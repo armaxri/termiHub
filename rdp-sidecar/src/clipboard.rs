@@ -24,7 +24,11 @@
 //! the same folder drive redirection (#1757) already exposes read-write, so this
 //! grants the remote no new local access. Every destination path is validated
 //! through the shared [`crate::sandbox`] choke point; Windows device names are
-//! rejected; oversized files are skipped.
+//! rejected. A copied **directory tree** is recreated under the shared folder
+//! (each descriptor's `relative_path` is honoured and its subdirectories are
+//! created, sandbox-validated per entry); **large files** stream in bounded
+//! chunks (`CLIPBOARD_CHUNK_BYTES` per range) so the sidecar never buffers a
+//! whole file, however large (#1780).
 //!
 //! Because IronRDP's `CliprdrBackend` methods run while the [`Cliprdr`] channel
 //! is borrowed, downloads are driven the same way as text: the backend records
@@ -37,10 +41,14 @@
 //! folder** to the remote so files placed there can be pasted into the remote
 //! session. When file transfer is enabled and the session is **not** view-only,
 //! [`on_request_format_list`](SidecarClipboardBackend::on_request_format_list)
-//! offers the folder's files as a `FileGroupDescriptorW` list (the driver calls
-//! [`Cliprdr::initiate_file_copy`]); on a remote paste the server asks for each
+//! offers the folder's **recursive** contents as a `FileGroupDescriptorW` list —
+//! directory entries plus files carrying their `\`-separated relative paths so
+//! the remote recreates the tree (#1780) — and the driver calls
+//! [`Cliprdr::initiate_file_copy`]; on a remote paste the server asks for each
 //! file's size/bytes and [`on_file_contents_request`](SidecarClipboardBackend::on_file_contents_request)
-//! serves them, reading **only** through the shared [`crate::sandbox`] resolver.
+//! serves them, reading **only** through the shared [`crate::sandbox`] resolver,
+//! at most `CLIPBOARD_CHUNK_BYTES` per range response so a large file streams
+//! without being buffered whole.
 //! Because a FormatList wholly replaces the previous, a text copy and a file
 //! offer are mutually exclusive — the most recent local action wins, matching a
 //! native clipboard. A view-only session never advertises or serves local
@@ -54,8 +62,10 @@
 //! **those real paths** to the remote in preference to the shared folder — most
 //! recent local action wins, matching a native client. It serves them from their
 //! real absolute paths (the [`crate::sandbox`] root does not apply — these are the
-//! user's own explicit copy, not remote-supplied paths), read-only, size-capped,
-//! regular files only. The remote only ever supplies an *index* into the list the
+//! user's own explicit copy, not remote-supplied paths), read-only. A copied
+//! **directory** is walked recursively into dir + file descriptors carrying their
+//! relative paths (#1780), symlinks skipped to stay inside the copy. The remote
+//! only ever supplies an *index* into the list the
 //! backend advertised, so it can never coax the sidecar into serving a file the
 //! user did not copy. The same opt-in and view-only gate as #1778 applies, so a
 //! view-only session still pushes nothing. Host-clipboard *reading* is macOS-only
@@ -82,11 +92,13 @@ use tracing::{debug, trace, warn};
 
 use crate::host_clipboard::read_host_clipboard_files;
 
-/// Cap on a single clipboard-received file. A whole file is requested in one
-/// range (position 0, size N), so this bounds the sidecar's memory for one
-/// transfer; larger files are skipped (chunked streaming is a follow-up). 32 MiB
-/// covers ordinary documents while refusing a hostile multi-gigabyte advertise.
-const MAX_CLIPBOARD_FILE_BYTES: u64 = 32 * 1024 * 1024;
+/// Memory bound for a single in-flight clipboard file-contents transfer. A large
+/// file is **streamed** in chunks of this size — received files are requested one
+/// range at a time and written incrementally, and served files return at most
+/// this many bytes per RANGE response — so the sidecar never buffers a whole file
+/// regardless of its size (#1780). 8 MiB keeps the footprint small while still
+/// filling the wire efficiently.
+const CLIPBOARD_CHUNK_BYTES: u64 = 8 * 1024 * 1024;
 
 /// An action the CLIPRDR backend needs the driver loop to perform on the
 /// [`Cliprdr`](ironrdp::cliprdr::Cliprdr) channel once it owns `&mut ActiveStage`
@@ -218,13 +230,20 @@ enum DownloadPhase {
     Range,
 }
 
-/// The single in-flight file download, keyed by the stream id we assigned.
+/// The single in-flight file download, keyed by the stream id we assigned. A
+/// large file is fetched over several `RANGE` requests; `position`/`total` track
+/// how far the streaming write has progressed so each chunk lands at the right
+/// offset and the transfer stops at EOF (#1780).
 #[derive(Debug, Clone)]
 struct ActiveDownload {
     stream_id: u32,
     index: i32,
     dest: PathBuf,
     phase: DownloadPhase,
+    /// Byte offset the next `RANGE` chunk is written at (0 during a `SIZE` phase).
+    position: u64,
+    /// Total file length once known (0 during a `SIZE` phase, before it resolves).
+    total: u64,
 }
 
 /// The sidecar's [`CliprdrBackend`]: it holds no clipboard *state* of its own; it
@@ -263,6 +282,10 @@ pub struct SidecarClipboardBackend {
     /// direct call) so tests can inject a deterministic list instead of touching
     /// the real clipboard; production wires [`read_host_clipboard_files`].
     host_clip_reader: Box<dyn Fn() -> Vec<PathBuf> + Send>,
+    /// Chunk size for streaming a received file's bytes (#1780). Defaults to
+    /// [`CLIPBOARD_CHUNK_BYTES`]; a field so tests can shrink it to exercise the
+    /// multi-chunk path without multi-megabyte fixtures.
+    chunk_bytes: u64,
 }
 
 impl std::fmt::Debug for SidecarClipboardBackend {
@@ -277,25 +300,35 @@ impl std::fmt::Debug for SidecarClipboardBackend {
             .field("next_stream_id", &self.next_stream_id)
             .field("view_only", &self.view_only)
             .field("offered_files", &self.offered_files)
+            .field("chunk_bytes", &self.chunk_bytes)
             .finish_non_exhaustive()
     }
 }
 
-/// A local file offered to the remote over CLIPRDR (#1778/#1779). Its position in
-/// the advertised list is the `index` a [`FileContentsRequest`] references.
+/// A local entry offered to the remote over CLIPRDR (#1778/#1779/#1780). Its
+/// position in the advertised list is the `index` a [`FileContentsRequest`]
+/// references. An entry is either a regular file (bytes served on request) or a
+/// **directory** (`is_dir`), which carries no bytes but tells the remote to
+/// recreate the folder so a copied tree keeps its structure (#1780).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct OfferedFile {
     /// Basename advertised to the remote.
     name: String,
+    /// Directory portion of this entry's path within the copied collection,
+    /// `\`-separated, or `None` for a top-level entry (#1780). Advertised as the
+    /// descriptor's `relative_path` so the remote rebuilds the tree.
+    relative_path: Option<String>,
     /// Path the bytes are served from: either a sandboxed, canonical path inside
     /// the shared folder (from [`crate::sandbox::resolve_in_root`], #1778) or the
     /// real absolute path of a file the user copied to the host clipboard (#1779).
     /// The remote never supplies this — it only selects an advertised index — so a
-    /// real path here is exactly one the user copied.
+    /// real path here is exactly one the user copied. Unused for a directory entry.
     path: PathBuf,
     /// File size at advertise time (a `SIZE` request re-stats for the current
-    /// value, falling back to this).
+    /// value, falling back to this). 0 for a directory entry.
     size: u64,
+    /// Whether this entry is a directory (no bytes to serve) rather than a file.
+    is_dir: bool,
 }
 
 impl SidecarClipboardBackend {
@@ -335,9 +368,17 @@ impl SidecarClipboardBackend {
                 view_only,
                 offered_files: Vec::new(),
                 host_clip_reader: Box::new(host_clip_reader),
+                chunk_bytes: CLIPBOARD_CHUNK_BYTES,
             },
             rx,
         )
+    }
+
+    /// Shrink the streaming chunk size (tests only) so the multi-chunk download
+    /// path can be exercised with tiny fixtures instead of multi-megabyte files.
+    #[cfg(test)]
+    fn set_chunk_bytes(&mut self, chunk_bytes: u64) {
+        self.chunk_bytes = chunk_bytes;
     }
 
     /// Whether this session serves local files to the remote: file transfer is
@@ -367,17 +408,15 @@ impl SidecarClipboardBackend {
             self.offered_files = offered;
             return Some(descriptors);
         }
-        // Otherwise fall back to the sandboxed shared folder's contents (#1778).
+        // Otherwise fall back to the sandboxed shared folder's contents (#1778),
+        // recursed into a directory + file tree (#1780).
         let root = self.download_dir.as_ref()?;
         let offered = collect_offerable_files(root);
         if offered.is_empty() {
             self.offered_files.clear();
             return None;
         }
-        let descriptors = offered
-            .iter()
-            .map(|f| FileDescriptor::new(f.name.clone()).with_file_size(f.size))
-            .collect();
+        let descriptors = offered.iter().map(offered_descriptor).collect();
         self.offered_files = offered;
         Some(descriptors)
     }
@@ -397,42 +436,62 @@ impl SidecarClipboardBackend {
         self.next_stream_id
     }
 
-    /// Plan the download of a remote file list into the download folder: skip
-    /// directories, empty/rejected names and Windows device names; flatten to
-    /// basenames within the one folder, deduplicating collisions. Returns the
-    /// queue of files to fetch.
+    /// Plan the download of a remote file list into the download folder,
+    /// preserving the copied directory structure (#1780): recreate each directory
+    /// descriptor's folder and honour every file descriptor's `relative_path` so
+    /// the tree lands intact under the shared folder. Empty/`.`/`..` leaves,
+    /// Windows device names (on any component) and paths the [`crate::sandbox`]
+    /// resolver rejects are skipped; a genuinely colliding destination is
+    /// deduplicated. Returns the queue of files whose bytes still need fetching.
     fn plan_downloads(&self, files: &[FileDescriptor]) -> VecDeque<PlannedDownload> {
         let Some(dir) = self.download_dir.as_ref() else {
             return VecDeque::new();
         };
-        let mut used: HashSet<String> = HashSet::new();
+        let mut used: HashSet<PathBuf> = HashSet::new();
         let mut queue = VecDeque::new();
         for (index, file) in files.iter().enumerate() {
-            if file
-                .attributes
-                .map(|a| a.contains(ClipboardFileAttributes::DIRECTORY))
-                .unwrap_or(false)
-            {
-                // Directories carry no bytes to request; flattening drops the
-                // tree structure (a follow-up preserves it).
-                continue;
-            }
-            // IronRDP already sanitised the name to a basename, but re-derive it
-            // defensively and reject anything unsafe to write.
-            let base = file.name.rsplit(['\\', '/']).next().unwrap_or(&file.name);
-            if base.is_empty() || base == "." || base == ".." {
-                warn!(name = %file.name, "skipping clipboard file with unusable name");
-                continue;
-            }
-            if is_windows_device_name(base) {
-                warn!(name = %base, "skipping clipboard file with a reserved device name");
-                continue;
-            }
-            let unique = unique_name(&mut used, base);
-            let Some(dest) = crate::sandbox::resolve_in_root(dir, &unique) else {
-                warn!(name = %unique, "clipboard file rejected by sandbox");
+            // Reconstruct the path relative to the copied-collection root from the
+            // descriptor's directory portion (`relative_path`) and basename.
+            let Some(rel) = descriptor_rel_path(file) else {
+                warn!(name = %file.name, "skipping clipboard entry with an unusable name");
                 continue;
             };
+            // Reject a reserved device name on ANY component, not just the leaf.
+            if rel
+                .split(['\\', '/'])
+                .any(|c| !c.is_empty() && is_windows_device_name(c))
+            {
+                warn!(path = %rel, "skipping clipboard entry with a reserved device name");
+                continue;
+            }
+            // Sandbox every entry — file or directory — per component: rejects
+            // `..`, drive letters, NUL and (for existing components) symlink
+            // escapes. `..` was already rejected lexically, so a fresh nested path
+            // cannot escape even before its parents exist.
+            let Some(dest) = crate::sandbox::resolve_in_root(dir, &rel) else {
+                warn!(path = %rel, "clipboard entry rejected by sandbox");
+                continue;
+            };
+            if descriptor_is_dir(file) {
+                // A directory carries no bytes: recreate it now so a file that
+                // arrives before its parent descriptor still has somewhere to land.
+                if let Err(e) = std::fs::create_dir_all(&dest) {
+                    warn!(error = %e, path = %dest.display(), "failed to create clipboard directory");
+                } else {
+                    used.insert(dest);
+                }
+                continue;
+            }
+            // Ensure the file's parent directory exists (a file may precede its
+            // directory descriptor, or carry a deeper relative path with no
+            // explicit descriptor for the intermediate folders).
+            if let Some(parent) = dest.parent() {
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    warn!(error = %e, path = %parent.display(), "failed to create clipboard parent directory; skipping file");
+                    continue;
+                }
+            }
+            let dest = unique_dest(&mut used, dest);
             queue.push_back(PlannedDownload {
                 index: index as i32,
                 dest,
@@ -444,8 +503,8 @@ impl SidecarClipboardBackend {
 
     /// Pop the next planned file and either fetch it (emitting a
     /// [`ClipboardEvent::RequestFileContents`]) or, for a known-empty file,
-    /// create it immediately and move on. Files larger than
-    /// [`MAX_CLIPBOARD_FILE_BYTES`] are skipped.
+    /// create it immediately and move on. A large file is streamed in
+    /// [`Self::chunk_bytes`]-sized ranges rather than skipped (#1780).
     fn start_next_download(&mut self) {
         self.active_download = None;
         while let Some(planned) = self.download_queue.pop_front() {
@@ -460,29 +519,9 @@ impl SidecarClipboardBackend {
                     }
                     continue;
                 }
-                Some(size) if size > MAX_CLIPBOARD_FILE_BYTES => {
-                    warn!(
-                        size,
-                        max = MAX_CLIPBOARD_FILE_BYTES,
-                        name = %planned.dest.display(),
-                        "skipping oversized clipboard file"
-                    );
-                    continue;
-                }
                 Some(size) => {
-                    // Size known: fetch the whole file in one range.
-                    let stream_id = self.allocate_stream_id();
-                    self.active_download = Some(ActiveDownload {
-                        stream_id,
-                        index: planned.index,
-                        dest: planned.dest,
-                        phase: DownloadPhase::Range,
-                    });
-                    self.emit(ClipboardEvent::RequestFileContents(range_request(
-                        stream_id,
-                        planned.index,
-                        size,
-                    )));
+                    // Size known: stream it, starting with the first chunk.
+                    self.begin_range_download(planned.index, planned.dest, size);
                     return;
                 }
                 None => {
@@ -493,6 +532,8 @@ impl SidecarClipboardBackend {
                         index: planned.index,
                         dest: planned.dest,
                         phase: DownloadPhase::Size,
+                        position: 0,
+                        total: 0,
                     });
                     self.emit(ClipboardEvent::RequestFileContents(size_request(
                         stream_id,
@@ -503,6 +544,26 @@ impl SidecarClipboardBackend {
             }
         }
     }
+
+    /// Begin (or, from [`Self::start_next_download`], restart) a chunked byte
+    /// download of a known-size file: request the first [`Self::chunk_bytes`]
+    /// range and record the transfer so [`Self::on_file_contents_response`]
+    /// continues it chunk by chunk until EOF (#1780).
+    fn begin_range_download(&mut self, index: i32, dest: PathBuf, total: u64) {
+        let stream_id = self.allocate_stream_id();
+        let want = total.min(self.chunk_bytes);
+        self.active_download = Some(ActiveDownload {
+            stream_id,
+            index,
+            dest,
+            phase: DownloadPhase::Range,
+            position: 0,
+            total,
+        });
+        self.emit(ClipboardEvent::RequestFileContents(range_request(
+            stream_id, index, 0, want,
+        )));
+    }
 }
 
 /// Build a deduplicated basename: `file.txt`, then `file (1).txt`, … keeping the
@@ -511,10 +572,7 @@ fn unique_name(used: &mut HashSet<String>, base: &str) -> String {
     if used.insert(base.to_string()) {
         return base.to_string();
     }
-    let (stem, ext) = match base.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => (stem, Some(ext)),
-        _ => (base, None),
-    };
+    let (stem, ext) = split_stem_ext(base);
     for n in 1.. {
         let candidate = match ext {
             Some(ext) => format!("{stem} ({n}).{ext}"),
@@ -525,6 +583,101 @@ fn unique_name(used: &mut HashSet<String>, base: &str) -> String {
         }
     }
     unreachable!("the counter is unbounded")
+}
+
+/// Split a basename into `(stem, extension)`, keeping `None` for a name with no
+/// extension (or a leading-dot name like `.env`, whose whole self is the stem).
+fn split_stem_ext(base: &str) -> (&str, Option<&str>) {
+    match base.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem, Some(ext)),
+        _ => (base, None),
+    }
+}
+
+/// Ensure `dest` is unique among the destinations planned so far, disambiguating
+/// a genuine collision with a ` (n)` suffix on the basename (extension kept) in
+/// the same directory — so a duplicated path never silently overwrites an earlier
+/// file. Preserving the tree means two files with the same basename in *different*
+/// directories no longer collide (#1780). Records the chosen path in `used`.
+fn unique_dest(used: &mut HashSet<PathBuf>, dest: PathBuf) -> PathBuf {
+    if used.insert(dest.clone()) {
+        return dest;
+    }
+    let parent = dest.parent().map(Path::to_path_buf).unwrap_or_default();
+    let base = dest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string();
+    let (stem, ext) = split_stem_ext(&base);
+    for n in 1.. {
+        let candidate = match ext {
+            Some(ext) => format!("{stem} ({n}).{ext}"),
+            None => format!("{stem} ({n})"),
+        };
+        let path = parent.join(candidate);
+        if used.insert(path.clone()) {
+            return path;
+        }
+    }
+    unreachable!("the counter is unbounded")
+}
+
+/// Whether a descriptor names a directory (which carries no bytes to fetch).
+fn descriptor_is_dir(file: &FileDescriptor) -> bool {
+    file.attributes
+        .map(|a| a.contains(ClipboardFileAttributes::DIRECTORY))
+        .unwrap_or(false)
+}
+
+/// Reconstruct a descriptor's path relative to the copied-collection root:
+/// `relative_path\name` when the descriptor carries a directory portion, else the
+/// bare `name` (#1780). Per-component sanitisation is left to the sandbox
+/// resolver — this only rejects a descriptor whose leaf is empty, `.` or `..`.
+fn descriptor_rel_path(file: &FileDescriptor) -> Option<String> {
+    let rel = match &file.relative_path {
+        Some(path) if !path.is_empty() => {
+            format!("{}\\{}", path.trim_end_matches(['\\', '/']), file.name)
+        }
+        _ => file.name.clone(),
+    };
+    let leaf = rel.rsplit(['\\', '/']).find(|c| !c.is_empty())?;
+    if leaf == "." || leaf == ".." {
+        return None;
+    }
+    Some(rel)
+}
+
+/// Build the `FileDescriptor` advertised for a local entry (#1780): a directory
+/// entry carries the `DIRECTORY` attribute and no size; a file carries its size.
+/// Both carry the `relative_path` so the remote rebuilds the tree.
+fn offered_descriptor(offered: &OfferedFile) -> FileDescriptor {
+    let mut descriptor = FileDescriptor::new(offered.name.clone());
+    if let Some(rel) = &offered.relative_path {
+        if !rel.is_empty() {
+            descriptor = descriptor.with_relative_path(rel.clone());
+        }
+    }
+    if offered.is_dir {
+        descriptor.with_attributes(ClipboardFileAttributes::DIRECTORY)
+    } else {
+        descriptor.with_file_size(offered.size)
+    }
+}
+
+/// Write one received chunk at `position`, truncating the file on the first chunk
+/// so a re-used name keeps no stale tail. Only one chunk is buffered at a time, so
+/// memory stays bounded regardless of the file's size (#1780).
+fn write_chunk(path: &Path, position: u64, data: &[u8]) -> std::io::Result<()> {
+    use std::io::{Seek, SeekFrom, Write};
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(position == 0)
+        .open(path)?;
+    file.seek(SeekFrom::Start(position))?;
+    file.write_all(data)?;
+    Ok(())
 }
 
 /// A `SIZE` file-contents request (per MS-RDPECLIP 2.2.5.3: position 0,
@@ -540,90 +693,124 @@ fn size_request(stream_id: u32, index: i32) -> FileContentsRequest {
     }
 }
 
-/// A `RANGE` request for the whole file `[0, size)` (size is `<= MAX_CLIPBOARD_FILE_BYTES`,
-/// so it fits in the `u32` `requested_size`).
-fn range_request(stream_id: u32, index: i32, size: u64) -> FileContentsRequest {
+/// A `RANGE` request for `len` bytes starting at `position` (#1780). `len` is a
+/// single chunk (`<= CLIPBOARD_CHUNK_BYTES`), so it always fits the `u32`
+/// `requested_size`; large files are fetched over successive chunks.
+fn range_request(stream_id: u32, index: i32, position: u64, len: u64) -> FileContentsRequest {
     FileContentsRequest {
         stream_id,
         index,
         flags: FileContentsFlags::RANGE,
-        position: 0,
-        requested_size: size as u32,
+        position,
+        requested_size: len as u32,
         data_id: None,
     }
 }
 
-/// Enumerate the shared folder's top-level regular files as offerable entries,
-/// in a deterministic (name-sorted) order so an advertised index stays stable
-/// for the matching serve. Skips directories, reserved device names, unreadable
-/// entries and files larger than [`MAX_CLIPBOARD_FILE_BYTES`]; every path is
-/// re-validated through the [`crate::sandbox`] resolver (#1778). Subdirectory
-/// recursion is a follow-up.
+/// Enumerate the shared folder **recursively** as offerable entries (#1780):
+/// directory entries (so the remote recreates the tree) and regular files, each
+/// carrying its `\`-separated `relative_path`. Deterministic (name-sorted per
+/// level, directories walked depth-first right after they are listed) so an
+/// advertised index stays stable for the matching serve. Symlinks and reserved
+/// device names are skipped, and every path is re-validated through the
+/// [`crate::sandbox`] resolver (#1778) so nothing escapes the folder.
 fn collect_offerable_files(root: &Path) -> Vec<OfferedFile> {
-    let read_dir = match std::fs::read_dir(root) {
-        Ok(rd) => rd,
-        Err(e) => {
-            warn!(error = %e, path = %root.display(), "cannot read shared folder to offer files");
-            return Vec::new();
-        }
-    };
     let mut entries = Vec::new();
-    for entry in read_dir.flatten() {
-        // `metadata` follows symlinks, so a link is treated as its target; the
-        // sandbox resolver below rejects one whose target escapes the folder.
-        let Ok(meta) = entry.metadata() else { continue };
-        if !meta.is_file() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name.is_empty() || is_windows_device_name(&name) {
-            continue;
-        }
-        let size = meta.len();
-        if size > MAX_CLIPBOARD_FILE_BYTES {
-            warn!(size, max = MAX_CLIPBOARD_FILE_BYTES, name = %name, "not offering oversized local file");
-            continue;
-        }
-        let Some(path) = crate::sandbox::resolve_in_root(root, &name) else {
-            warn!(name = %name, "local file rejected by sandbox; not offering");
-            continue;
-        };
-        entries.push(OfferedFile { name, path, size });
-    }
-    entries.sort_by(|a, b| a.name.cmp(&b.name));
+    collect_offerable_dir(root, None, &mut entries);
     entries
 }
 
+/// Recurse one directory (relative path `rel`, `None` at the root) of the shared
+/// folder, appending its directory and file entries to `out` in name-sorted
+/// order, each validated through the sandbox resolver.
+fn collect_offerable_dir(root: &Path, rel: Option<&str>, out: &mut Vec<OfferedFile>) {
+    let dir = match rel {
+        Some(rel) => match crate::sandbox::resolve_in_root(root, rel) {
+            Some(path) => path,
+            None => return,
+        },
+        None => root.to_path_buf(),
+    };
+    let read_dir = match std::fs::read_dir(&dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            warn!(error = %e, path = %dir.display(), "cannot read shared folder to offer files");
+            return;
+        }
+    };
+    let mut names: Vec<String> = Vec::new();
+    for entry in read_dir.flatten() {
+        // `file_type` does not follow symlinks, so a symlinked directory is not
+        // recursed into (avoiding both escapes and cycles); the sandbox resolver
+        // below is the second line of defence on the resolved path.
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.is_empty() || name == "." || name == ".." || is_windows_device_name(&name) {
+            continue;
+        }
+        names.push(name);
+    }
+    names.sort();
+    for name in names {
+        let child_rel = match rel {
+            Some(rel) => format!("{rel}\\{name}"),
+            None => name.clone(),
+        };
+        let Some(path) = crate::sandbox::resolve_in_root(root, &child_rel) else {
+            warn!(name = %child_rel, "local entry rejected by sandbox; not offering");
+            continue;
+        };
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if meta.is_dir() {
+            out.push(OfferedFile {
+                name,
+                relative_path: rel.map(str::to_string),
+                path,
+                size: 0,
+                is_dir: true,
+            });
+            collect_offerable_dir(root, Some(&child_rel), out);
+        } else if meta.is_file() {
+            out.push(OfferedFile {
+                name,
+                relative_path: rel.map(str::to_string),
+                path,
+                size: meta.len(),
+                is_dir: false,
+            });
+        }
+    }
+}
+
 /// Build a file offer from the host OS clipboard's file list (#1779): the real
-/// paths the user copied in their file manager. Keeps only readable **regular
-/// files** within [`MAX_CLIPBOARD_FILE_BYTES`] (directories need recursion — a
-/// follow-up; oversized files need chunked streaming — a follow-up), preserving
-/// the clipboard order so an advertised index maps to the copy order, and
-/// deduplicating colliding basenames (files with the same name from different
-/// folders). Returns the descriptors to advertise paired with the index→path map
-/// to serve from, or `None` when nothing offerable remains (the caller then falls
-/// back to the shared folder). Paths are served **as-is** — they are the user's
-/// own explicit copy, not remote-supplied, and the remote only ever selects an
+/// paths the user copied in their file manager. A copied **directory** is walked
+/// recursively into directory + file entries carrying their relative paths so the
+/// remote rebuilds the tree (#1780); regular files are offered directly. Symlinks
+/// are skipped to stay inside the copy (and avoid cycles); the clipboard order is
+/// preserved so an advertised index maps to the copy order, and colliding
+/// top-level basenames (same name from different folders) are deduplicated.
+/// Returns the descriptors to advertise paired with the index→entry map to serve
+/// from, or `None` when nothing offerable remains (the caller then falls back to
+/// the shared folder). Paths are served **as-is** — they are the user's own
+/// explicit copy, not remote-supplied, and the remote only ever selects an
 /// advertised index.
 fn build_host_file_offer(paths: &[PathBuf]) -> Option<(Vec<FileDescriptor>, Vec<OfferedFile>)> {
     let mut used: HashSet<String> = HashSet::new();
     let mut offered: Vec<OfferedFile> = Vec::new();
     for path in paths {
-        let meta = match std::fs::metadata(path) {
-            Ok(m) => m,
+        let ft = match std::fs::symlink_metadata(path) {
+            Ok(m) => m.file_type(),
             Err(e) => {
-                warn!(error = %e, path = %path.display(), "cannot stat host-clipboard file; not offering");
+                warn!(error = %e, path = %path.display(), "cannot stat host-clipboard entry; not offering");
                 continue;
             }
         };
-        if !meta.is_file() {
-            // Directories (and other non-regular entries) carry no single byte
-            // stream to serve; recursing a copied folder is a follow-up.
-            continue;
-        }
-        let size = meta.len();
-        if size > MAX_CLIPBOARD_FILE_BYTES {
-            warn!(size, max = MAX_CLIPBOARD_FILE_BYTES, path = %path.display(), "not offering oversized host-clipboard file");
+        if ft.is_symlink() {
             continue;
         }
         let base = path
@@ -634,27 +821,90 @@ fn build_host_file_offer(paths: &[PathBuf]) -> Option<(Vec<FileDescriptor>, Vec<
             continue;
         }
         let name = unique_name(&mut used, &base);
-        offered.push(OfferedFile {
-            name,
-            path: path.clone(),
-            size,
-        });
+        if ft.is_dir() {
+            // Recurse the copied folder, rooted so descendants' relative paths
+            // carry the (deduplicated) top-level `name`.
+            offered.push(OfferedFile {
+                name: name.clone(),
+                relative_path: None,
+                path: path.clone(),
+                size: 0,
+                is_dir: true,
+            });
+            collect_host_dir(path, &name, &mut offered);
+        } else if ft.is_file() {
+            let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+            offered.push(OfferedFile {
+                name,
+                relative_path: None,
+                path: path.clone(),
+                size,
+                is_dir: false,
+            });
+        }
     }
     if offered.is_empty() {
         return None;
     }
-    let descriptors = offered
-        .iter()
-        .map(|f| FileDescriptor::new(f.name.clone()).with_file_size(f.size))
-        .collect();
+    let descriptors = offered.iter().map(offered_descriptor).collect();
     Some((descriptors, offered))
 }
 
-/// Build the response to a server `FileContentsRequest` against the files we
+/// Recurse a copied host-clipboard directory `dir` whose relative path within the
+/// offer is `rel`, appending its directory and file entries (name-sorted per
+/// level) to `out`. Symlinks are skipped; there is no sandbox root — these are the
+/// user's own explicit copy (#1780).
+fn collect_host_dir(dir: &Path, rel: &str, out: &mut Vec<OfferedFile>) {
+    let read_dir = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            warn!(error = %e, path = %dir.display(), "cannot read copied host directory; skipping");
+            return;
+        }
+    };
+    let mut entries: Vec<(String, PathBuf, std::fs::FileType)> = Vec::new();
+    for entry in read_dir.flatten() {
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.is_empty() || name == "." || name == ".." {
+            continue;
+        }
+        entries.push((name, entry.path(), ft));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    for (name, path, ft) in entries {
+        let child_rel = format!("{rel}\\{name}");
+        if ft.is_dir() {
+            out.push(OfferedFile {
+                name,
+                relative_path: Some(rel.to_string()),
+                path: path.clone(),
+                size: 0,
+                is_dir: true,
+            });
+            collect_host_dir(&path, &child_rel, out);
+        } else if ft.is_file() {
+            let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+            out.push(OfferedFile {
+                name,
+                relative_path: Some(rel.to_string()),
+                path,
+                size,
+                is_dir: false,
+            });
+        }
+    }
+}
+
+/// Build the response to a server `FileContentsRequest` against the entries we
 /// advertised: a `SIZE` request yields the file's current length; a `RANGE`
-/// request yields the requested bytes (capped at [`MAX_CLIPBOARD_FILE_BYTES`],
-/// truncated at EOF). An unknown index, a missing flag or any read failure
-/// yields an error response, which the spec allows (#1778).
+/// request yields the requested bytes (capped at [`CLIPBOARD_CHUNK_BYTES`] per
+/// response, truncated at EOF, so a large file streams over successive ranges).
+/// An unknown index, a directory index, a missing flag or any read failure yields
+/// an error response, which the spec allows (#1778/#1780).
 fn serve_file_contents(
     offered: &[OfferedFile],
     request: &FileContentsRequest,
@@ -670,6 +920,16 @@ fn serve_file_contents(
         );
         return FileContentsResponse::new_error(stream_id);
     };
+
+    if file.is_dir {
+        // A directory entry carries no byte stream; a conforming remote only asks
+        // for file indices, so a request here is malformed.
+        warn!(
+            index = request.index,
+            "file-contents request for a directory entry"
+        );
+        return FileContentsResponse::new_error(stream_id);
+    }
 
     if request.flags.contains(FileContentsFlags::SIZE) {
         // Re-stat for the current size; fall back to the advertised value.
@@ -693,11 +953,12 @@ fn serve_file_contents(
     }
 }
 
-/// Read up to `requested_size` bytes (capped at [`MAX_CLIPBOARD_FILE_BYTES`])
-/// from `path` starting at `position`, returning fewer bytes at EOF.
+/// Read up to `requested_size` bytes (capped at [`CLIPBOARD_CHUNK_BYTES`] so one
+/// response never buffers more than a chunk) from `path` starting at `position`,
+/// returning fewer bytes at EOF.
 fn read_file_range(path: &Path, position: u64, requested_size: u32) -> std::io::Result<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
-    let cap = u64::from(requested_size).min(MAX_CLIPBOARD_FILE_BYTES);
+    let cap = u64::from(requested_size).min(CLIPBOARD_CHUNK_BYTES);
     let mut file = std::fs::File::open(path)?;
     file.seek(SeekFrom::Start(position))?;
     let mut buf = Vec::new();
@@ -852,28 +1113,9 @@ impl CliprdrBackend for SidecarClipboardBackend {
                     }
                     self.start_next_download();
                 }
-                Ok(size) if size > MAX_CLIPBOARD_FILE_BYTES => {
-                    warn!(
-                        size,
-                        max = MAX_CLIPBOARD_FILE_BYTES,
-                        "skipping oversized clipboard file"
-                    );
-                    self.start_next_download();
-                }
                 Ok(size) => {
-                    // Size resolved: request the bytes on the same file.
-                    let stream_id = self.allocate_stream_id();
-                    self.active_download = Some(ActiveDownload {
-                        stream_id,
-                        index: active.index,
-                        dest: active.dest,
-                        phase: DownloadPhase::Range,
-                    });
-                    self.emit(ClipboardEvent::RequestFileContents(range_request(
-                        stream_id,
-                        active.index,
-                        size,
-                    )));
+                    // Size resolved: stream the bytes, chunked, on the same file.
+                    self.begin_range_download(active.index, active.dest, size);
                 }
                 Err(e) => {
                     warn!(error = %e, "malformed file size response; skipping file");
@@ -881,17 +1123,50 @@ impl CliprdrBackend for SidecarClipboardBackend {
                 }
             },
             DownloadPhase::Range => {
-                match std::fs::write(&active.dest, response.data()) {
-                    Ok(()) => debug!(
-                        path = %active.dest.display(),
-                        bytes = response.data().len(),
-                        "saved clipboard file into the shared folder"
-                    ),
-                    Err(e) => {
-                        warn!(error = %e, path = %active.dest.display(), "failed to write clipboard file")
-                    }
+                let chunk = response.data();
+                if let Err(e) = write_chunk(&active.dest, active.position, chunk) {
+                    warn!(error = %e, path = %active.dest.display(), "failed to write clipboard file chunk; skipping file");
+                    self.start_next_download();
+                    return;
                 }
-                self.start_next_download();
+                let written = active.position + chunk.len() as u64;
+                // Stop at EOF: either we reached the advertised total, or the
+                // remote returned a short/empty chunk (all it had left).
+                if chunk.is_empty() || written >= active.total {
+                    if written < active.total {
+                        warn!(
+                            got = written,
+                            expected = active.total,
+                            path = %active.dest.display(),
+                            "clipboard file ended before its advertised size; wrote a partial file"
+                        );
+                    } else {
+                        debug!(
+                            path = %active.dest.display(),
+                            bytes = written,
+                            "saved clipboard file into the shared folder"
+                        );
+                    }
+                    self.start_next_download();
+                } else {
+                    // More to fetch: request the next chunk from where we stopped.
+                    let stream_id = self.allocate_stream_id();
+                    let want = (active.total - written).min(self.chunk_bytes);
+                    self.active_download = Some(ActiveDownload {
+                        stream_id,
+                        index: active.index,
+                        dest: active.dest,
+                        phase: DownloadPhase::Range,
+                        position: written,
+                        total: active.total,
+                    });
+                    self.emit(ClipboardEvent::RequestFileContents(range_request(
+                        stream_id,
+                        active.index,
+                        written,
+                        want,
+                    )));
+                }
             }
         }
     }
@@ -1178,21 +1453,149 @@ mod tests {
     }
 
     #[test]
-    fn oversized_file_is_skipped() {
-        let (mut backend, rx, _dir) = backend_with_download();
-        backend.on_remote_file_list(
-            &[FileDescriptor::new("huge.iso").with_file_size(MAX_CLIPBOARD_FILE_BYTES + 1)],
-            None,
-        );
-        // Too big → no request emitted, file skipped.
+    fn large_file_is_streamed_in_chunks() {
+        // A file larger than one chunk is fetched over successive RANGE requests
+        // and written incrementally, never buffered whole (#1780).
+        let (mut backend, rx, dir) = backend_with_download();
+        backend.set_chunk_bytes(4);
+        backend.on_remote_file_list(&[FileDescriptor::new("big.bin").with_file_size(10)], None);
+
+        // Chunk 1: [0, 4).
+        let r1 = next_request(&rx);
+        assert_eq!(r1.position, 0);
+        assert_eq!(r1.requested_size, 4);
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            r1.stream_id,
+            b"aaaa".to_vec(),
+        ));
+        // Chunk 2: [4, 8).
+        let r2 = next_request(&rx);
+        assert_eq!(r2.position, 4);
+        assert_eq!(r2.requested_size, 4);
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            r2.stream_id,
+            b"bbbb".to_vec(),
+        ));
+        // Chunk 3: [8, 10) — only the remaining 2 bytes are asked for.
+        let r3 = next_request(&rx);
+        assert_eq!(r3.position, 8);
+        assert_eq!(r3.requested_size, 2);
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            r3.stream_id,
+            b"cc".to_vec(),
+        ));
+
+        // No further request; the streamed bytes are reassembled in order.
         assert!(rx.try_recv().is_err());
+        assert_eq!(
+            std::fs::read(dir.path().join("big.bin")).unwrap(),
+            b"aaaabbbbcc"
+        );
     }
 
     #[test]
-    fn directories_are_skipped() {
+    fn a_short_chunk_continues_but_an_empty_chunk_ends_the_transfer() {
+        // A shorter-than-requested (but non-empty) chunk just advances by the
+        // bytes received and asks for the rest — robust to a server that chunks
+        // its responses. An empty chunk means the server has nothing more, so we
+        // stop (with a partial file) rather than loop forever (#1780).
+        let (mut backend, rx, dir) = backend_with_download();
+        backend.set_chunk_bytes(4);
+        backend.on_remote_file_list(&[FileDescriptor::new("short.bin").with_file_size(10)], None);
+
+        let r1 = next_request(&rx);
+        assert_eq!(r1.position, 0);
+        // Server returns only 2 of the requested 4 bytes — not EOF.
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            r1.stream_id,
+            b"aa".to_vec(),
+        ));
+        // We advance to position 2 and request the remainder.
+        let r2 = next_request(&rx);
+        assert_eq!(r2.position, 2);
+        // Now the server returns nothing → EOF, stop with what we have.
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            r2.stream_id,
+            Vec::new(),
+        ));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(std::fs::read(dir.path().join("short.bin")).unwrap(), b"aa");
+    }
+
+    #[test]
+    fn directory_structure_is_recreated() {
+        // A copied folder (with a nested file) keeps its tree under the shared
+        // folder instead of being flattened (#1780).
+        let (mut backend, rx, dir) = backend_with_download();
+        backend.on_remote_file_list(
+            &[
+                FileDescriptor::new("folder").with_attributes(ClipboardFileAttributes::DIRECTORY),
+                FileDescriptor::new("nested.txt")
+                    .with_relative_path("folder")
+                    .with_file_size(3),
+            ],
+            None,
+        );
+        // The directory is created immediately (no request); the nested file is
+        // fetched into it.
+        assert!(dir.path().join("folder").is_dir());
+        let req = next_request(&rx);
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            req.stream_id,
+            b"abc".to_vec(),
+        ));
+        assert_eq!(
+            std::fs::read(dir.path().join("folder").join("nested.txt")).unwrap(),
+            b"abc"
+        );
+    }
+
+    #[test]
+    fn deep_relative_path_creates_missing_parents() {
+        // A file whose relative path has no explicit directory descriptors still
+        // lands: the intermediate folders are created on demand (#1780).
+        let (mut backend, rx, dir) = backend_with_download();
+        backend.on_remote_file_list(
+            &[FileDescriptor::new("leaf.txt")
+                .with_relative_path("a\\b\\c")
+                .with_file_size(2)],
+            None,
+        );
+        let req = next_request(&rx);
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            req.stream_id,
+            b"hi".to_vec(),
+        ));
+        assert_eq!(
+            std::fs::read(dir.path().join("a").join("b").join("c").join("leaf.txt")).unwrap(),
+            b"hi"
+        );
+    }
+
+    #[test]
+    fn a_traversal_relative_path_is_rejected_per_entry() {
+        // Sandbox validation is per entry, not just the collection root: a
+        // descriptor trying to escape via `..` is dropped, not written (#1780).
+        let (mut backend, rx, dir) = backend_with_download();
+        backend.on_remote_file_list(
+            &[FileDescriptor::new("evil.txt")
+                .with_relative_path("..")
+                .with_file_size(4)],
+            None,
+        );
+        // Rejected → no request, nothing created outside the sandbox.
+        assert!(rx.try_recv().is_err());
+        assert!(!dir.path().parent().unwrap().join("evil.txt").exists());
+    }
+
+    #[test]
+    fn a_device_name_in_a_subdirectory_is_rejected() {
+        // A reserved device name on any component (not just the leaf) is refused.
         let (mut backend, rx, _dir) = backend_with_download();
         backend.on_remote_file_list(
-            &[FileDescriptor::new("folder").with_attributes(ClipboardFileAttributes::DIRECTORY)],
+            &[FileDescriptor::new("ok.txt")
+                .with_relative_path("CON")
+                .with_file_size(4)],
             None,
         );
         assert!(rx.try_recv().is_err());
@@ -1300,7 +1703,7 @@ mod tests {
     }
 
     #[test]
-    fn collects_offerable_files_sorted_skipping_dirs_and_device_names() {
+    fn collects_offerable_files_sorted_skipping_device_names() {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
         std::fs::write(root.join("b.txt"), b"bbb").unwrap();
@@ -1308,29 +1711,80 @@ mod tests {
         std::fs::create_dir(root.join("subdir")).unwrap();
 
         let offered = collect_offerable_files(&root);
-        // Directories are skipped; regular files come back name-sorted.
+        // Files come back name-sorted; the (empty) directory is offered too (its
+        // structure is preserved) but carries no size (#1780).
         let names: Vec<_> = offered.iter().map(|f| f.name.clone()).collect();
-        assert_eq!(names, vec!["a.txt".to_string(), "b.txt".to_string()]);
+        assert_eq!(
+            names,
+            vec![
+                "a.txt".to_string(),
+                "b.txt".to_string(),
+                "subdir".to_string()
+            ]
+        );
         assert_eq!(offered[0].size, 1);
         assert_eq!(offered[1].size, 3);
+        assert!(offered[2].is_dir);
         // Every path stays inside the sandbox root.
         assert!(offered.iter().all(|f| f.path.starts_with(&root)));
     }
 
     #[test]
-    fn oversized_local_file_is_not_offered() {
+    fn recursive_directory_is_offered_with_relative_paths() {
+        // A nested share is advertised as a directory entry plus its files, each
+        // carrying its `\`-separated relative path so the remote rebuilds the tree.
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::create_dir(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub").join("inner.txt"), b"hi").unwrap();
+        std::fs::write(root.join("top.txt"), b"t").unwrap();
+
+        let offered = collect_offerable_files(&root);
+        // Depth-first: "sub" (dir), then "sub/inner.txt", then "top.txt".
+        assert_eq!(offered[0].name, "sub");
+        assert!(offered[0].is_dir);
+        assert_eq!(offered[0].relative_path, None);
+        assert_eq!(offered[1].name, "inner.txt");
+        assert_eq!(offered[1].relative_path.as_deref(), Some("sub"));
+        assert_eq!(offered[2].name, "top.txt");
+        assert_eq!(offered[2].relative_path, None);
+
+        // The descriptor for the nested file advertises the directory portion.
+        let descriptor = offered_descriptor(&offered[1]);
+        assert_eq!(descriptor.relative_path.as_deref(), Some("sub"));
+        // And the directory descriptor is flagged as such.
+        let dir_descriptor = offered_descriptor(&offered[0]);
+        assert!(dir_descriptor
+            .attributes
+            .unwrap()
+            .contains(ClipboardFileAttributes::DIRECTORY));
+    }
+
+    #[test]
+    fn large_local_file_is_offered_and_served_bounded() {
+        // Large files are no longer skipped from the offer (#1780); a RANGE serve
+        // never returns more than one chunk, keeping serve memory bounded.
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
         std::fs::write(root.join("ok.txt"), b"ok").unwrap();
         let big = root.join("big.bin");
-        let f = std::fs::File::create(&big).unwrap();
-        f.set_len(MAX_CLIPBOARD_FILE_BYTES + 1).unwrap();
+        std::fs::File::create(&big)
+            .unwrap()
+            .set_len(CLIPBOARD_CHUNK_BYTES + 1)
+            .unwrap();
 
-        let names: Vec<_> = collect_offerable_files(&root)
-            .into_iter()
-            .map(|f| f.name)
-            .collect();
-        assert_eq!(names, vec!["ok.txt".to_string()]);
+        let offered = collect_offerable_files(&root);
+        let names: Vec<_> = offered.iter().map(|f| f.name.clone()).collect();
+        assert_eq!(names, vec!["big.bin".to_string(), "ok.txt".to_string()]);
+        // A single RANGE response over the whole advertised size is truncated to
+        // one chunk, never the whole large file.
+        let bytes = read_file_range(
+            &big,
+            0,
+            u32::try_from(CLIPBOARD_CHUNK_BYTES + 1).unwrap_or(u32::MAX),
+        )
+        .unwrap();
+        assert_eq!(bytes.len() as u64, CLIPBOARD_CHUNK_BYTES);
     }
 
     #[test]
@@ -1384,7 +1838,7 @@ mod tests {
         }
 
         // Then the bytes.
-        backend.on_file_contents_request(range_request(8, 0, 6));
+        backend.on_file_contents_request(range_request(8, 0, 0, 6));
         match next_event(&rx) {
             ClipboardEvent::ProvideFileContents(resp) => {
                 assert_eq!(resp.stream_id(), 8);
@@ -1426,7 +1880,7 @@ mod tests {
         let _ = next_event(&rx);
 
         // Ask for more than the file holds → returns only what exists.
-        backend.on_file_contents_request(range_request(1, 0, 999));
+        backend.on_file_contents_request(range_request(1, 0, 0, 999));
         match next_event(&rx) {
             ClipboardEvent::ProvideFileContents(resp) => {
                 assert!(!resp.is_error());
@@ -1459,14 +1913,14 @@ mod tests {
         let (mut backend, rx, dir) = backend_serving(true);
         std::fs::write(dir.path().join("secret.txt"), b"nope").unwrap();
         // Even a stray request serves nothing in a view-only session.
-        backend.on_file_contents_request(range_request(1, 0, 4));
+        backend.on_file_contents_request(range_request(1, 0, 0, 4));
         assert!(rx.try_recv().is_err());
     }
 
     #[test]
     fn text_only_bridge_ignores_a_file_contents_request() {
         let (mut backend, rx) = SidecarClipboardBackend::new(None, false);
-        backend.on_file_contents_request(range_request(1, 0, 4));
+        backend.on_file_contents_request(range_request(1, 0, 0, 4));
         assert!(rx.try_recv().is_err());
     }
 
@@ -1499,19 +1953,45 @@ mod tests {
         let z = dir.path().join("z.bin");
         std::fs::write(&a, b"aaa").unwrap();
         std::fs::write(&z, b"zzzzz").unwrap();
-        std::fs::create_dir(dir.path().join("folder")).unwrap();
 
-        // Clipboard order is z, folder, a — preserved (not sorted); the directory
-        // is dropped.
+        // Clipboard order is z, a — preserved (not sorted).
         let (descriptors, offered) =
-            build_host_file_offer(&[z.clone(), dir.path().join("folder"), a.clone()])
-                .expect("two regular files remain");
+            build_host_file_offer(&[z.clone(), a.clone()]).expect("two regular files remain");
         let names: Vec<_> = offered.iter().map(|f| f.name.clone()).collect();
         assert_eq!(names, vec!["z.bin".to_string(), "a.txt".to_string()]);
         assert_eq!(offered[0].path, z);
         assert_eq!(offered[1].path, a);
         assert_eq!(descriptors[0].file_size, Some(5));
         assert_eq!(descriptors[1].file_size, Some(3));
+    }
+
+    #[test]
+    fn build_host_file_offer_recurses_a_copied_directory() {
+        // Copying a folder in the file manager advertises the folder and its
+        // contents, each carrying a relative path rooted at the folder name (#1780).
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("project");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::create_dir(folder.join("src")).unwrap();
+        std::fs::write(folder.join("src").join("main.rs"), b"fn main(){}").unwrap();
+        std::fs::write(folder.join("readme.md"), b"hi").unwrap();
+
+        let (_descriptors, offered) =
+            build_host_file_offer(std::slice::from_ref(&folder)).expect("the folder is offered");
+        // Top-level folder first, then its name-sorted contents depth-first.
+        assert_eq!(offered[0].name, "project");
+        assert!(offered[0].is_dir);
+        assert_eq!(offered[0].relative_path, None);
+        assert_eq!(offered[1].name, "readme.md");
+        assert_eq!(offered[1].relative_path.as_deref(), Some("project"));
+        assert!(!offered[1].is_dir);
+        assert_eq!(offered[2].name, "src");
+        assert!(offered[2].is_dir);
+        assert_eq!(offered[2].relative_path.as_deref(), Some("project"));
+        assert_eq!(offered[3].name, "main.rs");
+        assert_eq!(offered[3].relative_path.as_deref(), Some("project\\src"));
+        // The nested file is served from its real path.
+        assert_eq!(offered[3].path, folder.join("src").join("main.rs"));
     }
 
     #[test]
@@ -1530,28 +2010,31 @@ mod tests {
     }
 
     #[test]
-    fn build_host_file_offer_skips_oversized_and_missing() {
+    fn build_host_file_offer_offers_large_files_and_skips_missing() {
+        // Large files are offered now that serving streams them (#1780); a missing
+        // path is still skipped.
         let dir = tempfile::tempdir().unwrap();
         let ok = dir.path().join("ok.txt");
         std::fs::write(&ok, b"ok").unwrap();
         let big = dir.path().join("big.bin");
         std::fs::File::create(&big)
             .unwrap()
-            .set_len(MAX_CLIPBOARD_FILE_BYTES + 1)
+            .set_len(CLIPBOARD_CHUNK_BYTES + 1)
             .unwrap();
         let missing = dir.path().join("gone.txt");
 
         let (_d, offered) = build_host_file_offer(&[big, missing, ok.clone()])
-            .expect("only the small existing file survives");
+            .expect("the large and small files survive");
         let names: Vec<_> = offered.iter().map(|f| f.name.clone()).collect();
-        assert_eq!(names, vec!["ok.txt".to_string()]);
+        assert_eq!(names, vec!["big.bin".to_string(), "ok.txt".to_string()]);
+        assert_eq!(offered[0].size, CLIPBOARD_CHUNK_BYTES + 1);
     }
 
     #[test]
     fn build_host_file_offer_none_when_nothing_offerable() {
-        // Only a directory and a missing path → nothing to offer.
+        // A missing path alone, and an empty list, offer nothing.
         let dir = tempfile::tempdir().unwrap();
-        assert!(build_host_file_offer(&[dir.path().to_path_buf()]).is_none());
+        assert!(build_host_file_offer(&[dir.path().join("gone.txt")]).is_none());
         assert!(build_host_file_offer(&[]).is_none());
     }
 
@@ -1596,7 +2079,7 @@ mod tests {
             }
             other => panic!("expected ProvideFileContents (size), got {other:?}"),
         }
-        backend.on_file_contents_request(range_request(8, 0, 6));
+        backend.on_file_contents_request(range_request(8, 0, 0, 6));
         match next_event(&rx) {
             ClipboardEvent::ProvideFileContents(resp) => {
                 assert!(!resp.is_error());
