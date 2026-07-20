@@ -575,11 +575,22 @@ where
     // we actually serve local files: file transfer opted in and not view-only.
     // Failure to start the watcher is non-fatal — the session keeps its
     // connect-time offer.
-    let readvertise = if cfg.view_only {
-        None
+    //
+    // The host-clipboard watcher (#1794) is the sibling trigger: it re-advertises
+    // when the user copies **files onto the host OS clipboard** mid-session. It is
+    // an independent source — either watcher can re-advertise without the other
+    // having changed — but shares the same serve gate (opt-in + not view-only), so
+    // a view-only or text-only session polls neither. Both are non-fatal to start.
+    let (readvertise, host_clip_watch) = if cfg.view_only {
+        (None, None)
     } else {
-        cfg.clipboard_download_dir()
-            .and_then(crate::folder_watch::watch_shared_folder)
+        match cfg.clipboard_download_dir() {
+            Some(root) => (
+                crate::folder_watch::watch_shared_folder(root),
+                Some(crate::host_clipboard_watch::watch_host_clipboard()),
+            ),
+            None => (None, None),
+        }
     };
 
     drive(
@@ -589,6 +600,7 @@ where
         clipboard_rx,
         cfg.view_only,
         readvertise,
+        host_clip_watch,
         ipc_in,
         ipc_out,
     )
@@ -604,7 +616,8 @@ where
 
 /// The driver loop: owns the transport, decoded image and active stage;
 /// `select!`s between decoding server PDUs, applying host input events, and
-/// re-advertising the local file list on a shared-folder change (#1788).
+/// re-advertising the local file list on a shared-folder change (#1788) or a
+/// host-clipboard file-list change (#1794).
 // Each argument is a distinct capability the loop owns (transport halves, config,
 // the CLIPRDR event channel, the folder-watch ticks, the IPC endpoints); bundling
 // them into a struct would only rename them without reducing coupling.
@@ -616,6 +629,7 @@ async fn drive<R, W>(
     clipboard_rx: std::sync::mpsc::Receiver<ClipboardEvent>,
     view_only: bool,
     mut readvertise: Option<crate::folder_watch::FolderWatch>,
+    mut host_clip_watch: Option<crate::host_clipboard_watch::HostClipboardWatch>,
     ipc_in: &mut R,
     ipc_out: &mut W,
 ) where
@@ -858,19 +872,9 @@ async fn drive<R, W>(
             } => {
                 match tick {
                     Some(()) => {
-                        // Drive the re-advertise through the backend so its
-                        // offered-file index map is refreshed in lockstep with what
-                        // it emits (a stale map would misserve a later paste).
-                        if let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() {
-                            if let Some(backend) =
-                                cliprdr.downcast_backend_mut::<SidecarClipboardBackend>()
-                            {
-                                backend.readvertise_local_files();
-                            }
-                        }
-                        if drain_clipboard_events(
-                            &clipboard_rx,
+                        if readvertise_and_drain(
                             &mut stage,
+                            &clipboard_rx,
                             &mut writer,
                             ipc_out,
                             local_clipboard.as_deref(),
@@ -886,8 +890,67 @@ async fn drive<R, W>(
                     None => readvertise = None,
                 }
             }
+            // The host OS clipboard's file list changed while connected: the user
+            // copied files locally mid-session, so re-advertise them over CLIPRDR
+            // without waiting for a server-initiated format-list (#1794). This is an
+            // independent trigger from the shared-folder watcher above but shares the
+            // exact re-advertise pipeline; the tick is rate-bounded by the poll
+            // interval. When no watcher is running (text- or view-only session),
+            // this arm never fires.
+            clip_tick = async {
+                match host_clip_watch.as_mut() {
+                    Some(w) => w.ticks.recv().await,
+                    None => std::future::pending::<Option<()>>().await,
+                }
+            } => {
+                match clip_tick {
+                    Some(()) => {
+                        if readvertise_and_drain(
+                            &mut stage,
+                            &clipboard_rx,
+                            &mut writer,
+                            ipc_out,
+                            local_clipboard.as_deref(),
+                        )
+                        .await
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    // The poll task ended (receiver closed); stop polling it but keep
+                    // the session alive.
+                    None => host_clip_watch = None,
+                }
+            }
         }
     }
+}
+
+/// Re-enumerate and re-advertise the local file offer, then flush the CLIPRDR
+/// actions it queued. Shared by the shared-folder-change (#1788) and
+/// host-clipboard-change (#1794) triggers. The re-advertise is driven **through the
+/// backend** so its offered-file index map is refreshed in lockstep with what it
+/// emits — a stale map would misserve a later paste — and the backend re-applies
+/// the opt-in + view-only gate, so a session that never offered local files emits
+/// nothing here.
+async fn readvertise_and_drain<T, W>(
+    stage: &mut ActiveStage,
+    clipboard_rx: &std::sync::mpsc::Receiver<ClipboardEvent>,
+    transport: &mut T,
+    ipc_out: &mut W,
+    local_clipboard: Option<&str>,
+) -> Result<()>
+where
+    T: FramedWrite,
+    W: AsyncWrite + Unpin,
+{
+    if let Some(cliprdr) = stage.get_svc_processor_mut::<CliprdrClient>() {
+        if let Some(backend) = cliprdr.downcast_backend_mut::<SidecarClipboardBackend>() {
+            backend.readvertise_local_files();
+        }
+    }
+    drain_clipboard_events(clipboard_rx, stage, transport, ipc_out, local_clipboard).await
 }
 
 /// Run the [Deactivation-Reactivation Sequence] after a server Deactivate All

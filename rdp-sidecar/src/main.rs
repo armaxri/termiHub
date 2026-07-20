@@ -19,6 +19,7 @@ mod clipboard;
 mod drive;
 mod folder_watch;
 mod host_clipboard;
+mod host_clipboard_watch;
 mod input;
 mod keymap;
 mod rdp;
