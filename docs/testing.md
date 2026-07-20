@@ -1045,7 +1045,7 @@ module, but the live PDU exchange needs a real server:
    **Expected:** the file's contents arrive on the remote intact. Only files
    directly in the shared folder are offered (subfolders are not yet recursed).
    Note: the offer is sent when the clipboard format list is first exchanged, so
-   files dropped into the folder *after* connecting are not re-advertised until
+   files dropped into the folder _after_ connecting are not re-advertised until
    the offer is re-sent — dynamic re-advertising is a follow-up (#1788).
 4. **Security:** confirm nothing outside the shared folder is ever served — the
    remote can only paste files that are in that one folder.
