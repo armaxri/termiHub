@@ -539,7 +539,10 @@ mod tests {
             // Standard PCM derivations must match what a Windows server offers.
             let block_align = f.n_channels * 2;
             assert_eq!(f.n_block_align, block_align);
-            assert_eq!(f.n_avg_bytes_per_sec, f.n_samples_per_sec * u32::from(block_align));
+            assert_eq!(
+                f.n_avg_bytes_per_sec,
+                f.n_samples_per_sec * u32::from(block_align)
+            );
             assert!(f.data.is_none());
         }
         // The classic CD-quality stereo format is present.
@@ -669,7 +672,9 @@ mod jitter_tests {
         let t = Instant::now();
         let mut jb = JitterBuffer::new();
         let mut payload = buf_of(100);
-        payload.samples = (0..(payload.samples.len() as i32)).map(|i| i as i16).collect();
+        payload.samples = (0..(payload.samples.len() as i32))
+            .map(|i| i as i16)
+            .collect();
         let released = jb.push(payload.clone(), t);
         assert_eq!(released.len(), 1);
         assert_eq!(released[0], payload);
