@@ -170,6 +170,12 @@ impl GraphicalSessionManager {
         }
     }
 
+    /// The RDP certificate trust store backing this manager, for the
+    /// trust-management commands (#1784).
+    pub fn trust_store(&self) -> &Arc<RdpTrustStore> {
+        &self.trust_store
+    }
+
     /// Number of live graphical sessions.
     pub async fn session_count(&self) -> usize {
         self.sessions.lock().await.len()

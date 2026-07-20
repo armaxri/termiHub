@@ -26,6 +26,7 @@ import { TerminalSettings } from "./TerminalSettings";
 import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
+import { RdpTrustSettings } from "./RdpTrustSettings";
 import { FileTypeSettings } from "./FileTypeSettings";
 import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
@@ -253,6 +254,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       }
       if (highlightedCategories?.has("security")) {
         sections.push(<SecuritySettings key="security" visibleFields={visibleFields} />);
+        sections.push(<RdpTrustSettings key="rdp-trust" visibleFields={visibleFields} />);
       }
       if (highlightedCategories?.has("editor")) {
         sections.push(<FileTypeSettings key="editor" visibleFields={visibleFields} />);
@@ -289,7 +291,12 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       case "keyboard":
         return <KeyboardSettings />;
       case "security":
-        return <SecuritySettings />;
+        return (
+          <>
+            <SecuritySettings />
+            <RdpTrustSettings />
+          </>
+        );
       case "external-files":
         return <ExternalFilesSettings />;
       case "editor":

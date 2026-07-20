@@ -400,6 +400,32 @@ export async function remoteDesktopDisconnect(sessionId: SessionId): Promise<voi
   await invoke("remote_desktop_disconnect", { sessionId });
 }
 
+/** One remembered RDP host and the certificate fingerprints trusted for it (#1784). */
+export interface RdpTrustedHost {
+  host: string;
+  fingerprints: string[];
+}
+
+/**
+ * List remembered RDP hosts and their trusted certificate fingerprints (#1784).
+ *
+ * These are the hosts a user chose "Accept for host" for in the interactive
+ * cert-trust prompt (#1767); the trust-management settings UI reviews them.
+ */
+export async function rdpTrustList(): Promise<RdpTrustedHost[]> {
+  return await invoke<RdpTrustedHost[]>("rdp_trust_list");
+}
+
+/**
+ * Revoke a remembered RDP certificate (#1784). Pass a `fingerprint` to forget
+ * just that one (the host is dropped once its last fingerprint is gone); omit it
+ * to forget the whole host. Either way the next connect to that host re-prompts.
+ * Returns whether anything was removed.
+ */
+export async function rdpTrustForget(host: string, fingerprint?: string): Promise<boolean> {
+  return await invoke<boolean>("rdp_trust_forget", { host, fingerprint: fingerprint ?? null });
+}
+
 // --- Persistent session commands ---
 
 /** Summary of a persistent session returned by the backend. */

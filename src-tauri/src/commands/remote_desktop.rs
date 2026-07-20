@@ -80,6 +80,47 @@ pub async fn remote_desktop_cert_decision(
     manager.cert_decision(&session_id, accept, remember).await
 }
 
+/// One remembered RDP host and the certificate fingerprints trusted for it,
+/// for the trust-management settings UI (#1784).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RdpTrustedHost {
+    /// Host key (`host:port`) as stored in the trust store.
+    pub host: String,
+    /// SHA-256 public-key fingerprints trusted for this host.
+    pub fingerprints: Vec<String>,
+}
+
+/// List every remembered RDP host and its trusted certificate fingerprints
+/// (#1784), so the settings UI can show what "Accept for host" has persisted.
+#[tauri::command]
+pub async fn rdp_trust_list(
+    manager: State<'_, GraphicalSessionManager>,
+) -> Result<Vec<RdpTrustedHost>, TerminalError> {
+    Ok(manager
+        .trust_store()
+        .entries()
+        .into_iter()
+        .map(|(host, fingerprints)| RdpTrustedHost { host, fingerprints })
+        .collect())
+}
+
+/// Revoke remembered RDP certificate trust (#1784). With `fingerprint` set,
+/// forgets just that fingerprint (dropping the host once its last one is gone);
+/// without it, forgets the whole host. Either way the next connect re-prompts.
+/// Returns whether anything was removed.
+#[tauri::command]
+pub async fn rdp_trust_forget(
+    host: String,
+    fingerprint: Option<String>,
+    manager: State<'_, GraphicalSessionManager>,
+) -> Result<bool, TerminalError> {
+    let store = manager.trust_store();
+    Ok(match fingerprint {
+        Some(fp) => store.forget_fingerprint(&host, &fp),
+        None => store.forget_host(&host),
+    })
+}
+
 /// Disconnect a graphical session and release its resources.
 #[tauri::command]
 pub async fn remote_desktop_disconnect(
