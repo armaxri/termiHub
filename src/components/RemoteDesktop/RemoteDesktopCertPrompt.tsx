@@ -92,13 +92,13 @@ export function RemoteDesktopCertPrompt({ prompt, onDecision }: RemoteDesktopCer
             {prompt.subject && (
               <>
                 <dt>Subject</dt>
-                <dd>{prompt.subject}</dd>
+                <dd data-testid="cert-subject">{prompt.subject}</dd>
               </>
             )}
             {prompt.issuer && (
               <>
                 <dt>Issuer</dt>
-                <dd>{prompt.issuer}</dd>
+                <dd data-testid="cert-issuer">{prompt.issuer}</dd>
               </>
             )}
             <dt>Fingerprint</dt>

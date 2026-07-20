@@ -52,6 +52,17 @@ ironrdp-tls = { version = "0.2", default-features = false, features = [
     "rustls-ring",
 ] }
 
+# X.509 parsing for the server certificate's subject/issuer distinguished names
+# (#1783). `ironrdp_tls::upgrade` already returns a parsed `x509_cert::Certificate`,
+# so this only names the type IronRDP hands us — it is already resolved in this
+# graph (IronRDP's TLS layer depends on it), adding no new locked dependency. The
+# fingerprint is the security-critical identity; subject/issuer are best-effort
+# human-readable context for the trust prompt.
+# DER + distinguished-name formatting only — `default-features = false` drops the
+# `pem` feature (and its pem-rfc7468 crate) we do not use, so this adds no new
+# locked dependency to the excluded sidecar graph.
+x509-cert = { version = "0.2", default-features = false, features = ["std"] }
+
 # The shared serde types (FrameUpdate / CursorUpdate / InputEvent / RdpConfig)
 # and the framed MessagePack IPC helpers live in termihub-core behind the
 # `rdp-sidecar` feature. `default-features = false` keeps russh (the `ssh`

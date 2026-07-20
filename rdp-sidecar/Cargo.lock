@@ -4135,6 +4135,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "x509-cert",
 ]
 
 [[package]]
