@@ -41,6 +41,7 @@
 //! crossing this IPC boundary.
 
 pub mod config;
+pub mod integrity;
 pub mod protocol;
 
 pub use config::rdp_settings_schema;
@@ -325,6 +326,18 @@ impl ConnectionType for SidecarRdp {
         let view_only = cfg.view_only;
 
         let helper = resolve_helper_binary();
+        // Refuse to launch a sidecar whose bytes do not match the SHA-256
+        // embedded at build time (#1762) — a tampered/corrupted/wrong-arch
+        // helper fails the connection here, before it can run. The check is
+        // skipped when the $TERMIHUB_RDP_HELPER override is set (dev/test) or no
+        // digest was embedded (dev/branch builds); see [`integrity`].
+        let override_active = std::env::var_os(HELPER_PATH_ENV).is_some();
+        integrity::verify_helper_integrity(
+            &helper,
+            override_active,
+            integrity::EXPECTED_HELPER_SHA256,
+        )
+        .map_err(SessionError::SpawnFailed)?;
         let mut command = tokio::process::Command::new(&helper);
         command
             .stdin(Stdio::piped())

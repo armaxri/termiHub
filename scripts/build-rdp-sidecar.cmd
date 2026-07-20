@@ -54,8 +54,22 @@ if "%EXTERNALBIN%"=="1" (
         exit /b 1
     )
     if not exist "src-tauri\binaries" mkdir "src-tauri\binaries"
-    copy /y "%BIN_PATH%" "src-tauri\binaries\termihub-rdp-helper-!TRIPLE!.exe" >nul
-    echo Staged for Tauri externalBin: src-tauri\binaries\termihub-rdp-helper-!TRIPLE!.exe
+    set "STAGE_NAME=termihub-rdp-helper-!TRIPLE!.exe"
+    copy /y "%BIN_PATH%" "src-tauri\binaries\!STAGE_NAME!" >nul
+    echo Staged for Tauri externalBin: src-tauri\binaries\!STAGE_NAME!
+
+    REM Compute the sidecar's SHA-256 (#1762). core\build.rs hashes this exact
+    REM staged binary to embed the expected digest the adapter checks before
+    REM spawn; this writes a `.sha256` sidecar and prints the digest purely for
+    REM transparency/local verification. certutil ships with Windows.
+    for /f "skip=1 tokens=* delims=" %%h in ('certutil -hashfile "src-tauri\binaries\!STAGE_NAME!" SHA256 ^| findstr /r "^[0-9a-fA-F ]*$"') do (
+        if not defined DIGEST set "DIGEST=%%h"
+    )
+    REM certutil prints the hash with spaces between byte pairs; strip them.
+    set "DIGEST=!DIGEST: =!"
+    >"src-tauri\binaries\!STAGE_NAME!.sha256" echo !DIGEST!  !STAGE_NAME!
+    echo SHA-256: !DIGEST!
+    echo Wrote checksum sidecar: src-tauri\binaries\!STAGE_NAME!.sha256
 )
 
 echo Point termiHub at it by placing it next to the desktop binary, or set:

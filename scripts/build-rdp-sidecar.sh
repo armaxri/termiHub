@@ -112,6 +112,22 @@ if [ "$EXTERNALBIN" -eq 1 ]; then
     mkdir -p "$STAGE_DIR"
     cp "$BIN_PATH" "$STAGE_DIR/$STAGE_NAME"
     echo "Staged for Tauri externalBin: $STAGE_DIR/$STAGE_NAME"
+
+    # Compute the sidecar's SHA-256 (#1762). `core/build.rs` hashes this exact
+    # staged binary to embed the expected digest the adapter checks before spawn,
+    # so this is purely for transparency/local verification: it prints the digest
+    # and writes a `.sha256` sidecar next to the staged binary. Tauri `externalBin`
+    # only picks the exact `termihub-rdp-helper-<triple>[.exe]` name, so the extra
+    # `.sha256` file is ignored by the bundler.
+    if command -v sha256sum >/dev/null 2>&1; then
+        DIGEST="$(sha256sum "$STAGE_DIR/$STAGE_NAME" | cut -d' ' -f1)"
+    else
+        # macOS has no sha256sum; `shasum -a 256` is the BSD equivalent.
+        DIGEST="$(shasum -a 256 "$STAGE_DIR/$STAGE_NAME" | cut -d' ' -f1)"
+    fi
+    printf '%s  %s\n' "$DIGEST" "$STAGE_NAME" >"$STAGE_DIR/$STAGE_NAME.sha256"
+    echo "SHA-256: $DIGEST"
+    echo "Wrote checksum sidecar: $STAGE_DIR/$STAGE_NAME.sha256"
 fi
 
 if [ -n "$OUT_DIR" ]; then
