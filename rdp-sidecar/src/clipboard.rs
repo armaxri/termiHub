@@ -2594,7 +2594,9 @@ mod tests {
         let hosted = host_dir.path().join("local.txt");
         std::fs::write(&hosted, b"abc").unwrap();
         let (mut backend, rx) =
-            SidecarClipboardBackend::with_host_clip_reader(None, false, move || vec![hosted.clone()]);
+            SidecarClipboardBackend::with_host_clip_reader(None, false, move || {
+                vec![hosted.clone()]
+            });
         // serve_host_clipboard defaults off.
         backend.on_request_format_list();
         assert_eq!(next_event(&rx), ClipboardEvent::AdvertiseLocal);
