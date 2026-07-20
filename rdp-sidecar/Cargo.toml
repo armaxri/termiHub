@@ -113,6 +113,19 @@ rodio = { version = "0.20", default-features = false }
 [target.'cfg(target_os = "macos")'.dependencies]
 clipboard-files = "0.1.2"
 
+# Read the Windows clipboard's `CF_HDROP` file list (#1791) — the Windows half of
+# the macOS reader above. `clipboard-win` hands us the raw `CF_HDROP` bytes via
+# its `raw` API and `host_clipboard.rs` parses the `DROPFILES` structure itself,
+# so the decode stays unit-testable off Windows (a live Win32 clipboard cannot be
+# read in headless CI). It is already a transitive dependency of `clipboard-files`
+# (same 4.5 line), so naming it directly adds no new crate to the lock.
+#
+# Gated to **Windows only**: it links Win32 clipboard APIs and must never enter
+# the macOS/Linux sidecar build graph. This lives in the workspace-EXCLUDED
+# sidecar graph, so it adds zero dependency-conflict risk to the main app (#1747).
+[target.'cfg(windows)'.dependencies]
+clipboard-win = "4.5"
+
 [dev-dependencies]
 # Temp directories back the drive-redirection filesystem tests (#1757), which
 # exercise the RDPDR backend against a real folder without a live RDP server.
