@@ -18,6 +18,58 @@ A modern, cross-platform terminal hub for managing multiple connections.
 
 termiHub provides a VS Code-like interface for managing multiple terminal connections — local shells, SSH, serial, telnet, Docker containers, and WSL distributions — with split views, drag-and-drop tabs, SSH tunneling, and organized connection management. A shared Rust core (`termihub-core`) powers both the desktop app and a remote agent for persistent sessions on headless servers. Built with [Tauri](https://tauri.app/), [React](https://react.dev/), and [Rust](https://www.rust-lang.org/).
 
+## Installation
+
+Download the latest release for your platform from the [GitHub Releases page](https://github.com/armaxri/termiHub/releases). Release assets follow the naming pattern `termiHub-<version>-<platform>.<ext>` (for example, `termiHub-0.1.0-macos-arm64.dmg`).
+
+> **Beta note:** v0.1.0 binaries are **unsigned**. macOS Gatekeeper and Windows SmartScreen will warn on first launch — the per-platform steps below explain how to proceed.
+
+### macOS (Apple Silicon & Intel)
+
+1. Download the `.dmg` for your architecture — `termiHub-0.1.0-macos-arm64.dmg` (Apple Silicon) or `termiHub-0.1.0-macos-x64.dmg` (Intel).
+2. Open the DMG and drag **termiHub** into your **Applications** folder.
+3. Because the app is unsigned, a normal double-click is blocked by Gatekeeper on first launch. Instead, **right-click (or Control-click) the app → Open → Open**. macOS remembers this choice for subsequent launches.
+
+### Windows x64
+
+1. Download `termiHub-0.1.0-windows-x64.msi`.
+2. Run the installer and follow the prompts.
+3. SmartScreen may warn about an unrecognized app. Click **More info → Run anyway** to continue.
+
+### Linux x64
+
+Pick either the AppImage (portable, no install) or the Debian package.
+
+**AppImage** — download `termiHub-0.1.0-linux-x64.AppImage`, then:
+
+```bash
+chmod +x termiHub-0.1.0-linux-x64.AppImage
+./termiHub-0.1.0-linux-x64.AppImage
+```
+
+**Debian package (`.deb`)** — download `termiHub-0.1.0-linux-x64.deb`, then:
+
+```bash
+sudo dpkg -i termiHub-0.1.0-linux-x64.deb
+```
+
+### Linux ARM64 (Raspberry Pi)
+
+AppImage is not built for ARM64, so use the Debian package. Download `termiHub-0.1.0-linux-arm64.deb`, then:
+
+```bash
+sudo dpkg -i termiHub-0.1.0-linux-arm64.deb
+```
+
+### Known limitations (beta)
+
+- **Unsigned binaries** — macOS shows a Gatekeeper prompt (right-click → Open) and Windows shows a SmartScreen warning (More info → Run anyway); see the per-platform steps above.
+- **No auto-update** — download new versions manually from the [Releases page](https://github.com/armaxri/termiHub/releases).
+- **Serial port support** requires platform-specific drivers — see [Serial Port Setup](#serial-port-setup).
+- **Telnet connections are unencrypted** by protocol design; avoid them over untrusted networks.
+
+Prefer to build it yourself? See [Development](#development) below.
+
 ## Features
 
 ### Connection Types
