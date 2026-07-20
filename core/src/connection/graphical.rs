@@ -168,6 +168,25 @@ pub type FrameReceiver = tokio::sync::mpsc::Receiver<FrameUpdate>;
 /// Async receiver for cursor-shape / position updates from a graphical backend.
 pub type CursorReceiver = tokio::sync::mpsc::Receiver<CursorUpdate>;
 
+/// Async receiver for interactive server-certificate trust prompts (#1767).
+pub type CertPromptReceiver = tokio::sync::mpsc::Receiver<CertPrompt>;
+
+/// A server-certificate trust prompt raised by a graphical backend that reached
+/// an untrusted certificate and needs an interactive accept/reject decision
+/// (RDP, #1767). The `fingerprint` (SHA-256 of the server public key) is the
+/// identity the host keys its persisted trust store on; `subject`/`issuer` are
+/// best-effort human context for the dialog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertPrompt {
+    /// SHA-256 fingerprint of the server public key (`sha256:AB:CD:…`).
+    pub fingerprint: String,
+    /// Certificate subject, when the backend could extract it.
+    pub subject: Option<String>,
+    /// Certificate issuer, when the backend could extract it.
+    pub issuer: Option<String>,
+}
+
 /// A single decoded, dirty rectangle of the remote framebuffer.
 ///
 /// `data` is tightly-packed RGBA (`width * height * 4` bytes), row-major, in the
@@ -559,6 +578,27 @@ pub trait GraphicalBackend: Send + Sync {
 
     /// Push local clipboard text to the remote.
     async fn set_clipboard(&self, text: String) -> Result<(), SessionError>;
+
+    /// Subscribe to interactive server-certificate trust prompts (#1767).
+    ///
+    /// Backends that never need a trust decision (VNC, the mock) return `None`
+    /// (the default); the RDP sidecar returns a receiver that yields a
+    /// [`CertPrompt`] whenever the server presents an untrusted certificate. The
+    /// [`GraphicalSessionManager`](../../../termihub/session) consults its trust
+    /// store and either auto-accepts or surfaces the prompt to the user.
+    fn subscribe_cert_prompts(&self) -> Option<CertPromptReceiver> {
+        None
+    }
+
+    /// Deliver the user's (or trust store's) verdict for a pending
+    /// [`CertPrompt`] (#1767): `accept` proceeds with the connection, and
+    /// `remember` reports whether the host persisted the fingerprint (the
+    /// backend does not persist anything itself). No-op for backends that never
+    /// prompt.
+    async fn send_cert_decision(&self, accept: bool, remember: bool) -> Result<(), SessionError> {
+        let _ = (accept, remember);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

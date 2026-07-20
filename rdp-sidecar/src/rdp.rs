@@ -153,14 +153,20 @@ pub fn is_auth_error(msg: &str) -> bool {
 /// verbatim to drive the Deactivation-Reactivation Sequence on dynamic resize,
 /// #1755), and the receiver on which the registered CLIPRDR backend surfaces
 /// clipboard events for the driver (#1756).
-async fn connect_session(
+async fn connect_session<R, W>(
     cfg: &RdpConfig,
+    ipc_in: &mut R,
+    ipc_out: &mut W,
 ) -> Result<(
     ConnectionResult,
     RdpFramed,
     ConnectorConfig,
     std::sync::mpsc::Receiver<ClipboardEvent>,
-)> {
+)>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let host = cfg.host.clone();
     let port = cfg.effective_port();
 
@@ -233,22 +239,23 @@ async fn connect_session(
         .ok_or_else(|| anyhow!("could not extract RDP server public key"))?
         .to_vec();
 
-    // Trust gate (#1758): fingerprint the server public key and either accept
-    // (only when the user set `ignoreCertErrors`) or refuse with an actionable
-    // message naming the fingerprint — never a silent blind accept. An
-    // interactive accept-once / accept-for-host prompt + persisted trust store
-    // is the sequenced follow-up.
+    // Trust gate (#1758/#1767): fingerprint the server public key and either
+    // accept (only when the user set `ignoreCertErrors`) or ask the host for an
+    // interactive accept/reject decision — never a silent blind accept and never
+    // a bare hard-fail. The host owns the persisted per-host trust store, so it
+    // auto-answers a known-good fingerprint and only bothers the user for an
+    // unknown or changed (possible-MITM) one.
     let fingerprint = crate::cert::public_key_fingerprint(&server_public_key);
-    match crate::cert::evaluate(cfg.ignore_cert_errors, &fingerprint) {
+    match crate::cert::evaluate(cfg.ignore_cert_errors) {
         crate::cert::CertVerdict::Accept => {
-            if cfg.ignore_cert_errors {
-                warn!(
-                    %fingerprint,
-                    "accepting RDP server certificate without verification (ignoreCertErrors is enabled)"
-                );
-            }
+            warn!(
+                %fingerprint,
+                "accepting RDP server certificate without verification (ignoreCertErrors is enabled)"
+            );
         }
-        crate::cert::CertVerdict::Reject(message) => anyhow::bail!(message),
+        crate::cert::CertVerdict::Prompt => {
+            prompt_cert_decision(ipc_in, ipc_out, &fingerprint).await?;
+        }
     }
 
     let upgraded = ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
@@ -269,6 +276,74 @@ async fn connect_session(
     .context("RDP CredSSP / capability exchange failed")?;
 
     Ok((result, framed, connector_config, clipboard_rx))
+}
+
+/// How long the sidecar blocks the connect waiting for the host's interactive
+/// certificate decision (#1767) before giving up. Generous: a human may be
+/// eyeballing the fingerprint. If the host never answers (e.g. a peer that does
+/// not speak the cert-prompt protocol), the connection aborts rather than hangs.
+const CERT_DECISION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// Surface an untrusted server certificate to the host and block on its verdict
+/// (#1767). Sends [`SidecarMessage::CertPrompt`] and waits for a
+/// [`HostMessage::CertDecision`]; `Ok(())` means proceed, `Err` aborts the
+/// connect (user rejected, timed out, or the peer closed the pipe).
+async fn prompt_cert_decision<R, W>(
+    ipc_in: &mut R,
+    ipc_out: &mut W,
+    fingerprint: &str,
+) -> Result<()>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    warn!(%fingerprint, "RDP server certificate is untrusted; asking the host for a decision");
+    write_message(
+        ipc_out,
+        &SidecarMessage::CertPrompt {
+            fingerprint: fingerprint.to_string(),
+            // Best-effort subject/issuer extraction is a sequenced follow-up; the
+            // public-key fingerprint is the identity the trust decision keys on.
+            subject: None,
+            issuer: None,
+        },
+    )
+    .await
+    .context("failed to send certificate prompt to host")?;
+
+    // Wait for the decision, tolerating input/resize/clipboard messages that the
+    // host may have already queued (its canvas is live): they are meaningless
+    // before the session establishes, so drop them and keep waiting. Only a
+    // decision, a disconnect, or the timeout ends the wait.
+    let deadline = tokio::time::Instant::now() + CERT_DECISION_TIMEOUT;
+    loop {
+        let msg = tokio::time::timeout_at(deadline, read_message::<_, HostMessage>(ipc_in))
+            .await
+            .map_err(|_| anyhow!("timed out waiting for the certificate trust decision"))?
+            .context("failed to read the certificate trust decision")?;
+        match msg {
+            HostMessage::CertDecision { accept: true, .. } => {
+                warn!(%fingerprint, "host accepted the untrusted RDP server certificate");
+                return Ok(());
+            }
+            HostMessage::CertDecision { accept: false, .. } => {
+                anyhow::bail!(
+                    "connection rejected: the RDP server certificate (server key {fingerprint}) \
+                     was not trusted"
+                )
+            }
+            HostMessage::Disconnect => {
+                anyhow::bail!("disconnected before the certificate trust decision")
+            }
+            // Pre-session input/resize/clipboard: no session yet, so discard.
+            HostMessage::Connect(_)
+            | HostMessage::Input(_)
+            | HostMessage::Resize { .. }
+            | HostMessage::SetClipboard(_) => {
+                debug!("ignoring a host message received while awaiting the cert decision");
+            }
+        }
+    }
 }
 
 /// Crop the tightly-packed RGBA pixels of an inclusive rectangle out of the
@@ -467,7 +542,8 @@ where
     .await
     .context("failed to write state")?;
 
-    let (result, framed, connector_config, clipboard_rx) = match connect_session(&cfg).await {
+    let (result, framed, connector_config, clipboard_rx) =
+        match connect_session(&cfg, ipc_in, ipc_out).await {
         Ok(v) => v,
         Err(e) => {
             let state = if is_auth_error(&format!("{e:#}")) {
@@ -986,5 +1062,96 @@ mod tests {
         let rect = crop_rect(&image, 2, 2, 100, 100).unwrap();
         assert_eq!((rect.x, rect.y, rect.width, rect.height), (2, 2, 2, 2));
         assert!(rect.is_well_formed());
+    }
+
+    /// The cert prompt must reach the host and an `accept` decision must let the
+    /// connect proceed — proven over an in-memory loopback standing in for stdio.
+    #[tokio::test]
+    async fn cert_prompt_accept_proceeds() {
+        let (mut host_out, mut sidecar_in) = tokio::io::duplex(64 * 1024);
+        let (mut sidecar_out, mut host_in) = tokio::io::duplex(64 * 1024);
+
+        let sidecar = tokio::spawn(async move {
+            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:AA:BB").await
+        });
+
+        // Host reads the prompt, then replies "accept".
+        let prompt = read_message::<_, SidecarMessage>(&mut host_in).await.unwrap();
+        assert!(matches!(prompt, SidecarMessage::CertPrompt { fingerprint, .. } if fingerprint == "sha256:AA:BB"));
+        write_message(
+            &mut host_out,
+            &HostMessage::CertDecision {
+                accept: true,
+                remember: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        sidecar.await.unwrap().expect("accept must let the connect proceed");
+    }
+
+    /// A `reject` decision must abort the connect.
+    #[tokio::test]
+    async fn cert_prompt_reject_aborts() {
+        let (mut host_out, mut sidecar_in) = tokio::io::duplex(64 * 1024);
+        let (mut sidecar_out, mut host_in) = tokio::io::duplex(64 * 1024);
+
+        let sidecar = tokio::spawn(async move {
+            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:CC").await
+        });
+
+        let _ = read_message::<_, SidecarMessage>(&mut host_in).await.unwrap();
+        write_message(
+            &mut host_out,
+            &HostMessage::CertDecision {
+                accept: false,
+                remember: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let err = sidecar.await.unwrap().expect_err("reject must abort");
+        assert!(err.to_string().contains("rejected"), "err: {err}");
+    }
+
+    /// Input/resize messages the host queued before deciding are discarded; the
+    /// wait continues until the real decision arrives.
+    #[tokio::test]
+    async fn cert_prompt_ignores_premature_input_then_accepts() {
+        let (mut host_out, mut sidecar_in) = tokio::io::duplex(64 * 1024);
+        let (mut sidecar_out, mut host_in) = tokio::io::duplex(64 * 1024);
+
+        let sidecar = tokio::spawn(async move {
+            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:DD").await
+        });
+
+        let _ = read_message::<_, SidecarMessage>(&mut host_in).await.unwrap();
+        // A stray pointer event from the live canvas, then the decision.
+        write_message(
+            &mut host_out,
+            &HostMessage::Input(InputEvent::Pointer {
+                x: 1,
+                y: 2,
+                buttons: 0,
+            }),
+        )
+        .await
+        .unwrap();
+        write_message(
+            &mut host_out,
+            &HostMessage::CertDecision {
+                accept: true,
+                remember: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        sidecar
+            .await
+            .unwrap()
+            .expect("stray input must be skipped, then accept proceeds");
     }
 }

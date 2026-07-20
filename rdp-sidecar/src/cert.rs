@@ -11,11 +11,13 @@
 //! The trust model is deliberately SSH-host-key-shaped: we fingerprint the
 //! server's public key (not a CA chain — real RDP hosts are overwhelmingly
 //! self-signed, so chain validation would reject nearly every legitimate host)
-//! and decide whether to proceed. Today the decision is binary —
-//! `ignoreCertErrors` accepts, otherwise the connection is refused and the
-//! fingerprint is surfaced. An interactive accept-once / accept-for-host prompt
-//! plus a persisted per-host trust store is the sequenced follow-up;
-//! [`CertVerdict`] is the seam it slots into.
+//! and decide whether to proceed. `ignoreCertErrors` accepts unconditionally;
+//! otherwise the sidecar asks the **host** for an interactive trust decision
+//! (#1767) via [`SidecarMessage::CertPrompt`](termihub_core::backends::rdp_sidecar::protocol::SidecarMessage::CertPrompt)
+//! and blocks on the reply. The persisted per-host trust store, the
+//! auto-accept-known and changed-fingerprint (MITM) detection all live on the
+//! host, which owns the config directory; the sidecar just relays the
+//! fingerprint and applies the verdict. [`CertVerdict`] is that seam.
 
 use sha2::{Digest, Sha256};
 
@@ -41,28 +43,24 @@ pub fn public_key_fingerprint(public_key: &[u8]) -> String {
 /// The outcome of the server-certificate trust gate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CertVerdict {
-    /// Proceed with the connection.
+    /// Proceed with the connection without asking (the user set `ignoreCertErrors`).
     Accept,
-    /// Refuse the connection; the string is a user-facing explanation.
-    Reject(String),
+    /// The certificate is untrusted: ask the host for an interactive decision
+    /// before proceeding (#1767).
+    Prompt,
 }
 
-/// Decide whether to trust the server certificate identified by `fingerprint`.
+/// Decide how to handle the server certificate identified by `fingerprint`.
 ///
-/// `ignore_cert_errors` mirrors the connection's `ignoreCertErrors` setting.
-/// Until a persisted trust store / interactive prompt exists (the #1758
-/// follow-up), an unset flag means the certificate is untrusted and the
-/// connection is refused with an actionable message — never silently accepted.
-pub fn evaluate(ignore_cert_errors: bool, fingerprint: &str) -> CertVerdict {
+/// `ignore_cert_errors` mirrors the connection's `ignoreCertErrors` setting: set,
+/// it accepts unconditionally; unset, the sidecar surfaces the fingerprint to the
+/// host and waits for an interactive accept/reject decision (#1767) rather than
+/// silently accepting or hard-failing.
+pub fn evaluate(ignore_cert_errors: bool) -> CertVerdict {
     if ignore_cert_errors {
         CertVerdict::Accept
     } else {
-        CertVerdict::Reject(format!(
-            "the RDP server presented an untrusted certificate (server key {fingerprint}). \
-             termiHub does not connect to an unverified host automatically. If you trust this \
-             server, enable \"Ignore Certificate Errors\" in the connection's RDP options and \
-             reconnect."
-        ))
+        CertVerdict::Prompt
     }
 }
 
@@ -99,23 +97,13 @@ mod tests {
 
     #[test]
     fn ignore_cert_errors_accepts() {
-        assert_eq!(evaluate(true, "sha256:AA"), CertVerdict::Accept);
+        assert_eq!(evaluate(true), CertVerdict::Accept);
     }
 
     #[test]
-    fn default_rejects_with_fingerprint_and_guidance() {
-        let verdict = evaluate(false, "sha256:AB:CD");
-        match verdict {
-            CertVerdict::Reject(msg) => {
-                // The message must name the fingerprint and point at the toggle,
-                // so the failure is actionable rather than a bare error.
-                assert!(msg.contains("sha256:AB:CD"), "fingerprint surfaced: {msg}");
-                assert!(
-                    msg.contains("Ignore Certificate Errors"),
-                    "guidance surfaced: {msg}"
-                );
-            }
-            CertVerdict::Accept => panic!("default (ignoreCertErrors=false) must not accept"),
-        }
+    fn default_prompts_for_an_interactive_decision() {
+        // With ignoreCertErrors unset the sidecar must neither silently accept
+        // nor hard-fail: it asks the host (#1767).
+        assert_eq!(evaluate(false), CertVerdict::Prompt);
     }
 }
