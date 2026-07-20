@@ -1092,7 +1092,10 @@ where
             ClipboardEvent::SurfaceRemoteFiles(files) => {
                 // Delayed rendering (#1793): hand the host the sanitized file
                 // list so it can offer them for a local paste; no bytes yet.
-                debug!(count = files.len(), "surfacing remote clipboard files to host");
+                debug!(
+                    count = files.len(),
+                    "surfacing remote clipboard files to host"
+                );
                 write_message(ipc_out, &SidecarMessage::RemoteClipboardFiles(files))
                     .await
                     .context("failed to surface remote clipboard files to host")?;

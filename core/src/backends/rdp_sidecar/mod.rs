@@ -1202,10 +1202,9 @@ mod tests {
                 panic!("expected FetchClipboardFile, got {msg:?}");
             };
             assert_eq!(index, 0);
-            for (position, data, last) in [
-                (0u64, b"hel".to_vec(), false),
-                (3u64, b"lo".to_vec(), true),
-            ] {
+            for (position, data, last) in
+                [(0u64, b"hel".to_vec(), false), (3u64, b"lo".to_vec(), true)]
+            {
                 write_message(
                     &mut sidecar_stdout,
                     &SidecarMessage::ClipboardFileChunk {

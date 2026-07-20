@@ -1345,7 +1345,10 @@ impl CliprdrBackend for SidecarClipboardBackend {
                     self.start_next_download();
                 }
                 TransferDest::Host { request_id } => {
-                    warn!(request_id, "remote returned an error for a fetched clipboard file");
+                    warn!(
+                        request_id,
+                        "remote returned an error for a fetched clipboard file"
+                    );
                     self.finish_host_fetch(*request_id, Err("remote refused the file".to_string()));
                 }
             }
@@ -1430,7 +1433,11 @@ impl CliprdrBackend for SidecarClipboardBackend {
                             self.start_next_download();
                         }
                         TransferDest::Host { request_id } => {
-                            debug!(request_id, bytes = written, "streamed fetched clipboard file to host");
+                            debug!(
+                                request_id,
+                                bytes = written,
+                                "streamed fetched clipboard file to host"
+                            );
                             self.active_download = None;
                         }
                     }
@@ -2518,8 +2525,7 @@ mod tests {
         assert_eq!(m.index, 5);
 
         // A directory descriptor is surfaced as a directory (no bytes).
-        let d =
-            FileDescriptor::new("folder").with_attributes(ClipboardFileAttributes::DIRECTORY);
+        let d = FileDescriptor::new("folder").with_attributes(ClipboardFileAttributes::DIRECTORY);
         assert!(sanitize_descriptor(&d, 0).unwrap().is_dir);
 
         // Hostile paths are dropped: `..`, traversal in the relative path, a drive
@@ -2642,7 +2648,10 @@ mod tests {
         ));
         match next_event(&rx) {
             ClipboardEvent::ProvideRemoteFileChunk {
-                position, data, last, ..
+                position,
+                data,
+                last,
+                ..
             } => {
                 assert_eq!(position, 8);
                 assert_eq!(data, b"cc");
