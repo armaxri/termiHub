@@ -22,10 +22,11 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
-    ConnectionType, ConnectionTypeRegistry, CursorUpdate, FrameUpdate, GraphicalState, InputEvent,
-    SessionStateMachine,
+    CertPrompt, CertPromptReceiver, ConnectionType, ConnectionTypeRegistry, CursorUpdate,
+    FrameUpdate, GraphicalState, InputEvent, SessionStateMachine,
 };
 
+use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
 use crate::utils::errors::TerminalError;
 
 /// Maximum concurrent graphical sessions.
@@ -73,6 +74,25 @@ pub struct RemoteDesktopStateEvent {
     pub message: Option<String>,
 }
 
+/// `remote-desktop-cert-prompt` payload: an untrusted server certificate needs
+/// an interactive trust decision (#1767). The frontend renders an accept-once /
+/// accept-for-host / reject dialog and replies via `remote_desktop_cert_decision`.
+///
+/// `changed` distinguishes first contact (`false`) from a *changed* fingerprint
+/// for a previously-trusted host (`true`) — the possible-MITM case the dialog
+/// warns about prominently.
+#[derive(Debug, Clone, Serialize)]
+pub struct RemoteDesktopCertPromptEvent {
+    pub session_id: String,
+    pub host: String,
+    pub fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub issuer: Option<String>,
+    pub changed: bool,
+}
+
 // ── Event sink abstraction (for test injection) ────────────────────
 
 /// Abstracts frontend event delivery so the manager is unit-testable without a
@@ -86,6 +106,8 @@ pub trait GraphicalEventSink: Clone + Send + Sync + 'static {
     fn emit_clipboard(&self, event: &RemoteDesktopClipboardEvent);
     /// Emit a lifecycle state change.
     fn emit_state(&self, event: &RemoteDesktopStateEvent);
+    /// Emit an interactive server-certificate trust prompt (#1767).
+    fn emit_cert_prompt(&self, event: &RemoteDesktopCertPromptEvent);
 }
 
 impl<R: tauri::Runtime> GraphicalEventSink for tauri::AppHandle<R> {
@@ -101,9 +123,17 @@ impl<R: tauri::Runtime> GraphicalEventSink for tauri::AppHandle<R> {
     fn emit_state(&self, event: &RemoteDesktopStateEvent) {
         let _ = self.emit("remote-desktop-state", event);
     }
+    fn emit_cert_prompt(&self, event: &RemoteDesktopCertPromptEvent) {
+        let _ = self.emit("remote-desktop-cert-prompt", event);
+    }
 }
 
 // ── Session record ─────────────────────────────────────────────────
+
+/// The host + fingerprint of a cert prompt awaiting the user's verdict, held so
+/// [`cert_decision`](GraphicalSessionManager::cert_decision) can persist the
+/// fingerprint on "Accept for host" (#1767).
+type PendingCert = Arc<Mutex<Option<(String, String)>>>;
 
 /// A live graphical session.
 struct GraphicalSession {
@@ -112,10 +142,12 @@ struct GraphicalSession {
     connection: Arc<Mutex<Box<dyn ConnectionType>>>,
     /// The shared lifecycle state machine.
     state: Arc<Mutex<SessionStateMachine>>,
-    /// Frame + cursor pump tasks, aborted on disconnect.
+    /// Frame + cursor (+ optional cert-prompt) pump tasks, aborted on disconnect.
     tasks: Vec<JoinHandle<()>>,
     /// Backend type id (for diagnostics).
     type_id: String,
+    /// The certificate prompt currently awaiting a user decision, if any (#1767).
+    pending_cert: PendingCert,
 }
 
 /// Manages live graphical remote-desktop sessions.
@@ -123,14 +155,18 @@ struct GraphicalSession {
 pub struct GraphicalSessionManager {
     sessions: Arc<Mutex<HashMap<String, GraphicalSession>>>,
     registry: Arc<ConnectionTypeRegistry>,
+    /// Persisted per-host RDP certificate trust store (#1767).
+    trust_store: Arc<RdpTrustStore>,
 }
 
 impl GraphicalSessionManager {
-    /// Create a new manager over the given connection-type registry.
-    pub fn new(registry: Arc<ConnectionTypeRegistry>) -> Self {
+    /// Create a new manager over the given connection-type registry, persisting
+    /// RDP certificate trust to `trust_store`.
+    pub fn new(registry: Arc<ConnectionTypeRegistry>, trust_store: Arc<RdpTrustStore>) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             registry,
+            trust_store,
         }
     }
 
@@ -175,6 +211,16 @@ impl GraphicalSessionManager {
             )));
         }
 
+        // The host keys the certificate trust store (#1767). Read it before
+        // `settings` is consumed by `connect`; default to the type id so a
+        // config without a host still keys deterministically.
+        let host = settings
+            .get("host")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(type_id)
+            .to_string();
+
         // Authenticating → establish.
         emit_state(&sink, &session_id, GraphicalState::Authenticating, 0, None);
         if let Err(e) = connection.connect(settings).await {
@@ -192,14 +238,19 @@ impl GraphicalSessionManager {
             return Err(TerminalError::ConnectionFailed(msg));
         }
 
-        // Subscribe to the framebuffer surface before marking active.
-        let (frame_rx, cursor_rx) = {
+        // Subscribe to the framebuffer surface (and any cert-prompt channel)
+        // before marking active.
+        let (frame_rx, cursor_rx, cert_rx) = {
             let backend = connection.graphical().ok_or_else(|| {
                 TerminalError::ConnectionFailed(
                     "connected graphical backend did not expose a framebuffer surface".to_string(),
                 )
             })?;
-            (backend.subscribe_frames(), backend.subscribe_cursor())
+            (
+                backend.subscribe_frames(),
+                backend.subscribe_cursor(),
+                backend.subscribe_cert_prompts(),
+            )
         };
 
         {
@@ -209,6 +260,11 @@ impl GraphicalSessionManager {
         }
         emit_state(&sink, &session_id, GraphicalState::Active, 0, None);
         info!(session_id = %session_id, type_id, "graphical session active");
+
+        // The connection is shared with the cert-prompt pump (which drives
+        // `send_cert_decision` on auto-accept) and the command handlers.
+        let connection = Arc::new(Mutex::new(connection));
+        let pending_cert: PendingCert = Arc::new(Mutex::new(None));
 
         // Spawn the frame + cursor pumps.
         let mut tasks = Vec::new();
@@ -223,12 +279,28 @@ impl GraphicalSessionManager {
             let sid = session_id.clone();
             tasks.push(tokio::spawn(cursor_pump(sid, cursor_rx, sink)));
         }
+        // The cert-prompt pump only exists for backends that expose the channel
+        // (RDP); VNC/mock return `None` and never reach this branch (#1767).
+        if let Some(cert_rx) = cert_rx {
+            let sink = sink.clone();
+            let sid = session_id.clone();
+            tasks.push(tokio::spawn(cert_pump(
+                sid,
+                host,
+                cert_rx,
+                sink,
+                connection.clone(),
+                self.trust_store.clone(),
+                pending_cert.clone(),
+            )));
+        }
 
         let session = GraphicalSession {
-            connection: Arc::new(Mutex::new(connection)),
+            connection,
             state,
             tasks,
             type_id: type_id.to_string(),
+            pending_cert,
         };
         self.sessions
             .lock()
@@ -236,6 +308,45 @@ impl GraphicalSessionManager {
             .insert(session_id.clone(), session);
 
         Ok(session_id)
+    }
+
+    /// Deliver the user's verdict for a pending certificate prompt (#1767).
+    ///
+    /// On "Accept for host" (`accept && remember`) the presented fingerprint is
+    /// persisted to the trust store so the host is not prompted again; the
+    /// verdict is then routed down to the backend, which is blocking its connect
+    /// on it. Plain "Accept" is session-scoped (not remembered); "Reject" aborts.
+    pub async fn cert_decision(
+        &self,
+        session_id: &str,
+        accept: bool,
+        remember: bool,
+    ) -> Result<(), TerminalError> {
+        let (conn, pending) = {
+            let sessions = self.sessions.lock().await;
+            let s = sessions
+                .get(session_id)
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+            (s.connection.clone(), s.pending_cert.clone())
+        };
+
+        // Persist first (so a remembered decision survives even if the backend
+        // send races a teardown), then clear the pending marker.
+        let pending_entry = pending.lock().await.take();
+        if accept && remember {
+            if let Some((host, fingerprint)) = &pending_entry {
+                self.trust_store.remember(host, fingerprint);
+            }
+        }
+
+        let guard = conn.lock().await;
+        let backend = guard
+            .graphical()
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        backend
+            .send_cert_decision(accept, remember)
+            .await
+            .map_err(|e| TerminalError::InternalError(e.to_string()))
     }
 
     /// Forward a protocol-agnostic input event to a session's backend.
@@ -450,6 +561,68 @@ async fn cursor_pump<S: GraphicalEventSink>(
     }
 }
 
+/// Pump interactive certificate-trust prompts from the backend (#1767).
+///
+/// For each [`CertPrompt`] the sidecar raises, consult the trust store:
+/// - **Trusted** (fingerprint already remembered for this host) → auto-accept
+///   silently, never bothering the user.
+/// - **Unknown** (first contact) → surface a `remote-desktop-cert-prompt` event
+///   for the accept/reject dialog.
+/// - **Changed** (host known, fingerprint differs) → surface the same event with
+///   `changed: true` so the dialog warns about a possible MITM.
+///
+/// For the prompted cases the verdict arrives asynchronously via
+/// [`cert_decision`](GraphicalSessionManager::cert_decision); `pending` records
+/// the host + fingerprint so that path can persist an "accept for host".
+#[allow(clippy::too_many_arguments)]
+async fn cert_pump<S: GraphicalEventSink>(
+    session_id: String,
+    host: String,
+    mut prompts: CertPromptReceiver,
+    sink: S,
+    connection: Arc<Mutex<Box<dyn ConnectionType>>>,
+    trust_store: Arc<RdpTrustStore>,
+    pending: PendingCert,
+) {
+    while let Some(prompt) = prompts.recv().await {
+        let CertPrompt {
+            fingerprint,
+            subject,
+            issuer,
+        } = prompt;
+
+        match trust_store.lookup(&host, &fingerprint) {
+            TrustLookup::Trusted => {
+                // Remembered: accept silently, no dialog.
+                debug!(session_id = %session_id, host = %host, "auto-accepting remembered RDP certificate");
+                let guard = connection.lock().await;
+                if let Some(backend) = guard.graphical() {
+                    if let Err(e) = backend.send_cert_decision(true, false).await {
+                        warn!(session_id = %session_id, error = %e, "failed to auto-accept remembered cert");
+                    }
+                }
+            }
+            lookup @ (TrustLookup::Unknown | TrustLookup::Changed) => {
+                let changed = lookup == TrustLookup::Changed;
+                *pending.lock().await = Some((host.clone(), fingerprint.clone()));
+                if changed {
+                    warn!(session_id = %session_id, host = %host, "RDP certificate fingerprint CHANGED for a trusted host (possible MITM)");
+                }
+                sink.emit_cert_prompt(&RemoteDesktopCertPromptEvent {
+                    session_id: session_id.clone(),
+                    host: host.clone(),
+                    fingerprint,
+                    subject,
+                    issuer,
+                    changed,
+                });
+                // The verdict returns via `cert_decision`; keep pumping in case
+                // the backend re-prompts (it will not for a single connect).
+            }
+        }
+    }
+}
+
 #[cfg(all(test, feature = "mock-remote-desktop"))]
 mod tests {
     use super::*;
@@ -462,6 +635,7 @@ mod tests {
         frames: Arc<StdMutex<usize>>,
         cursors: Arc<StdMutex<usize>>,
         states: Arc<StdMutex<Vec<GraphicalState>>>,
+        cert_prompts: Arc<StdMutex<Vec<RemoteDesktopCertPromptEvent>>>,
     }
 
     impl GraphicalEventSink for RecordingSink {
@@ -475,11 +649,14 @@ mod tests {
         fn emit_state(&self, event: &RemoteDesktopStateEvent) {
             self.states.lock().unwrap().push(event.state);
         }
+        fn emit_cert_prompt(&self, event: &RemoteDesktopCertPromptEvent) {
+            self.cert_prompts.lock().unwrap().push(event.clone());
+        }
     }
 
     fn manager() -> GraphicalSessionManager {
         let registry = Arc::new(crate::session::registry::build_desktop_registry());
-        GraphicalSessionManager::new(registry)
+        GraphicalSessionManager::new(registry, Arc::new(RdpTrustStore::in_memory()))
     }
 
     #[tokio::test]
@@ -583,5 +760,75 @@ mod tests {
             .await
             .expect_err("unknown session");
         assert!(matches!(err, TerminalError::SessionNotFound(_)));
+    }
+
+    /// Drive the cert pump directly with a known trust-store state and assert the
+    /// three routing outcomes (#1767): remembered → no dialog (auto-accept),
+    /// unknown → a first-contact prompt, changed → a MITM-flagged prompt.
+    async fn run_cert_pump(
+        trust_store: Arc<RdpTrustStore>,
+        host: &str,
+        fingerprint: &str,
+    ) -> RecordingSink {
+        use termihub_core::connection::ConnectionType;
+        let sink = RecordingSink::default();
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        // A disconnected mock backend: `graphical()` is None, so the auto-accept
+        // path is a no-op send — exactly what we want to observe (no dialog).
+        let registry = crate::session::registry::build_desktop_registry();
+        let conn: Box<dyn ConnectionType> = registry.create("mock-remote-desktop").unwrap();
+        let connection = Arc::new(Mutex::new(conn));
+        let pending: PendingCert = Arc::new(Mutex::new(None));
+
+        let handle = tokio::spawn(cert_pump(
+            "sid".to_string(),
+            host.to_string(),
+            rx,
+            sink.clone(),
+            connection,
+            trust_store,
+            pending,
+        ));
+
+        tx.send(CertPrompt {
+            fingerprint: fingerprint.to_string(),
+            subject: None,
+            issuer: None,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+        handle.await.unwrap();
+        sink
+    }
+
+    #[tokio::test]
+    async fn cert_pump_auto_accepts_remembered_fingerprint() {
+        let store = Arc::new(RdpTrustStore::in_memory());
+        store.remember("h:3389", "sha256:AA");
+        let sink = run_cert_pump(store, "h:3389", "sha256:AA").await;
+        // Remembered → no user dialog.
+        assert!(sink.cert_prompts.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cert_pump_prompts_unknown_host() {
+        let store = Arc::new(RdpTrustStore::in_memory());
+        let sink = run_cert_pump(store, "h:3389", "sha256:AA").await;
+        let prompts = sink.cert_prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(!prompts[0].changed, "first contact is not a MITM warning");
+        assert_eq!(prompts[0].fingerprint, "sha256:AA");
+    }
+
+    #[tokio::test]
+    async fn cert_pump_flags_changed_fingerprint_as_mitm() {
+        let store = Arc::new(RdpTrustStore::in_memory());
+        store.remember("h:3389", "sha256:AA");
+        // A different key for a remembered host.
+        let sink = run_cert_pump(store, "h:3389", "sha256:BB").await;
+        let prompts = sink.cert_prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].changed, "changed fingerprint must warn (MITM)");
     }
 }
