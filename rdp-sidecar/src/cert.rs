@@ -20,6 +20,33 @@
 //! fingerprint and applies the verdict. [`CertVerdict`] is that seam.
 
 use sha2::{Digest, Sha256};
+use x509_cert::Certificate;
+
+/// Best-effort human-readable subject and issuer distinguished names for the
+/// certificate-trust prompt (#1783).
+///
+/// `ironrdp_tls::upgrade` already hands the sidecar a parsed
+/// [`x509_cert::Certificate`], so this just formats its subject and issuer as
+/// RFC 4514 distinguished-name strings (e.g. `CN=host.example,O=Acme`). It is
+/// **context only** — the public-key fingerprint is the identity the trust
+/// decision keys on — so an empty distinguished name yields `None` rather than an
+/// empty string, and the caller never fails the connect over a missing value.
+pub fn subject_and_issuer(cert: &Certificate) -> (Option<String>, Option<String>) {
+    let subject = non_empty(cert.tbs_certificate.subject.to_string());
+    let issuer = non_empty(cert.tbs_certificate.issuer.to_string());
+    (subject, issuer)
+}
+
+/// Map a blank distinguished name to `None`; a certificate may legitimately carry
+/// an empty subject (identity asserted via subjectAltName), which is not useful
+/// prompt context.
+fn non_empty(dn: String) -> Option<String> {
+    if dn.trim().is_empty() {
+        None
+    } else {
+        Some(dn)
+    }
+}
 
 /// A SHA-256 fingerprint of the server's public key, formatted as uppercase
 /// colon-separated hex with a `sha256:` prefix (e.g. `sha256:AB:CD:…`) — the
@@ -105,5 +132,39 @@ mod tests {
         // With ignoreCertErrors unset the sidecar must neither silently accept
         // nor hard-fail: it asks the host (#1767).
         assert_eq!(evaluate(false), CertVerdict::Prompt);
+    }
+
+    /// A committed self-signed DER certificate whose subject == issuer is
+    /// `C=DE, O=termiHub, CN=termihub-test.example` (generated with `openssl req
+    /// -x509`). Exercises the real `x509-cert` DER decode + DN formatting path.
+    const SAMPLE_CERT_DER: &[u8] = include_bytes!("testdata/sample_cert.der");
+
+    #[test]
+    fn subject_and_issuer_extracted_from_der_cert() {
+        use x509_cert::der::Decode as _;
+
+        let cert = Certificate::from_der(SAMPLE_CERT_DER).expect("sample cert parses");
+        let (subject, issuer) = subject_and_issuer(&cert);
+
+        let subject = subject.expect("subject is populated");
+        let issuer = issuer.expect("issuer is populated");
+        // RFC 4514 formatting; assert on the components rather than exact spacing.
+        assert!(
+            subject.contains("CN=termihub-test.example"),
+            "subject was {subject:?}"
+        );
+        assert!(subject.contains("O=termiHub"), "subject was {subject:?}");
+        // Self-signed: issuer mirrors the subject.
+        assert_eq!(subject, issuer);
+    }
+
+    #[test]
+    fn empty_distinguished_name_maps_to_none() {
+        assert_eq!(non_empty(String::new()), None);
+        assert_eq!(non_empty("   ".to_string()), None);
+        assert_eq!(
+            non_empty("CN=host".to_string()),
+            Some("CN=host".to_string())
+        );
     }
 }

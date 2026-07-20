@@ -254,7 +254,10 @@ where
             );
         }
         crate::cert::CertVerdict::Prompt => {
-            prompt_cert_decision(ipc_in, ipc_out, &fingerprint).await?;
+            // Best-effort human-readable context for the prompt (#1783); the
+            // fingerprint above is the identity the trust decision keys on.
+            let (subject, issuer) = crate::cert::subject_and_issuer(&server_cert);
+            prompt_cert_decision(ipc_in, ipc_out, &fingerprint, subject, issuer).await?;
         }
     }
 
@@ -292,6 +295,8 @@ async fn prompt_cert_decision<R, W>(
     ipc_in: &mut R,
     ipc_out: &mut W,
     fingerprint: &str,
+    subject: Option<String>,
+    issuer: Option<String>,
 ) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -302,10 +307,10 @@ where
         ipc_out,
         &SidecarMessage::CertPrompt {
             fingerprint: fingerprint.to_string(),
-            // Best-effort subject/issuer extraction is a sequenced follow-up; the
-            // public-key fingerprint is the identity the trust decision keys on.
-            subject: None,
-            issuer: None,
+            // Best-effort human-readable context (#1783); the public-key
+            // fingerprint above is the identity the trust decision keys on.
+            subject,
+            issuer,
         },
     )
     .await
@@ -1101,16 +1106,28 @@ mod tests {
         let (mut sidecar_out, mut host_in) = tokio::io::duplex(64 * 1024);
 
         let sidecar = tokio::spawn(async move {
-            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:AA:BB").await
+            prompt_cert_decision(
+                &mut sidecar_in,
+                &mut sidecar_out,
+                "sha256:AA:BB",
+                Some("CN=host.example".to_string()),
+                Some("CN=Acme CA".to_string()),
+            )
+            .await
         });
 
-        // Host reads the prompt, then replies "accept".
+        // Host reads the prompt, then replies "accept". The best-effort
+        // subject/issuer context (#1783) must ride along with the fingerprint.
         let prompt = read_message::<_, SidecarMessage>(&mut host_in)
             .await
             .unwrap();
-        assert!(
-            matches!(prompt, SidecarMessage::CertPrompt { fingerprint, .. } if fingerprint == "sha256:AA:BB")
-        );
+        assert!(matches!(
+            prompt,
+            SidecarMessage::CertPrompt { fingerprint, subject, issuer }
+                if fingerprint == "sha256:AA:BB"
+                    && subject.as_deref() == Some("CN=host.example")
+                    && issuer.as_deref() == Some("CN=Acme CA")
+        ));
         write_message(
             &mut host_out,
             &HostMessage::CertDecision {
@@ -1134,7 +1151,7 @@ mod tests {
         let (mut sidecar_out, mut host_in) = tokio::io::duplex(64 * 1024);
 
         let sidecar = tokio::spawn(async move {
-            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:CC").await
+            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:CC", None, None).await
         });
 
         let _ = read_message::<_, SidecarMessage>(&mut host_in)
@@ -1162,7 +1179,7 @@ mod tests {
         let (mut sidecar_out, mut host_in) = tokio::io::duplex(64 * 1024);
 
         let sidecar = tokio::spawn(async move {
-            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:DD").await
+            prompt_cert_decision(&mut sidecar_in, &mut sidecar_out, "sha256:DD", None, None).await
         });
 
         let _ = read_message::<_, SidecarMessage>(&mut host_in)

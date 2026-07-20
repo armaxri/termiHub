@@ -26,7 +26,15 @@ const unknownPrompt: RemoteDesktopCertPromptPayload = {
   session_id: "rd-1",
   host: "server.example:3389",
   fingerprint: "sha256:AB:CD:EF",
-  subject: "CN=server.example",
+  subject: "CN=server.example,O=Acme",
+  issuer: "CN=Acme Root CA,O=Acme",
+  changed: false,
+};
+
+const noDnPrompt: RemoteDesktopCertPromptPayload = {
+  session_id: "rd-1",
+  host: "server.example:3389",
+  fingerprint: "sha256:AB:CD:EF",
   changed: false,
 };
 
@@ -65,6 +73,26 @@ describe("RemoteDesktopCertPrompt", () => {
     );
     // No MITM warning for first contact.
     expect(document.querySelector('[data-testid="cert-mitm-warning"]')).toBeNull();
+  });
+
+  it("renders the certificate subject and issuer when present (#1783)", () => {
+    render(<RemoteDesktopCertPrompt prompt={unknownPrompt} onDecision={vi.fn()} />);
+    expect(document.querySelector('[data-testid="cert-subject"]')?.textContent).toBe(
+      "CN=server.example,O=Acme"
+    );
+    expect(document.querySelector('[data-testid="cert-issuer"]')?.textContent).toBe(
+      "CN=Acme Root CA,O=Acme"
+    );
+  });
+
+  it("omits the subject and issuer rows when the sidecar could not extract them", () => {
+    render(<RemoteDesktopCertPrompt prompt={noDnPrompt} onDecision={vi.fn()} />);
+    expect(document.querySelector('[data-testid="cert-subject"]')).toBeNull();
+    expect(document.querySelector('[data-testid="cert-issuer"]')).toBeNull();
+    // The fingerprint (the security-critical identity) is still shown.
+    expect(document.querySelector('[data-testid="cert-fingerprint"]')?.textContent).toBe(
+      "sha256:AB:CD:EF"
+    );
   });
 
   it("routes reject as (false, false)", () => {
