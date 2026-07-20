@@ -1055,6 +1055,35 @@ module, but the live PDU exchange needs a real server:
 6. Leave **Receive Clipboard Files** off and reconnect. **Expected:** no file
    formats are advertised in either direction; text clipboard still works.
 
+#### Delayed-render paste to the host OS clipboard (macOS, #1804)
+
+On macOS the remote-copied files are surfaced to the **host OS clipboard** with
+delayed rendering instead of eagerly downloaded into the shared folder: the bytes
+are streamed from the remote only when the user actually pastes into a local app.
+The selection/index logic and manager plumbing are unit-tested (`macos_clipboard`,
+`graphical_manager`), but the live `NSPasteboard` promise + real paste need a
+manual run (per-PR CI does not run the CLIPRDR wire lane, #1569):
+
+1. On **macOS**, build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as
+   above); in the RDP connection editor enable **Redirect a Local Drive** (with a
+   **Shared Folder**) and **Receive Clipboard Files**, then connect to a Windows
+   RDP host.
+2. Copy one or more files in the remote session (Explorer → Ctrl+C). **Expected:**
+   the files do **not** appear in the shared folder (delayed rendering replaces the
+   eager download on macOS).
+3. Open the RemoteDesktop hover toolbar's **Clipboard** panel. **Expected:** a
+   **Remote files** section lists the copied files, with a **Copy to clipboard**
+   button.
+4. Click **Copy to clipboard**. **Expected:** a toast confirms `N file(s) ready`.
+   No bytes have been fetched yet.
+5. Paste into a local app — Finder (Cmd+V into a folder), a mail draft, etc.
+   **Expected:** the real files appear, their contents intact; the fetch happens
+   at this moment (delayed), streamed into a bounded staging file.
+6. **Non-macOS regression check:** on Windows/Linux, repeat step 2 with the same
+   options. **Expected:** unchanged #1765 behaviour — files download into the
+   shared folder, and the **Remote files** section does not appear (no host
+   binding, so nothing is surfaced).
+
 ### Deferred agent update (apply on last disconnect) (#1352)
 
 Verifies that a deferred agent update never interrupts active sessions and
