@@ -2483,4 +2483,304 @@ mod tests {
             other => panic!("expected the shared-folder offer, got {other:?}"),
         }
     }
+
+    // --- Remote→host delayed rendering (#1793) ---
+
+    /// A file-transfer backend with delayed rendering enabled.
+    fn backend_delayed() -> (
+        SidecarClipboardBackend,
+        Receiver<ClipboardEvent>,
+        tempfile::TempDir,
+    ) {
+        let (mut backend, rx, dir) = backend_with_download();
+        backend.set_delayed_render(true);
+        (backend, rx, dir)
+    }
+
+    #[test]
+    fn sanitize_descriptor_keeps_safe_paths_and_rejects_escapes() {
+        // A plain file keeps its name/size and top-level (no relative path).
+        let m = sanitize_descriptor(&FileDescriptor::new("a.txt").with_file_size(3), 0).unwrap();
+        assert_eq!(m.name, "a.txt");
+        assert_eq!(m.relative_path, None);
+        assert_eq!(m.size, Some(3));
+        assert!(!m.is_dir);
+        assert_eq!(m.index, 0);
+
+        // A nested file's `\`-relative path becomes a `/`-separated one; the
+        // descriptor index is preserved as the fetch token.
+        let nested = FileDescriptor::new("leaf.bin")
+            .with_relative_path("dir\\sub")
+            .with_file_size(1);
+        let m = sanitize_descriptor(&nested, 5).unwrap();
+        assert_eq!(m.name, "leaf.bin");
+        assert_eq!(m.relative_path.as_deref(), Some("dir/sub"));
+        assert_eq!(m.index, 5);
+
+        // A directory descriptor is surfaced as a directory (no bytes).
+        let d =
+            FileDescriptor::new("folder").with_attributes(ClipboardFileAttributes::DIRECTORY);
+        assert!(sanitize_descriptor(&d, 0).unwrap().is_dir);
+
+        // Hostile paths are dropped: `..`, traversal in the relative path, a drive
+        // letter / colon, and a reserved device name on any component.
+        assert!(sanitize_descriptor(&FileDescriptor::new("..").with_file_size(1), 0).is_none());
+        assert!(sanitize_descriptor(
+            &FileDescriptor::new("evil").with_relative_path("..\\..\\etc"),
+            0
+        )
+        .is_none());
+        assert!(sanitize_descriptor(&FileDescriptor::new("C:").with_file_size(1), 0).is_none());
+        assert!(sanitize_descriptor(
+            &FileDescriptor::new("x").with_relative_path("C:\\Windows"),
+            0
+        )
+        .is_none());
+        assert!(sanitize_descriptor(&FileDescriptor::new("CON").with_file_size(1), 0).is_none());
+    }
+
+    #[test]
+    fn delayed_render_surfaces_a_sanitized_list_without_downloading() {
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(
+            &[
+                FileDescriptor::new("doc.txt").with_file_size(5),
+                // Hostile entry — dropped from the surfaced list.
+                FileDescriptor::new("..").with_file_size(9),
+                FileDescriptor::new("nested.bin")
+                    .with_relative_path("d")
+                    .with_file_size(2),
+            ],
+            None,
+        );
+        match next_event(&rx) {
+            ClipboardEvent::SurfaceRemoteFiles(files) => {
+                assert_eq!(files.len(), 2);
+                assert_eq!(files[0].name, "doc.txt");
+                assert_eq!(files[0].index, 0);
+                assert_eq!(files[1].name, "nested.bin");
+                assert_eq!(files[1].relative_path.as_deref(), Some("d"));
+                // The original descriptor index (2) survives the dropped entry, so
+                // it still keys the right file for a fetch.
+                assert_eq!(files[1].index, 2);
+            }
+            other => panic!("expected SurfaceRemoteFiles, got {other:?}"),
+        }
+        // Delayed rendering never eagerly downloads: no file-contents request.
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn eager_download_stays_the_default_without_delayed_render() {
+        let (mut backend, rx, _dir) = backend_with_download();
+        backend.on_remote_file_list(&[FileDescriptor::new("f.txt").with_file_size(3)], None);
+        // The eager path issues a file-contents request, not a surface event.
+        let req = next_request(&rx);
+        assert!(req.flags.contains(FileContentsFlags::RANGE));
+    }
+
+    #[test]
+    fn delayed_render_without_opt_in_surfaces_nothing() {
+        // Delayed rendering is meaningless without the file-transfer opt-in (no
+        // shared folder), so a remote copy surfaces nothing.
+        let (mut backend, rx) = SidecarClipboardBackend::new(None, false);
+        backend.set_delayed_render(true);
+        backend.on_remote_file_list(&[FileDescriptor::new("a.txt").with_file_size(1)], None);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn fetch_streams_a_file_to_the_host_in_bounded_chunks() {
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.set_chunk_bytes(4);
+        backend.on_remote_file_list(&[FileDescriptor::new("big.bin").with_file_size(10)], None);
+        let _ = next_event(&rx); // SurfaceRemoteFiles
+
+        backend.fetch_remote_file(42, 0);
+
+        // Chunk 1: a RANGE request bounded to the chunk size, streamed to the host.
+        let r1 = next_request(&rx);
+        assert_eq!(r1.position, 0);
+        assert_eq!(r1.requested_size, 4);
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            r1.stream_id,
+            b"aaaa".to_vec(),
+        ));
+        match next_event(&rx) {
+            ClipboardEvent::ProvideRemoteFileChunk {
+                request_id,
+                position,
+                data,
+                last,
+            } => {
+                assert_eq!(request_id, 42);
+                assert_eq!(position, 0);
+                assert_eq!(data, b"aaaa");
+                // Never more than one chunk in memory.
+                assert!(data.len() as u64 <= 4);
+                assert!(!last);
+            }
+            other => panic!("expected a streamed chunk, got {other:?}"),
+        }
+
+        // Chunk 2: [4, 8).
+        let r2 = next_request(&rx);
+        assert_eq!(r2.position, 4);
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            r2.stream_id,
+            b"bbbb".to_vec(),
+        ));
+        let _ = next_event(&rx);
+
+        // Chunk 3: [8, 10) — only the remaining 2 bytes, marked last.
+        let r3 = next_request(&rx);
+        assert_eq!(r3.position, 8);
+        assert_eq!(r3.requested_size, 2);
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            r3.stream_id,
+            b"cc".to_vec(),
+        ));
+        match next_event(&rx) {
+            ClipboardEvent::ProvideRemoteFileChunk {
+                position, data, last, ..
+            } => {
+                assert_eq!(position, 8);
+                assert_eq!(data, b"cc");
+                assert!(last);
+            }
+            other => panic!("expected the final chunk, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn fetch_resolves_an_unknown_size_then_streams() {
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(&[FileDescriptor::new("data.bin")], None);
+        let _ = next_event(&rx); // surface (no advertised size)
+
+        backend.fetch_remote_file(7, 0);
+        let size_req = next_request(&rx);
+        assert!(size_req.flags.contains(FileContentsFlags::SIZE));
+        backend.on_file_contents_response(FileContentsResponse::new_size_response(
+            size_req.stream_id,
+            3,
+        ));
+        let range_req = next_request(&rx);
+        assert!(range_req.flags.contains(FileContentsFlags::RANGE));
+        assert_eq!(range_req.requested_size, 3);
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            range_req.stream_id,
+            b"abc".to_vec(),
+        ));
+        match next_event(&rx) {
+            ClipboardEvent::ProvideRemoteFileChunk {
+                request_id,
+                data,
+                last,
+                ..
+            } => {
+                assert_eq!(request_id, 7);
+                assert_eq!(data, b"abc");
+                assert!(last);
+            }
+            other => panic!("expected the streamed chunk, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fetch_of_an_empty_file_yields_an_empty_final_chunk() {
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(&[FileDescriptor::new("empty.txt").with_file_size(0)], None);
+        let _ = next_event(&rx); // surface
+
+        backend.fetch_remote_file(1, 0);
+        match next_event(&rx) {
+            ClipboardEvent::ProvideRemoteFileChunk {
+                position,
+                data,
+                last,
+                ..
+            } => {
+                assert_eq!(position, 0);
+                assert!(data.is_empty());
+                assert!(last);
+            }
+            other => panic!("expected an empty final chunk, got {other:?}"),
+        }
+        // An empty file needs no byte-range request.
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn fetch_rejects_unknown_directory_and_not_enabled() {
+        // An index the remote never advertised is refused.
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(&[FileDescriptor::new("a.txt").with_file_size(1)], None);
+        let _ = next_event(&rx);
+        backend.fetch_remote_file(1, 99);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RemoteFileError { request_id: 1, .. }
+        ));
+
+        // A directory index carries no bytes.
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(
+            &[FileDescriptor::new("dir").with_attributes(ClipboardFileAttributes::DIRECTORY)],
+            None,
+        );
+        let _ = next_event(&rx);
+        backend.fetch_remote_file(2, 0);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RemoteFileError { request_id: 2, .. }
+        ));
+
+        // A backend that is not in delayed-render mode has surfaced nothing.
+        let (mut backend, rx, _dir) = backend_with_download();
+        backend.fetch_remote_file(3, 0);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RemoteFileError { request_id: 3, .. }
+        ));
+    }
+
+    #[test]
+    fn a_second_fetch_while_one_is_in_flight_is_rejected() {
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(
+            &[
+                FileDescriptor::new("a.bin").with_file_size(4),
+                FileDescriptor::new("b.bin").with_file_size(4),
+            ],
+            None,
+        );
+        let _ = next_event(&rx);
+        backend.fetch_remote_file(1, 0);
+        let _ = next_request(&rx); // first fetch now in flight
+        backend.fetch_remote_file(2, 1);
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RemoteFileError { request_id: 2, .. }
+        ));
+    }
+
+    #[test]
+    fn a_remote_error_mid_fetch_terminates_and_frees_the_slot() {
+        let (mut backend, rx, _dir) = backend_delayed();
+        backend.on_remote_file_list(&[FileDescriptor::new("a.bin").with_file_size(4)], None);
+        let _ = next_event(&rx);
+        backend.fetch_remote_file(5, 0);
+        let req = next_request(&rx);
+        backend.on_file_contents_response(FileContentsResponse::new_error(req.stream_id));
+        assert!(matches!(
+            next_event(&rx),
+            ClipboardEvent::RemoteFileError { request_id: 5, .. }
+        ));
+        // The in-flight slot was freed, so a fresh fetch can proceed.
+        backend.fetch_remote_file(6, 0);
+        let req2 = next_request(&rx);
+        assert!(req2.flags.contains(FileContentsFlags::RANGE));
+    }
 }

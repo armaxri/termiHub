@@ -1119,4 +1119,163 @@ mod tests {
         // Consume state variant to keep the import used across cfgs.
         let _ = SidecarMessage::State(GraphicalState::AuthFailed);
     }
+
+    // --- Remote→host delayed rendering (#1793) ---
+
+    #[tokio::test]
+    async fn reader_stores_surfaced_remote_clipboard_files() {
+        let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, _f) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _c) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _ce) = mpsc::channel(CHANNEL_DEPTH);
+        let shared = test_shared();
+        let cancel = CancellationToken::new();
+        let reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
+            shared.clone(),
+            cancel.clone(),
+        ));
+
+        let files = vec![RemoteClipboardFile {
+            name: "report.pdf".to_string(),
+            relative_path: None,
+            size: Some(10),
+            is_dir: false,
+            index: 0,
+        }];
+        write_message(
+            &mut sidecar_stdout,
+            &SidecarMessage::RemoteClipboardFiles(files.clone()),
+        )
+        .await
+        .unwrap();
+
+        drop(sidecar_stdout);
+        let _ = reader.await;
+        assert_eq!(*shared.remote_clipboard_files.lock().await, files);
+    }
+
+    /// The full host round-trip: `fetch_remote_clipboard_file` sends a
+    /// `FetchClipboardFile`, a fake sidecar streams the bytes back, and the reader
+    /// routes them into a sanitized, bounded staging file whose contents match.
+    #[tokio::test]
+    async fn fetch_remote_clipboard_file_stages_streamed_bytes() {
+        let (host_write, mut sidecar_stdin) = tokio::io::duplex(1024 * 1024);
+        let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, _f) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _c) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _ce) = mpsc::channel(CHANNEL_DEPTH);
+        let (to_sidecar, sidecar_rx) = mpsc::channel(CHANNEL_DEPTH);
+
+        let shared = Arc::new(SidecarShared {
+            clipboard: Mutex::new(String::new()),
+            remote_clipboard_files: Mutex::new(vec![RemoteClipboardFile {
+                name: "hello.txt".to_string(),
+                relative_path: None,
+                size: Some(5),
+                is_dir: false,
+                index: 0,
+            }]),
+            fetches: StdMutex::new(HashMap::new()),
+            view_only: false,
+        });
+        let cancel = CancellationToken::new();
+        let reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
+            shared.clone(),
+            cancel.clone(),
+        ));
+        let writer = tokio::spawn(run_writer(host_write, sidecar_rx, cancel.clone()));
+
+        // A fake sidecar: on the fetch request, stream the file back in two chunks.
+        let fake = tokio::spawn(async move {
+            let msg = read_message::<_, HostMessage>(&mut sidecar_stdin)
+                .await
+                .expect("fetch request");
+            let HostMessage::FetchClipboardFile { request_id, index } = msg else {
+                panic!("expected FetchClipboardFile, got {msg:?}");
+            };
+            assert_eq!(index, 0);
+            for (position, data, last) in [
+                (0u64, b"hel".to_vec(), false),
+                (3u64, b"lo".to_vec(), true),
+            ] {
+                write_message(
+                    &mut sidecar_stdout,
+                    &SidecarMessage::ClipboardFileChunk {
+                        request_id,
+                        position,
+                        data,
+                        last,
+                    },
+                )
+                .await
+                .unwrap();
+            }
+            // Keep stdout open until the test tears down.
+            sidecar_stdout
+        });
+
+        let rdp = SidecarRdp {
+            runtime: Some(Arc::new(SidecarRuntime {
+                to_sidecar,
+                shared: shared.clone(),
+                next_fetch_id: AtomicU64::new(1),
+                cancel: cancel.clone(),
+            })),
+            frame_rx: StdMutex::new(None),
+            cursor_rx: StdMutex::new(None),
+            cert_prompt_rx: StdMutex::new(None),
+            tasks: Vec::new(),
+        };
+
+        let staged = rdp
+            .fetch_remote_clipboard_file(0)
+            .await
+            .expect("fetch should stage the file");
+        assert_eq!(std::fs::read(&staged).unwrap(), b"hello");
+        // The staged file keeps the sanitized basename.
+        assert_eq!(staged.file_name().unwrap().to_str().unwrap(), "hello.txt");
+        // The fetch registration was cleaned up.
+        assert!(shared.fetches.lock().unwrap().is_empty());
+
+        // Clean up the per-fetch staging directory.
+        if let Some(parent) = staged.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+        cancel.cancel();
+        let _ = reader.await;
+        let _ = writer.await;
+        let _ = fake.await;
+    }
+
+    #[tokio::test]
+    async fn fetch_rejects_an_unknown_index_without_touching_the_sidecar() {
+        // No runtime files surfaced → an unknown index fails fast as InvalidConfig,
+        // and (with no runtime) a disconnected backend reports NotRunning.
+        let disconnected = SidecarRdp::new();
+        assert!(disconnected.remote_clipboard_files().await.is_empty());
+        assert!(matches!(
+            disconnected.fetch_remote_clipboard_file(0).await,
+            Err(SessionError::NotRunning(_))
+        ));
+    }
+
+    #[test]
+    fn sanitize_leaf_rejects_separators_and_traversal() {
+        assert_eq!(sanitize_leaf("ok.txt"), Some("ok.txt"));
+        assert!(sanitize_leaf("").is_none());
+        assert!(sanitize_leaf("..").is_none());
+        assert!(sanitize_leaf(".").is_none());
+        assert!(sanitize_leaf("a/b").is_none());
+        assert!(sanitize_leaf("a\\b").is_none());
+        assert!(sanitize_leaf("C:evil").is_none());
+        assert!(sanitize_leaf("nul\0byte").is_none());
+    }
 }
