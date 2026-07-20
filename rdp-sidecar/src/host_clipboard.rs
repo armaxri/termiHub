@@ -14,30 +14,53 @@
 //! ## Platform coverage
 //!
 //! This module reads the **macOS** pasteboard (via the `clipboard-files` crate,
-//! which asks `NSPasteboard` for file URLs) and the **Windows** clipboard's
-//! `CF_HDROP` file list (via `clipboard-win`, #1791). Linux (`text/uri-list`)
-//! reading is a sequenced follow-up: there the reader returns an empty list, so
+//! which asks `NSPasteboard` for file URLs), the **Windows** clipboard's
+//! `CF_HDROP` file list (via `clipboard-win`, #1791), and the **Linux**
+//! clipboard's `text/uri-list` selection on both **X11** and **Wayland** (#1792).
+//! On any platform whose reader is not wired the reader returns an empty list, so
 //! the backend simply falls back to the #1778 sandboxed-shared-folder offer — the
 //! feature degrades per platform rather than breaking. Keeping the platform reader
 //! behind this one function means adding a platform is a single-function change.
 //!
 //! Each platform crate is intentionally target-gated (see the sidecar
 //! `Cargo.toml`): `clipboard-files` is **macOS only** (its Linux path links `gtk`,
-//! its Windows path links `clipboard-win`), and `clipboard-win` is **Windows
-//! only**. Dragging either into a platform whose reader is not wired would be pure
-//! cost. Both live in the workspace-**excluded** sidecar graph, so they add zero
+//! its Windows path links `clipboard-win`), `clipboard-win` is **Windows only**,
+//! and the Linux readers (`x11-clipboard`, `wl-clipboard-rs`) are **Linux only**.
+//! Dragging any of them into a platform whose reader is not wired would be pure
+//! cost. All live in the workspace-**excluded** sidecar graph, so they add zero
 //! conflict risk to the main app (#1747).
 //!
-//! On Windows the raw `CF_HDROP` bytes (a `DROPFILES` header followed by a
-//! double-null-terminated path list) are parsed by [`parse_cf_hdrop`] rather than
-//! by `clipboard-win`'s `DragQueryFileW`-based helper: our own parser is a pure
-//! function over a byte slice, so the decode is unit-testable on non-Windows CI,
-//! where a live Win32 clipboard cannot be read.
+//! On **Windows** the raw `CF_HDROP` bytes (a `DROPFILES` header followed by a
+//! double-null-terminated path list) are parsed by [`parse_cf_hdrop`], and on
+//! **Linux** the raw `text/uri-list` selection is parsed by [`parse_uri_list`],
+//! rather than by a platform crate's own helper: both are pure functions over the
+//! clipboard bytes, so the decode is unit-testable on any CI runner, where a live
+//! OS clipboard cannot be read.
+//!
+//! The Linux reader deliberately avoids `gtk` (which `clipboard-files` would pull
+//! in): GTK clipboard reads require the process's main thread and a running GTK
+//! main loop, which a headless sidecar called from a tokio worker cannot promise.
+//! `x11-clipboard` (pure Rust over `x11rb`, no `libxcb`) and `wl-clipboard-rs`
+//! (with `dlopen`, no link-time `libwayland`) are window-less, thread-agnostic,
+//! blocking clients that fit the sidecar and add no system-library build
+//! dependency to the bundle CI. Under Wayland the reader tries the Wayland
+//! clipboard first and falls back to X11, because XWayland bridges the same
+//! selection and some compositors do not implement the `wlr-data-control`
+//! protocol `wl-clipboard-rs` needs.
 
 use std::path::PathBuf;
 
-#[cfg_attr(not(any(target_os = "macos", windows)), allow(unused_imports))]
-use tracing::{debug, warn};
+// `debug` is used by the macOS, Windows and Linux readers; on a platform with no
+// reader wired the fallback stub logs nothing, so allow it to go unused there.
+#[cfg_attr(
+    not(any(target_os = "macos", windows, target_os = "linux")),
+    allow(unused_imports)
+)]
+use tracing::debug;
+// `warn` is only emitted by the macOS and Windows readers (the Linux path treats
+// every failure as an expected "no files" case and logs at debug).
+#[cfg(any(target_os = "macos", windows))]
+use tracing::warn;
 
 /// Absolute paths of the files currently on the host OS clipboard's native file
 /// list.
@@ -106,10 +129,111 @@ pub fn read_host_clipboard_files() -> Vec<PathBuf> {
     paths
 }
 
-/// The Linux (`text/uri-list`) reader is a sequenced follow-up; until then Linux
-/// offers no host-clipboard files and the backend falls back to the sandboxed
-/// shared folder (#1778).
-#[cfg(not(any(target_os = "macos", windows)))]
+/// Reads the Linux clipboard's `text/uri-list` selection — the files the user
+/// copied in their file manager — and returns their absolute paths in clipboard
+/// order (#1792).
+///
+/// Any failure (no display, no `text/uri-list` on the clipboard, unreadable data)
+/// yields an empty list: that is the "nothing to offer" signal the backend uses
+/// to fall back to the sandboxed shared folder (#1778), so a broken read must
+/// never tear down the session. The chosen client hands us the raw selection
+/// bytes; the platform-agnostic [`parse_uri_list`] decodes them.
+///
+/// Under Wayland the Wayland clipboard is tried first with an X11 fallback (see
+/// the module docs); otherwise only X11 is consulted.
+#[cfg(target_os = "linux")]
+pub fn read_host_clipboard_files() -> Vec<PathBuf> {
+    let raw = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        read_wayland_uri_list().or_else(read_x11_uri_list)
+    } else {
+        read_x11_uri_list()
+    };
+
+    match raw {
+        Some(text) => {
+            let paths = parse_uri_list(&text);
+            debug!(
+                count = paths.len(),
+                "read host clipboard file list (text/uri-list)"
+            );
+            paths
+        }
+        None => Vec::new(),
+    }
+}
+
+/// Reads the `text/uri-list` target of the X11 `CLIPBOARD` selection, returning
+/// the raw selection text or `None` when there is no X server, no such target, or
+/// the read fails. Uses `x11-clipboard` (pure Rust over `x11rb`), which owns a
+/// hidden window and a background event thread, so it is safe to call from any
+/// thread without a GTK main loop.
+#[cfg(target_os = "linux")]
+fn read_x11_uri_list() -> Option<String> {
+    use std::time::Duration;
+
+    let clipboard = match x11_clipboard::Clipboard::new() {
+        Ok(clipboard) => clipboard,
+        Err(error) => {
+            // No X server reachable (`$DISPLAY` unset / headless) — expected off a
+            // desktop, not an error worth escalating.
+            debug!(%error, "no X11 clipboard available; offering no files");
+            return None;
+        }
+    };
+
+    let target = clipboard.getter.get_atom("text/uri-list").ok()?;
+    let bytes = clipboard
+        .load(
+            clipboard.getter.atoms.clipboard,
+            target,
+            clipboard.getter.atoms.property,
+            Duration::from_secs(3),
+        )
+        .ok()?;
+
+    // The clipboard holds no file list (it is text / an image / empty) — the
+    // expected common case.
+    if bytes.is_empty() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// Reads the `text/uri-list` MIME type of the regular Wayland clipboard, returning
+/// the raw selection text or `None` when there is no Wayland display, the
+/// compositor offers no such type, or the read fails. `wl-clipboard-rs` is a
+/// window-less blocking client (no GTK main loop required).
+#[cfg(target_os = "linux")]
+fn read_wayland_uri_list() -> Option<String> {
+    use std::io::Read;
+    use wl_clipboard_rs::paste::{get_contents, ClipboardType, MimeType, Seat};
+
+    match get_contents(
+        ClipboardType::Regular,
+        Seat::Unspecified,
+        MimeType::Specific("text/uri-list"),
+    ) {
+        Ok((mut pipe, _mime)) => {
+            let mut bytes = Vec::new();
+            if pipe.read_to_end(&mut bytes).is_err() || bytes.is_empty() {
+                return None;
+            }
+            Some(String::from_utf8_lossy(&bytes).into_owned())
+        }
+        // An empty clipboard, no matching MIME type, or no seat all mean "nothing
+        // to offer" — the expected common case, not an error. A missing
+        // `wlr-data-control` protocol also lands here, and the caller falls back
+        // to X11.
+        Err(error) => {
+            debug!(%error, "no text/uri-list on the Wayland clipboard; offering none");
+            None
+        }
+    }
+}
+
+/// Host-clipboard file reading is not wired for this platform, so it offers no
+/// files and the backend falls back to the sandboxed shared folder (#1778).
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 pub fn read_host_clipboard_files() -> Vec<PathBuf> {
     Vec::new()
 }
@@ -169,9 +293,70 @@ fn parse_cf_hdrop(bytes: &[u8]) -> Vec<PathBuf> {
     paths
 }
 
+/// Decodes a Linux `text/uri-list` clipboard payload into absolute paths, in
+/// clipboard order (#1792).
+///
+/// Per [RFC 2483](https://www.rfc-editor.org/rfc/rfc2483#section-5) a
+/// `text/uri-list` is CRLF-separated lines where a `#` line is a comment; file
+/// managers put one `file:` URI per line. Each URI's path component is
+/// percent-decoded. Non-`file:` schemes and `file://<remote-host>/…` URIs (a path
+/// on another machine we cannot serve locally) are skipped rather than mis-served;
+/// an empty host or `localhost` denotes this machine and is kept.
+///
+/// This is a pure function over the clipboard string on purpose: it keeps the
+/// `text/uri-list` decode unit-testable on any platform (a real X11/Wayland
+/// clipboard cannot be read in headless CI), which is why the decode is done here
+/// rather than via a platform crate's own URI helper.
+#[cfg(any(target_os = "linux", test))]
+fn parse_uri_list(data: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    for line in data.lines() {
+        // `str::lines` splits on `\n` and strips a trailing `\r`, so CRLF and LF
+        // payloads both arrive CR-free here; trim any other stray whitespace.
+        let line = line.trim();
+        // Blank lines and `#` comment lines carry no URI.
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(path) = file_uri_to_path(line) {
+            paths.push(path);
+        }
+    }
+    paths
+}
+
+/// Converts a single `file:` URI to a local path, or `None` when it is not a local
+/// `file:` URI this host can serve. Handles `file://<host>/path`, `file:///path`,
+/// and the authority-less `file:/path`; percent-decodes the path component.
+#[cfg(any(target_os = "linux", test))]
+fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
+    use percent_encoding::percent_decode_str;
+
+    let rest = uri.strip_prefix("file:")?;
+    let encoded_path = if let Some(after_slashes) = rest.strip_prefix("//") {
+        // `//<host>/path`: the authority runs up to the next `/`. An empty host or
+        // `localhost` means this machine; a real remote host is not a local path.
+        let slash = after_slashes.find('/')?;
+        let host = &after_slashes[..slash];
+        if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+            return None;
+        }
+        &after_slashes[slash..]
+    } else {
+        // `file:/path`: no authority component, `rest` is already the path.
+        rest
+    };
+
+    let decoded = percent_decode_str(encoded_path).decode_utf8_lossy();
+    if decoded.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(decoded.into_owned()))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_cf_hdrop;
+    use super::{parse_cf_hdrop, parse_uri_list};
     use std::path::PathBuf;
 
     /// Builds a synthetic `CF_HDROP` byte buffer from UTF-16LE (`wide = true`)
@@ -275,5 +460,76 @@ mod tests {
         let mut bad = 999u32.to_le_bytes().to_vec();
         bad.extend_from_slice(&[0u8; 16]);
         assert!(parse_cf_hdrop(&bad).is_empty());
+    }
+
+    #[test]
+    fn parses_crlf_uri_list_in_order() {
+        let data = "file:///home/me/a.txt\r\nfile:///tmp/b.png\r\n";
+        assert_eq!(
+            parse_uri_list(data),
+            vec![PathBuf::from("/home/me/a.txt"), PathBuf::from("/tmp/b.png"),]
+        );
+    }
+
+    #[test]
+    fn accepts_lf_only_line_endings() {
+        // Some producers emit bare LF rather than the RFC 2483 CRLF.
+        let data = "file:///a\nfile:///b";
+        assert_eq!(
+            parse_uri_list(data),
+            vec![PathBuf::from("/a"), PathBuf::from("/b")]
+        );
+    }
+
+    #[test]
+    fn percent_decodes_paths() {
+        // `%20` space and a UTF-8 multi-byte sequence (`é` = %C3%A9).
+        let data = "file:///home/me/b%20c.txt\r\nfile:///home/Zo%C3%AB/na%C3%AFve.txt\r\n";
+        assert_eq!(
+            parse_uri_list(data),
+            vec![
+                PathBuf::from("/home/me/b c.txt"),
+                PathBuf::from("/home/Zoë/naïve.txt"),
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_comment_and_blank_lines() {
+        let data = "# a comment\r\n\r\nfile:///real\r\n   \r\n";
+        assert_eq!(parse_uri_list(data), vec![PathBuf::from("/real")]);
+    }
+
+    #[test]
+    fn skips_non_file_schemes() {
+        let data = "https://example.com/x\r\nfile:///keep\r\nmailto:me@x\r\n";
+        assert_eq!(parse_uri_list(data), vec![PathBuf::from("/keep")]);
+    }
+
+    #[test]
+    fn accepts_empty_and_localhost_authority_but_skips_remote_host() {
+        let data = "file:///local/a\r\nfile://localhost/local/b\r\nfile://remote.example/c\r\n";
+        assert_eq!(
+            parse_uri_list(data),
+            vec![PathBuf::from("/local/a"), PathBuf::from("/local/b")]
+        );
+    }
+
+    #[test]
+    fn accepts_authority_less_file_uri() {
+        // `file:/path` (no `//` authority) is a valid, if rarer, form.
+        assert_eq!(
+            parse_uri_list("file:/etc/hosts\r\n"),
+            vec![PathBuf::from("/etc/hosts")]
+        );
+    }
+
+    #[test]
+    fn empty_or_schemeless_input_yields_no_paths() {
+        assert!(parse_uri_list("").is_empty());
+        assert!(parse_uri_list("\r\n\r\n").is_empty());
+        assert!(parse_uri_list("/not/a/uri\r\n").is_empty());
+        // `file://host` with no path component names nothing servable.
+        assert!(parse_uri_list("file://host\r\n").is_empty());
     }
 }
