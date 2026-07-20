@@ -83,6 +83,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.11"
 hex = "0.4"
 
+# Percent-decode the path component of `file:` URIs when parsing a Linux
+# `text/uri-list` clipboard payload (#1792). Platform-agnostic (used by the
+# unit-tested `host_clipboard::parse_uri_list`), pure Rust, no system libs; already
+# resolved transitively in this graph, so naming it directly adds no new locked
+# crate.
+percent-encoding = "2"
+
 # Host audio output for rdpsnd audio redirection (#1764). `rodio` (a maintained,
 # widely-used Rust audio library on top of `cpal`) opens the default output
 # device, resamples our advertised PCM to it, and queues decoded `wave` buffers
@@ -125,6 +132,30 @@ clipboard-files = "0.1.2"
 # sidecar graph, so it adds zero dependency-conflict risk to the main app (#1747).
 [target.'cfg(windows)'.dependencies]
 clipboard-win = "4.5"
+
+# Read the Linux clipboard's `text/uri-list` file list (#1792) — the Linux half
+# of the macOS/Windows readers above. Both crates hand `host_clipboard.rs` the raw
+# selection text, which its own [`parse_uri_list`] decodes, so the parse stays
+# unit-testable off Linux (a live X11/Wayland clipboard cannot be read in headless
+# CI).
+#
+# Chosen over the `gtk`-based `clipboard-files` Linux path deliberately: GTK
+# clipboard reads require the process main thread and a running GTK main loop,
+# which a headless sidecar called from a tokio worker cannot promise. These two
+# are window-less, thread-agnostic blocking clients and, crucially, add **no
+# system-library build dependency** — `x11-clipboard` is pure Rust over `x11rb`
+# (no `libxcb`), and `wl-clipboard-rs` with `dlopen` loads `libwayland` at runtime
+# (no link-time `libwayland-dev`), so the bundle CI's existing ubuntu packages
+# suffice.
+#
+# Gated to **Linux only**: they link nothing on other platforms and must never
+# enter the macOS/Windows sidecar graph. This lives in the workspace-EXCLUDED
+# sidecar graph, so it adds zero dependency-conflict risk to the main app (#1747).
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-clipboard = "0.9"
+wl-clipboard-rs = { version = "0.8", default-features = false, features = [
+    "dlopen",
+] }
 
 [dev-dependencies]
 # Temp directories back the drive-redirection filesystem tests (#1757), which
