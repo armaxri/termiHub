@@ -30,8 +30,19 @@
 //! (risking "chipmunk" audio — e.g. playing 22.05 kHz data at 44.1 kHz). The fork
 //! passes the concrete [`AudioFormat`] to [`wave`](RdpsndClientHandler::wave), so
 //! each buffer is decoded and played at its **own** channel count and sample rate;
-//! [`rodio`] resamples to the device rate. Compressed formats (ADPCM/Opus) remain
-//! a follow-up — see #1773.
+//! [`rodio`] resamples to the device rate.
+//!
+//! ## Scope: compressed formats (#1812)
+//!
+//! Besides the advertised PCM table the handler also accepts a server's
+//! **MS-ADPCM** (`WAVE_FORMAT_ADPCM`) and **IMA/DVI ADPCM** (`WAVE_FORMAT_DVI_ADPCM`)
+//! formats and decodes them to PCM (via [`crate::adpcm`]) before the jitter buffer
+//! and sink. Because a server chooses a compressed format's block layout, these
+//! cannot be advertised by structural equality like PCM; the vendored fork's
+//! [`accepts_format`](RdpsndClientHandler::accepts_format) hook lets the handler
+//! accept them by codec and echoes the server's exact format back, so `wave` still
+//! receives concrete, decodable parameters. Opus (`WAVE_FORMAT_OPUS`) remains a
+//! follow-up — its decoders link the native `libopus` C library.
 //!
 //! ## Platforms
 //!
@@ -85,10 +96,42 @@ const MAX_LATENCY: Duration = Duration::from_millis(250);
 /// negotiation sound: the value the server negotiated travels with the samples,
 /// so nothing downstream can guess (and mis-guess) the rate.
 #[derive(Debug, Clone, PartialEq)]
-struct PcmBuffer {
+pub(crate) struct PcmBuffer {
     samples: Vec<i16>,
     channels: u16,
     sample_rate: u32,
+}
+
+impl PcmBuffer {
+    /// Build a decoded buffer from interleaved 16-bit samples and the playback
+    /// parameters they must be played at. Used by the compressed-format decoders
+    /// in [`crate::adpcm`], which produce PCM from a different module.
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    pub(crate) fn new(samples: Vec<i16>, channels: u16, sample_rate: u32) -> Self {
+        Self {
+            samples,
+            channels,
+            sample_rate,
+        }
+    }
+
+    /// The interleaved 16-bit samples. Used by the compressed-format decode tests.
+    #[cfg(test)]
+    pub(crate) fn samples(&self) -> &[i16] {
+        &self.samples
+    }
+
+    /// The channel count the samples must be played at.
+    #[cfg(test)]
+    pub(crate) fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    /// The sample rate (Hz) the samples must be played at.
+    #[cfg(test)]
+    pub(crate) fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
 }
 
 /// Build one PCM [`AudioFormat`]. Every field must match a format the server
@@ -125,19 +168,40 @@ fn advertised_formats() -> Vec<AudioFormat> {
 }
 
 /// Decode a `wave` payload into a [`PcmBuffer`] using the **negotiated**
-/// [`AudioFormat`] the server selected. Only 16-bit LE PCM is supported (every
-/// advertised format is such); any other format is rejected with `None` so an
-/// unexpected buffer is dropped rather than played at the wrong rate or width.
+/// [`AudioFormat`] the server selected, dispatching on the format tag: 16-bit LE
+/// PCM here, and the compressed codecs (MS-ADPCM / IMA-DVI ADPCM) via
+/// [`crate::adpcm`]. Any other format is rejected with `None` so an unexpected
+/// buffer is dropped rather than played at the wrong rate or width.
 ///
-/// The channel count and sample rate come straight from `format`, so the buffer
-/// is always played at exactly the rate it was negotiated at — this is the guard
-/// against "chipmunk" audio.
+/// Whatever the codec, the channel count and sample rate come straight from
+/// `format`, so the buffer is always played at exactly the rate it was negotiated
+/// at — this is the guard against "chipmunk" audio.
 fn decode_wave(format: &AudioFormat, data: &[u8]) -> Option<PcmBuffer> {
-    if format.format != WaveFormat::PCM || format.bits_per_sample != AUDIO_BITS_PER_SAMPLE {
+    match format.format {
+        WaveFormat::PCM => decode_pcm(format, data),
+        // Compressed formats are only advertised — and so only ever received —
+        // where the decoder (and audio sink) are compiled; on other targets they
+        // fall through to the rejection below.
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        WaveFormat::ADPCM | WaveFormat::DVI_ADPCM => crate::adpcm::decode(format, data),
+        _ => {
+            tracing::warn!(
+                ?format.format,
+                bits = format.bits_per_sample,
+                "rdpsnd: unsupported wave format, dropping buffer"
+            );
+            None
+        }
+    }
+}
+
+/// Decode a 16-bit LE PCM `wave` payload. Every advertised PCM format is 16-bit;
+/// a non-16-bit or zero-parameter format is rejected with `None`.
+fn decode_pcm(format: &AudioFormat, data: &[u8]) -> Option<PcmBuffer> {
+    if format.bits_per_sample != AUDIO_BITS_PER_SAMPLE {
         tracing::warn!(
-            ?format.format,
             bits = format.bits_per_sample,
-            "rdpsnd: unsupported wave format, dropping buffer"
+            "rdpsnd: unsupported PCM bit depth, dropping buffer"
         );
         return None;
     }
@@ -335,6 +399,25 @@ impl Default for RdpAudioBackend {
 impl RdpsndClientHandler for RdpAudioBackend {
     fn get_formats(&self) -> &[AudioFormat] {
         &self.formats
+    }
+
+    /// Accept a server-advertised format we can play: the exact PCM table entries
+    /// (matched by the vendored fork's default `contains` check) plus any
+    /// compressed format whose codec [`crate::adpcm`] can decode, at whatever block
+    /// layout the server chose. The fork echoes accepted formats back verbatim, so
+    /// [`wave`](Self::wave) always receives concrete, decodable parameters — we
+    /// never advertise a compressed format we would then have to drop.
+    fn accepts_format(&self, format: &AudioFormat) -> bool {
+        if self.formats.contains(format) {
+            return true;
+        }
+        // A compressed format is accepted only where the decoder is compiled; on
+        // other targets no formats are advertised at all, so this is unreachable.
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+        let compressed = crate::adpcm::can_decode(format);
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+        let compressed = false;
+        compressed
     }
 
     fn wave(&mut self, format: &AudioFormat, _ts: u32, data: Cow<'_, [u8]>) {
@@ -591,10 +674,11 @@ mod tests {
     #[test]
     fn decode_wave_rejects_unsupported_formats() {
         let bytes = [0x00, 0x01, 0x00, 0x02];
-        // Non-PCM (e.g. ADPCM tag) is dropped, not misplayed.
-        let mut adpcm = pcm_format(2, 44_100);
-        adpcm.format = WaveFormat::ADPCM;
-        assert!(decode_wave(&adpcm, &bytes).is_none());
+        // A codec we do not decode (e.g. µ-law) is dropped, not misplayed. (PCM and
+        // ADPCM are handled; the ADPCM decode path has its own tests in `adpcm`.)
+        let mut mulaw = pcm_format(2, 44_100);
+        mulaw.format = WaveFormat::MULAW;
+        assert!(decode_wave(&mulaw, &bytes).is_none());
         // 8-bit PCM is not advertised, so it is rejected rather than mis-decoded.
         let mut eight_bit = pcm_format(2, 44_100);
         eight_bit.bits_per_sample = 8;

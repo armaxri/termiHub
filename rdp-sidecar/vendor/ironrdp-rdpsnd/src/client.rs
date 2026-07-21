@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::collections::HashSet;
 
 use ironrdp_core::{Decode as _, EncodeResult, ReadCursor, cast_length, impl_as_any};
 use ironrdp_pdu::gcc::ChannelName;
@@ -16,6 +15,20 @@ pub trait RdpsndClientHandler: Send + core::fmt::Debug {
     }
 
     fn get_formats(&self) -> &[AudioFormat];
+
+    // termiHub vendored-fork change (#1812): whether the handler can play a
+    // server-advertised `format`. Compressed formats (ADPCM/Opus) are advertised
+    // by the server with a server-chosen block layout (`n_block_align`,
+    // `wSamplesPerBlock`, coefficient `data`) the client cannot predict, so the
+    // exact-equality intersection used for PCM in `client_formats()` can never
+    // select one. Overriding this lets a handler accept a server format by codec
+    // regardless of its block layout; `client_formats()` then echoes that exact
+    // `AudioFormat` back, so `wave` still receives concrete, decodable parameters.
+    // The default preserves the pre-#1812 exact-match behaviour (accept only what
+    // `get_formats()` advertises verbatim).
+    fn accepts_format(&self, format: &AudioFormat) -> bool {
+        self.get_formats().contains(format)
+    }
 
     // termiHub vendored-fork change (#1773): the handler receives the concrete
     // negotiated `AudioFormat` instead of a bare `format_no` index. See the note
@@ -108,15 +121,27 @@ impl Rdpsnd {
     pub fn client_formats(&mut self) -> PduResult<RdpsndSvcMessages> {
         // Windows seems to be confused if the client replies with more formats, or unknown formats (e.g.: opus).
         // We ensure to only send supported formats in common with the server.
-        let server_format: HashSet<_> = self
+        //
+        // termiHub vendored-fork change (#1773, extended #1812): iterate the
+        // server's advertised formats in order and keep the ones the handler
+        // accepts. PCM formats match by structural equality (the handler
+        // advertises a fixed table, so `accepts_format` defaults to a `contains`
+        // check); compressed formats (ADPCM) cannot be predicted — the server
+        // chooses the block layout — so a handler overriding `accepts_format`
+        // accepts them by codec and we echo the server's exact `AudioFormat` back,
+        // which is what gives `wave` concrete, decodable block parameters. This
+        // also makes the sent list deterministic (server order) where upstream's
+        // `HashSet` intersection was not.
+        let server_formats = self
             .server_format
             .as_ref()
             .ok_or_else(|| pdu_other_err!("invalid state - no server format"))?
             .formats
-            .iter()
+            .clone();
+        let formats: Vec<AudioFormat> = server_formats
+            .into_iter()
+            .filter(|format| self.handler.accepts_format(format))
             .collect();
-        let formats: HashSet<_> = self.handler.get_formats().iter().collect();
-        let formats: Vec<AudioFormat> = formats.intersection(&server_format).map(|&x| x.clone()).collect();
 
         // termiHub vendored-fork change (#1773): remember the exact list we send,
         // in the exact order it is encoded, so a later `Wave2 { format_no }` can be

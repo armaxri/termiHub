@@ -117,6 +117,24 @@ percent-encoding = "2"
 [target.'cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))'.dependencies]
 rodio = { version = "0.20", default-features = false }
 
+# Compressed rdpsnd audio decoding (#1812): MS-ADPCM (`WAVE_FORMAT_ADPCM`, 0x0002)
+# and IMA/DVI ADPCM (0x0011) `wave` payloads are decoded to 16-bit PCM before the
+# existing jitter buffer + rodio sink. Symphonia is a mature, widely-used, pure-Rust
+# multimedia library; its `adpcm` codec decodes both formats a Windows `rdpsnd`
+# server offers besides PCM. `default-features = false` keeps only the codec + core
+# (no format demuxers we do not use), and both crates are pure Rust with no system
+# libraries, so they add no C build dependency and are cleanly cross-platform.
+#
+# Target-gated to the same macOS/Windows/Linux set as `rodio`: ADPCM is only ever
+# decoded where the audio sink is compiled and formats are advertised, so gating it
+# alongside `rodio` keeps the decoder out of the no-op-sink builds. This lives in the
+# workspace-EXCLUDED sidecar graph, so it adds zero dependency-conflict risk to the
+# main app (#1747). Opus (`WAVE_FORMAT_OPUS`, 0x704F) is deferred — its maintained
+# bindings link the native `libopus` C library, a cross-platform CI cost tracked as a
+# follow-up.
+symphonia-core = { version = "0.5", default-features = false }
+symphonia-codec-adpcm = { version = "0.5", default-features = false }
+
 # Read the host OS clipboard's native file list to bridge it to CLIPRDR (#1779):
 # the sidecar runs on the host, so it can read what the user copied in their file
 # manager and serve those real files to the remote (`host_clipboard.rs`).
