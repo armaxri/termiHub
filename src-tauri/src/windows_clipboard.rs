@@ -52,7 +52,6 @@
 //! shared-folder download (#1765) remains the behaviour.
 
 use std::cell::RefCell;
-use std::ffi::c_void;
 use std::ptr;
 use std::sync::mpsc;
 use std::sync::OnceLock;
@@ -343,9 +342,13 @@ unsafe fn offer_delayed_hdrop(hwnd: HWND) {
 unsafe fn render_hdrop() {
     // Snapshot the context so we do not hold the RefCell borrow across the fetch.
     let Some((manager, session_id, indices)) = CURRENT.with(|slot| {
-        slot.borrow()
-            .as_ref()
-            .map(|ctx| (ctx.manager.clone(), ctx.session_id.clone(), ctx.indices.clone()))
+        slot.borrow().as_ref().map(|ctx| {
+            (
+                ctx.manager.clone(),
+                ctx.session_id.clone(),
+                ctx.indices.clone(),
+            )
+        })
     }) else {
         return;
     };
@@ -421,8 +424,7 @@ mod tests {
     fn parse_wide_hdrop(bytes: &[u8]) -> Vec<String> {
         const HEADER: usize = 20;
         assert!(bytes.len() >= HEADER);
-        let files_offset =
-            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        let files_offset = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
         let wide = u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) != 0;
         assert_eq!(files_offset, HEADER);
         assert!(wide, "build_cf_hdrop always emits wide paths");
