@@ -110,6 +110,7 @@ Not started yet — realistic and planned for the near to medium term.
 | [macro-recording.html](backlog/macro-recording.html)                                                       | Record and replay terminal input sequences                                                                                                                                                 |
 | [remote-desktop-sessions.html](backlog/remote-desktop-sessions.html)                                       | **Unified** graphical remote-desktop concept — VNC + RDP behind one shared user-facing layer (Rust-side decode); supersedes the standalone VNC/RDP concepts, now in `future/` (epic #1678) |
 | [release-planning-and-dependency-management.html](backlog/release-planning-and-dependency-management.html) | Structured release cadence, Dependabot, hotfix branching                                                                                                                                   |
+| [workflow-automation.html](backlog/workflow-automation.html)                                               | Authored multi-step workflows layered on macros — typed steps (send-command, run-script, run-macro, wait), manual/on-connect/hotkey triggers (#1826)                                       |
 
 ---
 

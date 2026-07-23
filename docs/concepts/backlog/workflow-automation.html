@@ -1,0 +1,923 @@
+<!doctype html>
+<!--
+  Single-file concept — Workflow Automation (docs/concepts/backlog/workflow-automation.html).
+  Prose + Mermaid + illustrative mockups (real mockup.css classes) + sync ledger.
+  Links only the shared ../_assets/. Never imports app code. See docs/concepts/README.md.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Workflow Automation (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Concept-specific mockup classes (the workflow editor dialog + step list). */
+      .menu__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border-primary);
+      }
+      .menu__body {
+        padding: 12px;
+      }
+      .menu__close {
+        background: none;
+        border: none;
+        color: var(--text-secondary);
+        cursor: pointer;
+        display: inline-flex;
+      }
+      .form-row {
+        margin-bottom: 12px;
+      }
+      .form-label {
+        display: block;
+        color: var(--text-secondary);
+        font-size: 12px;
+        margin: 4px 0;
+      }
+      .form-input {
+        width: 100%;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        color: var(--text-primary);
+        padding: 6px 8px;
+        font-family: var(--font-family);
+      }
+      .step-list {
+        list-style: none;
+        margin: 4px 0 8px;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .step-list__item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-sm);
+        padding: 6px 8px;
+      }
+      .step-list__grip {
+        color: var(--text-secondary);
+        cursor: grab;
+      }
+      .step-list__label {
+        color: var(--text-accent);
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      .step-list__detail {
+        color: var(--text-secondary);
+        margin-left: auto;
+        font-size: 12px;
+      }
+      .chip-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      .chip {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-lg);
+        color: var(--text-secondary);
+        font-size: 12px;
+        padding: 3px 10px;
+      }
+      .chip--active {
+        background: var(--accent-color);
+        border-color: var(--accent-color);
+        color: var(--text-on-accent, #fff);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Only the symbols used below. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-workflow" viewBox="0 0 24 24">
+        <rect x="3" y="3" width="8" height="8" rx="2" />
+        <path d="M7 11v4a2 2 0 0 0 2 2h4" />
+        <rect x="13" y="13" width="8" height="8" rx="2" />
+      </symbol>
+      <symbol id="i-play" viewBox="0 0 24 24">
+        <polygon points="6 3 20 12 6 21 6 3" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <polyline points="4 17 10 11 4 5" />
+        <line x1="12" y1="19" x2="20" y2="19" />
+      </symbol>
+      <symbol id="i-file-code" viewBox="0 0 24 24">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <path d="M14 2v6h6" />
+        <path d="m9 13-2 2 2 2" />
+        <path d="m13 13 2 2-2 2" />
+      </symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <polyline points="12 6 12 12 16 14" />
+      </symbol>
+      <symbol id="i-zap" viewBox="0 0 24 24">
+        <path
+          d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"
+        />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-grip" viewBox="0 0 24 24">
+        <circle cx="9" cy="6" r="1" />
+        <circle cx="9" cy="12" r="1" />
+        <circle cx="9" cy="18" r="1" />
+        <circle cx="15" cy="6" r="1" />
+        <circle cx="15" cy="12" r="1" />
+        <circle cx="15" cy="18" r="1" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Workflow Automation</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/1826">#1826</a></span
+          >
+          <span
+            >Builds on macro epic
+            <a href="https://github.com/armaxri/termiHub/issues/1670">#1670</a></span
+          >
+          <span><code>docs/concepts/backlog/workflow-automation.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#relation">Relation to the macro system</a></li>
+          <li><a href="#model">Workflow model</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#open">Limitations &amp; Open Questions</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          termiHub already ships <strong>macros</strong> (epic
+          <a href="https://github.com/armaxri/termiHub/issues/1670">#1670</a>): a macro is a
+          <em>named, stored sequence of recorded terminal input</em> that is captured from the xterm
+          input stream and replayed byte-for-byte into a session with a chosen timing mode. Macros
+          are excellent for "type this again", but they are a single, opaque, record-and-replay
+          stream: they cannot mix in other actions, they cannot invoke a script, and they only ever
+          exist because a human recorded keystrokes.
+        </p>
+        <p>
+          The request in #1826 — verbatim,
+          <em
+            >"I would like to have something stronger than simple macros, with standard workflows to
+            trigger scripts"</em
+          >
+          — is a different, larger feature. A <strong>workflow</strong> is an <em>authored</em> (not
+          necessarily recorded), <strong>ordered list of heterogeneous steps</strong> that can send
+          commands, run scripts, replay an existing macro, and pause between steps, optionally
+          launched automatically by a <strong>trigger</strong> (manual, on-connect, or hotkey).
+          Where a macro answers "replay what I typed", a workflow answers "run this standard
+          procedure against this session."
+        </p>
+        <p>
+          This is a substantial subsystem (a step model, an execution engine, a step editor, a
+          trigger registry, and a script-invocation seam with real security implications). Per the
+          repo's AI-driven concept workflow it is captured here as a design-first concept
+          <strong>for maintainer review before any implementation</strong>, rather than being
+          force-fit into the macro epic.
+        </p>
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            A <strong>workflow</strong> = an ordered list of typed steps a user can add, remove, and
+            reorder — <em>authored</em> in an editor, independent of raw macro capture.
+          </li>
+          <li>
+            Steps go <strong>beyond replaying keystrokes</strong>: send a command line, run a saved
+            script (a sequence of commands) into the session, replay an existing macro, or wait.
+          </li>
+          <li>
+            A workflow can be <strong>triggered</strong> manually (palette / sidebar / button),
+            <strong>on connect</strong> (when a session for a given connection opens), or by a
+            <strong>hotkey</strong>.
+          </li>
+          <li>
+            Reuse the shipped macro plumbing: the same <code>send_input</code> injection seam, the
+            same JSON-file storage pattern, the same sidebar/dialog UI idioms, the same
+            palette/keybinding trigger surfaces.
+          </li>
+          <li>
+            Run against the currently active terminal with a
+            <strong>visible progress and cancel affordance</strong>, exactly as macro playback does
+            today.
+          </li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            <strong>A general branching/scripting language.</strong> Workflows are linear ordered
+            steps in v1. Conditionals, loops, and output-driven <em>expect/send</em> branching are
+            explicitly deferred (see Open Questions).
+          </li>
+          <li>
+            <strong>Time-based scheduling / cron.</strong> Triggers in v1 are manual, on-connect,
+            and hotkey only — not "run at 03:00".
+          </li>
+          <li>
+            <strong>Broadcast to many terminals at once.</strong> That depends on the
+            broadcast-input plumbing (concept <code>broadcast-input.html</code>, #516) and is
+            additive later.
+          </li>
+          <li>
+            <strong>Parameterization / template variables</strong> (<code>{{hostname}}</code>
+            prompts) — a meaningful design surface deferred from #1670; noted here as a natural
+            future extension, not built in v1.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Relation to macros ─────────────────────────────────────── -->
+      <section>
+        <h2 id="relation">Relation to the macro system <a class="anchor" href="#relation">#</a></h2>
+        <p>
+          Workflows are a <strong>layer on top of</strong> macros, not a replacement. The shipped
+          macro system (<code>src-tauri/src/macros/</code>,
+          <code>src/components/MacroSidebar/</code>, <code>src/services/macroPlayback.ts</code>)
+          already provides the two hard seams a workflow engine needs, so the engine largely
+          orchestrates existing pieces:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Concern</th>
+                <th>Shipped macro seam reused by workflows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Inject text into a session</td>
+                <td>
+                  <code>TerminalRegistry.sendInputToTerminal</code> →
+                  <code>send_input</code> command → <code>SessionManager::send_input</code>
+                  (line-ending normalization included). Every workflow step that sends anything goes
+                  through this one choke point — the same one macro playback uses.
+                </td>
+              </tr>
+              <tr>
+                <td>Step scheduling with delays + cancel</td>
+                <td>
+                  <code>macroPlayback.ts</code> already schedules an ordered list of
+                  <code>{ data, delayMs }</code> steps with timing modes, a max-delay clamp,
+                  progress hooks, and cancellation. The workflow runner generalises this to a list
+                  of <em>typed</em> steps.
+                </td>
+              </tr>
+              <tr>
+                <td>Persist user data</td>
+                <td>
+                  <code>macros/storage.rs</code> (<code>resolve_config_dir()</code> + a versioned
+                  JSON store) is mirrored for <code>workflows.json</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>Manager UI + trigger surfaces</td>
+                <td>
+                  <code>MacroSidebar</code> / <code>MacroEditorDialog</code> are the direct analog
+                  for <code>WorkflowSidebar</code> / <code>WorkflowEditorDialog</code>; the command
+                  palette (<code>services/commands.ts</code>) and keybinding registry
+                  (<code>services/keybindings.ts</code>) are the same trigger surfaces.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The key new idea a workflow adds is the <strong>run-macro step</strong> and the
+          <strong>run-script step</strong>: a macro becomes one possible step <em>inside</em> a
+          workflow, and a workflow can additionally carry authored command/script steps that were
+          never recorded. This makes the shipped record/replay macro the primitive, and the workflow
+          the composition over it.
+        </p>
+      </section>
+
+      <!-- ── Workflow model ─────────────────────────────────────────── -->
+      <section>
+        <h2 id="model">Workflow model <a class="anchor" href="#model">#</a></h2>
+        <p>
+          A <code>Workflow</code> mirrors the shipped <code>Macro</code> shape (id, name,
+          description, tags, timestamps) but replaces the homogeneous <code>MacroStep[]</code> with
+          a list of <strong>discriminated step types</strong> and adds a list of
+          <strong>triggers</strong>.
+        </p>
+
+        <h3>Step types (v1)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Step type</th>
+                <th>What it does</th>
+                <th>Executes via</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>send-command</code></td>
+                <td>
+                  Sends a single authored command line into the active session (with a trailing
+                  newline). The everyday building block — "run <code>git status</code>".
+                </td>
+                <td><code>send_input</code> seam</td>
+              </tr>
+              <tr>
+                <td><code>run-script</code></td>
+                <td>
+                  Sends a saved multi-line <strong>script</strong> (an authored sequence of
+                  commands) into the session, line by line, with an optional per-line delay. This is
+                  the core of "trigger scripts": the script's <em>text</em> is streamed into the
+                  remote shell — it is not executed locally. Optionally the script body can be
+                  referenced from an on-disk file.
+                </td>
+                <td><code>send_input</code> seam</td>
+              </tr>
+              <tr>
+                <td><code>run-macro</code></td>
+                <td>
+                  Replays an existing stored macro by id — reuses the macro's own timing mode.
+                </td>
+                <td><code>macroPlayback.ts</code></td>
+              </tr>
+              <tr>
+                <td><code>wait</code></td>
+                <td>Pauses for a fixed number of milliseconds before the next step.</td>
+                <td>scheduler timer</td>
+              </tr>
+              <tr>
+                <td><code>run-local-process</code> <span class="callout">guarded</span></td>
+                <td>
+                  Spawns a <strong>local</strong> helper process/script (not on the remote host),
+                  reusing the app's existing local-process spawning. Security-sensitive; gated
+                  behind an explicit opt-in setting and a confirm-on-first-run — see Open Questions.
+                  May be deferred past v1.
+                </td>
+                <td>local process spawn</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mockup-note">
+          "Trigger scripts" is deliberately answered two ways: the safe, terminal-native path (<code
+            >run-script</code
+          >
+          streams command text into the session over the same seam macros already use, so it works
+          on any remote host) and the heavier local path (<code>run-local-process</code>, guarded).
+          v1 should ship the first; the second wants a maintainer decision on the security model
+          first.
+        </div>
+
+        <h3>Triggers (v1)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Trigger</th>
+                <th>Fires when</th>
+                <th>Binding surface</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>manual</code></td>
+                <td>User runs it from the palette, the Workflow sidebar, or a toolbar button.</td>
+                <td>always available</td>
+              </tr>
+              <tr>
+                <td><code>on-connect</code></td>
+                <td>
+                  A session opens for a connection the trigger is bound to (e.g. "on every
+                  <code>prod-web-1</code> connect, run the login-banner workflow").
+                </td>
+                <td>session lifecycle → per-connection binding</td>
+              </tr>
+              <tr>
+                <td><code>hotkey</code></td>
+                <td>A user-assigned keybinding is pressed while a session is focused.</td>
+                <td>keybinding registry</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Illustrative schema (TypeScript sketch)</h3>
+        <pre><code>type WorkflowStep =
+  | { kind: "send-command"; command: string }
+  | { kind: "run-script"; script: string; perLineDelayMs?: number; sourcePath?: string }
+  | { kind: "run-macro"; macroId: string }
+  | { kind: "wait"; delayMs: number }
+  | { kind: "run-local-process"; program: string; args: string[] }; // guarded
+
+type WorkflowTrigger =
+  | { kind: "manual" }
+  | { kind: "on-connect"; connectionIds: string[] }
+  | { kind: "hotkey"; binding: string };
+
+interface Workflow {
+  id: string;
+  name: string;
+  description?: string;
+  tags: string[];
+  steps: WorkflowStep[];        // ordered; add / remove / reorder in the editor
+  triggers: WorkflowTrigger[];
+  createdAt: string;            // RFC 3339
+  updatedAt: string;
+}</code></pre>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          Two surfaces, both direct analogs of the shipped macro UI: a
+          <strong>Workflow sidebar</strong> (browse / search / run / edit / delete, mirroring
+          <code>MacroSidebar</code>) and a <strong>Workflow editor</strong> dialog with an ordered,
+          reorderable step list and a trigger section (mirroring <code>MacroEditorDialog</code>).
+          The mockups below are illustrative — screenshot fidelity is deferred until the design is
+          approved.
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — Workflow sidebar</h3>
+          <div class="mockup-note">
+            An activity-bar panel listing saved workflows; each row runs against the active session.
+          </div>
+          <div class="app" style="height: 320px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </button>
+                  <button class="activity-bar__item activity-bar__item--active" title="Workflows">
+                    <svg class="li"><use href="#i-workflow" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">Workflows</span></div>
+                <div class="sidebar__content">
+                  <div class="connection-tree__item connection-tree__item--selected">
+                    <svg class="li"><use href="#i-play" /></svg> Prod login &amp; health check
+                  </div>
+                  <div class="connection-tree__item">
+                    <svg class="li"><use href="#i-play" /></svg> Deploy release
+                  </div>
+                  <div class="connection-tree__item">
+                    <svg class="li"><use href="#i-play" /></svg> Collect diagnostics
+                  </div>
+                  <div class="connection-tree__item">
+                    <svg class="li"><use href="#i-zap" /></svg> Banner (on-connect · prod-*)
+                  </div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="terminal">
+                      <span class="prompt">deploy@prod-web-1 $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item"
+                  >Running "Prod login &amp; health check" · step 2/5</span
+                >
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li><span class="callout">A</span> Workflows activity-bar icon (new).</li>
+              <li>
+                <span class="callout">B</span> A run row;
+                <svg class="li"><use href="#i-zap" /></svg> marks an on-connect-triggered workflow.
+              </li>
+              <li>
+                <span class="callout">C</span> Status bar shows live progress + a cancel affordance
+                (as macro playback does).
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — Workflow editor</h3>
+          <div class="mockup-note">
+            The step list is add/remove/reorder (grip handle = drag); the "Add step" menu offers the
+            typed steps; a Triggers section binds manual / on-connect / hotkey.
+          </div>
+          <div class="menu" style="max-width: 560px">
+            <div class="menu__header">
+              <span class="menu__title">Edit Workflow — Prod login &amp; health check</span>
+              <button class="menu__close" title="Close">
+                <svg class="li"><use href="#i-x" /></svg>
+              </button>
+            </div>
+            <div class="menu__body">
+              <div class="form-row">
+                <label class="form-label">Name</label>
+                <input class="form-input" value="Prod login &amp; health check" />
+              </div>
+
+              <div class="form-label">Steps</div>
+              <ul class="step-list">
+                <li class="step-list__item">
+                  <svg class="li step-list__grip"><use href="#i-grip" /></svg>
+                  <svg class="li"><use href="#i-terminal" /></svg>
+                  <span class="step-list__label">send-command</span>
+                  <code class="step-list__detail">sudo -v</code>
+                </li>
+                <li class="step-list__item">
+                  <svg class="li step-list__grip"><use href="#i-grip" /></svg>
+                  <svg class="li"><use href="#i-file-code" /></svg>
+                  <span class="step-list__label">run-script</span>
+                  <code class="step-list__detail">health-check.sh (12 lines)</code>
+                </li>
+                <li class="step-list__item">
+                  <svg class="li step-list__grip"><use href="#i-grip" /></svg>
+                  <svg class="li"><use href="#i-clock" /></svg>
+                  <span class="step-list__label">wait</span>
+                  <code class="step-list__detail">500 ms</code>
+                </li>
+                <li class="step-list__item">
+                  <svg class="li step-list__grip"><use href="#i-grip" /></svg>
+                  <svg class="li"><use href="#i-play" /></svg>
+                  <span class="step-list__label">run-macro</span>
+                  <code class="step-list__detail">tail app log</code>
+                </li>
+              </ul>
+              <button class="btn">
+                <svg class="li"><use href="#i-plus" /></svg> Add step…
+              </button>
+
+              <div class="form-label" style="margin-top: 12px">Triggers</div>
+              <div class="chip-row">
+                <span class="chip chip--active">Manual</span>
+                <span class="chip">On connect: prod-web-1, prod-web-2</span>
+                <span class="chip">Hotkey: Ctrl+Alt+H</span>
+              </div>
+            </div>
+            <div class="menu__footer">
+              <button class="btn">Cancel</button>
+              <button class="btn btn--primary">Save</button>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Each row is one typed step; the grip reorders, the
+                icon shows the kind.
+              </li>
+              <li>
+                <span class="callout">B</span> "Add step…" opens the typed-step menu (send-command /
+                run-script / run-macro / wait / run-local-process).
+              </li>
+              <li>
+                <span class="callout">C</span> Triggers bind how the workflow launches — chips
+                toggle each trigger kind.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <h3>Running a workflow</h3>
+        <p>
+          A workflow always runs against a <strong>target session</strong> — the active terminal, as
+          with macro playback. The runner walks the ordered steps, dispatching each by kind through
+          the appropriate seam, honouring inter-step and per-line delays (clamped by the same
+          <code>MAX_STEP_DELAY_MS</code> guard macros use). Progress is surfaced in the status bar
+          ("step 2/5"), and a single <strong>cancel</strong> stops the run between steps and aborts
+          the in-flight step's remaining injections.
+        </p>
+        <h3>On-connect triggers</h3>
+        <p>
+          When a session finishes opening, the runner checks for workflows whose
+          <code>on-connect</code> trigger names that connection and runs them against the fresh
+          session. This is the "standard workflow" case: log in, set the prompt, tail a log — every
+          time you connect to that host. Guard rails: on-connect workflows only fire for interactive
+          shell sessions, run at most once per session open, and are individually toggleable so a
+          failing workflow can be disabled without deleting it.
+        </p>
+        <h3>Script invocation, safely</h3>
+        <p>
+          The primary <code>run-script</code> path
+          <strong>streams command text into the session</strong> over the existing
+          <code>send_input</code> seam — it is exactly as privileged as the user typing those
+          commands, runs on whatever host the session is on, and needs no new local execution
+          capability. The heavier <code>run-local-process</code> step (spawning a local helper) is
+          genuinely different: it executes code on the user's machine. It is therefore gated behind
+          an explicit opt-in and a confirm-on-first-use, and may ship after v1. See Open Questions.
+        </p>
+        <h3>Editing vs recording</h3>
+        <p>
+          Workflows are <strong>authored</strong>, not recorded. The editor's step list is the
+          source of truth: users add typed steps, paste or reference scripts, drop in an existing
+          macro, and reorder freely. A convenience path — "promote a macro to a workflow" — seeds a
+          new workflow with a single <code>run-macro</code> step so users can grow a recorded macro
+          into a richer procedure.
+        </p>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+        <div class="diagram">
+          <span class="diagram__caption">Workflow run lifecycle</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Running: run (manual / trigger)
+    Running --> Running: next step
+    Running --> Cancelled: user cancels
+    Running --> Failed: step errors (stop-on-error)
+    Running --> Completed: last step done
+    Completed --> Idle
+    Cancelled --> Idle
+    Failed --> Idle
+          </pre>
+        </div>
+        <div class="diagram">
+          <span class="diagram__caption">On-connect trigger dispatch</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant S as SessionManager
+    participant WR as WorkflowRunner
+    participant T as Terminal (send_input)
+    U->>S: open connection prod-web-1
+    S-->>WR: session opened (connectionId)
+    WR->>WR: match on-connect triggers
+    WR->>T: step 1 send-command "sudo -v"
+    WR->>T: step 2 run-script health-check.sh (line by line)
+    WR->>WR: step 3 wait 500ms
+    WR->>T: step 4 run-macro "tail app log"
+    WR-->>U: status bar: completed 4/4
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the architecture at concept-creation time (post-#1670). The engine deliberately
+          mirrors the shipped macro module so most seams already exist. This is a
+          <strong>sequenced sub-epic</strong>, not one PR — the modules below share
+          <code>appStore.ts</code>, a new backend module, and the session-open path, so they land in
+          order (foundation → runner → editor UI → triggers → script step) to avoid merge
+          collisions, exactly as #1670's children were sequenced.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src-tauri/src/workflows/{mod,config,storage,manager}.rs</code></td>
+                <td>
+                  <strong>New</strong> — workflow model + versioned
+                  <code>workflows.json</code> store, mirroring <code>src-tauri/src/macros/</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/commands/workflows.rs</code></td>
+                <td>
+                  <strong>New</strong> — CRUD Tauri commands (list / save / delete / import /
+                  export), mirroring <code>commands/macros.rs</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/lib.rs</code></td>
+                <td>
+                  <strong>Edit</strong> — register the workflow module + command handlers (as
+                  <code>macros.json</code> is wired today).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/types/workflow.ts</code></td>
+                <td>
+                  <strong>New</strong> — <code>Workflow</code>, discriminated
+                  <code>WorkflowStep</code>, <code>WorkflowTrigger</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/services/workflowApi.ts</code></td>
+                <td>
+                  <strong>New</strong> — thin wrapper over the Tauri commands (mirrors
+                  <code>macroApi.ts</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/services/workflowRunner.ts</code></td>
+                <td>
+                  <strong>New</strong> — the step scheduler; generalises
+                  <code>macroPlayback.ts</code> to typed steps, dispatching
+                  <code>run-macro</code> back into the macro playback service and
+                  <code>send-command</code>/<code>run-script</code> into the
+                  <code>send_input</code> injector.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/store/appStore.ts</code></td>
+                <td>
+                  <strong>Edit</strong> — workflow slice (CRUD, run/cancel actions, progress),
+                  alongside the macro slice.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/WorkflowSidebar/*</code></td>
+                <td>
+                  <strong>New</strong> — sidebar list + editor dialog with the reorderable
+                  typed-step list, mirroring <code>MacroSidebar/</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/services/commands.ts</code>, <code>src/services/keybindings.ts</code>
+                </td>
+                <td>
+                  <strong>Edit</strong> — palette entries + a "run workflow" / hotkey-trigger action
+                  surface (as <code>toggle-macro-recording</code> is wired).
+                </td>
+              </tr>
+              <tr>
+                <td>session-open path (session lifecycle)</td>
+                <td>
+                  <strong>Edit</strong> — emit a "session opened" signal carrying the connection id
+                  so the runner can match <code>on-connect</code> triggers.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/commands/…</code> (local process)</td>
+                <td>
+                  <strong>New, guarded</strong> — only if <code>run-local-process</code> ships: a
+                  spawn command reusing existing local-process infrastructure, behind an opt-in
+                  setting.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Limitations & Open Questions ───────────────────────────── -->
+      <section>
+        <h2 id="open">Limitations &amp; Open Questions <a class="anchor" href="#open">#</a></h2>
+        <ul>
+          <li>
+            <strong>Local script execution security model.</strong> Does v1 include
+            <code>run-local-process</code> at all, or ship send-into-terminal only? If included:
+            what gates it (global opt-in setting? per-workflow confirm? allowlist of programs?), and
+            how is an imported workflow that carries a <code>run-local-process</code> step surfaced
+            to the user before it can run?
+            <em
+              >Recommend: v1 = terminal-native only; treat local process spawning as a separate,
+              later, guarded issue.</em
+            >
+          </li>
+          <li>
+            <strong>Failure handling.</strong> A sent command can "fail" without the app knowing,
+            because there is no output inspection in v1 (see below). "Stop-on-error" is therefore
+            best-effort (injection failures only). Should a step be able to declare a "continue on
+            error" flag?
+          </li>
+          <li>
+            <strong>Output-driven expect/send.</strong> True conditional workflows ("wait until the
+            prompt returns, then send X") require reading session output — a large capability
+            deferred from #1670. Explicitly out of scope for v1; a natural follow-up epic.
+          </li>
+          <li>
+            <strong>Parameterization.</strong> Template variables (<code>{{hostname}}</code>,
+            prompt-on-run) would make workflows reusable across hosts. Deferred from #1670; would
+            slot cleanly into the step model later.
+          </li>
+          <li>
+            <strong>Broadcast.</strong> Running a workflow against several sessions at once waits on
+            broadcast-input (#516); the <code>send_input</code> seam is deliberately shared so this
+            is additive.
+          </li>
+          <li>
+            <strong>Scheduling.</strong> Time/cron triggers are out of scope; on-connect covers the
+            most-requested automatic case.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept &lt;name&gt;</code>. Records the last commit at which
+            the concept and code were reconciled, plus open divergences. The concept is the source
+            of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Workflow engine, storage, editor, and triggers per this concept</td>
+                <td>Not implemented — only the macro record/replay system (#1670) exists</td>
+                <td>Missing</td>
+                <td>
+                  Await maintainer review of this concept, then implement as a sequenced sub-epic
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
