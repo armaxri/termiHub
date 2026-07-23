@@ -33,6 +33,7 @@ vi.mock("@xterm/xterm", () => {
     });
     writeln = vi.fn();
     scrollToBottom = mockScrollToBottom;
+    refresh = vi.fn();
     scrollLines = vi.fn();
     selectAll = vi.fn();
     hasSelection = vi.fn(() => false);
