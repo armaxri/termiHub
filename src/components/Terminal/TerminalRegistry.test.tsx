@@ -33,6 +33,9 @@ function createMockXterm(selection?: string): XTerm {
     write: vi.fn((_data: unknown, cb?: () => void) => cb?.()),
     clear: vi.fn(),
     scrollToBottom: vi.fn(),
+    refresh: vi.fn(),
+    cols: 80,
+    rows: 24,
     buffer: {
       active: {
         length: 1,
@@ -370,6 +373,53 @@ describe("pasteToTerminal", () => {
 
     expect(sendInput).toHaveBeenCalledTimes(1);
     expect(sendInput).toHaveBeenCalledWith("session-dup", "hello");
+  });
+});
+
+describe("fitTerminal", () => {
+  let rafSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    // Run the queued animation-frame callback synchronously so the post-fit
+    // scroll + refresh can be asserted without waiting for a real frame.
+    rafSpy = vi.spyOn(globalThis, "requestAnimationFrame").mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+  });
+
+  afterEach(() => {
+    rafSpy.mockRestore();
+  });
+
+  it("does nothing when no terminal is registered for the tabId", () => {
+    // Should not throw
+    act(() => {
+      registryActions.fitTerminal("nonexistent");
+    });
+  });
+
+  it("fits the addon and forces a full viewport repaint so reparented content shows", () => {
+    // Regression for #1823: zooming a tab reparents the terminal element into the
+    // overlay. fitAddon.fit() is a no-op when the new container yields the same
+    // cols/rows, so without an explicit refresh the renderer keeps stale/blank
+    // rows until the user scrolls. fitTerminal must fit AND refresh every row.
+    const xterm = createMockXterm();
+    const fitAddon = createMockFitAddon();
+    const el = document.createElement("div");
+
+    act(() => {
+      registryActions.register("tab-fit", el, xterm, fitAddon);
+    });
+
+    act(() => {
+      registryActions.fitTerminal("tab-fit");
+    });
+
+    expect(fitAddon.fit).toHaveBeenCalled();
+    expect(xterm.scrollToBottom).toHaveBeenCalled();
+    // 80×24 mock → refresh the full 0..rows-1 range.
+    expect(xterm.refresh).toHaveBeenCalledWith(0, 23);
   });
 });
 
