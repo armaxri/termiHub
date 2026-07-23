@@ -1035,13 +1035,43 @@ pub(crate) fn try_load_external_file(
     })
 }
 
+/// Read and parse an external connection store from disk.
+///
+/// A **missing** file or an **empty / whitespace-only** file is treated as a fresh,
+/// empty store, so writing to a brand-new external file works (see #1821). A file
+/// that genuinely exists with malformed, non-empty content still returns a clear
+/// "Failed to parse external file" error so a corrupt file is never silently
+/// overwritten.
+fn read_external_store(file_path: &str) -> Result<ExternalConnectionStore> {
+    let data = match std::fs::read_to_string(file_path) {
+        Ok(data) => data,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(empty_external_store()),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("Failed to read external file: {}", file_path));
+        }
+    };
+
+    if data.trim().is_empty() {
+        return Ok(empty_external_store());
+    }
+
+    serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse external file: {}", file_path))
+}
+
+/// A fresh, empty external connection store using the current on-disk format.
+fn empty_external_store() -> ExternalConnectionStore {
+    ExternalConnectionStore {
+        name: None,
+        version: "2".to_string(),
+        children: Vec::new(),
+    }
+}
+
 /// Save or update a single connection in an external file (by name+folder path).
 fn save_or_update_in_external_file(file_path: &str, connection: SavedConnection) -> Result<()> {
-    let data = std::fs::read_to_string(file_path)
-        .with_context(|| format!("Failed to read external file: {}", file_path))?;
-
-    let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
-        .with_context(|| format!("Failed to parse external file: {}", file_path))?;
+    let mut ext_store = read_external_store(file_path)?;
 
     // Flatten, update, rebuild
     let (mut conns, folders) = flatten_tree(&ext_store.children, None);
@@ -1431,6 +1461,63 @@ mod tests {
         assert!(
             conn.config.settings.get("password").is_none(),
             "Password should be stripped"
+        );
+    }
+
+    #[test]
+    fn save_to_nonexistent_external_file_creates_valid_file() {
+        // Regression for #1821: saving a connection to a brand-new (not-yet-existing)
+        // external file must succeed rather than failing with a parse error.
+        let store = crate::credential::NullStore;
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("brand_new.json");
+        let path_str = file_path.to_str().unwrap();
+        assert!(!file_path.exists());
+
+        let conn = make_local_conn("Local");
+        save_or_update_in_external_file(path_str, conn).unwrap();
+
+        // The file was created and parses back into one connection.
+        assert!(file_path.exists());
+        let main_folders: HashSet<&str> = HashSet::new();
+        let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
+        assert!(source.error.is_none());
+        assert_eq!(source.connections.len(), 1);
+    }
+
+    #[test]
+    fn save_to_empty_external_file_creates_valid_file() {
+        // Regression for #1821: an existing but empty (or whitespace-only) external
+        // file must be treated as a fresh store, not a parse error.
+        let store = crate::credential::NullStore;
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("empty.json");
+        let path_str = file_path.to_str().unwrap();
+        std::fs::write(path_str, "   \n").unwrap();
+
+        let conn = make_local_conn("Local");
+        save_or_update_in_external_file(path_str, conn).unwrap();
+
+        let main_folders: HashSet<&str> = HashSet::new();
+        let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
+        assert!(source.error.is_none());
+        assert_eq!(source.connections.len(), 1);
+    }
+
+    #[test]
+    fn save_to_malformed_external_file_still_errors() {
+        // A file that genuinely exists with malformed, non-empty content must still
+        // surface a clear parse error rather than being silently overwritten.
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("corrupt.json");
+        let path_str = file_path.to_str().unwrap();
+        std::fs::write(path_str, "{ this is not valid json ").unwrap();
+
+        let conn = make_local_conn("Local");
+        let err = save_or_update_in_external_file(path_str, conn).unwrap_err();
+        assert!(
+            err.to_string().contains("Failed to parse external file"),
+            "expected parse error, got: {err}"
         );
     }
 
