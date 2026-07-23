@@ -168,6 +168,21 @@ import {
   type MacroInjector,
   type MacroPlaybackHandle,
 } from "@/services/macroPlayback";
+import { Workflow } from "@/types/workflow";
+import {
+  listWorkflows as apiListWorkflows,
+  saveWorkflow as apiSaveWorkflow,
+  deleteWorkflow as apiDeleteWorkflow,
+} from "@/services/workflowApi";
+import {
+  parseWorkflowEnvelope,
+  resolveImportCollisions as resolveWorkflowImportCollisions,
+} from "@/services/workflowIo";
+import {
+  runWorkflow as runWorkflowSteps,
+  type WorkflowSendSeam,
+  type WorkflowRunHandle,
+} from "@/services/workflowRunner";
 import {
   saveLastSession as apiSaveLastSession,
   loadLastSession as apiLoadLastSession,
@@ -1231,6 +1246,36 @@ interface AppState {
   /** Cancel the in-flight macro playback, if any. Idempotent. */
   cancelMacroPlayback: () => void;
 
+  // Workflows (#1852) — the foundation of the Workflow Automation epic (#1851).
+  /** All stored workflows. */
+  workflows: Workflow[];
+  /** Load the workflow library from the backend into the store. */
+  loadWorkflows: () => Promise<void>;
+  /** Save (add or update) a workflow, then refresh the list. Returns the stored workflow. */
+  saveWorkflowToBackend: (workflow: Workflow) => Promise<Workflow>;
+  /** Delete a workflow by ID; only mutates local state after the backend delete resolves. */
+  deleteWorkflowFromBackend: (workflowId: string) => Promise<void>;
+  /**
+   * Import workflows from an exported-workflow file's JSON, merging them into the
+   * library. Malformed/incompatible files reject with a clear error and leave
+   * the library untouched; imported workflows get fresh ids and de-duplicated
+   * names. Returns the number imported.
+   */
+  importWorkflows: (json: string) => Promise<number>;
+  /** Metadata for the in-flight workflow run, or `null` when nothing is running. */
+  workflowRun: WorkflowRunState | null;
+  /**
+   * Run a stored workflow's steps against a target terminal, dispatching each
+   * step through the shared `send_input` seam and surfacing live progress.
+   * Defaults the target to the active terminal tab. Only one run happens at a
+   * time — a fresh call cancels any in-flight run first. Surfaces a recoverable
+   * toast when the workflow is missing/empty, the target terminal is not
+   * connected, or a step fails.
+   */
+  runWorkflow: (workflowId: string, opts?: RunWorkflowOptions) => Promise<void>;
+  /** Cancel the in-flight workflow run, if any. Idempotent. */
+  cancelWorkflowRun: () => void;
+
   // Workspaces
   workspaces: WorkspaceSummary[];
   activeWorkspaceName: string | null;
@@ -1350,6 +1395,42 @@ function generateMacroId(): string {
     return `macro-${c.randomUUID()}`;
   }
   return `macro-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** UI-facing metadata describing an in-flight workflow run (#1852). */
+export interface WorkflowRunState {
+  /** The workflow being run. */
+  workflowId: string;
+  /** The workflow's name, for the progress indicator. */
+  workflowName: string;
+  /** The terminal tab the workflow is running against. */
+  tabId: string;
+  /** Total number of steps in the workflow. */
+  total: number;
+  /** Steps completed so far. */
+  completed: number;
+}
+
+/** Options for {@link AppState.runWorkflow}. */
+export interface RunWorkflowOptions {
+  /** Tab to run against; defaults to the active terminal tab. */
+  targetTabId?: string;
+}
+
+/**
+ * Handle for the currently-running workflow, held at module scope so
+ * {@link AppState.cancelWorkflowRun} can stop it without threading the handle
+ * through store state (it is not serializable). `null` when nothing is running.
+ */
+let activeWorkflowRun: WorkflowRunHandle | null = null;
+
+/** Generate a unique workflow id, falling back when `crypto.randomUUID` is absent. */
+function generateWorkflowId(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === "function") {
+    return `workflow-${c.randomUUID()}`;
+  }
+  return `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -3375,6 +3456,8 @@ export const useAppStore = create<AppState>((set, get) => {
       get().loadWorkspaces();
       // Load macros
       get().loadMacros();
+      // Load workflows
+      get().loadWorkflows();
       // Load app mode (portable vs. installed) for status bar and settings display
       await get().loadAppMode();
       // Load credential store status (dialog opens on-demand when credentials are needed)
@@ -5840,6 +5923,159 @@ export const useAppStore = create<AppState>((set, get) => {
     cancelMacroPlayback: () => {
       if (activeMacroPlayback) {
         activeMacroPlayback.cancel();
+      }
+    },
+
+    // Workflows (#1852)
+    workflows: [],
+
+    loadWorkflows: async () => {
+      try {
+        const workflows = await apiListWorkflows();
+        set({ workflows });
+      } catch (err) {
+        console.error("Failed to load workflows:", err);
+      }
+    },
+
+    saveWorkflowToBackend: async (workflow) => {
+      const saved = await apiSaveWorkflow(workflow);
+      await get().loadWorkflows();
+      return saved;
+    },
+
+    deleteWorkflowFromBackend: async (workflowId) => {
+      await apiDeleteWorkflow(workflowId);
+      set((state) => ({
+        workflows: state.workflows.filter((w) => w.id !== workflowId),
+      }));
+    },
+
+    importWorkflows: async (json) => {
+      // parseWorkflowEnvelope throws on a malformed/incompatible file; let the
+      // error propagate so the caller can surface a recoverable toast.
+      const parsed = parseWorkflowEnvelope(json);
+      const prepared = resolveWorkflowImportCollisions(parsed, get().workflows, generateWorkflowId);
+      for (const workflow of prepared) {
+        await apiSaveWorkflow(workflow);
+      }
+      // Refresh once, after all saves, rather than per-workflow.
+      await get().loadWorkflows();
+      return prepared.length;
+    },
+
+    workflowRun: null,
+
+    runWorkflow: async (workflowId, opts) => {
+      const state = get();
+      const workflow = state.workflows.find((w) => w.id === workflowId);
+      if (!workflow) {
+        toast.error("Workflow not found");
+        return;
+      }
+
+      const targetTabId = opts?.targetTabId ?? getActiveTab(state)?.id ?? null;
+      if (!targetTabId) {
+        toast.error("No active terminal to run the workflow against");
+        return;
+      }
+
+      // Guard: only run against a connected, non-exited terminal session.
+      const tab = collectLiveTabs(state).find((t) => t.id === targetTabId);
+      if (
+        !tab ||
+        tab.contentType !== "terminal" ||
+        !tab.sessionId ||
+        state.terminalExitedTabs[targetTabId]
+      ) {
+        toast.error("The target terminal is not connected");
+        return;
+      }
+
+      if (workflow.steps.length === 0) {
+        toast.info(`Workflow "${workflow.name}" has no steps to run`);
+        return;
+      }
+
+      // Only one run at a time — cancel any in-flight run first.
+      if (activeWorkflowRun) {
+        activeWorkflowRun.cancel();
+        activeWorkflowRun = null;
+      }
+
+      // The workflow runner reuses the macro `send_input` injector seam, bound to
+      // the target tab, so send-based steps route through the single choke point.
+      const injector = getTerminalInputInjector();
+      const send: WorkflowSendSeam = (data) => {
+        if (!injector) return false;
+        return injector(targetTabId, data);
+      };
+
+      const toastId = `workflow-run-${workflowId}-${targetTabId}`;
+      const total = workflow.steps.length;
+      toast.loading(`Running workflow "${workflow.name}"…`, {
+        id: toastId,
+        description: `0 / ${total} steps`,
+      });
+      set({
+        workflowRun: {
+          workflowId,
+          workflowName: workflow.name,
+          tabId: targetTabId,
+          total,
+          completed: 0,
+        },
+      });
+
+      const handle = runWorkflowSteps(
+        workflow.steps,
+        { send },
+        {
+          onProgress: (completed, stepTotal) => {
+            set((s) =>
+              s.workflowRun &&
+              s.workflowRun.workflowId === workflowId &&
+              s.workflowRun.tabId === targetTabId
+                ? { workflowRun: { ...s.workflowRun, completed } }
+                : {}
+            );
+            toast.loading(`Running workflow "${workflow.name}"…`, {
+              id: toastId,
+              description: `${completed} / ${stepTotal} steps`,
+            });
+          },
+        }
+      );
+      activeWorkflowRun = handle;
+
+      const result = await handle.done;
+
+      // Only clear shared state when this run is still the current one — a newer
+      // runWorkflow may have replaced it while this one was cancelled.
+      if (activeWorkflowRun === handle) {
+        activeWorkflowRun = null;
+        set({ workflowRun: null });
+      }
+
+      if (result.status === "completed") {
+        toast.success(`Ran workflow "${workflow.name}"`, { id: toastId });
+      } else if (result.status === "cancelled") {
+        toast.info(`Workflow "${workflow.name}" cancelled`, {
+          id: toastId,
+          description: `Stopped after ${result.stepsCompleted} of ${total} steps`,
+        });
+      } else {
+        const stepNumber = (result.failedStepIndex ?? result.stepsCompleted) + 1;
+        toast.error(`Workflow "${workflow.name}" failed at step ${stepNumber}`, {
+          id: toastId,
+          description: result.error,
+        });
+      }
+    },
+
+    cancelWorkflowRun: () => {
+      if (activeWorkflowRun) {
+        activeWorkflowRun.cancel();
       }
     },
 

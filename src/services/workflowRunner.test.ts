@@ -57,11 +57,8 @@ describe("executeStep", () => {
 
 describe("runWorkflow", () => {
   it("executes every send-command step in order", async () => {
-    const send = vi.fn(async () => true);
-    const handle = runWorkflow(
-      [sendCommand("a"), sendCommand("b"), sendCommand("c")],
-      deps(send)
-    );
+    const send = vi.fn(async (_data: string) => true);
+    const handle = runWorkflow([sendCommand("a"), sendCommand("b"), sendCommand("c")], deps(send));
     const result = await handle.done;
 
     expect(result).toEqual({ status: "completed", stepsCompleted: 3 });
@@ -139,10 +136,7 @@ describe("runWorkflow", () => {
       .fn<(data: string) => Promise<boolean>>()
       .mockResolvedValueOnce(true)
       .mockResolvedValueOnce(false);
-    const handle = runWorkflow(
-      [sendCommand("a"), sendCommand("b"), sendCommand("c")],
-      deps(send)
-    );
+    const handle = runWorkflow([sendCommand("a"), sendCommand("b"), sendCommand("c")], deps(send));
     const result = await handle.done;
 
     expect(result.status).toBe("failed");
@@ -154,10 +148,7 @@ describe("runWorkflow", () => {
 
   it("fails at a not-yet-implemented step kind", async () => {
     const send = vi.fn(async () => true);
-    const handle = runWorkflow(
-      [sendCommand("a"), { kind: "wait", delayMs: 10 }],
-      deps(send)
-    );
+    const handle = runWorkflow([sendCommand("a"), { kind: "wait", delayMs: 10 }], deps(send));
     const result = await handle.done;
 
     expect(result.status).toBe("failed");

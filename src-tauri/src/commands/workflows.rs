@@ -6,9 +6,7 @@ use crate::workflows::manager::WorkflowManager;
 
 /// List all stored workflows.
 #[tauri::command]
-pub fn list_workflows(
-    manager: State<'_, WorkflowManager>,
-) -> Result<Vec<Workflow>, TerminalError> {
+pub fn list_workflows(manager: State<'_, WorkflowManager>) -> Result<Vec<Workflow>, TerminalError> {
     manager.list_workflows()
 }
 

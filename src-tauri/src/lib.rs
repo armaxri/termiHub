@@ -18,7 +18,6 @@ mod macros;
 mod network;
 mod session;
 mod spawn;
-mod workflows;
 mod terminal;
 mod tunnel;
 mod utils;
@@ -26,6 +25,7 @@ mod utils;
 /// into local apps with delayed rendering (`CF_HDROP`, #1814). Windows-only.
 #[cfg(windows)]
 mod windows_clipboard;
+mod workflows;
 mod workspace;
 
 use std::sync::{Arc, Mutex};

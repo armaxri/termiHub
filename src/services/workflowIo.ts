@@ -147,7 +147,10 @@ function validateTrigger(raw: unknown, where: string, triggerIndex: number): Wor
     case "manual":
       return { kind };
     case "on-connect":
-      if (!Array.isArray(raw.connectionIds) || raw.connectionIds.some((c) => typeof c !== "string")) {
+      if (
+        !Array.isArray(raw.connectionIds) ||
+        raw.connectionIds.some((c) => typeof c !== "string")
+      ) {
         throw new Error(`Invalid workflow file: ${at} (on-connect) has invalid "connectionIds".`);
       }
       return { kind, connectionIds: raw.connectionIds as string[] };
