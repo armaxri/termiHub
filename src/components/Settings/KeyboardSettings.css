@@ -94,12 +94,12 @@
 }
 
 .keyboard-settings__action-cell {
-  width: 45%;
+  width: 42%;
   color: var(--text-primary);
 }
 
 .keyboard-settings__binding-cell {
-  width: 45%;
+  width: 42%;
   cursor: pointer;
   padding: 2px var(--spacing-sm);
   border-radius: var(--radius-sm);
@@ -109,6 +109,11 @@
 
 .keyboard-settings__binding-cell:hover {
   background-color: var(--bg-hover);
+}
+
+.keyboard-settings__binding-cell--unbound {
+  color: var(--text-secondary);
+  font-style: italic;
 }
 
 .keyboard-settings__binding-cell--recording {
@@ -121,9 +126,14 @@
   background-color: var(--accent-color);
 }
 
-.keyboard-settings__reset-cell {
-  width: 10%;
-  text-align: center;
+.keyboard-settings__row-actions {
+  width: 16%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.keyboard-settings__row-actions > * + * {
+  margin-left: var(--spacing-xs);
 }
 
 .keyboard-settings__reset-btn {

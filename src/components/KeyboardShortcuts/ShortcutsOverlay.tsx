@@ -1,7 +1,12 @@
 import { useState, useMemo } from "react";
 import { Modal, Input } from "@/components/ui";
 import { ShortcutCategory, ShortcutScope } from "@/types/keybindings";
-import { getDefaultBindings, getEffectiveCombo, serializeBinding } from "@/services/keybindings";
+import {
+  getDefaultBindings,
+  getEffectiveCombo,
+  serializeBinding,
+  isUnboundCombo,
+} from "@/services/keybindings";
 import { isMac } from "@/utils/platform";
 import "./ShortcutsOverlay.css";
 
@@ -98,7 +103,11 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
                   : "Unbound";
                 const mac = binding.macDefault ? serializeBinding(binding.macDefault) : "Unbound";
                 const effective = getEffectiveCombo(binding.action);
-                const effectiveStr = effective ? serializeBinding(effective) : "";
+                const effectiveStr = isUnboundCombo(effective)
+                  ? "Unbound"
+                  : effective
+                    ? serializeBinding(effective)
+                    : "";
 
                 return (
                   <tr key={binding.action} data-testid={`shortcut-row-${binding.action}`}>
