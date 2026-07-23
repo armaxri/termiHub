@@ -5,7 +5,7 @@
  * mouse-event handlers for drag-to-resize handles between them.
  */
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 
 interface ResizeState {
   /** Index of the handle being dragged (between section i and i+1). */
@@ -119,5 +119,20 @@ export function useSectionResize(expandedCount: number): UseSectionResizeResult 
     [startResize]
   );
 
-  return { flexValues, handleProps, isResizing, sectionRefs };
+  // Normalise the returned array to always be exactly `expandedCount` long,
+  // defaulting any missing slot to an even `1`. `flexValues` state lags
+  // `expandedCount` for one render whenever the section count grows (the reset
+  // effect above runs only after that render): the desktop sidebar's Remote
+  // Agents sections appear after settings + agents load asynchronously, so
+  // without this guard a section reads `flexValues[i] === undefined` on that
+  // transient render and lays out as `flex: 0 1 auto` (size-to-content) instead
+  // of flex-filling its slot. On WebKit that mis-sized first paint sticks until
+  // a manual resize forces a reflow — the #1828 glitch. Deriving the value at
+  // render time keeps every paint correctly sized.
+  const normalizedFlexValues = useMemo(
+    () => Array.from({ length: expandedCount }, (_, i) => flexValues[i] ?? 1),
+    [flexValues, expandedCount]
+  );
+
+  return { flexValues: normalizedFlexValues, handleProps, isResizing, sectionRefs };
 }
