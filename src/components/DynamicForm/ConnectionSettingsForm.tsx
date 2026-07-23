@@ -127,6 +127,16 @@ export function ConnectionSettingsForm({
   // Reset the form when the connection type changes (schema groups differ).
   // isResetting suppresses the watch callback that reset fires synchronously,
   // preventing a spurious onChange call back to the parent on type switch.
+  //
+  // Every field key in the new schema is seeded to `undefined` before the new
+  // settings are layered on top. react-hook-form keeps a value cache keyed by
+  // field name (shouldUnregister defaults to false), so when two connection
+  // types share a field name (e.g. both local and SSH have a `shell` field) a
+  // bare `reset(settings)` that omits that key leaves the *previous* type's
+  // cached value in place — the local shell (`powershell` on Windows) then
+  // leaks into a new SSH connection's Advanced → Shell field and cannot be
+  // cleared (#1820). Explicitly clearing every current-schema key overrides the
+  // stale cache so absent keys reset to empty.
   const schemaKey = schema.groups.map((g) => g.key).join("|");
   const prevSchemaKey = useRef(schemaKey);
   const isResetting = useRef(false);
@@ -134,7 +144,18 @@ export function ConnectionSettingsForm({
     if (prevSchemaKey.current !== schemaKey) {
       prevSchemaKey.current = schemaKey;
       isResetting.current = true;
-      reset(settings);
+      const cleared: Record<string, unknown> = {};
+      for (const group of schema.groups) {
+        for (const field of group.fields) {
+          // Clear to `null`, not `undefined`: react-hook-form's `reset` ignores
+          // keys whose value is `undefined` and falls back to its per-name value
+          // cache, which is exactly what leaks the previous type's shared-name
+          // field (#1820). `null` is an explicit "empty" that overrides the cache
+          // and renders as blank in every widget (`value ?? ""`).
+          cleared[field.key] = null;
+        }
+      }
+      reset({ ...cleared, ...settings });
     }
     // Only trigger on schema change, not on every settings update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
