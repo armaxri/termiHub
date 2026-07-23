@@ -568,10 +568,19 @@ impl FtpConfig {
 
 impl ShellConfig {
     /// Return a copy with all `${VAR}` placeholders and `~` expanded.
+    ///
+    /// Environment-variable *values* are expanded too, so a configured value of
+    /// `${HOME}/bin` resolves against the launching process's environment. Keys
+    /// (variable names) are left verbatim.
     pub fn expand(mut self) -> Self {
         self.shell = self.shell.map(|s| expand_config_value(&s));
         self.starting_directory = self.starting_directory.map(|s| expand_config_value(&s));
         self.initial_command = self.initial_command.map(|s| expand_config_value(&s));
+        self.env = self
+            .env
+            .into_iter()
+            .map(|(k, v)| (k, expand_config_value(&v)))
+            .collect();
         self
     }
 }
@@ -1038,6 +1047,22 @@ mod tests {
         assert_eq!(back.cols, 100);
         assert_eq!(back.rows, 30);
         assert_eq!(back.env.get("FOO").unwrap(), "bar");
+    }
+
+    #[test]
+    fn shell_config_expand_expands_env_values() {
+        temp_env::with_var("TERMIHUB_TEST_ENV_HOME", Some("/opt/home"), || {
+            let cfg = ShellConfig {
+                env: HashMap::from([
+                    ("PATH_LIKE".into(), "${TERMIHUB_TEST_ENV_HOME}/bin".into()),
+                    ("LITERAL".into(), "plain".into()),
+                ]),
+                ..ShellConfig::default()
+            }
+            .expand();
+            assert_eq!(cfg.env.get("PATH_LIKE").unwrap(), "/opt/home/bin");
+            assert_eq!(cfg.env.get("LITERAL").unwrap(), "plain");
+        });
     }
 
     #[test]

@@ -5,6 +5,7 @@
 //! calls `portable_pty::native_pty_system()`; tests inject `MockLocalShellSpawner`
 //! which returns in-memory pipes and never forks a real process.
 
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -26,6 +27,29 @@ use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
 /// Channel capacity for output data from the PTY reader thread.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+
+/// Parse the `envVars` key-value list from connection settings into a map of
+/// environment variables to apply to the spawned shell.
+///
+/// Each entry is an object with `key`/`value` string fields (the shape produced
+/// by the [`FieldType::KeyValueList`](crate::connection::FieldType) form widget).
+/// Entries missing either field are skipped. On a duplicate key the last entry
+/// wins. Returns an empty map when the field is absent or not an array.
+fn parse_env_vars(settings: &serde_json::Value) -> HashMap<String, String> {
+    settings
+        .get("envVars")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let key = item.get("key").and_then(|v| v.as_str())?;
+                    let value = item.get("value").and_then(|v| v.as_str())?;
+                    Some((key.to_string(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 // ── NativeLocalShellSpawner ────────────────────────────────────────
 
@@ -323,8 +347,30 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         supports_tilde_expansion: false,
                         visible_when: None,
                     },
-                ],
-            }],
+                    ],
+                },
+                SettingsGroup {
+                    key: "environment".to_string(),
+                    label: "Environment".to_string(),
+                    fields: vec![SettingsField {
+                        key: "envVars".to_string(),
+                        label: "Environment Variables".to_string(),
+                        description: Some(
+                            "Extra environment variables for the spawned shell. \
+                             These override any inherited value of the same name."
+                                .to_string(),
+                        ),
+                        help_text: None,
+                        field_type: FieldType::KeyValueList,
+                        required: false,
+                        default: None,
+                        placeholder: None,
+                        supports_env_expansion: true,
+                        supports_tilde_expansion: false,
+                        visible_when: None,
+                    }],
+                },
+            ],
         }
     }
 
@@ -382,6 +428,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             .get("shellIntegration")
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
+        let env = parse_env_vars(&settings);
 
         // Resolve effective shell name for OSC 7 injection below.
         let effective_shell = shell
@@ -393,6 +440,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             shell: Some(effective_shell.clone()),
             starting_directory,
             initial_command,
+            env,
             ..ShellConfig::default()
         }
         .expand();
@@ -627,6 +675,8 @@ mod tests {
         killed: Arc<AtomicBool>,
         /// Dropping this sender signals EOF to the `ChannelReader`.
         reader_tx: Arc<Mutex<Option<std::sync::mpsc::SyncSender<Vec<u8>>>>>,
+        /// Captures the environment of the last spawned command.
+        captured_env: Arc<Mutex<Option<HashMap<String, String>>>>,
     }
 
     impl MockLocalShellSpawner {
@@ -637,6 +687,7 @@ mod tests {
                 resize_log: Arc::new(Mutex::new(Vec::new())),
                 killed: Arc::new(AtomicBool::new(false)),
                 reader_tx: Arc::new(Mutex::new(None)),
+                captured_env: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -649,10 +700,11 @@ mod tests {
     }
 
     impl LocalShellSpawner for MockLocalShellSpawner {
-        fn spawn(&self, _command: &ShellCommand) -> Result<SpawnedShell, SessionError> {
+        fn spawn(&self, command: &ShellCommand) -> Result<SpawnedShell, SessionError> {
             if self.should_fail {
                 return Err(SessionError::SpawnFailed("mock spawn failure".to_string()));
             }
+            *self.captured_env.lock().unwrap() = Some(command.env.clone());
             let write_log = self.write_log.clone();
             let resize_log = self.resize_log.clone();
             let killed = self.killed.clone();
@@ -914,6 +966,85 @@ mod tests {
             .expect("first connect");
         let result = shell.connect(valid_settings()).await;
         assert!(result.is_err(), "second connect should fail");
+
+        shell.disconnect().await.ok();
+    }
+
+    #[test]
+    fn parse_env_vars_reads_key_value_pairs() {
+        let settings = serde_json::json!({
+            "envVars": [
+                { "key": "FOO", "value": "bar" },
+                { "key": "BAZ", "value": "qux" },
+            ]
+        });
+        let env = parse_env_vars(&settings);
+        assert_eq!(env.len(), 2);
+        assert_eq!(env.get("FOO").map(String::as_str), Some("bar"));
+        assert_eq!(env.get("BAZ").map(String::as_str), Some("qux"));
+    }
+
+    #[test]
+    fn parse_env_vars_skips_incomplete_entries() {
+        let settings = serde_json::json!({
+            "envVars": [
+                { "key": "FOO", "value": "bar" },
+                { "key": "NO_VALUE" },
+                { "value": "orphan" },
+            ]
+        });
+        let env = parse_env_vars(&settings);
+        assert_eq!(env.len(), 1);
+        assert_eq!(env.get("FOO").map(String::as_str), Some("bar"));
+    }
+
+    #[test]
+    fn parse_env_vars_absent_field_is_empty() {
+        assert!(parse_env_vars(&serde_json::json!({})).is_empty());
+        assert!(parse_env_vars(&serde_json::json!({ "envVars": "nope" })).is_empty());
+    }
+
+    #[test]
+    fn schema_has_env_vars_key_value_field() {
+        let shell = LocalShell::new();
+        let schema = shell.settings_schema();
+        let field = schema
+            .groups
+            .iter()
+            .flat_map(|g| &g.fields)
+            .find(|f| f.key == "envVars")
+            .expect("envVars field present in schema");
+        assert!(matches!(field.field_type, FieldType::KeyValueList));
+    }
+
+    #[tokio::test]
+    async fn connect_applies_env_vars_to_spawned_command() {
+        let mock = MockLocalShellSpawner::new();
+        let captured_env = mock.captured_env.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        let shells = detect_available_shells();
+        let sh = shells.first().cloned().unwrap_or_else(|| "sh".to_string());
+        let settings = serde_json::json!({
+            "shell": sh,
+            "envVars": [
+                { "key": "TERMIHUB_CONN_VAR", "value": "connection-value" },
+            ],
+        });
+        shell.connect(settings).await.expect("connect");
+
+        let env = captured_env
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("spawn should have captured a command");
+        assert_eq!(
+            env.get("TERMIHUB_CONN_VAR").map(String::as_str),
+            Some("connection-value"),
+            "connection env var should reach the spawned process environment"
+        );
+        // Standard terminal vars remain alongside the custom one.
+        assert_eq!(env.get("TERM").map(String::as_str), Some("xterm-256color"));
 
         shell.disconnect().await.ok();
     }
