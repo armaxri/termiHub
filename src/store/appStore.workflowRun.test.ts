@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import type { Workflow, WorkflowStep } from "@/types/workflow";
+import type { Macro } from "@/types/macro";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -170,10 +171,41 @@ describe("appStore — workflow run slice (#1852)", () => {
     expect(toast.info).toHaveBeenCalled();
   });
 
+  it("runs run-script, wait, and run-macro steps end to end (#1853)", async () => {
+    seedConnectedTerminal();
+    const macro: Macro = {
+      id: "m1",
+      name: "tail log",
+      tags: [],
+      steps: [{ data: "tail -f app.log\n", delayMs: 0 }],
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    useAppStore.setState({
+      macros: [macro],
+      workflows: [
+        workflow("w1", [
+          { kind: "run-script", script: "line1\nline2" },
+          { kind: "wait", delayMs: 0 },
+          { kind: "run-macro", macroId: "m1" },
+        ]),
+      ],
+    });
+
+    await useAppStore.getState().runWorkflow("w1");
+
+    // run-script streams each line, then run-macro replays via the same injector.
+    expect(injected).toEqual(["line1\n", "line2\n", "tail -f app.log\n"]);
+    expect(useAppStore.getState().workflowRun).toBeNull();
+    expect(toast.success).toHaveBeenCalled();
+  });
+
   it("fails with a toast when a step kind is not yet implemented", async () => {
     seedConnectedTerminal();
     useAppStore.setState({
-      workflows: [workflow("w1", [cmd("a"), { kind: "wait", delayMs: 10 }])],
+      workflows: [
+        workflow("w1", [cmd("a"), { kind: "run-local-process", program: "x", args: [] }]),
+      ],
     });
 
     await useAppStore.getState().runWorkflow("w1");

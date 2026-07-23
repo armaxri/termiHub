@@ -103,6 +103,7 @@ import {
   closeTerminal as apiCloseTerminal,
   detachPersistentTab as apiDetachPersistentTab,
   saveShellIntegrationSettings,
+  localReadFile,
 } from "@/services/api";
 import type {
   ConnectionTypeInfo,
@@ -181,6 +182,7 @@ import {
 import {
   runWorkflow as runWorkflowSteps,
   type WorkflowSendSeam,
+  type WorkflowRunMacroSeam,
   type WorkflowRunHandle,
 } from "@/services/workflowRunner";
 import {
@@ -6004,11 +6006,25 @@ export const useAppStore = create<AppState>((set, get) => {
       }
 
       // The workflow runner reuses the macro `send_input` injector seam, bound to
-      // the target tab, so send-based steps route through the single choke point.
+      // the target tab, so send-based steps (send-command, run-script) route
+      // through the single choke point.
       const injector = getTerminalInputInjector();
       const send: WorkflowSendSeam = (data) => {
         if (!injector) return false;
         return injector(targetTabId, data);
+      };
+
+      // A `run-macro` step replays a stored macro by id through the macro-playback
+      // service, into the same target tab, reusing the macro's recorded timing.
+      const runMacro: WorkflowRunMacroSeam = async (macroId) => {
+        if (!injector) return false;
+        const macro = get().macros.find((m) => m.id === macroId);
+        if (!macro || macro.steps.length === 0) return false;
+        const macroHandle = runMacroPlayback(macro.steps, (data) => injector(targetTabId, data), {
+          timingMode: "real-time",
+        });
+        const macroResult = await macroHandle.done;
+        return macroResult.status === "completed";
       };
 
       const toastId = `workflow-run-${workflowId}-${targetTabId}`;
@@ -6029,7 +6045,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
       const handle = runWorkflowSteps(
         workflow.steps,
-        { send },
+        { send, runMacro, readScriptFile: localReadFile },
         {
           onProgress: (completed, stepTotal) => {
             set((s) =>
