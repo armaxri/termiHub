@@ -486,6 +486,39 @@ describe("TerminalConnectionOverlay — failed state", () => {
     expect(container.textContent).toContain("dialout");
   });
 
+  // Regression for #1830: the raw backend error embeds the same remediation
+  // (including the fix command) that the hint panel renders, so both the plain
+  // error text and the copyable CommandBlock showed the command — twice. The
+  // raw error box must drop the embedded remediation clause so the command and
+  // its guidance appear exactly once, in the hint panel.
+  it("does not duplicate the serial permission remediation command", () => {
+    const command = "sudo usermod -aG dialout $USER";
+    useAppStore.setState({
+      terminalSpawnErrors: {
+        [TAB_ID]: `Permission denied on 'COM7' — on Linux, add your user to the dialout group: ${command}`,
+      },
+    });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="serial"
+          isVisible={true}
+          sessionType="serial"
+        />
+      );
+    });
+    const text = container.textContent ?? "";
+    const commandOccurrences = text.split(command).length - 1;
+    expect(commandOccurrences).toBe(1);
+    // The raw failure reason is still shown once (with the port name).
+    expect(text).toContain("Permission denied on 'COM7'");
+    // The dialout guidance appears once, in the hint panel — not echoed by the
+    // raw error box.
+    expect(text.split("dialout group").length - 1).toBe(1);
+  });
+
   it("shows serial busy hint for serial sessionType", () => {
     useAppStore.setState({
       terminalSpawnErrors: { [TAB_ID]: "Serial port '/dev/ttyUSB0' is already in use" },
