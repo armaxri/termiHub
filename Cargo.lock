@@ -7541,6 +7541,7 @@ dependencies = [
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",
+ "percent-encoding",
  "portable-pty",
  "quick-xml",
  "rand 0.8.6",
@@ -7576,6 +7577,7 @@ dependencies = [
  "windows 0.58.0",
  "windows-sys 0.59.0",
  "winreg 0.55.0",
+ "x11rb",
  "zeroize",
  "zip",
 ]
