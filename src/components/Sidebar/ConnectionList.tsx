@@ -992,9 +992,14 @@ export function ConnectionList() {
   const LocalChevron = localCollapsed ? ChevronRight : ChevronDown;
   const RemoteAgentsChevron = remoteAgentsCollapsed ? ChevronRight : ChevronDown;
 
+  // The Remote Agents section only occupies a flex slot when it is both
+  // rendered (experimental) and expanded. Keying it on `experimental` alone
+  // (ignoring `remoteAgentsCollapsed`) left the collapsed wrapper flex-growing
+  // to fill the column, so its contents folded away but the empty space
+  // remained (#1822).
   const outerSectionsExpanded = useMemo(
-    () => [!localCollapsed, experimental] as boolean[],
-    [localCollapsed, experimental]
+    () => [!localCollapsed, experimental && !remoteAgentsCollapsed] as boolean[],
+    [localCollapsed, experimental, remoteAgentsCollapsed]
   );
   const { map: outerExpandedIndexMap, count: outerExpandedCount } = useMemo(
     () => buildExpandedIndexMap(outerSectionsExpanded),
@@ -1062,6 +1067,7 @@ export function ConnectionList() {
             <button
               className="connection-list__group-toggle"
               onClick={() => setLocalCollapsed((v) => !v)}
+              aria-expanded={!localCollapsed}
               data-testid="connection-list-group-toggle"
             >
               <LocalChevron size={16} className="connection-tree__chevron" />
@@ -1186,6 +1192,7 @@ export function ConnectionList() {
                 <button
                   className="connection-list__group-toggle"
                   onClick={() => setRemoteAgentsCollapsed((v) => !v)}
+                  aria-expanded={!remoteAgentsCollapsed}
                   data-testid="connection-list-remote-agents-toggle"
                 >
                   <RemoteAgentsChevron size={16} className="connection-tree__chevron" />
