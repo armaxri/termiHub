@@ -1035,13 +1035,43 @@ pub(crate) fn try_load_external_file(
     })
 }
 
+/// Read and parse an external connection store from disk.
+///
+/// A **missing** file or an **empty / whitespace-only** file is treated as a fresh,
+/// empty store, so writing to a brand-new external file works (see #1821). A file
+/// that genuinely exists with malformed, non-empty content still returns a clear
+/// "Failed to parse external file" error so a corrupt file is never silently
+/// overwritten.
+fn read_external_store(file_path: &str) -> Result<ExternalConnectionStore> {
+    let data = match std::fs::read_to_string(file_path) {
+        Ok(data) => data,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(empty_external_store()),
+        Err(err) => {
+            return Err(err)
+                .with_context(|| format!("Failed to read external file: {}", file_path));
+        }
+    };
+
+    if data.trim().is_empty() {
+        return Ok(empty_external_store());
+    }
+
+    serde_json::from_str(&data)
+        .with_context(|| format!("Failed to parse external file: {}", file_path))
+}
+
+/// A fresh, empty external connection store using the current on-disk format.
+fn empty_external_store() -> ExternalConnectionStore {
+    ExternalConnectionStore {
+        name: None,
+        version: "2".to_string(),
+        children: Vec::new(),
+    }
+}
+
 /// Save or update a single connection in an external file (by name+folder path).
 fn save_or_update_in_external_file(file_path: &str, connection: SavedConnection) -> Result<()> {
-    let data = std::fs::read_to_string(file_path)
-        .with_context(|| format!("Failed to read external file: {}", file_path))?;
-
-    let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
-        .with_context(|| format!("Failed to parse external file: {}", file_path))?;
+    let mut ext_store = read_external_store(file_path)?;
 
     // Flatten, update, rebuild
     let (mut conns, folders) = flatten_tree(&ext_store.children, None);
