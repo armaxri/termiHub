@@ -1,32 +1,37 @@
 /**
- * Workflow run engine (#1852) — the foundation of the Workflow Automation epic
- * (#1851).
+ * Workflow run engine — the foundation (#1852) of the Workflow Automation epic
+ * (#1851), extended with the remaining v1 terminal-native step types (#1853).
  *
  * Generalises the macro playback scheduler ({@link "@/services/macroPlayback"})
  * from a homogeneous list of recorded input chunks to an ordered list of *typed*
  * {@link WorkflowStep}s. The runner walks the steps in order, dispatching each by
- * `kind` through an **injectable send seam** so it is fully unit-testable with a
- * mock and no live terminal — exactly the `inject` seam macro playback uses.
+ * `kind` through **injectable seams** so it is fully unit-testable with mocks and
+ * no live terminal — exactly the `inject` seam macro playback uses.
  *
  * Run lifecycle (per the concept's state machine): a run is created in an
  * implicit *pending* state, transitions to *running* as it walks the steps, and
  * ends in exactly one terminal state — **completed** (last step done),
- * **cancelled** (the caller cancelled between steps), or **failed** (a step's
+ * **cancelled** (the caller cancelled between steps, or a multi-line step
+ * observed the cancel and aborted its remaining sends), or **failed** (a step's
  * seam reported failure, or the step kind is not yet executable). Cancellation is
- * honoured between steps: a step already in flight finishes, then the run stops
- * before the next step begins.
+ * honoured between steps; the multi-line `run-script` step additionally checks it
+ * at each line boundary, so a cancel aborts its remaining line injections.
  *
- * Only the `send-command` step executes in this foundation PR. The remaining v1
- * step kinds (`run-script`, `run-macro`, `wait`, `run-local-process`) are
- * clearly-marked dispatch placeholders that fail loudly until their owning child
- * issues wire them up:
- *  - #1853 — `run-script`, `run-macro`, `wait` (the latter reuses
- *    `macroPlayback.MAX_STEP_DELAY_MS` to clamp its delay).
- *  - #1857 — `run-local-process` (guarded, security-critical).
- * Later children extend the runner by adding their seam to
- * {@link WorkflowRunnerDeps} and replacing the placeholder in {@link executeStep}.
+ * Executable step kinds and the seam each routes through:
+ *  - `send-command` / `run-script` — the `send_input` seam ({@link WorkflowRunnerDeps.send}).
+ *  - `run-macro` — the macro-playback replay seam ({@link WorkflowRunnerDeps.runMacro}).
+ *  - `wait` / `run-script` inter-line delays — the timer seam
+ *    ({@link WorkflowRunnerDeps.wait}), with every delay clamped to
+ *    {@link "@/services/macroPlayback".MAX_STEP_DELAY_MS} exactly as macro
+ *    playback clamps its own delays.
+ *
+ * The only remaining placeholder is `run-local-process` (guarded,
+ * security-critical), wired by #1857; it fails loudly until then. Later children
+ * extend the runner by adding their seam to {@link WorkflowRunnerDeps} and
+ * replacing the placeholder in {@link executeStep}.
  */
 
+import { MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
 import type { WorkflowStep } from "@/types/workflow";
 
 /** Terminal outcome of a workflow run (the state machine's end states). */
@@ -52,14 +57,47 @@ export interface WorkflowRunResult {
 export type WorkflowSendSeam = (data: string) => Promise<boolean> | boolean;
 
 /**
+ * Replays a stored macro by id via the macro-playback service, reusing the
+ * macro's own timing mode. Resolves `true` when the macro replayed to
+ * completion, `false` when it was missing, empty, or the target session vanished.
+ */
+export type WorkflowRunMacroSeam = (macroId: string) => Promise<boolean> | boolean;
+
+/**
+ * Sleeps for `ms` milliseconds before resolving — the scheduler timer both the
+ * `wait` step and the `run-script` inter-line delay route through. Injectable so
+ * tests can assert the (already clamped) delay without real time passing.
+ */
+export type WorkflowWaitSeam = (ms: number) => Promise<void> | void;
+
+/**
+ * Reads a script body from an on-disk path (the `run-script` `sourcePath`
+ * affordance). Resolves the file's UTF-8 contents; rejects when it cannot be
+ * read, in which case the runner falls back to the step's embedded `script`.
+ */
+export type WorkflowReadFileSeam = (path: string) => Promise<string>;
+
+/**
  * Injectable dependencies the runner dispatches steps through. `send` is the only
- * seam the foundation requires; later children add optional seams here (e.g. a
- * macro-playback runner for `run-macro`, a guarded local-process spawner for
- * `run-local-process`) alongside their dispatch handler in {@link executeStep}.
+ * required seam; the rest back a specific step kind and are optional so a step
+ * kind that never appears needs no seam (and isolated unit tests can inject just
+ * what they exercise). A step whose seam is absent fails loudly at that step.
  */
 export interface WorkflowRunnerDeps {
   /** Injects text into the target session (the `send_input` seam). */
   send: WorkflowSendSeam;
+  /** Replays a stored macro by id (the `run-macro` seam). */
+  runMacro?: WorkflowRunMacroSeam;
+  /** Sleeps for a (clamped) number of ms (the `wait` / inter-line-delay seam). */
+  wait?: WorkflowWaitSeam;
+  /** Reads a script body from disk (the `run-script` `sourcePath` seam). */
+  readScriptFile?: WorkflowReadFileSeam;
+}
+
+/** A poll the runner threads into a step so long/multi-part steps can abort. */
+export interface WorkflowStepSignal {
+  /** `true` once the owning run has been cancelled. */
+  isCancelled: () => boolean;
 }
 
 /** Optional lifecycle hooks fired as a run advances. */
@@ -76,21 +114,67 @@ export interface WorkflowRunHandle {
   cancel: () => void;
 }
 
-/** Outcome of executing a single step. */
-type StepOutcome = { ok: true } | { ok: false; error: string };
+/**
+ * Outcome of executing a single step. `cancelled` marks a multi-part step (i.e.
+ * `run-script`) that observed the cancel and aborted mid-flight — the run ends
+ * `cancelled` without counting that step as completed.
+ */
+type StepOutcome = { ok: true; cancelled?: boolean } | { ok: false; error: string };
 
-/** Line terminator appended to an authored `send-command`; the `send_input` seam
- * normalises it to the session's configured line ending. */
-const COMMAND_TERMINATOR = "\n";
+/** Line terminator appended to each sent line; the `send_input` seam normalises
+ * it to the session's configured line ending. */
+const LINE_TERMINATOR = "\n";
+
+/** Error surfaced when a session vanishes mid-send. */
+const SESSION_GONE = "the target terminal is no longer connected";
 
 /**
- * Error message for a step kind that is defined in the model but not yet
- * executable in the foundation. Surfacing it as a step failure (rather than a
- * silent skip) means a workflow authored with a not-yet-wired step fails loudly
- * at that step until the owning child issue implements it.
+ * Clamp a caller-authored delay to `[0, MAX_STEP_DELAY_MS]` (and treat a
+ * non-finite value as 0), matching the guard macro playback applies so a single
+ * `wait` or per-line delay can never appear to hang the run for minutes.
  */
-function notYetImplemented(kind: WorkflowStep["kind"]): StepOutcome {
-  return { ok: false, error: `workflow step kind "${kind}" is not yet implemented` };
+function clampDelay(ms: number | undefined): number {
+  if (ms === undefined || !Number.isFinite(ms)) return 0;
+  return Math.max(0, Math.min(ms, MAX_STEP_DELAY_MS));
+}
+
+/** Default timer seam: a real `setTimeout` sleep (no-op for non-positive ms). */
+function defaultWait(ms: number): Promise<void> {
+  return ms <= 0 ? Promise.resolve() : new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Sleep for `ms` through the injected timer seam, or the real timer by default. */
+async function sleepFor(ms: number, deps: WorkflowRunnerDeps): Promise<void> {
+  await (deps.wait ?? defaultWait)(ms);
+}
+
+/**
+ * Split a script body into the lines to stream. Newlines of any flavour split
+ * lines; a single trailing empty line produced by a terminating newline is
+ * dropped so `"a\nb\n"` streams two commands, not two plus a blank enter.
+ * Interior blank lines are preserved.
+ */
+function splitScriptLines(script: string): string[] {
+  const lines = script.split(/\r\n|\r|\n/);
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+/**
+ * Resolve a `run-script` step's body: read it fresh from `sourcePath` when both
+ * the path and a read seam are present, falling back to the step's embedded
+ * `script` when there is no path/seam or the read fails.
+ */
+async function resolveScriptBody(
+  step: Extract<WorkflowStep, { kind: "run-script" }>,
+  deps: WorkflowRunnerDeps
+): Promise<string> {
+  if (!step.sourcePath || !deps.readScriptFile) return step.script;
+  try {
+    return await deps.readScriptFile(step.sourcePath);
+  } catch {
+    return step.script;
+  }
 }
 
 /**
@@ -98,24 +182,53 @@ function notYetImplemented(kind: WorkflowStep["kind"]): StepOutcome {
  * exhaustive over the {@link WorkflowStep} union (the `never` default is a
  * compile-time guard), so adding a step kind to the model forces a matching
  * dispatch entry here.
+ *
+ * `signal` lets a long or multi-part step abort when the run is cancelled; it is
+ * optional so a step can be unit-tested in isolation without a run around it.
  */
 export async function executeStep(
   step: WorkflowStep,
-  deps: WorkflowRunnerDeps
+  deps: WorkflowRunnerDeps,
+  signal?: WorkflowStepSignal
 ): Promise<StepOutcome> {
+  const cancelled = (): boolean => signal?.isCancelled() ?? false;
+
   switch (step.kind) {
     case "send-command": {
-      const delivered = await deps.send(step.command + COMMAND_TERMINATOR);
-      return delivered
-        ? { ok: true }
-        : { ok: false, error: "the target terminal is no longer connected" };
+      const delivered = await deps.send(step.command + LINE_TERMINATOR);
+      return delivered ? { ok: true } : { ok: false, error: SESSION_GONE };
     }
-    // --- Placeholders wired by later epic children (see module docs). ---
-    case "run-script": // #1853
-    case "run-macro": // #1853
-    case "wait": // #1853
-    case "run-local-process": // #1857
-      return notYetImplemented(step.kind);
+    case "run-script": {
+      const lines = splitScriptLines(await resolveScriptBody(step, deps));
+      const perLineDelay = clampDelay(step.perLineDelayMs);
+      for (let i = 0; i < lines.length; i++) {
+        if (cancelled()) return { ok: true, cancelled: true };
+        if (i > 0 && perLineDelay > 0) await sleepFor(perLineDelay, deps);
+        if (cancelled()) return { ok: true, cancelled: true };
+        const delivered = await deps.send(lines[i] + LINE_TERMINATOR);
+        if (!delivered) return { ok: false, error: SESSION_GONE };
+      }
+      return { ok: true };
+    }
+    case "run-macro": {
+      if (!deps.runMacro) {
+        return { ok: false, error: 'the "run-macro" step requires a macro-playback seam' };
+      }
+      const replayed = await deps.runMacro(step.macroId);
+      return replayed
+        ? { ok: true }
+        : { ok: false, error: `macro "${step.macroId}" could not be replayed` };
+    }
+    case "wait": {
+      await sleepFor(clampDelay(step.delayMs), deps);
+      return { ok: true };
+    }
+    // --- Placeholder wired by a later epic child (see module docs). ---
+    case "run-local-process": // #1857 (guarded, security-critical)
+      return {
+        ok: false,
+        error: `workflow step kind "${step.kind}" is not yet implemented`,
+      };
     default: {
       // Exhaustiveness guard: a new step kind must add a case above.
       const _exhaustive: never = step;
@@ -129,10 +242,13 @@ export async function executeStep(
  * reporting progress. Returns a {@link WorkflowRunHandle} whose `done` promise
  * resolves once the run reaches a terminal state.
  *
- * Cancellation is checked before each step: a step already in flight finishes,
- * then the run stops before the next step begins (status `cancelled`). If a
- * step's seam reports failure — or the step kind is not yet executable — the run
- * stops immediately with status `failed` and records the offending step.
+ * Cancellation is checked before each step and again after it: a `send-command`,
+ * `run-macro`, or `wait` already in flight finishes and counts as completed,
+ * then the run stops before the next step begins (status `cancelled`). A
+ * `run-script` that observes the cancel between its lines aborts its remaining
+ * sends and is *not* counted as completed. If a step's seam reports failure — or
+ * the step kind is not yet executable — the run stops immediately with status
+ * `failed` and records the offending step.
  */
 export function runWorkflow(
   steps: WorkflowStep[],
@@ -145,6 +261,8 @@ export function runWorkflow(
     cancelled = true;
   };
 
+  const signal: WorkflowStepSignal = { isCancelled: () => cancelled };
+
   const done = (async (): Promise<WorkflowRunResult> => {
     // Yield once before the first step so a cancel() issued synchronously right
     // after this handle is returned lands before any step runs — a run cancelled
@@ -153,7 +271,7 @@ export function runWorkflow(
     for (let i = 0; i < steps.length; i++) {
       if (cancelled) return { status: "cancelled", stepsCompleted: i };
 
-      const outcome = await executeStep(steps[i], deps);
+      const outcome = await executeStep(steps[i], deps, signal);
       if (!outcome.ok) {
         return {
           status: "failed",
@@ -162,6 +280,9 @@ export function runWorkflow(
           error: outcome.error,
         };
       }
+      // A multi-part step that aborted mid-flight on cancel: end the run without
+      // counting it as completed and without firing its progress hook.
+      if (outcome.cancelled) return { status: "cancelled", stepsCompleted: i };
 
       hooks?.onProgress?.(i + 1, steps.length, steps[i]);
     }
