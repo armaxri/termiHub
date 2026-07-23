@@ -629,14 +629,30 @@ export function Terminal({
           // the old content height.  Defer to a RAF so the render pass
           // completes first and scrollToBottom() targets the correct
           // position.
-          const scrollAfterWrite = () => {
-            if (!userScrolledUpRef.current) {
-              requestAnimationFrame(() => xterm.scrollToBottom());
-            }
+          //
+          // The same RAF also forces a full-viewport repaint. xterm's DOM
+          // renderer only repaints rows it has marked dirty; during rapid
+          // scrolling output — e.g. Windows ConPTY redrawing a `git status`
+          // with many untracked files — WebView2/WebKit can leave rows painted
+          // at stale vertical positions, so a later prompt line appears spliced
+          // into earlier output until a resize forces a full re-render (#1849).
+          // Refreshing every visible row after each flush makes the paint
+          // deterministic without a manual resize, mirroring the #1823 fit+
+          // refresh fix. The range is bounded by the viewport height (the same
+          // rows a scroll already repaints), so it stays cheap on high-
+          // throughput output. Runs regardless of scroll position so stale rows
+          // are corrected even when the user has scrolled up.
+          const afterWrite = () => {
+            requestAnimationFrame(() => {
+              if (!userScrolledUpRef.current) {
+                xterm.scrollToBottom();
+              }
+              xterm.refresh(0, Math.max(0, xterm.rows - 1));
+            });
           };
 
           if (outputBuffer.length === 1) {
-            xterm.write(outputBuffer[0], scrollAfterWrite);
+            xterm.write(outputBuffer[0], afterWrite);
           } else {
             // Concatenate all buffered chunks into one write
             let totalLen = 0;
@@ -647,7 +663,7 @@ export function Terminal({
               merged.set(chunk, offset);
               offset += chunk.length;
             }
-            xterm.write(merged, scrollAfterWrite);
+            xterm.write(merged, afterWrite);
           }
           outputBuffer.length = 0;
         };

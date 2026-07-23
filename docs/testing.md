@@ -1257,6 +1257,35 @@ stays manual. See PR for #1823.
 5. Regression check: dragging the split-view splitter to resize a terminal must
    still reflow and repaint as before.
 
+### Terminal output stays in order under scrolling output (#1849)
+
+Verifies that command output paints top-to-bottom in buffer order, with no later
+prompt/command line spliced between an earlier command's output lines. The
+symptom (from image001.png) was a `git status` whose two trailing prompt lines
+were painted in the middle of the untracked-files list, clearing only after the
+tab was resized. The output-flush path forces a full-viewport `xterm.refresh`
+after each write (unit-tested in `Terminal.output-repaint.test.tsx`), but the
+underlying stale-row repaint is renderer/WebView specific — it was reported on
+**Windows local CMD (ConPTY)** — so this stays manual.
+
+Run on **Windows** against a **local CMD** session (the ConPTY path):
+
+1. Open a local CMD terminal tab and `cd` into a directory with **many untracked
+   files** in a fresh git repo (e.g. `git init` in a project folder), so a
+   `git status` produces a long "Untracked files:" list that scrolls the
+   viewport.
+2. Run `git status`, then immediately press Enter a couple of times to emit a
+   few bare prompt lines right after it.
+3. **Expected:** the untracked-files list renders as one contiguous block, and
+   the bare prompt lines appear **after** the whole `git status` output — never
+   spliced into the middle of the file list — **without** resizing the tab.
+4. Repeat a few times (the original glitch was intermittent) and try other
+   scrolling output (e.g. `dir /s`, `type` of a large file). Rows must always
+   stay in order.
+5. Regression check: resizing the tab/window and high-throughput output
+   (e.g. a large file dump) must still render and scroll normally with no
+   visible slowdown.
+
 ### Connections sidebar renders fully on first paint (#1828)
 
 Verifies that the Connections sidebar lays out completely on launch, with no
