@@ -133,6 +133,19 @@ windows = { version = "0.58", features = [
     "Win32_System_Console",
     "Win32_Foundation",
 ] }
+# Low-level Win32 for the remote-clipboard delayed-render binding (#1814): a
+# message-only owner window that offers CF_HDROP with a NULL handle and renders
+# the file list on WM_RENDERFORMAT. windows-sys (already used by `termihub-core`)
+# gives the raw clipboard / window / message-loop APIs with predictable C-style
+# signatures. Windows-only — the module is `#[cfg(windows)]` and `cargo tree -i`
+# clean off Windows.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_UI_WindowsAndMessaging",
+] }
 # Windows Credential Manager backend for the `keyring` crate.
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
 # VcXsrv acquisition (X server provisioning): download + extract. Windows-only —

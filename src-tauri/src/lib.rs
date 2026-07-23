@@ -16,6 +16,10 @@ mod macos_clipboard;
 mod macos_services;
 mod macros;
 mod network;
+/// Native Windows clipboard binding for pasting remote-copied RDP clipboard files
+/// into local apps with delayed rendering (`CF_HDROP`, #1814). Windows-only.
+#[cfg(windows)]
+mod windows_clipboard;
 mod session;
 mod spawn;
 mod terminal;
