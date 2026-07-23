@@ -10,6 +10,7 @@ vi.mock("lucide-react", () => ({
   Loader2: () => null,
   Zap: () => null,
   Ban: () => null,
+  Copy: () => null,
 }));
 
 const TAB_ID = "tab-test";
