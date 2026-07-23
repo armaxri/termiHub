@@ -175,6 +175,17 @@ export function TerminalConnectionOverlay({
   const isSerialBusy =
     isSerial && !isSerialPermission && SERIAL_BUSY_PATTERNS.some((p) => error.includes(p));
 
+  // When a curated hint panel is shown it fully explains the failure and, since
+  // #1829, offers the fix command with a copy affordance. Backend errors append
+  // that same remediation to the raw message after an em-dash separator (see
+  // core/src/session/serial.rs), so rendering the raw error verbatim repeated
+  // the guidance and command — once as plain text, once in the hint (#1830).
+  // Drop the trailing remediation clause from the raw error box so the hint
+  // panel is the single source of the remediation.
+  const hasHint =
+    isAgentAuth || isTimeout || isSerialNotFound || isSerialPermission || isSerialBusy;
+  const displayError = hasHint ? error.split(" — ")[0].trim() : error;
+
   const cls = `terminal-connection-overlay${isVisible ? "" : " terminal-connection-overlay--hidden"}`;
 
   if (isReattaching) {
@@ -355,7 +366,7 @@ export function TerminalConnectionOverlay({
         <p className="terminal-connection-overlay__subheading">{tabTitle}</p>
 
         <div className="terminal-connection-overlay__error-box">
-          <span className="terminal-connection-overlay__error-text">{error}</span>
+          <span className="terminal-connection-overlay__error-text">{displayError}</span>
         </div>
 
         {isAgentAuth && (
