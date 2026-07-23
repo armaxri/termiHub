@@ -178,6 +178,8 @@ import {
 import {
   parseWorkflowEnvelope,
   resolveImportCollisions as resolveWorkflowImportCollisions,
+  summarizeLocalProcessSteps,
+  type WorkflowImportResult,
 } from "@/services/workflowIo";
 import {
   runWorkflow as runWorkflowSteps,
@@ -1262,9 +1264,11 @@ interface AppState {
    * Import workflows from an exported-workflow file's JSON, merging them into the
    * library. Malformed/incompatible files reject with a clear error and leave
    * the library untouched; imported workflows get fresh ids and de-duplicated
-   * names. Returns the number imported.
+   * names. Returns a {@link WorkflowImportResult} that also flags how many
+   * imported workflows carry a (guarded, never auto-authorized) `run-local-process`
+   * step so the caller can surface a security warning.
    */
-  importWorkflows: (json: string) => Promise<number>;
+  importWorkflows: (json: string) => Promise<WorkflowImportResult>;
   /** Metadata for the in-flight workflow run, or `null` when nothing is running. */
   workflowRun: WorkflowRunState | null;
   /**
@@ -5964,7 +5968,15 @@ export const useAppStore = create<AppState>((set, get) => {
       }
       // Refresh once, after all saves, rather than per-workflow.
       await get().loadWorkflows();
-      return prepared.length;
+      // Flag any imported run-local-process steps: they are preserved (never
+      // stripped) so #1857's run-time guard applies, but they are NOT
+      // auto-authorized — the caller surfaces this to the user.
+      const { workflowsWithLocalProcess, localProcessSteps } = summarizeLocalProcessSteps(prepared);
+      return {
+        imported: prepared.length,
+        workflowsWithLocalProcess,
+        localProcessSteps,
+      } satisfies WorkflowImportResult;
     },
 
     workflowRun: null,

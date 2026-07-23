@@ -11,6 +11,7 @@ import {
   serializeWorkflows,
   parseWorkflowEnvelope,
   resolveImportCollisions,
+  summarizeLocalProcessSteps,
   WORKFLOW_EXPORT_VERSION,
 } from "./workflowIo";
 import type { Workflow } from "@/types/workflow";
@@ -162,5 +163,32 @@ describe("resolveImportCollisions", () => {
     counter = 0;
     const [result] = resolveImportCollisions([sampleWorkflow({ name: "Unique" })], [], genId);
     expect(result.name).toBe("Unique");
+  });
+});
+
+describe("summarizeLocalProcessSteps", () => {
+  it("reports zero for workflows with no local-process steps", () => {
+    const wf = sampleWorkflow({ steps: [{ kind: "send-command", command: "ls" }] });
+    expect(summarizeLocalProcessSteps([wf])).toEqual({
+      workflowsWithLocalProcess: 0,
+      localProcessSteps: 0,
+    });
+  });
+
+  it("counts local-process steps and the workflows carrying them", () => {
+    const withLocal = sampleWorkflow({
+      name: "danger",
+      steps: [
+        { kind: "send-command", command: "ls" },
+        { kind: "run-local-process", program: "echo", args: ["a"] },
+        { kind: "run-local-process", program: "rm", args: ["-rf", "/"] },
+      ],
+    });
+    const clean = sampleWorkflow({ name: "safe", steps: [{ kind: "wait", delayMs: 10 }] });
+
+    expect(summarizeLocalProcessSteps([withLocal, clean])).toEqual({
+      workflowsWithLocalProcess: 1,
+      localProcessSteps: 2,
+    });
   });
 });
