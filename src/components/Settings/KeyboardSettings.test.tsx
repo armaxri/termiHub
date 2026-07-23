@@ -195,9 +195,7 @@ describe("KeyboardSettings", () => {
     expect(bindingCell.getAttribute("data-unbound")).toBe("true");
 
     // Unbind button disappears once there is nothing left to clear.
-    expect(
-      container.querySelector('[data-testid="keybinding-unbind-toggle-sidebar"]')
-    ).toBeNull();
+    expect(container.querySelector('[data-testid="keybinding-unbind-toggle-sidebar"]')).toBeNull();
 
     // The unbind is persisted to settings as an empty override.
     const overrides = useAppStore.getState().settings.keybindingOverrides ?? [];
@@ -215,11 +213,8 @@ describe("KeyboardSettings", () => {
       ).click();
     });
     expect(
-      (
-        container.querySelector(
-          '[data-testid="keybinding-binding-toggle-sidebar"]'
-        ) as HTMLElement
-      ).textContent
+      (container.querySelector('[data-testid="keybinding-binding-toggle-sidebar"]') as HTMLElement)
+        .textContent
     ).toBe("(unbound)");
 
     act(() => {
