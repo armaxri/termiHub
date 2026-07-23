@@ -140,10 +140,7 @@ describe("executeStep", () => {
   describe("run-macro", () => {
     it("delegates to the run-macro seam and succeeds when it replays", async () => {
       const runMacro: WorkflowRunMacroSeam = vi.fn(async () => true);
-      const outcome = await executeStep(
-        { kind: "run-macro", macroId: "m-1" },
-        deps({ runMacro })
-      );
+      const outcome = await executeStep({ kind: "run-macro", macroId: "m-1" }, deps({ runMacro }));
 
       expect(outcome).toEqual({ ok: true });
       expect(runMacro).toHaveBeenCalledWith("m-1");
@@ -151,10 +148,7 @@ describe("executeStep", () => {
 
     it("fails when the macro cannot be replayed", async () => {
       const runMacro: WorkflowRunMacroSeam = vi.fn(async () => false);
-      const outcome = await executeStep(
-        { kind: "run-macro", macroId: "gone" },
-        deps({ runMacro })
-      );
+      const outcome = await executeStep({ kind: "run-macro", macroId: "gone" }, deps({ runMacro }));
 
       expect(outcome.ok).toBe(false);
     });

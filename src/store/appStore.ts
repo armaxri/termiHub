@@ -6020,11 +6020,9 @@ export const useAppStore = create<AppState>((set, get) => {
         if (!injector) return false;
         const macro = get().macros.find((m) => m.id === macroId);
         if (!macro || macro.steps.length === 0) return false;
-        const macroHandle = runMacroPlayback(
-          macro.steps,
-          (data) => injector(targetTabId, data),
-          { timingMode: "real-time" }
-        );
+        const macroHandle = runMacroPlayback(macro.steps, (data) => injector(targetTabId, data), {
+          timingMode: "real-time",
+        });
         const macroResult = await macroHandle.done;
         return macroResult.status === "completed";
       };
