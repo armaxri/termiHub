@@ -30,6 +30,7 @@ mod utils;
 /// into local apps with delayed rendering (`CF_HDROP`, #1814). Windows-only.
 #[cfg(windows)]
 mod windows_clipboard;
+mod workflows;
 mod workspace;
 
 use std::sync::{Arc, Mutex};
@@ -520,6 +521,23 @@ pub fn run() {
                 }
             }
 
+            // Initialize workflow manager with recovery loading.
+            // On failure, the app still starts but workflows are unavailable.
+            match workflows::manager::WorkflowManager::new(app.handle()) {
+                Ok(manager) => {
+                    recovery_warnings.extend(manager.take_recovery_warnings());
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize workflow manager: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "workflows.json".to_string(),
+                        message: "Could not initialize workflow storage. Workflows are unavailable until the app is restarted.".to_string(),
+                        details: Some(e.to_string()),
+                    });
+                }
+            }
+
             // Initialize the last-session manager. On failure the app still starts;
             // session restore is simply unavailable until the next launch.
             match workspace::last_session::LastSessionManager::new(app.handle()) {
@@ -859,6 +877,11 @@ pub fn run() {
             commands::macros::get_macro,
             commands::macros::save_macro,
             commands::macros::delete_macro,
+            // Workflows
+            commands::workflows::list_workflows,
+            commands::workflows::get_workflow,
+            commands::workflows::save_workflow,
+            commands::workflows::delete_workflow,
             // Network diagnostics
             commands::network::network_port_scan,
             commands::network::network_port_scan_cancel,

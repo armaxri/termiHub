@@ -55,6 +55,9 @@ pub enum TerminalError {
     #[error("Macro error: {0}")]
     MacroError(String),
 
+    #[error("Workflow error: {0}")]
+    WorkflowError(String),
+
     #[error("Network error: {0}")]
     NetworkError(String),
 
