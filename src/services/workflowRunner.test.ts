@@ -50,7 +50,7 @@ describe("executeStep", () => {
 
   describe("run-script", () => {
     it("streams each line into the send seam with a trailing newline", async () => {
-      const send = vi.fn(async () => true);
+      const send = vi.fn(async (_data: string) => true);
       const step: WorkflowStep = { kind: "run-script", script: "echo a\necho b\necho c" };
       const outcome = await executeStep(step, deps({ send }));
 
@@ -59,7 +59,7 @@ describe("executeStep", () => {
     });
 
     it("drops a single trailing newline but keeps interior blank lines", async () => {
-      const send = vi.fn(async () => true);
+      const send = vi.fn(async (_data: string) => true);
       const step: WorkflowStep = { kind: "run-script", script: "a\n\nb\n" };
       await executeStep(step, deps({ send }));
 
@@ -93,7 +93,7 @@ describe("executeStep", () => {
     });
 
     it("reads the body from sourcePath when a read seam is provided", async () => {
-      const send = vi.fn(async () => true);
+      const send = vi.fn(async (_data: string) => true);
       const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => "fromdisk1\nfromdisk2");
       const step: WorkflowStep = {
         kind: "run-script",
@@ -107,7 +107,7 @@ describe("executeStep", () => {
     });
 
     it("falls back to the embedded script when the sourcePath read fails", async () => {
-      const send = vi.fn(async () => true);
+      const send = vi.fn(async (_data: string) => true);
       const readScriptFile: WorkflowReadFileSeam = vi.fn(async () => {
         throw new Error("no such file");
       });
