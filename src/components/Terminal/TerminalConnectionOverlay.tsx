@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useElapsed } from "@/hooks/useElapsed";
+import { getPlatform } from "@/utils/platform";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -26,6 +27,21 @@ const TIMEOUT_PATTERN = "timed out";
 const SERIAL_NOT_FOUND_PATTERNS = ["No such file", "cannot find", "not found"];
 const SERIAL_PERMISSION_PATTERN = "Permission denied";
 const SERIAL_BUSY_PATTERNS = ["busy", "in use", "Access is denied"];
+
+/**
+ * Platform-appropriate guidance for a serial permission error on non-Linux hosts
+ * (#1831). Only Linux gates serial ports behind the `dialout` group, so its hint
+ * offers the `usermod` fix command (rendered separately as a copyable block). On
+ * Windows a denied `COM` port and on macOS a denied `/dev/tty.*` port almost
+ * always mean another program holds the port or the user lacks access — there is
+ * no group to join, so we show plain guidance rather than a bogus command.
+ */
+const SERIAL_PERMISSION_HINT: Record<"windows" | "macos", string> = {
+  windows:
+    "Another application may be using the port, or you may not have permission to access it. Close any program using the port and try again.",
+  macos:
+    "You may not have permission to access this port, or another application may be using it. Close any program using the port and try again.",
+};
 
 /** Seconds after which a still-pending connect is flagged as unusually slow. */
 const SLOW_CONNECT_THRESHOLD_SECONDS = 20;
@@ -168,6 +184,9 @@ export function TerminalConnectionOverlay({
   }, [tabId, reconnectTerminal]);
 
   const isSerial = sessionType === "serial";
+  // The serial permission remediation is host-OS specific: only Linux has the
+  // dialout group, so the `usermod` fix must not be shown on Windows/macOS (#1831).
+  const platform = getPlatform();
   const isAgentAuth = error.includes(SSH_AGENT_PATTERN);
   const isTimeout = error.includes(TIMEOUT_PATTERN) && !isAgentAuth;
   const isSerialNotFound = isSerial && SERIAL_NOT_FOUND_PATTERNS.some((p) => error.includes(p));
@@ -399,11 +418,17 @@ export function TerminalConnectionOverlay({
         {isSerialPermission && (
           <div className="terminal-connection-overlay__hint">
             <p className="terminal-connection-overlay__hint-title">Permission denied</p>
-            <p>On Linux, add your user to the dialout group and re-login:</p>
-            <CommandBlock
-              command="sudo usermod -aG dialout $USER"
-              testId="terminal-connection-serial-copy-btn"
-            />
+            {platform === "linux" ? (
+              <>
+                <p>On Linux, add your user to the dialout group and re-login:</p>
+                <CommandBlock
+                  command="sudo usermod -aG dialout $USER"
+                  testId="terminal-connection-serial-copy-btn"
+                />
+              </>
+            ) : (
+              <p>{SERIAL_PERMISSION_HINT[platform]}</p>
+            )}
           </div>
         )}
 

@@ -1079,18 +1079,50 @@ manual run (per-PR CI does not run the CLIPRDR wire lane, #1569):
 5. Paste into a local app — Finder (Cmd+V into a folder), a mail draft, etc.
    **Expected:** the real files appear, their contents intact; the fetch happens
    at this moment (delayed), streamed into a bounded staging file.
-6. **Windows regression check:** on Windows (which has no host binding on
-   `develop` yet, #1814), repeat step 2 with the same options. **Expected:**
-   unchanged #1765 behaviour — files download into the shared folder, and the
-   **Remote files** section does not appear (no host binding, so nothing is
-   surfaced). (Linux now has its own binding — see the next section.)
+6. **Other-platform regression check:** on a platform whose host binding is not
+   yet wired, repeat step 2 with the same options. **Expected:** unchanged #1765
+   behaviour — files download into the shared folder, and the **Remote files**
+   section does not appear (no host binding, so nothing is surfaced). Windows
+   (#1814) and Linux (#1815) now have their own host bindings — see the two
+   sections below.
+
+#### Delayed-render paste to the host OS clipboard (Windows, #1814)
+
+The Windows sibling of the macOS binding above: remote-copied files are offered to
+the **Windows clipboard** as a delayed-render `CF_HDROP` and served on the real
+paste gesture (`WM_RENDERFORMAT`) from a dedicated message-only owner window. The
+pure parts are unit-tested (`windows_clipboard`: the `CF_HDROP` builder round-trip
+and the pasteable-index selection; `graphical_manager`), but the live
+`WM_RENDERFORMAT` render + real paste need a message loop and a live session, so
+they need a **manual run on Windows** (per-PR CI does not run the CLIPRDR wire
+lane, #1569):
+
+1. On **Windows**, build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as
+   above); in the RDP connection editor enable **Redirect a Local Drive** (with a
+   **Shared Folder**) and **Receive Clipboard Files**, then connect to a Windows
+   RDP host.
+2. Copy one or more files in the remote session (Explorer → Ctrl+C). **Expected:**
+   the files do **not** appear in the shared folder (delayed rendering replaces the
+   eager download on Windows).
+3. Open the RemoteDesktop hover toolbar's **Clipboard** panel. **Expected:** a
+   **Remote files** section lists the copied files, with a **Copy to clipboard**
+   button.
+4. Click **Copy to clipboard**. **Expected:** a toast confirms `N file(s) ready`.
+   No bytes have been fetched yet (the clipboard holds only the delayed-render
+   `CF_HDROP` offer with a NULL handle).
+5. Paste into a local app — Explorer (Ctrl+V into a folder), an Outlook draft, etc.
+   **Expected:** the real files appear, their contents intact; the fetch happens at
+   this moment (delayed), streamed into a bounded staging file, and the `CF_HDROP`
+   is built from the staged local paths.
+6. **Regression check:** the eager shared-folder path (#1765) still applies when
+   **Receive Clipboard Files** is off.
 
 #### Delayed-render paste to the host OS clipboard (Linux X11, #1815)
 
 On Linux the remote-copied files are surfaced to the **host X11 `CLIPBOARD`
-selection** with delayed rendering, the sibling of the macOS binding: instead of
-eagerly downloading into the shared folder, the app owns the selection and serves
-`text/uri-list` (plus `x-special/gnome-copied-files` /
+selection** with delayed rendering, the sibling of the macOS and Windows bindings:
+instead of eagerly downloading into the shared folder, the app owns the selection
+and serves `text/uri-list` (plus `x-special/gnome-copied-files` /
 `x-special/mate-copied-files`) only when a paste converts the selection, and the
 bytes are streamed from the remote at that moment. The pure parts (index
 selection, `file://` URI encoding, `text/uri-list` and gnome/mate formatting) are
