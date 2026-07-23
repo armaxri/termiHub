@@ -40,6 +40,25 @@ export interface WorkflowExportEnvelope {
 /** Suffix appended to imported workflow names that collide with an existing one. */
 const COLLISION_SUFFIX = "imported";
 
+/**
+ * The outcome of importing a workflow file, surfaced to the user (#1856).
+ *
+ * Beyond the plain count, this makes the **security-sensitive** part explicit:
+ * how many imported workflows carry a `run-local-process` step. Such steps are
+ * **preserved, not stripped** on import (so #1857's run-time guard applies), but
+ * they are **never auto-authorized** — the runner refuses to spawn them until the
+ * user explicitly enables the step. The counts let the sidebar flag them rather
+ * than silently trust an imported file.
+ */
+export interface WorkflowImportResult {
+  /** Number of workflows merged into the library. */
+  imported: number;
+  /** How many imported workflows contain at least one `run-local-process` step. */
+  workflowsWithLocalProcess: number;
+  /** Total `run-local-process` steps across all imported workflows. */
+  localProcessSteps: number;
+}
+
 /** All valid step-kind discriminants. */
 const STEP_KINDS: readonly WorkflowStepKind[] = [
   "send-command",
@@ -243,6 +262,29 @@ export function parseWorkflowEnvelope(json: string): Workflow[] {
   }
 
   return parsed.workflows.map((workflow, index) => validateWorkflow(workflow, index));
+}
+
+/**
+ * Count the `run-local-process` steps carried by a set of workflows, and how
+ * many workflows contain at least one. Used to surface a security warning when a
+ * file is imported: these steps are guarded and must be explicitly authorized
+ * (#1857) before they can run, so an imported file that carries them is flagged
+ * rather than silently trusted. Returns `{0, 0}` when there are none.
+ */
+export function summarizeLocalProcessSteps(workflows: Workflow[]): {
+  workflowsWithLocalProcess: number;
+  localProcessSteps: number;
+} {
+  let workflowsWithLocalProcess = 0;
+  let localProcessSteps = 0;
+  for (const workflow of workflows) {
+    const count = workflow.steps.filter((step) => step.kind === "run-local-process").length;
+    if (count > 0) {
+      workflowsWithLocalProcess += 1;
+      localProcessSteps += count;
+    }
+  }
+  return { workflowsWithLocalProcess, localProcessSteps };
 }
 
 /** Default fresh-id generator; mirrors the store's `generateWorkflowId`. */

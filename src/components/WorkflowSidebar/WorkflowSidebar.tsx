@@ -193,8 +193,26 @@ export function WorkflowSidebar() {
     if (!filePath || Array.isArray(filePath)) return;
     try {
       const json = await readTextFile(filePath);
-      const count = await importWorkflows(json);
-      toast.success(`Imported ${count} workflow${count === 1 ? "" : "s"}`);
+      const result = await importWorkflows(json);
+      const summary = `Imported ${result.imported} workflow${result.imported === 1 ? "" : "s"}`;
+      if (result.localProcessSteps > 0) {
+        // Security surfacing (#1856): an imported workflow may carry a
+        // run-local-process step. It is preserved but NOT auto-authorized — the
+        // runner refuses to spawn it until it is explicitly enabled (#1857). Flag
+        // it prominently (persistent toast) so it is never silently trusted.
+        const stepLabel = `${result.localProcessSteps} local-process step${
+          result.localProcessSteps === 1 ? "" : "s"
+        }`;
+        const wfLabel = `${result.workflowsWithLocalProcess} imported workflow${
+          result.workflowsWithLocalProcess === 1 ? "" : "s"
+        }`;
+        toast.success(summary, {
+          description: `${wfLabel} contain ${stepLabel} that run a local program. These stay disabled and will not run until you review and authorize them.`,
+          duration: Infinity,
+        });
+      } else {
+        toast.success(summary);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       toast.error(`Failed to import workflows: ${message}`);

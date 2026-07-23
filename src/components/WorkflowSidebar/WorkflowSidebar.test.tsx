@@ -106,7 +106,9 @@ describe("WorkflowSidebar", () => {
       workflowRun: null,
       saveWorkflowToBackend: vi.fn().mockResolvedValue(undefined),
       deleteWorkflowFromBackend: vi.fn().mockResolvedValue(undefined),
-      importWorkflows: vi.fn().mockResolvedValue(0),
+      importWorkflows: vi
+        .fn()
+        .mockResolvedValue({ imported: 0, workflowsWithLocalProcess: 0, localProcessSteps: 0 }),
       runWorkflow: vi.fn().mockResolvedValue(undefined),
       cancelWorkflowRun: vi.fn(),
     });
@@ -219,6 +221,79 @@ describe("WorkflowSidebar", () => {
     act(() => (query("workflow-delete-workflow-1") as HTMLButtonElement).click());
     expect(query("confirm-delete-dialog")).not.toBeNull();
     expect(deleteWorkflowFromBackend).not.toHaveBeenCalled();
+  });
+
+  it("exports all workflows to a chosen file via serialize + save", async () => {
+    dialogSave.mockResolvedValue("/tmp/workflows.json");
+    fsWriteTextFile.mockResolvedValue(undefined);
+    useAppStore.setState({ workflows: sampleWorkflows });
+    render();
+
+    act(() => (query("workflow-export-all-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(dialogSave).toHaveBeenCalledTimes(1);
+    expect(fsWriteTextFile).toHaveBeenCalledTimes(1);
+    const [, written] = fsWriteTextFile.mock.calls[0] as [string, string];
+    // The written payload is the serialized envelope of both workflows.
+    const parsed = JSON.parse(written) as { workflows: Workflow[] };
+    expect(parsed.workflows.map((w) => w.name)).toEqual(["Prod login", "Banner"]);
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("imports workflows and reports the count on success", async () => {
+    dialogOpen.mockResolvedValue("/tmp/workflows.json");
+    fsReadTextFile.mockResolvedValue("{}");
+    const importWorkflows = vi
+      .fn()
+      .mockResolvedValue({ imported: 2, workflowsWithLocalProcess: 0, localProcessSteps: 0 });
+    useAppStore.setState({ importWorkflows });
+    render();
+
+    act(() => (query("workflow-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(importWorkflows).toHaveBeenCalledWith("{}");
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    const [message, opts] = toastSuccess.mock.calls[0] as [string, Record<string, unknown>?];
+    expect(message).toBe("Imported 2 workflows");
+    // A clean import carries no security warning.
+    expect(opts?.description).toBeUndefined();
+  });
+
+  it("flags imported run-local-process steps as needing authorization", async () => {
+    dialogOpen.mockResolvedValue("/tmp/workflows.json");
+    fsReadTextFile.mockResolvedValue("{}");
+    const importWorkflows = vi
+      .fn()
+      .mockResolvedValue({ imported: 1, workflowsWithLocalProcess: 1, localProcessSteps: 2 });
+    useAppStore.setState({ importWorkflows });
+    render();
+
+    act(() => (query("workflow-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    const [message, opts] = toastSuccess.mock.calls[0] as [string, Record<string, unknown>?];
+    expect(message).toBe("Imported 1 workflow");
+    // The security warning is surfaced persistently and never auto-authorizes.
+    expect(String(opts?.description)).toMatch(/2 local-process steps/);
+    expect(String(opts?.description)).toMatch(/authorize/i);
+    expect(opts?.duration).toBe(Infinity);
+  });
+
+  it("surfaces a recoverable error when the import fails", async () => {
+    dialogOpen.mockResolvedValue("/tmp/workflows.json");
+    fsReadTextFile.mockResolvedValue("{}");
+    const importWorkflows = vi.fn().mockRejectedValue(new Error("Invalid workflow file"));
+    useAppStore.setState({ importWorkflows });
+    render();
+
+    act(() => (query("workflow-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(String(toastError.mock.calls[0][0])).toMatch(/Failed to import workflows/);
   });
 
   it("opens the editor prefilled when editing a workflow", () => {

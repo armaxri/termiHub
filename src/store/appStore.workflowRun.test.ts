@@ -270,13 +270,43 @@ describe("appStore — workflow run slice (#1852)", () => {
     useAppStore.setState({ workflows: [] });
     const json = serializeWorkflows([workflow("original", [cmd("ls")])]);
 
-    const count = await useAppStore.getState().importWorkflows(json);
+    const result = await useAppStore.getState().importWorkflows(json);
 
-    expect(count).toBe(1);
+    expect(result.imported).toBe(1);
+    // A clean file carries no run-local-process steps to flag.
+    expect(result.localProcessSteps).toBe(0);
+    expect(result.workflowsWithLocalProcess).toBe(0);
     const imported = useAppStore.getState().workflows;
     expect(imported).toHaveLength(1);
     // A fresh id is assigned on import (never the file's original id).
     expect(imported[0].id).not.toBe("original");
     expect(imported[0].steps).toEqual([cmd("ls")]);
+  });
+
+  it("flags imported run-local-process steps without stripping them", async () => {
+    useAppStore.setState({ workflows: [] });
+    const json = serializeWorkflows([
+      {
+        ...workflow("danger", [cmd("ls")]),
+        steps: [
+          { kind: "send-command", command: "ls" },
+          { kind: "run-local-process", program: "echo", args: ["hi"] },
+        ],
+      },
+    ]);
+
+    const result = await useAppStore.getState().importWorkflows(json);
+
+    // The step count is surfaced so the caller can warn the user...
+    expect(result.imported).toBe(1);
+    expect(result.workflowsWithLocalProcess).toBe(1);
+    expect(result.localProcessSteps).toBe(1);
+    // ...and the step is preserved (not stripped), so #1857's run-time guard applies.
+    const imported = useAppStore.getState().workflows;
+    expect(imported[0].steps).toContainEqual({
+      kind: "run-local-process",
+      program: "echo",
+      args: ["hi"],
+    });
   });
 });
