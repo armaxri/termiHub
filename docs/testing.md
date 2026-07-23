@@ -1226,6 +1226,32 @@ stays manual. See PR for #1823.
 5. Regression check: dragging the split-view splitter to resize a terminal must
    still reflow and repaint as before.
 
+### Connections sidebar renders fully on first paint (#1828)
+
+Verifies that the Connections sidebar lays out completely on launch, with no
+clipped/partial rendering that only clears after resizing the tab or window.
+The underlying flex-sizing fix has a unit test (`useSectionResize.test.tsx`),
+but the residual mis-paint was macOS-WKWebView specific, so this stays manual.
+See PR for #1828.
+
+Requires the **Remote Agents** section (enable experimental features in
+Settings) with at least one saved remote agent, since the glitch appeared as
+those sections mounted after settings/agents loaded.
+
+1. Fully quit and cold-launch the app (do not just reload) so the sidebar mounts
+   from scratch while settings and remote agents load.
+2. **Expected:** the Connections sidebar renders fully and correctly on the
+   first paint — group headers with their chevrons **and** titles, the filter
+   box, and every connection/agent row are laid out at the right width, with no
+   truncated text, stray chevrons, cut-off search box, or clipped rows.
+3. You must **not** need to resize the tab or window to make the sidebar look
+   right.
+4. Repeat a few times (the original bug was intermittent) and at different window
+   sizes, including a narrow window.
+5. Regression check: dragging the sidebar resize handle and the inner
+   section-resize handles (between Connections and Remote Agents, and between
+   expanded agents) must still resize as before.
+
 ### Agent binary SHA-256 checksums (release dry-run, #1350)
 
 Verifies that every published agent binary has a matching `*.sha256` asset and
