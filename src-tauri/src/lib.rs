@@ -21,6 +21,10 @@ mod spawn;
 mod terminal;
 mod tunnel;
 mod utils;
+/// Native Windows clipboard binding for pasting remote-copied RDP clipboard files
+/// into local apps with delayed rendering (`CF_HDROP`, #1814). Windows-only.
+#[cfg(windows)]
+mod windows_clipboard;
 mod workspace;
 
 use std::sync::{Arc, Mutex};

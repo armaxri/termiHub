@@ -109,10 +109,19 @@ pub async fn remote_desktop_bind_clipboard_files(
         return Ok(0);
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     {
         let count = files.len();
+        #[cfg(target_os = "macos")]
         crate::macos_clipboard::bind_remote_clipboard_files(
+            &app_handle,
+            (*manager).clone(),
+            session_id,
+            files,
+        )
+        .map_err(|e| TerminalError::InternalError(e.to_string()))?;
+        #[cfg(windows)]
+        crate::windows_clipboard::bind_remote_clipboard_files(
             &app_handle,
             (*manager).clone(),
             session_id,
@@ -121,12 +130,12 @@ pub async fn remote_desktop_bind_clipboard_files(
         .map_err(|e| TerminalError::InternalError(e.to_string()))?;
         Ok(count)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         // No native OS-clipboard binding on this platform: with delayed rendering
         // off, `remote_clipboard_files` is already empty and we returned above, so
         // reaching here means a caller invoked the command anyway. Report rather
-        // than silently succeed. (`app_handle`/`session_id` are macOS-only inputs.)
+        // than silently succeed. (`app_handle`/`session_id` are binding-only inputs.)
         let _ = (&app_handle, &session_id);
         Err(TerminalError::InternalError(
             "pasting remote clipboard files to the host OS clipboard is not supported on this \
