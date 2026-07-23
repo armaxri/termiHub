@@ -134,6 +134,85 @@ fn flow_control_options() -> Vec<SelectOption> {
     ]
 }
 
+/// Minimal async byte-source abstraction for the serial reader loop.
+///
+/// Extracted so [`run_serial_reader`] can be unit-tested with an injected mock
+/// instead of a real serial port, which would require hardware.
+#[async_trait::async_trait]
+trait SerialByteReader: Send + Sync {
+    /// Read available bytes into `buf`, returning the number read (`0` = EOF).
+    async fn read_bytes(&self, buf: &mut [u8]) -> std::io::Result<usize>;
+}
+
+#[async_trait::async_trait]
+impl SerialByteReader for serial2_tokio::SerialPort {
+    async fn read_bytes(&self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.read(buf).await
+    }
+}
+
+/// Read from the serial port until EOF or a fatal error, forwarding bytes to
+/// the current output subscriber.
+///
+/// On exit — whether the port reported EOF (`Ok(0)`) or a fatal I/O error
+/// (device removed, cable unplugged, broken pipe) — the stored output sender is
+/// cleared. Dropping the sender closes the output channel, which is how the
+/// desktop session manager detects the session ended and emits `terminal-exit`,
+/// flipping the tab out of the connected (green) state and showing the
+/// disconnect overlay. Without this drop a vanished COM/serial port left the tab
+/// green forever with no notification ([#1824]).
+///
+/// This mirrors the local-shell backend, whose reader thread clears its sender
+/// on exit for exactly the same reason. Transient `TimedOut` / `WouldBlock`
+/// errors are ignored so a merely quiet port is not mistaken for a lost one.
+///
+/// [#1824]: https://github.com/armaxri/termiHub/issues/1824
+async fn run_serial_reader<R: SerialByteReader>(
+    port_reader: Arc<R>,
+    output_tx: Arc<Mutex<Option<OutputSender>>>,
+    alive: Arc<AtomicBool>,
+) {
+    let mut buf = [0u8; 1024];
+    loop {
+        match port_reader.read_bytes(&mut buf).await {
+            Ok(0) => break,
+            Ok(n) => {
+                let data = buf[..n].to_vec();
+                // Clone the sender out before any await — MutexGuard is not Send.
+                let sender = {
+                    let Ok(guard) = output_tx.lock() else {
+                        break;
+                    };
+                    guard.clone()
+                };
+                match sender {
+                    Some(s) => {
+                        if s.send(data).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                continue
+            }
+            Err(_) => break,
+        }
+    }
+
+    // Port is gone or closed: mark it dead and drop the stored output sender so
+    // the session manager observes the channel close and surfaces the disconnect
+    // (tab dot leaves green + disconnect overlay). See the doc comment above.
+    alive.store(false, Ordering::SeqCst);
+    if let Ok(mut guard) = output_tx.lock() {
+        *guard = None;
+    }
+}
+
 #[async_trait::async_trait]
 impl ConnectionType for Serial {
     fn type_id(&self) -> &str {
@@ -325,44 +404,14 @@ impl ConnectionType for Serial {
             *guard = Some(tx);
         }
 
-        // Reader task: async reads forwarded to the output channel.
-        let port_reader = port.clone();
-        let alive_clone = alive.clone();
-        let output_tx_clone = self.output_tx.clone();
-        let reader_task = tokio::spawn(async move {
-            let mut buf = [0u8; 1024];
-            loop {
-                match port_reader.read(&mut buf).await {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let data = buf[..n].to_vec();
-                        // Clone the sender out before any await — MutexGuard is not Send.
-                        let sender = {
-                            let Ok(guard) = output_tx_clone.lock() else {
-                                break;
-                            };
-                            guard.clone()
-                        };
-                        match sender {
-                            Some(s) => {
-                                if s.send(data).await.is_err() {
-                                    break;
-                                }
-                            }
-                            None => break,
-                        }
-                    }
-                    Err(e)
-                        if e.kind() == std::io::ErrorKind::TimedOut
-                            || e.kind() == std::io::ErrorKind::WouldBlock =>
-                    {
-                        continue
-                    }
-                    Err(_) => break,
-                }
-            }
-            alive_clone.store(false, Ordering::SeqCst);
-        });
+        // Reader task: async reads forwarded to the output channel. On exit it
+        // drops the stored output sender so a lost port surfaces as a disconnect
+        // (see `run_serial_reader`).
+        let reader_task = tokio::spawn(run_serial_reader(
+            port.clone(),
+            self.output_tx.clone(),
+            alive.clone(),
+        ));
 
         // Writer task: drains the write channel and sends to the serial port.
         let port_writer = port.clone();
@@ -660,5 +709,105 @@ mod tests {
             .disconnect()
             .await
             .expect("disconnect should not fail");
+    }
+
+    // --- run_serial_reader / lost-port disconnect (#1824) -----------------
+
+    use std::collections::VecDeque;
+    use std::io;
+    use std::time::Duration;
+
+    /// Scripted async reader returning a queue of results, then EOF.
+    struct MockSerialReader {
+        results: Mutex<VecDeque<io::Result<Vec<u8>>>>,
+    }
+
+    impl MockSerialReader {
+        fn new(results: Vec<io::Result<Vec<u8>>>) -> Self {
+            Self {
+                results: Mutex::new(results.into_iter().collect()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SerialByteReader for MockSerialReader {
+        async fn read_bytes(&self, buf: &mut [u8]) -> io::Result<usize> {
+            let next = self.results.lock().expect("mock lock").pop_front();
+            match next {
+                Some(Ok(bytes)) => {
+                    let n = bytes.len().min(buf.len());
+                    buf[..n].copy_from_slice(&bytes[..n]);
+                    Ok(n)
+                }
+                Some(Err(e)) => Err(e),
+                None => Ok(0), // exhausted → EOF
+            }
+        }
+    }
+
+    fn make_output_channel() -> (
+        Arc<Mutex<Option<OutputSender>>>,
+        tokio::sync::mpsc::Receiver<Vec<u8>>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
+        let output_tx = Arc::new(Mutex::new(Some(tx)));
+        (output_tx, rx)
+    }
+
+    /// Regression test for #1824: when the port raises a fatal I/O error (device
+    /// removed / cable unplugged), the reader must drop the stored sender so the
+    /// output channel closes — that is what makes the desktop emit `terminal-exit`
+    /// and flip the tab out of the green "connected" state.
+    #[tokio::test]
+    async fn reader_drops_sender_and_closes_channel_on_fatal_error() {
+        let (output_tx, mut rx) = make_output_channel();
+        let alive = Arc::new(AtomicBool::new(true));
+        let reader = Arc::new(MockSerialReader::new(vec![
+            Ok(b"hello".to_vec()),
+            Err(io::Error::from(io::ErrorKind::BrokenPipe)),
+        ]));
+
+        run_serial_reader(reader, output_tx.clone(), alive.clone()).await;
+
+        assert_eq!(rx.recv().await, Some(b"hello".to_vec()));
+        // The channel must close so the session manager surfaces the disconnect.
+        // Bounded so a regression (sender not dropped) fails cleanly, not hangs.
+        let closed = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        assert_eq!(
+            closed,
+            Ok(None),
+            "channel must close on port loss so terminal-exit fires (#1824)"
+        );
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "alive must be false after the port is lost"
+        );
+        assert!(
+            output_tx.lock().expect("lock").is_none(),
+            "stored output sender must be dropped so the channel closes"
+        );
+    }
+
+    /// Transient `TimedOut` / `WouldBlock` reads must not be mistaken for a lost
+    /// port; the reader keeps going and only ends on a real EOF.
+    #[tokio::test]
+    async fn reader_ignores_transient_errors_then_ends_on_eof() {
+        let (output_tx, mut rx) = make_output_channel();
+        let alive = Arc::new(AtomicBool::new(true));
+        let reader = Arc::new(MockSerialReader::new(vec![
+            Err(io::Error::from(io::ErrorKind::TimedOut)),
+            Ok(b"data".to_vec()),
+            Err(io::Error::from(io::ErrorKind::WouldBlock)),
+            Ok(Vec::new()), // Ok(0) → clean EOF
+        ]));
+
+        run_serial_reader(reader, output_tx.clone(), alive.clone()).await;
+
+        assert_eq!(rx.recv().await, Some(b"data".to_vec()));
+        let closed = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        assert_eq!(closed, Ok(None), "channel must close on EOF");
+        assert!(!alive.load(Ordering::SeqCst));
+        assert!(output_tx.lock().expect("lock").is_none());
     }
 }
