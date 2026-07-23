@@ -123,6 +123,20 @@
   white-space: pre-wrap;
 }
 
+/* Suggested fix command with a copy affordance (#1829) */
+.terminal-connection-overlay__command-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
+}
+
+.terminal-connection-overlay__command-row .terminal-connection-overlay__hint-code {
+  flex: 1;
+  min-width: 0;
+  /* Selectable so the user can also copy the command by hand (#1829). */
+  user-select: text;
+}
+
 .terminal-connection-overlay__hint-text {
   max-width: 520px;
   color: var(--text-secondary);
