@@ -77,6 +77,26 @@ pub fn parse_serial_config(config: &SerialConfig) -> Result<ParsedSerialConfig, 
     })
 }
 
+/// Platform-appropriate remediation for a serial-port permission error.
+///
+/// Only Linux gates serial ports behind the `dialout` group, so the `usermod`
+/// fix applies there alone. On Windows a denied `COM` port and on macOS a denied
+/// `/dev/tty.*`/`/dev/cu.*` port almost always mean another program holds the
+/// port or the user lacks access — there is no group to join, so we return plain
+/// guidance rather than a bogus command (#1831). This runs on the machine that
+/// owns the port (the host for local ports, the remote agent for agent-hosted
+/// ports), so the advice matches where the device physically lives.
+fn serial_permission_hint() -> &'static str {
+    #[cfg(target_os = "linux")]
+    {
+        "on Linux, add your user to the dialout group: sudo usermod -aG dialout $USER"
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        "another application may be using the port, or you may not have permission to access it"
+    }
+}
+
 /// Open a serial port using a pre-parsed configuration.
 ///
 /// Returns a [`serial2_tokio::SerialPort`] ready for async I/O.
@@ -102,8 +122,9 @@ pub fn open_serial_port(config: &ParsedSerialConfig) -> Result<SerialPort, Sessi
                 config.port
             ),
             std::io::ErrorKind::PermissionDenied => format!(
-                "Permission denied on '{}' — on Linux, add your user to the dialout group: sudo usermod -aG dialout $USER",
-                config.port
+                "Permission denied on '{}' — {}",
+                config.port,
+                serial_permission_hint()
             ),
             _ => {
                 let desc = e.to_string();
@@ -640,6 +661,36 @@ mod tests {
             matches!(err, SessionError::SpawnFailed(_)),
             "expected SpawnFailed, got: {:?}",
             err
+        );
+    }
+
+    // --- serial_permission_hint tests ------------------------------------
+    //
+    // The permission-error remediation must be host-OS specific: the Linux
+    // `dialout` advice is wrong on Windows/macOS, where there is no such group
+    // (#1831). CI runs on all three platforms, so each leg pins its own case.
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn permission_hint_mentions_dialout_on_linux() {
+        assert!(
+            serial_permission_hint().contains("dialout"),
+            "Linux hint should recommend the dialout group, got: {:?}",
+            serial_permission_hint()
+        );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn permission_hint_omits_dialout_off_linux() {
+        let hint = serial_permission_hint();
+        assert!(
+            !hint.contains("dialout"),
+            "non-Linux hint must not mention the dialout group, got: {hint:?}"
+        );
+        assert!(
+            !hint.is_empty(),
+            "non-Linux hint should still offer generic guidance"
         );
     }
 }
