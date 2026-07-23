@@ -127,6 +127,72 @@ describe("ConnectionSettingsForm", () => {
     expect(query("dynamic-field-password")).toBeNull();
   });
 
+  // Regression for #1820: when the connection type changes, the previous type's
+  // value for a field whose name is shared between schemas (both the local shell
+  // and SSH have a `shell` field) must not leak into the new type. Without the
+  // fix, react-hook-form's per-name value cache re-populated the SSH Advanced →
+  // Shell field with the local default shell (`powershell` on Windows), which
+  // the user could not clear.
+  it("clears a shared-name field when switching to a schema that omits its default (#1820)", () => {
+    // A local-shell-like schema whose `shell` field is pre-filled.
+    const LOCAL_SCHEMA: SettingsSchema = {
+      groups: [
+        {
+          key: "shell",
+          label: "Shell",
+          fields: [
+            {
+              key: "shell",
+              label: "Shell",
+              fieldType: {
+                type: "select",
+                options: [
+                  { value: "powershell", label: "PowerShell" },
+                  { value: "cmd", label: "cmd" },
+                ],
+              },
+              required: false,
+              default: "powershell",
+            },
+          ],
+        },
+      ],
+    };
+    // An SSH-like schema whose Advanced `shell` field is a free-text field with
+    // no default (matches the real core SSH schema).
+    const SSH_WITH_SHELL: SettingsSchema = {
+      groups: [
+        {
+          key: "connection",
+          label: "Connection",
+          fields: [{ key: "host", label: "Host", fieldType: { type: "text" }, required: true }],
+        },
+        {
+          key: "advanced",
+          label: "Advanced",
+          fields: [
+            {
+              key: "shell",
+              label: "Shell",
+              fieldType: { type: "text" },
+              required: false,
+              placeholder: "/bin/bash",
+            },
+          ],
+        },
+      ],
+    };
+
+    const onChange = vi.fn();
+    renderForm(LOCAL_SCHEMA, { shell: "powershell" }, onChange);
+    // Switch to the SSH schema with settings that carry no `shell` value.
+    renderForm(SSH_WITH_SHELL, {}, onChange);
+
+    const shellInput = query("field-shell") as HTMLInputElement | null;
+    expect(shellInput).toBeTruthy();
+    expect(shellInput!.value).toBe("");
+  });
+
   it("hides fields when visibility condition is not met", () => {
     renderForm(SSH_SCHEMA, { authMethod: "password", port: 22 }, vi.fn());
     // Password visible when authMethod = "password"
