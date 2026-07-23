@@ -277,6 +277,29 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
 /** Active user overrides. */
 let overrides: KeybindingOverride[] = [];
 
+/**
+ * Sentinel combo that marks an action as explicitly unbound by the user.
+ *
+ * Unbinding is stored as an override with an empty key so the action does not
+ * fall back to its platform default — that fallback is exactly what the user is
+ * opting out of. It round-trips through serialization as an empty string.
+ */
+export const UNBOUND_COMBO: KeyCombo = { key: "" };
+
+/**
+ * Whether a resolved combo represents an explicit "unbound" state — an empty
+ * key with no meaningful modifiers. An unbound override is deliberately kept
+ * (rather than removed) so the action stays cleared instead of reverting to its
+ * platform default on the next launch.
+ */
+export function isUnboundCombo(combo: KeyCombo | KeyCombo[] | null | undefined): boolean {
+  if (!combo) return false;
+  if (Array.isArray(combo)) {
+    return combo.length === 0 || combo.every((c) => c.key === "");
+  }
+  return combo.key === "";
+}
+
 /** Serialize a KeyCombo to a human-readable string like "Ctrl+Shift+C". */
 export function serializeCombo(combo: KeyCombo): string {
   const parts: string[] = [];
@@ -391,6 +414,10 @@ export function findMatchingAction(event: KeyboardEvent): string | null {
     const combo = getEffectiveCombo(binding.action);
     if (!combo) continue;
 
+    // Skip actions the user explicitly unbound: they must not fire, and must
+    // not fall back to their platform default.
+    if (isUnboundCombo(combo)) continue;
+
     // Skip chord bindings (arrays with >1 combo)
     if (Array.isArray(combo) && combo.length > 1) continue;
 
@@ -437,6 +464,20 @@ export function setOverride(action: string, combo: KeyCombo | KeyCombo[] | null)
 }
 
 /**
+ * Explicitly unbind an action so it has no shortcut. Stored as an override (not
+ * a removal) so the action stays cleared and does not revert to its platform
+ * default. Reset-to-default (via {@link setOverride} with `null`) restores it.
+ */
+export function unbindAction(action: string): void {
+  setOverride(action, { ...UNBOUND_COMBO });
+}
+
+/** Whether an action is currently unbound (either by default or by the user). */
+export function isActionUnbound(action: string): boolean {
+  return isUnboundCombo(getEffectiveCombo(action));
+}
+
+/**
  * Check for conflicts: returns the action that already uses the given combo,
  * or null if no conflict exists.
  */
@@ -446,6 +487,7 @@ export function checkConflict(combo: KeyCombo, excludeAction?: string): string |
 
     const effective = getEffectiveCombo(binding.action);
     if (!effective) continue;
+    if (isUnboundCombo(effective)) continue;
 
     const single = Array.isArray(effective) ? effective[0] : effective;
     if (!Array.isArray(effective) || effective.length === 1) {
