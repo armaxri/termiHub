@@ -5,6 +5,7 @@ import {
   getEffectiveCombo,
   serializeBinding,
   getOverrides,
+  isUnboundCombo,
 } from "@/services/keybindings";
 import { ShortcutCategory } from "@/types/keybindings";
 
@@ -42,7 +43,8 @@ export function buildCheatSheetHtml(): string {
     .map((group) => {
       const rows = group.bindings
         .map((b) => {
-          const combo = getEffectiveCombo(b.action) ?? b.winLinuxDefault;
+          const effective = getEffectiveCombo(b.action);
+          const combo = isUnboundCombo(effective) ? null : (effective ?? b.winLinuxDefault);
           const keyStr = combo ? serializeBinding(combo) : "Unbound";
           const isOverride = overriddenActions.has(b.action);
           const overrideMark = isOverride

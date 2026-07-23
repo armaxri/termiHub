@@ -19,6 +19,11 @@ import {
   isShellReservedKey,
   isEventFromTerminal,
   DEFAULT_BINDINGS,
+  unbindAction,
+  isUnboundCombo,
+  isActionUnbound,
+  getOverrides,
+  UNBOUND_COMBO,
 } from "./keybindings";
 import { KeyCombo } from "@/types/keybindings";
 
@@ -268,6 +273,69 @@ describe("overrides", () => {
     expect(restored.ctrl).toBe(true);
     expect(restored.shift).toBe(true);
     expect(restored.key).toBe("B");
+  });
+});
+
+describe("unbind", () => {
+  beforeEach(() => {
+    clearOverrides();
+  });
+
+  it("isUnboundCombo recognizes empty combos and null", () => {
+    expect(isUnboundCombo(UNBOUND_COMBO)).toBe(true);
+    expect(isUnboundCombo({ key: "" })).toBe(true);
+    expect(isUnboundCombo([])).toBe(true);
+    expect(isUnboundCombo(null)).toBe(false);
+    expect(isUnboundCombo({ key: "W", ctrl: true })).toBe(false);
+  });
+
+  it("unbindAction clears the binding so the action no longer fires on its former keys", () => {
+    // close-tab defaults to Ctrl+Shift+W on Linux/Win.
+    expect(findMatchingAction(makeKeyEvent("W", { ctrl: true, shift: true }))).toBe("close-tab");
+
+    unbindAction("close-tab");
+
+    expect(isActionUnbound("close-tab")).toBe(true);
+    expect(findMatchingAction(makeKeyEvent("W", { ctrl: true, shift: true }))).toBeNull();
+    expect(processKeyEvent(makeKeyEvent("W", { ctrl: true, shift: true }))).toBeNull();
+  });
+
+  it("an unbound action does NOT fall back to its platform default", () => {
+    unbindAction("toggle-sidebar");
+    const combo = getEffectiveCombo("toggle-sidebar");
+    expect(isUnboundCombo(combo)).toBe(true);
+    // Would be Ctrl+Shift+B if it had fallen back to the default.
+    expect(findMatchingAction(makeKeyEvent("B", { ctrl: true, shift: true }))).toBeNull();
+  });
+
+  it("unbound state persists through serialization round-trip", () => {
+    unbindAction("copy");
+    const entries = getOverrides();
+    const copyEntry = entries.find((e) => e.action === "copy");
+    expect(copyEntry).toBeDefined();
+    expect(copyEntry?.key).toBe("");
+
+    // Simulate reload from persisted settings.
+    clearOverrides();
+    expect(isActionUnbound("copy")).toBe(false);
+    setOverrides(entries);
+    expect(isActionUnbound("copy")).toBe(true);
+    expect(findMatchingAction(makeKeyEvent("C", { ctrl: true, shift: true }))).toBeNull();
+  });
+
+  it("reset-to-default restores an unbound action", () => {
+    unbindAction("close-tab");
+    expect(isActionUnbound("close-tab")).toBe(true);
+
+    setOverride("close-tab", null);
+    expect(isActionUnbound("close-tab")).toBe(false);
+    expect(findMatchingAction(makeKeyEvent("W", { ctrl: true, shift: true }))).toBe("close-tab");
+  });
+
+  it("an unbound action is not reported as a conflict for a new binding", () => {
+    unbindAction("close-tab");
+    // Binding another action to close-tab's former keys must not conflict.
+    expect(checkConflict({ key: "W", ctrl: true, shift: true }, "toggle-sidebar")).toBeNull();
   });
 });
 

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { RotateCcw, Download } from "lucide-react";
+import { RotateCcw, Download, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { KeyCombo, KeyBinding, ShortcutCategory } from "@/types/keybindings";
 import {
@@ -10,6 +10,8 @@ import {
   clearOverrides,
   checkConflict,
   getOverrides,
+  unbindAction,
+  isUnboundCombo,
 } from "@/services/keybindings";
 import { exportCheatSheet } from "@/utils/cheatSheetPdf";
 import { Button, Toggle, Tooltip } from "@/components/ui";
@@ -86,6 +88,14 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     [persistOverrides]
   );
 
+  const handleUnbindOne = useCallback(
+    (action: string) => {
+      unbindAction(action);
+      persistOverrides();
+    },
+    [persistOverrides]
+  );
+
   const handleRecordComplete = useCallback(
     (action: string, combo: KeyCombo | null) => {
       setRecordingAction(null);
@@ -93,7 +103,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
 
       if (combo === null) {
         // Backspace pressed — unbind
-        setOverride(action, { key: "", ctrl: false });
+        unbindAction(action);
         persistOverrides();
         return;
       }
@@ -119,8 +129,13 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const filteredBindings = searchQuery.trim()
     ? bindings.filter((b) => {
         const q = searchQuery.toLowerCase();
-        const combo = getEffectiveCombo(b.action) ?? b.winLinuxDefault;
-        const comboStr = combo ? serializeBinding(combo) : "";
+        const effective = getEffectiveCombo(b.action);
+        const combo = effective ?? b.winLinuxDefault;
+        const comboStr = isUnboundCombo(effective)
+          ? "unbound"
+          : combo
+            ? serializeBinding(combo)
+            : "";
         return (
           b.label.toLowerCase().includes(q) ||
           b.action.toLowerCase().includes(q) ||
@@ -222,6 +237,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
                     setConflictWarning(null);
                   }}
                   onReset={() => handleResetOne(binding.action)}
+                  onUnbind={() => handleUnbindOne(binding.action)}
                 />
               ))}
             </tbody>
@@ -262,6 +278,7 @@ interface KeybindingRowProps {
   onRecordComplete: (combo: KeyCombo | null) => void;
   onCancel: () => void;
   onReset: () => void;
+  onUnbind: () => void;
 }
 
 function KeybindingRow({
@@ -271,9 +288,11 @@ function KeybindingRow({
   onRecordComplete,
   onCancel,
   onReset,
+  onUnbind,
 }: KeybindingRowProps) {
   const combo = getEffectiveCombo(binding.action);
-  const displayStr = combo ? serializeBinding(combo) : "(unbound)";
+  const isUnbound = !combo || isUnboundCombo(combo);
+  const displayStr = combo && !isUnboundCombo(combo) ? serializeBinding(combo) : "(unbound)";
   const cellRef = useRef<HTMLTableCellElement>(null);
 
   useEffect(() => {
@@ -315,13 +334,33 @@ function KeybindingRow({
       <td className="keyboard-settings__action-cell">{binding.label}</td>
       <td
         ref={cellRef}
-        className={`keyboard-settings__binding-cell ${isRecording ? "keyboard-settings__binding-cell--recording" : ""}`}
+        className={[
+          "keyboard-settings__binding-cell",
+          isRecording ? "keyboard-settings__binding-cell--recording" : "",
+          !isRecording && isUnbound ? "keyboard-settings__binding-cell--unbound" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
         onClick={!isRecording ? onStartRecording : undefined}
         data-testid={`keybinding-binding-${binding.action}`}
+        data-unbound={!isRecording && isUnbound ? "true" : undefined}
       >
-        {isRecording ? "Press a key combination..." : displayStr}
+        {isRecording ? "Press a key combination... (Backspace to unbind)" : displayStr}
       </td>
-      <td className="keyboard-settings__reset-cell">
+      <td className="keyboard-settings__row-actions">
+        {!isUnbound && (
+          <Tooltip content="Unbind (clear shortcut)">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              icon={<X size={12} />}
+              onClick={onUnbind}
+              aria-label={`Unbind ${binding.label}`}
+              data-testid={`keybinding-unbind-${binding.action}`}
+            />
+          </Tooltip>
+        )}
         <Tooltip content="Reset to default">
           <Button
             variant="ghost"
@@ -329,7 +368,7 @@ function KeybindingRow({
             iconOnly
             icon={<RotateCcw size={12} />}
             onClick={onReset}
-            aria-label="Reset to default"
+            aria-label={`Reset ${binding.label} to default`}
             data-testid={`keybinding-reset-${binding.action}`}
           />
         </Tooltip>
