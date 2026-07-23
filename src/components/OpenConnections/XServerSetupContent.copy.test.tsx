@@ -118,7 +118,7 @@ describe("XServerSetupContent — copy install command (#1819)", () => {
       dependency: "XQuartz",
       installCommand: command,
     });
-    const commandEl = container.querySelector<HTMLElement>(".x-server-setup__command");
+    const commandEl = document.querySelector<HTMLElement>(".x-server-setup__command");
     expect(commandEl).not.toBeNull();
     expect(commandEl?.textContent).toBe(command);
 
