@@ -144,6 +144,18 @@ zip = "2"
 winreg = "0.55"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# X11 `CLIPBOARD`-selection owner for the remote-clipboard delayed-render binding
+# (#1815): own the selection and serve `text/uri-list` (+ gnome/mate copied-files)
+# on request, fetching the remote files only when a paste converts the selection.
+# `x11rb` is the pure-Rust (`RustConnection`), libxcb-free X11 stack the sidecar's
+# `x11-clipboard` reader already builds on, so it adds **no system-library build
+# dependency**. Linux-only — the module is `#[cfg(target_os = "linux")]` and
+# `cargo tree -i` clean off Linux. `default-features = false` keeps the C-FFI
+# `XCBConnection` out; only the pure-Rust connection is needed.
+x11rb = { version = "0.13", default-features = false }
+# Percent-encode staged temp paths into `file://` URIs for the served payloads —
+# the encode side of the sidecar reader's percent-decode. Linux-only here.
+percent-encoding = "2"
 # Linux Secret Service backend. The `async-secret-service` backend talks to the
 # Secret Service over the pure-Rust `zbus` transport (no `libdbus-sys` C
 # dependency), so it compiles in CI without `libdbus-1-dev` and without a live
