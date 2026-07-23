@@ -475,11 +475,11 @@ impl GraphicalSessionManager {
     /// [`Self::remote_clipboard_files`] surfaced.
     ///
     /// Only the platform-native OS-clipboard binding calls this (on the real paste
-    /// gesture); macOS is wired today (`macos_clipboard`), Windows/Linux are
-    /// follow-ups (#1814/#1815). Off those platforms it has no in-crate caller
-    /// yet, so the dead-code lint is suppressed there rather than deleting a method
-    /// the pending bindings need.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    /// gesture); macOS (`macos_clipboard`) and Linux (`linux_clipboard`) are wired,
+    /// Windows is a follow-up (#1814). Off those platforms it has no in-crate
+    /// caller yet, so the dead-code lint is suppressed there rather than deleting a
+    /// method the pending binding needs.
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(dead_code))]
     pub async fn fetch_remote_clipboard_file(
         &self,
         session_id: &str,
