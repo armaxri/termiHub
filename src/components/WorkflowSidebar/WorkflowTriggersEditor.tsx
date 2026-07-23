@@ -59,9 +59,7 @@ export function WorkflowTriggersEditor({
 
   const toggleConnection = (connectionId: string, checked: boolean) => {
     const current = onConnect?.connectionIds ?? [];
-    const ids = checked
-      ? [...current, connectionId]
-      : current.filter((id) => id !== connectionId);
+    const ids = checked ? [...current, connectionId] : current.filter((id) => id !== connectionId);
     onChange(replace(triggers, "on-connect", { kind: "on-connect", connectionIds: ids }));
   };
 
@@ -131,9 +129,7 @@ export function WorkflowTriggersEditor({
               value={hotkey.binding}
               placeholder="e.g. Ctrl+Alt+H"
               onChange={(e) =>
-                onChange(
-                  replace(triggers, "hotkey", { kind: "hotkey", binding: e.target.value })
-                )
+                onChange(replace(triggers, "hotkey", { kind: "hotkey", binding: e.target.value }))
               }
               data-testid="workflow-trigger-hotkey-binding"
             />

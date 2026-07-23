@@ -1,13 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import {
-  DndContext,
-  DragEndEvent,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
+import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { Modal, Button, Input, Field } from "@/components/ui";
 import type { Workflow, WorkflowStep, WorkflowStepKind, WorkflowTrigger } from "@/types/workflow";
@@ -15,7 +9,12 @@ import type { Macro } from "@/types/macro";
 import type { SavedConnection } from "@/types/connection";
 import { WorkflowStepRow, type WorkflowStepEntry } from "./WorkflowStepRow";
 import { WorkflowTriggersEditor } from "./WorkflowTriggersEditor";
-import { WORKFLOW_STEP_KINDS, stepKindLabel, stepKindIcon, newWorkflowStep } from "./workflowStepMeta";
+import {
+  WORKFLOW_STEP_KINDS,
+  stepKindLabel,
+  stepKindIcon,
+  newWorkflowStep,
+} from "./workflowStepMeta";
 import "./WorkflowEditorDialog.css";
 
 /** The editable fields the dialog collects before saving a workflow. */

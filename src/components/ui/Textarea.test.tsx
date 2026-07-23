@@ -51,7 +51,13 @@ describe("Textarea", () => {
   it("spreads native textarea props (value, placeholder, rows)", () => {
     const onChange = vi.fn();
     render(
-      <Textarea data-testid="ta" defaultValue="line1\nline2" placeholder="script" rows={8} onChange={onChange} />
+      <Textarea
+        data-testid="ta"
+        defaultValue="line1\nline2"
+        placeholder="script"
+        rows={8}
+        onChange={onChange}
+      />
     );
     const el = document.querySelector('[data-testid="ta"]') as HTMLTextAreaElement;
     expect(el.placeholder).toBe("script");

@@ -156,13 +156,19 @@ export function WorkflowListItem({
             <span className="workflow-item__description">{workflow.description}</span>
           ) : null}
           {preview ? (
-            <code className="workflow-item__preview" data-testid={`workflow-preview-${workflow.id}`}>
+            <code
+              className="workflow-item__preview"
+              data-testid={`workflow-preview-${workflow.id}`}
+            >
               {preview}
             </code>
           ) : null}
           <span className="workflow-item__meta">
             {onConnect ? (
-              <span className="workflow-item__trigger" data-testid={`workflow-on-connect-${workflow.id}`}>
+              <span
+                className="workflow-item__trigger"
+                data-testid={`workflow-on-connect-${workflow.id}`}
+              >
                 <Zap size={10} aria-hidden="true" /> on-connect
               </span>
             ) : null}

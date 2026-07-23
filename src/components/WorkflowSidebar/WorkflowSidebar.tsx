@@ -86,20 +86,23 @@ export function WorkflowSidebar() {
     setEditing({ workflow: blankWorkflow(), isNew: true });
   }, []);
 
-  const handlePromoteMacro = useCallback((macroId: string) => {
-    const macro = macros.find((m) => m.id === macroId);
-    if (!macro) return;
-    setEditing({
-      workflow: {
-        ...blankWorkflow(),
-        name: macro.name,
-        description: macro.description,
-        tags: macro.tags,
-        steps: [{ kind: "run-macro", macroId: macro.id }],
-      },
-      isNew: true,
-    });
-  }, [macros]);
+  const handlePromoteMacro = useCallback(
+    (macroId: string) => {
+      const macro = macros.find((m) => m.id === macroId);
+      if (!macro) return;
+      setEditing({
+        workflow: {
+          ...blankWorkflow(),
+          name: macro.name,
+          description: macro.description,
+          tags: macro.tags,
+          steps: [{ kind: "run-macro", macroId: macro.id }],
+        },
+        isNew: true,
+      });
+    },
+    [macros]
+  );
 
   const handleRun = useCallback(
     (workflowId: string) => {
@@ -393,9 +396,7 @@ export function WorkflowSidebar() {
       <ConfirmDeleteDialog
         open={pendingDelete !== null}
         message={
-          pendingDelete
-            ? `Delete workflow "${pendingDelete.name}"? This cannot be undone.`
-            : ""
+          pendingDelete ? `Delete workflow "${pendingDelete.name}"? This cannot be undone.` : ""
         }
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
