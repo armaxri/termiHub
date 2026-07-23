@@ -160,17 +160,19 @@ impl Default for RdpConfig {
 /// clipboard for a delayed-render local paste (#1804).
 ///
 /// **macOS** has the native `NSPasteboard` promised-data binding
-/// (`src-tauri/src/macos_clipboard.rs`, #1804) and **Windows** has the `CF_HDROP`
-/// delayed-render binding (`src-tauri/src/windows_clipboard.rs`, #1814), so those
-/// are the platforms where the sidecar surfaces the file list for delayed
-/// rendering; every other platform keeps the eager shared-folder download (#1765)
-/// as the fallback. The host process stamps
-/// [`RdpConfig::clipboard_delayed_render`] from this at connect time — it reflects
-/// a platform capability, not a user preference, so it is deliberately absent from
-/// [`rdp_settings_schema`]. The Linux (X11/Wayland `text/uri-list`) binding is
-/// tracked as a follow-up (#1815); wiring one here is a single-line change.
+/// (`src-tauri/src/macos_clipboard.rs`, #1804), **Windows** has the `CF_HDROP`
+/// delayed-render binding (`src-tauri/src/windows_clipboard.rs`, #1814), and
+/// **Linux** has the X11 `CLIPBOARD`-selection `text/uri-list` binding
+/// (`src-tauri/src/linux_clipboard.rs`, #1815), so those are the platforms where
+/// the sidecar surfaces the file list for delayed rendering; every other platform
+/// keeps the eager shared-folder download (#1765) as the fallback. The host
+/// process stamps [`RdpConfig::clipboard_delayed_render`] from this at connect
+/// time — it reflects a platform capability, not a user preference, so it is
+/// deliberately absent from [`rdp_settings_schema`]. The native-Wayland delayed
+/// data source is still a follow-up (X11 covers Wayland via XWayland); wiring one
+/// here is a single-line change.
 pub const fn host_supports_clipboard_delayed_render() -> bool {
-    cfg!(any(target_os = "macos", windows))
+    cfg!(any(target_os = "macos", target_os = "linux", windows))
 }
 
 impl RdpConfig {
@@ -672,12 +674,12 @@ mod tests {
 
     #[test]
     fn host_capability_flag_matches_the_build_platform() {
-        // Delayed rendering is bound to the OS clipboard on macOS (#1804) and
-        // Windows (#1814); every other platform keeps the eager shared-folder
-        // download (#1765).
+        // Delayed rendering is bound to the OS clipboard on macOS (#1804),
+        // Windows (#1814), and Linux (#1815); every other platform keeps the eager
+        // shared-folder download (#1765).
         assert_eq!(
             host_supports_clipboard_delayed_render(),
-            cfg!(any(target_os = "macos", windows))
+            cfg!(any(target_os = "macos", target_os = "linux", windows))
         );
     }
 

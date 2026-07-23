@@ -109,11 +109,19 @@ pub async fn remote_desktop_bind_clipboard_files(
         return Ok(0);
     }
 
-    #[cfg(any(target_os = "macos", windows))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         let count = files.len();
         #[cfg(target_os = "macos")]
         crate::macos_clipboard::bind_remote_clipboard_files(
+            &app_handle,
+            (*manager).clone(),
+            session_id,
+            files,
+        )
+        .map_err(|e| TerminalError::InternalError(e.to_string()))?;
+        #[cfg(target_os = "linux")]
+        crate::linux_clipboard::bind_remote_clipboard_files(
             &app_handle,
             (*manager).clone(),
             session_id,
@@ -130,7 +138,7 @@ pub async fn remote_desktop_bind_clipboard_files(
         .map_err(|e| TerminalError::InternalError(e.to_string()))?;
         Ok(count)
     }
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         // No native OS-clipboard binding on this platform: with delayed rendering
         // off, `remote_clipboard_files` is already empty and we returned above, so

@@ -4,12 +4,19 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 
-// --- Mocks ---
+// Regression test for #1849: terminal output painted out of order (a later
+// prompt line rendered between an earlier command's output lines) until the tab
+// is resized. The maintainer confirmed a resize fixes it, proving the xterm.js
+// buffer is correct but the DOM renderer paints rows at stale positions during
+// rapid scrolling output (Windows ConPTY redrawing a `git status`). The fix
+// forces a full-viewport `xterm.refresh(0, rows - 1)` after each output flush so
+// the repaint is deterministic without a manual resize. This test locks in that
+// the refresh is issued on the output path.
 
-// Capture the onScroll handler and write callback so we can drive them in tests
-let capturedOnScrollHandler: (() => void) | null = null;
 let capturedWriteCallback: (() => void) | null = null;
+let capturedOnScrollHandler: (() => void) | null = null;
 const mockScrollToBottom = vi.fn();
+const mockRefresh = vi.fn();
 const mockBuffer = {
   active: { viewportY: 100, baseY: 100, length: 1, getLine: vi.fn() },
 };
@@ -33,7 +40,7 @@ vi.mock("@xterm/xterm", () => {
     });
     writeln = vi.fn();
     scrollToBottom = mockScrollToBottom;
-    refresh = vi.fn();
+    refresh = mockRefresh;
     scrollLines = vi.fn();
     selectAll = vi.fn();
     hasSelection = vi.fn(() => false);
@@ -92,7 +99,6 @@ vi.mock("@/services/events", () => ({
   terminalDispatcher: {
     init: vi.fn().mockResolvedValue(undefined),
     subscribeOutput: vi.fn((_id: string, cb: (data: Uint8Array) => void) => {
-      // Store the output callback so tests can push data
       outputCallback = cb;
       return vi.fn();
     }),
@@ -112,8 +118,6 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
 
 let outputCallback: ((data: Uint8Array) => void) | null = null;
 
-// Mock requestAnimationFrame to execute synchronously in tests
-// Mock ResizeObserver (not available in jsdom)
 globalThis.ResizeObserver = class {
   observe = vi.fn();
   unobserve = vi.fn();
@@ -145,9 +149,10 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  capturedOnScrollHandler = null;
   capturedWriteCallback = null;
+  capturedOnScrollHandler = null;
   mockScrollToBottom.mockClear();
+  mockRefresh.mockClear();
   mockBuffer.active.viewportY = 100;
   mockBuffer.active.baseY = 100;
   outputCallback = null;
@@ -174,106 +179,67 @@ function renderTerminal() {
   });
 }
 
-describe("Terminal auto-scroll behavior", () => {
-  it("auto-scrolls when viewport is at the bottom", async () => {
-    renderTerminal();
-
-    // Wait for async setupTerminal
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    // Simulate output arriving
-    if (outputCallback) {
-      act(() => {
-        outputCallback!(new Uint8Array([65, 66, 67]));
-      });
-    }
-
-    // Flush the output RAF (flushOutput)
-    act(() => flushRaf());
-
-    // The write callback should have been captured
-    if (capturedWriteCallback) {
-      act(() => capturedWriteCallback!());
-    }
-
-    // Flush the scrollToBottom RAF inside scrollAfterWrite
-    act(() => flushRaf());
-
-    expect(mockScrollToBottom).toHaveBeenCalled();
+async function pushOutputAndFlush() {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
   });
 
-  it("suppresses auto-scroll when user has scrolled up", async () => {
+  if (outputCallback) {
+    act(() => {
+      outputCallback!(new Uint8Array([65, 66, 67]));
+    });
+  }
+
+  // Flush the output RAF (flushOutput → xterm.write)
+  act(() => flushRaf());
+
+  // Run the write callback (afterWrite schedules the repaint RAF)
+  if (capturedWriteCallback) {
+    act(() => capturedWriteCallback!());
+  }
+
+  // Flush the scroll/refresh RAF
+  act(() => flushRaf());
+}
+
+describe("Terminal output repaint (#1849)", () => {
+  it("forces a full-viewport refresh after appended output", async () => {
+    renderTerminal();
+    await pushOutputAndFlush();
+
+    expect(mockRefresh).toHaveBeenCalledWith(0, 23);
+  });
+
+  it("still refreshes when the user has scrolled up (stale rows stay correct)", async () => {
     renderTerminal();
 
     await act(async () => {
       await new Promise((r) => setTimeout(r, 50));
     });
 
-    // Simulate user scrolling up: viewportY < baseY
+    // Simulate the user scrolling away from the bottom: onScroll marks the
+    // terminal as scrolled-up so auto-scroll is suppressed.
     mockBuffer.active.viewportY = 50;
     mockBuffer.active.baseY = 100;
     expect(capturedOnScrollHandler).not.toBeNull();
     act(() => capturedOnScrollHandler!());
-
-    // Clear any prior calls
     mockScrollToBottom.mockClear();
+    mockRefresh.mockClear();
 
-    // Simulate output arriving
     if (outputCallback) {
       act(() => {
         outputCallback!(new Uint8Array([68, 69, 70]));
       });
     }
-
     act(() => flushRaf());
-
     if (capturedWriteCallback) {
       act(() => capturedWriteCallback!());
     }
-
     act(() => flushRaf());
 
-    // scrollToBottom should NOT have been called
+    // Auto-scroll is suppressed while scrolled up, but the viewport is still
+    // repainted so no stale rows are left behind.
     expect(mockScrollToBottom).not.toHaveBeenCalled();
-  });
-
-  it("resumes auto-scroll when user scrolls back to bottom", async () => {
-    renderTerminal();
-
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 50));
-    });
-
-    // Simulate scrolling up
-    mockBuffer.active.viewportY = 50;
-    mockBuffer.active.baseY = 100;
-    act(() => capturedOnScrollHandler!());
-
-    // Then scroll back to bottom
-    mockBuffer.active.viewportY = 100;
-    mockBuffer.active.baseY = 100;
-    act(() => capturedOnScrollHandler!());
-
-    mockScrollToBottom.mockClear();
-
-    // Simulate output arriving
-    if (outputCallback) {
-      act(() => {
-        outputCallback!(new Uint8Array([71, 72, 73]));
-      });
-    }
-
-    act(() => flushRaf());
-
-    if (capturedWriteCallback) {
-      act(() => capturedWriteCallback!());
-    }
-
-    act(() => flushRaf());
-
-    // scrollToBottom should be called again
-    expect(mockScrollToBottom).toHaveBeenCalled();
+    expect(mockRefresh).toHaveBeenCalledWith(0, 23);
   });
 });
