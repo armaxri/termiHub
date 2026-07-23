@@ -292,7 +292,7 @@ function KeybindingRow({
 }: KeybindingRowProps) {
   const combo = getEffectiveCombo(binding.action);
   const isUnbound = !combo || isUnboundCombo(combo);
-  const displayStr = isUnbound ? "(unbound)" : serializeBinding(combo);
+  const displayStr = combo && !isUnboundCombo(combo) ? serializeBinding(combo) : "(unbound)";
   const cellRef = useRef<HTMLTableCellElement>(null);
 
   useEffect(() => {
