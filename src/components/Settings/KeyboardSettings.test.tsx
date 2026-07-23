@@ -173,6 +173,72 @@ describe("KeyboardSettings", () => {
     expect(container.textContent).toContain("Press a key combination...");
   });
 
+  it("shows an unbind button for a bound action and clears it on click", async () => {
+    renderComponent();
+
+    const unbindBtn = container.querySelector(
+      '[data-testid="keybinding-unbind-toggle-sidebar"]'
+    ) as HTMLElement;
+    expect(unbindBtn).not.toBeNull();
+
+    await act(async () => {
+      unbindBtn.click();
+      // updateSettings persists asynchronously; flush the microtask queue.
+      await Promise.resolve();
+    });
+
+    // Binding cell now reads "(unbound)" and is marked as such.
+    const bindingCell = container.querySelector(
+      '[data-testid="keybinding-binding-toggle-sidebar"]'
+    ) as HTMLElement;
+    expect(bindingCell.textContent).toBe("(unbound)");
+    expect(bindingCell.getAttribute("data-unbound")).toBe("true");
+
+    // Unbind button disappears once there is nothing left to clear.
+    expect(
+      container.querySelector('[data-testid="keybinding-unbind-toggle-sidebar"]')
+    ).toBeNull();
+
+    // The unbind is persisted to settings as an empty override.
+    const overrides = useAppStore.getState().settings.keybindingOverrides ?? [];
+    const entry = overrides.find((o) => o.action === "toggle-sidebar");
+    expect(entry).toBeDefined();
+    expect(entry?.key).toBe("");
+  });
+
+  it("restores an unbound action to its default via the reset button", () => {
+    renderComponent();
+
+    act(() => {
+      (
+        container.querySelector('[data-testid="keybinding-unbind-toggle-sidebar"]') as HTMLElement
+      ).click();
+    });
+    expect(
+      (
+        container.querySelector(
+          '[data-testid="keybinding-binding-toggle-sidebar"]'
+        ) as HTMLElement
+      ).textContent
+    ).toBe("(unbound)");
+
+    act(() => {
+      (
+        container.querySelector('[data-testid="keybinding-reset-toggle-sidebar"]') as HTMLElement
+      ).click();
+    });
+
+    const bindingCell = container.querySelector(
+      '[data-testid="keybinding-binding-toggle-sidebar"]'
+    ) as HTMLElement;
+    expect(bindingCell.textContent).not.toBe("(unbound)");
+    expect(bindingCell.getAttribute("data-unbound")).toBeNull();
+    // Default is restored, so the unbind button is back.
+    expect(
+      container.querySelector('[data-testid="keybinding-unbind-toggle-sidebar"]')
+    ).not.toBeNull();
+  });
+
   it("cancels recording mode on Escape", () => {
     renderComponent();
     const bindingCell = container.querySelector(
