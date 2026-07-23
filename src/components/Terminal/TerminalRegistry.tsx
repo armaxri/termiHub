@@ -168,7 +168,17 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       frontendLog("terminal_registry", `fitTerminal fit error tab=${tabId}: ${err}`);
     }
     if (xterm) {
-      requestAnimationFrame(() => xterm.scrollToBottom());
+      requestAnimationFrame(() => {
+        xterm.scrollToBottom();
+        // Force a full repaint of the viewport. fitAddon.fit() only re-renders
+        // when the computed cols/rows actually change; when a terminal is
+        // reparented into a same-size container — e.g. zooming a tab into the
+        // overlay — fit() is a no-op, so the renderer keeps showing stale/blank
+        // rows until a scroll event marks them dirty. That is why zoomed content
+        // only appeared after scrolling up/down. Refreshing every visible row
+        // makes the repaint deterministic so content shows immediately (#1823).
+        xterm.refresh(0, Math.max(0, xterm.rows - 1));
+      });
     }
   }, []);
 
