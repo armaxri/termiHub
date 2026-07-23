@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Modal, Button } from "@/components/ui";
+import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
+import { Copy } from "lucide-react";
+import { Modal, Button, toast } from "@/components/ui";
 import type { XServerError, XServerProgress } from "@/types/xserver";
 import "./XServerSetupDialog.css";
 
@@ -22,6 +24,16 @@ function fallbackButtonLabel(url: string): string {
 
 /** Microsoft Store page for App Installer (winget) — the Windows guided prerequisite. */
 const APP_INSTALLER_URL = "https://apps.microsoft.com/detail/9NBLGGH4NNS1";
+
+/**
+ * Copy the install command to the clipboard so the user can paste and run it
+ * instead of retyping it by hand (#1819). Returns the promise so the Button
+ * drives its success flash; a rejection surfaces via the Button's error toast.
+ */
+async function copyInstallCommand(command: string): Promise<void> {
+  await writeClipboard(command);
+  toast.success("Command copied to clipboard");
+}
 
 /**
  * Whether the recovery is a guided-terminal install (#1309): the user runs
@@ -168,6 +180,7 @@ export function XServerSetupContent({
     const message =
       error?.message ?? (rawError instanceof Error ? rawError.message : String(rawError));
     const isDependencyMissing = error?.kind === "dependencyMissing";
+    const installCommand = isDependencyMissing ? error?.installCommand : undefined;
     return (
       <div className="x-server-setup__error">
         <p className="x-server-setup__error-message" data-testid={`${testIdPrefix}-error`}>
@@ -176,10 +189,21 @@ export function XServerSetupContent({
         {isDependencyMissing && error?.installHint && (
           <p className="x-server-setup__hint">{error.installHint}</p>
         )}
-        {isDependencyMissing && error?.installCommand && (
-          <pre className="x-server-setup__command">
-            <code>{error.installCommand}</code>
-          </pre>
+        {installCommand && (
+          <div className="x-server-setup__command-row">
+            <pre className="x-server-setup__command">
+              <code>{installCommand}</code>
+            </pre>
+            <Button
+              variant="ghost"
+              iconOnly
+              icon={<Copy size={16} aria-hidden />}
+              aria-label="Copy command"
+              title="Copy command"
+              data-testid={`${testIdPrefix}-copy-command`}
+              onClick={() => copyInstallCommand(installCommand)}
+            />
+          </div>
         )}
       </div>
     );

@@ -90,14 +90,24 @@
   }
 }
 
-/* Dependency install command block */
+/* Dependency install command block, with a copy affordance (#1819) */
+.x-server-setup__command-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
 .x-server-setup__command {
+  flex: 1;
+  min-width: 0;
   margin: 0;
   padding: var(--spacing-sm) var(--spacing-md);
   overflow-x: auto;
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
+  /* Selectable so the user can also copy the command by hand (#1819). */
+  user-select: text;
   background: var(--bg-tertiary);
   border-radius: var(--radius-sm);
 }
