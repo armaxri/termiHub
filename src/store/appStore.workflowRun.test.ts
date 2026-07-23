@@ -56,6 +56,7 @@ vi.mock("@/services/workflowApi", () => ({
 import { useAppStore } from "./appStore";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { serializeWorkflows } from "@/services/workflowIo";
+import { resetOnConnectDispatchState } from "@/services/workflowTriggers";
 import { toast } from "@/components/ui";
 
 const workflow = (id: string, steps: WorkflowStep[]): Workflow => ({
@@ -92,6 +93,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
+    resetOnConnectDispatchState();
     savedWorkflows.length = 0;
     injected = [];
     registerTerminalInputInjector(async (_tabId, data) => {
@@ -278,5 +280,90 @@ describe("appStore — workflow run slice (#1852)", () => {
     // A fresh id is assigned on import (never the file's original id).
     expect(imported[0].id).not.toBe("original");
     expect(imported[0].steps).toEqual([cmd("ls")]);
+  });
+});
+
+describe("appStore — on-connect trigger dispatch (#1855)", () => {
+  let injected: string[];
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    resetOnConnectDispatchState();
+    injected = [];
+    registerTerminalInputInjector(async (_tabId, data) => {
+      injected.push(data);
+      return true;
+    });
+  });
+
+  afterEach(() => {
+    registerTerminalInputInjector(null);
+    vi.restoreAllMocks();
+  });
+
+  /** Seed a terminal tab opened from `connectionId`, not yet connected. */
+  function seedUnconnectedTab(connectionId: string | undefined, tabId = "tab-oc") {
+    const tab: TerminalTab = {
+      id: tabId,
+      sessionId: null,
+      title: "term",
+      connectionType: "ssh",
+      contentType: "terminal",
+      config: { type: "ssh", config: {} },
+      panelId: "leaf-1",
+      isActive: true,
+      ...(connectionId ? { connectionId } : {}),
+    };
+    const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
+    useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1", terminalExitedTabs: {} });
+  }
+
+  function onConnectWorkflow(id: string, connectionIds: string[]): Workflow {
+    return {
+      ...workflow(id, [cmd(`echo ${id}`)]),
+      triggers: [{ kind: "on-connect", connectionIds }],
+    };
+  }
+
+  it("runs an on-connect workflow when a bound connection's session opens", async () => {
+    useAppStore.setState({ workflows: [onConnectWorkflow("wf-a", ["conn-1"])] });
+    seedUnconnectedTab("conn-1");
+
+    useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-1");
+
+    await vi.waitFor(() => expect(injected).toContain("echo wf-a\n"));
+  });
+
+  it("does not run for a connection with no matching on-connect trigger", async () => {
+    useAppStore.setState({ workflows: [onConnectWorkflow("wf-a", ["conn-other"])] });
+    seedUnconnectedTab("conn-1");
+
+    useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-2");
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(injected).toEqual([]);
+  });
+
+  it("fires at most once per session open", async () => {
+    useAppStore.setState({ workflows: [onConnectWorkflow("wf-a", ["conn-1"])] });
+    seedUnconnectedTab("conn-1");
+
+    useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-3");
+    await vi.waitFor(() => expect(injected).toContain("echo wf-a\n"));
+    // A redundant session-open signal for the same session must not re-run it.
+    useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-3");
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(injected.filter((d) => d === "echo wf-a\n")).toHaveLength(1);
+  });
+
+  it("does not run on-connect workflows for a tab with no connection id", async () => {
+    useAppStore.setState({ workflows: [onConnectWorkflow("wf-a", ["conn-1"])] });
+    seedUnconnectedTab(undefined);
+
+    useAppStore.getState().setTabSessionId("tab-oc", "sess-oc-4");
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(injected).toEqual([]);
   });
 });

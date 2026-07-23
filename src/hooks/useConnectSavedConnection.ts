@@ -1,6 +1,7 @@
 import { useCallback } from "react";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, type AddTabOptions } from "@/store/appStore";
 import { SavedConnection } from "@/types/connection";
+import type { ConnectionConfig } from "@/types/terminal";
 import {
   createTerminal,
   removeCredential,
@@ -49,6 +50,15 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
       let config = connection.config;
       const cfg = config.config as unknown as Record<string, unknown>;
 
+      // Open a tab for this saved connection, always stamping its `connectionId`
+      // so the on-connect workflow trigger (#1855) can match the freshly opened
+      // session back to the connection it came from.
+      const openTab = (tabConfig: ConnectionConfig, opts: AddTabOptions = {}) =>
+        addTab(connection.name, connection.config.type, tabConfig, {
+          connectionId: connection.id,
+          ...opts,
+        });
+
       // A terminal-less connection type (Capabilities.terminal === false, e.g.
       // FTP) opens into a browser-only tab instead of a terminal tab — no xterm,
       // no PTY. The tab still owns a session so the sidebar file browser can route
@@ -91,7 +101,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         // Password auth always needs a credential; key auth only when encrypted.
         const needsCredential = authMethod === "password" || (authMethod === "key" && keyEncrypted);
         if (!needsCredential) {
-          addTab(connection.name, connection.config.type, config, {
+          openTab(config, {
             terminalOptions: connection.terminalOptions,
             contentType,
           });
@@ -105,7 +115,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         // synthetic) connection id and would miss, forcing a redundant prompt
         // even though the password is already known.
         if (typeof cfg.password === "string" && cfg.password.length > 0) {
-          addTab(connection.name, connection.config.type, config, {
+          openTab(config, {
             terminalOptions: connection.terminalOptions,
             contentType,
           });
@@ -137,7 +147,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           // directly with the resolved credential in its config; the
           // RemoteDesktopTab drives `remote_desktop_connect` itself (#1680).
           if (isGraphical) {
-            addTab(connection.name, connection.config.type, preConfig, {
+            openTab(preConfig, {
               terminalOptions: connection.terminalOptions,
               contentType,
             });
@@ -146,7 +156,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           try {
             const sessionId = await createTerminal(preConfig);
             // Stored credential worked — open tab with existing session
-            addTab(connection.name, connection.config.type, preConfig, {
+            openTab(preConfig, {
               terminalOptions: connection.terminalOptions,
               sessionId,
               contentType,
@@ -162,7 +172,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
               await removeCredential(connection.id, resolution.credentialType).catch(() => {});
             } else {
               // Non-auth failure — let the Terminal component handle the error
-              addTab(connection.name, connection.config.type, config, {
+              openTab(config, {
                 terminalOptions: connection.terminalOptions,
                 contentType,
               });
@@ -202,7 +212,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         }
       }
 
-      addTab(connection.name, connection.config.type, config, {
+      openTab(config, {
         terminalOptions: connection.terminalOptions,
         contentType,
       });
