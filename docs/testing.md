@@ -1205,6 +1205,27 @@ correctly in both themes. See PR #1504.
    have no close button; confirm the toast they resolve into (success/error)
    does.
 
+### Zoomed tab repaints terminal content immediately (#1823)
+
+Verifies that zooming a terminal tab repaints its content at the new size right
+away, with no need to scroll up/down to force a rerender. The fit + refresh path
+has a unit test (`TerminalRegistry.test.tsx` → `fitTerminal`), but the actual GPU
+repaint of the reparented terminal is visual and macOS-WKWebView specific, so it
+stays manual. See PR for #1823.
+
+1. Open a terminal tab and produce a full screen of visible content
+   (e.g. run `ls -la /usr/bin` or `seq 1 200`) so the viewport is not blank.
+2. Zoom the tab into the overlay (**Cmd+Shift+Enter** on macOS,
+   **Ctrl+Shift+Enter** elsewhere, or the tab's zoom control).
+3. **Expected:** the terminal content is visible in the zoom overlay
+   **immediately**, at the new size — you do **not** have to scroll up/down to
+   make it appear.
+4. Repeat several times (the original bug was intermittent) and with both zoom
+   in and out (Esc / the close button to un-zoom). Content must always render
+   without a manual scroll.
+5. Regression check: dragging the split-view splitter to resize a terminal must
+   still reflow and repaint as before.
+
 ### Agent binary SHA-256 checksums (release dry-run, #1350)
 
 Verifies that every published agent binary has a matching `*.sha256` asset and
