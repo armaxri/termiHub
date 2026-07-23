@@ -155,6 +155,26 @@ tests:
     verification: manual
     tags: [serial]
 
+  # --- Lost-port disconnect notification (#1824) ---
+
+  - id: MT-SER-10
+    name: "Losing the serial/COM port flips the tab out of green and notifies"
+    issue: 1824
+    platforms: [all]
+    prerequisites:
+      - app: true
+      - hardware: "a real USB serial adapter (or a socat virtual pair whose backing process can be killed)"
+    instructions:
+      - "Create a Serial connection to a live USB serial adapter and open it"
+      - "Confirm the tab connects and its status dot is green (connected)"
+      - "Physically remove the adapter / unplug the cable (or kill the socat process backing the virtual port)"
+    expected:
+      - "Within a moment the tab's status dot leaves green (turns to the disconnected/error color)"
+      - "The disconnect overlay appears on the terminal ('Session disconnected / The connection was lost.')"
+      - "The app stays stable (no crash, no hang)"
+    verification: manual
+    tags: [serial, disconnect]
+
   # --- Configurable line endings (PR #791) ---
 
   - id: MT-SER-06
