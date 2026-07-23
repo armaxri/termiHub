@@ -4,6 +4,7 @@ import { FileBrowser } from "./FileBrowser";
 import { TunnelSidebar } from "@/components/TunnelSidebar";
 import { WorkspaceSidebar } from "@/components/WorkspaceSidebar";
 import { MacroSidebar } from "@/components/MacroSidebar";
+import { WorkflowSidebar } from "@/components/WorkflowSidebar";
 import { NetworkToolsSidebar } from "@/components/NetworkTools/NetworkToolsSidebar";
 import { EmbeddedServerSidebar } from "@/components/EmbeddedServerSidebar";
 import "./Sidebar.css";
@@ -15,6 +16,7 @@ const VIEW_TITLES: Record<string, string> = {
   services: "Services",
   workspaces: "Workspaces",
   macros: "Macros",
+  workflows: "Workflows",
   "network-tools": "Network Tools",
 };
 
@@ -40,6 +42,7 @@ export function Sidebar({ width }: SidebarProps) {
         {sidebarView === "services" && <EmbeddedServerSidebar />}
         {sidebarView === "workspaces" && <WorkspaceSidebar />}
         {sidebarView === "macros" && <MacroSidebar />}
+        {sidebarView === "workflows" && <WorkflowSidebar />}
         {sidebarView === "network-tools" && <NetworkToolsSidebar />}
       </div>
     </div>

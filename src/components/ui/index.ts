@@ -14,6 +14,9 @@ export type { InputProps } from "./Input";
 export { NumberInput } from "./NumberInput";
 export type { NumberInputProps } from "./NumberInput";
 
+export { Textarea } from "./Textarea";
+export type { TextareaProps } from "./Textarea";
+
 export { Field } from "./Field";
 export type { FieldProps } from "./Field";
 

@@ -1,0 +1,115 @@
+.workflow-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.workflow-sidebar__actions {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  gap: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.workflow-sidebar__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.workflow-sidebar__search-icon {
+  position: absolute;
+  left: 16px;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+.workflow-sidebar__search .ui-input {
+  padding-left: 26px;
+}
+
+.workflow-sidebar__list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.workflow-sidebar__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+  gap: 8px;
+}
+
+.workflow-sidebar__empty-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--accent-color);
+  cursor: pointer;
+  font-size: inherit;
+  text-decoration: underline;
+}
+
+/*
+ * Workflow rows compose from the shared `SidebarListItem` shell, so the row
+ * layout lives in `SidebarListItem.css`. Only workflow-specific detail lines
+ * remain here.
+ */
+.workflow-item__description {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-item__preview {
+  display: block;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-item__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.workflow-item__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--accent-color);
+  font-size: 10px;
+}
+
+.workflow-item__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.workflow-item__tag {
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 16px;
+}

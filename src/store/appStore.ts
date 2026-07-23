@@ -231,6 +231,7 @@ export type SidebarView =
   | "services"
   | "workspaces"
   | "macros"
+  | "workflows"
   | "network-tools";
 
 /** Clipboard state for file browser copy/cut operations. */
