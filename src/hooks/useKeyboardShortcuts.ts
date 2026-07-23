@@ -9,6 +9,7 @@ import {
   getActionScope,
 } from "@/services/keybindings";
 import { CONTEXT_COMMANDS } from "@/services/contextCommands";
+import { matchHotkeyWorkflow } from "@/services/workflowTriggers";
 import {
   activeContextFromTab,
   isEventFromTextInput,
@@ -57,7 +58,18 @@ export function useKeyboardShortcuts() {
       }
 
       const action = processKeyEvent(e);
-      if (!action) return;
+      if (!action) {
+        // No app shortcut matched — try workflow `hotkey` triggers (#1855). A
+        // workflow bound to this key runs against the focused terminal via the
+        // store's single-run-at-a-time `runWorkflow`. Checked after app
+        // shortcuts so a user's app binding always wins over a workflow hotkey.
+        const wfId = matchHotkeyWorkflow(e, useAppStore.getState().workflows);
+        if (wfId) {
+          e.preventDefault();
+          void useAppStore.getState().runWorkflow(wfId);
+        }
+        return;
+      }
 
       // chord-pending means the first key of a chord was pressed — just block it
       if (action === "chord-pending") {
