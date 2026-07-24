@@ -108,6 +108,17 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Credential storage** — Optional credential encryption via platform keychain, master password, or prompt-only mode
 - **Auto-lock** — Configurable timeout for credential store locking
 
+### Workflow Automation (experimental)
+
+- **Authored multi-step workflows** — Save named, ordered sequences of steps that run against a terminal session
+- **Step types** — `send-command` (type a command), `run-script` (stream a multi-line script), `run-macro` (replay a saved macro), `wait` (delay), and `run-local-process` (run a local program — see the security callout below)
+- **Triggers** — Run manually (command palette / sidebar), via a hotkey, or automatically on-connect when a chosen connection opens a session
+- **Sidebar + editor** — Manage, edit, and organize workflows from the Workflows panel; import and export workflows as portable JSON
+
+> ⚠️ **`run-local-process` runs on your LOCAL machine.** Every other step type sends text into the terminal session (i.e. runs on the remote host when you are connected). `run-local-process` instead launches a program on the computer running termiHub. It is **off by default** and stays inert until you explicitly opt in under **Settings → Security**, and each program must be authorized via a per-program allowlist / per-run confirmation. Arguments are passed as a discrete list (no shell interpretation). This is a power-user orchestration capability — safe to ignore entirely if you don't use it. Imported workflows are **never** auto-authorized.
+>
+> The Workflows panel is **experimental** and behind the experimental-features toggle — enable **Settings → General → Allow Experimental Features** to use it. Design reference: [`docs/concepts/backlog/workflow-automation.html`](docs/concepts/backlog/workflow-automation.html).
+
 ### Platform Support
 
 - **Cross-platform** — Windows, Linux, and macOS
