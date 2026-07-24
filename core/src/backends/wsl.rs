@@ -339,6 +339,46 @@ pub(crate) fn windows_path_to_wsl_path(win_path: &str) -> Option<String> {
     }
 }
 
+/// Parse the `env` key/value list from connection settings into a map of
+/// environment variables to apply to the WSL distribution.
+///
+/// Mirrors the SSH backend's parsing: each entry is an object with `key`/`value`
+/// string fields (the shape produced by the `KeyValueList` form widget). Entries
+/// missing either field are skipped; on a duplicate key the last entry wins.
+/// Returns an empty map when the field is absent or not an array.
+fn parse_wsl_env(settings: &serde_json::Value) -> std::collections::HashMap<String, String> {
+    settings
+        .get("env")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| {
+                    let key = item.get("key").and_then(|v| v.as_str())?;
+                    let value = item.get("value").and_then(|v| v.as_str())?;
+                    Some((key.to_string(), value.to_string()))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Build the `WSLENV` value that shares the given variable names across the
+/// Win32↔WSL boundary.
+///
+/// `wsl.exe` inherits the launching process's Win32 environment, but a variable
+/// only crosses into the Linux side if its name is listed in `WSLENV`. Names are
+/// joined with `:` and appended to any pre-existing `WSLENV` (passed as
+/// `existing`) so a caller-provided `WSLENV` is preserved. No per-variable flag
+/// is used, so the values cross verbatim (no `/p` path translation) — correct
+/// for arbitrary string values. `names` is assumed pre-sorted for determinism.
+fn build_wslenv(existing: Option<&str>, names: &[String]) -> String {
+    let joined = names.join(":");
+    match existing.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(existing) => format!("{existing}:{joined}"),
+        None => joined,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Silent setup task
 // ---------------------------------------------------------------------------
@@ -629,6 +669,26 @@ impl ConnectionType for Wsl {
                         supports_tilde_expansion: false,
                         visible_when: None,
                     },
+                    SettingsField {
+                        key: "env".to_string(),
+                        label: "Environment Variables".to_string(),
+                        description: Some(
+                            "Additional environment variables for the WSL shell".to_string(),
+                        ),
+                        help_text: Some(concat!(
+                            "These are set in the Win32 environment of `wsl.exe` and shared into ",
+                            "the Linux side by adding their names to `WSLENV`, so they are present ",
+                            "in the distribution's shell. Values cross verbatim (no path ",
+                            "translation).",
+                        ).to_string()),
+                        field_type: FieldType::KeyValueList,
+                        required: false,
+                        default: None,
+                        placeholder: None,
+                        supports_env_expansion: true,
+                        supports_tilde_expansion: false,
+                        visible_when: None,
+                    },
                 ],
             }],
         }
@@ -680,6 +740,7 @@ impl ConnectionType for Wsl {
             distribution: distribution.clone(),
             starting_directory,
             initial_command: _initial_command,
+            env: parse_wsl_env(&settings),
             ..WslConfig::default()
         };
 
@@ -724,6 +785,23 @@ impl ConnectionType for Wsl {
         // Set TERM for the WSL environment.
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+
+        // Per-connection environment variables. `wsl.exe` inherits this Win32
+        // environment, but a variable only reaches the Linux side if its name is
+        // listed in `WSLENV`. Set each var on the launch environment and append
+        // its name (sorted for determinism) to `WSLENV`, preserving any existing
+        // `WSLENV` from the parent process.
+        if !config.env.is_empty() {
+            let mut names: Vec<String> = config.env.keys().cloned().collect();
+            names.sort();
+            for name in &names {
+                if let Some(value) = config.env.get(name) {
+                    command.env(name, value);
+                }
+            }
+            let wslenv = build_wslenv(std::env::var("WSLENV").ok().as_deref(), &names);
+            command.env("WSLENV", wslenv);
+        }
 
         let child = pty_pair
             .slave
@@ -990,6 +1068,68 @@ mod tests {
         let fields = &schema.groups[0].fields;
         let distro_field = fields.iter().find(|f| f.key == "distribution").unwrap();
         assert!(distro_field.required);
+    }
+
+    #[test]
+    fn schema_has_env_key_value_list() {
+        let wsl = Wsl::new();
+        let schema = wsl.settings_schema();
+        let fields = &schema.groups[0].fields;
+        let env_field = fields
+            .iter()
+            .find(|f| f.key == "env")
+            .expect("env field present in schema");
+        assert!(matches!(env_field.field_type, FieldType::KeyValueList));
+        assert!(!env_field.required);
+    }
+
+    // -----------------------------------------------------------------------
+    // Environment-variable parsing / WSLENV boundary crossing
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parse_wsl_env_reads_key_value_array() {
+        let settings = serde_json::json!({
+            "distribution": "Ubuntu",
+            "env": [
+                {"key": "FOO", "value": "bar"},
+                {"key": "BAZ", "value": "qux"}
+            ]
+        });
+        let env = super::parse_wsl_env(&settings);
+        assert_eq!(env.len(), 2);
+        assert_eq!(env.get("FOO").map(String::as_str), Some("bar"));
+        assert_eq!(env.get("BAZ").map(String::as_str), Some("qux"));
+    }
+
+    #[test]
+    fn parse_wsl_env_empty_and_missing() {
+        assert!(super::parse_wsl_env(&serde_json::json!({ "env": [] })).is_empty());
+        assert!(super::parse_wsl_env(&serde_json::json!({})).is_empty());
+        // Malformed (not an array) → empty, never panics.
+        assert!(super::parse_wsl_env(&serde_json::json!({ "env": "nope" })).is_empty());
+    }
+
+    #[test]
+    fn build_wslenv_no_existing() {
+        let names = vec!["FOO".to_string(), "BAR".to_string()];
+        assert_eq!(super::build_wslenv(None, &names), "FOO:BAR");
+    }
+
+    #[test]
+    fn build_wslenv_appends_to_existing() {
+        let names = vec!["FOO".to_string()];
+        assert_eq!(
+            super::build_wslenv(Some("EXISTING/p"), &names),
+            "EXISTING/p:FOO"
+        );
+    }
+
+    #[test]
+    fn build_wslenv_empty_existing_is_ignored() {
+        let names = vec!["FOO".to_string()];
+        assert_eq!(super::build_wslenv(Some(""), &names), "FOO");
+        assert_eq!(super::build_wslenv(Some("   "), &names), "FOO");
     }
 
     #[test]
