@@ -364,6 +364,25 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "warnLargePortScan",
+    label: "Warn Before a Large Port Scan",
+    description:
+      "Show a warning before starting a Port Scanner scan that probes a very large number of host/port combinations",
+    category: "general",
+    keywords: [
+      "warn",
+      "port",
+      "scan",
+      "scanner",
+      "large",
+      "network",
+      "confirm",
+      "prompt",
+      "dialog",
+      "probe",
+    ],
+  },
+  {
     id: "experimentalFeaturesEnabled",
     label: "Allow Experimental Features",
     description:

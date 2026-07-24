@@ -3422,6 +3422,7 @@ export const useAppStore = create<AppState>((set, get) => {
       confirmCloseTabOnShortcut: true,
       confirmCloseLiveSession: true,
       askOpenSavedFileInTab: true,
+      warnLargePortScan: true,
     },
     savedSettings: {
       version: "1",
@@ -3431,6 +3432,7 @@ export const useAppStore = create<AppState>((set, get) => {
       confirmCloseTabOnShortcut: true,
       confirmCloseLiveSession: true,
       askOpenSavedFileInTab: true,
+      warnLargePortScan: true,
     },
 
     // Layout
