@@ -23,7 +23,7 @@ export type { FieldProps } from "./Field";
 export { Select, SelectItem } from "./Select";
 export type { SelectProps, SelectOption } from "./Select";
 
-export { Modal } from "./Modal";
+export { Modal, useModalPortalContainer } from "./Modal";
 export type { ModalProps } from "./Modal";
 
 export { ConfirmDialog } from "./ConfirmDialog";
