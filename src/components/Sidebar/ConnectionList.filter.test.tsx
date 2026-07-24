@@ -157,6 +157,7 @@ describe("ConnectionList — filter/search", () => {
     keydown(input, "Enter");
 
     expect(addTab).toHaveBeenCalledWith("web-server", "local", expect.anything(), {
+      connectionId: "conn-2",
       terminalOptions: undefined,
     });
   });

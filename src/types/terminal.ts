@@ -303,6 +303,13 @@ export interface TerminalTab {
    */
   persistentConnectionId?: string;
   /**
+   * Id of the saved connection this tab was opened from, when known. Threaded
+   * so the on-connect workflow trigger (#1855) can match a freshly opened
+   * session back to the connection it came from. Absent for local/unmanaged
+   * tabs and externally spawned sessions.
+   */
+  connectionId?: string;
+  /**
    * Set when this tab was opened from an external spawn (`termiHub spawn …`,
    * #1446) as a "new container". Spawned containers have no saved connection id;
    * this flag drives the tab's "Spawned" badge and the separate grouping in the
