@@ -11,10 +11,8 @@ rendered in the DOM but was dead in the real app while jsdom unit tests passed.
 :meth:`WorkflowUi.add_step` asserts the step count actually changes, so a menu
 item that renders-but-does-nothing fails here.
 
-Note: the Workflows activity-bar item is *not* experimental-gated in the current
-code (unlike Tunnels/Services). The panel-opens test still enables experimental
-features first, both to exercise the journey the concept describes and so the
-suite keeps passing if gating is later added.
+The Workflows activity-bar item is experimental-gated (re-gated as experimental
+on develop), so every suite enables experimental features before opening it.
 """
 
 import pytest
@@ -37,8 +35,8 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
     """Author a workflow through the sidebar + editor dialog."""
 
     def test_panel_opens(self):
-        # Enable experimental features first (the journey the concept describes),
-        # then open the Workflows panel from the activity bar.
+        # The Workflows panel is experimental-gated, so reveal it first, then
+        # open it from the activity bar.
         self.enable_experimental_features()
         self.open_workflows_sidebar()
         assert self.driver.exists("workflow-sidebar")
@@ -101,13 +99,15 @@ class TestWorkflowEditor(WorkflowUi, SettingsUi, SidebarUi, SystemTest):
         assert self.driver.exists(f"workflow-item-{saved['id']}")
 
 
-class TestWorkflowRun(WorkflowUi, TerminalUi, SystemTest):
+class TestWorkflowRun(WorkflowUi, TerminalUi, SettingsUi, SidebarUi, SystemTest):
     """Run a stored send-command workflow against a live local shell."""
 
     def test_send_command_reaches_terminal(self):
         name = unique_name("wf-run")
         marker = unique_name("WF_MARK").replace("-", "_")
 
+        # The Workflows panel is experimental-gated — reveal it first.
+        self.enable_experimental_features()
         self.open_workflows_sidebar()
         self.open_new_workflow()
         self.add_step("send-command")
@@ -121,3 +121,24 @@ class TestWorkflowRun(WorkflowUi, TerminalUi, SystemTest):
         self.run_workflow(workflow_id)
 
         assert marker in self.wait_for_output(marker)
+
+    def test_run_script_sends_each_line(self):
+        # A run-script step streams each non-empty line as its own command
+        # through the same terminal choke point — assert both lines land.
+        name = unique_name("wf-script")
+        first = unique_name("WF_A").replace("-", "_")
+        second = unique_name("WF_B").replace("-", "_")
+
+        self.open_workflows_sidebar()
+        self.open_new_workflow()
+        self.add_step("run-script")
+        self.set_script(0, f"echo {first}\necho {second}")
+        self.set_name(name)
+        self.save_workflow()
+        workflow_id = self.workflow_id(name)
+
+        self.ensure_terminal()
+        self.run_workflow(workflow_id)
+
+        assert first in self.wait_for_output(first)
+        assert second in self.wait_for_output(second)

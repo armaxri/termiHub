@@ -35,6 +35,13 @@ class WorkflowUi(HarnessMixin):
         Clicking an already-active activity-bar icon toggles the sidebar closed,
         so only click when Workflows isn't already the visible view.
         """
+        # The Workflows item is experimental-gated and the activity bar mounts a
+        # beat after the bridge connects, so wait for the item before clicking
+        # (callers must enable experimental features first).
+        self.wait(
+            lambda: self.driver.exists("activity-bar-workflows"),
+            what="the Workflows activity-bar item (enable experimental features first)",
+        )
         try:
             showing = self.driver.get_state("sidebarView") == "workflows" and not (
                 self.driver.get_state("sidebarCollapsed")
@@ -119,6 +126,10 @@ class WorkflowUi(HarnessMixin):
     def set_command(self, index: int, command: str) -> None:
         """Set the command field of a send-command step at ``index``."""
         self.driver.type(f"workflow-editor-step-command-{index}", command)
+
+    def set_script(self, index: int, script: str) -> None:
+        """Set the script textarea of a run-script step at ``index``."""
+        self.driver.type(f"workflow-editor-step-script-{index}", script)
 
     def move_step_down(self, index: int) -> None:
         """Reorder the step at ``index`` one slot down via the arrow button."""
