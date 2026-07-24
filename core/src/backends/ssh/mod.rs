@@ -1056,7 +1056,10 @@ mod tests {
     #[test]
     fn build_ssh_env_export_single_var() {
         let env = std::collections::HashMap::from([("FOO".to_string(), "bar".to_string())]);
-        assert_eq!(build_ssh_env_export(&env).as_deref(), Some("export FOO='bar'\n"));
+        assert_eq!(
+            build_ssh_env_export(&env).as_deref(),
+            Some("export FOO='bar'\n")
+        );
     }
 
     #[test]
@@ -1075,10 +1078,7 @@ mod tests {
     fn build_ssh_env_export_escapes_single_quotes() {
         // A value containing a single quote must be escaped as '\'' so the
         // resulting line is still a valid, safe POSIX export statement.
-        let env = std::collections::HashMap::from([(
-            "MSG".to_string(),
-            "it's a test".to_string(),
-        )]);
+        let env = std::collections::HashMap::from([("MSG".to_string(), "it's a test".to_string())]);
         assert_eq!(
             build_ssh_env_export(&env).as_deref(),
             Some("export MSG='it'\\''s a test'\n")
