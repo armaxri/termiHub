@@ -556,35 +556,61 @@ but this allows graceful cleanup and correct state dot display before the window
 uniform regardless of whether a connection runs locally or through an agent.</p>
 <hr>
 <h2 id="implementation-status">Implementation Status</h2>
-<p><strong>Status: Not implemented.</strong> The concept issue is closed; no implementation issues have been created yet.</p>
+<p><strong>Status: Largely implemented (agent-hosted scope).</strong> Implementation issue
+<a href="https://github.com/armaxri/termiHub/issues/672">#672</a> shipped and is closed (merged
+2026-06-01), along with #709 (scrollback on reattach), #767 (Windows daemon spawn/detach) and
+follow-ups #847/#995/#1237/#1277. The full Start/Attach/Stop lifecycle, state store, IPC commands
+and event flow exist. Two gaps remain, both now tracked.</p>
 <h3 id="what-exists">What exists</h3>
 <ul>
-<li>The <code>persistent: boolean</code> field is present in the <code>SavedRemoteAgent</code> connection definition
-  (<code>src/types/terminal.ts</code>, <code>src/components/ConnectionEditor/ConnectionEditor.tsx</code>).</li>
-<li>The <code>persistent</code> capability flag is propagated through workspace layouts
-  (<code>src/utils/workspaceLayout.ts</code>).</li>
-<li>A tooltip on <code>AgentNode</code> shows <code>"persistent"</code> in the connection title when the flag is set.</li>
+<li><strong>Types</strong> — <code>PersistentRunState</code> (stopped/starting/running/attached/stopping/error)
+  and <code>PersistentSessionEntry</code> in <code>src/types/connection.ts</code>.</li>
+<li><strong>Store</strong> — the <code>persistentSessions</code> slice in <code>src/store/appStore.ts</code> with
+  start/attach/stop/adopt/restart actions (keyed <code>${agentId}:${definitionId}</code> for agent
+  sessions), tested in <code>appStore.persistentSessions.test.ts</code>.</li>
+<li><strong>IPC commands</strong> — <code>start_persistent_session</code>, <code>stop_persistent_session</code>,
+  <code>list_persistent_sessions</code>, <code>attach_persistent_tab</code>, <code>detach_persistent_tab</code>,
+  <code>adopt_persistent_session</code>, <code>get_agent_session_buffer</code> (scrollback replay) — a superset
+  of the concept's proposed set — backed by <code>src-tauri/src/session/manager.rs</code>.</li>
+<li><strong>Event flow</strong> — the <code>persistent-session-state-changed</code> Tauri event, subscribed via
+  <code>onPersistentSessionStateChanged</code> in <code>src/services/events.ts</code>.</li>
+<li><strong>Sidebar UX (agent-hosted)</strong> — <code>src/components/Sidebar/AgentNode.tsx</code>: ∞ persistence
+  badge, colour-coded state dot, inline Start/Attach/Stop buttons, and a state-adaptive context
+  menu. Tab decoration (∞ superscript, close-detaches-not-kills, scrollback-on-reattach) in
+  <code>Tab.tsx</code>/<code>Terminal.tsx</code>.</li>
+<li><strong>Daemon persistence</strong> — agent-hosted sessions survive disconnect (<code>detach_all</code>,
+  <code>recover_sessions</code>, <code>state.json</code>, Windows daemon). Backend <code>persistent</code>
+  capability is <code>true</code> for ssh/docker/wsl/serial/local_shell, <code>false</code> for
+  telnet/ftp/vnc/rdp.</li>
 </ul>
 <h3 id="what-is-missing">What is missing</h3>
 <ul>
-<li><strong>Persistence badge</strong> in the sidebar (∞ pill / icon) — not rendered anywhere.</li>
-<li><strong>Start / Attach / Stop</strong> lifecycle for persistent connections — the only action today is
-  "open tab" which always starts a new session. There is no way to start without attaching,
-  attach to an already-running session, or stop a session without closing the tab.</li>
-<li><strong>Connection state tracking</strong> (stopped / starting / running / attached) in the Zustand store.</li>
-<li><strong>Sidebar status dot</strong> showing running-in-background vs. attached vs. stopped.</li>
-<li><strong>Status bar integration</strong> showing the count of background-running persistent sessions.</li>
-<li>The concept's <code>connection.start()</code>, <code>connection.attach(sessionId)</code>, and <code>connection.stop()</code>
-  IPC commands do not exist.</li>
+<li><strong>Desktop-local sidebar surfacing</strong> — the persistent badge/state-dot/Start/Attach/Stop
+  controls exist only on agent-hosted definitions (<code>AgentNode.tsx</code>); the desktop-local saved
+  connection item (<code>ConnectionItem</code> in <code>ConnectionList.tsx</code>) surfaces none of it, so the
+  store's desktop-local <code>startPersistentSession</code>/<code>attachPersistentSession</code> actions have no
+  non-test caller. Tracked: <a href="https://github.com/armaxri/termiHub/issues/1881">#1881</a>.</li>
+<li><strong>Status-bar background-session count</strong> — not present in <code>StatusBar</code>; the mockups'
+  attached-tab numeric badge and one-time detach tooltip are also unbuilt. Tracked:
+  <a href="https://github.com/armaxri/termiHub/issues/1882">#1882</a>.</li>
 </ul>
-<h3 id="to-consider-before-implementing">To consider before implementing</h3>
-<ul>
-<li>The remote agent already has a well-established connect/disconnect/reconnect lifecycle;
-  reuse those patterns rather than designing a separate system.</li>
-<li>The <code>persistent</code> flag currently only appears on remote agent sub-connections, not on
-  local SSH, Docker, WSL, or Serial connections — the concept covers all of these.</li>
-<li>Implementation issue: none open yet — create one referencing this concept when ready to start.</li>
-</ul>
+<hr>
+<h2 id="sync">Sync Ledger</h2>
+<blockquote>
+<p>Maintained by <code>/sync-concept persistent-connection-ux</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
+</blockquote>
+<p><strong>Last synced:</strong> 2026-07-24 at commit <code>fb7befbb</code> · <strong>Status:</strong> diverged (partial). The lifecycle shipped for the agent-hosted scope (#672); two surfacing gaps remain (#1881, #1882). Concept prose still describes the pre-implementation frontend layout.</p>
+<h3 id="sync-open">Open divergences</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Recommendation</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Preliminary Impl Details wire persistence into <code>ConnectionList.tsx</code>/<code>ConnectionItem</code> and <code>TerminalTab.tsx</code></td><td>Landed in <code>AgentNode.tsx</code> + <code>Tab.tsx</code> for agent-hosted definitions; desktop-local <code>ConnectionItem</code> surfaces nothing</td><td>Missing</td><td>Surface on desktop-local items (<a href="https://github.com/armaxri/termiHub/issues/1881">#1881</a>)</td></tr>
+<tr><td>2</td><td>Status-bar count of background sessions; attached-tab numeric badge; one-time detach tooltip</td><td>Not implemented</td><td>Missing</td><td><a href="https://github.com/armaxri/termiHub/issues/1882">#1882</a></td></tr>
+<tr><td>3</td><td>Concept proposes <code>connection.start()/attach()/stop()</code> IPC commands</td><td>Shipped as <code>start_/stop_/list_persistent_session</code> plus <code>attach_/detach_/adopt_persistent_*</code> and <code>get_agent_session_buffer</code> — a superset; sessions keyed <code>${agentId}:${definitionId}</code></td><td>Undocumented</td><td>Reconcile concept command list to the shipped names</td></tr>
+</tbody>
+</table>
+</div>
     </div>
 
     <script src="../_assets/mermaid.min.js"></script>
