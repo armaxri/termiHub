@@ -1,6 +1,7 @@
 /**
- * Tests for the WoL "Save Current" flow after replacing the native
- * `window.prompt` with the shared Modal primitive (#1348).
+ * Tests for the WoL "Save Current" flow. The dialog was first moved off the
+ * native `window.prompt` onto the shared Modal primitive (#1348), then onto the
+ * shared ConfirmDialog primitive via its body slot (#1875).
  *
  * Covers: the modal opens instead of a native prompt; the device name is
  * captured via a Field; an invalid MAC blocks the save with an inline error;
@@ -112,7 +113,7 @@ describe("WolPanel — Save Current modal (#1348)", () => {
     await flush();
 
     await act(async () => {
-      q<HTMLButtonElement>('[data-testid="wol-save-confirm"]')!.click();
+      q<HTMLButtonElement>('[data-testid="confirm-dialog-confirm"]')!.click();
     });
     await flush();
 
@@ -133,14 +134,14 @@ describe("WolPanel — Save Current modal (#1348)", () => {
     });
     await flush();
 
-    const confirm = q<HTMLButtonElement>('[data-testid="wol-save-confirm"]')!;
+    const confirm = q<HTMLButtonElement>('[data-testid="confirm-dialog-confirm"]')!;
     expect(confirm.disabled).toBe(true);
 
     await act(async () => {
       setInputValue(q<HTMLInputElement>('[data-testid="wol-save-name"]')!, "NAS");
     });
     await flush();
-    expect(q<HTMLButtonElement>('[data-testid="wol-save-confirm"]')!.disabled).toBe(false);
+    expect(q<HTMLButtonElement>('[data-testid="confirm-dialog-confirm"]')!.disabled).toBe(false);
   });
 
   it("reloads the saved-device list after a successful save", async () => {
@@ -158,7 +159,7 @@ describe("WolPanel — Save Current modal (#1348)", () => {
     });
     await flush();
     await act(async () => {
-      q<HTMLButtonElement>('[data-testid="wol-save-confirm"]')!.click();
+      q<HTMLButtonElement>('[data-testid="confirm-dialog-confirm"]')!.click();
     });
     await flush();
 
