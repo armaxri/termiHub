@@ -6,7 +6,7 @@
   and the sync ledger. See docs/concepts/implemented/ai-driven-concept-workflow.html.
   Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
 
-  Supersedes docs/concepts/future/embedded-unix-windows.html (#519). Modeled on the
+  Supersedes the retired embedded-Unix-on-Windows concept (#519, file removed). Modeled on the
   detect-and-guide pattern of docs/concepts/implemented/x-server-provisioning.html.
 -->
 <html lang="en">
@@ -67,16 +67,16 @@
       <header class="concept-header">
         <h1>Guided Git Bash Installation on Windows</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span>detect-and-guide, no bundling</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/519">#519</a></span
           >
           <span
-            >Implementation: <a href="https://github.com/armaxri/termiHub/issues/1671">#1671</a>,
+            >Delivered by <a href="https://github.com/armaxri/termiHub/issues/1671">#1671</a>,
             <a href="https://github.com/armaxri/termiHub/issues/1672">#1672</a></span
           >
-          <span><code>docs/concepts/backlog/git-bash-provisioning.html</code></span>
+          <span><code>docs/concepts/implemented/git-bash-provisioning.html</code></span>
         </div>
       </header>
 
@@ -92,9 +92,8 @@
       <blockquote style="border-left-color: var(--color-success)">
         <p>
           <strong
-            >Supersedes
-            <a href="../future/embedded-unix-windows.html">Embedded Unix Command Environment</a>
-            (#519).</strong
+            >Supersedes the retired Embedded Unix Command Environment concept
+            (<a href="https://github.com/armaxri/termiHub/issues/519">#519</a>, since removed).</strong
           >
           Instead of bundling BusyBox-w32 + standalone binaries with the Windows build, termiHub
           <strong
@@ -223,8 +222,9 @@ flowchart LR
         <ul>
           <li>
             Bundling or embedding any Unix environment (BusyBox/MSYS2/Cygwin) — that is the
-            <strong>retired</strong> <a href="../future/embedded-unix-windows.html">#519</a> concept
-            this one supersedes.
+            <strong>retired</strong>
+            <a href="https://github.com/armaxri/termiHub/issues/519">#519</a> concept this one
+            supersedes.
           </li>
           <li>
             A package/plugin manager for installing extra Unix tools — that is
@@ -828,13 +828,15 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
-          — new concept; replaces the retired embedded-Unix concept (#519). Detection groundwork
-          exists (<code>GIT_BASH_PATHS</code> / <code>resolve_git_bash</code> in
-          <code>core/src/session/shell.rs</code>) but is not yet hardened; the guided-install flow
-          is unbuilt. Implementation tracked by
-          <a href="https://github.com/armaxri/termiHub/issues/1671">#1671</a> and
-          <a href="https://github.com/armaxri/termiHub/issues/1672">#1672</a>.
+          <strong>Last synced:</strong> #1671, #1672 · <strong>Status:</strong> implemented (one
+          deliberate descope). Layered detection is hardened and the guided-install flow shipped
+          (<code>core/src/session/shell.rs</code>, <code>src/utils/gitBashSetup.ts</code>,
+          <code>src/components/OpenConnections/GitBashSetupDialog.tsx</code> +
+          <code>guideGitBashInstall.ts</code>, wired into GeneralSettings and the connection editor).
+          The concept's in-app <em>automatic</em> winget install with a progress bar (and the
+          <code>git_bash_status</code> / <code>git_bash_install</code> backend commands) was
+          deliberately descoped to the simpler guided-terminal path (open a terminal preloaded with
+          the winget command) plus the git-scm.com fallback — see divergence #1 below.
         </p>
 
         <h3>Open divergences</h3>
@@ -852,34 +854,20 @@ sequenceDiagram
             <tbody>
               <tr>
                 <td>1</td>
-                <td>Layered Git Bash detection (registry / user-scope / winget / PATH)</td>
                 <td>
-                  Only two hardcoded <code>Program Files</code> paths in
-                  <code>GIT_BASH_PATHS</code> (<code>core/src/session/shell.rs</code>)
-                </td>
-                <td>Missing</td>
-                <td>Implement in #1671, then re-sync</td>
-              </tr>
-              <tr>
-                <td>2</td>
-                <td>Consent/progress guided-install UI + "Git Bash — set up…" picker row</td>
-                <td>
-                  No install surface; picker only lists <code>gitbash</code> when already detected
-                </td>
-                <td>Missing</td>
-                <td>Implement in #1672</td>
-              </tr>
-              <tr>
-                <td>3</td>
-                <td>
-                  Backend <code>git_bash_status</code> / <code>git_bash_install</code> commands +
-                  winget-absent guided-terminal fallback
+                  In-app <em>automatic</em> winget install with a progress bar, backed by
+                  <code>git_bash_status</code> / <code>git_bash_install</code> commands
                 </td>
                 <td>
-                  No such commands; <code>guideTerminalInstall</code> exists but is X-server-only
+                  Descoped — no such backend commands; the shipped flow opens a terminal preloaded
+                  with the winget command (<code>guideGitBashInstall.ts</code>) plus a git-scm.com
+                  fallback
                 </td>
-                <td>Missing</td>
-                <td>Implement in #1672 (reuse <code>guideTerminalInstall</code>)</td>
+                <td>Concept ahead (deliberate descope)</td>
+                <td>
+                  Maintainer call: rewrite the concept's auto-install mockup to match the shipped
+                  guided-terminal path, or file a follow-up to build the auto-install UI
+                </td>
               </tr>
             </tbody>
           </table>
@@ -900,8 +888,8 @@ sequenceDiagram
                 <td>2026-07-19</td>
                 <td>#519</td>
                 <td>
-                  Concept created, superseding the retired embedded-Unix environment
-                  (<code>docs/concepts/future/embedded-unix-windows.html</code>). Product decision
+                  Concept created, superseding the retired embedded-Unix environment concept (since
+                  removed). Product decision
                   on #519: detect-and-guide Git for Windows rather than bundle BusyBox-w32.
                   Implementation split into detection hardening (#1671) and the guided-install flow
                   (#1672).
