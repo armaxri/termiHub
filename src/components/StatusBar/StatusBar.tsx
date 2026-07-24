@@ -15,6 +15,7 @@ import {
   ArrowUpCircle,
   Monitor,
   Highlighter,
+  Infinity as InfinityIcon,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
@@ -108,6 +109,7 @@ export function StatusBar() {
         <JumpHostStatus />
         <RemoteDesktopStatus />
         <MonitoringStatus />
+        <PersistentSessionsIndicator />
         <ServicesIndicator />
         <AgentUpdatesIndicator />
         <TransferQueueIndicator />
@@ -353,6 +355,48 @@ function ServicesIndicator() {
         onClick={() => setSidebarView("services")}
       >
         <Server size={12} />
+        {runningCount}
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * Background persistent-session count in the status bar (#1882).
+ *
+ * Counts the persistent connections whose background process is currently
+ * running — state `running` or `attached`, matching the sidebar's
+ * `isPersistentRunning` classification (ConnectionList / AgentNode). Both
+ * desktop-local and agent-hosted persistent sessions share the store's
+ * `persistentSessions` map, so a single count covers every background session.
+ *
+ * Gives at-a-glance awareness that processes are alive with no tab in front of
+ * them; clicking opens the Connections sidebar where they can be attached or
+ * stopped. Renders nothing when none are running, keeping the bar uncluttered.
+ */
+function PersistentSessionsIndicator() {
+  const persistentSessions = useAppStore((s) => s.persistentSessions);
+  const setSidebarView = useAppStore((s) => s.setSidebarView);
+
+  const runningCount = Object.values(persistentSessions).filter(
+    (entry) => entry.state === "running" || entry.state === "attached"
+  ).length;
+
+  if (runningCount === 0) return null;
+
+  const sessionsLabel = `${runningCount} background session${
+    runningCount !== 1 ? "s" : ""
+  } running — click to open Connections`;
+
+  return (
+    <Tooltip content={sessionsLabel} side="top">
+      <button
+        className="status-bar__item status-bar__item--interactive"
+        aria-label={sessionsLabel}
+        data-testid="persistent-sessions-indicator"
+        onClick={() => setSidebarView("connections")}
+      >
+        <InfinityIcon size={12} />
         {runningCount}
       </button>
     </Tooltip>
