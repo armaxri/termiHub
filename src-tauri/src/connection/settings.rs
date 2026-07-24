@@ -544,6 +544,38 @@ mod tests {
     }
 
     #[test]
+    fn custom_themes_round_trip_verbatim() {
+        // The backend stores customThemes as an opaque JSON passthrough (#1879).
+        // A save/load cycle must preserve the full frontend-owned shape so custom
+        // themes are not silently dropped.
+        let themes = serde_json::json!([{
+            "id": "abc-123",
+            "name": "Ocean",
+            "colorScheme": "dark",
+            "baseTheme": "dark",
+            "colors": { "bgPrimary": "#012", "accentColor": "#3af" }
+        }]);
+        let settings = AppSettings {
+            theme: Some("custom:abc-123".to_string()),
+            custom_themes: Some(themes.clone()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.theme.as_deref(), Some("custom:abc-123"));
+        assert_eq!(deserialized.custom_themes, Some(themes));
+    }
+
+    #[test]
+    fn custom_themes_absent_by_default() {
+        assert!(AppSettings::default().custom_themes.is_none());
+        // A legacy file without the field deserializes with no custom themes.
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.custom_themes.is_none());
+    }
+
+    #[test]
     fn restore_last_session_on_startup_round_trips() {
         let settings = AppSettings {
             restore_last_session_on_startup: false,
