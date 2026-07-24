@@ -641,6 +641,61 @@ GitHub Release for manual rollback, rather than implementing automatic rollback.
 }
 </code></pre>
 <p><code>pending_install_version</code> is only used by Variant C to persist a staged update across restarts.</p>
+<hr>
+<h2 id="implementation-status">Implementation Status</h2>
+<p><strong>Status: Partial — Variant A (Notify Only) fully shipped; Variants B and C not built.</strong>
+This concept is the <em>desktop app</em> self-update, distinct from the already-implemented remote
+<em>agent</em> update strategy. Variant A is complete; advancing past it is a maintainer decision
+(see below).</p>
+<h3 id="what-is-implemented">What is implemented (Variant A)</h3>
+<ul>
+<li><strong>Backend</strong> — <code>src-tauri/src/commands/update.rs</code>: <code>check_for_updates</code> (GitHub Releases
+  API, semver compare, pre-release skip, 1-hour rate limit, silent network-fail),
+  <code>skip_update_version</code>/<code>clear_skipped_version</code>, <code>set_update_auto_check</code>,
+  <code>get_update_settings</code>, <code>get_app_info</code>; security detection via the
+  <code>&lt;!-- security --&gt;</code> release-body marker; settings under <code>updates.*</code>
+  (<code>connection/settings.rs</code>). Extensive unit tests.</li>
+<li><strong>Frontend</strong> — <code>StatusBar/UpdateIndicator.tsx</code> (amber/red version chip),
+  <code>UpdateNotification/UpdateNotification.tsx</code> (non-blocking popup; security variant drops
+  "Skip this version"), <code>Settings/UpdateSettings.tsx</code> (Check Now, On-startup/Never,
+  skipped-version + Clear). Store + scheduling (5s startup delay, 24h interval) in
+  <code>appStore.ts</code>/<code>App.tsx</code>.</li>
+</ul>
+<h3 id="what-is-missing">What is missing</h3>
+<ul>
+<li><strong>Release-notes security marker emission</strong> — the app consumes <code>&lt;!-- security --&gt;</code>
+  but nothing in the release workflow emits it, so security releases never trigger the bypass.
+  Tracked: <a href="https://github.com/armaxri/termiHub/issues/1878">#1878</a>.</li>
+<li><strong>Variant B — Download + Prompt</strong> and <strong>Variant C — Fully Automatic</strong>: not built.
+  Both need <code>tauri-plugin-updater</code>, a signed <code>latest.json</code> manifest, and — critically —
+  macOS + Windows <strong>code signing</strong>. See the maintainer decision below; no
+  <code>Ready2Implement</code> issue is filed for these because whether to pursue them is a product/infra
+  call, not a straightforward implementation task.</li>
+</ul>
+<blockquote>
+<p><strong>Maintainer decision (flagged, not filed):</strong> Variants B/C require paid code-signing
+certificates (~$99/yr Apple + ~$200–600/yr Windows) and an in-app installer-replacement flow. The
+concept itself calls Variant C "likely overkill for a developer/ops tool." Whether to advance past
+Variant A is a maintainer product/budget decision — file implementation issues only once that
+direction is chosen.</p>
+</blockquote>
+<hr>
+<h2 id="sync">Sync Ledger</h2>
+<blockquote>
+<p>Maintained by <code>/sync-concept in-field-update-mechanism</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
+</blockquote>
+<p><strong>Last synced:</strong> 2026-07-24 at commit <code>fb7befbb</code> · <strong>Status:</strong> diverged (partial). Variant A shipped and matches the mockups; Variants B/C flagged as a maintainer decision.</p>
+<h3 id="sync-open">Open divergences</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Recommendation</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Variant A described as "to build" (new <code>commands/update.rs</code>, new components)</td><td>All shipped and wired end-to-end</td><td>Match</td><td>Reframe Variant-A prose as implemented</td></tr>
+<tr><td>2</td><td><code>&lt;!-- security --&gt;</code> marker gates the security-update path</td><td>Consumed by the app, but not emitted by the release workflow</td><td>Missing</td><td><a href="https://github.com/armaxri/termiHub/issues/1878">#1878</a></td></tr>
+<tr><td>3</td><td>Variants B (download+prompt) and C (auto-install) with <code>tauri-plugin-updater</code></td><td>Not built; plugin absent from Cargo/npm/tauri.conf</td><td>Missing (design reality)</td><td>Maintainer decision — gated on code signing; no issue filed</td></tr>
+</tbody>
+</table>
+</div>
     </div>
 
     <script src="../_assets/mermaid.min.js"></script>
