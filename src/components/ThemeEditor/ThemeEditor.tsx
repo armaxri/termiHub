@@ -20,9 +20,6 @@ interface ThemeEditorProps {
   onCancel: () => void;
 }
 
-/** Base-theme options for the "Based on" selector. */
-const BASE_OPTIONS: SelectOption[] = BASE_THEME_ORDER.map((t) => ({ value: t.id, label: t.name }));
-
 /**
  * Resolve a token value to a `#RRGGBB` string the native color input accepts.
  * Non-hex values (e.g. `rgba(...)`) fall back to black for the swatch while the
@@ -40,6 +37,13 @@ function toSwatch(value: string): string {
  */
 export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEditorProps) {
   const [draft, setDraft] = useState<ThemeDefinition>(initialTheme);
+
+  // Built lazily (not at module load) so partially-mocked `@/themes` in other
+  // components' tests never executes this at import time.
+  const baseOptions: SelectOption[] = useMemo(
+    () => BASE_THEME_ORDER.map((t) => ({ value: t.id, label: t.name })),
+    []
+  );
 
   // Reset the draft whenever a different theme is opened for editing.
   useEffect(() => {
@@ -115,7 +119,7 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
           <Select
             value={draft.baseTheme ?? "dark"}
             onChange={handleBaseChange}
-            options={BASE_OPTIONS}
+            options={baseOptions}
             data-testid="theme-editor-base"
           />
         </Field>
