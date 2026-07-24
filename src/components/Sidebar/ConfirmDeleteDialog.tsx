@@ -1,4 +1,4 @@
-import { Modal, Button } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ui";
 
 interface ConfirmDeleteDialogProps {
   open: boolean;
@@ -15,23 +15,16 @@ export function ConfirmDeleteDialog({
   onCancel,
 }: ConfirmDeleteDialogProps) {
   return (
-    <Modal
+    <ConfirmDialog
       open={open}
-      onOpenChange={(isOpen) => !isOpen && onCancel()}
       title="Confirm Delete"
+      message={message}
+      confirmLabel="Delete"
+      confirmVariant="danger"
+      testIdBase="confirm-delete"
       data-testid="confirm-delete-dialog"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onCancel} data-testid="confirm-delete-cancel">
-            Cancel
-          </Button>
-          <Button variant="danger" onClick={onConfirm} data-testid="confirm-delete-confirm">
-            Delete
-          </Button>
-        </>
-      }
-    >
-      {message}
-    </Modal>
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }
