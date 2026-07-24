@@ -190,6 +190,46 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
     }
 }
 
+/// Build a single POSIX `export` statement that sets every entry in `env`.
+///
+/// Values are wrapped in single quotes (with embedded `'` escaped as `'\''`)
+/// so arbitrary characters survive, and keys are sorted for a deterministic,
+/// stable line. Returns `None` when `env` is empty.
+///
+/// # Why this exists (the `AcceptEnv` caveat)
+///
+/// Setting an environment variable on the SSH *client* does not make it appear
+/// on the server: the standard channel env request (`set_env`, RFC 4254 §6.4)
+/// is only honoured for names the server explicitly whitelists via sshd's
+/// `AcceptEnv`, which defaults to accepting little more than `LANG`/`LC_*`.
+/// So the backend requests each variable via `set_env` (clean, and present
+/// before the login shell's rc files run *when* the server accepts it) **and**
+/// injects the line built here into the interactive shell after it starts —
+/// guaranteeing the variables take effect regardless of `AcceptEnv`. The
+/// injected line is briefly visible in the terminal, matching the existing X11
+/// `export DISPLAY` injection.
+pub(crate) fn build_ssh_env_export(
+    env: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    if env.is_empty() {
+        return None;
+    }
+    let mut pairs: Vec<(&String, &String)> = env.iter().collect();
+    pairs.sort_by(|a, b| a.0.cmp(b.0));
+
+    let mut line = String::from("export");
+    for (key, value) in pairs {
+        let escaped = value.replace('\'', "'\\''");
+        line.push(' ');
+        line.push_str(key);
+        line.push_str("='");
+        line.push_str(&escaped);
+        line.push('\'');
+    }
+    line.push('\n');
+    Some(line)
+}
+
 #[async_trait::async_trait]
 impl ConnectionType for Ssh {
     fn type_id(&self) -> &str {
@@ -402,7 +442,14 @@ impl ConnectionType for Ssh {
                             description: Some(
                                 "Additional environment variables for the remote shell".to_string(),
                             ),
-                            help_text: None,
+                            help_text: Some(concat!(
+                                "These are requested over the SSH channel and, for reliability, ",
+                                "also applied by exporting them in the remote shell once it starts.\n\n",
+                                "The SSH server only honours the channel request for names listed in ",
+                                "its sshd `AcceptEnv` setting (which usually accepts little beyond ",
+                                "`LANG`/`LC_*`). The export fallback makes the variables take effect ",
+                                "regardless, so it is briefly visible in the terminal at connect time.",
+                            ).to_string()),
                             field_type: FieldType::KeyValueList,
                             required: false,
                             default: None,
@@ -996,6 +1043,59 @@ mod tests {
             .find(|f| f.key == "env")
             .unwrap();
         assert!(matches!(env.field_type, FieldType::KeyValueList));
+    }
+
+    // --- Environment-variable export fallback (AcceptEnv) tests ---
+
+    #[test]
+    fn build_ssh_env_export_none_when_empty() {
+        let env = std::collections::HashMap::new();
+        assert!(build_ssh_env_export(&env).is_none());
+    }
+
+    #[test]
+    fn build_ssh_env_export_single_var() {
+        let env = std::collections::HashMap::from([("FOO".to_string(), "bar".to_string())]);
+        assert_eq!(build_ssh_env_export(&env).as_deref(), Some("export FOO='bar'\n"));
+    }
+
+    #[test]
+    fn build_ssh_env_export_sorts_keys_for_determinism() {
+        let env = std::collections::HashMap::from([
+            ("ZED".to_string(), "1".to_string()),
+            ("ALPHA".to_string(), "2".to_string()),
+        ]);
+        assert_eq!(
+            build_ssh_env_export(&env).as_deref(),
+            Some("export ALPHA='2' ZED='1'\n")
+        );
+    }
+
+    #[test]
+    fn build_ssh_env_export_escapes_single_quotes() {
+        // A value containing a single quote must be escaped as '\'' so the
+        // resulting line is still a valid, safe POSIX export statement.
+        let env = std::collections::HashMap::from([(
+            "MSG".to_string(),
+            "it's a test".to_string(),
+        )]);
+        assert_eq!(
+            build_ssh_env_export(&env).as_deref(),
+            Some("export MSG='it'\\''s a test'\n")
+        );
+    }
+
+    #[test]
+    fn build_ssh_env_export_handles_spaces_and_specials() {
+        let env = std::collections::HashMap::from([(
+            "PATH_EXTRA".to_string(),
+            "/opt/my app/bin:$HOME".to_string(),
+        )]);
+        // Single quotes keep spaces and `$` literal — no expansion or splitting.
+        assert_eq!(
+            build_ssh_env_export(&env).as_deref(),
+            Some("export PATH_EXTRA='/opt/my app/bin:$HOME'\n")
+        );
     }
 
     // --- Settings validation tests ---

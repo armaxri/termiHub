@@ -247,7 +247,11 @@ impl SshConnector for RusshSshConnector {
             }
         }
 
-        // User-specified environment variables (best-effort; many servers reject setenv).
+        // User-specified environment variables via the SSH channel env request.
+        // Best-effort: the server only accepts names whitelisted in its
+        // `AcceptEnv`, but when it does accept a name the value is present
+        // before the login shell's rc files run. Names it rejects are covered
+        // by the `export` injection after the shell starts (see below).
         for (key, value) in &config.env {
             let _ = channel.set_env(false, key, value).await;
         }
@@ -269,6 +273,14 @@ impl SshConnector for RusshSshConnector {
             .request_shell(false)
             .await
             .map_err(|e| SessionError::SpawnFailed(format!("Shell request failed: {e}")))?;
+
+        // Inject an `export` line for the user-specified environment variables.
+        // This guarantees they take effect in the interactive shell even when
+        // the server's `AcceptEnv` rejected the `set_env` requests above. The
+        // line is briefly visible, matching the X11 `export DISPLAY` injection.
+        if let Some(export_line) = super::build_ssh_env_export(&config.env) {
+            let _ = channel.data(export_line.as_bytes()).await;
+        }
 
         // Inject DISPLAY and xauth if X11 forwarding is active.
         if let Some(display_num) = x11_display {
