@@ -251,7 +251,9 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             >
               <Toggle
                 checked={settings.showRecentSessions ?? true}
-                onCheckedChange={(checked) => onChange({ ...settings, showRecentSessions: checked })}
+                onCheckedChange={(checked) =>
+                  onChange({ ...settings, showRecentSessions: checked })
+                }
                 data-testid="settings-show-recent-sessions"
               />
             </SettingsField>

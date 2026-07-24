@@ -205,13 +205,19 @@ mod tests {
     #[test]
     fn telnet_serial_docker_wsl_keys() {
         assert_eq!(
-            compute_dedup_key("telnet", &cfg("telnet", json!({ "host": "sw", "port": 23 }))),
+            compute_dedup_key(
+                "telnet",
+                &cfg("telnet", json!({ "host": "sw", "port": 23 }))
+            ),
             "telnet:sw:23"
         );
         assert_eq!(
             compute_dedup_key(
                 "serial",
-                &cfg("serial", json!({ "device": "/dev/ttyUSB0", "baudRate": 115200 }))
+                &cfg(
+                    "serial",
+                    json!({ "device": "/dev/ttyUSB0", "baudRate": 115200 })
+                )
             ),
             "serial:/dev/ttyUSB0:115200"
         );

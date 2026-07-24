@@ -42,9 +42,7 @@ export async function setHistoryEntryPinned(
 }
 
 /** Mark a history entry as promoted to a saved connection. */
-export async function markHistoryEntryPromoted(
-  dedupKey: string
-): Promise<SessionHistoryEntry[]> {
+export async function markHistoryEntryPromoted(dedupKey: string): Promise<SessionHistoryEntry[]> {
   return await invoke<SessionHistoryEntry[]>("mark_history_entry_promoted", { dedupKey });
 }
 

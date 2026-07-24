@@ -85,7 +85,9 @@ export function RecentSessionsSidebar() {
       void removeHistoryEntry(entry.dedupKey)
         .then(() => toast.success(`Removed “${entry.title}” from history`))
         .catch((err) => {
-          toast.error(`Failed to remove entry: ${err instanceof Error ? err.message : String(err)}`);
+          toast.error(
+            `Failed to remove entry: ${err instanceof Error ? err.message : String(err)}`
+          );
         });
     },
     [removeHistoryEntry]

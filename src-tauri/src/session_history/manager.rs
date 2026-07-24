@@ -111,10 +111,7 @@ impl SessionHistoryManager {
     }
 
     /// Mark an entry as promoted to a saved connection (retained in history).
-    pub fn set_promoted(
-        &self,
-        dedup_key: &str,
-    ) -> Result<Vec<SessionHistoryEntry>, TerminalError> {
+    pub fn set_promoted(&self, dedup_key: &str) -> Result<Vec<SessionHistoryEntry>, TerminalError> {
         let mut store = self.lock()?;
         let entry = store
             .entries
@@ -172,11 +169,7 @@ fn now_millis() -> u64 {
 /// `last_used` descending (most recent first).
 fn sorted_for_display(store: &SessionHistoryStore) -> Vec<SessionHistoryEntry> {
     let mut entries = store.entries.clone();
-    entries.sort_by(|a, b| {
-        b.pinned
-            .cmp(&a.pinned)
-            .then(b.last_used.cmp(&a.last_used))
-    });
+    entries.sort_by(|a, b| b.pinned.cmp(&a.pinned).then(b.last_used.cmp(&a.last_used)));
     entries
 }
 
@@ -281,13 +274,8 @@ mod tests {
         let mgr = manager(&dir);
 
         for i in 0..3 {
-            mgr.record(
-                "ssh",
-                ssh(&format!("h{i}"), "u"),
-                format!("u@h{i}"),
-                2,
-            )
-            .unwrap();
+            mgr.record("ssh", ssh(&format!("h{i}"), "u"), format!("u@h{i}"), 2)
+                .unwrap();
         }
 
         let list = mgr.list().unwrap();

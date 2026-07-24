@@ -8,7 +8,5 @@ import type { SessionHistoryEntry } from "@/types/sessionHistory";
  */
 export function connectionString(entry: SessionHistoryEntry): string {
   const prefix = `${entry.connectionType}:`;
-  return entry.dedupKey.startsWith(prefix)
-    ? entry.dedupKey.slice(prefix.length)
-    : entry.dedupKey;
+  return entry.dedupKey.startsWith(prefix) ? entry.dedupKey.slice(prefix.length) : entry.dedupKey;
 }

@@ -14,10 +14,7 @@ export interface QuickConnectTarget {
  * `defaultUser` is used; when the port is omitted 22 is assumed. Returns `null`
  * when the input has no host part.
  */
-export function parseQuickConnect(
-  input: string,
-  defaultUser?: string
-): QuickConnectTarget | null {
+export function parseQuickConnect(input: string, defaultUser?: string): QuickConnectTarget | null {
   const trimmed = input.trim();
   if (!trimmed) return null;
 

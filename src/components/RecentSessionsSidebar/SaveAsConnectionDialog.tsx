@@ -4,6 +4,9 @@ import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 import type { SessionHistoryEntry } from "@/types/sessionHistory";
 import { sessionTypeBadge } from "@/utils/sessionHistoryTitle";
 
+/** Sentinel for the "No folder" option (Radix Select forbids empty-string item values). */
+const NO_FOLDER = "__no_folder__";
+
 /** Generate a unique connection id, falling back when `crypto.randomUUID` is absent. */
 function generateConnectionId(): string {
   const c = globalThis.crypto;
@@ -42,18 +45,18 @@ export function SaveAsConnectionDialog({
   onSave,
 }: SaveAsConnectionDialogProps) {
   const [name, setName] = useState("");
-  const [folderId, setFolderId] = useState("");
+  const [folderId, setFolderId] = useState(NO_FOLDER);
 
   useEffect(() => {
     if (entry) {
       setName(entry.title);
-      setFolderId("");
+      setFolderId(NO_FOLDER);
     }
   }, [entry]);
 
   const folderOptions = useMemo(
     () => [
-      { value: "", label: "No folder" },
+      { value: NO_FOLDER, label: "No folder" },
       ...folders.map((f) => ({ value: f.id, label: f.name })),
     ],
     [folders]
@@ -80,7 +83,7 @@ export function SaveAsConnectionDialog({
       id: generateConnectionId(),
       name: trimmed,
       config: entry.config,
-      folderId: folderId || null,
+      folderId: folderId === NO_FOLDER ? null : folderId,
     };
     await onSave(connection, entry.dedupKey);
     onOpenChange(false);
