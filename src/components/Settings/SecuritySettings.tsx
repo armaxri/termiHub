@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Shield, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
@@ -247,7 +247,10 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   );
 
   const localProcessEnabled = settings.workflowLocalProcessEnabled ?? false;
-  const localProcessAllowlist = settings.workflowLocalProcessAllowlist ?? [];
+  const localProcessAllowlist = useMemo(
+    () => settings.workflowLocalProcessAllowlist ?? [],
+    [settings.workflowLocalProcessAllowlist]
+  );
 
   const handleToggleLocalProcess = useCallback(
     (enabled: boolean) => {
