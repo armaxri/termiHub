@@ -11,7 +11,11 @@ const STATUS_META: Record<
   { label: string; Icon: typeof Loader2; className: string }
 > = {
   running: { label: "Running", Icon: Loader2, className: "workflow-run-output--running" },
-  completed: { label: "Completed", Icon: CheckCircle2, className: "workflow-run-output--completed" },
+  completed: {
+    label: "Completed",
+    Icon: CheckCircle2,
+    className: "workflow-run-output--completed",
+  },
   cancelled: { label: "Cancelled", Icon: Ban, className: "workflow-run-output--cancelled" },
   failed: { label: "Failed", Icon: XCircle, className: "workflow-run-output--failed" },
 };
