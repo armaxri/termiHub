@@ -741,12 +741,18 @@ export interface ConfirmDialogProps {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-18 (status reconciliation) ·
+          <strong>Last synced:</strong> 2026-07-24 (status reconciliation) ·
           <strong>Status:</strong> diverged (partial — the <code>ConfirmDialog</code> primitive
           shipped with the <code>ConfirmDontAskAgain</code> Checkbox opt-out and is used by several
-          dialogs, but the three call sites this concept names still build on raw <code>Modal</code>
-          and the Port Scanner large-scan suppression is unbuilt). Concept moved
-          <code>backlog/</code> → <code>partial/</code>.
+          dialogs, but the three call sites this concept names still compose the raw
+          <code>Modal</code> + <code>Button</code> primitives rather than <code>ConfirmDialog</code>,
+          and the Port Scanner large-scan suppression is unbuilt). The remaining work is now
+          tracked: <a href="https://github.com/armaxri/termiHub/issues/1875">#1875</a> (body slot +
+          WoL migration), <a href="https://github.com/armaxri/termiHub/issues/1876">#1876</a>
+          (ConfirmDeleteDialog + Port Scanner migration),
+          <a href="https://github.com/armaxri/termiHub/issues/1877">#1877</a> (Port Scanner
+          "don't warn again" suppression). Note: the closed design issue #1391 does not track this
+          migration. Concept moved <code>backlog/</code> → <code>partial/</code>.
         </p>
         <div class="table-wrap">
           <table>
@@ -777,10 +783,17 @@ export interface ConfirmDialogProps {
                 <td>Three named call sites migrated onto <code>ConfirmDialog</code></td>
                 <td>
                   Still open — <code>Sidebar/ConfirmDeleteDialog.tsx</code>, the Port Scanner
-                  large-scan modal and the WoL save modal all still build on raw <code>Modal</code>.
+                  large-scan modal and the WoL save modal compose the raw <code>Modal</code> +
+                  <code>Button</code> primitives, not <code>ConfirmDialog</code>. The WoL modal
+                  carries a form body, which the shipped primitive cannot host yet (row 4).
                 </td>
                 <td>Missing</td>
-                <td>Migrate the three named call sites; preserve existing test ids</td>
+                <td>
+                  Tracked: <a href="https://github.com/armaxri/termiHub/issues/1876">#1876</a>
+                  (ConfirmDeleteDialog + Port Scanner);
+                  <a href="https://github.com/armaxri/termiHub/issues/1875">#1875</a> (WoL, after
+                  the body slot). Migrating changes the hard-coded test ids (row 5).
+                </td>
               </tr>
               <tr>
                 <td>3</td>
@@ -791,7 +804,45 @@ export interface ConfirmDialogProps {
                   Cancel / Start and no suppression option.
                 </td>
                 <td>Missing</td>
-                <td>Add via the primitive's opt-out + a caller-owned stored preference</td>
+                <td>Tracked: <a href="https://github.com/armaxri/termiHub/issues/1877">#1877</a></td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>
+                  Concept proposes a richer API: <code>variant</code>-driven title icon,
+                  <code>children</code> body slot, async <code>onConfirm</code> with pending/error
+                  Button lifecycle, and a <code>dontWarnAgain</code> opt-out
+                </td>
+                <td>
+                  Shipped primitive is simpler: <code>confirmVariant</code> only (no accent icon),
+                  <code>message</code> only (no <code>children</code>), synchronous
+                  <code>onConfirm</code>, and the opt-out is named <code>dontAskAgain</code> /
+                  <code>ConfirmDontAskAgain</code>.
+                </td>
+                <td>Missing</td>
+                <td>
+                  Add a body/content slot to enable form confirmations
+                  (<a href="https://github.com/armaxri/termiHub/issues/1875">#1875</a>); the
+                  variant-icon / async-lifecycle extensions are deferred until a call site needs
+                  them.
+                </td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>
+                  Migration "keeps existing test ids" — concept derives
+                  <code>${base}-cancel</code>/<code>${base}-confirm</code> from a base id
+                </td>
+                <td>
+                  Shipped primitive hard-codes <code>confirm-dialog-cancel</code> /
+                  <code>confirm-dialog-confirm</code> and does not derive from a base id, so
+                  migrating the named sites changes their existing test ids.
+                </td>
+                <td>Code divergence</td>
+                <td>
+                  Update tests/testids during migration, or add id derivation to the primitive
+                  (folded into <a href="https://github.com/armaxri/termiHub/issues/1876">#1876</a>).
+                </td>
               </tr>
             </tbody>
           </table>

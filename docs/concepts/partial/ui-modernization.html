@@ -1267,12 +1267,19 @@ stateDiagram-v2
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-18 (status reconciliation) ·
-          <strong>Status:</strong> partially implemented — the foundation (primitive layer, Toast
-          hub over <code>sonner</code>, tokens) has shipped, so divergences #1–#3 are resolved; the
-          concept stays <code>partial/</code> because roadmap phase 4 (converting the ~33
-          dialogs/forms onto the primitives + motion) is still in progress — e.g. the Port Scanner
-          and WoL modals remain raw <code>Modal</code>s.
+          <strong>Last synced:</strong> 2026-07-24 (status reconciliation) ·
+          <strong>Status:</strong> effectively implemented, pending a maintainer call on the folder
+          move. All five roadmap phases shipped and their issues (#1059–#1063) are closed — the
+          phase-4 dialog/form migration is <strong>complete</strong>: every <code>&lt;Modal&gt;</code>
+          call site (including the Port Scanner large-scan warning, WoL save modal and
+          <code>Sidebar/ConfirmDeleteDialog.tsx</code>) composes the shared primitives, and there are
+          no open UI-modernization issues. The one residual is <strong>bespoke <code>__btn</code>
+          classes in ~15 non-dialog panel/banner/sidebar surfaces</strong>, now tracked as
+          <a href="https://github.com/armaxri/termiHub/issues/1885">#1885</a>. Whether to move this
+          concept to <code>implemented/</code> now (accepting that residual as out-of-original-scope)
+          or hold it in <code>partial/</code> until #1885 lands is a maintainer decision; it also
+          serves as the design-system source of truth referenced by <code>.claude/CLAUDE.md</code>,
+          so any move must update that reference.
         </p>
         <div class="table-wrap">
           <table>
@@ -1327,12 +1334,31 @@ stateDiagram-v2
                 <td>5</td>
                 <td>All ~33 dialogs/forms migrated onto the primitives (roadmap phase 4)</td>
                 <td>
-                  Partial — many dialogs use the primitives, but raw <code>Modal</code> call sites
-                  remain (e.g. Port Scanner large-scan warning, WoL save modal,
-                  <code>Sidebar/ConfirmDeleteDialog.tsx</code>)
+                  <strong>Resolved</strong> — every <code>&lt;Modal&gt;</code> call site composes the
+                  primitives, including the Port Scanner large-scan warning, WoL save modal and
+                  <code>Sidebar/ConfirmDeleteDialog.tsx</code> (they import <code>Modal</code>/<code>Button</code>/<code>Field</code>
+                  from <code>@/components/ui</code>). Phase-4 issue
+                  <a href="https://github.com/armaxri/termiHub/issues/1062">#1062</a> is closed.
+                  (Consolidating those confirmation dialogs further onto the higher-level
+                  <code>ConfirmDialog</code> primitive is a separate concern tracked by the
+                  confirm-dialog-primitive concept.)
+                </td>
+                <td>Resolved</td>
+                <td>—</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>
+                  Phase-4 acceptance: "no component defines its own <code>__btn</code>"
+                </td>
+                <td>
+                  Not literally met — ~15 non-dialog panel/banner/sidebar CSS files still define
+                  bespoke <code>__btn</code>/<code>-btn</code> classes (e.g. <code>ConnectionEditor.css</code>,
+                  <code>NetworkTools.css</code>, <code>TunnelSidebar.css</code>, <code>TerminalReconnectPrompt.css</code>),
+                  untracked when #1062 closed
                 </td>
                 <td>Missing</td>
-                <td>Continue phase-4 migration (<a href="https://github.com/armaxri/termiHub/issues/1062">#1062</a>), then re-sync</td>
+                <td>Migrate onto <code>ui/Button</code> (<a href="https://github.com/armaxri/termiHub/issues/1885">#1885</a>)</td>
               </tr>
             </tbody>
           </table>
