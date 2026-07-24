@@ -78,6 +78,7 @@ All features in this folder are live in the codebase.
 | [context-aware-keyboard-shortcuts.html](implemented/context-aware-keyboard-shortcuts.html)         | Context-aware keybinding routing — per-scope shortcut dispatch, editor delegation, scope shown in the shortcuts overlay (#787)                                       |
 | [terminal-syntax-highlighting.html](implemented/terminal-syntax-highlighting.html)                 | Terminal output syntax highlighting — engine, rules registry, custom-rule editor, per-connection override, status-bar toggle (epic #1696)                            |
 | [git-bash-provisioning.html](implemented/git-bash-provisioning.html)                               | Detect Git for Windows and guide its install; Git Bash as the Windows Unix-tools provider (#1671/#1672) — auto-install UI descoped to guided-terminal path           |
+| [ssh-key-passphrase.html](implemented/ssh-key-passphrase.html)                                     | SSH key passphrase handling — encryption detection (#885), connect-time `PasswordPrompt`, secrets in the credential store (not plaintext), `CredentialType::KeyPassphrase` (#121)  |
 
 ---
 
@@ -94,7 +95,6 @@ These features have something built, but there are meaningful gaps. See the
 | [light-color-theme.html](partial/light-color-theme.html)                                 | Dark/Light/System theme engine, CSS variables, xterm.js re-theming                                              | Custom theme editor, `customThemes` settings field, theme import/export                                                                    |
 | [persistent-connection-ux.html](partial/persistent-connection-ux.html)                   | `persistent: boolean` field in connection config                                                                | Start/Attach/Stop mechanics, sidebar status badge, IPC commands                                                                            |
 | [session-auto-save.html](partial/session-auto-save.html)                                 | Workspace system (manual save/restore)                                                                          | Auto-snapshot on close, restore-on-startup — tracked in issue #586                                                                         |
-| [ssh-key-passphrase.html](partial/ssh-key-passphrase.html)                               | SSH key loading and `strip_ssh_password`                                                                        | Passphrase storage in credential store — tracked in issues #249 #255 #258 #259                                                             |
 | [ui-modernization.html](partial/ui-modernization.html)                                   | Shared token'd primitives (`src/components/ui/`), toast hub, tokens — foundation shipped (#1059–#1063)          | Roadmap phase 4: converting the ~33 dialogs/forms onto the primitives + motion still in progress (#1062)                                   |
 | [confirm-dialog-primitive.html](partial/confirm-dialog-primitive.html)                   | `ConfirmDialog` primitive in `src/components/ui/` with a `ConfirmDontAskAgain` opt-out, used by several dialogs | Named call sites (ConfirmDeleteDialog, Port Scanner, WoL) still on raw `Modal`; Port Scanner large-scan "don't warn again" unbuilt (#1391) |
 
@@ -106,7 +106,7 @@ Not started yet — realistic and planned for the near to medium term.
 
 | Document                                                                                                   | Summary                                                                                      |
 | ---------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| [app-icons.html](backlog/app-icons.html)                                                                   | Custom application icon design — placeholder Tauri icons are in place, not the designed ones |
+| [app-icons.html](backlog/app-icons.html)                                                                   | Custom application icon design — a custom icon already ships, but not the concept's design; app-icon direction is an open maintainer call (UI-icon family still unbuilt) |
 | [broadcast-input.html](backlog/broadcast-input.html)                                                       | Synchronised input across multiple terminals simultaneously                                  |
 | [macos-code-signing-notarization.html](backlog/macos-code-signing-notarization.html)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)          |
 | [multi-window.html](backlog/multi-window.html)                                                             | Tear tabs out into additional native windows                                                 |
@@ -127,4 +127,3 @@ These may eventually be implemented, but there is no active plan.
 | [rlogin-rsh.html](future/rlogin-rsh.html)                                   | Legacy BSD rlogin/rsh protocol support                   | Superseded by SSH; rarely needed                                                  |
 | [unified-test-system.html](future/unified-test-system.html)                 | Analysis: unify WebdriverIO E2E + YAML manual runner     | Premise (WebdriverIO/tauri-driver) retired by #1027; superseded by Python harness |
 | [webdriverio-unified-testing.html](future/webdriverio-unified-testing.html) | All tests in one WebdriverIO/tauri-driver infrastructure | WebdriverIO/tauri-driver stack retired by #1027; superseded by Python harness     |
-| [xdmcp-sessions.html](future/xdmcp-sessions.html)                           | XDMCP remote desktop sessions                            | Requires X11 server embedding; very high complexity                               |

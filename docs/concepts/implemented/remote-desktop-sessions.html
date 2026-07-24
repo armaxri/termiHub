@@ -382,9 +382,10 @@
           <code>rdp-sessions.html</code>, which each chose a <em>different</em> rendering transport
           and therefore a different frontend. Those standalone concepts have been removed; this
           unified concept supersedes them.
-          XDMCP (<a href="https://github.com/armaxri/termiHub/issues/515">#515</a>) stays parked in
-          <code>future/</code>; the abstraction below is designed so it (or any later graphical
-          protocol) can plug in without reworking the UI.
+          XDMCP (<a href="https://github.com/armaxri/termiHub/issues/515">#515</a>) has been
+          retired — it will not be implemented, as VNC/RDP plus SSH cover the need — but the
+          abstraction below is still designed so any later graphical protocol can plug in without
+          reworking the UI.
         </p>
       </blockquote>
 
@@ -474,7 +475,7 @@
             Smart-card / certificate authentication (password + NLA for RDP; RFB auth for VNC).
           </li>
           <li>Image clipboard (text clipboard only; image is a stretch goal).</li>
-          <li>XDMCP (#515) — parked in <code>future/</code>, designed to plug in later.</li>
+          <li>XDMCP (#515) — retired; won't be implemented (VNC/RDP + SSH cover the need), though the abstraction could still accommodate a future graphical protocol.</li>
         </ul>
       </section>
 
