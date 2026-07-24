@@ -11,6 +11,7 @@ pub mod network;
 pub mod portable;
 pub mod remote_desktop;
 pub mod session;
+pub mod session_history;
 pub mod shell_integration;
 pub mod spawn;
 pub mod ssh_config_import;

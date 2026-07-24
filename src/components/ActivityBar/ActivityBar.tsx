@@ -5,6 +5,7 @@ import {
   ArrowLeftRight,
   LayoutGrid,
   Clapperboard,
+  History,
   Workflow,
   Server,
   Settings,
@@ -60,6 +61,7 @@ const REQUIRED_ITEMS: ActivityBarItemDef[] = [
 
 const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   { view: "files", icon: FolderOpen, label: "File Browser" },
+  { view: "recent-sessions", icon: History, label: "Recent Sessions" },
   { view: "workspaces", icon: LayoutGrid, label: "Workspaces" },
   { view: "macros", icon: Clapperboard, label: "Macros" },
   { view: "tunnels", icon: ArrowLeftRight, label: "SSH Tunnels", experimental: true },
@@ -91,6 +93,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   const setExportDialogOpen = useAppStore((s) => s.setExportDialogOpen);
   const setImportDialog = useAppStore((s) => s.setImportDialog);
   const toggleActivityBarView = useAppStore((s) => s.toggleActivityBarView);
+  const showRecentSessions = useAppStore((s) => s.settings.showRecentSessions);
   const experimental = useExperimentalFeatures();
 
   const handleExport = useCallback(() => {
@@ -112,8 +115,13 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   }, [setImportDialog]);
 
   const availableOptionalItems = OPTIONAL_ITEMS.filter(
-    (item) => !item.experimental || experimental
+    (item) => (!item.experimental || experimental) && !isViewHiddenBySetting(item.view)
   );
+
+  function isViewHiddenBySetting(view: SidebarView): boolean {
+    // The Recent Sessions panel is opt-out via the session-history settings.
+    return view === "recent-sessions" && showRecentSessions === false;
+  }
   const visibleItems = [...REQUIRED_ITEMS, ...availableOptionalItems].filter(
     (item) => !hiddenActivityBarViews.includes(item.view)
   );

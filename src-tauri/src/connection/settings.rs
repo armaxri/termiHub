@@ -67,6 +67,11 @@ fn default_true() -> bool {
     true
 }
 
+/// Default maximum number of retained session-history entries.
+fn default_session_history_limit() -> u32 {
+    50
+}
+
 /// Layout configuration for UI section positioning and visibility.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -191,6 +196,18 @@ pub struct AppSettings {
     /// always starts with a fresh empty session.
     #[serde(default = "default_true")]
     pub restore_last_session_on_startup: bool,
+    /// When true (default), every terminal session opened is recorded to the
+    /// browsable session history (`session-history.json`). Turning it off stops
+    /// all automatic recording (existing entries are kept).
+    #[serde(default = "default_true")]
+    pub session_history_enabled: bool,
+    /// Maximum number of history entries to retain. When the limit is reached,
+    /// the least-recently-used unpinned entry is evicted. Defaults to 50.
+    #[serde(default = "default_session_history_limit")]
+    pub session_history_limit: u32,
+    /// When true (default), the "Recent Sessions" sidebar panel is shown.
+    #[serde(default = "default_true")]
+    pub show_recent_sessions: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<LayoutConfig>,
     /// Credential storage mode: "master_password" or "none".
@@ -297,6 +314,9 @@ impl Default for AppSettings {
             provide_x_server_automatically: None,
             stop_x_server_when_idle: true,
             restore_last_session_on_startup: true,
+            session_history_enabled: true,
+            session_history_limit: default_session_history_limit(),
+            show_recent_sessions: true,
             layout: None,
             credential_storage_mode: None,
             credential_auto_lock_minutes: None,

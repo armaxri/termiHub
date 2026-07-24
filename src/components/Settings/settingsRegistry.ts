@@ -390,6 +390,27 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "sessionHistoryEnabled",
+    label: "Auto-Save Sessions to History",
+    description: "Record every session opened so it can be reconnected from Recent Sessions",
+    category: "general",
+    keywords: ["session", "history", "recent", "record", "auto-save", "mobaxterm", "quick connect"],
+  },
+  {
+    id: "sessionHistoryLimit",
+    label: "Session History Limit",
+    description: "Maximum number of recent sessions to keep before the oldest is evicted",
+    category: "general",
+    keywords: ["session", "history", "limit", "recent", "max", "count", "evict"],
+  },
+  {
+    id: "showRecentSessions",
+    label: "Show Recent Sessions Panel",
+    description: "Show the Recent Sessions sidebar panel and its activity-bar icon",
+    category: "general",
+    keywords: ["session", "history", "recent", "sidebar", "panel", "show", "hide"],
+  },
+  {
     id: "provideXServerAutomatically",
     label: "Provide X Server Automatically",
     description: "Start a local X server automatically for X11 forwarding",
