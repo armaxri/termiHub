@@ -55,13 +55,14 @@ vi.mock("@/services/workflowApi", () => ({
 
 // The guarded local-process backend (#1857) is mocked so no Tauri command runs;
 // `invokeRunLocalProcess` records what it was asked to spawn.
-const invokeRunLocalProcess = vi.fn(() =>
-  Promise.resolve({ exitCode: 0, timedOut: false, cancelled: false })
+const invokeRunLocalProcess = vi.fn((_args: { program: string; args: string[] }) =>
+  Promise.resolve({ exitCode: 0 as number | null, timedOut: false, cancelled: false })
 );
-const cancelLocalProcess = vi.fn(() => Promise.resolve(true));
+const cancelLocalProcess = vi.fn((_runId: string) => Promise.resolve(true));
 vi.mock("@/services/localProcessApi", () => ({
-  invokeRunLocalProcess: (args: unknown) => invokeRunLocalProcess(args as never),
-  cancelLocalProcess: (runId: string) => cancelLocalProcess(runId as never),
+  invokeRunLocalProcess: (args: { program: string; args: string[] }) =>
+    invokeRunLocalProcess(args),
+  cancelLocalProcess: (runId: string) => cancelLocalProcess(runId),
   subscribeLocalProcessOutput: vi.fn(() => Promise.resolve(() => {})),
 }));
 
