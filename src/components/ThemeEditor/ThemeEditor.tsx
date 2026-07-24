@@ -1,12 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button, Field, Input, Modal, Select } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
-import {
-  BASE_THEME_ORDER,
-  COLOR_TOKEN_GROUPS,
-  previewTheme,
-  resolveBaseTheme,
-} from "@/themes";
+import { BASE_THEME_ORDER, COLOR_TOKEN_GROUPS, previewTheme, resolveBaseTheme } from "@/themes";
 import type { ThemeColors, ThemeDefinition } from "@/themes/types";
 import { normalizeHexColor } from "@/services/syntaxHighlighting";
 import "./ThemeEditor.css";

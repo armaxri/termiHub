@@ -3,7 +3,12 @@ import { darkTheme } from "./dark";
 import { lightTheme } from "./light";
 import { solarizedDarkTheme } from "./solarized-dark";
 import { solarizedLightTheme } from "./solarized-light";
-import { customThemeId, findCustomTheme, isCustomThemeSetting, resolveCustomTheme } from "./customThemes";
+import {
+  customThemeId,
+  findCustomTheme,
+  isCustomThemeSetting,
+  resolveCustomTheme,
+} from "./customThemes";
 
 /**
  * Maps camelCase ThemeColors keys to their corresponding CSS custom

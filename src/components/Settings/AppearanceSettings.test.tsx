@@ -23,7 +23,13 @@ vi.mock("@/components/ui", async (orig) => ({
 
 /** A minimal but valid custom theme for option/select tests. */
 function customTheme(id: string, name: string): ThemeDefinition {
-  return { id, name, colorScheme: "dark", baseTheme: "dark", colors: {} as ThemeDefinition["colors"] };
+  return {
+    id,
+    name,
+    colorScheme: "dark",
+    baseTheme: "dark",
+    colors: {} as ThemeDefinition["colors"],
+  };
 }
 
 let container: HTMLDivElement;

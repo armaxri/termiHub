@@ -17,9 +17,7 @@ let root: Root;
 
 function render(theme: ThemeDefinition, onSave = vi.fn(), onCancel = vi.fn()) {
   act(() => {
-    root.render(
-      <ThemeEditor open initialTheme={theme} onSave={onSave} onCancel={onCancel} />
-    );
+    root.render(<ThemeEditor open initialTheme={theme} onSave={onSave} onCancel={onCancel} />);
   });
   return { onSave, onCancel };
 }

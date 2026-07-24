@@ -55,8 +55,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
     : undefined;
 
   const openNewTheme = () => {
-    const baseId =
-      settings.theme && BUILTIN_BASE_IDS.has(settings.theme) ? settings.theme : "dark";
+    const baseId = settings.theme && BUILTIN_BASE_IDS.has(settings.theme) ? settings.theme : "dark";
     const fresh = createCustomTheme(baseId, dedupeThemeName("Custom Theme", customThemes));
     setEditing(fresh);
   };
