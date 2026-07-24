@@ -498,6 +498,20 @@ export interface AppSettings {
    * with a fresh empty session.
    */
   restoreLastSessionOnStartup?: boolean;
+  /**
+   * When true (default), every terminal session opened is recorded to the
+   * browsable session history. Turning it off stops all automatic recording;
+   * existing entries are kept.
+   */
+  sessionHistoryEnabled?: boolean;
+  /**
+   * Maximum number of session-history entries to retain (default 50, range
+   * 10–500). When the limit is reached the least-recently-used unpinned entry
+   * is evicted; pinned entries are exempt.
+   */
+  sessionHistoryLimit?: number;
+  /** When true (default), the "Recent Sessions" sidebar panel is shown. */
+  showRecentSessions?: boolean;
   layout?: LayoutConfig;
   credentialStorageMode?: "master_password" | "os_keychain" | "none";
   credentialAutoLockMinutes?: number;

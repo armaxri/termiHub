@@ -55,6 +55,9 @@ pub enum TerminalError {
     #[error("Macro error: {0}")]
     MacroError(String),
 
+    #[error("Session history error: {0}")]
+    SessionHistoryError(String),
+
     #[error("Workflow error: {0}")]
     WorkflowError(String),
 

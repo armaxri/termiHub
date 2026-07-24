@@ -6,7 +6,7 @@ import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
 import { isWindows } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
-import { Select, SelectItem, Toggle } from "@/components/ui";
+import { Button, NumberInput, Select, SelectItem, Toggle, toast } from "@/components/ui";
 import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
 import { KeyPathInput } from "./KeyPathInput";
 import { SettingsField } from "./SettingsField";
@@ -49,6 +49,8 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
   const [availableShells, setAvailableShells] = useState<ShellType[]>([]);
   const [gitBashSetupOpen, setGitBashSetupOpen] = useState(false);
   const platformDefaultShell = useAppStore((s) => s.defaultShell);
+  const historyCount = useAppStore((s) => s.sessionHistory.length);
+  const clearSessionHistory = useAppStore((s) => s.clearSessionHistory);
 
   const refreshShells = useCallback(() => {
     detectAvailableShells().then(setAvailableShells);
@@ -200,6 +202,82 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           </SettingsField>
         )}
       </div>
+
+      {(show("sessionHistoryEnabled") ||
+        show("sessionHistoryLimit") ||
+        show("showRecentSessions")) && (
+        <div className="settings-panel__category">
+          <h3 className="settings-panel__category-title">Session History</h3>
+
+          {show("sessionHistoryEnabled") && (
+            <SettingsField
+              label="Auto-Save Sessions to History"
+              hint="Record every session you open so it can be reconnected from the Recent Sessions panel. Passwords are never stored in history."
+            >
+              <Toggle
+                checked={settings.sessionHistoryEnabled ?? true}
+                onCheckedChange={(checked) =>
+                  onChange({ ...settings, sessionHistoryEnabled: checked })
+                }
+                data-testid="settings-session-history-enabled"
+              />
+            </SettingsField>
+          )}
+
+          {show("sessionHistoryLimit") && (
+            <SettingsField
+              label="Session History Limit"
+              hint="Maximum number of recent sessions to keep (10–500). When the limit is reached, the least-recently-used unpinned entry is removed."
+            >
+              <NumberInput
+                value={settings.sessionHistoryLimit ?? 50}
+                onValueChange={(value) =>
+                  onChange({
+                    ...settings,
+                    sessionHistoryLimit: value === "" ? undefined : value,
+                  })
+                }
+                min={10}
+                max={500}
+                data-testid="settings-session-history-limit"
+              />
+            </SettingsField>
+          )}
+
+          {show("showRecentSessions") && (
+            <SettingsField
+              label="Show Recent Sessions Panel"
+              hint="Show the Recent Sessions sidebar panel and its activity-bar icon."
+            >
+              <Toggle
+                checked={settings.showRecentSessions ?? true}
+                onCheckedChange={(checked) => onChange({ ...settings, showRecentSessions: checked })}
+                data-testid="settings-show-recent-sessions"
+              />
+            </SettingsField>
+          )}
+
+          {show("sessionHistoryEnabled") && (
+            <SettingsField
+              label="Clear Session History"
+              hint="Remove all recorded sessions, including pinned entries."
+            >
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={historyCount === 0}
+                data-testid="settings-clear-session-history"
+                onClick={async () => {
+                  await clearSessionHistory();
+                  toast.success("Cleared session history");
+                }}
+              >
+                Clear All History
+              </Button>
+            </SettingsField>
+          )}
+        </div>
+      )}
 
       {(show("defaultShellIntegration") || show("defaultX11Forwarding")) && (
         <div className="settings-panel__category">

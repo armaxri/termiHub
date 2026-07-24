@@ -23,6 +23,7 @@ mod macos_services;
 mod macros;
 mod network;
 mod session;
+mod session_history;
 mod spawn;
 mod terminal;
 mod tunnel;
@@ -523,6 +524,23 @@ pub fn run() {
                 }
             }
 
+            // Initialize the session-history manager with recovery loading.
+            // On failure, the app still starts but session history is unavailable.
+            match session_history::manager::SessionHistoryManager::new(app.handle()) {
+                Ok(manager) => {
+                    recovery_warnings.extend(manager.take_recovery_warnings());
+                    app.manage(manager);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to initialize session-history manager: {e}");
+                    recovery_warnings.push(RecoveryWarning {
+                        file_name: "session-history.json".to_string(),
+                        message: "Could not initialize session-history storage. Recent sessions are unavailable until the app is restarted.".to_string(),
+                        details: Some(e.to_string()),
+                    });
+                }
+            }
+
             // Initialize workflow manager with recovery loading.
             // On failure, the app still starts but workflows are unavailable.
             match workflows::manager::WorkflowManager::new(app.handle()) {
@@ -879,6 +897,13 @@ pub fn run() {
             commands::macros::get_macro,
             commands::macros::save_macro,
             commands::macros::delete_macro,
+            // Session history
+            commands::session_history::get_session_history,
+            commands::session_history::record_session,
+            commands::session_history::set_history_entry_pinned,
+            commands::session_history::mark_history_entry_promoted,
+            commands::session_history::remove_history_entry,
+            commands::session_history::clear_session_history,
             // Workflows
             commands::workflows::list_workflows,
             commands::workflows::get_workflow,
