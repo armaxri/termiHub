@@ -1,14 +1,20 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { AppSettings } from "@/types/connection";
 import type { ThemeDefinition } from "@/themes/types";
 import { AppearanceSettings } from "./AppearanceSettings";
 
 const toastSuccess = vi.fn();
+const toastError = vi.fn();
 
-// Keep the real theme helpers (createCustomTheme, resolve, encode) but stub the
-// applyTheme/previewTheme side effects so the tests don't mutate global CSS.
+vi.mock("@tauri-apps/plugin-dialog", () => ({ save: vi.fn(), open: vi.fn() }));
+vi.mock("@tauri-apps/plugin-fs", () => ({ writeTextFile: vi.fn(), readTextFile: vi.fn() }));
+
+// Keep the real theme helpers (createCustomTheme, resolve, encode, IO) but stub
+// the applyTheme/previewTheme side effects so the tests don't mutate global CSS.
 vi.mock("@/themes", async (orig) => ({
   ...(await orig<typeof import("@/themes")>()),
   applyTheme: vi.fn(),
@@ -18,8 +24,25 @@ vi.mock("@/themes", async (orig) => ({
 
 vi.mock("@/components/ui", async (orig) => ({
   ...(await orig<typeof import("@/components/ui")>()),
-  toast: { success: (...a: unknown[]) => toastSuccess(...a), error: vi.fn(), loading: vi.fn() },
+  toast: {
+    success: (...a: unknown[]) => toastSuccess(...a),
+    error: (...a: unknown[]) => toastError(...a),
+    loading: vi.fn(),
+  },
 }));
+
+const mockedSave = vi.mocked(save);
+const mockedOpen = vi.mocked(open);
+const mockedWriteTextFile = vi.mocked(writeTextFile);
+const mockedReadTextFile = vi.mocked(readTextFile);
+
+/** Flush pending microtasks so async dialog handlers settle. */
+async function flush() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
 
 /** A minimal but valid custom theme for option/select tests. */
 function customTheme(id: string, name: string): ThemeDefinition {
@@ -188,5 +211,114 @@ describe("AppearanceSettings — custom themes", () => {
     expect(next.customThemes![0].name).toBe("Sunset");
     expect(next.theme).toBe(`custom:${next.customThemes![0].id}`);
     expect(toastSuccess).toHaveBeenCalled();
+  });
+});
+
+describe("AppearanceSettings — theme import/export (#1880)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    toastSuccess.mockReset();
+    toastError.mockReset();
+    mockedSave.mockReset();
+    mockedOpen.mockReset();
+    mockedWriteTextFile.mockReset();
+    mockedReadTextFile.mockReset();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  const withOcean: AppSettings = {
+    ...defaultSettings,
+    theme: "custom:t1",
+    customThemes: [customTheme("t1", "Ocean")],
+  };
+
+  it("disables Export with no custom theme selected, enables it for one", () => {
+    renderWith({ ...defaultSettings, theme: "dark" });
+    expect((byId("appearance-theme-export") as HTMLButtonElement).disabled).toBe(true);
+    // Import is always available.
+    expect((byId("appearance-theme-import") as HTMLButtonElement).disabled).toBe(false);
+
+    act(() => root.render(<AppearanceSettings settings={withOcean} onChange={vi.fn()} />));
+    expect((byId("appearance-theme-export") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("serializes the selected theme and writes it to the chosen file", async () => {
+    mockedSave.mockResolvedValue("/tmp/ocean.json");
+    mockedWriteTextFile.mockResolvedValue(undefined);
+    renderWith(withOcean);
+
+    act(() => (byId("appearance-theme-export") as HTMLButtonElement).click());
+    await flush();
+
+    expect(mockedWriteTextFile).toHaveBeenCalledTimes(1);
+    const [path, contents] = mockedWriteTextFile.mock.calls[0] as [string, string];
+    expect(path).toBe("/tmp/ocean.json");
+    const parsed = JSON.parse(contents) as Record<string, unknown>;
+    expect(parsed.$schema).toBe("termihub-theme-v1");
+    expect(parsed.name).toBe("Ocean");
+    expect(toastSuccess).toHaveBeenCalled();
+  });
+
+  it("does nothing when the export dialog is cancelled", async () => {
+    mockedSave.mockResolvedValue(null);
+    renderWith(withOcean);
+
+    act(() => (byId("appearance-theme-export") as HTMLButtonElement).click());
+    await flush();
+
+    expect(mockedWriteTextFile).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("validates a file, adds and selects it, and de-dupes a colliding name", async () => {
+    mockedOpen.mockResolvedValue("/tmp/import.json");
+    mockedReadTextFile.mockResolvedValue(
+      JSON.stringify({ name: "Ocean", baseTheme: "dark", colors: { bgPrimary: "#010203" } })
+    );
+    const onChange = renderWith(withOcean);
+
+    act(() => (byId("appearance-theme-import") as HTMLButtonElement).click());
+    await flush();
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0][0] as AppSettings;
+    expect(next.customThemes).toHaveLength(2);
+    const imported = next.customThemes![1];
+    expect(imported.name).toBe("Ocean (2)"); // de-duped against the existing "Ocean"
+    expect(imported.colors.bgPrimary).toBe("#010203");
+    expect(next.theme).toBe(`custom:${imported.id}`);
+    expect(toastSuccess).toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a recoverable error toast for a malformed file", async () => {
+    mockedOpen.mockResolvedValue("/tmp/bad.json");
+    mockedReadTextFile.mockResolvedValue("this is not json {");
+    const onChange = renderWith(withOcean);
+
+    act(() => (byId("appearance-theme-import") as HTMLButtonElement).click());
+    await flush();
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(String(toastError.mock.calls[0][0])).toMatch(/Invalid theme file/);
+  });
+
+  it("does nothing when the import dialog is cancelled", async () => {
+    mockedOpen.mockResolvedValue(null);
+    const onChange = renderWith(withOcean);
+
+    act(() => (byId("appearance-theme-import") as HTMLButtonElement).click());
+    await flush();
+
+    expect(mockedReadTextFile).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
   });
 });
