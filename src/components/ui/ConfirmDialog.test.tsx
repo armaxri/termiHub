@@ -120,13 +120,7 @@ describe("ConfirmDialog", () => {
 
   it("disables the confirm button when confirmDisabled is set", () => {
     render(
-      <ConfirmDialog
-        open
-        title="Save host"
-        confirmDisabled
-        onConfirm={vi.fn()}
-        onCancel={vi.fn()}
-      >
+      <ConfirmDialog open title="Save host" confirmDisabled onConfirm={vi.fn()} onCancel={vi.fn()}>
         <input data-testid="body-field" />
       </ConfirmDialog>
     );
