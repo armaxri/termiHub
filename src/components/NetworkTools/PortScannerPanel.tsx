@@ -14,6 +14,7 @@ import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { estimateScanProbes } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
+import { useAppStore } from "@/store/appStore";
 
 /** Probe count above which the scanner warns before starting. */
 const LARGE_SCAN_THRESHOLD = 1000;
@@ -38,6 +39,15 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const [results, setResults] = useState<ScanRow[]>([]);
   const [summary, setSummary] = useState<PortScanSummary | null>(null);
   const [warnOpen, setWarnOpen] = useState(false);
+  // Local, deferred opt-out state — committed to settings only on confirm,
+  // discarded on cancel (honours the ConfirmDialog checkbox contract).
+  const [dontWarnAgain, setDontWarnAgain] = useState(false);
+
+  // Persisted "warn before a large scan" preference. Defaults to true when
+  // unset; the dialog's opt-out flips it off, re-enabled from General settings.
+  const warnLargeScan = useAppStore((s) => s.settings.warnLargePortScan);
+  const settings = useAppStore((s) => s.settings);
+  const updateSettings = useAppStore((s) => s.updateSettings);
 
   const hostRef = useAutofocusSelect<HTMLInputElement>();
 
@@ -97,17 +107,29 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
 
   const handleRun = useCallback(async () => {
     if (!canRun) return;
-    if (probeEstimate > LARGE_SCAN_THRESHOLD) {
+    // Skip the warning when the user previously opted out (warnLargePortScan
+    // === false); the scan then starts directly. Unset defaults to warning.
+    if (probeEstimate > LARGE_SCAN_THRESHOLD && warnLargeScan !== false) {
       setWarnOpen(true);
       return;
     }
     await run();
-  }, [canRun, probeEstimate, run]);
+  }, [canRun, probeEstimate, warnLargeScan, run]);
 
   const handleConfirmLargeScan = useCallback(async () => {
+    // Deferred opt-out: persist only when confirmed with the box ticked.
+    if (dontWarnAgain) {
+      void updateSettings({ ...settings, warnLargePortScan: false });
+    }
+    setDontWarnAgain(false);
     setWarnOpen(false);
     await run();
-  }, [run]);
+  }, [dontWarnAgain, settings, updateSettings, run]);
+
+  const handleCancelLargeScan = useCallback(() => {
+    setDontWarnAgain(false);
+    setWarnOpen(false);
+  }, []);
 
   // Only show the Host column when results span more than one host
   // (single-host scans look cleaner without it). Memoised because results
@@ -259,8 +281,13 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         confirmVariant="primary"
         testIdBase="port-scan-warn"
         data-testid="port-scan-warn-modal"
+        dontAskAgain={{
+          checked: dontWarnAgain,
+          onChange: setDontWarnAgain,
+          label: "Don't warn again",
+        }}
         onConfirm={handleConfirmLargeScan}
-        onCancel={() => setWarnOpen(false)}
+        onCancel={handleCancelLargeScan}
       />
     </form>
   );

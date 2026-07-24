@@ -169,6 +169,21 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           </SettingsField>
         )}
 
+        {show("warnLargePortScan") && (
+          <SettingsField
+            label="Warn Before a Large Port Scan"
+            hint="Show a warning before starting a Port Scanner scan that probes a very large number of host/port combinations."
+          >
+            <Toggle
+              checked={settings.warnLargePortScan ?? true}
+              onCheckedChange={(checked) =>
+                onChange({ ...settings, warnLargePortScan: checked })
+              }
+              data-testid="settings-warn-large-port-scan"
+            />
+          </SettingsField>
+        )}
+
         {show("experimentalFeaturesEnabled") && (
           <SettingsField
             label="Allow Experimental Features"

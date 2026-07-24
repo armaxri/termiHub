@@ -499,6 +499,13 @@ export interface AppSettings {
    * file is saved silently and no dialog or editor tab is opened.
    */
   askOpenSavedFileInTab?: boolean;
+  /**
+   * Show a warning before starting a Port Scanner scan whose estimated probe
+   * count is very large (many host/port combinations). Defaults to true. The
+   * warning dialog's "Don't warn again" opt-out flips this off; it can be
+   * re-enabled from General settings.
+   */
+  warnLargePortScan?: boolean;
   defaultShellIntegration?: boolean;
   defaultX11Forwarding?: boolean;
   /** Start/provide a local X server automatically for SSH X11 forwarding. Unset → platform default (on for Windows). */
