@@ -167,6 +167,17 @@ winreg = "0.55"
 # `cargo tree -i` clean off Linux. `default-features = false` keeps the C-FFI
 # `XCBConnection` out; only the pure-Rust connection is needed.
 x11rb = { version = "0.13", default-features = false }
+# Native-Wayland `wlr-data-control` delayed data source for the same binding under
+# a Wayland session (#1847): own a data source offering the file targets and serve
+# its `send(mime, fd)` callback on paste, fetching the remote files only then — the
+# lazy serve `wl-clipboard-rs` (fixed-bytes only) cannot do. `wayland-client`'s
+# `dlopen` feature loads `libwayland-client.so` at **runtime** (like the sidecar's
+# `wl-clipboard-rs`), so this adds **no link-time `libwayland-dev` build
+# dependency**; `wayland-protocols-wlr`'s `client` feature provides the
+# data-control bindings. Linux-only — the module is `#[cfg(target_os = "linux")]`
+# and `cargo tree -i` clean off Linux.
+wayland-client = { version = "0.31", features = ["dlopen"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # Percent-encode staged temp paths into `file://` URIs for the served payloads —
 # the encode side of the sidecar reader's percent-decode. Linux-only here.
 percent-encoding = "2"
