@@ -6127,9 +6127,7 @@ export const useAppStore = create<AppState>((set, get) => {
       // streaming its output into the LogViewer (the app's observable surface)
       // and forwarding a cancel from the run's signal to the backend.
       const runLocalProcess: WorkflowRunLocalProcessSeam = async (program, args, options) => {
-        const runId = `wf-lp-${workflowId}-${Date.now()}-${Math.random()
-          .toString(36)
-          .slice(2, 8)}`;
+        const runId = `wf-lp-${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         frontendLog("workflow", `local process starting: ${[program, ...args].join(" ")}`);
 
         const unlisten = await subscribeLocalProcessOutput(runId, (chunk) => {

@@ -304,9 +304,7 @@ export async function executeStep(
       if (result.exitCode === 0) return { ok: true };
       return {
         ok: false,
-        error: `local process "${step.program}" exited with code ${
-          result.exitCode ?? "unknown"
-        }`,
+        error: `local process "${step.program}" exited with code ${result.exitCode ?? "unknown"}`,
       };
     }
     default: {

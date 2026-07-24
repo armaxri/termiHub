@@ -568,7 +568,9 @@ describe("SecuritySettings", () => {
         remove.click();
       });
 
-      expect(useAppStore.getState().settings.workflowLocalProcessAllowlist).toEqual(["notify-send"]);
+      expect(useAppStore.getState().settings.workflowLocalProcessAllowlist).toEqual([
+        "notify-send",
+      ]);
     });
   });
 });

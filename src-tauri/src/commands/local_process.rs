@@ -127,7 +127,11 @@ impl LocalProcessRegistry {
 /// Clamp a caller-requested timeout into `[1ms, MAX_TIMEOUT_MS]`, applying the
 /// default when unset.
 fn resolve_timeout(timeout_ms: Option<u64>) -> Duration {
-    Duration::from_millis(timeout_ms.unwrap_or(DEFAULT_TIMEOUT_MS).clamp(1, MAX_TIMEOUT_MS))
+    Duration::from_millis(
+        timeout_ms
+            .unwrap_or(DEFAULT_TIMEOUT_MS)
+            .clamp(1, MAX_TIMEOUT_MS),
+    )
 }
 
 /// Stream every line from `reader` to `tx`, tagged with `stream`. Ends when the
@@ -339,7 +343,9 @@ mod tests {
     use super::*;
 
     /// Drain the output channel into a flat list of `(stream, line)` pairs.
-    fn collect_output(mut rx: mpsc::UnboundedReceiver<(&'static str, String)>) -> Vec<(String, String)> {
+    fn collect_output(
+        mut rx: mpsc::UnboundedReceiver<(&'static str, String)>,
+    ) -> Vec<(String, String)> {
         let mut out = Vec::new();
         while let Ok((stream, line)) = rx.try_recv() {
             out.push((stream.to_string(), line));
@@ -367,9 +373,10 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel();
         let token = CancellationToken::new();
         let args = vec!["[%s]\n".to_string(), "a b".to_string()];
-        let outcome = execute_local_process("/usr/bin/printf", &args, Duration::from_secs(5), &token, tx)
-            .await
-            .expect("printf should run");
+        let outcome =
+            execute_local_process("/usr/bin/printf", &args, Duration::from_secs(5), &token, tx)
+                .await
+                .expect("printf should run");
         assert_eq!(outcome.exit_code, Some(0));
         let lines: Vec<String> = collect_output(rx)
             .into_iter()
@@ -390,9 +397,10 @@ mod tests {
         let (tx, rx) = mpsc::unbounded_channel();
         let token = CancellationToken::new();
         let args = vec!["%s\n".to_string(), "; rm -rf / && echo pwned".to_string()];
-        let outcome = execute_local_process("/usr/bin/printf", &args, Duration::from_secs(5), &token, tx)
-            .await
-            .expect("printf should run");
+        let outcome =
+            execute_local_process("/usr/bin/printf", &args, Duration::from_secs(5), &token, tx)
+                .await
+                .expect("printf should run");
         assert_eq!(outcome.exit_code, Some(0));
         let lines: Vec<String> = collect_output(rx)
             .into_iter()
@@ -427,9 +435,10 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let token = CancellationToken::new();
         let args = vec!["30".to_string()];
-        let outcome = execute_local_process("/bin/sleep", &args, Duration::from_millis(150), &token, tx)
-            .await
-            .expect("sleep should spawn");
+        let outcome =
+            execute_local_process("/bin/sleep", &args, Duration::from_millis(150), &token, tx)
+                .await
+                .expect("sleep should spawn");
         assert!(outcome.timed_out, "expected timeout: {outcome:?}");
         assert!(!outcome.cancelled);
         assert_eq!(outcome.exit_code, None);
@@ -447,9 +456,10 @@ mod tests {
             cancel_token.cancel();
         });
         let args = vec!["30".to_string()];
-        let outcome = execute_local_process("/bin/sleep", &args, Duration::from_secs(30), &token, tx)
-            .await
-            .expect("sleep should spawn");
+        let outcome =
+            execute_local_process("/bin/sleep", &args, Duration::from_secs(30), &token, tx)
+                .await
+                .expect("sleep should spawn");
         assert!(outcome.cancelled, "expected cancelled: {outcome:?}");
         assert!(!outcome.timed_out);
         assert_eq!(outcome.exit_code, None);
@@ -478,11 +488,7 @@ mod tests {
         let (tx, _rx) = mpsc::unbounded_channel();
         let token = CancellationToken::new();
         // ping -n 30 keeps the process alive well past the timeout.
-        let args = vec![
-            "-n".to_string(),
-            "30".to_string(),
-            "127.0.0.1".to_string(),
-        ];
+        let args = vec!["-n".to_string(), "30".to_string(), "127.0.0.1".to_string()];
         let outcome = execute_local_process("ping", &args, Duration::from_millis(200), &token, tx)
             .await
             .expect("ping should spawn");
@@ -492,7 +498,10 @@ mod tests {
 
     #[test]
     fn resolve_timeout_applies_default_and_bounds() {
-        assert_eq!(resolve_timeout(None), Duration::from_millis(DEFAULT_TIMEOUT_MS));
+        assert_eq!(
+            resolve_timeout(None),
+            Duration::from_millis(DEFAULT_TIMEOUT_MS)
+        );
         assert_eq!(resolve_timeout(Some(0)), Duration::from_millis(1));
         assert_eq!(
             resolve_timeout(Some(MAX_TIMEOUT_MS * 10)),

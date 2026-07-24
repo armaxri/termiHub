@@ -240,9 +240,7 @@ function LocalProcessArgsEditor({ index, args, onChange }: LocalProcessArgsEdito
   return (
     <Field label="Arguments" htmlFor={`workflow-step-arg-${index}-0`}>
       <div className="workflow-step__args" data-testid={`workflow-editor-step-args-${index}`}>
-        {args.length === 0 && (
-          <span className="workflow-step__args-empty">No arguments.</span>
-        )}
+        {args.length === 0 && <span className="workflow-step__args-empty">No arguments.</span>}
         {args.map((arg, i) => (
           <div className="workflow-step__arg-row" key={i}>
             <Input
