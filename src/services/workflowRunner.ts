@@ -25,10 +25,12 @@
  *    {@link "@/services/macroPlayback".MAX_STEP_DELAY_MS} exactly as macro
  *    playback clamps its own delays.
  *
- * The only remaining placeholder is `run-local-process` (guarded,
- * security-critical), wired by #1857; it fails loudly until then. Later children
- * extend the runner by adding their seam to {@link WorkflowRunnerDeps} and
- * replacing the placeholder in {@link executeStep}.
+ * `run-local-process` (guarded, security-critical) is wired by #1857. It routes
+ * through **two** seams — {@link WorkflowRunnerDeps.authorizeLocalProcess} and
+ * {@link WorkflowRunnerDeps.runLocalProcess} — and is fail-closed: absent an
+ * authorize seam, or when authorization is refused, the process is **never
+ * spawned** and the step fails. Only an explicit `true` from the authorize seam
+ * lets the run seam spawn the program.
  */
 
 import { MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
@@ -78,6 +80,51 @@ export type WorkflowWaitSeam = (ms: number) => Promise<void> | void;
 export type WorkflowReadFileSeam = (path: string) => Promise<string>;
 
 /**
+ * Terminal outcome of a spawned local process, surfaced to the runner. `exitCode`
+ * is `null` when the process was killed before it could report one (cancelled or
+ * timed out).
+ */
+export interface LocalProcessResult {
+  /** The process exit code, or `null` when it was killed. */
+  exitCode: number | null;
+  /** `true` when the process was killed for exceeding its timeout. */
+  timedOut: boolean;
+  /** `true` when the process was killed because the run was cancelled. */
+  cancelled: boolean;
+}
+
+/** Options threaded into a local-process spawn so it can observe cancellation. */
+export interface LocalProcessRunOptions {
+  /** A cancel poll: when it flips true, the seam kills the process. */
+  signal?: WorkflowStepSignal;
+}
+
+/**
+ * The **authorization gate** for a `run-local-process` step (#1857). Resolves
+ * `true` only when the user has both opted in *and* authorized this specific
+ * program (via a persisted allowlist or an interactive confirmation). The runner
+ * treats every other resolution — `false`, or the seam being absent — as "not
+ * authorized" and refuses to spawn. This is the security choke point: nothing
+ * runs a local process without a `true` from here first.
+ */
+export type WorkflowAuthorizeLocalProcessSeam = (
+  program: string,
+  args: string[]
+) => Promise<boolean> | boolean;
+
+/**
+ * Spawns an authorized local program with the discrete `args` (never a shell),
+ * streaming its output to an observable surface, bounded by a timeout, and
+ * killable when the run is cancelled. Resolves the process outcome. Only ever
+ * called after {@link WorkflowAuthorizeLocalProcessSeam} resolves `true`.
+ */
+export type WorkflowRunLocalProcessSeam = (
+  program: string,
+  args: string[],
+  options: LocalProcessRunOptions
+) => Promise<LocalProcessResult>;
+
+/**
  * Injectable dependencies the runner dispatches steps through. `send` is the only
  * required seam; the rest back a specific step kind and are optional so a step
  * kind that never appears needs no seam (and isolated unit tests can inject just
@@ -92,6 +139,13 @@ export interface WorkflowRunnerDeps {
   wait?: WorkflowWaitSeam;
   /** Reads a script body from disk (the `run-script` `sourcePath` seam). */
   readScriptFile?: WorkflowReadFileSeam;
+  /**
+   * Authorizes a `run-local-process` step before it runs (#1857). Absent → the
+   * step is never authorized and never spawns.
+   */
+  authorizeLocalProcess?: WorkflowAuthorizeLocalProcessSeam;
+  /** Spawns an authorized local process (#1857). */
+  runLocalProcess?: WorkflowRunLocalProcessSeam;
 }
 
 /** A poll the runner threads into a step so long/multi-part steps can abort. */
@@ -223,12 +277,38 @@ export async function executeStep(
       await sleepFor(clampDelay(step.delayMs), deps);
       return { ok: true };
     }
-    // --- Placeholder wired by a later epic child (see module docs). ---
-    case "run-local-process": // #1857 (guarded, security-critical)
+    case "run-local-process": {
+      // Guarded, security-critical (#1857). Fail-closed at every gate.
+      if (!deps.runLocalProcess) {
+        return { ok: false, error: 'the "run-local-process" step requires a local-process seam' };
+      }
+      // GUARDRAIL: never spawn without explicit authorization. Absent seam or a
+      // refusal both mean "not authorized" — the process is never spawned.
+      const authorized = deps.authorizeLocalProcess
+        ? await deps.authorizeLocalProcess(step.program, step.args)
+        : false;
+      if (!authorized) {
+        return {
+          ok: false,
+          error: `local process "${step.program}" is not authorized to run`,
+        };
+      }
+      // A cancel observed before the spawn aborts the run without spawning.
+      if (cancelled()) return { ok: true, cancelled: true };
+
+      const result = await deps.runLocalProcess(step.program, step.args, { signal });
+      if (result.cancelled) return { ok: true, cancelled: true };
+      if (result.timedOut) {
+        return { ok: false, error: `local process "${step.program}" timed out` };
+      }
+      if (result.exitCode === 0) return { ok: true };
       return {
         ok: false,
-        error: `workflow step kind "${step.kind}" is not yet implemented`,
+        error: `local process "${step.program}" exited with code ${
+          result.exitCode ?? "unknown"
+        }`,
       };
+    }
     default: {
       // Exhaustiveness guard: a new step kind must add a case above.
       const _exhaustive: never = step;
