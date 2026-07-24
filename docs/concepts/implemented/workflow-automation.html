@@ -1,6 +1,6 @@
 <!doctype html>
 <!--
-  Single-file concept — Workflow Automation (docs/concepts/backlog/workflow-automation.html).
+  Single-file concept — Workflow Automation (docs/concepts/implemented/workflow-automation.html).
   Prose + Mermaid + illustrative mockups (real mockup.css classes) + sync ledger.
   Links only the shared ../_assets/. Never imports app code. See docs/concepts/README.md.
 -->
@@ -165,15 +165,19 @@
       <header class="concept-header">
         <h1>Workflow Automation</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/1826">#1826</a></span
+          >
+          <span
+            >Delivered by epic
+            <a href="https://github.com/armaxri/termiHub/issues/1851">#1851</a> (#1852–#1857)</span
           >
           <span
             >Builds on macro epic
             <a href="https://github.com/armaxri/termiHub/issues/1670">#1670</a></span
           >
-          <span><code>docs/concepts/backlog/workflow-automation.html</code></span>
+          <span><code>docs/concepts/implemented/workflow-automation.html</code></span>
         </div>
       </header>
 
@@ -880,7 +884,8 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
+          <strong>Last synced:</strong> epic #1851 (#1852–#1857) · <strong>Status:</strong> in sync
+          (implemented)
         </p>
         <div class="table-wrap">
           <table>
@@ -897,11 +902,14 @@ sequenceDiagram
               <tr>
                 <td>1</td>
                 <td>Workflow engine, storage, editor, and triggers per this concept</td>
-                <td>Not implemented — only the macro record/replay system (#1670) exists</td>
-                <td>Missing</td>
                 <td>
-                  Await maintainer review of this concept, then implement as a sequenced sub-epic
+                  Implemented — <code>src-tauri/src/workflows/</code>,
+                  <code>src/components/WorkflowSidebar/</code>, <code>src/services/workflow*.ts</code>
+                  (engine, step types, sidebar/editor, manual/on-connect/hotkey triggers,
+                  import/export, run-local-process)
                 </td>
+                <td>None</td>
+                <td>In sync — delivered by epic #1851 (#1852–#1857)</td>
               </tr>
             </tbody>
           </table>
