@@ -27,3 +27,5 @@ export {
   findCustomTheme,
   resolveCustomTheme,
 } from "./customThemes";
+export { THEME_FILE_SCHEMA, serializeTheme, parseThemeFile, themeFileName } from "./themeIO";
+export type { ThemeFile, ThemeImportResult } from "./themeIO";

@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { open, save } from "@tauri-apps/plugin-dialog";
+import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { AppSettings } from "@/types/connection";
 import { Button, NumberInput, Select, toast } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
@@ -10,8 +12,11 @@ import {
   dedupeThemeName,
   findCustomTheme,
   isCustomThemeSetting,
+  parseThemeFile,
+  serializeTheme,
+  themeFileName,
 } from "@/themes";
-import type { ThemeDefinition } from "@/themes/types";
+import type { ThemeDefinition, ThemeImportResult } from "@/themes";
 import { ThemeEditor } from "@/components/ThemeEditor/ThemeEditor";
 import { SettingsField } from "./SettingsField";
 import "./AppearanceSettings.css";
@@ -94,6 +99,69 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
     toast.success(`Theme "${deleted.name}" deleted`);
   };
 
+  const handleExportTheme = async () => {
+    if (!selectedCustom) return;
+    try {
+      const filePath = await save({
+        title: "Export Theme",
+        defaultPath: themeFileName(selectedCustom.name),
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (!filePath) return; // dialog cancelled
+      await writeTextFile(filePath, serializeTheme(selectedCustom));
+      toast.success(`Theme "${selectedCustom.name}" exported`);
+    } catch (err) {
+      toast.error(`Failed to export theme: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleImportTheme = async () => {
+    let filePath: string | string[] | null;
+    try {
+      filePath = await open({
+        multiple: false,
+        title: "Import Theme",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+    } catch {
+      return; // dialog cancelled / unavailable
+    }
+    if (!filePath || Array.isArray(filePath)) return;
+
+    let text: string;
+    try {
+      text = await readTextFile(filePath);
+    } catch (err) {
+      toast.error(`Could not read theme file: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+
+    let result: ThemeImportResult;
+    try {
+      result = parseThemeFile(text);
+    } catch (err) {
+      toast.error(`Invalid theme file: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+
+    // Regenerate id-free name collisions with a "(2)" suffix, matching the
+    // concept's import-rename behavior, then add and select the new theme.
+    const name = dedupeThemeName(result.theme.name, customThemes);
+    const imported: ThemeDefinition = { ...result.theme, name };
+    onChange({
+      ...settings,
+      customThemes: [...customThemes, imported],
+      theme: customThemeSetting(imported.id),
+    });
+    if (result.hadInvalidColors) {
+      toast.success(`Theme "${name}" imported`, {
+        description: "Some colors were invalid and fell back to the base theme's defaults.",
+      });
+    } else {
+      toast.success(`Theme "${name}" imported`);
+    }
+  };
+
   return (
     <div className="settings-panel__category">
       <h3 className="settings-panel__category-title">Appearance</h3>
@@ -124,6 +192,23 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
               data-testid="appearance-theme-edit"
             >
               Edit
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleImportTheme}
+              data-testid="appearance-theme-import"
+            >
+              Import
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleExportTheme}
+              disabled={!selectedCustom}
+              data-testid="appearance-theme-export"
+            >
+              Export
             </Button>
             <Button
               variant="danger"
