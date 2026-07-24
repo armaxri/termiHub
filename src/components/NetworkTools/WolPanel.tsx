@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from "react";
 import { Power, Save, Trash2, Zap } from "lucide-react";
-import { Button, Tooltip, toast, Modal, Field, Input, NumberInput } from "@/components/ui";
+import { Button, Tooltip, toast, ConfirmDialog, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkWolSend,
@@ -236,44 +236,22 @@ export function WolPanel() {
         Save Current
       </Button>
 
-      <Modal
+      <ConfirmDialog
         open={saveModalOpen}
-        onOpenChange={setSaveModalOpen}
         title="Save Wake-on-LAN Device"
-        description="Give this device a name to save its MAC address, broadcast, and port."
+        confirmLabel="Save"
+        confirmVariant="primary"
+        confirmDisabled={!canSaveDevice}
+        confirmErrorToast={false}
+        onConfirm={handleConfirmSave}
+        onCancel={() => setSaveModalOpen(false)}
         data-testid="wol-save-modal"
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => setSaveModalOpen(false)}
-              data-testid="wol-save-cancel"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleConfirmSave}
-              errorToast={false}
-              disabled={!canSaveDevice}
-              data-testid="wol-save-confirm"
-            >
-              Save
-            </Button>
-          </>
-        }
       >
         <Field label="Device name" htmlFor="wol-save-name">
           <Input
             id="wol-save-name"
             value={saveName}
             onChange={(e) => setSaveName(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && canSaveDevice) {
-                e.preventDefault();
-                void handleConfirmSave();
-              }
-            }}
             placeholder="e.g. Office NAS"
             autoFocus
             data-testid="wol-save-name"
@@ -282,7 +260,7 @@ export function WolPanel() {
         <Field label="MAC address" htmlFor="wol-save-mac" error={macError ?? undefined}>
           <Input id="wol-save-mac" value={mac} readOnly data-testid="wol-save-mac" />
         </Field>
-      </Modal>
+      </ConfirmDialog>
 
       {/* History */}
       {history.length > 0 && (
