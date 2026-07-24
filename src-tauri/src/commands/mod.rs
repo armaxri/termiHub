@@ -4,6 +4,7 @@ pub mod connection_path;
 pub mod credential;
 pub mod embedded_servers;
 pub mod files;
+pub mod local_process;
 pub mod logs;
 pub mod macros;
 pub mod network;

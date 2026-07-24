@@ -231,6 +231,7 @@ pub fn run() {
         .manage(x_server_consent_registry.clone())
         .manage(spawn::handler::PendingSpawn::default())
         .manage(commands::connection_path::ProbeRegistry::default())
+        .manage(commands::local_process::LocalProcessRegistry::default())
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
 
@@ -882,6 +883,8 @@ pub fn run() {
             commands::workflows::get_workflow,
             commands::workflows::save_workflow,
             commands::workflows::delete_workflow,
+            commands::local_process::run_local_process,
+            commands::local_process::cancel_local_process,
             // Network diagnostics
             commands::network::network_port_scan,
             commands::network::network_port_scan_cancel,
