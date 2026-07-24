@@ -60,8 +60,7 @@ const invokeRunLocalProcess = vi.fn((_args: { program: string; args: string[] })
 );
 const cancelLocalProcess = vi.fn((_runId: string) => Promise.resolve(true));
 vi.mock("@/services/localProcessApi", () => ({
-  invokeRunLocalProcess: (args: { program: string; args: string[] }) =>
-    invokeRunLocalProcess(args),
+  invokeRunLocalProcess: (args: { program: string; args: string[] }) => invokeRunLocalProcess(args),
   cancelLocalProcess: (runId: string) => cancelLocalProcess(runId),
   subscribeLocalProcessOutput: vi.fn(() => Promise.resolve(() => {})),
 }));
