@@ -12,11 +12,27 @@
       <header class="concept-header">
         <h1>SSH Key Passphrase Handling</h1>
         <div class="concept-meta">
-          <span class="concept-status">Partial</span>
+          <span class="concept-status">Implemented</span>
           <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/121">#121</a></span>
-          <span><code>docs/concepts/partial/ssh-key-passphrase.html</code></span>
+          <span><code>docs/concepts/implemented/ssh-key-passphrase.html</code></span>
         </div>
       </header>
+
+      <blockquote style="border-left-color: var(--color-success)">
+        <p>
+          <strong>Shipped via the credential store, not the plaintext field this concept originally
+          proposed.</strong> The concept's goals — prompt on connect, early encryption detection,
+          secrets kept out of the connection file, no re-prompt on reconnect, and a clean
+          password-vs-passphrase distinction — are all met, but through termiHub's
+          <strong>credential store</strong> (<code>src-tauri/src/credential/</code>: OS keychain or
+          master-password-encrypted storage with auto-lock) rather than a plaintext
+          <code>keyPassphrase</code> field in <code>connections.json</code> plus an in-memory
+          <code>passphrase_cache.rs</code>. The prose, storage sections, and Implementation Details
+          below have been reconciled to describe that shipped architecture; the original
+          field-based proposal is preserved for history where noted. See the Sync Ledger.
+        </p>
+      </blockquote>
+
       <nav class="concept-toc">
         <h2>Contents</h2>
         <ol>
@@ -25,19 +41,20 @@
           <li><a href="#general-handling">General Handling</a></li>
           <li><a href="#states-sequences">States &amp; Sequences</a></li>
           <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
         </ol>
       </nav>
 
 <h2 id="overview">Overview</h2>
-<p>termiHub supports SSH key-based authentication, including passphrase-protected keys. The basic plumbing already exists: the UI has a "Key Passphrase" field, and the backend decrypts encrypted OpenSSH keys via the <code>ssh_key</code> crate before passing them to libssh2. However, the current implementation has several gaps that affect usability and security:</p>
+<p>termiHub supports SSH key-based authentication, including passphrase-protected keys. This concept identified five gaps in the early implementation; all have since been closed, though the solution the codebase shipped is a <strong>credential store</strong> rather than the plaintext-field approach sketched below. The gaps and how they were resolved:</p>
 <ol>
-<li><strong>Passphrase stored in plaintext</strong> — The passphrase is saved alongside the connection config in <code>connections.json</code> as unencrypted text. Anyone with file system access can read it, defeating the purpose of protecting the key with a passphrase.</li>
-<li><strong>No encryption detection during validation</strong> — The key validation endpoint (<code>validate_ssh_key</code>) detects key format but not whether a key is encrypted. Users only discover a missing passphrase when the connection attempt fails.</li>
-<li><strong>No runtime prompting</strong> — There is no mechanism to prompt the user for a passphrase at connection time. The passphrase must be pre-configured and saved, or the connection fails.</li>
-<li><strong>Overloaded <code>password</code> field</strong> — The same <code>password</code> field in <code>SshConfig</code> is used for password authentication and key passphrases, creating semantic confusion.</li>
-<li><strong>No session caching</strong> — Each reconnect re-reads the passphrase from config. There is no in-memory cache to avoid repeated prompts within a session.</li>
+<li><strong>Passphrase stored in plaintext</strong> <em>(resolved — via the credential store, not the "save toggle + plaintext warning" this concept proposed)</em> — Passphrases are no longer written to <code>connections.json</code>. They are routed to termiHub's credential store (<code>src-tauri/src/credential/</code>): an OS keychain, or a master-password-encrypted store with auto-lock. The connection file holds only a reference, never the secret.</li>
+<li><strong>No encryption detection during validation</strong> <em>(resolved, #885)</em> — <code>is_ssh_key_encrypted</code> in <code>ssh_key_validate.rs</code> reports whether a key is passphrase-encrypted, and the connect path uses it to decide whether to prompt.</li>
+<li><strong>No runtime prompting</strong> <em>(resolved)</em> — The global <code>PasswordPrompt</code> dialog prompts for the SSH password / key passphrase at connect time, with a "Save password" checkbox (shown only when a credential store is active) that persists the secret to the store.</li>
+<li><strong>Overloaded <code>password</code> field</strong> <em>(resolved semantically at the credential layer, not by a new config field)</em> — <code>SshConfig</code> still carries a single transient <code>password</code> field, but the credential store distinguishes intent with <code>CredentialType::KeyPassphrase</code> vs <code>CredentialType::Password</code>, so a key passphrase and a login password are stored and retrieved as distinct credential kinds.</li>
+<li><strong>No session caching</strong> <em>(resolved via the store's unlock lifetime)</em> — Once the credential store is unlocked, saved passphrases are served without re-prompting on reconnect; auto-lock re-secures them after inactivity. This replaces the concept's separate in-memory <code>PassphraseCache</code>.</li>
 </ol>
-<p>This concept addresses these gaps by designing a passphrase handling system that is secure, user-friendly, and consistent with how tools like OpenSSH and VS Code handle key passphrases.</p>
+<p>The remainder of this concept documents the original design; the storage-related sections and the Implementation Details have been reconciled to the shipped credential-store architecture, with the original field-based proposal noted where it differs.</p>
 <h3 id="goals">Goals</h3>
 <ul>
 <li><strong>Prompt on connect</strong> — Ask for the passphrase at connection time when it is not saved, similar to OpenSSH's interactive prompt</li>
@@ -48,12 +65,15 @@
 </ul>
 <h3 id="non-goals">Non-Goals</h3>
 <ul>
-<li>OS keychain integration (e.g., Windows Credential Manager, macOS Keychain, libsecret) — this is a valuable future enhancement but out of scope for this concept. It would be a natural follow-up.</li>
+<li>OS keychain integration (e.g., Windows Credential Manager, macOS Keychain, libsecret) was called out here as a future follow-up — and it has since shipped as one of the credential-store backends (<code>src-tauri/src/credential/os_keychain.rs</code>), so the shipped solution is actually stronger than this concept's original plaintext-field plan.</li>
 <li>SSH agent passphrase management — when using SSH agent auth, the agent handles passphrases. This concept only covers key-based auth where termiHub manages the key directly.</li>
 <li>Certificate-based SSH authentication — a separate feature entirely.</li>
 </ul>
 <hr>
 <h2 id="ui-interface">UI Interface</h2>
+<blockquote>
+<p><strong>Reconciliation note:</strong> the ASCII mockups below are the original design and still mention a "Save passphrase … stored in plaintext" affordance. As shipped there is <strong>no plaintext storage</strong>: the connect-time prompt's "Save password" checkbox writes to the credential store (OS keychain or master-password-encrypted), and is only offered when a store is active. Read the plaintext warnings as historical, superseded by the credential-store architecture described in the Overview and Sync Ledger.</p>
+</blockquote>
 <h3 id="key-passphrase-field-with-encryption-indicator">Key Passphrase Field with Encryption Indicator</h3>
 <p>When the user selects an SSH key file, the validation hint now indicates whether the key is encrypted. The passphrase field adapts accordingly.</p>
 <p><strong>Encrypted key selected:</strong></p>
@@ -276,22 +296,19 @@ flowchart LR
 </table>
 </div>
 <h3 id="separating-password-from-passphrase">Separating Password from Passphrase</h3>
-<p>The <code>password</code> field is currently overloaded. The concept introduces a dedicated <code>keyPassphrase</code> field:</p>
-<p><strong>Current state:</strong></p>
-<pre><code>SshConfig.password → used for password auth AND key passphrase
+<p><em>Shipped differently from the original proposal.</em> This concept proposed adding a dedicated <code>keyPassphrase</code> field to <code>SshConfig</code> and migrating saved <code>password</code> values into it. The codebase instead keeps a single transient <code>password</code> field on <code>SshConfig</code> and draws the password-vs-passphrase distinction at the <strong>credential-store</strong> layer:</p>
+<pre><code>SshConfig.password        → transient, in-memory only (not written to connections.json)
+CredentialType::Password       → login password, stored under "&lt;conn-id&gt;:password"
+CredentialType::KeyPassphrase  → key passphrase, stored under "&lt;conn-id&gt;:key_passphrase"
 </code></pre>
-<p><strong>Proposed state:</strong></p>
-<pre><code>SshConfig.password      → used only for password auth
-SshConfig.keyPassphrase → used only for key passphrase (new field)
-</code></pre>
-<p>This is a <strong>breaking change</strong> to the config format. A migration is needed for existing <code>connections.json</code> files: when loading a config with <code>authMethod: "key"</code> and <code>password</code> set but <code>keyPassphrase</code> absent, the <code>password</code> value is moved to <code>keyPassphrase</code> and <code>password</code> is cleared.</p>
+<p>On save, <code>prepare_for_storage</code> (in <code>connection/manager.rs</code>) routes the entered secret to the active credential store under the correct <code>CredentialType</code> for the auth method (<code>KeyPassphrase</code> for <code>authMethod: "key"</code>), then strips it from the config before it is written to disk. Because the secret never lands in <code>connections.json</code>, no plaintext-field migration is required — a strict improvement over the breaking config change this concept originally called for.</p>
 <h3 id="save-passphrase-toggle">"Save Passphrase" Toggle</h3>
-<p>The "Save passphrase" checkbox controls whether the passphrase is persisted in the connection config file. This is an explicit opt-in with a plaintext warning.</p>
+<p><em>Shipped via the credential store.</em> The "Save password" checkbox (shown in the connect-time <code>PasswordPrompt</code> only when a credential store is active, i.e. its mode is not <code>none</code>) controls whether the entered passphrase is persisted to the <strong>credential store</strong> — never to <code>connections.json</code>. The preference is tracked by the <code>save_password</code> boolean on <code>SshConfig</code> (reused for both password and key-passphrase auth):</p>
 <ul>
-<li><strong>Checked</strong>: passphrase is stored in <code>SshConfig.keyPassphrase</code> and written to <code>connections.json</code></li>
-<li><strong>Unchecked</strong>: <code>SshConfig.keyPassphrase</code> is <code>None</code>. The user will be prompted at connection time (or the session cache is used).</li>
+<li><strong>Checked</strong> (<code>save_password: true</code>): the passphrase is stored in the credential store under <code>CredentialType::KeyPassphrase</code> and reused on future connects without re-prompting (while the store is unlocked).</li>
+<li><strong>Unchecked</strong>: nothing is persisted; the user is prompted at connection time on each new connect (and reuse depends on the store's unlock lifetime).</li>
 </ul>
-<p>A new boolean field <code>saveKeyPassphrase</code> in the config tracks this preference. When <code>saveKeyPassphrase</code> is <code>false</code> (or absent), the <code>keyPassphrase</code> field is excluded from serialization even if it's populated in memory.</p>
+<p>There is no plaintext-storage path and therefore no plaintext warning: when no credential store is configured, the "Save" affordance simply isn't offered.</p>
 <h3 id="edge-cases">Edge Cases</h3>
 <ul>
 <li><strong>Key file changes after validation</strong>: If the user replaces the key file between validation and connection, the encryption status may differ. The backend handles this gracefully — if decryption fails, the prompt dialog is shown regardless of what validation reported.</li>
@@ -485,7 +502,24 @@ sequenceDiagram
 </div>
 <hr>
 <h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
-<p>Based on the current project architecture at the time of concept creation. The codebase may evolve between concept creation and implementation.</p>
+<blockquote style="border-left-color: var(--color-success)">
+<p><strong>What actually shipped (reconciled).</strong> The sections that follow are the <em>original</em> pre-implementation proposal — a plaintext <code>keyPassphrase</code>/<code>saveKeyPassphrase</code> field on <code>SshConfig</code>, a config migration, and a standalone in-memory <code>passphrase_cache.rs</code>. The codebase took a different, stronger route: a general-purpose <strong>credential store</strong>. The mapping:</p>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Concept proposal</th><th>What shipped</th></tr></thead>
+<tbody>
+<tr><td><code>SshConfig.keyPassphrase</code> + <code>saveKeyPassphrase</code> fields, secret written to <code>connections.json</code></td><td>No new fields. Secret routed to the credential store under <code>CredentialType::KeyPassphrase</code> via <code>prepare_for_storage</code> (<code>connection/manager.rs</code>) and stripped from the on-disk config. <code>save_password</code> tracks the opt-in.</td></tr>
+<tr><td>Encryption detection in <code>validate_ssh_key</code> (new <code>encrypted</code> field)</td><td><code>is_ssh_key_encrypted</code> in <code>src-tauri/src/utils/ssh_key_validate.rs</code>; the connect path (<code>commands/session.rs</code>) uses it to decide whether to prompt (#885).</td></tr>
+<tr><td>Config migration moving <code>password</code> → <code>keyPassphrase</code></td><td>Not needed — secrets never live in <code>connections.json</code>, so there is nothing to migrate.</td></tr>
+<tr><td>New <code>utils/passphrase_cache.rs</code> (in-memory, keyed by key path)</td><td>Superseded by the credential store's unlock lifetime + auto-lock (<code>credential/auto_lock.rs</code>). An unlocked store serves saved passphrases without re-prompting.</td></tr>
+<tr><td>New <code>PassphraseNeededEvent</code> + <code>submit_passphrase</code> command + <code>PassphraseDialog.tsx</code></td><td>Connect-time prompting handled by the shared global <code>PasswordPrompt</code> component + credential commands (<code>commands/credential.rs</code>); the "Save password" checkbox persists to the store when one is active.</td></tr>
+<tr><td>Plaintext "Save passphrase" toggle with warning</td><td>"Save password" checkbox shown only when a credential store is active; encrypted/keychain storage, no plaintext, no warning.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Key shipped modules: <code>src-tauri/src/credential/</code> (<code>manager.rs</code>, <code>crypto.rs</code>, <code>master_password.rs</code>, <code>os_keychain.rs</code>, <code>auto_lock.rs</code>, <code>types.rs</code>), <code>src-tauri/src/commands/credential.rs</code>, <code>src-tauri/src/utils/ssh_key_validate.rs</code>, <code>src/components/PasswordPrompt/</code>, and <code>src/components/CredentialStoreIndicator/</code>.</p>
+</blockquote>
+<p>Based on the current project architecture at the time of concept creation. The codebase may evolve between concept creation and implementation. <em>(The following is the original proposal, retained for history — see the reconciliation table above for what shipped.)</em></p>
 <h3 id="1-enhanced-validation-ssh_key_validaters">1. Enhanced Validation: <code>ssh_key_validate.rs</code></h3>
 <p>The <code>SshKeyValidation</code> struct gains a new <code>encrypted</code> field:</p>
 <pre><code class="language-rust">#[derive(Debug, Clone, Serialize)]
@@ -877,6 +911,27 @@ dismissPassphrasePrompt: () =&gt; void;
 <li><strong>Fourth PR — Runtime prompting</strong>: Add <code>PassphraseNeededEvent</code>, <code>submit_passphrase</code> command, <code>PassphraseDialog</code> component, and the async prompt flow. This is the largest change and completes the feature.</li>
 <li><strong>Fifth PR — Remote agent passphrase</strong>: Apply the same field separation and prompt flow to <code>RemoteAgentConfig</code> / remote session connections.</li>
 </ol>
+<hr>
+<h2 id="sync">Sync Ledger</h2>
+<blockquote>
+<p>Maintained by <code>/sync-concept ssh-key-passphrase</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
+</blockquote>
+<p><strong>Last synced:</strong> 2026-07-24 at commit <code>6e40e8dc</code> · <strong>Status:</strong> in-sync (implemented). Moved <code>partial/</code> → <code>implemented/</code>: all five concept goals are met, via the credential store rather than the plaintext-field design originally proposed.</p>
+<h3 id="sync-open">Open divergences</h3>
+<p>None — the concept has been reconciled to the shipped credential-store architecture.</p>
+<h3 id="sync-resolved">Resolved</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Date</th><th>Artifact claim</th><th>Code reality</th><th>Resolution</th></tr></thead>
+<tbody>
+<tr><td>2026-07-24</td><td>Passphrase stored as plaintext <code>keyPassphrase</code> field in <code>connections.json</code>, gated by a <code>saveKeyPassphrase</code> toggle + plaintext warning</td><td>Secret routed to the credential store (<code>CredentialType::KeyPassphrase</code>), never written to <code>connections.json</code>; "Save password" checkbox only when a store is active</td><td>Design reality — a stronger architecture (OS keychain / master-password-encrypted store) made the plaintext design wrong. Concept updated; working code unchanged.</td></tr>
+<tr><td>2026-07-24</td><td>New <code>utils/passphrase_cache.rs</code> in-memory cache keyed by key-file path</td><td>Credential-store unlock lifetime + <code>auto_lock.rs</code> serve saved passphrases without re-prompt</td><td>Design reality. Concept updated to describe the store's unlock model.</td></tr>
+<tr><td>2026-07-24</td><td>Config migration moving <code>password</code> → <code>keyPassphrase</code></td><td>Not needed; secrets never live in the config file</td><td>Design reality — migration obviated. Concept updated.</td></tr>
+<tr><td>2026-07-24</td><td>New <code>PassphraseNeededEvent</code> / <code>submit_passphrase</code> / <code>PassphraseDialog.tsx</code></td><td>Shared global <code>PasswordPrompt</code> + <code>commands/credential.rs</code></td><td>Design reality — unified prompt covers password + passphrase. Concept updated.</td></tr>
+<tr><td>2026-07-24</td><td>Encryption detection + connect-time prompting + password/passphrase separation not yet implemented (status: partial)</td><td>Shipped: <code>is_ssh_key_encrypted</code> (#885), <code>PasswordPrompt</code>, <code>CredentialType</code></td><td>Implemented. Status moved partial → implemented.</td></tr>
+</tbody>
+</table>
+</div>
     </div>
 
     <script src="../_assets/mermaid.min.js"></script>

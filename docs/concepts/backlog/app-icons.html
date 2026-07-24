@@ -25,6 +25,7 @@
           <li><a href="#general-handling">General Handling</a></li>
           <li><a href="#states-sequences">States &amp; Sequences</a></li>
           <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
         </ol>
       </nav>
 
@@ -494,7 +495,8 @@ sequenceDiagram
 <hr>
 <h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
 <h3 id="current-state">Current State</h3>
-<p>The <code>src-tauri/icons/</code> directory contains the Tauri default placeholder icon in the following files, referenced by <code>tauri.conf.json</code> under <code>bundle.icon</code>:</p>
+<p><strong>Updated 2026-07-24:</strong> the repo <em>no longer</em> ships the Tauri default placeholder. A custom termiHub app icon is already in <code>src-tauri/icons/</code> — a friendly face (two caret "eyebrow" eyes over a smile) on a dark navy rounded square with a green→blue gradient frame. It is a deliberate, polished asset, but it does <strong>not</strong> match this concept's proposed design (a terminal prompt cursor <code>&gt; ▋</code> inside a hub node, deep-navy radial gradient, four connector lines). This is an <strong>unresolved design-direction divergence</strong> — see the Sync Ledger; recreating the concept's design would be real design work and was deliberately not attempted during reconciliation. The concept remains in <code>backlog/</code> because the UI-icon family and style-system portions are still unbuilt regardless of which app-icon direction wins.</p>
+<p>The <code>src-tauri/icons/</code> directory contains the following files, referenced by <code>tauri.conf.json</code> under <code>bundle.icon</code>:</p>
 <pre><code>icons/
   32x32.png           ← referenced in bundle config
   128x128.png         ← referenced in bundle config
@@ -571,6 +573,30 @@ Style: Lucide icons family. Output as clean SVG paths.
 <li><strong>App icon replacement</strong> — deliver the new <code>icon.png</code>, <code>icon.icns</code>, <code>icon.ico</code>, and sized PNGs.</li>
 <li><strong>UI icon system</strong> — audit all current Lucide usages, define the connection-type icon set as custom SVGs where Lucide has no suitable match, and document the icon style guide in <code>docs/contributing.md</code>.</li>
 </ol>
+<hr>
+<h2 id="sync">Sync Ledger</h2>
+<blockquote>
+<p>Maintained by <code>/sync-concept app-icons</code>. The concept is the source of truth; a divergence that needs a human product/design call is flagged here rather than silently resolved either way.</p>
+</blockquote>
+<p><strong>Last synced:</strong> 2026-07-24 at commit <code>6e40e8dc</code> · <strong>Status:</strong> diverged (one open item needing a maintainer design decision). Stays in <code>backlog/</code>: the UI-icon family and style system are unbuilt, and the app-icon direction is undecided.</p>
+<h3 id="sync-open">Open divergences</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Recommendation</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>App icon design: terminal prompt cursor <code>&gt; ▋</code> inside a hub node, deep-navy radial gradient, four connector lines to the corners</td><td>A different custom icon ships: a friendly face (caret eyes + smile) on a dark navy rounded square with a green→blue gradient frame — deliberate and polished, not a placeholder</td><td>Design reality (needs a human call)</td><td><strong>Maintainer decision required.</strong> Either (a) the shipped face icon is the intended brand asset → rewrite this concept's "App Icon Visual Design" to describe it and mark the app-icon portion implemented, or (b) the concept's prompt-in-hub design is still wanted → keep it and treat the shipped icon as interim. Reconciliation did not guess or perform icon design work; the shipped custom icon was left untouched.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="sync-resolved">Resolved</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>Date</th><th>Artifact claim</th><th>Resolution</th></tr></thead>
+<tbody>
+<tr><td>2026-07-24</td><td>"Current State" said the repo ships the Tauri default placeholder icon</td><td>Corrected — a custom termiHub icon already ships. "Current State" now describes the shipped icon and points to the open design-direction divergence above.</td></tr>
+</tbody>
+</table>
+</div>
     </div>
 
     <script src="../_assets/mermaid.min.js"></script>
