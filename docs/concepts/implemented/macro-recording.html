@@ -381,11 +381,15 @@
       <header class="concept-header">
         <h1>Macro Recording and Playback</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/517">#517</a></span
           >
-          <span><code>docs/concepts/backlog/macro-recording.html</code></span>
+          <span
+            >Delivered by epic
+            <a href="https://github.com/armaxri/termiHub/issues/1670">#1670</a> (#1673–#1677)</span
+          >
+          <span><code>docs/concepts/implemented/macro-recording.html</code></span>
         </div>
       </header>
 
@@ -2124,9 +2128,14 @@ pub struct MacroSettings {
 
         <h3>Implementation Status</h3>
         <p>
-          Not started — this is a <code>backlog/</code> concept. Once implementation begins, run
-          <code>/sync-concept macro-recording</code> after each change to keep the Sync Ledger
-          current.
+          Implemented via epic <a href="https://github.com/armaxri/termiHub/issues/1670">#1670</a>
+          (#1673–#1677): storage model + backend (<code>src-tauri/src/macros/</code>), frontend api/state
+          (<code>src/services/macro*.ts</code>, <code>src/store/appStore.macro*.ts</code>), recording +
+          save (<code>src/components/Terminal/MacroRecordSaveDialog.tsx</code>), playback with timing
+          modes + triggers (<code>src/services/macroPlayback.ts</code>,
+          <code>MacroPlaybackDialog.tsx</code>), the macro manager panel
+          (<code>src/components/MacroSidebar/</code>), and file import/export
+          (<code>src/services/macroIo.ts</code>).
         </p>
       </section>
 
@@ -2141,8 +2150,8 @@ pub struct MacroSettings {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (concept not yet implemented) ·
-          <strong>Status:</strong> diverged (entirely missing — backlog feature)
+          <strong>Last synced:</strong> epic #1670 (#1673–#1677) · <strong>Status:</strong> in sync
+          (implemented)
         </p>
 
         <h3>Open divergences</h3>
@@ -2159,11 +2168,8 @@ pub struct MacroSettings {
             </thead>
             <tbody>
               <tr>
-                <td>1</td>
-                <td>Entire feature (per concept)</td>
-                <td>Not implemented — backlog</td>
-                <td>Missing</td>
-                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+                <td>—</td>
+                <td colspan="4">None open — feature shipped via epic #1670 (#1673–#1677).</td>
               </tr>
             </tbody>
           </table>

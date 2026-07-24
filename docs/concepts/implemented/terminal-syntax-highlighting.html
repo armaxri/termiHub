@@ -12,9 +12,13 @@
       <header class="concept-header">
         <h1>Terminal Output Syntax Highlighting</h1>
         <div class="concept-meta">
-          <span class="concept-status">Partial</span>
+          <span class="concept-status">Implemented</span>
           <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/522">#522</a></span>
-          <span><code>docs/concepts/partial/terminal-syntax-highlighting.html</code></span>
+          <span
+            >Delivered by epic
+            <a href="https://github.com/armaxri/termiHub/issues/1696">#1696</a> (#1700, #1704)</span
+          >
+          <span><code>docs/concepts/implemented/terminal-syntax-highlighting.html</code></span>
         </div>
       </header>
       <nav class="concept-toc">
@@ -844,22 +848,24 @@ flowchart LR
 </ul>
 <hr>
 <h2 id="implementation-status">Implementation Status</h2>
-<p><strong>Status: Not implemented</strong> (xterm.js terminal output highlighting). The concept issue is closed.</p>
-<h3 id="what-exists-not-this-concept">What exists (not this concept)</h3>
+<p><strong>Status: Implemented</strong> — terminal output syntax highlighting shipped via epic
+<a href="https://github.com/armaxri/termiHub/issues/1696">#1696</a> (#1700, #1704).</p>
+<h3 id="what-exists">What exists</h3>
 <ul>
-<li><strong>Monaco file editor</strong> uses Shiki TextMate grammars for syntax highlighting of file content
-  opened in the file editor — this is unrelated to terminal output highlighting.</li>
-<li>Language pack settings (<code>src/components/Settings/LanguagePackagesSettings.tsx</code>) and custom
-  grammar settings (<code>src/components/Settings/CustomGrammarsSettings.tsx</code>) exist for the file
-  editor only.</li>
+<li>Highlighting engine + rules registry: <code>src/services/syntaxHighlighting.ts</code>,
+  <code>syntaxHighlightingRules.ts</code>, <code>syntaxHighlightingConfig.ts</code>, with types in
+  <code>src/types/syntaxHighlighting.ts</code>.</li>
+<li>Settings panel with a custom-rule editor:
+  <code>src/components/Settings/SyntaxHighlightingSettings.tsx</code>.</li>
+<li>Per-connection enable/disable override and a status-bar quick toggle (#1704).</li>
+<li>Wired into the terminal lifecycle in <code>Terminal.tsx</code> (#1700).</li>
 </ul>
-<h3 id="what-is-missing">What is missing</h3>
+<h3 id="related-file-editor-highlighting">Related (separate) — file-editor highlighting</h3>
 <ul>
-<li><code>SyntaxHighlightEngine</code> class (regex matching against xterm.js output) — does not exist.</li>
-<li>ANSI decoration injection into the xterm.js buffer — not implemented.</li>
-<li>Highlight rules registry (built-in patterns for errors, paths, IPs, URLs, etc.) — not present.</li>
-<li>Settings panel entry under Terminal → Syntax Highlighting — not present.</li>
-<li>Per-connection override for enable/disable — not present.</li>
+<li>The <strong>Monaco file editor</strong> uses Shiki TextMate grammars for file content; language
+  pack (<code>LanguagePackagesSettings.tsx</code>) and custom grammar
+  (<code>CustomGrammarsSettings.tsx</code>) settings serve the file editor and are distinct from the
+  terminal-output engine above.</li>
 </ul>
 <h3 id="to-consider-before-implementing">To consider before implementing</h3>
 <ul>

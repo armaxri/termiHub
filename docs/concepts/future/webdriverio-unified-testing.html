@@ -12,8 +12,8 @@
       <header class="concept-header">
         <h1>WebdriverIO Unified Testing — All Tests in One Infrastructure</h1>
         <div class="concept-meta">
-          <span class="concept-status">Partial</span>
-          <span><code>docs/concepts/partial/webdriverio-unified-testing.html</code></span>
+          <span class="concept-status">Future · superseded</span>
+          <span><code>docs/concepts/future/webdriverio-unified-testing.html</code></span>
         </div>
       </header>
       <nav class="concept-toc">
@@ -35,7 +35,7 @@
 <p>termiHub currently has (or is planned to have) two separate testing systems:</p>
 <ol>
 <li><strong>WebdriverIO E2E tests</strong> — 45 test files (~12,800 lines of JavaScript), running via tauri-driver. Covers 251 automated items.</li>
-<li><strong>Python/YAML guided test runner</strong> (from the <a href="guided-manual-testing.html">guided-manual-testing</a> concept) — 11 YAML files defining 176 manual test items, with a Python script for interactive guidance and automated verification.</li>
+<li><strong>Python/YAML guided test runner</strong> (from the <a href="../implemented/guided-manual-testing.html">guided-manual-testing</a> concept) — 11 YAML files defining 176 manual test items, with a Python script for interactive guidance and automated verification.</li>
 </ol>
 <p>The <a href="unified-test-system.html">unified-test-system</a> concept analyzed unifying these and recommended a <strong>hybrid approach</strong> (YAML as registry, dual execution backends). This concept explores the alternative: <strong>collapsing everything into WebdriverIO</strong>.</p>
 <h3 id="core-idea">Core Idea</h3>
@@ -1761,13 +1761,18 @@ fi
 </ul>
 <hr>
 <h2 id="implementation-status">Implementation Status</h2>
-<p><strong>Status: Not implemented.</strong> No GitHub issue was assigned to this concept.</p>
+<p><strong>Status: Superseded — never implemented.</strong> No GitHub issue was assigned to this
+concept. Its entire premise is the WebdriverIO + <code>tauri-driver</code> E2E stack, which was
+<strong>retired in <a href="https://github.com/armaxri/termiHub/issues/1027">#1027</a></strong> in
+favor of the Python bridge system-test harness (<code>tests/system/</code>). The tagging/guided-mode
+layer it proposes on top of that retired stack will not be built. Filed under <code>future/</code>
+rather than deleted for history.</p>
 <h3 id="what-exists">What exists</h3>
 <ul>
 <li>WebdriverIO E2E tests in <code>tests/e2e/</code> continue to run as fully automated tests via
   <code>tauri-driver</code> on Linux/Windows inside Docker.</li>
 <li>The separate YAML-based guided test runner (<code>scripts/test-manual.py</code> +
-  <code>tests/manual/*.yaml</code>) was built per the <a href="guided-manual-testing.html">guided-manual-testing</a>
+  <code>tests/manual/*.yaml</code>) was built per the <a href="../implemented/guided-manual-testing.html">guided-manual-testing</a>
   concept — this is the alternative path, not the WebdriverIO-unified path.</li>
 </ul>
 <h3 id="what-is-missing">What is missing</h3>

@@ -5,12 +5,10 @@
   client-side), the mockups (inline, real mockup.css classes + lucide icons),
   and the sync ledger. See docs/concepts/implemented/ai-driven-concept-workflow.html.
 
-  This concept SUPERSEDES the two independently-written concepts:
-    docs/concepts/future/vnc-sessions.html (#514)
-    docs/concepts/future/rdp-sessions.html (#513)
-  Both are kept for #513/#514 history and now carry a banner pointing here.
+  This concept SUPERSEDES and consolidates the two independently-written concepts,
+  now removed (epic #1678): the standalone VNC (#514) and RDP (#513) session concepts.
 
-  Screenshot-verify: scripts/internal/screenshot-mockup.sh docs/concepts/backlog/remote-desktop-sessions.html
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh docs/concepts/implemented/remote-desktop-sessions.html
 -->
 <html lang="en">
   <head>
@@ -352,13 +350,16 @@
       <header class="concept-header">
         <h1>Unified Graphical Remote-Desktop Sessions (VNC + RDP)</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span>Epic: <a href="https://github.com/armaxri/termiHub/issues/1678">#1678</a></span>
           <span
             >Concept issue:
             <a href="https://github.com/armaxri/termiHub/issues/1679">#1679</a></span
           >
-          <span><code>docs/concepts/backlog/remote-desktop-sessions.html</code></span>
+          <span
+            >Supersedes standalone RDP (#513) and VNC (#514) concepts</span
+          >
+          <span><code>docs/concepts/implemented/remote-desktop-sessions.html</code></span>
         </div>
       </header>
 
@@ -379,7 +380,8 @@
           <code>vnc-sessions.html</code> and
           <a href="https://github.com/armaxri/termiHub/issues/513">#513</a>
           <code>rdp-sessions.html</code>, which each chose a <em>different</em> rendering transport
-          and therefore a different frontend. Those files remain for history and now point here.
+          and therefore a different frontend. Those standalone concepts have been removed; this
+          unified concept supersedes them.
           XDMCP (<a href="https://github.com/armaxri/termiHub/issues/515">#515</a>) stays parked in
           <code>future/</code>; the abstraction below is designed so it (or any later graphical
           protocol) can plug in without reworking the UI.
@@ -1547,8 +1549,8 @@ classDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
-          (design only)
+          <strong>Last synced:</strong> epic #1678 (#1680–#1682) · <strong>Status:</strong> in sync
+          (implemented)
         </p>
         <div class="table-wrap">
           <table>
@@ -1566,25 +1568,32 @@ classDiagram
                 <td>1</td>
                 <td>
                   Shared graphical-session layer (canvas tab, toolbar, session manager, generic
-                  commands/events, <code>GraphicalBackend</code> trait, mock backend)
+                  commands/events, mock backend)
                 </td>
-                <td>Not implemented</td>
-                <td>Missing</td>
-                <td>Implement #1680, then re-sync</td>
+                <td>
+                  Implemented — <code>src/components/RemoteDesktop/</code>,
+                  <code>src-tauri/src/commands/remote_desktop.rs</code>,
+                  <code>core/src/backends/mock_remote_desktop.rs</code>
+                </td>
+                <td>None</td>
+                <td>In sync — #1680</td>
               </tr>
               <tr>
                 <td>2</td>
                 <td>VNC (RFB) backend adapter, decode in Rust</td>
-                <td>Not implemented</td>
-                <td>Missing</td>
-                <td>Implement #1681 after #1680</td>
+                <td>Implemented — <code>core/src/backends/vnc/</code></td>
+                <td>None</td>
+                <td>In sync — #1681</td>
               </tr>
               <tr>
                 <td>3</td>
                 <td>RDP (IronRDP) backend adapter, decode in Rust</td>
-                <td>Not implemented</td>
-                <td>Missing</td>
-                <td>Implement #1682 after #1680</td>
+                <td>
+                  Implemented — <code>core/src/backends/rdp_sidecar/</code>,
+                  <code>src-tauri/src/session/rdp_trust_store.rs</code>
+                </td>
+                <td>None</td>
+                <td>In sync — #1682</td>
               </tr>
             </tbody>
           </table>
