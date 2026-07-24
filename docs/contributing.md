@@ -789,6 +789,15 @@ Use [Keep a Changelog](https://keepachangelog.com/) categories (`Added`, `Change
 **Good**: "Added support for Git Bash on Windows"
 **Bad**: "Implemented GitBashDetector class in shell_detect.rs"
 
+> **Security releases**: put security-relevant notes under a `### Security` category. At
+> release time the release workflow detects that section and injects the `<!-- security -->`
+> marker into the GitHub release body, which is what makes the desktop app's self-update
+> flag the release as a security update (a non-suppressible, red-dot notification — see
+> [`src-tauri/src/commands/update.rs`](../src-tauri/src/commands/update.rs)). A maintainer
+> can also force the marker on a release by setting the `TERMIHUB_SECURITY_RELEASE`
+> repository variable. The marker is emitted by
+> [`scripts/internal/emit-release-notes.mjs`](../scripts/internal/emit-release-notes.mjs).
+
 Skip the fragment for changes that are not user-facing (refactors, CI, internal docs,
 test-only work). See [`docs/changes/README.md`](changes/README.md) for the full mechanism,
 template, and rationale (including why intermediate `develop` fixes are curated out of the

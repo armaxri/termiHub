@@ -76,3 +76,8 @@ Guidelines:
   - **Bad**: "Implemented `GitBashDetector` in `shell_detect.rs`"
 - Reference the issue/PR number(s).
 - No top-level `#` heading is needed — start at `###` category headings.
+- **Security fixes go under a `### Security` category.** At release time the release
+  workflow detects that section and injects a `<!-- security -->` marker into the GitHub
+  release body; the desktop app's self-update check keys on that marker to flag the release
+  as a non-suppressible security update. See
+  [`scripts/internal/emit-release-notes.mjs`](../../scripts/internal/emit-release-notes.mjs).
