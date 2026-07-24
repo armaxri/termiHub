@@ -91,6 +91,30 @@
   padding-left: 26px;
 }
 
+/* ── Local-process discrete argument list (#1857) ───────────────────── */
+.workflow-step__args {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.workflow-step__arg-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+
+.workflow-step__arg-row > :first-child {
+  flex: 1;
+}
+
+.workflow-step__args-empty {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
 /* ── Triggers ───────────────────────────────────────────────────────── */
 .workflow-triggers {
   display: flex;

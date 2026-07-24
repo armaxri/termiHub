@@ -245,6 +245,23 @@ pub struct AppSettings {
     /// resolves the built-in defaults.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub syntax_highlighting: Option<serde_json::Value>,
+    /// Master opt-in for the guarded `run-local-process` workflow step (#1857).
+    ///
+    /// Defaults to `false`: a workflow can spawn a local program on the user's
+    /// machine only after the user explicitly enables this. Owned by the
+    /// frontend `AppSettings.workflowLocalProcessEnabled`; the backend both
+    /// persists it and **re-checks it in the spawn command** (defence-in-depth)
+    /// so a step can never run without opt-in. `#[serde(default)]` keeps older
+    /// settings files forward-compatible (missing → `false`).
+    #[serde(default)]
+    pub workflow_local_process_enabled: bool,
+    /// Programs the user has chosen to always allow a `run-local-process` step
+    /// to spawn without re-confirming (#1857). Owned by the frontend
+    /// `AppSettings.workflowLocalProcessAllowlist`; persisted here so the
+    /// authorization survives a restart. Independent of workflow data, so an
+    /// imported workflow can never add an entry.
+    #[serde(default)]
+    pub workflow_local_process_allowlist: Vec<String>,
 }
 
 impl Default for AppSettings {
@@ -289,6 +306,8 @@ impl Default for AppSettings {
             serial_port_scan_prefixes: None,
             shell_integration: ShellIntegrationSettings::default(),
             syntax_highlighting: None,
+            workflow_local_process_enabled: false,
+            workflow_local_process_allowlist: Vec::new(),
         }
     }
 }
@@ -859,6 +878,38 @@ mod tests {
         assert!(!json.contains("fileLanguageMappings"));
         assert!(!json.contains("installedLanguagePackages"));
         assert!(!json.contains("customLanguageGrammars"));
+    }
+
+    #[test]
+    fn workflow_local_process_settings_default_off_and_round_trip() {
+        // Default: opt-in OFF, empty allowlist (#1857).
+        let defaults = AppSettings::default();
+        assert!(!defaults.workflow_local_process_enabled);
+        assert!(defaults.workflow_local_process_allowlist.is_empty());
+
+        let settings = AppSettings {
+            workflow_local_process_enabled: true,
+            workflow_local_process_allowlist: vec!["/usr/bin/notify-send".to_string()],
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("workflowLocalProcessEnabled"));
+        assert!(json.contains("workflowLocalProcessAllowlist"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.workflow_local_process_enabled);
+        assert_eq!(
+            deserialized.workflow_local_process_allowlist,
+            vec!["/usr/bin/notify-send".to_string()]
+        );
+    }
+
+    #[test]
+    fn workflow_local_process_missing_fields_default_to_disabled() {
+        // An older settings file without the fields must load as disabled/empty.
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let deserialized: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(!deserialized.workflow_local_process_enabled);
+        assert!(deserialized.workflow_local_process_allowlist.is_empty());
     }
 
     #[test]

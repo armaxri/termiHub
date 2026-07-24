@@ -7,9 +7,10 @@
  * per-line delays) route through the timer seam clamped to `MAX_STEP_DELAY_MS`,
  * progress is reported per step, cancellation stops the run between steps and
  * aborts an in-flight `run-script`'s remaining line injections, a failing seam
- * fails the run at the offending step, and the still-unimplemented
- * `run-local-process` kind fails loudly. All seams are mocked so no terminal or
- * session is required.
+ * fails the run at the offending step, and the guarded `run-local-process` kind
+ * (#1857) is fail-closed: it never spawns without explicit authorization, passes
+ * args as a discrete array (no shell split), and surfaces exit/timeout/cancel.
+ * All seams are mocked so no terminal or session is required.
  */
 import { describe, it, expect, vi } from "vitest";
 import {
@@ -20,6 +21,7 @@ import {
   type WorkflowRunMacroSeam,
   type WorkflowWaitSeam,
   type WorkflowReadFileSeam,
+  type WorkflowRunLocalProcessSeam,
 } from "./workflowRunner";
 import { MAX_STEP_DELAY_MS } from "./macroPlayback";
 import type { WorkflowStep } from "@/types/workflow";
@@ -178,14 +180,127 @@ describe("executeStep", () => {
     });
   });
 
-  it("fails loudly for the still-unimplemented run-local-process step", async () => {
-    const outcome = await executeStep(
-      { kind: "run-local-process", program: "echo", args: [] },
-      deps()
-    );
+  describe("run-local-process (guarded, #1857)", () => {
+    const step = (program: string, args: string[] = []): WorkflowStep => ({
+      kind: "run-local-process",
+      program,
+      args,
+    });
+    const okRun: WorkflowRunLocalProcessSeam = vi.fn(async () => ({
+      exitCode: 0,
+      timedOut: false,
+      cancelled: false,
+    }));
 
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.error).toContain("run-local-process");
+    it("fails without a run seam", async () => {
+      const outcome = await executeStep(step("echo"), deps());
+      expect(outcome.ok).toBe(false);
+    });
+
+    it("GUARDRAIL: never spawns when no authorize seam is wired", async () => {
+      const runLocalProcess = vi.fn(okRun);
+      const outcome = await executeStep(step("echo"), deps({ runLocalProcess }));
+
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) expect(outcome.error).toContain("not authorized");
+      // The security invariant: the process seam is NEVER reached unauthorized.
+      expect(runLocalProcess).not.toHaveBeenCalled();
+    });
+
+    it("GUARDRAIL: never spawns when authorization is refused", async () => {
+      const authorizeLocalProcess = vi.fn(async () => false);
+      const runLocalProcess = vi.fn(okRun);
+      const outcome = await executeStep(
+        step("rm", ["-rf", "/"]),
+        deps({ authorizeLocalProcess, runLocalProcess })
+      );
+
+      expect(outcome.ok).toBe(false);
+      expect(authorizeLocalProcess).toHaveBeenCalledWith("rm", ["-rf", "/"]);
+      expect(runLocalProcess).not.toHaveBeenCalled();
+    });
+
+    it("GUARDRAIL: passes args as a discrete array, unmodified (no shell split)", async () => {
+      const authorizeLocalProcess = vi.fn(async () => true);
+      const runLocalProcess = vi.fn(okRun);
+      // A single argument containing spaces/metacharacters must stay ONE element.
+      const args = ["--message", "hello world; rm -rf /"];
+      await executeStep(
+        step("notify-send", args),
+        deps({ authorizeLocalProcess, runLocalProcess })
+      );
+
+      expect(runLocalProcess).toHaveBeenCalledTimes(1);
+      const [program, passedArgs] = runLocalProcess.mock.calls[0];
+      expect(program).toBe("notify-send");
+      expect(passedArgs).toEqual(["--message", "hello world; rm -rf /"]);
+      // Same reference-equal contents: the runner does not re-split or reshape.
+      expect(passedArgs).toHaveLength(2);
+    });
+
+    it("succeeds when an authorized process exits 0", async () => {
+      const outcome = await executeStep(
+        step("echo", ["hi"]),
+        deps({ authorizeLocalProcess: async () => true, runLocalProcess: vi.fn(okRun) })
+      );
+      expect(outcome).toEqual({ ok: true });
+    });
+
+    it("fails and surfaces the exit code on a non-zero exit", async () => {
+      const runLocalProcess: WorkflowRunLocalProcessSeam = async () => ({
+        exitCode: 3,
+        timedOut: false,
+        cancelled: false,
+      });
+      const outcome = await executeStep(
+        step("false"),
+        deps({ authorizeLocalProcess: async () => true, runLocalProcess })
+      );
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) expect(outcome.error).toContain("code 3");
+    });
+
+    it("fails with a timeout message when the process times out", async () => {
+      const runLocalProcess: WorkflowRunLocalProcessSeam = async () => ({
+        exitCode: null,
+        timedOut: true,
+        cancelled: false,
+      });
+      const outcome = await executeStep(
+        step("sleep", ["99"]),
+        deps({ authorizeLocalProcess: async () => true, runLocalProcess })
+      );
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) expect(outcome.error).toContain("timed out");
+    });
+
+    it("ends the run as cancelled when the process was cancelled", async () => {
+      const runLocalProcess: WorkflowRunLocalProcessSeam = async () => ({
+        exitCode: null,
+        timedOut: false,
+        cancelled: true,
+      });
+      const outcome = await executeStep(
+        step("sleep", ["99"]),
+        deps({ authorizeLocalProcess: async () => true, runLocalProcess })
+      );
+      expect(outcome).toEqual({ ok: true, cancelled: true });
+    });
+
+    it("GUARDRAIL: does not spawn when cancelled before the process starts", async () => {
+      const runLocalProcess: WorkflowRunLocalProcessSeam = vi.fn(async () => ({
+        exitCode: 0,
+        timedOut: false,
+        cancelled: false,
+      }));
+      const outcome = await executeStep(
+        step("echo"),
+        deps({ authorizeLocalProcess: async () => true, runLocalProcess }),
+        { isCancelled: () => true }
+      );
+      expect(outcome).toEqual({ ok: true, cancelled: true });
+      expect(runLocalProcess).not.toHaveBeenCalled();
+    });
   });
 });
 

@@ -161,6 +161,49 @@ describe("WorkflowEditorDialog", () => {
     expect(result.steps[0]).toEqual({ kind: "send-command", command: "whoami" });
   });
 
+  it("edits run-local-process args as a discrete list (a space-containing arg stays one arg)", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const lpWorkflow: Workflow = {
+      ...workflow,
+      steps: [{ kind: "run-local-process", program: "notify-send", args: ["--urgency"] }],
+    };
+    render({ onSave, workflow: lpWorkflow });
+
+    // Add a second argument row, then type a value that contains a space.
+    act(() => (query("workflow-editor-step-arg-add-0") as HTMLButtonElement).click());
+    await flush();
+    setInput("workflow-editor-step-arg-0-1", "hello world");
+
+    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
+    await flush();
+
+    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
+    // The space-containing value is a SINGLE discrete argument — never split.
+    expect(result.steps[0]).toEqual({
+      kind: "run-local-process",
+      program: "notify-send",
+      args: ["--urgency", "hello world"],
+    });
+  });
+
+  it("removes a run-local-process argument row", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    const lpWorkflow: Workflow = {
+      ...workflow,
+      steps: [{ kind: "run-local-process", program: "echo", args: ["a", "b"] }],
+    };
+    render({ onSave, workflow: lpWorkflow });
+
+    act(() => (query("workflow-editor-step-arg-remove-0-0") as HTMLButtonElement).click());
+    await flush();
+
+    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
+    await flush();
+
+    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
+    expect(result.steps[0]).toEqual({ kind: "run-local-process", program: "echo", args: ["b"] });
+  });
+
   it("adds a typed step from the Add step menu", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render({ onSave });

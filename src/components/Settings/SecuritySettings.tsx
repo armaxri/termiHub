@@ -1,10 +1,10 @@
-import { useState, useCallback } from "react";
-import { Shield } from "lucide-react";
+import { useState, useCallback, useMemo } from "react";
+import { Shield, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { CredentialStorageMode } from "@/types/credential";
 import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Button, Select, toast } from "@/components/ui";
+import { Button, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 
 interface SecuritySettingsProps {
@@ -246,6 +246,33 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     [settings, updateSettings]
   );
 
+  const localProcessEnabled = settings.workflowLocalProcessEnabled ?? false;
+  const localProcessAllowlist = useMemo(
+    () => settings.workflowLocalProcessAllowlist ?? [],
+    [settings.workflowLocalProcessAllowlist]
+  );
+
+  const handleToggleLocalProcess = useCallback(
+    (enabled: boolean) => {
+      void updateSettings({ ...settings, workflowLocalProcessEnabled: enabled });
+      toast.success(
+        enabled
+          ? "Workflow local process execution enabled"
+          : "Workflow local process execution disabled"
+      );
+    },
+    [settings, updateSettings]
+  );
+
+  const handleRemoveAllowedProgram = useCallback(
+    (program: string) => {
+      const next = localProcessAllowlist.filter((p) => p !== program);
+      void updateSettings({ ...settings, workflowLocalProcessAllowlist: next });
+      toast.success(`Removed ${program} from the allowlist`);
+    },
+    [settings, updateSettings, localProcessAllowlist]
+  );
+
   return (
     <div className="settings-panel__category">
       {show("credentialStorageMode") && (
@@ -457,6 +484,59 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
             </div>
           )}
         </>
+      )}
+
+      {show("workflowLocalProcess") && (
+        <div className="settings-panel__section">
+          <h3 className="settings-panel__section-title">Workflow Local Process Execution</h3>
+          <p className="settings-panel__description">
+            The guarded <code>run-local-process</code> workflow step runs a program on this
+            computer. This is off by default. When enabled, each not-yet-trusted program still
+            requires a one-time confirmation before it can run; imported workflows are never
+            pre-authorized.
+          </p>
+
+          <SettingsField
+            label="Allow workflows to run local programs"
+            hint="Master switch. While off, any run-local-process step is refused."
+          >
+            <Toggle
+              checked={localProcessEnabled}
+              onCheckedChange={handleToggleLocalProcess}
+              aria-label="Allow workflows to run local programs"
+              data-testid="workflow-local-process-toggle"
+            />
+          </SettingsField>
+
+          {localProcessEnabled && (
+            <div className="settings-panel__field">
+              <span className="settings-panel__field-label">Allowed programs</span>
+              {localProcessAllowlist.length === 0 ? (
+                <p className="settings-panel__description" data-testid="workflow-allowlist-empty">
+                  No programs are remembered yet. Choosing &ldquo;Always allow&rdquo; when a
+                  workflow runs one adds it here.
+                </p>
+              ) : (
+                <ul className="settings-panel__list" data-testid="workflow-allowlist">
+                  {localProcessAllowlist.map((program) => (
+                    <li key={program} className="settings-panel__list-item">
+                      <code>{program}</code>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        icon={<Trash2 size={14} />}
+                        aria-label={`Remove ${program} from the allowlist`}
+                        onClick={() => handleRemoveAllowedProgram(program)}
+                        data-testid={`workflow-allowlist-remove-${program}`}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

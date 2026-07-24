@@ -186,8 +186,15 @@ import {
   type WorkflowSendSeam,
   type WorkflowRunMacroSeam,
   type WorkflowRunHandle,
+  type WorkflowAuthorizeLocalProcessSeam,
+  type WorkflowRunLocalProcessSeam,
 } from "@/services/workflowRunner";
 import { dispatchOnConnectTriggers } from "@/services/workflowTriggers";
+import {
+  invokeRunLocalProcess,
+  cancelLocalProcess,
+  subscribeLocalProcessOutput,
+} from "@/services/localProcessApi";
 import {
   saveLastSession as apiSaveLastSession,
   loadLastSession as apiLoadLastSession,
@@ -1289,6 +1296,14 @@ interface AppState {
   runWorkflow: (workflowId: string, opts?: RunWorkflowOptions) => Promise<void>;
   /** Cancel the in-flight workflow run, if any. Idempotent. */
   cancelWorkflowRun: () => void;
+  /**
+   * Pending authorization prompt for a guarded `run-local-process` step (#1857),
+   * or `null` when none is open. Set when a workflow reaches such a step whose
+   * program is not yet on the allowlist; resolved by the user via the dialog.
+   */
+  localProcessPrompt: LocalProcessPromptState | null;
+  /** Resolve the open local-process authorization prompt with the user's choice. */
+  resolveLocalProcessPrompt: (decision: LocalProcessAuthDecision) => void;
 
   // Workspaces
   workspaces: WorkspaceSummary[];
@@ -1430,6 +1445,34 @@ export interface RunWorkflowOptions {
   /** Tab to run against; defaults to the active terminal tab. */
   targetTabId?: string;
 }
+
+/**
+ * The user's choice at a local-process authorization prompt (#1857):
+ * `"once"` allows this single run, `"always"` allows it and adds the program to
+ * the persisted allowlist, `"cancel"` refuses (the step does not run).
+ */
+export type LocalProcessAuthDecision = "once" | "always" | "cancel";
+
+/** State backing the open local-process authorization dialog (#1857). */
+export interface LocalProcessPromptState {
+  /** The program the step wants to spawn. */
+  program: string;
+  /** The discrete arguments it would be spawned with. */
+  args: string[];
+  /** The name of the workflow requesting it, for the prompt copy. */
+  workflowName: string;
+  /** Resolver wired to the pending authorization promise. */
+  resolve: (decision: LocalProcessAuthDecision) => void;
+}
+
+/**
+ * Default timeout (ms) applied to a `run-local-process` step from the frontend.
+ * The backend clamps to its own hard cap regardless.
+ */
+const LOCAL_PROCESS_TIMEOUT_MS = 60_000;
+
+/** How often (ms) a running local process polls the workflow cancel signal. */
+const LOCAL_PROCESS_CANCEL_POLL_MS = 200;
 
 /**
  * Handle for the currently-running workflow, held at module scope so
@@ -6071,6 +6114,89 @@ export const useAppStore = create<AppState>((set, get) => {
         return macroResult.status === "completed";
       };
 
+      // The authorization gate for a `run-local-process` step (#1857). Fails
+      // closed: unless the user has opted in AND authorized this specific
+      // program (allowlist hit or an interactive confirmation), it returns
+      // false and the step never spawns. An imported workflow's step is never
+      // pre-authorized — the program is not on the allowlist and the master
+      // opt-in defaults off, so it lands here and is gated exactly like any
+      // other untrusted program.
+      const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = async (program, args) => {
+        const settings = get().settings;
+        if (!settings.workflowLocalProcessEnabled) {
+          toast.error("Local process execution is disabled", {
+            description:
+              "Enable it in Settings → Security before this workflow can run a local program.",
+          });
+          return false;
+        }
+        const allowlist = settings.workflowLocalProcessAllowlist ?? [];
+        if (allowlist.includes(program)) return true;
+
+        // Not yet trusted — ask the user, once, via the confirmation dialog.
+        const decision = await new Promise<LocalProcessAuthDecision>((resolve) => {
+          set({
+            localProcessPrompt: { program, args, workflowName: workflow.name, resolve },
+          });
+        });
+        set({ localProcessPrompt: null });
+
+        if (decision === "cancel") return false;
+        if (decision === "always") {
+          const current = get().settings;
+          const nextAllowlist = [...(current.workflowLocalProcessAllowlist ?? [])];
+          if (!nextAllowlist.includes(program)) nextAllowlist.push(program);
+          await get().updateSettings({
+            ...current,
+            workflowLocalProcessAllowlist: nextAllowlist,
+          });
+        }
+        return true;
+      };
+
+      // Spawn an authorized local process through the guarded backend command,
+      // streaming its output into the LogViewer (the app's observable surface)
+      // and forwarding a cancel from the run's signal to the backend.
+      const runLocalProcess: WorkflowRunLocalProcessSeam = async (program, args, options) => {
+        const runId = `wf-lp-${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        frontendLog("workflow", `local process starting: ${[program, ...args].join(" ")}`);
+
+        const unlisten = await subscribeLocalProcessOutput(runId, (chunk) => {
+          frontendLog("workflow", `[${chunk.stream}] ${chunk.line}`);
+        });
+        // Poll the run's cancel signal and forward it to the backend so a
+        // long-running process is killed when the run is cancelled.
+        const poll = window.setInterval(() => {
+          if (options.signal?.isCancelled()) {
+            void cancelLocalProcess(runId);
+          }
+        }, LOCAL_PROCESS_CANCEL_POLL_MS);
+
+        try {
+          const outcome = await invokeRunLocalProcess({
+            runId,
+            program,
+            args,
+            timeoutMs: LOCAL_PROCESS_TIMEOUT_MS,
+          });
+          frontendLog(
+            "workflow",
+            `local process finished: exitCode=${outcome.exitCode ?? "null"} ` +
+              `timedOut=${outcome.timedOut} cancelled=${outcome.cancelled}`
+          );
+          return outcome;
+        } catch (err) {
+          // A backend rejection (e.g. opt-in disabled at the trust boundary)
+          // surfaces as a failed step rather than crashing the run.
+          const message = err instanceof Error ? err.message : String(err);
+          frontendLog("workflow", `local process error: ${message}`);
+          return { exitCode: 1, timedOut: false, cancelled: false };
+        } finally {
+          window.clearInterval(poll);
+          unlisten();
+        }
+      };
+
       const toastId = `workflow-run-${workflowId}-${targetTabId}`;
       const total = workflow.steps.length;
       toast.loading(`Running workflow "${workflow.name}"…`, {
@@ -6089,7 +6215,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
       const handle = runWorkflowSteps(
         workflow.steps,
-        { send, runMacro, readScriptFile: localReadFile },
+        { send, runMacro, readScriptFile: localReadFile, authorizeLocalProcess, runLocalProcess },
         {
           onProgress: (completed, stepTotal) => {
             set((s) =>
@@ -6137,6 +6263,15 @@ export const useAppStore = create<AppState>((set, get) => {
       if (activeWorkflowRun) {
         activeWorkflowRun.cancel();
       }
+    },
+
+    localProcessPrompt: null,
+    resolveLocalProcessPrompt: (decision) => {
+      const prompt = get().localProcessPrompt;
+      if (!prompt) return;
+      // Clear first so a second click cannot double-resolve the promise.
+      set({ localProcessPrompt: null });
+      prompt.resolve(decision);
     },
 
     // Workspaces

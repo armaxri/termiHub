@@ -239,6 +239,24 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "workflowLocalProcess",
+    label: "Workflow Local Process Execution",
+    description:
+      "Allow workflows to run local programs on this computer, and manage which programs are allowed",
+    category: "security",
+    keywords: [
+      "workflow",
+      "local process",
+      "run-local-process",
+      "execute",
+      "program",
+      "allowlist",
+      "authorize",
+      "security",
+      "spawn",
+    ],
+  },
+  {
     id: "fileLanguageMappings",
     label: "File Type Mappings",
     description: "Map filenames and extensions to syntax highlighting languages",

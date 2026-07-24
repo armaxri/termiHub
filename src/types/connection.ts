@@ -556,6 +556,25 @@ export interface AppSettings {
    * which keeps older settings files forward-compatible.
    */
   syntaxHighlighting?: SyntaxHighlightingConfig;
+  /**
+   * Master opt-in for the guarded `run-local-process` workflow step (#1857).
+   * Defaults to `false` (off): a workflow that contains a `run-local-process`
+   * step cannot spawn a local program on the user's machine until this is
+   * explicitly enabled. This is the primary security guardrail — imported
+   * workflows carry such steps but are **never** auto-authorized, so an
+   * imported step stays inert until the user turns this on **and** authorizes
+   * the specific program (see {@link workflowLocalProcessAllowlist}). Enforced
+   * again in the backend spawn command as defence-in-depth.
+   */
+  workflowLocalProcessEnabled?: boolean;
+  /**
+   * Programs the user has chosen to always allow a `run-local-process` step to
+   * spawn without re-confirming (#1857). A program not on this list triggers a
+   * per-run confirmation dialog; "Always allow" appends it here. Independent of
+   * workflow data, so importing a workflow can never add an entry — an imported
+   * step is unauthorized until the user confirms it interactively.
+   */
+  workflowLocalProcessAllowlist?: string[];
 }
 
 /**
