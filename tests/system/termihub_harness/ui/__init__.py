@@ -26,6 +26,7 @@ Mixin → concern:
 - :class:`ManualUi`          — operator prompts for guided-manual tests (#914)
 - :class:`NetworkToolsUi`    — the Network Tools sidebar + diagnostic panels
 - :class:`AgentUi`           — remote-agent create / connect / error dialog / setup
+- :class:`WorkflowUi`        — workflow-automation editor + sidebar (author / run)
 
 The plain name->element store lookups (``find_connection`` / ``find_folder`` /
 testid helpers) stay functions so they remain unit-testable without an app.
@@ -63,6 +64,7 @@ from .sidebar import SidebarUi
 from .ssh import SshUi
 from .tabs import TabsUi
 from .terminal import TerminalUi
+from .workflow import WorkflowUi
 
 __all__ = [
     "AgentUi",
@@ -84,6 +86,7 @@ __all__ = [
     "NetworkToolsUi",
     "EmbeddedServicesUi",
     "ShellFsUi",
+    "WorkflowUi",
     "connections",
     "find_connection",
     "folders",
