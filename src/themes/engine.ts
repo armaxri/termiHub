@@ -3,6 +3,7 @@ import { darkTheme } from "./dark";
 import { lightTheme } from "./light";
 import { solarizedDarkTheme } from "./solarized-dark";
 import { solarizedLightTheme } from "./solarized-light";
+import { customThemeId, findCustomTheme, isCustomThemeSetting, resolveCustomTheme } from "./customThemes";
 
 /**
  * Maps camelCase ThemeColors keys to their corresponding CSS custom
@@ -86,7 +87,10 @@ let mediaListener: EventListener | null = null;
 const changeCallbacks = new Set<ThemeChangeCallback>();
 
 /** Resolve the theme setting string to an actual ThemeDefinition. */
-function resolveTheme(setting: string | undefined): ThemeDefinition {
+function resolveTheme(
+  setting: string | undefined,
+  customThemes: ThemeDefinition[] = []
+): ThemeDefinition {
   if (setting === "light") return lightTheme;
   if (setting === "solarized-dark") return solarizedDarkTheme;
   if (setting === "solarized-light") return solarizedLightTheme;
@@ -94,6 +98,12 @@ function resolveTheme(setting: string | undefined): ThemeDefinition {
     const prefersDark =
       typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
     return prefersDark ? darkTheme : lightTheme;
+  }
+  if (isCustomThemeSetting(setting)) {
+    const id = customThemeId(setting);
+    const custom = id ? findCustomTheme(customThemes, id) : undefined;
+    // A deleted or missing custom theme falls back to dark (concept edge case).
+    return custom ? resolveCustomTheme(custom) : darkTheme;
   }
   return darkTheme;
 }
@@ -125,9 +135,12 @@ function removeMediaListener(): void {
  * registered that automatically re-applies the theme when the OS
  * preference changes.
  */
-export function applyTheme(setting: string | undefined): void {
+export function applyTheme(
+  setting: string | undefined,
+  customThemes: ThemeDefinition[] = []
+): void {
   removeMediaListener();
-  currentTheme = resolveTheme(setting);
+  currentTheme = resolveTheme(setting, customThemes);
   setCssVariables(currentTheme);
 
   if (setting === "system" && typeof window !== "undefined") {
@@ -139,6 +152,21 @@ export function applyTheme(setting: string | undefined): void {
     }) as EventListener;
     mediaQuery.addEventListener("change", mediaListener);
   }
+}
+
+/**
+ * Apply a full theme definition directly, bypassing the settings-string
+ * resolver. Used by the theme editor to render live, unsaved edits to the whole
+ * app (CSS variables + open terminals) without persisting anything. The passed
+ * theme is resolved through {@link resolveCustomTheme} so any missing color
+ * falls back to its base. Any `"system"` media listener is torn down first;
+ * restore the persisted theme afterwards with {@link applyTheme}.
+ */
+export function previewTheme(theme: ThemeDefinition): void {
+  removeMediaListener();
+  currentTheme = resolveCustomTheme(theme);
+  setCssVariables(currentTheme);
+  for (const cb of changeCallbacks) cb();
 }
 
 /**

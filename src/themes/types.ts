@@ -88,4 +88,11 @@ export interface ThemeDefinition {
   /** Controls the CSS `color-scheme` property so WebKit renders system UI (scrollbars, inputs) in the matching mode. */
   colorScheme: "dark" | "light";
   colors: ThemeColors;
+  /**
+   * For user-defined custom themes only: the id of the built-in theme this
+   * theme was derived from (e.g. `"dark"`). Used as the source for per-token
+   * "reset to base" in the editor and as a fallback for any missing color.
+   * Absent on the built-in themes.
+   */
+  baseTheme?: string;
 }

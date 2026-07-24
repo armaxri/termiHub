@@ -1,0 +1,7 @@
+.appearance-settings__theme-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+  margin-top: calc(-1 * var(--spacing-xs));
+  margin-bottom: var(--spacing-sm);
+}

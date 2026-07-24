@@ -126,6 +126,12 @@ pub struct AppSettings {
     pub default_shell: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
+    /// User-defined custom color themes (#1879). The full shape is owned by the
+    /// frontend (`src/themes/types.ts` / `ThemeDefinition[]`); the backend only
+    /// persists it verbatim, so it is stored as an opaque JSON value rather than
+    /// mirrored as a typed struct. Absent → no custom themes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_themes: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -273,6 +279,7 @@ impl Default for AppSettings {
             default_ssh_key_path: None,
             default_shell: None,
             theme: None,
+            custom_themes: None,
             font_family: None,
             font_size: None,
             line_height: None,
