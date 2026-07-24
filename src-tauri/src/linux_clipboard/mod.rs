@@ -180,7 +180,8 @@ impl FetchContext {
         let mut uris: Vec<String> = Vec::new();
         for &index in &self.indices {
             match tauri::async_runtime::block_on(
-                self.manager.fetch_remote_clipboard_file(&self.session_id, index),
+                self.manager
+                    .fetch_remote_clipboard_file(&self.session_id, index),
             ) {
                 Ok(path) => uris.push(path_to_file_uri(&path)),
                 Err(e) => {
@@ -217,7 +218,15 @@ fn x_server_available() -> bool {
 
 /// `true` when environment variable `name` is set to a non-empty value.
 fn env_is_set(name: &str) -> bool {
-    std::env::var_os(name).is_some_and(|v| !v.is_empty())
+    var_is_present(std::env::var_os(name).as_deref())
+}
+
+/// Whether an environment-variable lookup indicates a usable value: present and
+/// non-empty. Split out from [`env_is_set`] so the "set but empty" / "unset" /
+/// "set" decision is unit-testable without mutating the process environment (a
+/// data race against other threads' `getenv`).
+fn var_is_present(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| !v.is_empty())
 }
 
 /// Bind the remote-copied clipboard `files` onto the host clipboard with delayed
@@ -254,9 +263,9 @@ pub fn bind_remote_clipboard_files(
     if session_is_wayland() {
         match wayland::bind(ctx.clone()) {
             Ok(()) => wayland_bound = true,
-            Err(e) => tracing::warn!(
-                "native Wayland clipboard bind failed, relying on X11/XWayland: {e}"
-            ),
+            Err(e) => {
+                tracing::warn!("native Wayland clipboard bind failed, relying on X11/XWayland: {e}")
+            }
         }
     }
 
@@ -267,7 +276,9 @@ pub fn bind_remote_clipboard_files(
             Ok(()) => return Ok(()),
             Err(e) => {
                 if wayland_bound {
-                    tracing::warn!("X11 clipboard bind failed, native Wayland source is active: {e}");
+                    tracing::warn!(
+                        "X11 clipboard bind failed, native Wayland source is active: {e}"
+                    );
                 } else {
                     return Err(e);
                 }
@@ -394,14 +405,11 @@ mod tests {
     }
 
     #[test]
-    fn env_is_set_requires_a_non_empty_value() {
-        let key = "TERMIHUB_TEST_CLIPBOARD_ENV";
-        std::env::remove_var(key);
-        assert!(!env_is_set(key));
-        std::env::set_var(key, "");
-        assert!(!env_is_set(key));
-        std::env::set_var(key, "wayland-0");
-        assert!(env_is_set(key));
-        std::env::remove_var(key);
+    fn var_is_present_requires_a_non_empty_value() {
+        use std::ffi::OsStr;
+        assert!(!var_is_present(None));
+        assert!(!var_is_present(Some(OsStr::new(""))));
+        assert!(var_is_present(Some(OsStr::new("wayland-0"))));
+        assert!(var_is_present(Some(OsStr::new(":0"))));
     }
 }

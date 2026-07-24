@@ -7,8 +7,9 @@ mod embedded_servers;
 /// `TransferRegistry` directly — issue #1245).
 pub mod files;
 /// Native Linux X11 `CLIPBOARD`-selection binding for pasting remote-copied RDP
-/// clipboard files into local apps with delayed rendering (`text/uri-list`,
-/// #1815). Linux-only.
+/// clipboard files into local apps with delayed rendering (`text/uri-list`) —
+/// the X11 `CLIPBOARD` owner (#1815) plus the native-Wayland `wlr-data-control`
+/// data source (#1847). Linux-only.
 #[cfg(target_os = "linux")]
 mod linux_clipboard;
 /// Native macOS `NSPasteboard` binding for pasting remote-copied RDP clipboard
