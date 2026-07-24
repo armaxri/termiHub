@@ -1,7 +1,7 @@
 import type React from "react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, ArrowUp, ArrowDown, Trash2 } from "lucide-react";
+import { GripVertical, ArrowUp, ArrowDown, Trash2, Plus } from "lucide-react";
 import { Button, Input, Textarea, NumberInput, Select, Field } from "@/components/ui";
 import type { WorkflowStep } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
@@ -205,18 +205,75 @@ function StepDetailEditor({ index, step, macros, onChange }: StepDetailEditorPro
               data-testid={`workflow-editor-step-program-${index}`}
             />
           </Field>
-          <Field label="Arguments (space-separated)" htmlFor={`workflow-step-args-${index}`}>
-            <Input
-              id={`workflow-step-args-${index}`}
-              value={step.args.join(" ")}
-              placeholder="arg1 arg2"
-              onChange={(e) =>
-                onChange({ ...step, args: e.target.value.split(/\s+/).filter(Boolean) })
-              }
-              data-testid={`workflow-editor-step-args-${index}`}
-            />
-          </Field>
+          <LocalProcessArgsEditor
+            index={index}
+            args={step.args}
+            onChange={(args) => onChange({ ...step, args })}
+          />
         </>
       );
   }
+}
+
+interface LocalProcessArgsEditorProps {
+  index: number;
+  args: string[];
+  onChange: (args: string[]) => void;
+}
+
+/**
+ * A discrete, ordered list of program arguments — one {@link Input} per argument
+ * (#1857). This replaces the old whitespace-split single field so an argument
+ * that contains spaces (e.g. a message body or a path) stays a single, literal
+ * argument. Each argument is passed to the backend as its own argv entry with no
+ * shell involved, so nothing here is ever re-split or interpreted.
+ */
+function LocalProcessArgsEditor({ index, args, onChange }: LocalProcessArgsEditorProps) {
+  const setArg = (i: number, value: string) => {
+    const next = args.slice();
+    next[i] = value;
+    onChange(next);
+  };
+  const removeArg = (i: number) => onChange(args.filter((_, j) => j !== i));
+  const addArg = () => onChange([...args, ""]);
+
+  return (
+    <Field label="Arguments" htmlFor={`workflow-step-arg-${index}-0`}>
+      <div className="workflow-step__args" data-testid={`workflow-editor-step-args-${index}`}>
+        {args.length === 0 && (
+          <span className="workflow-step__args-empty">No arguments.</span>
+        )}
+        {args.map((arg, i) => (
+          <div className="workflow-step__arg-row" key={i}>
+            <Input
+              id={`workflow-step-arg-${index}-${i}`}
+              value={arg}
+              placeholder={`argument ${i + 1}`}
+              onChange={(e) => setArg(i, e.target.value)}
+              aria-label={`Argument ${i + 1} for step ${index + 1}`}
+              data-testid={`workflow-editor-step-arg-${index}-${i}`}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`Remove argument ${i + 1}`}
+              icon={<Trash2 size={12} />}
+              onClick={() => removeArg(i)}
+              data-testid={`workflow-editor-step-arg-remove-${index}-${i}`}
+            />
+          </div>
+        ))}
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Plus size={12} />}
+          onClick={addArg}
+          data-testid={`workflow-editor-step-arg-add-${index}`}
+        >
+          Add argument
+        </Button>
+      </div>
+    </Field>
+  );
 }

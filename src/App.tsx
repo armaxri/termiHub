@@ -7,6 +7,7 @@ import { TransferQueue } from "@/components/TransferQueue";
 import { ShellIntegrationBanner } from "@/components/ShellIntegrationBanner";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
+import { LocalProcessAuthDialog } from "@/components/WorkflowSidebar/LocalProcessAuthDialog";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
@@ -287,6 +288,7 @@ function App() {
           <TransferQueue />
           {layoutConfig.statusBarVisible && <StatusBar />}
           <PasswordPrompt />
+          <LocalProcessAuthDialog />
           <CustomizeLayoutDialog />
           <ExportDialog />
           <ImportDialog />
