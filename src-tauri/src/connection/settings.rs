@@ -630,7 +630,10 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         assert!(json.contains("restoreLastSessionMode"));
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
-        assert_eq!(deserialized.restore_last_session_mode.as_deref(), Some("ask"));
+        assert_eq!(
+            deserialized.restore_last_session_mode.as_deref(),
+            Some("ask")
+        );
 
         // A legacy file without the field deserializes to None.
         let legacy = r#"{"version":"1","externalConnectionFiles":[]}"#;
