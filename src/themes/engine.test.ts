@@ -1,7 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { applyTheme, getXtermTheme, getCurrentTheme, onThemeChange, dispose } from "./engine";
+import {
+  applyTheme,
+  previewTheme,
+  getXtermTheme,
+  getCurrentTheme,
+  onThemeChange,
+  dispose,
+} from "./engine";
 import { darkTheme } from "./dark";
 import { lightTheme } from "./light";
+import { createCustomTheme } from "./customThemes";
+import type { ThemeDefinition } from "./types";
 
 /** Stub matchMedia so we can control the `prefers-color-scheme` value. */
 function stubMatchMedia(prefersDark: boolean) {
@@ -79,6 +88,41 @@ describe("applyTheme", () => {
     const { mql } = stubMatchMedia(true);
     applyTheme("dark");
     expect(mql.addEventListener).not.toHaveBeenCalled();
+  });
+
+  it("applies a matching custom theme by custom:<id>", () => {
+    const custom: ThemeDefinition = {
+      ...createCustomTheme("dark", "Neon"),
+      id: "neon",
+      colors: { ...darkTheme.colors, accentColor: "#ff00ff" },
+    };
+    applyTheme("custom:neon", [custom]);
+    expect(getCurrentTheme().id).toBe("neon");
+    expect(document.documentElement.style.getPropertyValue("--accent-color")).toBe("#ff00ff");
+  });
+
+  it("falls back to dark when the custom theme id is missing", () => {
+    applyTheme("custom:gone", []);
+    expect(getCurrentTheme().id).toBe("dark");
+    expect(document.documentElement.style.getPropertyValue("--bg-primary")).toBe(
+      darkTheme.colors.bgPrimary
+    );
+  });
+});
+
+describe("previewTheme", () => {
+  it("applies a full theme definition live and fires callbacks", () => {
+    const cb = vi.fn();
+    onThemeChange(cb);
+    const draft: ThemeDefinition = {
+      ...createCustomTheme("light", "Draft"),
+      id: "draft",
+      colors: { ...lightTheme.colors, bgPrimary: "#0a0a0a" },
+    };
+    previewTheme(draft);
+    expect(getCurrentTheme().id).toBe("draft");
+    expect(document.documentElement.style.getPropertyValue("--bg-primary")).toBe("#0a0a0a");
+    expect(cb).toHaveBeenCalledTimes(1);
   });
 });
 

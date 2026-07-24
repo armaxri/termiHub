@@ -3549,7 +3549,7 @@ export const useAppStore = create<AppState>((set, get) => {
           sidebarView,
           sidebarCollapsed,
         });
-        applyTheme(settings.theme);
+        applyTheme(settings.theme, settings.customThemes);
         if (settings.keybindingOverrides) {
           setKeybindingOverrides(settings.keybindingOverrides);
         }
@@ -3660,8 +3660,13 @@ export const useAppStore = create<AppState>((set, get) => {
         await persistSettings(newSettings);
         set({ settings: newSettings, savedSettings: newSettings });
 
-        if (oldSettings.theme !== newSettings.theme) {
-          applyTheme(newSettings.theme);
+        // Re-apply when the selection changes or when the active custom theme's
+        // colors were edited (the customThemes array reference changes on save).
+        if (
+          oldSettings.theme !== newSettings.theme ||
+          oldSettings.customThemes !== newSettings.customThemes
+        ) {
+          applyTheme(newSettings.theme, newSettings.customThemes);
         }
 
         // Side-effects when global defaults are toggled off.

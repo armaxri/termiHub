@@ -3,6 +3,7 @@ import { SettingsSchema, Capabilities } from "./schema";
 import { KeybindingOverrideEntry } from "./keybindings";
 import type { SavedContainerRuntime, SpawnKind } from "./spawn";
 import type { SyntaxHighlightingConfig } from "./syntaxHighlighting";
+import type { ThemeDefinition } from "@/themes/types";
 
 /**
  * Explicit lifecycle status of the single desktop SFTP session (audit gap A1).
@@ -458,7 +459,19 @@ export interface AppSettings {
   defaultUser?: string;
   defaultSshKeyPath?: string;
   defaultShell?: string;
-  theme?: "dark" | "light" | "solarized-dark" | "solarized-light" | "system";
+  /**
+   * Active color theme. Built-in values plus `custom:<id>`, which selects a
+   * user-defined theme from {@link AppSettings.customThemes} by its `id`.
+   * Defaults to `"dark"` when absent (backward compatible).
+   */
+  theme?: "dark" | "light" | "solarized-dark" | "solarized-light" | "system" | `custom:${string}`;
+  /**
+   * User-defined custom color themes. Each entry is a full, self-contained
+   * {@link ThemeDefinition} (all colors resolved) with an optional `baseTheme`
+   * recording the built-in theme it was derived from. Serializable as-is so
+   * import/export (#1880) can build on this shape. Absent → no custom themes.
+   */
+  customThemes?: ThemeDefinition[];
   fontFamily?: string;
   fontSize?: number;
   lineHeight?: number;

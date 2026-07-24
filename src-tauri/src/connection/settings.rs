@@ -126,6 +126,12 @@ pub struct AppSettings {
     pub default_shell: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
+    /// User-defined custom color themes (#1879). The full shape is owned by the
+    /// frontend (`src/themes/types.ts` / `ThemeDefinition[]`); the backend only
+    /// persists it verbatim, so it is stored as an opaque JSON value rather than
+    /// mirrored as a typed struct. Absent → no custom themes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_themes: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -273,6 +279,7 @@ impl Default for AppSettings {
             default_ssh_key_path: None,
             default_shell: None,
             theme: None,
+            custom_themes: None,
             font_family: None,
             font_size: None,
             line_height: None,
@@ -534,6 +541,38 @@ mod tests {
         assert!(settings.default_x11_forwarding);
         assert!(settings.ask_open_saved_file_in_tab);
         assert!(settings.restore_last_session_on_startup);
+    }
+
+    #[test]
+    fn custom_themes_round_trip_verbatim() {
+        // The backend stores customThemes as an opaque JSON passthrough (#1879).
+        // A save/load cycle must preserve the full frontend-owned shape so custom
+        // themes are not silently dropped.
+        let themes = serde_json::json!([{
+            "id": "abc-123",
+            "name": "Ocean",
+            "colorScheme": "dark",
+            "baseTheme": "dark",
+            "colors": { "bgPrimary": "#012", "accentColor": "#3af" }
+        }]);
+        let settings = AppSettings {
+            theme: Some("custom:abc-123".to_string()),
+            custom_themes: Some(themes.clone()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.theme.as_deref(), Some("custom:abc-123"));
+        assert_eq!(deserialized.custom_themes, Some(themes));
+    }
+
+    #[test]
+    fn custom_themes_absent_by_default() {
+        assert!(AppSettings::default().custom_themes.is_none());
+        // A legacy file without the field deserializes with no custom themes.
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.custom_themes.is_none());
     }
 
     #[test]
