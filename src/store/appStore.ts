@@ -165,11 +165,7 @@ import {
   captureAllTabGroups,
   getWorkspaceLeaves,
 } from "@/utils/workspaceLayout";
-import {
-  resolveRestoreMode,
-  summarizeLastSession,
-  type RestorePrompt,
-} from "@/utils/restoreMode";
+import { resolveRestoreMode, summarizeLastSession, type RestorePrompt } from "@/utils/restoreMode";
 import { Macro, MacroStep } from "@/types/macro";
 import {
   listMacros as apiListMacros,
