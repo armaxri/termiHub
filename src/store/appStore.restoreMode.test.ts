@@ -1,0 +1,210 @@
+import { describe, it, expect, beforeEach, vi } from "vitest";
+
+// Mock service modules before importing the store (mirrors appStore.lastSession.test.ts).
+vi.mock("@/services/storage", () => ({
+  loadConnections: vi.fn(() =>
+    Promise.resolve({ connections: [], folders: [], agents: [], externalErrors: [] })
+  ),
+  persistConnection: vi.fn(() => Promise.resolve()),
+  removeConnection: vi.fn(() => Promise.resolve()),
+  persistFolder: vi.fn(() => Promise.resolve()),
+  removeFolder: vi.fn(() => Promise.resolve()),
+  getSettings: vi.fn(() => Promise.resolve({ version: "1", externalConnectionFiles: [] })),
+  saveSettings: vi.fn(() => Promise.resolve()),
+  moveConnectionToFile: vi.fn(() => Promise.resolve()),
+  reloadExternalConnections: vi.fn(() => Promise.resolve([])),
+  getRecoveryWarnings: vi.fn(() => Promise.resolve([])),
+}));
+
+vi.mock("@/services/api", () => ({
+  sftpOpen: vi.fn(),
+  sftpClose: vi.fn(),
+  sftpListDir: vi.fn(),
+  localListDir: vi.fn(),
+  vscodeAvailable: vi.fn(() => Promise.resolve(false)),
+}));
+
+vi.mock("@/services/lastSessionApi", () => ({
+  saveLastSession: vi.fn(() => Promise.resolve()),
+  loadLastSession: vi.fn(() => Promise.resolve(null)),
+  clearLastSession: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock("@/components/ui", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    loading: vi.fn(),
+    promise: vi.fn(),
+    dismiss: vi.fn(),
+  },
+}));
+
+import { useAppStore } from "./appStore";
+import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
+import { saveSettings } from "@/services/storage";
+import type { LastSession } from "@/types/lastSession";
+
+const mockSave = vi.mocked(saveLastSession);
+const mockLoad = vi.mocked(loadLastSession);
+const mockClear = vi.mocked(clearLastSession);
+const mockPersistSettings = vi.mocked(saveSettings);
+
+const storedSession: LastSession = {
+  version: "1",
+  activeGroupIndex: 0,
+  tabGroups: [
+    {
+      name: "Restored",
+      layout: {
+        type: "leaf",
+        tabs: [{ inlineConfig: { type: "local", config: { shell: "bash" } }, title: "Shell A" }],
+      },
+    },
+  ],
+};
+
+describe("startup restore mode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockLoad.mockResolvedValue(null);
+    useAppStore.setState({
+      connections: [],
+      remoteAgents: [],
+      agentDefinitions: {},
+      defaultShell: "bash",
+      restorePrompt: null,
+      settings: {
+        ...useAppStore.getState().settings,
+        restoreLastSessionOnStartup: undefined,
+        restoreLastSessionMode: "ask",
+      },
+    });
+    useAppStore.getState().addTab("Shell", "local", { type: "local", config: { shell: "bash" } });
+  });
+
+  describe("saveLastSession honours the mode", () => {
+    it("skips persisting when the mode is never", async () => {
+      useAppStore.setState({
+        settings: { ...useAppStore.getState().settings, restoreLastSessionMode: "never" },
+      });
+
+      await useAppStore.getState().saveLastSession();
+
+      expect(mockSave).not.toHaveBeenCalled();
+    });
+
+    it("persists when the mode is ask", async () => {
+      await useAppStore.getState().saveLastSession();
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+
+    it("persists when the mode is always", async () => {
+      useAppStore.setState({
+        settings: { ...useAppStore.getState().settings, restoreLastSessionMode: "always" },
+      });
+      await useAppStore.getState().saveLastSession();
+      expect(mockSave).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("promptRestore", () => {
+    it("raises the prompt when a session with tabs is stored", async () => {
+      mockLoad.mockResolvedValue(storedSession);
+
+      await useAppStore.getState().promptRestore();
+
+      const prompt = useAppStore.getState().restorePrompt;
+      expect(prompt).not.toBeNull();
+      expect(prompt?.tabCount).toBe(1);
+      expect(prompt?.tabs[0].title).toBe("Shell A");
+    });
+
+    it("does not raise the prompt when nothing is stored", async () => {
+      mockLoad.mockResolvedValue(null);
+
+      await useAppStore.getState().promptRestore();
+
+      expect(useAppStore.getState().restorePrompt).toBeNull();
+    });
+
+    it("does not raise the prompt when the stored session has no tabs", async () => {
+      mockLoad.mockResolvedValue({
+        version: "1",
+        activeGroupIndex: 0,
+        tabGroups: [{ name: "Empty", layout: { type: "leaf", tabs: [] } }],
+      });
+
+      await useAppStore.getState().promptRestore();
+
+      expect(useAppStore.getState().restorePrompt).toBeNull();
+    });
+  });
+
+  describe("confirmRestorePrompt (Restore)", () => {
+    beforeEach(() => {
+      useAppStore.setState({
+        restorePrompt: { tabCount: 1, tabs: [{ title: "x", typeLabel: "Local" }] },
+      });
+      mockLoad.mockResolvedValue(storedSession);
+    });
+
+    it("restores the session and clears the prompt", async () => {
+      await useAppStore.getState().confirmRestorePrompt(false);
+
+      expect(useAppStore.getState().restorePrompt).toBeNull();
+      expect(useAppStore.getState().tabGroups[0].name).toBe("Restored");
+    });
+
+    it("persists mode=always when remember is set", async () => {
+      await useAppStore.getState().confirmRestorePrompt(true);
+
+      expect(useAppStore.getState().settings.restoreLastSessionMode).toBe("always");
+      expect(mockPersistSettings).toHaveBeenCalled();
+      expect(
+        (mockPersistSettings.mock.calls[0][0] as { restoreLastSessionMode?: string })
+          .restoreLastSessionMode
+      ).toBe("always");
+    });
+
+    it("does not change the mode when remember is not set", async () => {
+      await useAppStore.getState().confirmRestorePrompt(false);
+
+      expect(useAppStore.getState().settings.restoreLastSessionMode).toBe("ask");
+      expect(mockPersistSettings).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("dismissRestorePrompt (Start Fresh)", () => {
+    beforeEach(() => {
+      useAppStore.setState({
+        restorePrompt: { tabCount: 1, tabs: [{ title: "x", typeLabel: "Local" }] },
+      });
+    });
+
+    it("clears the stored session and the prompt", async () => {
+      await useAppStore.getState().dismissRestorePrompt(false);
+
+      expect(useAppStore.getState().restorePrompt).toBeNull();
+      expect(mockClear).toHaveBeenCalledTimes(1);
+    });
+
+    it("persists mode=never when remember is set", async () => {
+      await useAppStore.getState().dismissRestorePrompt(true);
+
+      expect(useAppStore.getState().settings.restoreLastSessionMode).toBe("never");
+      expect(
+        (mockPersistSettings.mock.calls[0][0] as { restoreLastSessionMode?: string })
+          .restoreLastSessionMode
+      ).toBe("never");
+    });
+
+    it("does not change the mode when remember is not set", async () => {
+      await useAppStore.getState().dismissRestorePrompt(false);
+
+      expect(useAppStore.getState().settings.restoreLastSessionMode).toBe("ask");
+      expect(mockPersistSettings).not.toHaveBeenCalled();
+    });
+  });
+});
