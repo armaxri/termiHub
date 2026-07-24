@@ -176,9 +176,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           >
             <Toggle
               checked={settings.warnLargePortScan ?? true}
-              onCheckedChange={(checked) =>
-                onChange({ ...settings, warnLargePortScan: checked })
-              }
+              onCheckedChange={(checked) => onChange({ ...settings, warnLargePortScan: checked })}
               data-testid="settings-warn-large-port-scan"
             />
           </SettingsField>
