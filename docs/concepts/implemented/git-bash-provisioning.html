@@ -139,10 +139,12 @@
         <p>
           This concept adds a subsystem that <strong>ensures a usable Git Bash exists</strong> when
           the user asks for a Unix shell: it detects Git for Windows robustly, and when it is absent
-          it <strong>guides a consent-based install</strong> (winget → official installer → portable
-          fallback), then re-detects and offers Git Bash —
-          <strong>with no manual PATH surgery and no app restart</strong>. The installed Git Bash
-          <em>is</em> the Unix-tools provider.
+          it <strong>guides a consent-based install</strong> — a local terminal tab preloaded with
+          the winget command (or the official-installer download link) — then re-detects and offers
+          Git Bash on the next attempt, <strong>with no manual PATH surgery and no app restart</strong>.
+          The installed Git Bash <em>is</em> the Unix-tools provider. (As shipped the install is
+          <em>always</em> guided-in-terminal; the originally-drafted in-app automatic winget install
+          with a progress bar was deliberately descoped — see the Sync Ledger.)
         </p>
 
         <h3>Why guide an install instead of bundling one</h3>
@@ -212,9 +214,10 @@ flowchart LR
             on Windows" — the Unix-tools provider — in the shell picker and Settings.
           </li>
           <li>
-            <strong>Reuse the X-server guided-install mechanism</strong> — the same consent/progress
-            UX and the existing <code>guideTerminalInstall</code> / <code>openLocalCommandTab</code>
-            helpers — rather than inventing a new install surface.
+            <strong>Reuse the guided-terminal install mechanism</strong> — the shared
+            <code>guideTerminalInstall</code> helper (built for the macOS Homebrew→XQuartz flow) and
+            a consent dialog composed from the <code>src/components/ui/</code> primitives — rather
+            than inventing a new install surface or a bespoke in-app installer.
           </li>
         </ul>
 
@@ -297,57 +300,54 @@ flowchart LR
           </div>
 
           <div class="mockup-note" style="margin-top: 16px">
-            Guided-install flow (Windows), shown when the user picks <em>"Git Bash — set up…"</em>.
-            <strong>Nothing is downloaded before consent</strong> <span class="callout">B</span> —
-            identical shape to the X-server VcXsrv consent prompt.
+            Guided-install dialog (Windows), shown when the user picks <em>"Git Bash — set up…"</em>.
+            <strong>Nothing runs before consent</strong> <span class="callout">B</span>, and the
+            dialog is composed from the shared <code>src/components/ui/</code> Modal + Button
+            primitives (<code>GitBashSetupDialog.tsx</code>). As shipped there is a single guided path
+            — no in-app automatic install, no progress bar. <strong>Install in terminal</strong>
+            opens a local shell tab preloaded with <code>winget install --id Git.Git -e</code>
+            (via <code>guideTerminalInstall</code>); <strong>Open git-scm.com</strong> deep-links the
+            official installer for machines without winget.
           </div>
           <div class="states">
             <div>
-              <p class="state-label">Step 1 — consent prompt</p>
+              <p class="state-label">Step 1 — consent dialog</p>
               <div class="menu">
                 <div class="menu__title">
                   <svg class="li"><use href="#i-app-window" /></svg> Set up Git Bash
                 </div>
                 <div class="menu__row" style="display: block; color: var(--text-secondary)">
                   A Unix shell needs <strong>Git for Windows</strong>, which isn't installed. It
-                  provides <strong>bash, grep, sed, curl, ssh</strong> and 20+ more tools. termiHub
-                  can install it via <strong>winget</strong> (one time).
+                  provides <strong>bash, grep, sed, curl, ssh</strong> and 20+ more tools. Install in
+                  a terminal (needs <strong>winget</strong> / App&nbsp;Installer), or download the
+                  official installer from git-scm.com.
                 </div>
                 <div class="menu__footer">
-                  <button class="btn btn--primary">
-                    <svg class="li"><use href="#i-download" /></svg> Install &amp; Enable
+                  <button class="btn">Cancel</button>
+                  <button class="btn btn--link">
+                    <svg class="li"><use href="#i-download" /></svg> Open git-scm.com
                   </button>
-                  <button class="btn btn--link">Open git-scm.com</button>
-                  <button class="btn">Not now</button>
+                  <button class="btn btn--primary">
+                    <svg class="li"><use href="#i-terminal" /></svg> Install in terminal
+                  </button>
                 </div>
               </div>
             </div>
             <div>
-              <p class="state-label">Step 2 — installing</p>
+              <p class="state-label">Step 2 — guided terminal</p>
               <div class="menu">
                 <div class="menu__title">
-                  <svg class="li"><use href="#i-download" /></svg> Setting up Git Bash
+                  <svg class="li"><use href="#i-terminal" /></svg> Install Git for Windows
                 </div>
-                <div class="menu__row">
-                  <span class="state-dot state-dot--connecting"></span> Installing Git for Windows
-                  via winget…
-                </div>
-                <div style="padding: 0 14px 12px">
-                  <div style="height: 4px; border-radius: 2px; background: var(--bg-active)">
-                    <div
-                      style="
-                        width: 55%;
-                        height: 100%;
-                        border-radius: 2px;
-                        background: var(--accent-color);
-                      "
-                    ></div>
-                  </div>
+                <div class="menu__row" style="display: block; color: var(--text-secondary)">
+                  A local terminal tab opens preloaded with
+                  <code>winget install --id Git.Git -e</code>. The user drives any UAC / winget
+                  prompts; termiHub does not stream progress back into the app.
                 </div>
               </div>
             </div>
             <div>
-              <p class="state-label">Step 3 — installed &amp; selected</p>
+              <p class="state-label">Step 3 — re-detected &amp; selected</p>
               <div class="menu">
                 <div class="menu__title" style="color: var(--color-success)">
                   <svg class="li"><use href="#i-circle-check" /></svg> Git Bash ready
@@ -358,8 +358,9 @@ flowchart LR
                   <span class="count">detected</span>
                 </div>
                 <div class="menu__row" style="display: block; color: var(--text-secondary)">
-                  Set as the default shell for new local connections. bash, grep, curl, ssh &amp;
-                  more now work in every local terminal.
+                  On the next connect (no app restart), re-detection finds the freshly-installed Git
+                  Bash and offers it. bash, grep, curl, ssh &amp; more now work in every local
+                  terminal.
                 </div>
               </div>
             </div>
@@ -367,66 +368,15 @@ flowchart LR
           <div class="legend">
             <ul>
               <li>
-                <span class="callout">B</span> Nothing installs until the user picks
-                <strong>Install &amp; Enable</strong>. Progress is driven by backend events (install
-                / re-detect), reusing the X-server progress-event shape. Once installed, later runs
-                skip Steps&nbsp;1–2 — Git Bash is simply detected and offered.
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <!-- Mockup 2 -->
-        <div class="mockup-section">
-          <h3>Mockup — winget absent: guided fallback</h3>
-          <div class="mockup-note">
-            When winget (App Installer) is missing, the automatic install can't run — so termiHub
-            guides the user instead of failing, symmetric to the X-server winget-absent path.
-            <strong>Install in terminal</strong> <span class="callout">C</span> opens a local
-            terminal tab pre-loaded with the winget/installer command (reusing
-            <code>guideTerminalInstall</code>); <strong>Open git-scm.com</strong>
-            <span class="callout">D</span> is the manual-download fallback.
-          </div>
-          <div class="menu" style="width: 380px">
-            <div class="menu__title">
-              <svg class="li"><use href="#i-app-window" /></svg> Install Git for Windows
-            </div>
-            <div class="menu__row" style="display: block; color: var(--text-secondary)">
-              The automatic install needs <strong>winget</strong> (App Installer), which isn't
-              available. Open a terminal to run the install yourself, or download the official
-              installer.
-            </div>
-            <div class="menu__footer">
-              <button class="btn btn--primary">
-                <svg class="li"><use href="#i-terminal" /></svg> Install in terminal
-              </button>
-              <button class="btn btn--link">
-                <svg class="li"><use href="#i-download" /></svg> Open git-scm.com
-              </button>
-              <button class="btn">Not now</button>
-            </div>
-          </div>
-          <div class="legend">
-            <ul>
-              <li>
-                <span class="callout">C</span> <strong>Install in terminal</strong> — opens a local
-                shell tab pre-loaded with the installer command (<code
-                  >winget install -e --id Git.Git</code
-                >
-                when winget is present; otherwise a documented manual command), and the user drives
-                any UAC / prompts. termiHub re-detects Git Bash when the tab's command finishes.
-                Reuses the existing <code>guideTerminalInstall</code> /
-                <code>openLocalCommandTab</code> helpers.
-              </li>
-              <li>
-                <span class="callout">D</span> <strong>Open git-scm.com</strong> — deep link to the
-                official installer for a fully manual install (also the portable-Git route). Help
-                ends here; termiHub never hosts or redistributes the installer.
-              </li>
-              <li>
-                On a locked-down / corporate machine where the user cannot install anything, the
-                prompt still surfaces the manual link and a hint that <strong>WSL</strong> is an
-                alternative — never a silent dead end.
+                <span class="callout">B</span> Nothing runs until the user picks
+                <strong>Install in terminal</strong> — which opens a local shell tab preloaded with
+                the winget command (<code>guideGitBashInstall.ts</code> →
+                <code>guideTerminalInstall</code>), the user driving any UAC / prompts — or
+                <strong>Open git-scm.com</strong> for the manual/portable-Git download. There is no
+                separate winget-present "automatic" path: the install is always guided-in-terminal.
+                On a locked-down / corporate machine the git-scm.com link and the WSL alternative
+                remain — never a silent dead end. Once installed, later runs skip the dialog — Git
+                Bash is simply detected and offered.
               </li>
             </ul>
           </div>
@@ -456,23 +406,25 @@ flowchart LR
             unless asked.
           </li>
           <li>
-            <strong>Install strategy (in order):</strong> winget (<code
-              >winget install -e --id Git.Git --accept-package-agreements
-              --accept-source-agreements</code
-            >) → official installer link (<code>git-scm.com/download/win</code>) → portable Git
-            (same link; detected afterwards via PATH). winget-absent is a guided terminal install,
-            not a failure.
+            <strong>Install strategy:</strong> a single guided path — <strong>Install in
+            terminal</strong> opens a local shell tab preloaded with <code>winget install --id
+            Git.Git -e</code> (via <code>guideTerminalInstall</code>), and <strong>Open
+            git-scm.com</strong> (<code>git-scm.com/download/win</code>) is the manual /
+            portable-Git fallback. There is no in-app automatic winget install and no progress bar —
+            the user always drives the install in the terminal, so winget-absent is not a special
+            failure case.
           </li>
           <li>
-            <strong>Re-detect after install, no restart.</strong> When the install completes (winget
-            command returns, or the guided terminal tab's command finishes), re-run detection and,
-            if found, select Git Bash for the pending connection.
+            <strong>Re-detect on next connect, no restart.</strong> termiHub does not watch the
+            guided terminal for completion; instead the next time the user opens the shell picker /
+            attempts the connection, layered detection re-runs and, if Git Bash is now present,
+            offers it — no app restart needed.
           </li>
           <li>
             <strong>Reuse, don't reinvent.</strong> The guided-terminal path reuses
-            <code>guideTerminalInstall</code> / <code>openLocalCommandTab</code> (built for the
-            macOS Homebrew→XQuartz flow, #1309/#1312); the consent/progress UX mirrors the X-server
-            prompt.
+            <code>guideTerminalInstall</code> (built for the macOS Homebrew→XQuartz flow,
+            #1309/#1312); the consent dialog is composed from the shared
+            <code>src/components/ui/</code> Modal + Button primitives.
           </li>
           <li>
             <strong>Failure is actionable, never silent.</strong> If winget errors, surface its
@@ -499,15 +451,15 @@ flowchart LR
 flowchart TD
     A[User selects a Unix/bash<br/>local shell] --> B{Git for Windows<br/>detected? layered probe}
     B -->|Yes| Z[Offer / select Git Bash<br/>resolve_git_bash path]
-    B -->|No| C[Show 'Set up Git Bash'<br/>consent prompt]
-    C -->|Not now| W[Keep PowerShell/cmd;<br/>WSL + custom-shell still available]
-    C -->|Install & Enable| D{winget present?}
-    D -->|Yes| E["winget install -e --id Git.Git"]
-    D -->|No| F[Guided terminal install<br/>+ git-scm.com link]
-    E --> G{Re-detect finds<br/>Git Bash?}
+    B -->|No| C[Show 'Set up Git Bash'<br/>consent dialog]
+    C -->|Cancel| W[Keep PowerShell/cmd;<br/>WSL + custom-shell still available]
+    C -->|Install in terminal| E["Open local tab preloaded with<br/>winget install --id Git.Git -e"]
+    C -->|Open git-scm.com| F[Deep-link official installer<br/>manual / portable-Git]
+    E --> G[User drives install in the terminal]
     F --> G
-    G -->|Yes| Z
-    G -->|No| X[Surface installer error<br/>+ manual link + WSL hint]
+    G --> H{Next connect: re-detect<br/>finds Git Bash?}
+    H -->|Yes| Z
+    H -->|No| X[Dialog still offers git-scm.com<br/>+ WSL hint]
     style E fill:#e87d0d,stroke:#333,color:#fff
     style Z fill:#e87d0d,stroke:#333,color:#fff
           </pre>
@@ -534,19 +486,18 @@ flowchart TD
         </div>
 
         <div class="diagram">
-          <span class="diagram__caption">Guided install workflow (#1672)</span>
+          <span class="diagram__caption">Guided install workflow (#1672, as shipped)</span>
           <pre class="mermaid">
 flowchart TD
-    A[User: Install & Enable] --> B{winget present?}
-    B -->|Yes| C["run: winget install -e --id Git.Git<br/>--accept-package-agreements<br/>--accept-source-agreements"]
-    B -->|No| D[guideTerminalInstall:<br/>open local tab w/ install command]
-    C --> E{exit 0?}
-    D --> F[User drives UAC / prompts;<br/>command finishes]
-    E -->|yes| G[Re-run layered detection]
-    E -->|no| H[Show winget error verbatim<br/>+ 'Open git-scm.com' + Retry]
-    F --> G
-    G -->|found| I[Select Git Bash<br/>for pending connection]
-    G -->|not found| H
+    A[GitBashSetupDialog shown] --> B{User choice}
+    B -->|Install in terminal| C["guideGitBashInstall.ts →<br/>guideTerminalInstall:<br/>local tab preloaded with<br/>winget install --id Git.Git -e"]
+    B -->|Open git-scm.com| D[openGitForWindowsDownload:<br/>deep-link git-scm.com/download/win]
+    B -->|Cancel| W[Dismiss; PowerShell/cmd stay]
+    C --> F[User drives UAC / winget prompts<br/>in the terminal tab]
+    D --> F
+    F --> G[Next connect: re-run layered detection]
+    G -->|found| I[Offer / select Git Bash]
+    G -->|not found| H[Re-open dialog: git-scm.com + WSL hint]
     style C fill:#e87d0d,stroke:#333,color:#fff
     style I fill:#e87d0d,stroke:#333,color:#fff
           </pre>
@@ -560,42 +511,33 @@ stateDiagram-v2
     Detecting --> Available: layered probe finds Git for Windows
     Detecting --> Absent: nothing found
     Absent --> Prompting: user selects 'Git Bash — set up…'
-    Prompting --> Absent: Not now
-    Prompting --> Installing: Install & Enable (winget)
-    Prompting --> Guiding: winget absent → guided terminal
-    Installing --> Available: re-detect succeeds
-    Installing --> Failed: winget error / not found after install
-    Guiding --> Available: re-detect succeeds
-    Guiding --> Failed: still not found
-    Failed --> Prompting: Retry
-    Failed --> Absent: user gives up (WSL/custom remain)
+    Prompting --> Absent: Cancel
+    Prompting --> Guiding: Install in terminal / Open git-scm.com
+    Guiding --> Available: next connect — re-detect succeeds
+    Guiding --> Absent: still not found (dialog re-offered; WSL/custom remain)
     Available --> Selected: chosen as shell for a connection
     Selected --> [*]
           </pre>
         </div>
 
         <div class="diagram">
-          <span class="diagram__caption">Session/select sequence (winget path)</span>
+          <span class="diagram__caption">Session/select sequence (guided-terminal path, as shipped)</span>
           <pre class="mermaid">
 sequenceDiagram
     participant User
     participant UI as Shell picker (frontend)
-    participant Cmd as Tauri commands
-    participant Det as shell.rs detect_git_bash
-    participant WG as winget
+    participant Dlg as GitBashSetupDialog
+    participant Term as Local terminal tab
+    participant Det as shell detect (detect_available_shells)
     User->>UI: Select 'Git Bash — set up…'
-    UI->>Cmd: git_bash_status()
-    Cmd->>Det: layered probe
-    Det-->>Cmd: NotInstalled
-    Cmd-->>UI: NotInstalled → show consent prompt
-    User->>UI: Install & Enable
-    UI->>Cmd: git_bash_install() (winget present)
-    Cmd->>WG: winget install -e --id Git.Git …
-    WG-->>Cmd: exit 0 (progress events → UI)
-    Cmd->>Det: re-probe
-    Det-->>Cmd: Some(path\bin\bash.exe)
-    Cmd-->>UI: Available(2.45.0)
-    UI->>User: Git Bash selected for the connection
+    UI->>Dlg: shouldOfferGitBashSetup → open dialog
+    User->>Dlg: Install in terminal
+    Dlg->>Term: guideTerminalInstall("winget install --id Git.Git -e")
+    User->>Term: drive UAC / winget prompts; install completes
+    User->>UI: Re-open shell picker / retry connect
+    UI->>Det: detect_available_shells (layered probe)
+    Det-->>UI: gitbash available (resolved path)
+    UI->>User: Git Bash offered / selected for the connection
           </pre>
         </div>
 
@@ -632,13 +574,15 @@ sequenceDiagram
               <tr>
                 <td>winget (App Installer) absent</td>
                 <td>
-                  Guided terminal install + <code>git-scm.com</code> manual link — never silent
+                  The terminal command won't succeed; the dialog's <code>git-scm.com</code> manual
+                  link covers this machine — never silent
                 </td>
               </tr>
               <tr>
                 <td>winget install fails</td>
                 <td>
-                  Surface winget's error verbatim; offer Retry + manual link (never a partial state)
+                  winget's error is visible in the guided terminal tab (not surfaced in-app); the
+                  user retries there or falls back to the git-scm.com link
                 </td>
               </tr>
               <tr>
@@ -718,30 +662,38 @@ sequenceDiagram
                 </td>
               </tr>
               <tr>
-                <td><code>src-tauri/src/commands/…</code> (new <code>git_bash.rs</code>)</td>
                 <td>
-                  <strong>New (#1672)</strong> — <code>git_bash_status</code> /
-                  <code>git_bash_install</code> commands + progress events, modeled on the X-server
-                  <code>x_server_status</code> / <code>_ensure</code> /
-                  <code>_install_dependency</code>
-                  commands.
+                  <code>src/utils/gitBashSetup.ts</code>,
+                  <code>src/components/OpenConnections/guideGitBashInstall.ts</code>
+                </td>
+                <td>
+                  <strong>Shipped (#1672)</strong> — no backend install commands were built. The
+                  winget command string / download URL constants and the
+                  <code>shouldOfferGitBashSetup</code> gate live in <code>gitBashSetup.ts</code>;
+                  <code>guideGitBashInstall.ts</code> exposes
+                  <code>guideGitForWindowsInstall()</code> (→ <code>guideTerminalInstall</code>) and
+                  <code>openGitForWindowsDownload()</code>. The originally-drafted
+                  <code>git_bash_status</code> / <code>git_bash_install</code> Tauri commands were
+                  deliberately descoped (see Sync Ledger).
                 </td>
               </tr>
               <tr>
                 <td><code>src/components/OpenConnections/guideTerminalInstall.ts</code></td>
                 <td>
-                  <strong>Reuse (#1672)</strong> — open a local tab pre-loaded with the install
-                  command for the winget-absent / manual path (same helper as the Homebrew flow).
+                  <strong>Reuse (#1672)</strong> — open a local tab pre-loaded with the winget
+                  install command (same helper as the macOS Homebrew flow).
                 </td>
               </tr>
               <tr>
                 <td>
-                  <code>src/components/ConnectionEditor/*</code> &amp; Settings default-shell UI
+                  <code>src/components/OpenConnections/GitBashSetupDialog.tsx</code> &amp; Settings
+                  default-shell UI
                 </td>
                 <td>
-                  <strong>Modify (#1672)</strong> — render the "Git Bash — set up…" row when absent;
-                  wire the consent/progress prompt (compose from <code>src/components/ui/</code>
-                  primitives — Modal/Button — no bespoke dialog CSS).
+                  <strong>Shipped (#1672)</strong> — render the "Git Bash — set up…" row when absent;
+                  the consent dialog is composed from the shared <code>src/components/ui/</code>
+                  Modal + Button primitives with two actions ("Install in terminal", "Open
+                  git-scm.com") and no in-app progress bar.
                 </td>
               </tr>
               <tr>
@@ -769,20 +721,20 @@ sequenceDiagram
           it. Keep the change Windows-gated; Unix detection is untouched.
         </p>
 
-        <h3>Guided install (#1672)</h3>
+        <h3>Guided install (#1672, as shipped)</h3>
         <p>
-          Mirror the X-server acquisition path. When the user picks "Git Bash — set up…", check for
-          winget; if present, run
-          <code
-            >winget install -e --id Git.Git --accept-package-agreements
-            --accept-source-agreements</code
-          >
-          and stream progress via events; if absent, call
-          <code>guideTerminalInstall(command, "Install Git for Windows")</code> to open a terminal
-          tab pre-loaded with the command, plus a <code>git-scm.com/download/win</code> deep link.
-          On completion, re-run detection (#1671) and select Git Bash for the pending connection.
-          The consent/progress dialog composes from the shared
-          <code>src/components/ui/</code> primitives.
+          When the user picks "Git Bash — set up…", <code>GitBashSetupDialog.tsx</code> (a Modal
+          composed from the shared <code>src/components/ui/</code> primitives) offers two actions:
+          <strong>Install in terminal</strong> calls
+          <code>guideGitForWindowsInstall()</code> →
+          <code>guideTerminalInstall("winget install --id Git.Git -e", "Install Git for Windows")</code>
+          to open a local terminal tab preloaded with the command, and <strong>Open
+          git-scm.com</strong> calls <code>openGitForWindowsDownload()</code> to deep-link
+          <code>git-scm.com/download/win</code> for the manual / portable-Git route. The install is
+          <em>always</em> driven by the user in the terminal — there is no in-app automatic winget
+          run, no progress bar, and no <code>git_bash_status</code> / <code>git_bash_install</code>
+          backend commands. Re-detection (#1671) happens on the next connect / shell-picker open, so
+          the freshly-installed Git Bash is offered without an app restart.
         </p>
 
         <h3>Licensing</h3>
@@ -802,14 +754,15 @@ sequenceDiagram
             independently useful and the foundation for reliable post-install re-detection.
           </li>
           <li>
-            <strong>Backend commands + events</strong> (new <code>git_bash.rs</code>, #1672) —
-            <code>git_bash_status</code> / <code>git_bash_install</code>, modeled on the X-server
-            commands.
+            <strong>Frontend setup helpers</strong> (<code>gitBashSetup.ts</code> /
+            <code>guideGitBashInstall.ts</code>, #1672) — winget command + download-URL constants,
+            the <code>shouldOfferGitBashSetup</code> gate, and the guided-terminal / download
+            wrappers. No backend commands (the drafted <code>git_bash.rs</code> was descoped).
           </li>
           <li>
-            <strong>Frontend consent/progress UI</strong> (#1672) — "set up…" row, consent prompt,
-            progress, winget-absent fallback via <code>guideTerminalInstall</code>; re-detect +
-            select.
+            <strong>Frontend consent UI</strong> (#1672) — "set up…" row +
+            <code>GitBashSetupDialog</code> with "Install in terminal" (via
+            <code>guideTerminalInstall</code>) and "Open git-scm.com"; re-detect on next connect.
           </li>
           <li>
             Docs + manual test steps (guided install is not exercised by per-PR CI on Windows).
@@ -828,50 +781,22 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> #1671, #1672 · <strong>Status:</strong> implemented (one
-          deliberate descope). Layered detection is hardened and the guided-install flow shipped
+          <strong>Last synced:</strong> 2026-07-24 at commit <code>6e40e8dc</code> ·
+          <strong>Status:</strong> in-sync (implemented, with one deliberate descope now reflected
+          in the concept). Layered detection is hardened and the guided-install flow shipped
           (<code>core/src/session/shell.rs</code>, <code>src/utils/gitBashSetup.ts</code>,
           <code>src/components/OpenConnections/GitBashSetupDialog.tsx</code> +
           <code>guideGitBashInstall.ts</code>, wired into GeneralSettings and the connection editor).
-          The concept's in-app <em>automatic</em> winget install with a progress bar (and the
-          <code>git_bash_status</code> / <code>git_bash_install</code> backend commands) was
-          deliberately descoped to the simpler guided-terminal path (open a terminal preloaded with
-          the winget command) plus the git-scm.com fallback — see divergence #1 below.
+          The concept previously described an in-app <em>automatic</em> winget install with a
+          progress bar backed by <code>git_bash_status</code> / <code>git_bash_install</code>
+          commands; that was deliberately descoped to the simpler guided-terminal path (open a
+          terminal preloaded with the winget command) plus the git-scm.com fallback, and the
+          concept prose, mockups, and diagrams above have been updated to describe that shipped
+          reality — see the Resolved table.
         </p>
 
         <h3>Open divergences</h3>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Artifact claim</th>
-                <th>Code reality</th>
-                <th>Type</th>
-                <th>Recommendation</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>1</td>
-                <td>
-                  In-app <em>automatic</em> winget install with a progress bar, backed by
-                  <code>git_bash_status</code> / <code>git_bash_install</code> commands
-                </td>
-                <td>
-                  Descoped — no such backend commands; the shipped flow opens a terminal preloaded
-                  with the winget command (<code>guideGitBashInstall.ts</code>) plus a git-scm.com
-                  fallback
-                </td>
-                <td>Concept ahead (deliberate descope)</td>
-                <td>
-                  Maintainer call: rewrite the concept's auto-install mockup to match the shipped
-                  guided-terminal path, or file a follow-up to build the auto-install UI
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <p>None — the concept matches the shipped implementation.</p>
 
         <h3>Resolved</h3>
         <div class="table-wrap">
@@ -884,6 +809,21 @@ sequenceDiagram
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td>2026-07-24</td>
+                <td>#1672</td>
+                <td>
+                  Reconciled the in-app <em>automatic</em> winget install (progress bar +
+                  <code>git_bash_status</code> / <code>git_bash_install</code> commands) against the
+                  shipped guided-terminal path. The auto-installer was deliberately descoped (never
+                  built), so — per the source-of-truth exception, a real product decision made the
+                  original design wrong — the <strong>concept</strong> was updated to describe the
+                  shipped reality: a two-action <code>GitBashSetupDialog</code> ("Install in
+                  terminal" via <code>guideTerminalInstall</code> + "Open git-scm.com"), no backend
+                  install commands, no progress bar, re-detect on next connect. Working code was
+                  left unchanged.
+                </td>
+              </tr>
               <tr>
                 <td>2026-07-19</td>
                 <td>#519</td>
