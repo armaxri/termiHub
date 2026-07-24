@@ -70,13 +70,21 @@ const TELNET_CONN: SavedConnection = {
 let container: HTMLDivElement;
 let root: Root;
 
-function render(persistentSessions: Record<string, PersistentSessionEntry> = {}) {
+function render(
+  persistentSessions: Record<string, PersistentSessionEntry> = {},
+  actionOverrides: Partial<{
+    startPersistentSession: () => Promise<void>;
+    attachPersistentSession: () => Promise<void>;
+    stopPersistentSession: () => Promise<void>;
+  }> = {}
+) {
   const initial = useAppStore.getInitialState();
   useAppStore.setState({
     ...initial,
     connections: [SSH_CONN, TELNET_CONN],
     connectionTypes: [SSH_TYPE, TELNET_TYPE],
     persistentSessions,
+    ...actionOverrides,
   });
   act(() => {
     root.render(
@@ -138,8 +146,7 @@ describe("ConnectionList — desktop-local persistent controls", () => {
 
   it("shows Start when stopped and calls startPersistentSession", () => {
     const startPersistentSession = vi.fn(() => Promise.resolve());
-    render();
-    useAppStore.setState({ startPersistentSession });
+    render({}, { startPersistentSession });
 
     expect(q("persistent-start-ssh-1")).not.toBeNull();
     expect(q("persistent-attach-ssh-1")).toBeNull();
@@ -154,8 +161,7 @@ describe("ConnectionList — desktop-local persistent controls", () => {
   it("shows Attach + Stop when running and calls the matching actions", () => {
     const attachPersistentSession = vi.fn(() => Promise.resolve());
     const stopPersistentSession = vi.fn(() => Promise.resolve());
-    render({ "ssh-1": entry("running") });
-    useAppStore.setState({ attachPersistentSession, stopPersistentSession });
+    render({ "ssh-1": entry("running") }, { attachPersistentSession, stopPersistentSession });
 
     expect(q("persistent-start-ssh-1")).toBeNull();
     expect(q("persistent-attach-ssh-1")).not.toBeNull();
