@@ -2955,3 +2955,32 @@ evidence exists on disk after the process is gone. Referenced by PR #1578.
    with the banner, the previous content moved to `termihub.1.log`, and that after
    enough churn `termihub.2.log` is the oldest kept — `termihub.3.log` must
    **never** appear and the directory must stay under ~15 MiB.
+
+### Workflow editor menus are clickable inside the modal (#1868)
+
+The workflow editor is a modal Radix `Dialog`, which sets `pointer-events: none`
+on `document.body` while open. Any Radix menu/select that portals to
+`document.body` (the default) therefore renders **outside** the dialog and is
+dead/unclickable in a real WebView. jsdom does not enforce `pointer-events`, so
+unit tests structurally cannot catch this — hence a manual test in the running
+app. The fix portals these into the dialog's own content node (via the shared
+`Modal` primitive's portal container). Referenced by PR for #1868.
+
+**Launch the app** (`./scripts/dev.sh` — never `pnpm tauri dev`).
+
+**The "+ Add step…" menu works.**
+
+1. Open the **Workflows** panel → **New Workflow**.
+2. Click **"+ Add step…"**. Confirm the step-kind menu **opens and each item is
+   clickable** (not just visible). Add one of every kind — send-command,
+   run-script, run-macro, wait, run-local-process — confirming each appends a
+   step row.
+
+**Pickers inside the editor work.**
+
+1. On a **Run macro** step, open the **Macro** `Select` and confirm the listbox
+   opens and a macro can be selected (this `Select` portals to the same place
+   and was dead for the same reason).
+2. Reorder, edit, and delete steps as normal to confirm the fix changed nothing
+   else about the editor's behavior.
+3. Save the workflow and confirm it persists with the steps you added.

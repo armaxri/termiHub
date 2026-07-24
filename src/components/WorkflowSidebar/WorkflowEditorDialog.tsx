@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
-import { Modal, Button, Input, Field } from "@/components/ui";
+import { Modal, Button, Input, Field, useModalPortalContainer } from "@/components/ui";
 import type { Workflow, WorkflowStep, WorkflowStepKind, WorkflowTrigger } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
 import type { SavedConnection } from "@/types/connection";
@@ -241,36 +241,7 @@ export function WorkflowEditorDialog({
         </DndContext>
       )}
 
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger asChild>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Plus size={14} />}
-            data-testid="workflow-editor-add-step"
-          >
-            Add step…
-          </Button>
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content className="settings-menu__content" align="start" sideOffset={4}>
-            {WORKFLOW_STEP_KINDS.map((kind) => {
-              const Icon = stepKindIcon(kind);
-              return (
-                <DropdownMenu.Item
-                  key={kind}
-                  className="settings-menu__item"
-                  onSelect={() => addStep(kind)}
-                  data-testid={`workflow-editor-add-step-${kind}`}
-                >
-                  <Icon size={14} />
-                  {stepKindLabel(kind)}
-                </DropdownMenu.Item>
-              );
-            })}
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
+      <AddStepMenu onAdd={addStep} />
 
       <div className="workflow-editor__section-header">
         <span className="workflow-editor__section-title">Triggers</span>
@@ -281,5 +252,51 @@ export function WorkflowEditorDialog({
         onChange={setTriggers}
       />
     </Modal>
+  );
+}
+
+interface AddStepMenuProps {
+  onAdd: (kind: WorkflowStepKind) => void;
+}
+
+/**
+ * The "Add step…" dropdown. Extracted so it renders *inside* the {@link Modal}
+ * body and can read {@link useModalPortalContainer}: the menu content must
+ * portal into the dialog's content node, not `document.body`, or the modal's
+ * `pointer-events: none` on the body leaves it dead/unclickable (#1868).
+ */
+function AddStepMenu({ onAdd }: AddStepMenuProps) {
+  const portalContainer = useModalPortalContainer();
+  return (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Plus size={14} />}
+          data-testid="workflow-editor-add-step"
+        >
+          Add step…
+        </Button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal container={portalContainer}>
+        <DropdownMenu.Content className="settings-menu__content" align="start" sideOffset={4}>
+          {WORKFLOW_STEP_KINDS.map((kind) => {
+            const Icon = stepKindIcon(kind);
+            return (
+              <DropdownMenu.Item
+                key={kind}
+                className="settings-menu__item"
+                onSelect={() => onAdd(kind)}
+                data-testid={`workflow-editor-add-step-${kind}`}
+              >
+                <Icon size={14} />
+                {stepKindLabel(kind)}
+              </DropdownMenu.Item>
+            );
+          })}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }

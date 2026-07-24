@@ -1,6 +1,7 @@
 import React from "react";
 import * as RadixSelect from "@radix-ui/react-select";
 import { Check, ChevronDown } from "lucide-react";
+import { useModalPortalContainer } from "./Modal";
 import "./ui.css";
 
 /** A single option for the simple {@link Select} API. */
@@ -84,6 +85,9 @@ export function Select({
   ...rest
 }: SelectProps): React.ReactElement {
   const testid = rest["data-testid"];
+  // Portal into the enclosing Modal's content (if any) so the listbox stays
+  // clickable inside a dialog; `null` falls back to Radix's default body (#1868).
+  const portalContainer = useModalPortalContainer();
 
   return (
     <RadixSelect.Root value={value} onValueChange={onChange} disabled={disabled}>
@@ -98,7 +102,7 @@ export function Select({
           <ChevronDown width={14} height={14} aria-hidden="true" />
         </RadixSelect.Icon>
       </RadixSelect.Trigger>
-      <RadixSelect.Portal>
+      <RadixSelect.Portal container={portalContainer}>
         <RadixSelect.Content className="ui-select__content" position="popper" sideOffset={4}>
           <RadixSelect.Viewport>
             {children ??
