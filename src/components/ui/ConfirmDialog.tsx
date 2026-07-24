@@ -30,6 +30,8 @@ export interface ConfirmDialogProps {
   open: boolean;
   /** Heading text. */
   title: React.ReactNode;
+  /** Optional description for screen readers (rendered visually hidden). */
+  description?: string;
   /**
    * Plain body message (the common case). Optional so a caller may supply only
    * a richer {@link ConfirmDialogProps.children | children} body slot instead.
@@ -65,6 +67,15 @@ export interface ConfirmDialogProps {
   onConfirm: () => void | Promise<void>;
   /** Invoked when the user cancels (button, ESC, scrim click). */
   onCancel: () => void;
+  /**
+   * Base for the action-button test ids (defaults to `"confirm-dialog"`, so the
+   * Cancel/Confirm buttons and the "don't ask again" checkbox are
+   * `confirm-dialog-cancel` / `confirm-dialog-confirm` /
+   * `confirm-dialog-dont-ask-again`). Override it so a migrated call site keeps
+   * its own historical ids (e.g. `"confirm-delete"` → `confirm-delete-cancel` /
+   * `confirm-delete-confirm`) without every consumer sharing one id.
+   */
+  testIdBase?: string;
   /** Test hook forwarded to the modal content. */
   "data-testid"?: string;
 }
@@ -84,6 +95,7 @@ export interface ConfirmDialogProps {
 export function ConfirmDialog({
   open,
   title,
+  description,
   message,
   children,
   confirmLabel = "Confirm",
@@ -92,6 +104,7 @@ export function ConfirmDialog({
   confirmDisabled,
   confirmErrorToast,
   dontAskAgain,
+  testIdBase = "confirm-dialog",
   onConfirm,
   onCancel,
   ...rest
@@ -111,6 +124,7 @@ export function ConfirmDialog({
       open={open}
       onOpenChange={(isOpen) => !isOpen && onCancel()}
       title={title}
+      description={description}
       data-testid={rest["data-testid"]}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
@@ -125,7 +139,7 @@ export function ConfirmDialog({
             ref={cancelBtnRef}
             variant="secondary"
             onClick={onCancel}
-            data-testid="confirm-dialog-cancel"
+            data-testid={`${testIdBase}-cancel`}
           >
             {cancelLabel}
           </Button>
@@ -134,7 +148,7 @@ export function ConfirmDialog({
             onClick={onConfirm}
             disabled={confirmDisabled}
             errorToast={confirmErrorToast}
-            data-testid="confirm-dialog-confirm"
+            data-testid={`${testIdBase}-confirm`}
           >
             {confirmLabel}
           </Button>
@@ -149,7 +163,7 @@ export function ConfirmDialog({
             checked={dontAskAgain.checked}
             onCheckedChange={dontAskAgain.onChange}
             aria-label={dontAskAgain.label ?? "Don't ask again"}
-            data-testid={dontAskAgain["data-testid"] ?? "confirm-dialog-dont-ask-again"}
+            data-testid={dontAskAgain["data-testid"] ?? `${testIdBase}-dont-ask-again`}
           />
           <span>{dontAskAgain.label ?? "Don't ask again"}</span>
         </label>
