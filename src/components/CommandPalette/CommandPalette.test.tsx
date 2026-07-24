@@ -117,6 +117,30 @@ describe("CommandPalette", () => {
     expect(connectSpy).not.toHaveBeenCalled();
   });
 
+  it("runs the highlighted workflow on Enter via the manual trigger and closes", () => {
+    const runWorkflow = vi.fn(() => Promise.resolve());
+    useAppStore.setState({
+      runWorkflow,
+      workflows: [
+        {
+          id: "wf-1",
+          name: "Deploy",
+          tags: [],
+          steps: [{ kind: "send-command", command: "echo hi" }],
+          triggers: [{ kind: "manual" }],
+          createdAt: "2026-07-24T00:00:00Z",
+          updatedAt: "2026-07-24T00:00:00Z",
+        },
+      ],
+    });
+    typeInto("run workflow: deploy");
+    expect(activeLabel()).toBe("Run Workflow: Deploy");
+    keydown("Enter");
+    expect(runWorkflow).toHaveBeenCalledWith("wf-1");
+    expect(useAppStore.getState().commandPaletteOpen).toBe(false);
+    expect(connectSpy).not.toHaveBeenCalled();
+  });
+
   it("connects the highlighted connection on Enter and closes", () => {
     typeInto("production");
     keydown("Enter");

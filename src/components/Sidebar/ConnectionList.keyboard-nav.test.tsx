@@ -141,6 +141,7 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
     keydown(item1, "Enter");
 
     expect(addTab).toHaveBeenCalledWith("Connection conn-1", "local", expect.anything(), {
+      connectionId: "conn-1",
       terminalOptions: undefined,
     });
   });

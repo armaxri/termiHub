@@ -189,6 +189,7 @@ import {
   type WorkflowAuthorizeLocalProcessSeam,
   type WorkflowRunLocalProcessSeam,
 } from "@/services/workflowRunner";
+import { dispatchOnConnectTriggers } from "@/services/workflowTriggers";
 import {
   invokeRunLocalProcess,
   cancelLocalProcess,
@@ -271,6 +272,12 @@ export interface AddTabOptions {
   sessionId?: string | null;
   /** Persistent-connection id this tab is attached to, if any. */
   persistentConnectionId?: string;
+  /**
+   * Saved-connection id this tab is opened from, if any. Threaded onto the tab
+   * so the on-connect workflow trigger (#1855) can match the freshly opened
+   * session back to its connection.
+   */
+  connectionId?: string;
   /**
    * Marks the tab as an externally spawned session with no saved connection
    * (#1446). Defaults to `false`.
@@ -2542,7 +2549,29 @@ export const useAppStore = create<AppState>((set, get) => {
       });
       // A non-null session id means this tab has connected — settle it in any
       // in-flight restore/launch cohort so the aggregate summary can fire (#1146).
-      if (sessionId) get().settleRestoreTab(tabId, "connected");
+      if (sessionId) {
+        get().settleRestoreTab(tabId, "connected");
+
+        // On-connect workflow triggers (#1855): a terminal session that opened
+        // for a saved connection runs any workflow bound to that connection,
+        // once per session open (interactive shells only — file-browser and
+        // remote-desktop tabs are excluded here). Matching/guarding lives in the
+        // workflowTriggers service; the store only supplies state and the run.
+        const connectedTab = getAllLeaves(get().rootPanel)
+          .flatMap((l) => l.tabs)
+          .find((t) => t.id === tabId);
+        if (connectedTab?.contentType === "terminal" && connectedTab.connectionId) {
+          dispatchOnConnectTriggers({
+            connectionId: connectedTab.connectionId,
+            tabId,
+            sessionId,
+            workflows: get().workflows,
+            run: (workflowId, targetTabId) => {
+              void get().runWorkflow(workflowId, { targetTabId });
+            },
+          });
+        }
+      }
     },
 
     addTab: (title, connectionType, config, options) => {
@@ -2552,6 +2581,7 @@ export const useAppStore = create<AppState>((set, get) => {
         terminalOptions,
         sessionId,
         persistentConnectionId,
+        connectionId,
         spawned,
         initialCommand,
       } = options ?? {};
@@ -2565,7 +2595,7 @@ export const useAppStore = create<AppState>((set, get) => {
           type: "local",
           config: { shell: state.defaultShell },
         };
-        const newTab = createTab(
+        const baseTab = createTab(
           title,
           connectionType,
           defaultConfig,
@@ -2576,6 +2606,7 @@ export const useAppStore = create<AppState>((set, get) => {
           spawned,
           initialCommand
         );
+        const newTab: TerminalTab = connectionId ? { ...baseTab, connectionId } : baseTab;
         createdTabId = newTab.id;
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
