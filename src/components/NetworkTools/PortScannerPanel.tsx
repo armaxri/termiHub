@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { Play, StopCircle } from "lucide-react";
-import { Button, Modal, Field, Input, NumberInput } from "@/components/ui";
+import { Button, ConfirmDialog, Field, Input, NumberInput } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkPortScan,
@@ -250,34 +250,18 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         }
       />
 
-      <Modal
+      <ConfirmDialog
         open={warnOpen}
-        onOpenChange={setWarnOpen}
         title="Large scan"
         description="Confirm before starting a scan that may take a while."
+        message={`This scan will probe about ${probeEstimate.toLocaleString()} host/port combinations and may take several minutes. Continue?`}
+        confirmLabel="Start scan"
+        confirmVariant="primary"
+        testIdBase="port-scan-warn"
         data-testid="port-scan-warn-modal"
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={() => setWarnOpen(false)}
-              data-testid="port-scan-warn-cancel"
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              onClick={handleConfirmLargeScan}
-              data-testid="port-scan-warn-confirm"
-            >
-              Start scan
-            </Button>
-          </>
-        }
-      >
-        This scan will probe about {probeEstimate.toLocaleString()} host/port combinations and may
-        take several minutes. Continue?
-      </Modal>
+        onConfirm={handleConfirmLargeScan}
+        onCancel={() => setWarnOpen(false)}
+      />
     </form>
   );
 }

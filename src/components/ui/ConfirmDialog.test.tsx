@@ -77,6 +77,59 @@ describe("ConfirmDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it("renders a children body slot between the message and the action row", () => {
+    render(
+      <ConfirmDialog
+        open
+        title="Save host"
+        message="Give it a name."
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        data-testid="my-confirm"
+      >
+        <input data-testid="body-field" defaultValue="Office NAS" />
+      </ConfirmDialog>
+    );
+    const dialog = document.querySelector('[data-testid="my-confirm"]');
+    // Message stays; the body slot renders alongside it.
+    expect(dialog?.textContent).toContain("Give it a name.");
+    const field = document.querySelector('[data-testid="body-field"]');
+    expect(field).toBeTruthy();
+    // The body slot renders above the action row.
+    const confirmBtn = document.querySelector('[data-testid="confirm-dialog-confirm"]');
+    expect(
+      field!.compareDocumentPosition(confirmBtn!) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
+  });
+
+  it("renders a children-only body with no message", () => {
+    render(
+      <ConfirmDialog
+        open
+        title="Save host"
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+        data-testid="my-confirm"
+      >
+        <input data-testid="body-field" />
+      </ConfirmDialog>
+    );
+    expect(document.querySelector('[data-testid="body-field"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="confirm-dialog-confirm"]')).toBeTruthy();
+  });
+
+  it("disables the confirm button when confirmDisabled is set", () => {
+    render(
+      <ConfirmDialog open title="Save host" confirmDisabled onConfirm={vi.fn()} onCancel={vi.fn()}>
+        <input data-testid="body-field" />
+      </ConfirmDialog>
+    );
+    const confirmBtn = document.querySelector(
+      '[data-testid="confirm-dialog-confirm"]'
+    ) as HTMLButtonElement;
+    expect(confirmBtn.disabled).toBe(true);
+  });
+
   it("renders the don't-ask-again checkbox and reports changes", () => {
     const onChange = vi.fn();
     render(

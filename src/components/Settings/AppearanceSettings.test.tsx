@@ -2,12 +2,35 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { AppSettings } from "@/types/connection";
+import type { ThemeDefinition } from "@/themes/types";
 import { AppearanceSettings } from "./AppearanceSettings";
 
-vi.mock("@/themes", () => ({
+const toastSuccess = vi.fn();
+
+// Keep the real theme helpers (createCustomTheme, resolve, encode) but stub the
+// applyTheme/previewTheme side effects so the tests don't mutate global CSS.
+vi.mock("@/themes", async (orig) => ({
+  ...(await orig<typeof import("@/themes")>()),
   applyTheme: vi.fn(),
+  previewTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
 }));
+
+vi.mock("@/components/ui", async (orig) => ({
+  ...(await orig<typeof import("@/components/ui")>()),
+  toast: { success: (...a: unknown[]) => toastSuccess(...a), error: vi.fn(), loading: vi.fn() },
+}));
+
+/** A minimal but valid custom theme for option/select tests. */
+function customTheme(id: string, name: string): ThemeDefinition {
+  return {
+    id,
+    name,
+    colorScheme: "dark",
+    baseTheme: "dark",
+    colors: {} as ThemeDefinition["colors"],
+  };
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -96,5 +119,74 @@ describe("AppearanceSettings — numeric fields", () => {
     const onChange = renderWith({ ...defaultSettings, lineHeight: 1.5 });
     setValue(fieldInput("Line Height"), "");
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ lineHeight: undefined }));
+  });
+});
+
+/** Query a testid from the container or any Radix portal on document.body. */
+function byId<T extends Element = HTMLElement>(testid: string): T {
+  return document.querySelector(`[data-testid="${testid}"]`) as T;
+}
+
+describe("AppearanceSettings — custom themes", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    toastSuccess.mockClear();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("disables Edit and Delete when no custom theme is selected", () => {
+    renderWith({ ...defaultSettings, theme: "dark" });
+    expect((byId("appearance-theme-edit") as HTMLButtonElement).disabled).toBe(true);
+    expect((byId("appearance-theme-delete") as HTMLButtonElement).disabled).toBe(true);
+    expect((byId("appearance-theme-new") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("enables Edit and Delete when the active theme is a custom one", () => {
+    renderWith({
+      ...defaultSettings,
+      theme: "custom:t1",
+      customThemes: [customTheme("t1", "Ocean")],
+    });
+    expect((byId("appearance-theme-edit") as HTMLButtonElement).disabled).toBe(false);
+    expect((byId("appearance-theme-delete") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("opens the theme editor when New Theme is clicked", () => {
+    renderWith(defaultSettings);
+    act(() => (byId("appearance-theme-new") as HTMLButtonElement).click());
+    expect(byId("theme-editor")).toBeTruthy();
+  });
+
+  it("deletes the active custom theme and falls back to dark", () => {
+    const onChange = renderWith({
+      ...defaultSettings,
+      theme: "custom:t1",
+      customThemes: [customTheme("t1", "Ocean")],
+    });
+    act(() => (byId("appearance-theme-delete") as HTMLButtonElement).click());
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ theme: "dark", customThemes: [] })
+    );
+    expect(toastSuccess).toHaveBeenCalled();
+  });
+
+  it("creates and selects a new custom theme end to end", () => {
+    const onChange = renderWith(defaultSettings);
+    act(() => (byId("appearance-theme-new") as HTMLButtonElement).click());
+    setValue(byId<HTMLInputElement>("theme-editor-name"), "Sunset");
+    act(() => (byId("theme-editor-save") as HTMLButtonElement).click());
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0][0] as AppSettings;
+    expect(next.customThemes).toHaveLength(1);
+    expect(next.customThemes![0].name).toBe("Sunset");
+    expect(next.theme).toBe(`custom:${next.customThemes![0].id}`);
+    expect(toastSuccess).toHaveBeenCalled();
   });
 });

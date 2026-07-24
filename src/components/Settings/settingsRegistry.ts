@@ -61,7 +61,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Theme",
     description: "Application color theme",
     category: "appearance",
-    keywords: ["dark", "light", "color", "mode"],
+    keywords: ["dark", "light", "color", "mode", "custom", "theme editor", "palette"],
   },
   {
     id: "fontFamily",
