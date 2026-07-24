@@ -196,6 +196,13 @@ pub struct AppSettings {
     /// always starts with a fresh empty session.
     #[serde(default = "default_true")]
     pub restore_last_session_on_startup: bool,
+    /// How the previous session is restored on startup: `"never"`, `"ask"`, or
+    /// `"always"`. `None` migrates from `restore_last_session_on_startup`
+    /// (`false` → `"never"`, otherwise the frontend default `"ask"`). The
+    /// frontend owns the resolution (`resolveRestoreMode`); the backend only
+    /// persists the chosen value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub restore_last_session_mode: Option<String>,
     /// When true (default), every terminal session opened is recorded to the
     /// browsable session history (`session-history.json`). Turning it off stops
     /// all automatic recording (existing entries are kept).
@@ -314,6 +321,7 @@ impl Default for AppSettings {
             provide_x_server_automatically: None,
             stop_x_server_when_idle: true,
             restore_last_session_on_startup: true,
+            restore_last_session_mode: None,
             session_history_enabled: true,
             session_history_limit: default_session_history_limit(),
             show_recent_sessions: true,
@@ -604,6 +612,30 @@ mod tests {
         let json = serde_json::to_string(&settings).unwrap();
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
         assert!(!deserialized.restore_last_session_on_startup);
+    }
+
+    #[test]
+    fn restore_last_session_mode_round_trips() {
+        // Unset by default and omitted from the serialized JSON.
+        let default = AppSettings::default();
+        assert!(default.restore_last_session_mode.is_none());
+        let default_json = serde_json::to_string(&default).unwrap();
+        assert!(!default_json.contains("restoreLastSessionMode"));
+
+        // A set value survives a serialize/deserialize round-trip.
+        let settings = AppSettings {
+            restore_last_session_mode: Some("ask".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("restoreLastSessionMode"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.restore_last_session_mode.as_deref(), Some("ask"));
+
+        // A legacy file without the field deserializes to None.
+        let legacy = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let legacy_settings: AppSettings = serde_json::from_str(legacy).unwrap();
+        assert!(legacy_settings.restore_last_session_mode.is_none());
     }
 
     #[test]

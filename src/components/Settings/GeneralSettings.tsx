@@ -4,6 +4,7 @@ import { ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
 import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
+import { resolveRestoreMode } from "@/utils/restoreMode";
 import { isWindows } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
 import { Button, NumberInput, Select, SelectItem, Toggle, toast } from "@/components/ui";
@@ -203,14 +204,23 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
         {show("restoreLastSessionOnStartup") && (
           <SettingsField
             label="Restore Last Session on Startup"
-            hint="Reopen the tabs and panel layout from your previous session when the app starts. Sessions that can no longer reconnect are shown in a disconnected state."
+            hint="Choose how the tabs and panel layout from your previous session are handled when the app starts. Never starts fresh; Ask offers a restore dialog; Always restores silently. Sessions that can no longer reconnect are shown in a disconnected state."
           >
-            <Toggle
-              checked={settings.restoreLastSessionOnStartup ?? true}
-              onCheckedChange={(checked) =>
-                onChange({ ...settings, restoreLastSessionOnStartup: checked })
+            <Select
+              value={resolveRestoreMode(settings)}
+              onChange={(value) =>
+                onChange({
+                  ...settings,
+                  restoreLastSessionMode: value as "never" | "ask" | "always",
+                })
               }
-              data-testid="settings-restore-last-session"
+              options={[
+                { value: "never", label: "Never" },
+                { value: "ask", label: "Ask each time" },
+                { value: "always", label: "Always" },
+              ]}
+              aria-label="Restore last session on startup"
+              data-testid="settings-restore-last-session-mode"
             />
           </SettingsField>
         )}

@@ -165,6 +165,11 @@ import {
   captureAllTabGroups,
   getWorkspaceLeaves,
 } from "@/utils/workspaceLayout";
+import {
+  resolveRestoreMode,
+  summarizeLastSession,
+  type RestorePrompt,
+} from "@/utils/restoreMode";
 import { Macro, MacroStep } from "@/types/macro";
 import {
   listMacros as apiListMacros,
@@ -1398,6 +1403,30 @@ interface AppState {
   restoreLastSession: () => Promise<boolean>;
   /** Clear the persisted last session (e.g. when restore-on-startup is disabled). */
   clearLastSession: () => Promise<void>;
+  /**
+   * Pending "restore previous session?" prompt for `ask` mode: a summary of the
+   * stored last session shown by the {@link SessionRestoreDialog}. `null` when
+   * no prompt is showing.
+   */
+  restorePrompt: RestorePrompt | null;
+  /**
+   * `ask`-mode startup step: peek the stored last session and, when it has
+   * tabs, raise {@link restorePrompt} so the dialog can offer to restore. A
+   * no-op when nothing is stored.
+   */
+  promptRestore: () => Promise<void>;
+  /**
+   * Resolve the restore prompt with "Restore": optionally persist
+   * `restoreLastSessionMode: "always"` (when `remember`), then restore the
+   * stored session.
+   */
+  confirmRestorePrompt: (remember: boolean) => Promise<void>;
+  /**
+   * Resolve the restore prompt with "Start Fresh": optionally persist
+   * `restoreLastSessionMode: "never"` (when `remember`), then clear the stored
+   * session.
+   */
+  dismissRestorePrompt: (remember: boolean) => Promise<void>;
 
   // Credential store
   credentialStoreStatus: CredentialStoreStatusInfo | null;
@@ -6838,7 +6867,8 @@ export const useAppStore = create<AppState>((set, get) => {
     saveLastSession: async () => {
       const state = get();
       // Respect the setting at save time so toggling it takes effect immediately.
-      if (state.settings.restoreLastSessionOnStartup === false) return;
+      // "never" means the user does not want a session kept, so skip the write.
+      if (resolveRestoreMode(state.settings) === "never") return;
       const tabGroups = captureAllTabGroups(
         state.tabGroups,
         state.activeTabGroupId,
@@ -6967,6 +6997,48 @@ export const useAppStore = create<AppState>((set, get) => {
           `Failed to clear saved session: ${err instanceof Error ? err.message : String(err)}`
         );
       }
+    },
+
+    restorePrompt: null,
+
+    promptRestore: async () => {
+      try {
+        const session = await apiLoadLastSession();
+        if (!session || session.tabGroups.length === 0) return;
+        const summary = summarizeLastSession(session);
+        // Nothing launchable → treat as "no session" and stay silent.
+        if (summary.tabCount === 0) return;
+        set({ restorePrompt: summary });
+      } catch (err) {
+        // A corrupt/failed load must not wedge startup — surface it like a
+        // failed restore and start fresh.
+        frontendLog("workspace", `Failed to load last session for prompt: ${String(err)}`);
+        toast.error("Could not load previous session");
+      }
+    },
+
+    confirmRestorePrompt: async (remember) => {
+      const state = get();
+      if (remember) {
+        await state.updateSettings({
+          ...state.settings,
+          restoreLastSessionMode: "always",
+        });
+      }
+      set({ restorePrompt: null });
+      await get().restoreLastSession();
+    },
+
+    dismissRestorePrompt: async (remember) => {
+      const state = get();
+      if (remember) {
+        await state.updateSettings({
+          ...state.settings,
+          restoreLastSessionMode: "never",
+        });
+      }
+      set({ restorePrompt: null });
+      await get().clearLastSession();
     },
 
     // Credential store

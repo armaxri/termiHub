@@ -393,7 +393,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "restoreLastSessionOnStartup",
     label: "Restore Last Session on Startup",
-    description: "Reopen the tabs and layout from your previous session when the app starts",
+    description:
+      "Never, ask, or always reopen the tabs and layout from your previous session when the app starts",
     category: "general",
     keywords: [
       "restore",
@@ -406,6 +407,10 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "remember",
       "last",
       "previous",
+      "ask",
+      "always",
+      "never",
+      "mode",
     ],
   },
   {

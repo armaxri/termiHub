@@ -20,6 +20,7 @@ import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { OpenSavedFileDialog } from "@/components/Terminal/OpenSavedFileDialog";
 import { ConfirmCloseTabDialog } from "@/components/Terminal/ConfirmCloseTabDialog";
 import { ConfirmSessionCloseDialog } from "@/components/Terminal/ConfirmSessionCloseDialog";
+import { SessionRestoreDialog } from "@/components/SessionRestoreDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { XServerConnectConsent } from "@/components/OpenConnections/XServerConnectConsent";
 import { ToastProvider, TooltipProvider } from "@/components/ui";
@@ -37,6 +38,7 @@ import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
 import { getCliWorkspace } from "@/services/workspaceApi";
+import { resolveRestoreMode } from "@/utils/restoreMode";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -183,13 +185,17 @@ function App() {
       }
 
       const store = useAppStore.getState();
-      if (store.settings.restoreLastSessionOnStartup !== false) {
-        if (!handledByCli) {
-          await store.restoreLastSession();
-        }
-      } else {
-        // Restore disabled: drop any stale stored session from a previous run.
+      const restoreMode = resolveRestoreMode(store.settings);
+      if (restoreMode === "never") {
+        // Never restore: drop any stale stored session from a previous run.
         await store.clearLastSession();
+      } else if (!handledByCli) {
+        if (restoreMode === "always") {
+          await store.restoreLastSession();
+        } else {
+          // "ask": raise the restore dialog when a session is stored.
+          await store.promptRestore();
+        }
       }
 
       // Always observe layout changes; saveLastSession itself honors the current
@@ -337,6 +343,7 @@ function App() {
           <UpdateNotification />
           <ConfirmCloseTabDialog />
           <ConfirmSessionCloseDialog />
+          <SessionRestoreDialog />
           <XServerConnectConsent />
           <ToastProvider />
         </div>
