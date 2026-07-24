@@ -43,6 +43,20 @@ jobs:
           # Save to file (multiline support)
           echo "$CHANGELOG" > release_notes.md
 
+      - name: Mark security release
+        # The desktop self-update check (src-tauri/src/commands/update.rs) treats a
+        # release as a *security* update when its body contains the "<!-- security -->"
+        # marker, dropping the "Skip this version" action so the patch cannot be
+        # suppressed (#1878). Emit that marker when the notes carry a Keep a Changelog
+        # "### Security" section — or when a maintainer forces it by setting the
+        # TERMIHUB_SECURITY_RELEASE repository variable. node is preinstalled on the
+        # runner (same as scripts/internal/parse-issue-refs.mjs in auto-close-issues).
+        env:
+          TERMIHUB_SECURITY_RELEASE: ${{ vars.TERMIHUB_SECURITY_RELEASE }}
+        run: |
+          node scripts/internal/emit-release-notes.mjs release_notes.md > release_notes.marked.md
+          mv release_notes.marked.md release_notes.md
+
       - name: Create GitHub Release
         run: |
           gh release create "v${{ steps.get_version.outputs.version }}" \
