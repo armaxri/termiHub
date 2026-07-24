@@ -520,4 +520,55 @@ describe("SecuritySettings", () => {
     // The inline error still surfaces the wrong-password feedback; dialog stays open.
     expect(query("change-password-dialog")).not.toBeNull();
   });
+
+  describe("workflow local process execution (#1857)", () => {
+    it("shows the opt-in toggle, off by default, with no allowlist section", () => {
+      useAppStore.setState({
+        credentialStoreStatus: { mode: "none", status: "unlocked" },
+      });
+      render();
+
+      expect(query("workflow-local-process-toggle")).not.toBeNull();
+      // The allowlist section only appears once the opt-in is on.
+      expect(query("workflow-allowlist")).toBeNull();
+      expect(query("workflow-allowlist-empty")).toBeNull();
+    });
+
+    it("enabling the opt-in persists the setting", async () => {
+      useAppStore.setState({
+        credentialStoreStatus: { mode: "none", status: "unlocked" },
+      });
+      render();
+
+      const toggle = query("workflow-local-process-toggle") as HTMLElement;
+      await act(async () => {
+        toggle.click();
+      });
+
+      expect(useAppStore.getState().settings.workflowLocalProcessEnabled).toBe(true);
+    });
+
+    it("lists allowed programs and removes one on click", async () => {
+      useAppStore.setState({
+        credentialStoreStatus: { mode: "none", status: "unlocked" },
+        settings: {
+          ...useAppStore.getState().settings,
+          workflowLocalProcessEnabled: true,
+          workflowLocalProcessAllowlist: ["notify-send", "echo"],
+        },
+      });
+      render();
+
+      const list = query("workflow-allowlist");
+      expect(list).not.toBeNull();
+      expect(list?.querySelectorAll("li")).toHaveLength(2);
+
+      const remove = query("workflow-allowlist-remove-echo") as HTMLElement;
+      await act(async () => {
+        remove.click();
+      });
+
+      expect(useAppStore.getState().settings.workflowLocalProcessAllowlist).toEqual(["notify-send"]);
+    });
+  });
 });

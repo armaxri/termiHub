@@ -881,6 +881,38 @@ mod tests {
     }
 
     #[test]
+    fn workflow_local_process_settings_default_off_and_round_trip() {
+        // Default: opt-in OFF, empty allowlist (#1857).
+        let defaults = AppSettings::default();
+        assert!(!defaults.workflow_local_process_enabled);
+        assert!(defaults.workflow_local_process_allowlist.is_empty());
+
+        let settings = AppSettings {
+            workflow_local_process_enabled: true,
+            workflow_local_process_allowlist: vec!["/usr/bin/notify-send".to_string()],
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("workflowLocalProcessEnabled"));
+        assert!(json.contains("workflowLocalProcessAllowlist"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.workflow_local_process_enabled);
+        assert_eq!(
+            deserialized.workflow_local_process_allowlist,
+            vec!["/usr/bin/notify-send".to_string()]
+        );
+    }
+
+    #[test]
+    fn workflow_local_process_missing_fields_default_to_disabled() {
+        // An older settings file without the fields must load as disabled/empty.
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let deserialized: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(!deserialized.workflow_local_process_enabled);
+        assert!(deserialized.workflow_local_process_allowlist.is_empty());
+    }
+
+    #[test]
     fn experimental_features_enabled_round_trip() {
         let settings = AppSettings {
             experimental_features_enabled: Some(true),

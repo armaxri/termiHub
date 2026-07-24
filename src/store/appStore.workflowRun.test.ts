@@ -53,6 +53,18 @@ vi.mock("@/services/workflowApi", () => ({
   deleteWorkflow: vi.fn(() => Promise.resolve()),
 }));
 
+// The guarded local-process backend (#1857) is mocked so no Tauri command runs;
+// `invokeRunLocalProcess` records what it was asked to spawn.
+const invokeRunLocalProcess = vi.fn(() =>
+  Promise.resolve({ exitCode: 0, timedOut: false, cancelled: false })
+);
+const cancelLocalProcess = vi.fn(() => Promise.resolve(true));
+vi.mock("@/services/localProcessApi", () => ({
+  invokeRunLocalProcess: (args: unknown) => invokeRunLocalProcess(args as never),
+  cancelLocalProcess: (runId: string) => cancelLocalProcess(runId as never),
+  subscribeLocalProcessOutput: vi.fn(() => Promise.resolve(() => {})),
+}));
+
 import { useAppStore } from "./appStore";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { serializeWorkflows } from "@/services/workflowIo";
@@ -94,6 +106,8 @@ describe("appStore — workflow run slice (#1852)", () => {
     useAppStore.setState(useAppStore.getInitialState());
     savedWorkflows.length = 0;
     injected = [];
+    invokeRunLocalProcess.mockClear();
+    cancelLocalProcess.mockClear();
     registerTerminalInputInjector(async (_tabId, data) => {
       injected.push(data);
       return true;
@@ -200,19 +214,102 @@ describe("appStore — workflow run slice (#1852)", () => {
     expect(toast.success).toHaveBeenCalled();
   });
 
-  it("fails with a toast when a step kind is not yet implemented", async () => {
-    seedConnectedTerminal();
-    useAppStore.setState({
-      workflows: [
-        workflow("w1", [cmd("a"), { kind: "run-local-process", program: "x", args: [] }]),
-      ],
+  describe("run-local-process guardrails (#1857)", () => {
+    const lp = (program: string, args: string[]): WorkflowStep => ({
+      kind: "run-local-process",
+      program,
+      args,
     });
 
-    await useAppStore.getState().runWorkflow("w1");
+    /** Enable the opt-in, optionally pre-authorizing programs. */
+    function enableLocalProcess(allowlist: string[] = []) {
+      useAppStore.setState({
+        settings: {
+          ...useAppStore.getState().settings,
+          workflowLocalProcessEnabled: true,
+          workflowLocalProcessAllowlist: allowlist,
+        },
+      });
+    }
 
-    expect(injected).toEqual(["a\n"]);
-    expect(useAppStore.getState().workflowRun).toBeNull();
-    expect(toast.error).toHaveBeenCalled();
+    it("GUARDRAIL: refuses to spawn when the opt-in is off (default)", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("a"), lp("rm", ["-rf", "/"])])] });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      // The prior send ran; the local process NEVER spawned.
+      expect(injected).toEqual(["a\n"]);
+      expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("runs an allowlisted program without prompting, passing discrete args", async () => {
+      seedConnectedTerminal();
+      enableLocalProcess(["notify-send"]);
+      useAppStore.setState({
+        workflows: [workflow("w1", [lp("notify-send", ["--urgency", "hello world"])])],
+      });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(useAppStore.getState().localProcessPrompt).toBeNull();
+      expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+      const call = invokeRunLocalProcess.mock.calls[0][0] as unknown as {
+        program: string;
+        args: string[];
+      };
+      expect(call.program).toBe("notify-send");
+      // GUARDRAIL: the space-containing arg stays a single, literal argv entry.
+      expect(call.args).toEqual(["--urgency", "hello world"]);
+      expect(toast.success).toHaveBeenCalled();
+    });
+
+    it("prompts for a not-yet-trusted program and runs it on 'allow once'", async () => {
+      seedConnectedTerminal();
+      enableLocalProcess([]);
+      useAppStore.setState({ workflows: [workflow("w1", [lp("echo", ["hi"])])] });
+
+      const done = useAppStore.getState().runWorkflow("w1");
+      // Wait for the prompt to open.
+      await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+      expect(useAppStore.getState().localProcessPrompt?.program).toBe("echo");
+
+      useAppStore.getState().resolveLocalProcessPrompt("once");
+      await done;
+
+      expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+      // "once" does NOT persist the program to the allowlist.
+      expect(useAppStore.getState().settings.workflowLocalProcessAllowlist).toEqual([]);
+    });
+
+    it("'always allow' persists the program to the allowlist", async () => {
+      seedConnectedTerminal();
+      enableLocalProcess([]);
+      useAppStore.setState({ workflows: [workflow("w1", [lp("echo", ["hi"])])] });
+
+      const done = useAppStore.getState().runWorkflow("w1");
+      await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+      useAppStore.getState().resolveLocalProcessPrompt("always");
+      await done;
+
+      expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+      expect(useAppStore.getState().settings.workflowLocalProcessAllowlist).toContain("echo");
+    });
+
+    it("GUARDRAIL: 'cancel' refuses — the process never spawns", async () => {
+      seedConnectedTerminal();
+      enableLocalProcess([]);
+      useAppStore.setState({ workflows: [workflow("w1", [lp("echo", ["hi"])])] });
+
+      const done = useAppStore.getState().runWorkflow("w1");
+      await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+      useAppStore.getState().resolveLocalProcessPrompt("cancel");
+      await done;
+
+      expect(invokeRunLocalProcess).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalled();
+    });
   });
 
   it("errors when the workflow does not exist", async () => {
