@@ -224,6 +224,23 @@ describe("WorkflowEditorDialog", () => {
     expect(result.steps[3].kind).toBe("wait");
   });
 
+  it("portals the Add step menu inside the dialog content, not document.body (#1868)", async () => {
+    render();
+
+    await openAddStepMenu();
+    const dialog = query("workflow-editor-dialog");
+    const waitItem = query("workflow-editor-add-step-wait");
+    expect(dialog).not.toBeNull();
+    expect(waitItem).not.toBeNull();
+
+    // Regression guard for #1868: a modal Radix Dialog sets pointer-events: none
+    // on document.body, so a menu portalled to body is dead/unclickable in a
+    // real browser. The menu must live INSIDE the dialog subtree (its
+    // pointer-events: auto content) — jsdom can't reproduce the pointer-events
+    // failure itself, but it can prove the structural fix that prevents it.
+    expect(dialog!.contains(waitItem)).toBe(true);
+  });
+
   it("deletes an individual step before saving", async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render({ onSave });
