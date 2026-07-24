@@ -31,6 +31,8 @@ import {
   Search,
   X,
   FileDown,
+  Link,
+  Square,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
@@ -327,9 +329,51 @@ function ConnectionItem({
     [setDragRef, rowRef]
   );
 
+  // Desktop-local persistent-session wiring (#1881). A saved connection whose
+  // type reports the `persistent` capability can run as a background session:
+  // it shows the ∞ badge + a run-state dot and gains Start/Attach/Stop controls,
+  // mirroring the agent-hosted definitions in AgentNode. Persistence state is
+  // keyed by the plain connection id in the store's `persistentSessions` map.
+  const persistentCapable = useAppStore(
+    (s) =>
+      s.connectionTypes.find((t) => t.typeId === connection.config.type)?.capabilities.persistent ??
+      false
+  );
+  const persistentEntry = useAppStore((s) => s.persistentSessions[connection.id]);
+  const startPersistentSession = useAppStore((s) => s.startPersistentSession);
+  const attachPersistentSession = useAppStore((s) => s.attachPersistentSession);
+  const stopPersistentSession = useAppStore((s) => s.stopPersistentSession);
+
+  const runState = persistentEntry?.state ?? null;
+  const isPersistentRunning = runState === "running" || runState === "attached";
+  const isPersistentTransitioning = runState === "starting" || runState === "stopping";
+  const hasPersistentError = runState === "error";
+  const isPersistentStopped = !runState || runState === "stopped" || hasPersistentError;
+
+  const stateDotClass = isPersistentRunning
+    ? "connection-tree__state-dot--running"
+    : isPersistentTransitioning
+      ? "connection-tree__state-dot--transitioning"
+      : hasPersistentError
+        ? "connection-tree__state-dot--error"
+        : "connection-tree__state-dot--stopped";
+
+  const handleStartPersistent = useCallback(() => {
+    void startPersistentSession(connection.id);
+  }, [startPersistentSession, connection.id]);
+
+  const handleAttachPersistent = useCallback(() => {
+    void attachPersistentSession(connection.id);
+  }, [attachPersistentSession, connection.id]);
+
+  const handleStopPersistent = useCallback(() => {
+    void stopPersistentSession(connection.id);
+  }, [stopPersistentSession, connection.id]);
+
   let className = "connection-tree__item";
   if (isDragging) className += " connection-tree__item--dragging";
   if (isSelected) className += " connection-tree__item--selected";
+  if (persistentCapable) className += " connection-tree__item--persistent";
 
   const jumpHosts = getJumpHosts(connection.config);
   const [showConnectionPath, setShowConnectionPath] = useState(false);
@@ -364,6 +408,13 @@ function ConnectionItem({
               onFocus={() => onRowFocus(rowIndex)}
             >
               <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
+              {persistentCapable && (
+                <span
+                  className={`connection-tree__state-dot ${stateDotClass}`}
+                  title={runState ?? "stopped"}
+                  data-testid={`persistent-state-dot-${connection.id}`}
+                />
+              )}
               <span className="connection-tree__label">{connection.name}</span>
               {jumpHosts.length > 0 && (
                 <span
@@ -377,27 +428,119 @@ function ConnectionItem({
                   )}
                 </span>
               )}
+              {persistentCapable && (
+                <span
+                  className="connection-tree__persistent-badge"
+                  title="Runs while the app is open. Use an agent for across-session persistence."
+                  data-testid={`persistent-badge-${connection.id}`}
+                >
+                  ∞
+                </span>
+              )}
               <span className="connection-tree__type">{connection.config.type}</span>
+              {persistentCapable && !isPersistentTransitioning && (
+                <span className="connection-tree__persistent-actions">
+                  {isPersistentStopped ? (
+                    <Tooltip content="Start session" side="top">
+                      <button
+                        type="button"
+                        className="connection-tree__action-btn"
+                        aria-label="Start session"
+                        data-testid={`persistent-start-${connection.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleStartPersistent();
+                        }}
+                      >
+                        <Play size={12} />
+                      </button>
+                    </Tooltip>
+                  ) : (
+                    <>
+                      <Tooltip content="Attach new tab" side="top">
+                        <button
+                          type="button"
+                          className="connection-tree__action-btn"
+                          aria-label="Attach new tab"
+                          data-testid={`persistent-attach-${connection.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleAttachPersistent();
+                          }}
+                        >
+                          <Link size={12} />
+                        </button>
+                      </Tooltip>
+                      <Tooltip content="Stop session" side="top">
+                        <button
+                          type="button"
+                          className="connection-tree__action-btn connection-tree__action-btn--danger"
+                          aria-label="Stop session"
+                          data-testid={`persistent-stop-${connection.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStopPersistent();
+                          }}
+                        >
+                          <Square size={12} />
+                        </button>
+                      </Tooltip>
+                    </>
+                  )}
+                </span>
+              )}
             </button>
-            <Tooltip content="Connect" side="right">
-              <button
-                type="button"
-                className="connection-tree__connect-btn"
-                aria-label={`Connect to ${connection.name}`}
-                tabIndex={-1}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onConnect(connection);
-                }}
-                data-testid={`connection-connect-${connection.id}`}
-              >
-                <Play size={14} />
-              </button>
-            </Tooltip>
+            {!persistentCapable && (
+              <Tooltip content="Connect" side="right">
+                <button
+                  type="button"
+                  className="connection-tree__connect-btn"
+                  aria-label={`Connect to ${connection.name}`}
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onConnect(connection);
+                  }}
+                  data-testid={`connection-connect-${connection.id}`}
+                >
+                  <Play size={14} />
+                </button>
+              </Tooltip>
+            )}
           </div>
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
+            {persistentCapable && isPersistentStopped && (
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={handleStartPersistent}
+                data-testid="context-connection-start-persistent"
+              >
+                <Play size={14} /> Start Session
+              </ContextMenu.Item>
+            )}
+            {persistentCapable && isPersistentRunning && (
+              <>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={handleAttachPersistent}
+                  data-testid="context-connection-attach-persistent"
+                >
+                  <Link size={14} /> Attach New Tab
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu__item context-menu__item--danger"
+                  onSelect={handleStopPersistent}
+                  data-testid="context-connection-stop-persistent"
+                >
+                  <Square size={14} /> Stop Session
+                </ContextMenu.Item>
+              </>
+            )}
+            {persistentCapable && !isPersistentTransitioning && (
+              <ContextMenu.Separator className="context-menu__separator" />
+            )}
             <ContextMenu.Item
               className="context-menu__item"
               onSelect={() => onConnect(connection)}
