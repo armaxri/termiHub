@@ -1297,6 +1297,15 @@ interface AppState {
   /** Cancel the in-flight workflow run, if any. Idempotent. */
   cancelWorkflowRun: () => void;
   /**
+   * Inline output surface for a `run-local-process` step (#1865): the streamed
+   * stdout/stderr and the final exit outcome, kept visible after the run ends
+   * until dismissed. `null` when no local process has run this session (or the
+   * surface was dismissed).
+   */
+  workflowRunOutput: WorkflowRunOutputState | null;
+  /** Dismiss the inline run-output surface. */
+  dismissWorkflowRunOutput: () => void;
+  /**
    * Pending authorization prompt for a guarded `run-local-process` step (#1857),
    * or `null` when none is open. Set when a workflow reaches such a step whose
    * program is not yet on the allowlist; resolved by the user via the dialog.
@@ -1440,6 +1449,51 @@ export interface WorkflowRunState {
   completed: number;
 }
 
+/** A single streamed line of a local process's output, tagged by its stream. */
+export interface WorkflowRunOutputLine {
+  /** Monotonic id within the current process, so React can key incremental appends. */
+  id: number;
+  /** Which stream produced the line. */
+  stream: "stdout" | "stderr";
+  /** The line of text (no trailing newline). */
+  text: string;
+}
+
+/** Live status of the inline run-output surface (#1865). */
+export type WorkflowRunOutputStatus = "running" | "completed" | "cancelled" | "failed";
+
+/**
+ * The inline run-output surface for a `run-local-process` step (#1865).
+ *
+ * Unlike {@link WorkflowRunState}, which is cleared the instant a run ends, this
+ * persists after the run finishes so the streamed stdout/stderr and the final
+ * exit outcome stay visible in the workflow panel until the user dismisses it or
+ * starts another run. It is created lazily — only when a run actually spawns a
+ * local process — so terminal-native workflows never surface an empty panel. It
+ * reuses the exact `subscribeLocalProcessOutput` stream #1857 already emits; no
+ * new backend channel is added.
+ */
+export interface WorkflowRunOutputState {
+  /** The workflow whose local process produced this output. */
+  workflowId: string;
+  /** The workflow's name, for the panel header. */
+  workflowName: string;
+  /** The program the (most recent) `run-local-process` step spawned. */
+  program: string;
+  /** The discrete arguments it was spawned with. */
+  args: string[];
+  /** Streamed stdout/stderr lines, in arrival order. */
+  lines: WorkflowRunOutputLine[];
+  /** Live status: `running` until the run reaches a terminal state. */
+  status: WorkflowRunOutputStatus;
+  /** The process exit code once known (`null` when killed before it reported one). */
+  exitCode: number | null;
+  /** `true` when the process was killed for exceeding its timeout. */
+  timedOut: boolean;
+  /** A human-readable failure reason when `status` is `failed`. */
+  error?: string;
+}
+
 /** Options for {@link AppState.runWorkflow}. */
 export interface RunWorkflowOptions {
   /** Tab to run against; defaults to the active terminal tab. */
@@ -1473,6 +1527,13 @@ const LOCAL_PROCESS_TIMEOUT_MS = 60_000;
 
 /** How often (ms) a running local process polls the workflow cancel signal. */
 const LOCAL_PROCESS_CANCEL_POLL_MS = 200;
+
+/**
+ * Cap on retained inline run-output lines (#1865). A chatty process can emit
+ * thousands of lines; the surface keeps only the most recent so run state cannot
+ * grow unbounded. The full stream still lands in the LogViewer.
+ */
+const WORKFLOW_RUN_OUTPUT_MAX_LINES = 1000;
 
 /**
  * Handle for the currently-running workflow, held at module scope so
@@ -6161,8 +6222,42 @@ export const useAppStore = create<AppState>((set, get) => {
         const runId = `wf-lp-${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         frontendLog("workflow", `local process starting: ${[program, ...args].join(" ")}`);
 
+        // Open the inline run-output surface for this spawn (#1865). A fresh
+        // spawn owns the panel — its program/args and a clean line buffer — so a
+        // second run-local-process step shows its own process, not the prior one.
+        let lineSeq = 0;
+        set({
+          workflowRunOutput: {
+            workflowId,
+            workflowName: workflow.name,
+            program,
+            args,
+            lines: [],
+            status: "running",
+            exitCode: null,
+            timedOut: false,
+          },
+        });
+
+        // Reuse the exact streamed-output events #1857 already emits (keyed by
+        // run id): each line lands in the LogViewer AND the inline surface.
         const unlisten = await subscribeLocalProcessOutput(runId, (chunk) => {
           frontendLog("workflow", `[${chunk.stream}] ${chunk.line}`);
+          const nextLine: WorkflowRunOutputLine = {
+            id: lineSeq++,
+            stream: chunk.stream,
+            text: chunk.line,
+          };
+          set((s) => {
+            if (!s.workflowRunOutput) return {};
+            const lines = [...s.workflowRunOutput.lines, nextLine];
+            // Keep only the most recent lines so a chatty process stays bounded.
+            const trimmed =
+              lines.length > WORKFLOW_RUN_OUTPUT_MAX_LINES
+                ? lines.slice(lines.length - WORKFLOW_RUN_OUTPUT_MAX_LINES)
+                : lines;
+            return { workflowRunOutput: { ...s.workflowRunOutput, lines: trimmed } };
+          });
         });
         // Poll the run's cancel signal and forward it to the backend so a
         // long-running process is killed when the run is cancelled.
@@ -6184,12 +6279,31 @@ export const useAppStore = create<AppState>((set, get) => {
             `local process finished: exitCode=${outcome.exitCode ?? "null"} ` +
               `timedOut=${outcome.timedOut} cancelled=${outcome.cancelled}`
           );
+          // Record the process outcome on the inline surface. The overall run
+          // status (completed / cancelled / failed) is stamped once the run
+          // resolves; here we surface only the raw exit code / timeout (#1865).
+          set((s) =>
+            s.workflowRunOutput
+              ? {
+                  workflowRunOutput: {
+                    ...s.workflowRunOutput,
+                    exitCode: outcome.exitCode,
+                    timedOut: outcome.timedOut,
+                  },
+                }
+              : {}
+          );
           return outcome;
         } catch (err) {
           // A backend rejection (e.g. opt-in disabled at the trust boundary)
           // surfaces as a failed step rather than crashing the run.
           const message = err instanceof Error ? err.message : String(err);
           frontendLog("workflow", `local process error: ${message}`);
+          set((s) =>
+            s.workflowRunOutput
+              ? { workflowRunOutput: { ...s.workflowRunOutput, exitCode: 1, timedOut: false } }
+              : {}
+          );
           return { exitCode: 1, timedOut: false, cancelled: false };
         } finally {
           window.clearInterval(poll);
@@ -6211,6 +6325,9 @@ export const useAppStore = create<AppState>((set, get) => {
           total,
           completed: 0,
         },
+        // Clear any prior run's output panel when a fresh run starts; it is
+        // recreated lazily only if this run spawns a local process (#1865).
+        workflowRunOutput: null,
       });
 
       const handle = runWorkflowSteps(
@@ -6240,7 +6357,19 @@ export const useAppStore = create<AppState>((set, get) => {
       // runWorkflow may have replaced it while this one was cancelled.
       if (activeWorkflowRun === handle) {
         activeWorkflowRun = null;
-        set({ workflowRun: null });
+        set((s) => ({
+          workflowRun: null,
+          // Stamp the run's terminal status onto the inline surface so its exit
+          // outcome stays visible after the run ends (#1865). Left untouched when
+          // no local process ran (surface is null).
+          workflowRunOutput: s.workflowRunOutput
+            ? {
+                ...s.workflowRunOutput,
+                status: result.status,
+                error: result.status === "failed" ? result.error : undefined,
+              }
+            : null,
+        }));
       }
 
       if (result.status === "completed") {
@@ -6263,6 +6392,11 @@ export const useAppStore = create<AppState>((set, get) => {
       if (activeWorkflowRun) {
         activeWorkflowRun.cancel();
       }
+    },
+
+    workflowRunOutput: null,
+    dismissWorkflowRunOutput: () => {
+      set({ workflowRunOutput: null });
     },
 
     localProcessPrompt: null,

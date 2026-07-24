@@ -1,0 +1,134 @@
+/*
+ * Inline run-output panel for a `run-local-process` workflow step (#1865).
+ * Docks to the foot of the Workflow Manager, above nothing else, and never
+ * pushes the workflow list off screen — its stream area scrolls internally.
+ */
+.workflow-run-output {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  max-height: 45%;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.workflow-run-output__header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.workflow-run-output__spacer {
+  flex: 1;
+}
+
+.workflow-run-output__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.workflow-run-output__status-icon {
+  flex-shrink: 0;
+}
+
+.workflow-run-output--running .workflow-run-output__status {
+  color: var(--text-accent);
+}
+
+.workflow-run-output--completed .workflow-run-output__status {
+  color: var(--color-success);
+}
+
+.workflow-run-output--cancelled .workflow-run-output__status {
+  color: var(--color-warning);
+}
+
+.workflow-run-output--failed .workflow-run-output__status {
+  color: var(--color-error);
+}
+
+.workflow-run-output__status-icon--spin {
+  animation: workflow-run-output-spin 0.8s linear infinite;
+}
+
+@keyframes workflow-run-output-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-run-output__status-icon--spin {
+    animation: none;
+  }
+}
+
+.workflow-run-output__command {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.workflow-run-output__command code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-run-output__stream {
+  flex: 1;
+  min-height: 64px;
+  overflow-y: auto;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-primary);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.workflow-run-output__line {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-primary);
+}
+
+.workflow-run-output__line--stderr {
+  color: var(--color-error);
+}
+
+.workflow-run-output__empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.workflow-run-output__footer {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.workflow-run-output--completed .workflow-run-output__footer {
+  color: var(--color-success);
+}
+
+.workflow-run-output--cancelled .workflow-run-output__footer {
+  color: var(--color-warning);
+}
+
+.workflow-run-output--failed .workflow-run-output__footer {
+  color: var(--color-error);
+}

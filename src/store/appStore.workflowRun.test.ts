@@ -59,10 +59,23 @@ const invokeRunLocalProcess = vi.fn((_args: { program: string; args: string[] })
   Promise.resolve({ exitCode: 0 as number | null, timedOut: false, cancelled: false })
 );
 const cancelLocalProcess = vi.fn((_runId: string) => Promise.resolve(true));
+// The last-registered streamed-output handler (#1865), so a test can push
+// stdout/stderr chunks through the same seam #1857 emits them on.
+type LocalProcessOutputChunk = { runId: string; stream: "stdout" | "stderr"; line: string };
+let localProcessOutputHandler: ((chunk: LocalProcessOutputChunk) => void) | null = null;
+const subscribeLocalProcessOutput = vi.fn(
+  (_runId: string, onChunk: (chunk: LocalProcessOutputChunk) => void) => {
+    localProcessOutputHandler = onChunk;
+    return Promise.resolve(() => {
+      localProcessOutputHandler = null;
+    });
+  }
+);
 vi.mock("@/services/localProcessApi", () => ({
   invokeRunLocalProcess: (args: { program: string; args: string[] }) => invokeRunLocalProcess(args),
   cancelLocalProcess: (runId: string) => cancelLocalProcess(runId),
-  subscribeLocalProcessOutput: vi.fn(() => Promise.resolve(() => {})),
+  subscribeLocalProcessOutput: (runId: string, onChunk: (chunk: LocalProcessOutputChunk) => void) =>
+    subscribeLocalProcessOutput(runId, onChunk),
 }));
 
 import { useAppStore } from "./appStore";
@@ -110,6 +123,8 @@ describe("appStore — workflow run slice (#1852)", () => {
     injected = [];
     invokeRunLocalProcess.mockClear();
     cancelLocalProcess.mockClear();
+    subscribeLocalProcessOutput.mockClear();
+    localProcessOutputHandler = null;
     registerTerminalInputInjector(async (_tabId, data) => {
       injected.push(data);
       return true;
@@ -311,6 +326,71 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(invokeRunLocalProcess).not.toHaveBeenCalled();
       expect(toast.error).toHaveBeenCalled();
+    });
+
+    // --- Inline run-output surface (#1865) ---
+
+    it("accumulates streamed stdout/stderr into the inline run-output surface", async () => {
+      seedConnectedTerminal();
+      enableLocalProcess(["make"]);
+      useAppStore.setState({ workflows: [workflow("w1", [lp("make", ["build"])])] });
+      // The spawn emits two lines through the same event seam #1857 uses, then
+      // exits 0. Emitting inside the invoke mock guarantees the handler is set.
+      invokeRunLocalProcess.mockImplementationOnce(() => {
+        localProcessOutputHandler?.({ runId: "r", stream: "stdout", line: "compiling" });
+        localProcessOutputHandler?.({ runId: "r", stream: "stderr", line: "warning: unused" });
+        return Promise.resolve({ exitCode: 0, timedOut: false, cancelled: false });
+      });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      const out = useAppStore.getState().workflowRunOutput;
+      expect(out).not.toBeNull();
+      expect(out?.program).toBe("make");
+      expect(out?.lines.map((l) => [l.stream, l.text])).toEqual([
+        ["stdout", "compiling"],
+        ["stderr", "warning: unused"],
+      ]);
+      // The run finished cleanly — the surface reflects the terminal outcome.
+      expect(out?.status).toBe("completed");
+      expect(out?.exitCode).toBe(0);
+    });
+
+    it("marks the run-output surface failed with the exit code on a non-zero exit", async () => {
+      seedConnectedTerminal();
+      enableLocalProcess(["make"]);
+      useAppStore.setState({ workflows: [workflow("w1", [lp("make", ["build"])])] });
+      invokeRunLocalProcess.mockImplementationOnce(() =>
+        Promise.resolve({ exitCode: 2, timedOut: false, cancelled: false })
+      );
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      const out = useAppStore.getState().workflowRunOutput;
+      expect(out?.status).toBe("failed");
+      expect(out?.exitCode).toBe(2);
+    });
+
+    it("does not open a run-output surface for a terminal-native workflow", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("echo hi")])] });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      // No local process ran, so the inline surface stays null.
+      expect(useAppStore.getState().workflowRunOutput).toBeNull();
+    });
+
+    it("dismissWorkflowRunOutput clears the surface", async () => {
+      seedConnectedTerminal();
+      enableLocalProcess(["make"]);
+      useAppStore.setState({ workflows: [workflow("w1", [lp("make", ["build"])])] });
+
+      await useAppStore.getState().runWorkflow("w1");
+      expect(useAppStore.getState().workflowRunOutput).not.toBeNull();
+
+      useAppStore.getState().dismissWorkflowRunOutput();
+      expect(useAppStore.getState().workflowRunOutput).toBeNull();
     });
   });
 

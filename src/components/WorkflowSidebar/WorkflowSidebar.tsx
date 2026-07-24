@@ -10,6 +10,7 @@ import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { serializeWorkflows } from "@/services/workflowIo";
 import type { Workflow } from "@/types/workflow";
 import { WorkflowListItem } from "./WorkflowListItem";
+import { WorkflowRunOutput } from "./WorkflowRunOutput";
 import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
 import "./WorkflowSidebar.css";
 
@@ -400,6 +401,7 @@ export function WorkflowSidebar() {
           })}
         </div>
       )}
+      <WorkflowRunOutput />
       <WorkflowEditorDialog
         open={editing !== null}
         workflow={editing?.workflow ?? null}
