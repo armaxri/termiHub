@@ -485,7 +485,7 @@ it("should have no accessibility violations", async () => {
 
 ## Comprehensive System Tests
 
-termiHub includes a comprehensive test infrastructure with 13 Docker containers (SSH variants, telnet, serial, SFTP stress, network fault injection) and Rust integration tests that exercise the app's backends directly. See the [concept document](concepts/partial/comprehensive-test-infrastructure.html) for the full design.
+termiHub includes a comprehensive test infrastructure with a Docker container fleet (SSH variants, jump-host, telnet, serial, SFTP stress, network fault injection, and more) and Rust integration tests that exercise the app's backends directly. See the [concept document](concepts/implemented/comprehensive-test-infrastructure.html) for the full design.
 
 ### Quick Start
 

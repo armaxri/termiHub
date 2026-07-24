@@ -1016,6 +1016,55 @@ flowchart TD
 <li><strong>PR 6 — Custom themes</strong>: Theme editor tab, import/export, custom theme persistence.</li>
 </ol>
 <p>PRs 4 and 5 can be developed in parallel after PR 3 is merged.</p>
+<hr>
+<h2 id="implementation-status">Implementation Status</h2>
+<p><strong>Status: Partial — built-in theme engine shipped; custom themes not built.</strong> The
+concept issue #193 (Concept) is closed. PRs 1–5 (equivalent) are done; the custom-theme surface
+(PR 6) is unbuilt.</p>
+<h3 id="what-is-implemented">What is implemented</h3>
+<ul>
+<li><strong>Theme engine</strong> — <code>src/themes/engine.ts</code> (<code>resolveTheme</code>, <code>setCssVariables</code> via
+  <code>COLOR_TO_CSS_VAR</code>, <code>applyTheme</code>, <code>getXtermTheme</code>, <code>onThemeChange</code>) with an OS
+  <code>matchMedia("(prefers-color-scheme: dark)")</code> listener for <code>"system"</code> mode.</li>
+<li><strong>Theme definitions</strong> — <code>src/themes/types.ts</code>, <code>dark.ts</code>, <code>light.ts</code>, plus two
+  extra shipped themes beyond the concept's scope: <code>solarized-dark.ts</code> / <code>solarized-light.ts</code>
+  (added by #578).</li>
+<li><strong>Settings dropdown</strong> — <code>src/components/Settings/AppearanceSettings.tsx</code> (Dark, Light,
+  Solarized Dark, Solarized Light, System); persisted via <code>AppSettings.theme</code>
+  (<code>src/types/connection.ts</code>).</li>
+<li><strong>Live xterm re-theming</strong> — <code>Terminal.tsx</code> applies <code>getXtermTheme()</code> on init and on
+  change; <code>FileEditor.tsx</code>/<code>appStore.ts</code> subscribe via <code>onThemeChange</code>.</li>
+<li><strong>Hardcoded-color refactor</strong> — state-dot / status colors moved to CSS variables
+  (<code>--state-connected</code>, <code>--color-success</code>, …); no hardcoded <code>#fff</code> in component CSS.</li>
+</ul>
+<h3 id="what-is-missing">What is missing (the custom-theme half)</h3>
+<ul>
+<li><strong>Custom theme editor + <code>customThemes</code> field</strong> — no <code>ThemeEditor</code> component, no
+  <code>customThemes</code> in <code>AppSettings</code>, no <code>custom:&lt;id&gt;</code> theme variant, and
+  <code>ThemeDefinition</code> lacks the <code>type</code>/<code>baseTheme</code> fields custom themes need to inherit
+  from a base. Tracked: <a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a>.</li>
+<li><strong>Theme import/export</strong> — no <code>importTheme</code>/<code>exportTheme</code>, no JSON validation. Tracked:
+  <a href="https://github.com/armaxri/termiHub/issues/1880">#1880</a>.</li>
+<li><strong>Theme preview tooltip on dropdown hover</strong> — not implemented (folds into the editor work,
+  <a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a>).</li>
+</ul>
+<hr>
+<h2 id="sync">Sync Ledger</h2>
+<blockquote>
+<p>Maintained by <code>/sync-concept light-color-theme</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
+</blockquote>
+<p><strong>Last synced:</strong> 2026-07-24 at commit <code>fb7befbb</code> · <strong>Status:</strong> diverged (partial). Built-in engine shipped; custom themes tracked in #1879/#1880.</p>
+<h3 id="sync-open">Open divergences</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Recommendation</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Two built-in themes: Dark and Light</td><td>Also ships Solarized Dark + Solarized Light (#578)</td><td>Undocumented</td><td>Add the solarized themes to the concept's theme list</td></tr>
+<tr><td>2</td><td><code>ThemeDefinition</code> has <code>type</code> and <code>baseTheme</code>; <code>AppSettings.theme</code> union includes <code>custom:${string}</code></td><td>Interface omits both and adds <code>colorScheme</code>; union has the two solarized variants, no <code>custom:</code> form</td><td>Missing</td><td>Add <code>type</code>/<code>baseTheme</code> + <code>customThemes</code> (<a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a>)</td></tr>
+<tr><td>3</td><td>Custom theme editor, live preview tooltip, import/export</td><td>None exist</td><td>Missing</td><td><a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a>, <a href="https://github.com/armaxri/termiHub/issues/1880">#1880</a></td></tr>
+</tbody>
+</table>
+</div>
     </div>
 
     <script src="../_assets/mermaid.min.js"></script>

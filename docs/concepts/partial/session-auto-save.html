@@ -749,36 +749,51 @@ graph TD
 <p>Use Tauri's <code>on_window_event</code> with <code>WindowEvent::CloseRequested</code> to trigger session snapshot saving. The frontend listens for a <code>before-close</code> event, serializes the current panel tree and open tabs, and sends the snapshot to the backend for persistence before allowing the window to close.</p>
 <hr>
 <h2 id="implementation-status">Implementation Status</h2>
-<p><strong>Status: Not implemented.</strong> The concept issue (#527) is closed. A related implementation issue
-is open: <a href="https://github.com/armaxri/termiHub/issues/586">#586 — persist open tabs and restore last session on startup</a>.</p>
+<p><strong>Status: Partial — session restore shipped; session history not started.</strong> The
+session-restore half shipped and its issue <a href="https://github.com/armaxri/termiHub/issues/586">#586</a>
+is closed (merged 2026-06-16). The MobaXterm-style session-history half is unbuilt.</p>
 <h3 id="what-exists">What exists</h3>
 <ul>
-<li>The workspace system (<code>src-tauri/src/workspace/</code>) can save and restore named panel layouts
-  with connection definitions — but this requires explicit user action (save workspace) and does
-  not automatically capture the last session state.</li>
-<li><code>src/components/Terminal/Terminal.tsx</code> and <code>appStore.ts</code> have session-stability logic that
-  keeps a terminal alive through tab switches — this is intra-session stability, not persistence
-  across restarts.</li>
+<li><strong>Automatic session persistence + restore-on-startup</strong> —
+  <code>src-tauri/src/workspace/last_session.rs</code> (<code>LastSession</code> reusing
+  <code>WorkspaceTabGroupDef</code>, <code>LastSessionStorage</code>/<code>LastSessionManager</code>, persisted to
+  <code>last-session.json</code>), commands <code>save_last_session</code>/<code>load_last_session</code>/<code>clear_last_session</code>,
+  frontend <code>src/services/lastSessionApi.ts</code>. Auto-save is debounced on any layout change
+  (<code>App.tsx</code>), restore runs on launch, guarded by the <code>restoreLastSessionOnStartup</code> setting
+  and covered by <code>appStore.restoreGuard.test.ts</code>/<code>appStore.lastSession.test.ts</code>. The
+  mechanism (save-on-change + silent restore) differs from the concept's save-on-close + restore
+  dialog design.</li>
+<li>The workspace system (<code>src-tauri/src/workspace/</code>) remains the manual named-layout foundation.</li>
 </ul>
 <h3 id="what-is-missing">What is missing</h3>
 <ul>
-<li><strong>Automatic snapshot on close</strong> — no <code>before-close</code> Tauri event handler serializes the panel
-  tree to disk.</li>
-<li><strong>Auto-restore on startup</strong> — the app always opens to an empty state; it never reads a
-  previous session snapshot.</li>
-<li><strong>Session history sidebar section</strong> — no "Recent Sessions" section exists in the sidebar.</li>
-<li><strong>Quick-connect bar</strong> — no <code>user@host</code> fast-entry widget exists.</li>
-<li><strong>History deduplication</strong> — no history store or deduplication logic.</li>
+<li><strong>Session-history store</strong> — no <code>session-history.json</code>, auto-record on tab open, or
+  dedup logic. Tracked: <a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a>.</li>
+<li><strong>"Recent Sessions" sidebar section</strong> — collapsible history list, pin, per-entry context
+  menu, relative time. Tracked: <a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a>.</li>
+<li><strong>Quick-connect bar</strong> — <code>user@host[:port]</code> fast entry + autocomplete-from-history, and
+  "Save as Connection" promotion. Tracked:
+  <a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a>.</li>
+<li><strong>Restore mode (ask/never/always) + restore dialog</strong> — code has only a boolean setting and
+  restores silently. Tracked: <a href="https://github.com/armaxri/termiHub/issues/1884">#1884</a>.</li>
 </ul>
-<h3 id="to-consider">To consider</h3>
-<ul>
-<li>Issue #586 covers only "persist open tabs" (restore last layout on startup), which is a
-  subset of this full concept. Start with #586 before tackling session history / quick-connect.</li>
-<li>The workspace system is the correct foundation — a "last session" snapshot is essentially an
-  auto-saved, unnamed workspace. Reuse <code>WorkspaceDefinition</code> rather than a new schema.</li>
-<li>Passwords must never be stored in history; the existing credential store should handle any
-  saved credentials.</li>
-</ul>
+<hr>
+<h2 id="sync">Sync Ledger</h2>
+<blockquote>
+<p>Maintained by <code>/sync-concept session-auto-save</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
+</blockquote>
+<p><strong>Last synced:</strong> 2026-07-24 at commit <code>fb7befbb</code> · <strong>Status:</strong> diverged (partial). Session restore shipped (#586); session history (#1883) and the restore-mode dialog (#1884) remain.</p>
+<h3 id="sync-open">Open divergences</h3>
+<div class="table-wrap">
+<table>
+<thead><tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Recommendation</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Bespoke <code>LastSessionSnapshot</code>/<code>PanelSnapshot</code> schema in <code>src-tauri/src/session/snapshot.rs</code>; save on window <code>CloseRequested</code></td><td>Reuses <code>WorkspaceTabGroupDef</code> in <code>src-tauri/src/workspace/last_session.rs</code>; saves debounced on layout change (survives crashes)</td><td>Design reality</td><td>Concept reconciled to the shipped mechanism; commands are <code>save/load/clear_last_session</code></td></tr>
+<tr><td>2</td><td>Session-history store, Recent Sessions sidebar, quick-connect bar, save-as-connection promotion, history settings</td><td>None exist</td><td>Missing</td><td><a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a></td></tr>
+<tr><td>3</td><td>Restore ask/never/always mode + "Restore Previous Session?" dialog with per-tab checkboxes and offline-target warnings</td><td>Single boolean <code>restoreLastSessionOnStartup</code>; silent restore</td><td>Missing</td><td><a href="https://github.com/armaxri/termiHub/issues/1884">#1884</a></td></tr>
+</tbody>
+</table>
+</div>
     </div>
 
     <script src="../_assets/mermaid.min.js"></script>
