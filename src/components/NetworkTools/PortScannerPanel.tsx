@@ -275,6 +275,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
       <ConfirmDialog
         open={warnOpen}
         title="Large scan"
+        variant="warn"
         description="Confirm before starting a scan that may take a while."
         message={`This scan will probe about ${probeEstimate.toLocaleString()} host/port combinations and may take several minutes. Continue?`}
         confirmLabel="Start scan"

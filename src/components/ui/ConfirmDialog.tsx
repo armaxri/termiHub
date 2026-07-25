@@ -1,8 +1,23 @@
 import React, { useEffect, useRef } from "react";
+import { AlertTriangle } from "lucide-react";
 import { Modal } from "./Modal";
 import { Button, ButtonVariant } from "./Button";
 import { Checkbox } from "./Checkbox";
 import "./ui.css";
+
+/**
+ * Intent of a {@link ConfirmDialog}, driving the tinted accent icon rendered in
+ * the Modal title:
+ *
+ * - `danger` — destructive/irreversible action: an alert triangle in
+ *   `--color-error` (the same token the danger confirm Button uses).
+ * - `warn` — a heads-up before a heavy/slow action: an alert triangle in
+ *   `--color-warning`.
+ * - `default` — no accent icon, unless the caller supplies one via
+ *   {@link ConfirmDialogProps.icon | icon} (e.g. a save glyph for the WoL
+ *   "save device" modal), which renders untinted.
+ */
+export type ConfirmDialogVariant = "default" | "warn" | "danger";
 
 /**
  * Optional "don't ask again" opt-out rendered below a confirmation message.
@@ -30,6 +45,22 @@ export interface ConfirmDialogProps {
   open: boolean;
   /** Heading text. */
   title: React.ReactNode;
+  /**
+   * Intent driving the tinted title accent icon (defaults to `"default"`, which
+   * shows no icon). `danger`/`warn` render an alert triangle tinted with
+   * `--color-error` / `--color-warning`; see {@link ConfirmDialogVariant}. This
+   * is presentational only — the confirm Button's colour is set independently
+   * via {@link ConfirmDialogProps.confirmVariant | confirmVariant}.
+   */
+  variant?: ConfirmDialogVariant;
+  /**
+   * Optional caller-supplied title accent icon. Overrides the
+   * {@link ConfirmDialogProps.variant | variant} default icon, so a
+   * `variant="default"` dialog can still show a glyph (e.g. `<Save />` for the
+   * WoL save modal). A caller icon on a `danger`/`warn` dialog is still tinted
+   * with that variant's accent colour.
+   */
+  icon?: React.ReactNode;
   /** Optional description for screen readers (rendered visually hidden). */
   description?: string;
   /**
@@ -95,6 +126,8 @@ export interface ConfirmDialogProps {
 export function ConfirmDialog({
   open,
   title,
+  variant = "default",
+  icon,
   description,
   message,
   children,
@@ -111,6 +144,24 @@ export function ConfirmDialog({
 }: ConfirmDialogProps): React.ReactElement {
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
 
+  // Resolve the title accent icon: a caller-supplied `icon` wins, otherwise the
+  // danger/warn variants fall back to an alert triangle. `default` has no icon.
+  const accentIcon =
+    icon ?? (variant === "default" ? null : <AlertTriangle size={16} aria-hidden="true" />);
+  const titleNode = accentIcon ? (
+    <span className="ui-confirm__title">
+      <span
+        className={`ui-confirm__title-icon ui-confirm__title-icon--${variant}`}
+        data-testid={`${testIdBase}-title-icon`}
+      >
+        {accentIcon}
+      </span>
+      <span>{title}</span>
+    </span>
+  ) : (
+    title
+  );
+
   // Focus the safe (Cancel) button on open so an accidental Enter does not
   // trigger the destructive action.
   useEffect(() => {
@@ -123,7 +174,7 @@ export function ConfirmDialog({
     <Modal
       open={open}
       onOpenChange={(isOpen) => !isOpen && onCancel()}
-      title={title}
+      title={titleNode}
       description={description}
       data-testid={rest["data-testid"]}
       onKeyDown={(e) => {
