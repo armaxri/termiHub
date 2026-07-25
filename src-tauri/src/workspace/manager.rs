@@ -135,6 +135,7 @@ impl WorkspaceManager {
             name: format!("Copy of {}", original.name),
             description: original.description,
             tab_groups: original.tab_groups,
+            windows: original.windows,
         };
 
         store.workspaces.push(duplicate);
@@ -170,8 +171,10 @@ impl WorkspaceManager {
                         name: g.name.clone(),
                         color: g.color.clone(),
                         layout: replace_connection_ids_with_names(&g.layout, id_to_name),
+                        window_id: g.window_id.clone(),
                     })
                     .collect(),
+                windows: ws.windows.clone(),
             })
             .collect();
 
@@ -224,8 +227,10 @@ impl WorkspaceManager {
                         name: g.name,
                         color: g.color,
                         layout: resolve_connection_names_to_ids(&g.layout, name_to_id),
+                        window_id: g.window_id,
                     })
                     .collect(),
+                windows: entry.windows,
             };
 
             store.workspaces.push(definition);
@@ -348,9 +353,11 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             description: None,
+            windows: None,
             tab_groups: vec![WorkspaceTabGroupDef {
                 name: "Main".to_string(),
                 color: None,
+                window_id: None,
                 layout: WorkspaceLayoutNode::Leaf {
                     tabs: vec![WorkspaceTabDef {
                         connection_ref: Some("conn-1".to_string()),
@@ -369,10 +376,12 @@ mod tests {
             id: id.to_string(),
             name: name.to_string(),
             description: None,
+            windows: None,
             tab_groups: vec![
                 WorkspaceTabGroupDef {
                     name: "Dev".to_string(),
                     color: None,
+                    window_id: None,
                     layout: WorkspaceLayoutNode::Leaf {
                         tabs: vec![WorkspaceTabDef {
                             connection_ref: Some("conn-1".to_string()),
@@ -386,6 +395,7 @@ mod tests {
                 WorkspaceTabGroupDef {
                     name: "Deploy".to_string(),
                     color: Some("#ff6b6b".to_string()),
+                    window_id: None,
                     layout: WorkspaceLayoutNode::Leaf {
                         tabs: vec![WorkspaceTabDef {
                             connection_ref: Some("conn-2".to_string()),
@@ -448,9 +458,11 @@ mod tests {
             id: "ws-1".to_string(),
             name: "Test".to_string(),
             description: Some("desc".to_string()),
+            windows: None,
             tab_groups: vec![WorkspaceTabGroupDef {
                 name: "Main".to_string(),
                 color: None,
+                window_id: None,
                 layout: WorkspaceLayoutNode::Split {
                     direction: SplitDirection::Horizontal,
                     children: vec![

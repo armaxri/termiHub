@@ -38,6 +38,30 @@ export interface WorkspaceTabGroupDef {
   color?: string;
   /** The panel layout tree for this group. */
   layout: WorkspaceLayoutNode;
+  /**
+   * Logical id of the native window this group belongs to (multi-window
+   * persistence, #1905), referencing a {@link WorkspaceWindowDef.id}. Omitted
+   * for the primary window and for legacy single-window saves — an absent value
+   * restores into the main window (see `MAIN_WINDOW_LABEL`).
+   */
+  windowId?: string;
+}
+
+/**
+ * A native window recorded in a saved layout (multi-window persistence, #1905).
+ *
+ * Windows are identified by a **logical** id referenced from
+ * {@link WorkspaceTabGroupDef.windowId}; the primary window uses the
+ * `MAIN_WINDOW_LABEL` sentinel (`"main"`). The id is a grouping key, not a
+ * runtime window label — restore recreates the secondary windows and maps each
+ * logical id onto a freshly allocated `win-N`. Recorded explicitly (rather than
+ * inferred from the groups) so that an **empty** window — one holding zero tab
+ * groups, the #1902 empty-window state — still survives a save/restore round
+ * trip. Legacy single-window saves omit the window dimension entirely.
+ */
+export interface WorkspaceWindowDef {
+  /** Logical window id referenced by tab groups. `"main"` is the primary window. */
+  id: string;
 }
 
 /** A complete workspace definition. */
@@ -47,6 +71,12 @@ export interface WorkspaceDefinition {
   description?: string;
   /** The tab groups in this workspace (always at least one). */
   tabGroups: WorkspaceTabGroupDef[];
+  /**
+   * The set of windows this layout spans, in restore order (multi-window
+   * persistence, #1905). Absent/empty on legacy single-window saves, which
+   * restore entirely into the main window.
+   */
+  windows?: WorkspaceWindowDef[];
 }
 
 /** Summary of a workspace for list display. */

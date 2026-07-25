@@ -1,4 +1,4 @@
-import { WorkspaceTabGroupDef } from "@/types/workspace";
+import { WorkspaceTabGroupDef, WorkspaceWindowDef } from "@/types/workspace";
 
 /**
  * The automatically persisted "last session": the open tab groups and their
@@ -15,4 +15,10 @@ export interface LastSession {
   tabGroups: WorkspaceTabGroupDef[];
   /** Index into {@link tabGroups} of the group that was active. */
   activeGroupIndex: number;
+  /**
+   * The set of windows the session spanned, in restore order (multi-window
+   * persistence, #1905). Absent/empty for a legacy single-window session, which
+   * restores entirely into the main window.
+   */
+  windows?: WorkspaceWindowDef[];
 }

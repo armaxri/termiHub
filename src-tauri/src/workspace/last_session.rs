@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::config::WorkspaceTabGroupDef;
+use super::config::{WorkspaceTabGroupDef, WorkspaceWindowDef};
 use crate::utils::config_paths::resolve_config_dir;
 
 const FILE_NAME: &str = "last-session.json";
@@ -27,6 +27,11 @@ pub struct LastSession {
     /// Index into `tab_groups` of the group that was active.
     #[serde(default)]
     pub active_group_index: usize,
+    /// The set of windows the session spanned, in restore order (multi-window
+    /// persistence, #1905). Absent/empty for a legacy single-window session,
+    /// which restores entirely into the main window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<Vec<WorkspaceWindowDef>>,
 }
 
 impl LastSession {
@@ -147,9 +152,11 @@ mod tests {
             tab_groups: vec![WorkspaceTabGroupDef {
                 name: "Group 1".to_string(),
                 color: None,
+                window_id: None,
                 layout: WorkspaceLayoutNode::Leaf { tabs: vec![] },
             }],
             active_group_index: 0,
+            windows: None,
         }
     }
 
@@ -231,6 +238,7 @@ mod tests {
                 version: "1".to_string(),
                 tab_groups: vec![],
                 active_group_index: 0,
+                windows: None,
             })
             .unwrap();
 
