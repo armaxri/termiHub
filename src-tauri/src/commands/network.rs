@@ -109,6 +109,32 @@ pub fn network_port_scan_cancel(
     manager.cancel_task(&task_id)
 }
 
+/// One-shot TCP reachability probe used by the session-restore dialog to flag
+/// unreachable targets (issue #1931).
+///
+/// Attempts a single TCP connect to `host:port` and returns `true` only when the
+/// connection is accepted within `timeout_ms` (default 1500 ms). A refused,
+/// filtered, unresolved, or timed-out target returns `false` — for the dialog's
+/// purposes those all mean "won't connect right now".
+#[tauri::command]
+pub async fn probe_target_reachable(
+    host: String,
+    port: u16,
+    timeout_ms: Option<u64>,
+) -> Result<bool, TerminalError> {
+    let summary = port_scan::scan_ports(
+        &host,
+        &[port],
+        timeout_ms.unwrap_or(1500),
+        1,
+        |_| {},
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
+    Ok(summary.open > 0)
+}
+
 // ── Ping ─────────────────────────────────────────────────────────────────────
 
 /// Start a ping session. Returns a task ID; results are emitted as events.
@@ -282,6 +308,39 @@ pub fn network_ping_sweep_cancel(
 }
 
 // ── DNS Lookup ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn probe_reports_open_listener_reachable() {
+        // A bound (even non-accepting) listener completes the TCP handshake.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let port = listener.local_addr().unwrap().port();
+
+        let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(1000))
+            .await
+            .expect("probe should not error");
+
+        assert!(reachable, "an open TCP listener should be reachable");
+    }
+
+    #[tokio::test]
+    async fn probe_reports_closed_port_unreachable() {
+        // Bind then drop to claim a port that nothing is listening on.
+        let port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+            listener.local_addr().unwrap().port()
+        };
+
+        let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(500))
+            .await
+            .expect("probe should not error");
+
+        assert!(!reachable, "a closed port should be reported unreachable");
+    }
+}
 
 /// Perform a DNS lookup and return the records immediately.
 #[tauri::command]

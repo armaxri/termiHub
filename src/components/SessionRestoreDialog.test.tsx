@@ -79,14 +79,14 @@ describe("SessionRestoreDialog", () => {
     expect(byTestId("session-restore-dialog")?.textContent).toContain("You had 1 tab open");
   });
 
-  it("restores (without remember) when Restore is clicked", () => {
+  it("restores all tabs (without remember) when Restore is clicked", () => {
     storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
     render();
 
     act(() => (byTestId("session-restore-confirm") as HTMLElement).click());
 
     expect(confirmRestorePrompt).toHaveBeenCalledTimes(1);
-    expect(confirmRestorePrompt).toHaveBeenCalledWith(false);
+    expect(confirmRestorePrompt).toHaveBeenCalledWith(false, [0]);
     expect(dismissRestorePrompt).not.toHaveBeenCalled();
   });
 
@@ -108,7 +108,73 @@ describe("SessionRestoreDialog", () => {
     act(() => (byTestId("session-restore-remember") as HTMLElement).click());
     act(() => (byTestId("session-restore-confirm") as HTMLElement).click());
 
-    expect(confirmRestorePrompt).toHaveBeenCalledWith(true);
+    expect(confirmRestorePrompt).toHaveBeenCalledWith(true, [0]);
+  });
+
+  it("renders a checkbox per tab", () => {
+    storeState.restorePrompt = {
+      tabCount: 2,
+      tabs: [
+        { title: "one", typeLabel: "SSH" },
+        { title: "two", typeLabel: "Local" },
+      ],
+    };
+    render();
+    expect(byTestId("session-restore-tab-checkbox-0")).not.toBeNull();
+    expect(byTestId("session-restore-tab-checkbox-1")).not.toBeNull();
+  });
+
+  it("restores only the checked tabs", () => {
+    storeState.restorePrompt = {
+      tabCount: 2,
+      tabs: [
+        { title: "one", typeLabel: "SSH" },
+        { title: "two", typeLabel: "Local" },
+      ],
+    };
+    render();
+
+    // Uncheck the first tab, then confirm.
+    act(() => (byTestId("session-restore-tab-checkbox-0") as HTMLElement).click());
+    act(() => (byTestId("session-restore-confirm") as HTMLElement).click());
+
+    expect(confirmRestorePrompt).toHaveBeenCalledWith(false, [1]);
+  });
+
+  it("shows a warning icon and starts unchecked for an unreachable tab", () => {
+    storeState.restorePrompt = {
+      tabCount: 2,
+      tabs: [
+        { title: "reachable", typeLabel: "SSH", reachability: "reachable" },
+        {
+          title: "/dev/ttyUSB0",
+          typeLabel: "Serial",
+          reachability: "unreachable",
+          unreachableReason: "device offline",
+        },
+      ],
+    };
+    render();
+
+    const warning = byTestId("session-restore-tab-warning-1");
+    expect(warning).not.toBeNull();
+    expect(warning?.textContent).toContain("device offline");
+    // No warning on the reachable tab.
+    expect(byTestId("session-restore-tab-warning-0")).toBeNull();
+
+    // The unreachable tab starts unchecked, so restore excludes it by default.
+    act(() => (byTestId("session-restore-confirm") as HTMLElement).click());
+    expect(confirmRestorePrompt).toHaveBeenCalledWith(false, [0]);
+  });
+
+  it("disables the confirm button when every tab is unchecked", () => {
+    storeState.restorePrompt = { tabCount: 1, tabs: [{ title: "Shell", typeLabel: "Local" }] };
+    render();
+
+    act(() => (byTestId("session-restore-tab-checkbox-0") as HTMLElement).click());
+
+    const confirm = byTestId("session-restore-confirm") as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
   });
 
   it("passes remember=true to dismiss after ticking 'Remember my choice'", () => {
