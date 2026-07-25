@@ -77,6 +77,24 @@ pub struct SshHostKeyVerifier {
     pending: Mutex<HashMap<String, oneshot::Sender<Decision>>>,
 }
 
+/// RAII guard that removes a pending prompt entry when dropped, so the entry is
+/// cleaned up even if the `prompt` future is dropped mid-await (e.g. the connect
+/// times out) — not only on the normal resolve/reply path (#1979). Without it, a
+/// timed-out unknown-host connect leaked one `pending` entry per attempt.
+struct PendingGuard<'a> {
+    pending: &'a Mutex<HashMap<String, oneshot::Sender<Decision>>>,
+    prompt_id: String,
+}
+
+impl Drop for PendingGuard<'_> {
+    fn drop(&mut self) {
+        // Never panic in Drop — a poisoned mutex just skips cleanup.
+        if let Ok(mut map) = self.pending.lock() {
+            map.remove(&self.prompt_id);
+        }
+    }
+}
+
 impl SshHostKeyVerifier {
     /// Build a verifier that persists trust to `trust_store` and prompts through
     /// `sink`.
@@ -122,6 +140,13 @@ impl SshHostKeyVerifier {
             .lock()
             .expect("ssh host-key pending mutex poisoned")
             .insert(prompt_id.clone(), tx);
+        // Guarantee the pending entry is removed on every exit path — including
+        // when this future is dropped mid-await (connect timeout) — not just the
+        // normal resolve/reply path (#1979).
+        let _guard = PendingGuard {
+            pending: &self.pending,
+            prompt_id: prompt_id.clone(),
+        };
 
         if changed {
             warn!(
@@ -144,12 +169,9 @@ impl SshHostKeyVerifier {
             accept: false,
             remember: false,
         });
-        // Best-effort cleanup for the dropped/rejected path (resolve already
-        // removed it on the happy path).
-        self.pending
-            .lock()
-            .expect("ssh host-key pending mutex poisoned")
-            .remove(&prompt_id);
+        // `_guard` removes the pending entry on drop (here on the reply path, or
+        // if this future is cancelled mid-await). `resolve` may have removed it
+        // already on the happy path — the guard's remove is then a no-op.
         decision
     }
 }
@@ -381,5 +403,35 @@ mod tests {
         let sink = Arc::new(RecordingSink::default());
         let verifier = SshHostKeyVerifier::new(store, sink);
         assert!(!verifier.resolve("nope", true, true));
+    }
+
+    /// A prompt future dropped mid-await (e.g. the connect timed out before the
+    /// user answered) must not leak its pending entry (#1979).
+    #[tokio::test]
+    async fn dropped_prompt_leaves_no_pending_entry() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        // An unknown host prompts and awaits a verdict; never resolve it, and let
+        // the timeout drop the future.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            verifier.verify(&info("ghost", 22, "SHA256:ZZ")),
+        )
+        .await;
+        assert!(result.is_err(), "verify must not resolve without a verdict");
+        assert_eq!(
+            sink.count.load(Ordering::SeqCst),
+            1,
+            "the unknown host should have prompted"
+        );
+
+        // The dropped prompt future must have cleaned up its pending entry.
+        assert_eq!(
+            verifier.pending.lock().expect("pending mutex").len(),
+            0,
+            "pending prompt entry leaked after the future was dropped"
+        );
     }
 }
