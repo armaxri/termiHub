@@ -473,6 +473,43 @@ mod tests {
     }
 
     #[test]
+    fn broadened_claim_keeps_single_window_resize_and_single_owner_on_move() {
+        // #1939: every window now claims the sessions it renders, so a session in
+        // a lone window is *claimed* (by "main") rather than left unclaimed. This
+        // must not change single-window resize gating: the owning window still
+        // resizes it.
+        let wm = WindowManager::new();
+        assert_eq!(wm.claim("s1", "main"), None, "first render claims the session");
+        assert!(
+            wm.may_resize("s1", "main"),
+            "the sole window that rendered (and claimed) the session still resizes it"
+        );
+
+        // A move re-parents the session: the destination grants first, so there is
+        // never a moment with two owners, and the source's later release is a
+        // no-op that cannot orphan the moved session.
+        assert_eq!(
+            wm.claim("s1", "win-1"),
+            Some("main".to_string()),
+            "destination supersedes the previous owner atomically"
+        );
+        assert_eq!(wm.owner_of("s1"), Some("win-1".to_string()));
+        assert!(!wm.release("s1", "main"), "stale source release is a no-op");
+        assert_eq!(
+            wm.owner_of("s1"),
+            Some("win-1".to_string()),
+            "single-owner invariant holds across the move"
+        );
+        // Resize gating followed ownership to the destination.
+        assert!(wm.may_resize("s1", "win-1"));
+        assert!(!wm.may_resize("s1", "main"));
+
+        // Closing the tab in the owning window relinquishes ownership.
+        assert!(wm.release("s1", "win-1"), "owner release clears the entry");
+        assert_eq!(wm.owner_of("s1"), None);
+    }
+
+    #[test]
     fn last_window_teardown_policy_is_per_os() {
         // macOS keeps the app alive on last-window-close, so teardown is
         // deferred; every other platform tears down when the last window goes.
