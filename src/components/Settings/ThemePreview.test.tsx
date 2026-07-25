@@ -46,9 +46,7 @@ describe("ThemePreview", () => {
       darkTheme.colors.bgPrimary,
     ]);
     // One color chip per representative color, filled with the theme's own value.
-    const chips = Array.from(
-      container.querySelectorAll<HTMLElement>(".theme-preview__chip")
-    );
+    const chips = Array.from(container.querySelectorAll<HTMLElement>(".theme-preview__chip"));
     expect(chips).toHaveLength(4);
     expect(chips[0].style.backgroundColor).not.toBe("");
   });

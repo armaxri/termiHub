@@ -2,7 +2,15 @@ import { useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { AppSettings } from "@/types/connection";
-import { Button, NumberInput, Select, SelectItem, Tooltip, TooltipProvider, toast } from "@/components/ui";
+import {
+  Button,
+  NumberInput,
+  Select,
+  SelectItem,
+  Tooltip,
+  TooltipProvider,
+  toast,
+} from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import {
   applyTheme,
@@ -176,7 +184,9 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
               <Select
                 data-testid="appearance-theme-select"
                 value={settings.theme ?? "dark"}
-                onChange={(value) => onChange({ ...settings, theme: value as AppSettings["theme"] })}
+                onChange={(value) =>
+                  onChange({ ...settings, theme: value as AppSettings["theme"] })
+                }
               >
                 {themeOptions.map((opt) => (
                   <Tooltip

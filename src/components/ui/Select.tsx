@@ -43,8 +43,10 @@ export interface SelectProps {
 }
 
 /** Props for the exported {@link SelectItem}. */
-export interface SelectItemProps
-  extends Omit<React.ComponentPropsWithoutRef<typeof RadixSelect.Item>, "value"> {
+export interface SelectItemProps extends Omit<
+  React.ComponentPropsWithoutRef<typeof RadixSelect.Item>,
+  "value"
+> {
   value: string;
   disabled?: boolean;
   children: React.ReactNode;
