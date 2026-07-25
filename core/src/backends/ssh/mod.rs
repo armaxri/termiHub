@@ -483,6 +483,32 @@ impl ConnectionType for Ssh {
                             supports_tilde_expansion: false,
                             visible_when: None,
                         },
+                        SettingsField {
+                            key: "resilientReconnect".to_string(),
+                            label: "Resilient Reconnect".to_string(),
+                            description: Some(
+                                "Auto-reconnect a dropped link with backoff into the same tab"
+                                    .to_string(),
+                            ),
+                            help_text: Some(concat!(
+                                "For flaky links (cellular, spotty Wi-Fi), termiHub automatically ",
+                                "re-establishes a dropped SSH connection with an exponential backoff ",
+                                "instead of showing the manual reconnect prompt. It reattaches to the ",
+                                "same tab and keeps the local scrollback visible while it retries; a ",
+                                "Cancel control lets you stop and browse the scrollback.\n\n",
+                                "Without a remote agent, server-side shell state (running commands, a ",
+                                "half-typed line, the working directory) is NOT preserved — the ",
+                                "reconnect opens a fresh remote shell. Deploy an agent for full ",
+                                "session continuity.",
+                            ).to_string()),
+                            field_type: FieldType::Boolean,
+                            required: false,
+                            default: Some(serde_json::json!(false)),
+                            placeholder: None,
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
                     ],
                 },
             ],
@@ -872,7 +898,8 @@ mod tests {
                 "enableX11Forwarding",
                 "connectTimeoutSecs",
                 "env",
-                "shellIntegration"
+                "shellIntegration",
+                "resilientReconnect"
             ]
         );
     }

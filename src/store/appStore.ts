@@ -19,6 +19,7 @@ import {
   NetworkTool,
   TabGroup,
   TerminalExitInfo,
+  TerminalAutoReconnectState,
   SessionCloseConfirmRequest,
   BroadcastScope,
 } from "@/types/terminal";
@@ -272,6 +273,13 @@ import {
   registerCustomGrammars,
 } from "@/utils/monacoCustomLanguages";
 import { frontendLog } from "@/utils/frontendLog";
+import {
+  DEFAULT_BACKOFF,
+  initialReconnectState,
+  reconnectReducer,
+  type BackoffConfig,
+  type ReconnectPhase,
+} from "@/utils/reconnectBackoff";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
 import {
@@ -1121,6 +1129,14 @@ interface AppState {
   /** Error message that triggered the auto-reconnect, shown during the spinner overlay. */
   terminalReconnectTriggerErrors: Record<string, string>;
   /**
+   * Agentless resilient-reconnect loop state per tab (#1962). Present only while
+   * a plain-SSH tab that opted in is auto-reconnecting after a dropped link.
+   * Drives the auto-reconnect overlay's countdown/attempt display and the Cancel
+   * affordance; the actual backoff timer lives at module scope
+   * (`autoReconnectTimers`). Cleared on success, give-up, cancel, or tab close.
+   */
+  terminalAutoReconnect: Record<string, TerminalAutoReconnectState>;
+  /**
    * Mark a tab's session as exited. Pass `info` to record the exit code and
    * cause so the overlay can branch its wording; a `killed` reason additionally
    * drops the tab straight into view mode so no disconnect overlay appears (#1121).
@@ -1194,6 +1210,23 @@ interface AppState {
   reconnectTerminal: (tabId: string) => void;
   showTerminalReconnectPrompt: (tabId: string) => void;
   dismissTerminalReconnectPrompt: (tabId: string) => void;
+
+  /**
+   * Begin the agentless resilient-reconnect loop for a dropped plain-SSH tab
+   * that opted in (#1962). Arms an exponential-backoff timer that re-drives the
+   * tab through {@link reconnectTerminal}; a failed attempt backs off further and
+   * a success settles the loop. Called from {@link setTerminalExited} on a
+   * `dropped` exit — not usually invoked directly. No-op if already looping.
+   */
+  startAutoReconnect: (tabId: string) => void;
+  /**
+   * Stop (give up) the resilient-reconnect loop for a tab (#1962) — the Cancel
+   * affordance and the exhausted-attempts path. Clears the backoff timer and the
+   * loop state and leaves the tab in the standard "disconnected" overlay so the
+   * user can manually reconnect or browse scrollback. `error`, when given, shows
+   * the "Reconnect failed" overlay variant with that message.
+   */
+  cancelAutoReconnect: (tabId: string, error?: string) => void;
 
   // Remote connection states
   remoteStates: Record<string, string>;
@@ -2124,6 +2157,165 @@ function collectLiveTabs(state: {
     g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
   );
   return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+}
+
+// ── Agentless auto-reconnect (#1962) ────────────────────────────────────────
+//
+// Backoff timers for the resilient-reconnect loop, keyed by tab id. Kept at
+// module scope (not in the store) because a `setTimeout` handle is an imperative
+// resource, not serializable UI state — the store holds only the *display* state
+// (phase/attempt/countdown) in `terminalAutoReconnect`. Every arm clears the
+// prior handle first so a tab never has two live timers.
+const autoReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** Cancel and forget the pending backoff timer for a tab, if any. */
+function clearAutoReconnectTimer(tabId: string): void {
+  const handle = autoReconnectTimers.get(tabId);
+  if (handle !== undefined) {
+    clearTimeout(handle);
+    autoReconnectTimers.delete(tabId);
+  }
+}
+
+/** The backoff schedule for the resilient-reconnect loop. Central so tests and UI agree. */
+const autoReconnectConfig: BackoffConfig = DEFAULT_BACKOFF;
+
+/**
+ * Whether a tab is eligible for agentless resilient reconnect (#1962): a plain
+ * SSH terminal whose saved connection opted in via the "Resilient Reconnect"
+ * setting, and which is NOT agent-backed or a persistent session (those have
+ * their own continuity machinery). Reads the opt-in from the tab's connection
+ * config, where the SSH schema field persists it.
+ */
+function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
+  if (!tab) return false;
+  if (tab.contentType !== "terminal") return false;
+  if (tab.connectionType !== "ssh") return false;
+  if (tab.persistentConnectionId) return false;
+  const cfg = tab.config?.config as { resilientReconnect?: unknown; agentId?: unknown } | undefined;
+  if (!cfg) return false;
+  if (cfg.agentId) return false;
+  return cfg.resilientReconnect === true;
+}
+
+/**
+ * Drive the resilient-reconnect state machine for one tab by feeding it an event
+ * (#1962), then reconcile the imperative side effects (backoff timer, redriving
+ * the connection, overlay state) with the resulting phase. Centralising this
+ * keeps the timer, the store's display state, and the overlay in lockstep for
+ * every transition — start, retry tick, failure, success, and give-up.
+ *
+ * Called from the store's lifecycle hooks (`setTerminalExited` → `drop`,
+ * `setTabSessionId` → `success`, `setTerminalSpawnError` → `failure`) and from
+ * the Cancel affordance (`cancel`). Reads/writes the live store via
+ * `useAppStore`, so it must only run after module init (always true at call
+ * time). Uses the module-scoped `reconnectReducer` for the pure decision.
+ */
+function driveAutoReconnect(
+  tabId: string,
+  event: "drop" | "attempt" | "success" | "failure" | "cancel",
+  error?: string
+): void {
+  const store = useAppStore.getState();
+  const current = store.terminalAutoReconnect[tabId];
+  // Absent entry ≡ idle. A settled (connected) loop is cleared, so a later drop
+  // re-enters from idle — equivalent to the reducer's connected→waiting edge.
+  const prev = current
+    ? { phase: current.phase as ReconnectPhase, attempt: current.attempt, delayMs: current.delayMs }
+    : initialReconnectState;
+  const next = reconnectReducer(prev, event, autoReconnectConfig);
+
+  // A no-op transition (stray event for the current phase) changes nothing.
+  if (next.phase === prev.phase && next.attempt === prev.attempt && event !== "cancel") {
+    return;
+  }
+
+  clearAutoReconnectTimer(tabId);
+
+  switch (next.phase) {
+    case "waiting": {
+      const nextAttemptAt = Date.now() + next.delayMs;
+      const record: TerminalAutoReconnectState = {
+        phase: "waiting",
+        attempt: next.attempt,
+        maxAttempts: autoReconnectConfig.maxAttempts,
+        delayMs: next.delayMs,
+        nextAttemptAt,
+      };
+      useAppStore.setState((state) => ({
+        terminalAutoReconnect: { ...state.terminalAutoReconnect, [tabId]: record },
+        // Clear any leftover failed-attempt state so no competing overlay shows
+        // beneath the countdown; the auto-reconnect overlay owns the tab now.
+        terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
+        terminalDisconnectErrors: omitKey(state.terminalDisconnectErrors, tabId),
+      }));
+      const handle = setTimeout(() => {
+        autoReconnectTimers.delete(tabId);
+        driveAutoReconnect(tabId, "attempt");
+      }, next.delayMs);
+      autoReconnectTimers.set(tabId, handle);
+      frontendLog(
+        "disconnect",
+        `auto-reconnect tab=${tabId}: waiting ${next.delayMs}ms before attempt ${next.attempt + 1}`
+      );
+      break;
+    }
+
+    case "connecting": {
+      const record: TerminalAutoReconnectState = {
+        phase: "connecting",
+        attempt: next.attempt,
+        maxAttempts: autoReconnectConfig.maxAttempts,
+        delayMs: 0,
+        nextAttemptAt: 0,
+      };
+      useAppStore.setState((state) => ({
+        terminalAutoReconnect: { ...state.terminalAutoReconnect, [tabId]: record },
+      }));
+      frontendLog("disconnect", `auto-reconnect tab=${tabId}: attempt ${next.attempt} connecting`);
+      // Re-drive the same tab through the normal reconnect path: bumps the retry
+      // counter so Terminal.tsx re-runs setup, replaying local scrollback and
+      // reattaching in place. Success → setTabSessionId → "success"; a direct-SSH
+      // failure → setTerminalSpawnError → "failure".
+      store.reconnectTerminal(tabId);
+      break;
+    }
+
+    case "connected":
+      // Transport recovered — settle and forget the loop.
+      useAppStore.setState((state) => ({
+        terminalAutoReconnect: omitKey(state.terminalAutoReconnect, tabId),
+      }));
+      frontendLog("disconnect", `auto-reconnect tab=${tabId}: reconnected`);
+      break;
+
+    case "gaveup":
+    case "idle":
+    default: {
+      // Cancelled by the user or attempts exhausted. Drop the loop state and
+      // hand off to the manual disconnect overlay (scrollback preserved).
+      useAppStore.setState((state) => ({
+        terminalAutoReconnect: omitKey(state.terminalAutoReconnect, tabId),
+        terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
+      }));
+      if (error) {
+        // Exhausted: show the "Reconnect failed" overlay with the last error.
+        store.setTerminalDisconnectWithError(tabId, error);
+      } else {
+        // User cancelled mid-loop: ensure the standard disconnect overlay is
+        // visible so Reconnect / View Scrollback remain available.
+        useAppStore.setState((state) => ({
+          terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+          terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
+        }));
+      }
+      frontendLog(
+        "disconnect",
+        `auto-reconnect tab=${tabId}: gave up (${error ? "exhausted" : "cancelled"})`
+      );
+      break;
+    }
+  }
 }
 
 /**
@@ -3560,6 +3752,13 @@ export const useAppStore = create<AppState>((set, get) => {
       if (sessionId) {
         get().settleRestoreTab(tabId, "connected");
 
+        // Agentless resilient reconnect (#1962): a session id landing while a
+        // backoff loop is in flight means the transport came back — settle the
+        // loop. (No-op when no loop is active.)
+        if (get().terminalAutoReconnect[tabId]) {
+          driveAutoReconnect(tabId, "success");
+        }
+
         // On-connect workflow triggers (#1855): a terminal session that opened
         // for a saved connection runs any workflow bound to that connection,
         // once per session open (interactive shells only — file-browser and
@@ -4049,6 +4248,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const remainingPrompt = omitKey(state.terminalReconnectPrompt, tabId);
         const remainingAutoRetry = omitKey(state.terminalAutoRetryCount, tabId);
         const remainingWaiting = omitKey(state.terminalWaitingForAgent, tabId);
+        const remainingAutoReconnect = omitKey(state.terminalAutoReconnect, tabId);
 
         // Drop the SFTP sessions owned by this tab (closed above) from the map,
         // and reset the browser when the active session was one of them (#1241).
@@ -4120,6 +4320,7 @@ export const useAppStore = create<AppState>((set, get) => {
             terminalReconnectPrompt: remainingPrompt,
             terminalAutoRetryCount: remainingAutoRetry,
             terminalWaitingForAgent: remainingWaiting,
+            terminalAutoReconnect: remainingAutoReconnect,
             sftpSessions: remainingSftp,
             ...sftpBrowserReset,
           };
@@ -4148,10 +4349,16 @@ export const useAppStore = create<AppState>((set, get) => {
           terminalReconnectPrompt: remainingPrompt,
           terminalAutoRetryCount: remainingAutoRetry,
           terminalWaitingForAgent: remainingWaiting,
+          terminalAutoReconnect: remainingAutoReconnect,
           sftpSessions: remainingSftp,
           ...sftpBrowserReset,
         };
       });
+
+      // Cancel any pending resilient-reconnect backoff timer for the closed tab
+      // (#1962) — the store entry was already dropped above; this frees the
+      // imperative timer so it cannot fire against a gone tab.
+      clearAutoReconnectTimer(tabId);
 
       // Broadcast (#1955): closing the source tab ends broadcast entirely;
       // closing a plain target silently drops it from the set.
@@ -5438,13 +5645,23 @@ export const useAppStore = create<AppState>((set, get) => {
     terminalConnectDeadline: {},
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},
-    setTerminalSpawnError: (tabId, error) =>
+    setTerminalSpawnError: (tabId, error) => {
+      // Agentless resilient reconnect (#1962): a spawn error while a backoff loop
+      // is connecting is a failed attempt — feed it to the machine, which backs
+      // off further or gives up (surfacing this error). Do this before writing
+      // the error so the loop can suppress the competing connection overlay while
+      // it retries. When no loop is active this is a plain error write.
+      if (error !== null && get().terminalAutoReconnect[tabId]?.phase === "connecting") {
+        driveAutoReconnect(tabId, "failure", error);
+        return;
+      }
       set((state) => ({
         terminalSpawnErrors:
           error === null
             ? omitKey(state.terminalSpawnErrors, tabId)
             : { ...state.terminalSpawnErrors, [tabId]: error },
-      })),
+      }));
+    },
     retryTerminalSpawn: (tabId) =>
       set((state) => ({
         terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
@@ -5545,6 +5762,7 @@ export const useAppStore = create<AppState>((set, get) => {
     terminalReattaching: {},
     terminalReconnectPrompt: {},
     terminalReconnectTriggerErrors: {},
+    terminalAutoReconnect: {},
     setTerminalExited: (tabId, info) => {
       set((state) => ({
         terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
@@ -5568,6 +5786,16 @@ export const useAppStore = create<AppState>((set, get) => {
       const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
       if (deadKey && get().monitors[deadKey]) {
         get().disconnectMonitoring(deadKey);
+      }
+      // Agentless resilient reconnect (#1962): a dropped link on a plain-SSH tab
+      // that opted in kicks off the backoff loop instead of leaving the user at
+      // the manual disconnect prompt. Only an unexpected drop qualifies — a clean
+      // exit or a user kill must not silently reconnect.
+      if (info?.reason === "dropped") {
+        const tab = collectLiveTabs(get()).find((t) => t.id === tabId);
+        if (isResilientReconnectTab(tab)) {
+          get().startAutoReconnect(tabId);
+        }
       }
     },
     markSessionKilled: (sessionId) =>
@@ -5758,6 +5986,18 @@ export const useAppStore = create<AppState>((set, get) => {
       })),
     dismissTerminalReconnectPrompt: (tabId) =>
       set((state) => ({ terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId) })),
+
+    startAutoReconnect: (tabId) => {
+      // A "drop" only arms the loop from idle (no active entry) or a settled one;
+      // the reducer ignores it while already waiting/connecting, so this is safe
+      // to call on every dropped exit without double-starting.
+      driveAutoReconnect(tabId, "drop");
+    },
+    cancelAutoReconnect: (tabId, error) => {
+      // No active loop → nothing to cancel (avoid spuriously forcing the overlay).
+      if (!get().terminalAutoReconnect[tabId]) return;
+      driveAutoReconnect(tabId, "cancel", error);
+    },
 
     // Remote connection states
     remoteStates: {},

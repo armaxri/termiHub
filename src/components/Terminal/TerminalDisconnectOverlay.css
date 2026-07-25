@@ -86,6 +86,14 @@
   line-height: 1.5;
 }
 
+/* Honesty note for agentless resilient reconnect (#1962): what survives a drop
+   vs. what does not, rendered a step quieter than the subheading. */
+.terminal-disconnect-overlay__note {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary, var(--text-secondary));
+  max-width: 42ch;
+}
+
 .terminal-disconnect-overlay__error-box {
   width: 100%;
   max-height: 120px;

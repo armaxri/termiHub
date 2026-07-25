@@ -197,6 +197,32 @@ export interface TerminalExitInfo {
   reason: TerminalExitReason;
 }
 
+/**
+ * Display state for the agentless resilient-reconnect loop of one tab (#1962).
+ * A serializable snapshot the disconnect overlay reads to render the countdown,
+ * attempt progress, and Cancel affordance. The imperative backoff timer lives at
+ * module scope in `appStore`; this holds only what the UI needs to draw.
+ */
+export interface TerminalAutoReconnectState {
+  /**
+   * Loop phase. `waiting` = counting down to the next attempt; `connecting` =
+   * an attempt is in flight (the standard connection overlay takes over). The
+   * overlay only renders its auto-reconnect variant while `waiting`.
+   */
+  phase: "waiting" | "connecting";
+  /** Attempts started so far in this loop (1-based once the first attempt fires). */
+  attempt: number;
+  /** Maximum attempts before giving up; `0` means unbounded retry. */
+  maxAttempts: number;
+  /** Backoff delay of the current `waiting` window, in ms. */
+  delayMs: number;
+  /**
+   * Wall-clock timestamp (`Date.now()`-based) the next attempt is scheduled for,
+   * used by the overlay to render a live countdown. `0` while `connecting`.
+   */
+  nextAttemptAt: number;
+}
+
 export interface TerminalOptions {
   horizontalScrolling?: boolean;
   color?: string;

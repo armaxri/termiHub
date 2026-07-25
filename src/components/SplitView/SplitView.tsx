@@ -905,6 +905,11 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
   const isViewMode = useAppStore((s) => s.terminalViewMode[tabId] ?? false);
   const isReconnecting = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
   const isReconnectPromptVisible = useAppStore((s) => s.terminalReconnectPrompt[tabId] ?? false);
+  // Agentless resilient reconnect (#1962): the backoff countdown overlay must
+  // show even after the first attempt cleared the exited flag mid-loop.
+  const isAutoReconnectWaiting = useAppStore(
+    (s) => s.terminalAutoReconnect[tabId]?.phase === "waiting"
+  );
 
   useEffect(() => {
     const slotEl = slotRef.current;
@@ -955,7 +960,9 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
       style={tabColor ? { border: `2px solid ${tabColor}` } : undefined}
     >
-      {(isReconnecting || (isExited && !isViewMode)) && <TerminalDisconnectOverlay tabId={tabId} />}
+      {(isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode)) && (
+        <TerminalDisconnectOverlay tabId={tabId} />
+      )}
       {isExited && isViewMode && (
         <>
           <TerminalViewModeBanner tabId={tabId} />
