@@ -27,6 +27,7 @@ import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { RdpTrustSettings } from "./RdpTrustSettings";
+import { SshTrustSettings } from "./SshTrustSettings";
 import { FileTypeSettings } from "./FileTypeSettings";
 import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
@@ -255,6 +256,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       if (highlightedCategories?.has("security")) {
         sections.push(<SecuritySettings key="security" visibleFields={visibleFields} />);
         sections.push(<RdpTrustSettings key="rdp-trust" visibleFields={visibleFields} />);
+        sections.push(<SshTrustSettings key="ssh-trust" visibleFields={visibleFields} />);
       }
       if (highlightedCategories?.has("editor")) {
         sections.push(<FileTypeSettings key="editor" visibleFields={visibleFields} />);
@@ -295,6 +297,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           <>
             <SecuritySettings />
             <RdpTrustSettings />
+            <SshTrustSettings />
           </>
         );
       case "external-files":

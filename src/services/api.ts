@@ -631,6 +631,32 @@ export async function rdpTrustForget(host: string, fingerprint?: string): Promis
   return await invoke<boolean>("rdp_trust_forget", { host, fingerprint: fingerprint ?? null });
 }
 
+/** One remembered SSH host and the host-key fingerprints trusted for it (#1968). */
+export interface SshTrustedHost {
+  host: string;
+  fingerprints: string[];
+}
+
+/**
+ * List remembered SSH hosts and their trusted host-key fingerprints (#1968).
+ *
+ * These are the hosts a user chose "Accept for host" for in the interactive
+ * host-key trust prompt (#1959); the trust-management settings UI reviews them.
+ */
+export async function sshTrustList(): Promise<SshTrustedHost[]> {
+  return await invoke<SshTrustedHost[]>("ssh_trust_list");
+}
+
+/**
+ * Revoke a remembered SSH host key (#1968). Pass a `fingerprint` to forget just
+ * that one (the host is dropped once its last fingerprint is gone); omit it to
+ * forget the whole host. Either way the next connect to that host re-prompts.
+ * Returns whether anything was removed.
+ */
+export async function sshTrustForget(host: string, fingerprint?: string): Promise<boolean> {
+  return await invoke<boolean>("ssh_trust_forget", { host, fingerprint: fingerprint ?? null });
+}
+
 // --- Persistent session commands ---
 
 /** Summary of a persistent session returned by the backend. */

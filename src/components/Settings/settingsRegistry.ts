@@ -239,6 +239,25 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "sshTrustedHostKeys",
+    label: "Remembered SSH Host Keys",
+    description: "Review and revoke SSH host keys you chose to trust",
+    category: "security",
+    keywords: [
+      "ssh",
+      "host key",
+      "hostkey",
+      "trust",
+      "fingerprint",
+      "sha256",
+      "revoke",
+      "forget",
+      "known hosts",
+      "known_hosts",
+      "mitm",
+    ],
+  },
+  {
     id: "workflowLocalProcess",
     label: "Workflow Local Process Execution",
     description:
