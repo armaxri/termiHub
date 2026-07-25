@@ -7,7 +7,8 @@
 use tauri::{AppHandle, Emitter, State};
 
 use termihub_core::network::{
-    dns, open_ports, ping, port_scan, traceroute, wol, DnsRecordType, PortScanResult, WolDevice,
+    dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol, DnsRecordType, PingSweepResult,
+    PortScanResult, WolDevice,
 };
 
 use crate::network::http_monitor::{HttpMonitorConfig, HttpMonitorState};
@@ -176,6 +177,104 @@ pub async fn network_ping_start(
 /// Stop a running ping session.
 #[tauri::command]
 pub fn network_ping_stop(
+    task_id: String,
+    manager: State<'_, NetworkManager>,
+) -> Result<(), TerminalError> {
+    manager.cancel_task(&task_id)
+}
+
+// ── Ping Sweep ─────────────────────────────────────────────────────────────────
+
+/// Start a subnet / IP-range ping sweep. Returns a task ID; results stream as
+/// events.
+///
+/// `host` accepts a single host, an IPv4 or IPv6 address, a CIDR range (e.g.
+/// `192.168.1.0/24`), or a comma-separated mix of those — expanded via
+/// [`port_scan::parse_target_spec`].
+///
+/// Events emitted:
+/// - `network-sweep-result` per responding host: `{ taskId, host, latencyMs?, hostname? }`
+/// - `network-sweep-complete`: `{ taskId, summary, canceled }`
+/// - `network-sweep-error`: `{ taskId, error }`
+#[tauri::command]
+pub async fn network_ping_sweep(
+    host: String,
+    timeout_ms: Option<u64>,
+    concurrency: Option<usize>,
+    resolve_hostnames: Option<bool>,
+    manager: State<'_, NetworkManager>,
+    app: AppHandle,
+) -> Result<String, TerminalError> {
+    let targets = port_scan::parse_target_spec(&host)
+        .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
+
+    let (task_id, cancel) = manager.register_task();
+
+    let app_clone = app.clone();
+    let task_id_clone = task_id.clone();
+    let manager_ref = manager.inner() as *const NetworkManager as usize;
+    let cancel_clone = cancel.clone();
+
+    tokio::spawn(async move {
+        let app = app_clone;
+        let tid = task_id_clone.clone();
+
+        let on_result = {
+            let app = app.clone();
+            let tid = tid.clone();
+            move |result: PingSweepResult| {
+                let _ = app.emit(
+                    "network-sweep-result",
+                    serde_json::json!({
+                        "taskId": tid,
+                        "host": result.host,
+                        "latencyMs": result.latency_ms,
+                        "hostname": result.hostname,
+                    }),
+                );
+            }
+        };
+
+        let summary = ping_sweep::ping_sweep(
+            &targets,
+            timeout_ms.unwrap_or(1000),
+            concurrency.unwrap_or(64),
+            resolve_hostnames.unwrap_or(true),
+            on_result,
+            cancel,
+        )
+        .await;
+
+        // The token is set while the sweep runs; check *after* it ends so Stop
+        // is reported as canceled rather than completed.
+        let canceled = cancel_clone.is_cancelled();
+
+        match summary {
+            Ok(s) => {
+                let _ = app.emit(
+                    "network-sweep-complete",
+                    serde_json::json!({ "taskId": &tid, "summary": s, "canceled": canceled }),
+                );
+            }
+            Err(e) => {
+                let _ = app.emit(
+                    "network-sweep-error",
+                    serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
+                );
+            }
+        }
+
+        // SAFETY: manager is Tauri managed state which outlives all tasks.
+        let mgr = unsafe { &*(manager_ref as *const NetworkManager) };
+        mgr.complete_task(&tid);
+    });
+
+    Ok(task_id)
+}
+
+/// Cancel a running ping sweep.
+#[tauri::command]
+pub fn network_ping_sweep_cancel(
     task_id: String,
     manager: State<'_, NetworkManager>,
 ) -> Result<(), TerminalError> {

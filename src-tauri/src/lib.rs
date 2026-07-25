@@ -977,6 +977,8 @@ pub fn run() {
             commands::network::network_port_scan_cancel,
             commands::network::network_ping_start,
             commands::network::network_ping_stop,
+            commands::network::network_ping_sweep,
+            commands::network::network_ping_sweep_cancel,
             commands::network::network_dns_lookup,
             commands::network::network_open_ports,
             commands::network::network_traceroute,
