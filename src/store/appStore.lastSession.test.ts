@@ -23,12 +23,23 @@ vi.mock("@/services/storage", () => ({
   getRecoveryWarnings: vi.fn(() => Promise.resolve([])),
 }));
 
+// Multi-window aggregation/restore commands (#1925). Untyped wrappers so the
+// resolved values can be set per-test.
+const openWindow = vi.fn();
+const reportWindowLayout = vi.fn();
+const collectWindowLayouts = vi.fn();
+const takePendingWindowRestore = vi.fn();
+
 vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
   sftpClose: vi.fn(),
   sftpListDir: vi.fn(),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
+  openWindow: (...args: unknown[]) => openWindow(...args),
+  reportWindowLayout: (...args: unknown[]) => reportWindowLayout(...args),
+  collectWindowLayouts: (...args: unknown[]) => collectWindowLayouts(...args),
+  takePendingWindowRestore: (...args: unknown[]) => takePendingWindowRestore(...args),
 }));
 
 vi.mock("@/services/lastSessionApi", () => ({
@@ -66,6 +77,12 @@ describe("last session persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoad.mockResolvedValue(null);
+    // Default: aggregation unavailable → each save/restore falls back to this
+    // window only (byte-identical legacy shape); overridden per multi-window test.
+    reportWindowLayout.mockResolvedValue(undefined);
+    collectWindowLayouts.mockResolvedValue([]);
+    takePendingWindowRestore.mockResolvedValue(null);
+    openWindow.mockResolvedValue("win-1");
     // Reset to a clean single empty terminal group.
     useAppStore.setState({
       connections: [],
@@ -117,8 +134,8 @@ describe("last session persistence", () => {
     });
   });
 
-  // Window dimension (#1905): the save path stamps the capturing window and the
-  // restore path is non-lossy for a multi-window session.
+  // Window dimension (#1905/#1925): the save path stamps the capturing window and
+  // the restore path spawns + hydrates the saved secondary windows.
   describe("window dimension", () => {
     it("omits windowId and windows for the main window (legacy shape)", async () => {
       await useAppStore.getState().saveLastSession();
@@ -140,7 +157,7 @@ describe("last session persistence", () => {
       expect(payload.windows).toEqual([{ id: "win-2" }]);
     });
 
-    it("restores a multi-window session non-lossily (all groups, main first)", async () => {
+    it("spawns the saved secondary windows and restores only the main groups here (#1925)", async () => {
       // A saved session spanning main (group A) + win-1 (group B).
       const leaf = (title: string) => ({
         type: "leaf" as const,
@@ -159,8 +176,101 @@ describe("last session persistence", () => {
       const ok = await useAppStore.getState().restoreLastSession();
 
       expect(ok).toBe(true);
+      // This (main) window holds only its own group; the secondary window is
+      // spawned to hold group B rather than collapsed into main.
       const groups = useAppStore.getState().tabGroups;
-      expect(groups.map((g) => g.name)).toEqual(["A", "B"]);
+      expect(groups.map((g) => g.name)).toEqual(["A"]);
+      // One secondary window is spawned, seeded with win-1's group B.
+      expect(openWindow).toHaveBeenCalledTimes(1);
+      const [handoffArg, restoreArg] = openWindow.mock.calls[0];
+      expect(handoffArg).toBeUndefined();
+      // The seeded group keeps its saved windowId (hydration ignores it).
+      expect(restoreArg).toEqual({
+        tabGroups: [{ name: "B", layout: leaf("b"), windowId: "win-1" }],
+      });
+    });
+
+    it("spawns an empty window for a saved empty secondary window (#1902/#1925)", async () => {
+      mockLoad.mockResolvedValue({
+        version: "1",
+        activeGroupIndex: 0,
+        tabGroups: [
+          {
+            name: "A",
+            layout: {
+              type: "leaf",
+              tabs: [{ inlineConfig: { type: "local", config: { shell: "bash" } }, title: "a" }],
+            },
+          },
+        ],
+        windows: [{ id: "main" }, { id: "win-1" }],
+      });
+
+      const ok = await useAppStore.getState().restoreLastSession();
+
+      expect(ok).toBe(true);
+      // win-1 owns no groups → spawn a plain empty window (no restore payload).
+      expect(openWindow).toHaveBeenCalledTimes(1);
+      expect(openWindow.mock.calls[0]).toEqual([]);
+    });
+  });
+
+  // Multi-window aggregation on save (#1925): the main window persists a document
+  // spanning every open window from the backend-reported slices it cannot see.
+  describe("multi-window aggregation (#1925)", () => {
+    it("assembles every window's reported slice into one saved document", async () => {
+      // The backend authority reports main (its live group) + win-1 (group B).
+      const leafB = {
+        type: "leaf" as const,
+        tabs: [{ inlineConfig: { type: "local", config: { shell: "bash" } }, title: "b" }],
+      };
+      collectWindowLayouts.mockResolvedValue([
+        {
+          label: "main",
+          tabGroups: [{ name: "Main", layout: { type: "leaf", tabs: [] } }],
+          activeGroupIndex: 0,
+        },
+        { label: "win-1", tabGroups: [{ name: "B", layout: leafB }], activeGroupIndex: 0 },
+      ]);
+
+      await useAppStore.getState().saveLastSession();
+
+      expect(reportWindowLayout).toHaveBeenCalledTimes(1);
+      const payload = mockSave.mock.calls[0][0] as LastSession;
+      // Both windows recorded; win-1's group carries its windowId, main's does not.
+      expect(payload.windows).toEqual([{ id: "main" }, { id: "win-1" }]);
+      const winIds = payload.tabGroups.map((g) => g.windowId);
+      expect(winIds).toEqual([undefined, "win-1"]);
+    });
+
+    it("hydrates a restore-spawned window from its seeded groups (#1925)", async () => {
+      takePendingWindowRestore.mockResolvedValue({
+        tabGroups: [
+          {
+            name: "Seeded",
+            layout: {
+              type: "leaf",
+              tabs: [{ inlineConfig: { type: "local", config: { shell: "bash" } }, title: "S" }],
+            },
+          },
+        ],
+      });
+
+      await useAppStore.getState().receivePendingWindowRestore();
+
+      const state = useAppStore.getState();
+      expect(state.tabGroups.map((g) => g.name)).toEqual(["Seeded"]);
+      const tabs = getAllLeaves(state.rootPanel).flatMap((l) => l.tabs);
+      expect(tabs.map((t) => t.title)).toEqual(["S"]);
+    });
+
+    it("is a no-op when there is no seeded restore payload", async () => {
+      takePendingWindowRestore.mockResolvedValue(null);
+      const before = useAppStore.getState().tabGroups;
+
+      await useAppStore.getState().receivePendingWindowRestore();
+
+      expect(useAppStore.getState().tabGroups).toBe(before);
     });
   });
 

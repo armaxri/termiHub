@@ -5,6 +5,7 @@ import {
   collectWindowIds,
   hasWindowDimension,
   planWindowRestore,
+  assembleWindowedGroups,
 } from "./windowPersistence";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
@@ -169,5 +170,40 @@ describe("planWindowRestore", () => {
     expect(plan.map((e) => e.windowId)).toEqual([MAIN_WINDOW_LABEL, "win-1"]);
     expect(plan[0].tabGroups.map((g) => g.name)).toEqual(["A", "B"]);
     expect(plan[1].tabGroups.map((g) => g.name)).toEqual(["C"]);
+  });
+});
+
+describe("assembleWindowedGroups (#1925)", () => {
+  it("produces the legacy shape for a single main window", () => {
+    const result = assembleWindowedGroups([
+      { windowId: MAIN_WINDOW_LABEL, tabGroups: [group("A"), group("B")] },
+    ]);
+    expect(result.windows).toBeUndefined();
+    expect(result.tabGroups.every((g) => g.windowId === undefined)).toBe(true);
+  });
+
+  it("stamps each window's groups and records windows[] main-first", () => {
+    const result = assembleWindowedGroups([
+      { windowId: MAIN_WINDOW_LABEL, tabGroups: [group("A")] },
+      { windowId: "win-1", tabGroups: [group("B")] },
+    ]);
+    expect(result.windows).toEqual([{ id: MAIN_WINDOW_LABEL }, { id: "win-1" }]);
+    expect(result.tabGroups.map((g) => g.windowId)).toEqual([undefined, "win-1"]);
+    // Round-trips: assembling then planning recovers the per-window partition.
+    const plan = planWindowRestore(result.tabGroups, result.windows);
+    expect(plan.map((e) => e.windowId)).toEqual([MAIN_WINDOW_LABEL, "win-1"]);
+    expect(plan[1].tabGroups.map((g) => g.name)).toEqual(["B"]);
+  });
+
+  it("records a secondary window that owns no groups as an empty window", () => {
+    const result = assembleWindowedGroups([
+      { windowId: MAIN_WINDOW_LABEL, tabGroups: [group("A")] },
+      { windowId: "win-1", tabGroups: [] },
+    ]);
+    // win-1 carries no group, so it survives only via the explicit windows[] entry.
+    expect(result.windows).toEqual([{ id: MAIN_WINDOW_LABEL }, { id: "win-1" }]);
+    expect(result.tabGroups.map((g) => g.name)).toEqual(["A"]);
+    const plan = planWindowRestore(result.tabGroups, result.windows);
+    expect(plan.find((e) => e.windowId === "win-1")?.tabGroups).toEqual([]);
   });
 });
