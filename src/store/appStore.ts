@@ -118,6 +118,9 @@ import {
   sendHandoffToWindow,
   claimSession,
   takePendingHandoffs,
+  reportWindowLayout,
+  collectWindowLayouts,
+  takePendingWindowRestore,
 } from "@/services/api";
 import type {
   MoveWindowTarget,
@@ -125,6 +128,7 @@ import type {
   HandoffTab,
   WindowInfo,
   WindowCloseRequest,
+  WindowRestorePayload,
 } from "@/types/window";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -133,7 +137,9 @@ import {
   buildWindowsMeta,
   planWindowRestore,
   hasWindowDimension,
+  assembleWindowedGroups,
 } from "@/utils/windowPersistence";
+import type { CapturedWindowLayout, WindowRestorePlanEntry } from "@/utils/windowPersistence";
 import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
 import type {
   ConnectionTypeInfo,
@@ -172,7 +178,12 @@ import {
   stopTunnel as apiStopTunnel,
   getTunnelStatuses,
 } from "@/services/tunnelApi";
-import { WorkspaceSummary, WorkspaceDefinition } from "@/types/workspace";
+import {
+  WorkspaceSummary,
+  WorkspaceDefinition,
+  type WorkspaceTabGroupDef,
+  type WorkspaceWindowDef,
+} from "@/types/workspace";
 import {
   getWorkspaces as apiGetWorkspaces,
   loadWorkspace as apiLoadWorkspace,
@@ -707,6 +718,21 @@ interface AppState {
   hydrateHandoffTab: (record: TabHandoffRecord) => void;
   /** Drain and hydrate any hand-off records queued for this window. */
   receivePendingHandoffs: () => Promise<void>;
+  /**
+   * Drain and hydrate the tab groups a restore-spawned secondary window was
+   * seeded with (#1925). A no-op for a window not spawned by a multi-window
+   * restore. Rebuilds this window's layout from the saved groups just as the
+   * main window rebuilds its own in {@link restoreLastSession}.
+   */
+  receivePendingWindowRestore: () => Promise<void>;
+  /**
+   * Report this (secondary) window's captured layout slice to the backend
+   * aggregation authority (#1925) so the main window can persist a document that
+   * spans every window. Debounced via {@link scheduleWindowLayoutReport}.
+   */
+  reportOwnWindowLayout: () => Promise<void>;
+  /** Debounced trigger for {@link reportOwnWindowLayout} on a layout change. */
+  scheduleWindowLayoutReport: () => void;
   /**
    * Open a brand-new, empty native window (no hand-off) — the top-level "New
    * Window" command (#1902). The window boots into the empty-window CTA state.
@@ -1724,7 +1750,77 @@ function currentWindowLabel(): string {
     return MAIN_WINDOW_LABEL;
   }
 }
+
+/**
+ * Capture the full multi-window layout for persistence (#1925): refresh this
+ * window's slice in the backend aggregation authority, pull every window's
+ * reported slice, and assemble the windowId-stamped groups + `windows[]` set.
+ *
+ * Falls back to **this window's groups only** if the cross-window commands are
+ * unavailable (e.g. browser dev mode, or an IPC error) so a save never throws —
+ * a single-window app then produces the byte-identical legacy shape.
+ */
+async function captureAllWindows(
+  ownGroups: WorkspaceTabGroupDef[],
+  activeGroupIndex: number
+): Promise<{ tabGroups: WorkspaceTabGroupDef[]; windows?: WorkspaceWindowDef[] }> {
+  let layouts: CapturedWindowLayout[] = [{ windowId: currentWindowLabel(), tabGroups: ownGroups }];
+  try {
+    await reportWindowLayout(ownGroups, activeGroupIndex);
+    const reports = await collectWindowLayouts();
+    if (reports.length > 0) {
+      layouts = reports.map((r) => ({ windowId: r.label, tabGroups: r.tabGroups }));
+    }
+  } catch (err) {
+    frontendLog(
+      "multi_window",
+      `window layout aggregation unavailable, saving own window only: ${String(err)}`
+    );
+  }
+  return assembleWindowedGroups(layouts);
+}
+
+/**
+ * Spawn a native window for each non-main entry of a restore plan and seed it
+ * with its assigned tab groups (#1925). Each spawned window hydrates its layout
+ * on boot from the backend pending-restore queue; an entry that owns no groups
+ * spawns an empty window so the #1902 empty-window state round-trips.
+ *
+ * Best-effort per window: a single window's spawn failure is logged and skipped
+ * rather than aborting the whole restore.
+ */
+async function spawnPlanSecondaryWindows(plan: WindowRestorePlanEntry[]): Promise<void> {
+  for (const entry of plan) {
+    if (entry.isMain) continue;
+    try {
+      if (entry.tabGroups.length > 0) {
+        await openWindow(undefined, { tabGroups: entry.tabGroups });
+      } else {
+        await openWindow();
+      }
+    } catch (err) {
+      frontendLog("multi_window", `spawn restore window ${entry.windowId} failed: ${String(err)}`);
+    }
+  }
+}
+
+/**
+ * Restore a windowed layout (#1925): spawn + hydrate the saved secondary windows
+ * and return the tab group defs that belong in **this** (main) window, in saved
+ * order. A legacy save with no window dimension yields a single main entry, so
+ * this returns every group and spawns nothing — the back-compat path.
+ */
+async function restoreWindowedLayout(
+  plan: WindowRestorePlanEntry[]
+): Promise<WorkspaceTabGroupDef[]> {
+  await spawnPlanSecondaryWindows(plan);
+  const mainEntry = plan.find((entry) => entry.isMain);
+  return mainEntry ? mainEntry.tabGroups : plan.flatMap((entry) => entry.tabGroups);
+}
+
 const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
+/** Debounce timer for reporting a secondary window's layout slice (#1925). */
+let windowLayoutReportTimer: ReturnType<typeof setTimeout> | null = null;
 /**
  * Settle timer for the restore-in-progress guard (GAP G5, #1146). After a
  * restore/launch places its layout, per-tab connects keep mutating the tree for
@@ -2549,6 +2645,88 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         get().hydrateHandoffTab(record);
       }
+    },
+
+    receivePendingWindowRestore: async () => {
+      let payload: WindowRestorePayload | null;
+      try {
+        payload = await takePendingWindowRestore();
+      } catch (err) {
+        frontendLog("multi_window", `takePendingWindowRestore failed: ${String(err)}`);
+        return;
+      }
+      if (!payload || payload.tabGroups.length === 0) return;
+      const state = get();
+      // Agents are all disconnected at startup, so agentRef tabs resolve to
+      // agent-error tabs rather than silently disappearing (mirrors restore).
+      const agentContext = {
+        agents: state.remoteAgents.map((a) => ({
+          id: a.id,
+          name: a.name,
+          connected: a.connectionState === "connected",
+        })),
+        definitions: state.agentDefinitions,
+      };
+      const builtGroups = buildTabGroupsFromWorkspace(
+        payload.tabGroups,
+        state.connections,
+        state.defaultShell,
+        agentContext
+      );
+      const builtTabCount = builtGroups.reduce(
+        (n, g) => n + getAllLeaves(g.rootPanel).reduce((m, leaf) => m + leaf.tabs.length, 0),
+        0
+      );
+      if (builtGroups.length === 0 || builtTabCount === 0) {
+        frontendLog(
+          "multi_window",
+          "receivePendingWindowRestore: seeded groups produced no launchable tabs"
+        );
+        return;
+      }
+      const firstGroup = builtGroups[0];
+      // GAP G5 (#1146): raise the guard before placing the layout so this
+      // window's auto-report subscription does not report a mid-hydrate tree.
+      beginRestoreGuard(set);
+      set({
+        tabGroups: builtGroups,
+        activeTabGroupId: firstGroup.id,
+        rootPanel: firstGroup.rootPanel,
+        activePanelId: firstGroup.activePanelId,
+      });
+      const { pendingTabIds, preFailedCount } = collectRestoreCohort(builtGroups);
+      get().beginRestoreCohort(pendingTabIds, preFailedCount);
+    },
+
+    reportOwnWindowLayout: async () => {
+      const state = get();
+      const tabGroups = captureAllTabGroups(
+        state.tabGroups,
+        state.activeTabGroupId,
+        state.rootPanel,
+        state.connections
+      );
+      const activeGroupIndex = Math.max(
+        0,
+        state.tabGroups.findIndex((g) => g.id === state.activeTabGroupId)
+      );
+      try {
+        await reportWindowLayout(tabGroups, activeGroupIndex);
+      } catch (err) {
+        frontendLog("multi_window", `reportWindowLayout failed: ${String(err)}`);
+      }
+    },
+
+    scheduleWindowLayoutReport: () => {
+      // While a restore/hydrate is settling, the layout tree is mid-flight; a
+      // report now would push a transient slice to the aggregation authority and
+      // nudge the main window to persist it (GAP G5, #1146). Hold until settled.
+      if (get().restoreInProgress) return;
+      if (windowLayoutReportTimer) clearTimeout(windowLayoutReportTimer);
+      windowLayoutReportTimer = setTimeout(() => {
+        windowLayoutReportTimer = null;
+        void get().reportOwnWindowLayout();
+      }, LAST_SESSION_SAVE_DEBOUNCE_MS);
     },
 
     openNewWindow: async () => {
@@ -7140,8 +7318,13 @@ export const useAppStore = create<AppState>((set, get) => {
           definitions: freshState.agentDefinitions,
         };
 
+        // Window dimension (#1925): spawn + hydrate the workspace's saved
+        // secondary windows and build only the main window's groups here. A
+        // legacy single-window workspace spawns nothing and builds every group.
+        const plan = planWindowRestore(definition.tabGroups, definition.windows);
+        const mainGroups = await restoreWindowedLayout(plan);
         const builtGroups = buildTabGroupsFromWorkspace(
-          definition.tabGroups,
+          mainGroups,
           resolvedConnections,
           state.defaultShell,
           agentContext
@@ -7198,25 +7381,37 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const state = get();
         const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
-        const tabGroups =
-          scope === "active" && activeGroup
-            ? captureAllTabGroups(
-                [activeGroup],
-                state.activeTabGroupId,
-                state.rootPanel,
-                state.connections
-              )
-            : captureAllTabGroups(
-                state.tabGroups,
-                state.activeTabGroupId,
-                state.rootPanel,
-                state.connections
-              );
-        // Window dimension (#1905): record which window owns each group so a
-        // saved multi-window layout restores its window arrangement. For the
-        // single main-window store this omits the dimension (legacy shape).
-        const stampedGroups = stampWindowId(tabGroups, currentWindowLabel());
-        const windows = buildWindowsMeta(stampedGroups);
+        // "active" scope saves only this window's active group — inherently a
+        // single-window layout, so stamp it directly (legacy shape when it is the
+        // main window). Full scope aggregates every open window (#1905/#1925) so a
+        // saved multi-window layout restores its window arrangement.
+        let stampedGroups: WorkspaceTabGroupDef[];
+        let windows: WorkspaceWindowDef[] | undefined;
+        if (scope === "active" && activeGroup) {
+          const tabGroups = captureAllTabGroups(
+            [activeGroup],
+            state.activeTabGroupId,
+            state.rootPanel,
+            state.connections
+          );
+          stampedGroups = stampWindowId(tabGroups, currentWindowLabel());
+          windows = buildWindowsMeta(stampedGroups);
+        } else {
+          const tabGroups = captureAllTabGroups(
+            state.tabGroups,
+            state.activeTabGroupId,
+            state.rootPanel,
+            state.connections
+          );
+          const activeGroupIndex = Math.max(
+            0,
+            state.tabGroups.findIndex((g) => g.id === state.activeTabGroupId)
+          );
+          ({ tabGroups: stampedGroups, windows } = await captureAllWindows(
+            tabGroups,
+            activeGroupIndex
+          ));
+        }
         const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
         await apiSaveWorkspace({
           id,
@@ -7240,28 +7435,32 @@ export const useAppStore = create<AppState>((set, get) => {
       // Respect the setting at save time so toggling it takes effect immediately.
       // "never" means the user does not want a session kept, so skip the write.
       if (resolveRestoreMode(state.settings) === "never") return;
-      const tabGroups = captureAllTabGroups(
+      const ownGroups = captureAllTabGroups(
         state.tabGroups,
         state.activeTabGroupId,
         state.rootPanel,
         state.connections
       );
-      // Only persist when there is at least one real tab to restore. An empty
-      // payload tells the backend to clear the stored session instead.
-      const totalTabs = tabGroups.reduce(
-        (n, g) => n + getWorkspaceLeaves(g.layout).reduce((m, leaf) => m + leaf.tabs.length, 0),
-        0
-      );
       const activeGroupIndex = Math.max(
         0,
         state.tabGroups.findIndex((g) => g.id === state.activeTabGroupId)
       );
-      // Window dimension (#1905): stamp which window owns each captured group so
-      // a multi-window session restores its window arrangement. For the main
-      // window (the only store today) this omits windowId and the windows set,
-      // keeping the payload identical to the legacy single-window shape.
-      const stampedGroups = stampWindowId(tabGroups, currentWindowLabel());
-      const windows = buildWindowsMeta(stampedGroups);
+      // Window dimension (#1905/#1925): aggregate every open window's reported
+      // layout slice into one windowId-stamped document so a multi-window session
+      // restores its window arrangement. This also refreshes the main window's own
+      // slice in the backend authority. Falls back to this window's groups only if
+      // aggregation is unavailable — a single-window app then produces the
+      // byte-identical legacy shape (no windowId, no windows set).
+      const { tabGroups: stampedGroups, windows } = await captureAllWindows(
+        ownGroups,
+        activeGroupIndex
+      );
+      // Only persist when there is at least one real tab to restore across every
+      // window. An empty payload tells the backend to clear the stored session.
+      const totalTabs = stampedGroups.reduce(
+        (n, g) => n + getWorkspaceLeaves(g.layout).reduce((m, leaf) => m + leaf.tabs.length, 0),
+        0
+      );
       try {
         await apiSaveLastSession({
           version: "1",
@@ -7308,21 +7507,15 @@ export const useAppStore = create<AppState>((set, get) => {
           })),
           definitions: state.agentDefinitions,
         };
-        // Window dimension (#1905): partition the saved groups by window. Spawning
-        // and hydrating the secondary native windows is cross-window runtime owned
-        // by the epic's runtime work; until it lands, restore is deliberately
-        // NON-LOSSY — every window's groups are restored (plan order, main first)
-        // into this main window rather than dropped. A legacy session has a single
-        // main entry, so this is a no-op there.
+        // Window dimension (#1925): partition the saved groups by window, spawn +
+        // hydrate the saved secondary windows, and build only the main window's
+        // groups into THIS window. A legacy session has a single main entry, so
+        // this spawns nothing and restores every group here (back-compat path).
         const plan = planWindowRestore(session.tabGroups, session.windows);
         if (hasWindowDimension(session.tabGroups, session.windows)) {
-          frontendLog(
-            "multi_window",
-            `restoreLastSession: ${plan.length} saved windows collapsed into the main ` +
-              `window (multi-window spawn-on-restore not yet wired)`
-          );
+          frontendLog("multi_window", `restoreLastSession: restoring ${plan.length} saved windows`);
         }
-        const orderedGroups = plan.flatMap((entry) => entry.tabGroups);
+        const orderedGroups = await restoreWindowedLayout(plan);
         const builtGroups = buildTabGroupsFromWorkspace(
           orderedGroups,
           state.connections,

@@ -16,7 +16,13 @@ import type { RemoteClipboardFile, RemoteDesktopInput } from "@/types/remoteDesk
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
-import type { TabHandoffRecord, WindowInfo } from "@/types/window";
+import type {
+  TabHandoffRecord,
+  WindowInfo,
+  WindowLayoutReport,
+  WindowRestorePayload,
+} from "@/types/window";
+import type { WorkspaceTabGroupDef } from "@/types/workspace";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -282,11 +288,19 @@ export async function takePendingSpawn(): Promise<SpawnRequestPayload | null> {
 
 /**
  * Open a new native window loading the same frontend bundle. When a hand-off
- * record is supplied, it is queued for the new window to drain on boot. Returns
- * the new window's unique label.
+ * record is supplied, it is queued for the new window to drain on boot; when a
+ * restore payload is supplied, its tab groups are queued for the new window to
+ * hydrate on boot (multi-window restore, #1925). Returns the new window's unique
+ * label.
  */
-export async function openWindow(handoff?: TabHandoffRecord): Promise<string> {
-  return await invoke<string>("open_window", { handoff: handoff ?? null });
+export async function openWindow(
+  handoff?: TabHandoffRecord,
+  restore?: WindowRestorePayload
+): Promise<string> {
+  return await invoke<string>("open_window", {
+    handoff: handoff ?? null,
+    restore: restore ?? null,
+  });
 }
 
 /**
@@ -338,6 +352,36 @@ export async function sendHandoffToWindow(
   handoff: TabHandoffRecord
 ): Promise<void> {
   await invoke("send_handoff_to_window", { targetLabel, handoff });
+}
+
+/**
+ * Report this window's captured layout slice to the multi-window aggregation
+ * authority (#1925) so the main window can assemble the full persisted document
+ * it cannot see across the JS-context boundary.
+ */
+export async function reportWindowLayout(
+  tabGroups: WorkspaceTabGroupDef[],
+  activeGroupIndex: number
+): Promise<void> {
+  await invoke("report_window_layout", { tabGroups, activeGroupIndex });
+}
+
+/**
+ * Every open window's reported layout slice, main-window-first — the main window
+ * assembles the full multi-window last-session / workspace document from these
+ * (#1925).
+ */
+export async function collectWindowLayouts(): Promise<WindowLayoutReport[]> {
+  return await invoke<WindowLayoutReport[]>("collect_window_layouts");
+}
+
+/**
+ * Take (and clear) the tab groups this window should hydrate on boot when it was
+ * spawned by a multi-window restore (#1925). `null` for a window that was not
+ * restore-spawned.
+ */
+export async function takePendingWindowRestore(): Promise<WindowRestorePayload | null> {
+  return await invoke<WindowRestorePayload | null>("take_pending_window_restore");
 }
 
 /**

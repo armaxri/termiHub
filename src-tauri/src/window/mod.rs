@@ -39,6 +39,12 @@ use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
+/// Runtime label of the primary application window (mirrors the frontend
+/// `MAIN_WINDOW_LABEL`). Used to order the primary window first when assembling a
+/// multi-window persisted layout, and to gate the "layout changed" nudge so the
+/// main window never nudges itself into a re-save loop (#1925).
+pub const MAIN_WINDOW_LABEL: &str = "main";
+
 /// A serialized tab view-model handed from one window to another during a
 /// re-parent ("move to window") operation.
 ///
@@ -69,6 +75,45 @@ pub struct WindowManager {
     /// hint sourced from real state rather than a placeholder. Absent until a
     /// window first reports (a freshly-booted window that has not yet reported).
     tab_counts: Mutex<HashMap<String, usize>>,
+    /// `window_label → the window's last-reported captured layout slice` — the
+    /// aggregation authority for multi-window persistence (#1925). Each window's
+    /// tab groups live in its own JS context, so the main window cannot see
+    /// another window's layout; every window reports its own slice here and the
+    /// main window assembles the full last-session / workspace document from
+    /// [`Self::collect_layouts`].
+    layouts: Mutex<HashMap<String, StoredLayout>>,
+    /// Monotonic counter giving each first-seen window a stable collect order so
+    /// [`Self::collect_layouts`] returns windows deterministically.
+    layout_seq: AtomicU32,
+    /// `window_label → tab groups to hydrate on boot` for a window spawned by a
+    /// multi-window restore (#1925). Mirrors [`Self::pending`] (hand-offs) but
+    /// carries whole tab groups seeded by the restore rather than one moved tab.
+    pending_restores: Mutex<HashMap<String, serde_json::Value>>,
+}
+
+/// One window's reported layout slice, held by [`WindowManager`] for the main
+/// window to assemble into the full multi-window persisted document (#1925).
+#[derive(Debug, Clone)]
+struct StoredLayout {
+    /// The window's captured `WorkspaceTabGroupDef[]` (opaque frontend JSON).
+    tab_groups: serde_json::Value,
+    /// Index of the active group within this window's own groups.
+    active_group_index: usize,
+    /// First-report order, for a deterministic secondary-window ordering.
+    order: u32,
+}
+
+/// One window's reported layout slice as returned to the frontend for assembly
+/// (#1925). The `tab_groups` payload is opaque frontend JSON.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowLayoutReport {
+    /// The reporting window's runtime label (`main`, `win-1`, …).
+    pub label: String,
+    /// That window's captured `WorkspaceTabGroupDef[]` (opaque frontend JSON).
+    pub tab_groups: serde_json::Value,
+    /// Index of the active group within this window's own groups.
+    pub active_group_index: usize,
 }
 
 /// Recover a lock guard even if a previous holder panicked. Multi-window
@@ -203,6 +248,85 @@ impl WindowManager {
     /// map never grows a stale entry for a window that no longer exists.
     pub fn forget_tab_count(&self, window_label: &str) {
         recover(self.tab_counts.lock()).remove(window_label);
+    }
+
+    // ── Per-window layout aggregation for persistence (#1925) ─────────────
+
+    /// Record `window_label`'s current captured layout slice for the main window
+    /// to aggregate into a multi-window persisted document.
+    ///
+    /// Returns whether the stored slice actually *changed*. The caller uses this
+    /// to nudge the main window to re-persist only on a real change — never on a
+    /// redundant re-report of an unchanged layout, which would otherwise loop the
+    /// main window's re-save.
+    pub fn report_layout(
+        &self,
+        window_label: &str,
+        tab_groups: serde_json::Value,
+        active_group_index: usize,
+    ) -> bool {
+        let mut map = recover(self.layouts.lock());
+        let changed = match map.get(window_label) {
+            Some(existing) => {
+                existing.tab_groups != tab_groups
+                    || existing.active_group_index != active_group_index
+            }
+            None => true,
+        };
+        // Preserve a window's first-seen order across re-reports so the collect
+        // order is stable while it stays open.
+        let order = map
+            .get(window_label)
+            .map(|l| l.order)
+            .unwrap_or_else(|| self.layout_seq.fetch_add(1, Ordering::SeqCst));
+        map.insert(
+            window_label.to_string(),
+            StoredLayout {
+                tab_groups,
+                active_group_index,
+                order,
+            },
+        );
+        changed
+    }
+
+    /// Forget a window's reported layout slice (the window was destroyed) so an
+    /// assembled document never carries a window that no longer exists.
+    pub fn forget_layout(&self, window_label: &str) {
+        recover(self.layouts.lock()).remove(window_label);
+    }
+
+    /// Every window's reported layout slice, ordered main-window-first then by
+    /// first-report order, for the main window to assemble the full document.
+    pub fn collect_layouts(&self) -> Vec<WindowLayoutReport> {
+        let map = recover(self.layouts.lock());
+        let mut entries: Vec<(&String, &StoredLayout)> = map.iter().collect();
+        entries.sort_by(|(la, a), (lb, b)| {
+            let a_main = la.as_str() == MAIN_WINDOW_LABEL;
+            let b_main = lb.as_str() == MAIN_WINDOW_LABEL;
+            // Main first (a_main "greater"), then by first-report order.
+            b_main.cmp(&a_main).then_with(|| a.order.cmp(&b.order))
+        });
+        entries
+            .into_iter()
+            .map(|(label, l)| WindowLayoutReport {
+                label: label.clone(),
+                tab_groups: l.tab_groups.clone(),
+                active_group_index: l.active_group_index,
+            })
+            .collect()
+    }
+
+    // ── Pending window-restore queue (#1925) ─────────────────────────────
+
+    /// Queue the tab groups a restore-spawned window should hydrate on boot.
+    pub fn queue_restore(&self, window_label: &str, groups: serde_json::Value) {
+        recover(self.pending_restores.lock()).insert(window_label.to_string(), groups);
+    }
+
+    /// Take (and clear) the restore payload queued for `window_label`, if any.
+    pub fn take_restore(&self, window_label: &str) -> Option<serde_json::Value> {
+        recover(self.pending_restores.lock()).remove(window_label)
     }
 
     // ── Hand-off queue ───────────────────────────────────────────────────
@@ -363,6 +487,60 @@ mod tests {
         wm.forget_tab_count("win-1");
         assert_eq!(wm.tab_count_of("win-1"), None);
         assert_eq!(wm.tab_count_of("main"), Some(0));
+    }
+
+    #[test]
+    fn report_layout_reports_signals_change_and_forgets() {
+        let wm = WindowManager::new();
+        let groups = |n: &str| serde_json::json!([{ "name": n }]);
+
+        // First report of a window is always a change.
+        assert!(wm.report_layout("main", groups("a"), 0));
+        // Re-reporting the identical slice is not a change (prevents re-save loop).
+        assert!(!wm.report_layout("main", groups("a"), 0));
+        // A different slice — or a different active index — is a change.
+        assert!(wm.report_layout("main", groups("b"), 0));
+        assert!(wm.report_layout("main", groups("b"), 1));
+
+        // Forgetting a destroyed window drops its slice; a later report is "new".
+        wm.forget_layout("main");
+        assert!(wm.report_layout("main", groups("b"), 1));
+    }
+
+    #[test]
+    fn collect_layouts_orders_main_first_then_first_report_order() {
+        let wm = WindowManager::new();
+        let groups = |n: &str| serde_json::json!([{ "name": n }]);
+
+        // Report secondaries before main to prove main is floated to the front.
+        wm.report_layout("win-2", groups("b"), 0);
+        wm.report_layout("win-1", groups("c"), 0);
+        wm.report_layout("main", groups("a"), 0);
+
+        let collected: Vec<String> = wm.collect_layouts().into_iter().map(|r| r.label).collect();
+        // Main first, then secondaries in first-report order (win-2 before win-1).
+        assert_eq!(collected, vec!["main", "win-2", "win-1"]);
+
+        // A window keeps its order across re-reports.
+        wm.report_layout("win-2", groups("b2"), 0);
+        let collected: Vec<String> = wm.collect_layouts().into_iter().map(|r| r.label).collect();
+        assert_eq!(collected, vec!["main", "win-2", "win-1"]);
+    }
+
+    #[test]
+    fn pending_restore_is_queued_and_drained_once() {
+        let wm = WindowManager::new();
+        let payload = serde_json::json!({ "tabGroups": [{ "name": "g" }] });
+        assert_eq!(
+            wm.take_restore("win-1"),
+            None,
+            "unseeded window has nothing"
+        );
+
+        wm.queue_restore("win-1", payload.clone());
+        assert_eq!(wm.take_restore("win-1"), Some(payload));
+        // Drained, not copied — a second take is empty.
+        assert_eq!(wm.take_restore("win-1"), None);
     }
 
     #[test]
