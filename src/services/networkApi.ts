@@ -276,9 +276,7 @@ export function onPingError(
 export function onSweepResult(
   cb: (payload: { taskId: string } & PingSweepResult) => void
 ): Promise<UnlistenFn> {
-  return listen<{ taskId: string } & PingSweepResult>("network-sweep-result", (e) =>
-    cb(e.payload)
-  );
+  return listen<{ taskId: string } & PingSweepResult>("network-sweep-result", (e) => cb(e.payload));
 }
 
 /** Listen for ping sweep complete events. */

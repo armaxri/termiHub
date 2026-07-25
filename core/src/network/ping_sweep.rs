@@ -169,7 +169,9 @@ mod tests {
     #[tokio::test]
     async fn sweep_empty_targets_is_all_zero() {
         let cancel = CancellationToken::new();
-        let summary = ping_sweep(&[], 500, 4, false, |_| {}, cancel).await.unwrap();
+        let summary = ping_sweep(&[], 500, 4, false, |_| {}, cancel)
+            .await
+            .unwrap();
         assert_eq!(summary.total, 0);
         assert_eq!(summary.up, 0);
         assert_eq!(summary.down, 0);
