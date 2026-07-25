@@ -1,6 +1,28 @@
-import { LeafPanel, PanelNode, SplitContainer, DropEdge } from "@/types/terminal";
+import { LeafPanel, PanelNode, SplitContainer, DropEdge, TabGroup } from "@/types/terminal";
 
 export type FocusDirection = "up" | "down" | "left" | "right";
+
+/** Total number of tabs across every leaf of a panel tree. */
+export function countTabsInTree(root: PanelNode): number {
+  return getAllLeaves(root).reduce((n, leaf) => n + leaf.tabs.length, 0);
+}
+
+/**
+ * Whether a native window holds zero tabs across every tab group — the
+ * empty-window first-class state (#1902). The active group's live tree is passed
+ * separately (it is authoritative over the stale copy stored in `tabGroups`);
+ * inactive groups use their stored `rootPanel`.
+ */
+export function isWindowEmpty(
+  activeRootPanel: PanelNode,
+  tabGroups: TabGroup[],
+  activeTabGroupId: string | null
+): boolean {
+  if (countTabsInTree(activeRootPanel) > 0) return false;
+  return tabGroups
+    .filter((g) => g.id !== activeTabGroupId)
+    .every((g) => countTabsInTree(g.rootPanel) === 0);
+}
 
 /** Normalize an array of sizes so they sum to exactly 100. */
 export function normalizeSizes(sizes: number[]): number[] {

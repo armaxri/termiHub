@@ -15,12 +15,14 @@ import {
   ArrowUpCircle,
   Monitor,
   Highlighter,
+  AppWindow,
   Infinity as InfinityIcon,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { frontendLog } from "@/utils/frontendLog";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
+import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { summarizeAgentUpdates } from "@/utils/agentVersion";
 import { jumpHostStatusLabel } from "@/utils/jumpHost";
 import type { ConnectionTypeInfo } from "@/services/api";
@@ -105,6 +107,7 @@ export function StatusBar() {
   return (
     <div className="status-bar" data-testid="status-bar">
       <div className="status-bar__section status-bar__section--left">
+        <WindowIndicator />
         <PortableBadge />
         <JumpHostStatus />
         <RemoteDesktopStatus />
@@ -199,6 +202,28 @@ export function StatusBar() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Status-bar window affordance (#1902, epic #1899).
+ *
+ * When more than one native window is open, the status bar shows this window's
+ * name (e.g. "Window 2") so windows are distinguishable at a glance. With a
+ * single window it renders nothing — there is nothing to disambiguate. The count
+ * and label come from the backend window registry (#1900), since stores are not
+ * shared across windows.
+ */
+function WindowIndicator() {
+  const { name, count } = useWindowInfo();
+
+  if (count <= 1) return null;
+
+  return (
+    <span className="status-bar__item" data-testid="status-bar-window" title={name}>
+      <AppWindow size={13} />
+      {name}
+    </span>
   );
 }
 

@@ -110,6 +110,11 @@ export function useKeyboardShortcuts() {
           useAppStore.getState().addTab("Terminal", "local");
           break;
 
+        case "new-window":
+          e.preventDefault();
+          void useAppStore.getState().openNewWindow();
+          break;
+
         case "show-shortcuts":
           e.preventDefault();
           useAppStore.getState().setShortcutsOverlayOpen(true);

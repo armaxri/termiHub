@@ -40,6 +40,9 @@ const STORE_RUNNERS: Record<string, () => void> = {
   "new-terminal": () => {
     useAppStore.getState().addTab("Terminal", "local");
   },
+  "new-window": () => {
+    void useAppStore.getState().openNewWindow();
+  },
   "split-right": () => useAppStore.getState().splitPanel("horizontal"),
   "split-down": () => useAppStore.getState().splitPanel("vertical"),
   "zoom-panel": () => useAppStore.getState().toggleZoomActiveTab(),
