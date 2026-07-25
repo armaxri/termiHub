@@ -1,0 +1,50 @@
+/*
+ * Broadcast input visual indicators (#1957, epic #1954).
+ *
+ * Drives the source/target panel rings + source glow, the per-tab Radio badge,
+ * and the status-bar pill entirely off the broadcast store state (#1955). Tokens
+ * only — the orange accent lives in variables.css as --broadcast-accent.
+ */
+
+/*
+ * Every participating panel gets an orange ring; an `outline` (offset inward)
+ * rather than a `box-shadow` so the panel content's overflow:hidden never clips
+ * it. Applied to the panel wrapper whose active tab is a broadcast participant.
+ */
+.panel--broadcast-source,
+.panel--broadcast-target {
+  outline: 2px solid var(--broadcast-accent);
+  outline-offset: -2px;
+}
+
+/*
+ * The source panel — the terminal the user actually types into — additionally
+ * gets an inner glow so it is distinguishable from the (ring-only) targets.
+ */
+.panel--broadcast-source {
+  box-shadow: inset 0 0 14px color-mix(in srgb, var(--broadcast-accent) 32%, transparent);
+}
+
+/*
+ * Per-tab badge next to a participating tab's title. Rendered for every
+ * participating tab in the strip, so it stays visible even when the tab is
+ * inactive.
+ */
+.tab__broadcast-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--broadcast-accent);
+}
+
+/* Status-bar pill: orange while healthy. */
+.status-bar__item--broadcast {
+  color: var(--broadcast-accent);
+}
+
+/*
+ * No-targets warning: when every target is disconnected the pill turns to the
+ * error colour, signalling that input is being dropped until one reconnects.
+ */
+.status-bar__item--broadcast-warning {
+  color: var(--color-error);
+}

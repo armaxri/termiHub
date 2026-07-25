@@ -64,6 +64,15 @@
   --color-notice: #f59e0b;
   --color-badge-dev: #7c3aed;
 
+  /*
+   * Broadcast input (#1957): distinct orange accent for the participating-panel
+   * rings/glow, the per-tab Radio badge, and the status-bar pill. A single-root
+   * value (like the state dots) that reads on both dark and light themes, and
+   * deliberately distinct from the blue --accent-color so a broadcast ring is
+   * never mistaken for focus.
+   */
+  --broadcast-accent: #e87d0d;
+
   /* State indicator dots */
   --state-connected: #2dd79c;
   --state-connecting: #f0c040;

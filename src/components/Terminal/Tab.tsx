@@ -20,6 +20,7 @@ import {
   AppWindow,
   Plus,
   ChevronRight,
+  Radio,
 } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { TabStatus } from "@/utils/tabStatus";
@@ -52,6 +53,12 @@ interface TabProps {
   onSetColor?: () => void;
   /** Per-tab connection status; drives the status dot. `undefined` hides the dot. */
   status?: TabStatus;
+  /**
+   * Whether this tab participates in the active broadcast session (#1957). When
+   * true a Radio badge is shown next to the title, visible even while the tab is
+   * inactive so participation is always at a glance.
+   */
+  isBroadcast?: boolean;
   /**
    * Title to display, disambiguated when two editor tabs share a basename
    * (#1640). Falls back to `tab.title` when omitted.
@@ -88,6 +95,7 @@ export function Tab({
   onRename,
   onSetColor,
   status,
+  isBroadcast,
   displayTitle,
   windows = [],
   currentWindowLabel = null,
@@ -160,6 +168,15 @@ export function Tab({
         {isDirty && <span className="tab__dirty-dot" />}
         {shownTitle}
       </span>
+      {isBroadcast && (
+        <span
+          className="tab__broadcast-badge"
+          title="Broadcast target"
+          data-testid={`tab-broadcast-badge-${tab.id}`}
+        >
+          <Radio size={12} />
+        </span>
+      )}
       {tab.persistentConnectionId && <span className="tab__persistent-badge">∞</span>}
       {tab.spawned && (
         <span className="tab__spawned-badge" title="Spawned container">

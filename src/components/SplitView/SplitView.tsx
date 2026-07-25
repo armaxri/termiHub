@@ -586,6 +586,23 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const useQuickAction =
     rightClickBehavior === "quickAction" || (!rightClickBehavior && isWindows());
 
+  // Broadcast panel ring/glow (#1957): a participating panel is ringed when the
+  // terminal it currently shows (its active tab) is in the broadcast set; the
+  // source panel additionally glows. Keyed off the visible tab so the ring
+  // tracks what the user actually sees, not an inactive participant behind it.
+  const broadcastActive = useAppStore((s) => s.broadcastActive);
+  const broadcastSourceTabId = useAppStore((s) => s.broadcastSourceTabId);
+  const broadcastTargetTabIds = useAppStore((s) => s.broadcastTargetTabIds);
+  const activeTabId = panel.activeTabId;
+  const broadcastPanelClass =
+    broadcastActive && activeTabId
+      ? activeTabId === broadcastSourceTabId
+        ? " panel--broadcast-source"
+        : broadcastTargetTabIds.has(activeTabId)
+          ? " panel--broadcast-target"
+          : ""
+      : "";
+
   const {
     clearTerminal,
     saveTerminalToFile,
@@ -636,7 +653,11 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const renameTabData = renameTabId ? panel.tabs.find((t) => t.id === renameTabId) : null;
 
   return (
-    <div className="split-view__panel-content" onClick={() => setActivePanel(panel.id)}>
+    <div
+      className={`split-view__panel-content${broadcastPanelClass}`}
+      data-testid={`panel-content-${panel.id}`}
+      onClick={() => setActivePanel(panel.id)}
+    >
       <TabBar panelId={panel.id} tabs={panel.tabs} />
       <div className="split-view__terminal-area" ref={terminalAreaRef}>
         {isFileDragOver && panelSessionId && (
