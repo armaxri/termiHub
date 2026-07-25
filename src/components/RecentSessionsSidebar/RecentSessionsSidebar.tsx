@@ -40,6 +40,7 @@ export function RecentSessionsSidebar() {
   const removeHistoryEntry = useAppStore((s) => s.removeHistoryEntry);
   const clearSessionHistory = useAppStore((s) => s.clearSessionHistory);
   const markHistoryPromoted = useAppStore((s) => s.markHistoryPromoted);
+  const splitPanel = useAppStore((s) => s.splitPanel);
   const { connect } = useConnectSavedConnection();
 
   const [query, setQuery] = useState("");
@@ -69,6 +70,17 @@ export function RecentSessionsSidebar() {
   const handleConnect = useCallback(
     (entry: SessionHistoryEntry) => void openConnection(entry.config, entry.title),
     [openConnection]
+  );
+
+  // Split the active panel first, then connect: the freshly created panel
+  // becomes active, so the shared connect flow opens its tab there instead of
+  // the current panel.
+  const handleConnectInNewPanel = useCallback(
+    (entry: SessionHistoryEntry) => {
+      splitPanel();
+      void openConnection(entry.config, entry.title);
+    },
+    [splitPanel, openConnection]
   );
 
   const handleTogglePin = useCallback(
@@ -179,6 +191,7 @@ export function RecentSessionsSidebar() {
                 key={entry.dedupKey}
                 entry={entry}
                 onConnect={handleConnect}
+                onConnectInNewPanel={handleConnectInNewPanel}
                 onTogglePin={handleTogglePin}
                 onSaveAsConnection={setSaveEntry}
                 onCopyString={handleCopyString}

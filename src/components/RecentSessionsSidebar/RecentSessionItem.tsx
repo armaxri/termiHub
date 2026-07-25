@@ -1,6 +1,6 @@
 import type React from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { Pin, PinOff, Plug, Save, Copy, Trash2, Star } from "lucide-react";
+import { Pin, PinOff, Plug, Save, Copy, Trash2, Star, SplitSquareHorizontal } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -11,6 +11,7 @@ import type { SessionHistoryEntry } from "@/types/sessionHistory";
 interface RecentSessionItemProps {
   entry: SessionHistoryEntry;
   onConnect: (entry: SessionHistoryEntry) => void;
+  onConnectInNewPanel: (entry: SessionHistoryEntry) => void;
   onTogglePin: (entry: SessionHistoryEntry) => void;
   onSaveAsConnection: (entry: SessionHistoryEntry) => void;
   onCopyString: (entry: SessionHistoryEntry) => void;
@@ -24,11 +25,13 @@ interface RecentSessionItemProps {
 /**
  * A single recorded-session row: connection-type icon, `user@host` title, a
  * type badge, and relative last-used time. Single/double click reconnects; a
- * right-click context menu offers pin, save-as-connection, copy, and remove.
+ * right-click context menu offers connect-in-new-panel, pin,
+ * save-as-connection, copy, and remove.
  */
 export function RecentSessionItem({
   entry,
   onConnect,
+  onConnectInNewPanel,
   onTogglePin,
   onSaveAsConnection,
   onCopyString,
@@ -125,6 +128,13 @@ export function RecentSessionItem({
             data-testid={`recent-session-menu-connect-${key}`}
           >
             <Plug size={14} /> Connect
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onConnectInNewPanel(entry)}
+            data-testid={`recent-session-menu-connect-new-panel-${key}`}
+          >
+            <SplitSquareHorizontal size={14} /> Connect in New Panel
           </ContextMenu.Item>
           <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item

@@ -72,6 +72,7 @@ const entries: SessionHistoryEntry[] = [
 ];
 
 const addTab = vi.fn();
+const splitPanel = vi.fn();
 const pinHistoryEntry = vi.fn().mockResolvedValue(undefined);
 const removeHistoryEntry = vi.fn().mockResolvedValue(undefined);
 const clearSessionHistory = vi.fn().mockResolvedValue(undefined);
@@ -88,6 +89,7 @@ describe("RecentSessionsSidebar", () => {
       connectionTypes: [],
       settings: { defaultUser: "root" } as AppSettings,
       addTab,
+      splitPanel,
       requestPassword: vi.fn(),
       pinHistoryEntry,
       removeHistoryEntry,
@@ -163,6 +165,35 @@ describe("RecentSessionsSidebar", () => {
     act(() => (query("recent-session-connect-ssh:admin@prod:22") as HTMLButtonElement).click());
     expect(addTab).toHaveBeenCalledTimes(1);
     expect(addTab.mock.calls[0][1]).toBe("ssh");
+  });
+
+  it("opens the session in a new panel from the context menu", async () => {
+    useAppStore.setState({ sessionHistory: entries });
+    render();
+
+    // Open the row's context menu, then invoke "Connect in New Panel".
+    const row = query("recent-session-serial:/dev/ttyUSB0:115200")!;
+    act(() => {
+      row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const item = query("recent-session-menu-connect-new-panel-serial:/dev/ttyUSB0:115200");
+    expect(item).not.toBeNull();
+
+    act(() => {
+      item!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Splits into a new panel first, then opens the session there.
+    expect(splitPanel).toHaveBeenCalledTimes(1);
+    expect(addTab).toHaveBeenCalledTimes(1);
+    expect(addTab.mock.calls[0][1]).toBe("serial");
   });
 
   it("toggles pin via the row action", () => {
