@@ -145,6 +145,7 @@ export interface WorkspaceEditorMeta {
 export type NetworkTool =
   | "port-scanner"
   | "ping"
+  | "ping-sweep"
   | "dns-lookup"
   | "http-monitor"
   | "traceroute"

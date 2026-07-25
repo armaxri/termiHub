@@ -20,6 +20,8 @@ import type {
   WolDevice,
   PingResult,
   PingStats,
+  PingSweepResult,
+  PingSweepSummary,
   TracerouteHop,
 } from "@/types/network";
 
@@ -73,6 +75,37 @@ export async function networkPingStart(
 /** Stop a running ping session. */
 export async function networkPingStop(taskId: string): Promise<void> {
   await invoke("network_ping_stop", { taskId });
+}
+
+// ── Ping Sweep ─────────────────────────────────────────────────────────────────
+
+/**
+ * Start a subnet / IP-range ping sweep. Returns a task ID. Results stream via
+ * events:
+ * - `network-sweep-result` — a responding host
+ * - `network-sweep-complete` — sweep finished (with summary)
+ * - `network-sweep-error` — sweep failed (e.g. invalid range)
+ *
+ * `host` accepts a single host/IP, a CIDR range (e.g. `192.168.1.0/24`), or a
+ * comma-separated mix.
+ */
+export async function networkPingSweep(
+  host: string,
+  timeoutMs?: number,
+  concurrency?: number,
+  resolveHostnames?: boolean
+): Promise<string> {
+  return await invoke<string>("network_ping_sweep", {
+    host,
+    timeoutMs: timeoutMs ?? null,
+    concurrency: concurrency ?? null,
+    resolveHostnames: resolveHostnames ?? null,
+  });
+}
+
+/** Cancel an in-progress ping sweep by task ID. */
+export async function networkPingSweepCancel(taskId: string): Promise<void> {
+  await invoke("network_ping_sweep_cancel", { taskId });
 }
 
 // ── DNS Lookup ───────────────────────────────────────────────────────────────
@@ -237,6 +270,30 @@ export function onPingError(
   cb: (payload: { taskId: string; error: string }) => void
 ): Promise<UnlistenFn> {
   return listen<{ taskId: string; error: string }>("network-ping-error", (e) => cb(e.payload));
+}
+
+/** Listen for ping sweep result events (one per responding host). */
+export function onSweepResult(
+  cb: (payload: { taskId: string } & PingSweepResult) => void
+): Promise<UnlistenFn> {
+  return listen<{ taskId: string } & PingSweepResult>("network-sweep-result", (e) => cb(e.payload));
+}
+
+/** Listen for ping sweep complete events. */
+export function onSweepComplete(
+  cb: (payload: { taskId: string; summary: PingSweepSummary; canceled: boolean }) => void
+): Promise<UnlistenFn> {
+  return listen<{ taskId: string; summary: PingSweepSummary; canceled: boolean }>(
+    "network-sweep-complete",
+    (e) => cb(e.payload)
+  );
+}
+
+/** Listen for fatal ping sweep errors (e.g. invalid CIDR / range). */
+export function onSweepError(
+  cb: (payload: { taskId: string; error: string }) => void
+): Promise<UnlistenFn> {
+  return listen<{ taskId: string; error: string }>("network-sweep-error", (e) => cb(e.payload));
 }
 
 /** Listen for traceroute hop events. */

@@ -42,6 +42,25 @@ export interface PingStats {
   jitterMs: number;
 }
 
+// ── Ping Sweep ─────────────────────────────────────────────────────────────────
+
+/** A host that responded during a subnet / IP-range ping sweep. */
+export interface PingSweepResult {
+  /** The probed address (an IP string, or the original hostname token). */
+  host: string;
+  latencyMs?: number;
+  /** Best-effort reverse-DNS hostname for the address, if resolvable. */
+  hostname?: string;
+}
+
+/** Summary emitted when a ping sweep completes. */
+export interface PingSweepSummary {
+  total: number;
+  up: number;
+  down: number;
+  elapsedMs: number;
+}
+
 // ── DNS Lookup ───────────────────────────────────────────────────────────────
 
 export type DnsRecordType =
