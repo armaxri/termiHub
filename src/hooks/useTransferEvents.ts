@@ -35,21 +35,52 @@ function toastTerminalPhase(progress: TransferProgress): void {
 }
 
 /**
+ * Coalesce ownership-map refreshes (#1964). `transfer-progress` events fire once
+ * per chunk, so a naive refetch-per-event would spam the IPC bridge; this
+ * collapses a burst into at most one refresh per window, keeping
+ * {@link useAppStore}'s `sessionOwners` fresh during active transfers (so the
+ * fold gate scopes each transfer to its owning window) without flooding the
+ * backend. Module-scoped because the timer is a shared imperative resource.
+ */
+let ownersRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+const OWNERS_REFRESH_DEBOUNCE_MS = 150;
+function scheduleOwnersRefresh(refresh: () => void): void {
+  if (ownersRefreshTimer !== null) return;
+  ownersRefreshTimer = setTimeout(() => {
+    ownersRefreshTimer = null;
+    refresh();
+  }, OWNERS_REFRESH_DEBOUNCE_MS);
+}
+
+/**
  * Hook that listens for `transfer-progress` events from the backend (#1245) and
  * folds them into the store's `transfers` map (#1247), driving the Open
  * Connections "Transfers" section, the file-browser footer, and the status-bar
  * aggregate. On a terminal phase it also raises the one success/error toast for
  * the transfer (#1286).
+ *
+ * It also keeps the backend `session → window` ownership map mirrored in the
+ * store fresh (#1964): once on mount, and coalesced while transfers flow. That
+ * lets a window learn which of its sibling windows owns a session so a broadcast
+ * transfer is folded only in the owning window, even without a tab move.
  */
 export function useTransferEvents(): void {
   const applyTransferProgress = useAppStore((s) => s.applyTransferProgress);
   const applyTransferProgressToQueue = useAppStore((s) => s.applyTransferProgressToQueue);
+  const refreshSessionOwners = useAppStore((s) => s.refreshSessionOwners);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
 
+    // Seed the ownership map so scoping is correct from the first event, before
+    // any transfer has flowed.
+    void refreshSessionOwners();
+
     const setup = async () => {
       unlisten = await onTransferProgress((progress) => {
+        // Keep the ownership map fresh while transfers flow (coalesced) so a
+        // session claimed by a sibling window is scoped out here (#1964).
+        scheduleOwnersRefresh(() => void refreshSessionOwners());
         // Feed both consumers from the single `transfer-progress` subscription:
         // the transient #1247 `transfers` map (clears terminal rows) and the
         // persistent #1337 Transfer Queue panel (retains terminal rows).
@@ -64,5 +95,5 @@ export function useTransferEvents(): void {
     return () => {
       unlisten?.();
     };
-  }, [applyTransferProgress, applyTransferProgressToQueue]);
+  }, [applyTransferProgress, applyTransferProgressToQueue, refreshSessionOwners]);
 }

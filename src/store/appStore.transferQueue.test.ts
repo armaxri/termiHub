@@ -28,6 +28,9 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(() => Promise.resolve([])),
   sftpRealpath: vi.fn(() => Promise.resolve("/home/alice")),
   sftpCancelTransfer: vi.fn(() => Promise.resolve()),
+  claimSession: vi.fn(() => Promise.resolve(null)),
+  releaseSession: vi.fn(() => Promise.resolve(true)),
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
@@ -169,6 +172,33 @@ describe("appStore — transfer queue slice (#1337)", () => {
       const q = useAppStore.getState().transferQueue;
       expect(Object.keys(q)).toHaveLength(1);
       expect(q["t1"].transferred).toBe(60);
+    });
+  });
+
+  describe("window-scoped queue folding (#1964)", () => {
+    it("adds a queue row for a session with no ownership entry (single-window / background)", () => {
+      useAppStore.getState().applyTransferProgressToQueue(progress({ sessionId: "sess-a" }));
+      expect(useAppStore.getState().transferQueue["t1"]).toBeDefined();
+    });
+
+    it("suppresses a queue row for a session owned by another window", () => {
+      useAppStore.setState({ windowLabel: "main", sessionOwners: { "sess-a": "win-1" } });
+      useAppStore.getState().applyTransferProgressToQueue(progress({ sessionId: "sess-a" }));
+      expect(useAppStore.getState().transferQueue["t1"]).toBeUndefined();
+    });
+
+    it("adds a queue row for a session this window owns", () => {
+      useAppStore.setState({ windowLabel: "main", sessionOwners: { "sess-a": "main" } });
+      useAppStore.getState().applyTransferProgressToQueue(progress({ sessionId: "sess-a" }));
+      expect(useAppStore.getState().transferQueue["t1"]).toBeDefined();
+    });
+
+    it("prunes a foreign queue row once ownership is learned", () => {
+      useAppStore.getState().applyTransferProgressToQueue(progress({ sessionId: "sess-a" }));
+      expect(useAppStore.getState().transferQueue["t1"]).toBeDefined();
+
+      useAppStore.getState().setSessionOwners({ "sess-a": "win-1" });
+      expect(useAppStore.getState().transferQueue["t1"]).toBeUndefined();
     });
   });
 
