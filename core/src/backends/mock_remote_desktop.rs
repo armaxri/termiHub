@@ -413,6 +413,18 @@ impl GraphicalBackend for MockRemoteDesktop {
         Ok(())
     }
 
+    async fn request_full_frame(&self) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("mock not connected".to_string()));
+        };
+        // A cross-window (re)attach (#1904): re-send the whole framebuffer so the
+        // destination canvas repaints promptly instead of waiting for the next
+        // moving-block tick.
+        let (w, h) = *rt.dims.lock().await;
+        let _ = rt.frame_tx.send(background_frame(w, h)).await;
+        Ok(())
+    }
+
     async fn get_clipboard(&self) -> Option<String> {
         let rt = self.runtime.as_ref()?;
         let text = rt.clipboard.lock().await.clone();
@@ -527,6 +539,36 @@ mod tests {
                 .expect("open");
             if f.width == 640 {
                 assert_eq!(f.height, 480);
+                break;
+            }
+        }
+        m.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn request_full_frame_re_emits_background() {
+        let mut m = connected();
+        m.connect(serde_json::json!({})).await.unwrap();
+        let mut frames = m.subscribe_frames();
+        // Drain the initial background.
+        let _ = tokio::time::timeout(Duration::from_secs(2), frames.recv())
+            .await
+            .unwrap();
+        let backend = m.graphical().unwrap();
+        backend.request_full_frame().await.unwrap();
+        // A full-surface frame follows: a single rect covering the whole
+        // framebuffer (moving-block ticks only paint a small dirty rect).
+        loop {
+            let f = tokio::time::timeout(Duration::from_secs(2), frames.recv())
+                .await
+                .expect("frame")
+                .expect("open");
+            let full = f
+                .rects
+                .iter()
+                .any(|r| r.x == 0 && r.y == 0 && r.width == f.width && r.height == f.height);
+            if full {
+                assert_eq!(f.width, DEFAULT_WIDTH as u32);
                 break;
             }
         }

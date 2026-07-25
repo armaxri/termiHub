@@ -37,6 +37,19 @@ pub async fn remote_desktop_resize(
     manager.resize(&session_id, width, height, app_handle).await
 }
 
+/// Ask the backend to re-emit a full framebuffer frame.
+///
+/// Invoked when a graphical tab is moved into another window (#1904): the
+/// destination canvas is blank until the next full frame, so this forces a
+/// prompt repaint. The frame flows out on `remote-desktop-frame` as usual.
+#[tauri::command]
+pub async fn remote_desktop_request_full_frame(
+    session_id: String,
+    manager: State<'_, GraphicalSessionManager>,
+) -> Result<(), TerminalError> {
+    manager.request_full_frame(&session_id).await
+}
+
 /// Forward a protocol-agnostic input event (key / pointer / wheel).
 #[tauri::command]
 pub async fn remote_desktop_send_input(

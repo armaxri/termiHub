@@ -602,6 +602,19 @@ pub trait GraphicalBackend: Send + Sync {
     /// return `Ok(())`; the frontend scales the canvas instead.
     async fn resize(&self, width_px: u16, height_px: u16) -> Result<(), SessionError>;
 
+    /// Ask the backend to re-emit a full framebuffer frame.
+    ///
+    /// Used when a window (re)attaches to a still-live session — a cross-window
+    /// tab move (#1904). The framebuffer is canvas memory in the source window
+    /// and cannot cross a native-window boundary, so the destination canvas is
+    /// blank/stale until the next full frame. This forces a prompt repaint
+    /// instead of waiting for the protocol's next natural keyframe. Backends that
+    /// cannot force a keyframe return `Ok(())` (the default); the frontend then
+    /// simply waits for the next natural frame.
+    async fn request_full_frame(&self) -> Result<(), SessionError> {
+        Ok(())
+    }
+
     /// Read the remote clipboard text, if any / supported.
     async fn get_clipboard(&self) -> Option<String>;
 

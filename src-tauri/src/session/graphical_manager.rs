@@ -372,6 +372,25 @@ impl GraphicalSessionManager {
             .map_err(|e| TerminalError::InternalError(e.to_string()))
     }
 
+    /// Ask a session's backend to re-emit a full framebuffer frame.
+    ///
+    /// Used when a window (re)attaches to a still-live graphical session after a
+    /// cross-window tab move (#1904): the destination canvas is blank until the
+    /// next full frame, so this forces a prompt repaint instead of waiting for
+    /// the protocol's next natural keyframe. The re-emitted frame flows out on
+    /// `remote-desktop-frame` through the session's already-running frame pump.
+    pub async fn request_full_frame(&self, session_id: &str) -> Result<(), TerminalError> {
+        let conn = self.connection_of(session_id).await?;
+        let guard = conn.lock().await;
+        let backend = guard
+            .graphical()
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        backend
+            .request_full_frame()
+            .await
+            .map_err(|e| TerminalError::InternalError(e.to_string()))
+    }
+
     /// Request a new session resolution in pixels.
     pub async fn resize(
         &self,
@@ -690,14 +709,23 @@ mod tests {
     #[derive(Clone, Default)]
     struct RecordingSink {
         frames: Arc<StdMutex<usize>>,
+        /// Frames whose dirty rect covers the whole surface (a full repaint).
+        full_frames: Arc<StdMutex<usize>>,
         cursors: Arc<StdMutex<usize>>,
         states: Arc<StdMutex<Vec<GraphicalState>>>,
         cert_prompts: Arc<StdMutex<Vec<RemoteDesktopCertPromptEvent>>>,
     }
 
     impl GraphicalEventSink for RecordingSink {
-        fn emit_frame(&self, _event: &RemoteDesktopFrameEvent) {
+        fn emit_frame(&self, event: &RemoteDesktopFrameEvent) {
             *self.frames.lock().unwrap() += 1;
+            let f = &event.frame;
+            if f.rects
+                .iter()
+                .any(|r| r.x == 0 && r.y == 0 && r.width == f.width && r.height == f.height)
+            {
+                *self.full_frames.lock().unwrap() += 1;
+            }
         }
         fn emit_cursor(&self, _event: &RemoteDesktopCursorEvent) {
             *self.cursors.lock().unwrap() += 1;
@@ -788,6 +816,45 @@ mod tests {
             mgr.get_clipboard(&sid).await.expect("get"),
             Some("hello".to_string())
         );
+
+        mgr.disconnect(&sid, sink).await.expect("disconnect");
+    }
+
+    #[tokio::test]
+    async fn request_full_frame_emits_a_frame_on_attach() {
+        // The full-frame-on-attach hook (#1904): a moved graphical tab landing in
+        // a new window asks the backend to re-paint, which flows out as extra
+        // `remote-desktop-frame` events through the running pump.
+        let mgr = manager();
+        let sink = RecordingSink::default();
+        let sid = mgr
+            .connect("mock-remote-desktop", serde_json::json!({}), sink.clone())
+            .await
+            .expect("connect");
+
+        // Let the initial background frame drain so the baseline is settled.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let before = *sink.full_frames.lock().unwrap();
+
+        mgr.request_full_frame(&sid)
+            .await
+            .expect("full frame on attach");
+
+        // A *full-surface* repaint follows within a moment — the ongoing
+        // moving-block ticks only paint a small dirty rect, so a rising
+        // full-frame count is attributable to the hook.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        let after = *sink.full_frames.lock().unwrap();
+        assert!(
+            after > before,
+            "request_full_frame should emit a full-surface repaint (before={before}, after={after})"
+        );
+
+        // Unknown sessions are reported, not silently ignored.
+        assert!(matches!(
+            mgr.request_full_frame("nope").await,
+            Err(TerminalError::SessionNotFound(_))
+        ));
 
         mgr.disconnect(&sid, sink).await.expect("disconnect");
     }
