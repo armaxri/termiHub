@@ -118,6 +118,9 @@ import {
   sendHandoffToWindow,
   claimSession,
   takePendingHandoffs,
+  reportWindowLayout,
+  collectWindowLayouts,
+  takePendingWindowRestore,
 } from "@/services/api";
 import type {
   MoveWindowTarget,
@@ -125,6 +128,7 @@ import type {
   HandoffTab,
   WindowInfo,
   WindowCloseRequest,
+  WindowRestorePayload,
 } from "@/types/window";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -133,6 +137,11 @@ import {
   buildWindowsMeta,
   planWindowRestore,
   hasWindowDimension,
+  assembleWindowedGroups,
+} from "@/utils/windowPersistence";
+import type {
+  CapturedWindowLayout,
+  WindowRestorePlanEntry,
 } from "@/utils/windowPersistence";
 import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
 import type {
@@ -1724,7 +1733,68 @@ function currentWindowLabel(): string {
     return MAIN_WINDOW_LABEL;
   }
 }
+
+/**
+ * Capture the full multi-window layout for persistence (#1925): refresh this
+ * window's slice in the backend aggregation authority, pull every window's
+ * reported slice, and assemble the windowId-stamped groups + `windows[]` set.
+ *
+ * Falls back to **this window's groups only** if the cross-window commands are
+ * unavailable (e.g. browser dev mode, or an IPC error) so a save never throws —
+ * a single-window app then produces the byte-identical legacy shape.
+ */
+async function captureAllWindows(
+  ownGroups: WorkspaceTabGroupDef[],
+  activeGroupIndex: number
+): Promise<{ tabGroups: WorkspaceTabGroupDef[]; windows?: WorkspaceWindowDef[] }> {
+  let layouts: CapturedWindowLayout[] = [
+    { windowId: currentWindowLabel(), tabGroups: ownGroups },
+  ];
+  try {
+    await reportWindowLayout(ownGroups, activeGroupIndex);
+    const reports = await collectWindowLayouts();
+    if (reports.length > 0) {
+      layouts = reports.map((r) => ({ windowId: r.label, tabGroups: r.tabGroups }));
+    }
+  } catch (err) {
+    frontendLog(
+      "multi_window",
+      `window layout aggregation unavailable, saving own window only: ${String(err)}`
+    );
+  }
+  return assembleWindowedGroups(layouts);
+}
+
+/**
+ * Spawn a native window for each non-main entry of a restore plan and seed it
+ * with its assigned tab groups (#1925). Each spawned window hydrates its layout
+ * on boot from the backend pending-restore queue; an entry that owns no groups
+ * spawns an empty window so the #1902 empty-window state round-trips.
+ *
+ * Best-effort per window: a single window's spawn failure is logged and skipped
+ * rather than aborting the whole restore.
+ */
+async function spawnPlanSecondaryWindows(plan: WindowRestorePlanEntry[]): Promise<void> {
+  for (const entry of plan) {
+    if (entry.isMain) continue;
+    try {
+      if (entry.tabGroups.length > 0) {
+        await openWindow(undefined, { tabGroups: entry.tabGroups });
+      } else {
+        await openWindow();
+      }
+    } catch (err) {
+      frontendLog(
+        "multi_window",
+        `spawn restore window ${entry.windowId} failed: ${String(err)}`
+      );
+    }
+  }
+}
+
 const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
+/** Debounce timer for reporting a secondary window's layout slice (#1925). */
+let windowLayoutReportTimer: ReturnType<typeof setTimeout> | null = null;
 /**
  * Settle timer for the restore-in-progress guard (GAP G5, #1146). After a
  * restore/launch places its layout, per-tab connects keep mutating the tree for

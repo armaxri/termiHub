@@ -8,6 +8,7 @@
  */
 
 import type { ConnectionConfig, TabContentType } from "@/types/terminal";
+import type { WorkspaceTabGroupDef } from "@/types/workspace";
 
 /** Runtime label of the primary application window. */
 export const MAIN_WINDOW_LABEL = "main";
@@ -60,6 +61,37 @@ export interface TabHandoffRecord {
  * the foundation only provides the store action and the seam.
  */
 export type MoveWindowTarget = { kind: "new" } | { kind: "existing"; label: string };
+
+/**
+ * One window's captured layout slice, reported to the backend aggregation
+ * authority and read back when the main window assembles the full multi-window
+ * last-session / workspace document (#1925).
+ *
+ * Each window's tab groups live in its own JS context, so the main window cannot
+ * see another window's layout directly — it collects every window's reported
+ * slice from the backend (`collect_window_layouts`) and stamps + concatenates
+ * them (see `src/utils/windowPersistence.ts`).
+ */
+export interface WindowLayoutReport {
+  /** The reporting window's runtime label (`main`, `win-1`, …). */
+  label: string;
+  /** That window's captured tab groups (its panel trees). */
+  tabGroups: WorkspaceTabGroupDef[];
+  /** Index of the active group within this window's own groups. */
+  activeGroupIndex: number;
+}
+
+/**
+ * The tab groups a restore-spawned secondary window hydrates on boot (#1925).
+ *
+ * A multi-window restore spawns one native window per saved secondary window and
+ * seeds each with its assigned groups via the backend pending-restore queue; the
+ * new window drains this payload (`take_pending_window_restore`) and rebuilds its
+ * layout from it, exactly as the main window rebuilds its own on restore.
+ */
+export interface WindowRestorePayload {
+  tabGroups: WorkspaceTabGroupDef[];
+}
 
 /**
  * What would happen to one live session owned by a window being closed (#1903):
