@@ -1984,7 +1984,8 @@ sequenceDiagram
           </li>
           <li>
             <strong>Transfer-queue ownership</strong> when an SFTP/FTP tab with in-flight transfers
-            moves windows.
+            moves windows. <em>Resolved (#1951): transfers follow the tab</em> — carried in the
+            hand-off and seeded in the destination; see the deferred-items list below.
           </li>
           <li>
             <strong
@@ -2145,9 +2146,9 @@ sequenceDiagram
               <tr>
                 <td>6</td>
                 <td>Transfer-queue ownership scoped to the owning window on move</td>
-                <td>Transfer Queue is app-scoped; not yet re-scoped to the moved-to window</td>
-                <td>Deferred</td>
-                <td>Tracked in #1951</td>
+                <td>Transfers follow the tab: carried in the hand-off, seeded in the destination</td>
+                <td>Resolved (#1951)</td>
+                <td>Source releases the moved sessions so broadcast events don't re-adopt them</td>
               </tr>
             </tbody>
           </table>
@@ -2174,10 +2175,18 @@ sequenceDiagram
             the window boundary is not yet built.
           </li>
           <li>
-            <strong>Still deferred — transfer-queue ownership on move.</strong> The shared Transfer
-            Queue is app-scoped; scoping its ownership to the owning window when an SFTP/FTP tab
-            with in-flight transfers moves is tracked in
-            <a href="https://github.com/armaxri/termiHub/issues/1951">#1951</a>.
+            <strong>Resolved — transfer-queue ownership on move (transfers follow the tab).</strong>
+            The Transfer Queue is per-window store state fed by broadcast
+            <code>transfer-progress</code> events, so an SFTP/FTP tab's transfers used to stay
+            orphaned in the source window on move. A moved tab now carries its Transfer Queue rows
+            (rows on the tab's own session, plus any SFTP sidebar session bound to it via
+            <code>sftpSessions[…].owningTabId</code>) in the opaque hand-off envelope
+            (<code>HandoffTab.transfers</code>): the destination seeds them into its own queue while
+            the source drops them and marks the sessions <em>released</em> so ongoing broadcast
+            events do not re-adopt the moved rows
+            (<a href="https://github.com/armaxri/termiHub/issues/1951">#1951</a>). Fully scoping the
+            display to the owning window <em>without</em> a move (a window that never owned a
+            session still folds its broadcast transfers) remains a separate follow-up.
           </li>
         </ul>
       </section>
