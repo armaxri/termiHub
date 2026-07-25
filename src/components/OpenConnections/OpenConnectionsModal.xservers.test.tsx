@@ -16,6 +16,7 @@ const xServerStop = vi.fn(() => Promise.resolve());
 vi.mock("@/services/api", () => ({
   listLocalSessions: vi.fn(() => Promise.resolve([])),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
   closeTerminal: vi.fn(() => Promise.resolve()),
   closeAgentSession: vi.fn(() => Promise.resolve()),
   cancelConnecting: vi.fn(() => Promise.resolve(true)),
