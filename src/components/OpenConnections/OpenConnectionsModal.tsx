@@ -21,6 +21,7 @@ import {
   Unplug,
   Power,
   Package,
+  AppWindow,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Modal, Button, Tooltip, Progress, ConfirmDialog, toast } from "@/components/ui";
@@ -40,6 +41,8 @@ import {
   pruneDeadAgents,
   xServerStatus,
   xServerStop,
+  listSessionOwners,
+  focusWindow,
   LocalSessionInfo,
   AgentSessionInfo,
 } from "@/services/api";
@@ -52,6 +55,8 @@ import { frontendLog } from "@/utils/frontendLog";
 import { XServerStatusReport } from "@/types/xserver";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
+import { useWindowInfo } from "@/hooks/useWindowInfo";
+import { windowDisplayName } from "@/utils/windowPicker";
 import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
 import { XServerSetupDialog } from "./XServerSetupDialog";
 import "./OpenConnectionsModal.css";
@@ -76,6 +81,11 @@ interface ProxySessionsState {
 export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModalProps) {
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const desktopVersion = useDesktopVersion();
+  // How many native windows are open. The owning-window badge/focus affordance
+  // (#1926) is shown only with >1 window, so single-window users see no change —
+  // mirroring the StatusBar window affordance (#1902).
+  const { count: windowCount } = useWindowInfo();
+  const multiWindow = windowCount > 1;
   const disconnectRemoteAgent = useAppStore((s) => s.disconnectRemoteAgent);
   const shutdownRemoteAgent = useAppStore((s) => s.shutdownRemoteAgent);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
@@ -153,6 +163,10 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const [xServer, setXServer] = useState<XServerStatusReport | null>(null);
   const [xServerSetupOpen, setXServerSetupOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Snapshot of the backend `session_id → owning_window` map (#1900), read when
+  // the panel opens. Sparse — only claimed sessions (e.g. moved between windows)
+  // appear — so a session with no entry renders no window badge.
+  const [sessionOwners, setSessionOwners] = useState<Record<string, string>>({});
 
   // Split backend-local sessions: spawned containers get their own section, the
   // rest stay under "Local Sessions" (#1446). A session is spawned when the
@@ -179,14 +193,16 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const [locals, xServerReport, ...agentSessionArrays] = await Promise.all([
+      const [locals, xServerReport, owners, ...agentSessionArrays] = await Promise.all([
         listLocalSessions(),
         xServerStatus().catch(() => null),
+        listSessionOwners().catch(() => ({}) as Record<string, string>),
         ...connectedAgents.map((a) => listAgentSessions(a.id).catch(() => [])),
       ]);
 
       setLocalSessions(locals.filter((s) => !s.agentId));
       setXServer(xServerReport as XServerStatusReport | null);
+      setSessionOwners(owners as Record<string, string>);
 
       const byProxy: ProxySessionsState = {};
       for (const s of locals) {
@@ -303,6 +319,28 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
           : disconnectRemoteAgent(a.id).catch(() => {})
       )
     );
+  };
+
+  // Resolve a session's owning window into a display name (#1926). Returns null
+  // when only one window is open, the session id is missing, or the session is
+  // unclaimed (no ownership entry) — in all three cases the row shows no window
+  // badge, so single-window users see no change.
+  const resolveOwningWindow = (sessionId: string | null | undefined): OwningWindow | null => {
+    if (!multiWindow || !sessionId) return null;
+    const label = sessionOwners[sessionId];
+    if (!label) return null;
+    return { label, name: windowDisplayName(label) };
+  };
+
+  // Bring an owning window to the foreground (#1926). Focusing the current window
+  // is a harmless no-op.
+  const handleFocusWindow = async (label: string) => {
+    try {
+      await focusWindow(label);
+    } catch (err) {
+      frontendLog("open_connections", `Failed to focus window ${label}: ${err}`);
+      toast.error(`Failed to focus window: ${err}`);
+    }
   };
 
   const handleKillLocal = async (id: string) => {
@@ -639,6 +677,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 icon={<Terminal size={14} />}
                 title={s.title}
                 badge={s.alive ? "alive" : "dead"}
+                owningWindow={resolveOwningWindow(s.id)}
+                onFocusWindow={handleFocusWindow}
                 onKill={() => handleKillLocal(s.id)}
               />
             ))}
@@ -662,6 +702,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 icon={<Package size={14} />}
                 title={s.title}
                 badge={s.alive ? "spawned" : "dead"}
+                owningWindow={resolveOwningWindow(s.id)}
+                onFocusWindow={handleFocusWindow}
                 onKill={() => handleKillLocal(s.id)}
               />
             ))}
@@ -750,6 +792,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                   icon={s.connectionType === "ssh" ? <Server size={14} /> : <Terminal size={14} />}
                   title={s.title}
                   badge={s.alive ? "alive" : "dead"}
+                  owningWindow={resolveOwningWindow(s.id)}
+                  onFocusWindow={handleFocusWindow}
                   onKill={() => handleKillProxy(a.id, s.id)}
                 />
               ))}
@@ -1156,6 +1200,17 @@ function TransferRow({ transfer, onCancel }: TransferRowProps) {
   );
 }
 
+/**
+ * The window that owns a session, resolved from the backend ownership map for
+ * the owning-window badge / focus affordance (#1926).
+ */
+interface OwningWindow {
+  /** The owning window's runtime label (`main`, `win-1`, …). */
+  label: string;
+  /** Human-readable name, e.g. "Window 2". */
+  name: string;
+}
+
 interface ConnectionRowProps {
   icon: React.ReactNode;
   title: string;
@@ -1164,6 +1219,14 @@ interface ConnectionRowProps {
   badge: BadgeVariant;
   /** Extra info rendered between the title and the status badge (e.g. agent version). */
   meta?: React.ReactNode;
+  /**
+   * The window owning this row's session (#1926). When set, the row renders a
+   * clickable "Window N" chip that focuses that window. Null/undefined for
+   * single-window mode or an unclaimed session — the row then shows no chip.
+   */
+  owningWindow?: OwningWindow | null;
+  /** Bring the owning window to the foreground (#1926). */
+  onFocusWindow?: (label: string) => void | Promise<void>;
   /** When omitted, no per-row kill button is rendered. */
   onKill?: () => void | Promise<void>;
   /** Label for the kill button (defaults to "Kill"). */
@@ -1185,6 +1248,8 @@ function ConnectionRow({
   detail,
   badge,
   meta,
+  owningWindow,
+  onFocusWindow,
   onKill,
   killLabel = "Kill",
   "data-testid": testId,
@@ -1199,6 +1264,21 @@ function ConnectionRow({
         {detail && <span className="oc-row__detail">{detail}</span>}
       </span>
       {meta}
+      {owningWindow && (
+        <Tooltip content={`Focus ${owningWindow.name}`} side="top">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="oc-row__window"
+            icon={<AppWindow size={12} />}
+            onClick={() => onFocusWindow?.(owningWindow.label)}
+            aria-label={`Focus ${owningWindow.name}`}
+            data-testid="oc-row-window"
+          >
+            {owningWindow.name}
+          </Button>
+        </Tooltip>
+      )}
       <span className={`oc-row__badge oc-row__badge--${badge}`}>{badge}</span>
       {actions ??
         (onKill && (

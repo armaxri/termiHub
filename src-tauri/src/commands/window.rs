@@ -114,6 +114,35 @@ pub fn get_session_owner(
     window_manager.owner_of(&session_id)
 }
 
+/// A snapshot of the full `session_id → owning_window_label` map (#1926).
+///
+/// The Open Connections panel reads this once when it opens to stamp each
+/// session row with an owning-window badge (and a "focus owning window"
+/// affordance). Only claimed sessions appear — an unclaimed session has no
+/// entry, so its row shows no window badge.
+#[tauri::command]
+pub fn list_session_owners(
+    window_manager: State<'_, WindowManager>,
+) -> std::collections::HashMap<String, String> {
+    window_manager.all_owners()
+}
+
+/// Bring the window addressed by `label` to the foreground (#1926).
+///
+/// The "focus owning window" affordance in the Open Connections panel calls this
+/// to surface the window that owns a session. Unminimizes first so a minimized
+/// window is restored, then shows and focuses it. A `label` with no live window
+/// (it was closed between the panel opening and the click) is a no-op.
+#[tauri::command]
+pub fn focus_window(app: AppHandle, label: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(&label) {
+        window.unminimize().map_err(|e| e.to_string())?;
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// List all currently open windows, each with its last-reported tab count.
 ///
 /// The tab count is whatever the owning window last pushed via

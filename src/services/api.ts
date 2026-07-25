@@ -321,6 +321,26 @@ export async function getSessionOwner(sessionId: string): Promise<string | null>
   return await invoke<string | null>("get_session_owner", { sessionId });
 }
 
+/**
+ * A snapshot of the full `session_id → owning_window_label` map (#1926).
+ *
+ * The Open Connections panel reads this when it opens to stamp each session row
+ * with an owning-window badge. Only claimed sessions (e.g. moved between windows)
+ * appear; an unclaimed session has no entry.
+ */
+export async function listSessionOwners(): Promise<Record<string, string>> {
+  return await invoke<Record<string, string>>("list_session_owners");
+}
+
+/**
+ * Bring the window addressed by `label` to the foreground (#1926) — the "focus
+ * owning window" affordance in the Open Connections panel. A label whose window
+ * has since closed is a no-op.
+ */
+export async function focusWindow(label: string): Promise<void> {
+  await invoke("focus_window", { label });
+}
+
 /** List all currently open windows, each with its last-reported tab count. */
 export async function listWindows(): Promise<WindowInfo[]> {
   return await invoke<WindowInfo[]>("list_windows");
