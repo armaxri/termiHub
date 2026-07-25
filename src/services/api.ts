@@ -16,6 +16,7 @@ import type { RemoteClipboardFile, RemoteDesktopInput } from "@/types/remoteDesk
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
+import type { TabHandoffRecord, WindowInfo } from "@/types/window";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -275,6 +276,69 @@ export async function resolveShellSpawn(
  */
 export async function takePendingSpawn(): Promise<SpawnRequestPayload | null> {
   return await invoke<SpawnRequestPayload | null>("take_pending_spawn");
+}
+
+// ── Multi-window foundation (#1900) ───────────────────────────────────────
+
+/**
+ * Open a new native window loading the same frontend bundle. When a hand-off
+ * record is supplied, it is queued for the new window to drain on boot. Returns
+ * the new window's unique label.
+ */
+export async function openWindow(handoff?: TabHandoffRecord): Promise<string> {
+  return await invoke<string>("open_window", { handoff: handoff ?? null });
+}
+
+/**
+ * Claim a session for the *calling* window (grant side of the ownership
+ * handshake). Returns the previous owner's label, if any.
+ */
+export async function claimSession(sessionId: string): Promise<string | null> {
+  return await invoke<string | null>("claim_session", { sessionId });
+}
+
+/** Release a session from the *calling* window. No-op unless it is the owner. */
+export async function releaseSession(sessionId: string): Promise<boolean> {
+  return await invoke<boolean>("release_session", { sessionId });
+}
+
+/** The window label currently rendering a session, if any. */
+export async function getSessionOwner(sessionId: string): Promise<string | null> {
+  return await invoke<string | null>("get_session_owner", { sessionId });
+}
+
+/** List all currently open windows (label only). */
+export async function listWindows(): Promise<WindowInfo[]> {
+  return await invoke<WindowInfo[]>("list_windows");
+}
+
+/**
+ * Take (and clear) the hand-off records queued for the *calling* window — the
+ * destination window's drain on boot / on a `window-handoff` nudge.
+ */
+export async function takePendingHandoffs(): Promise<TabHandoffRecord[]> {
+  return await invoke<TabHandoffRecord[]>("take_pending_handoffs");
+}
+
+/**
+ * Queue a hand-off record for an already-open window and nudge every window to
+ * drain its queue (global `window-handoff` event).
+ */
+export async function sendHandoffToWindow(
+  targetLabel: string,
+  handoff: TabHandoffRecord
+): Promise<void> {
+  await invoke("send_handoff_to_window", { targetLabel, handoff });
+}
+
+/**
+ * Fetch a session's captured scrollback so a freshly-created xterm in a
+ * destination window can repaint history after a re-parent. Empty when nothing
+ * has been captured or the session is unknown.
+ */
+export async function replaySessionScrollback(sessionId: string): Promise<Uint8Array> {
+  const bytes = await invoke<number[]>("replay_session_scrollback", { sessionId });
+  return new Uint8Array(bytes);
 }
 
 /**

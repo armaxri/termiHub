@@ -2160,6 +2160,39 @@ connection (no exec channel, so no `sudo` path). See PR #1525 (#1330).
    connection → the **Edit with sudo** action is shown (not the fallback), and no
    "Save a copy…" / "Download" actions appear in the banner (see #1329).
 
+### Multi-window: move a live tab between windows (#1900)
+
+Multi-window behavior cannot be automated on macOS (`tauri-driver` has no
+WKWebView driver, ADR-5) and the Python bridge harness is not yet multi-window
+aware, so the foundation's end-to-end path is verified manually. The UI to
+trigger a move (context-menu "Move to Window") is #1901; until it lands, drive
+the store seam from the DevTools console.
+
+Foundation smoke test (all platforms; **required on macOS**):
+
+1. Launch via `./scripts/dev.sh`. Open a **local shell** tab in the main window
+   and run a few commands so it has visible scrollback (e.g. `ls -la`, `pwd`).
+2. Open the DevTools console and note the tab/panel ids:
+   `const s = window` — instead use the app store:
+   ```js
+   const store = (await import("/src/store/appStore.ts")).useAppStore;
+   const leaf = store.getState().rootPanel; // inspect to find the leaf + tab id
+   ```
+   (Or read the tab id off the active leaf via `getAllLeaves`.)
+3. Move the tab into a **new** window:
+   ```js
+   store.getState().moveTabToWindow("<tabId>", "<panelId>", { kind: "new" });
+   ```
+4. Verify: a second native window opens; the tab appears in it with its
+   **scrollback repainted**; the tab disappears from the main window; the shell
+   is **still live** (type a command in the moved tab — it responds, the backend
+   PTY never restarted).
+5. In the new (empty) main-window leaf, confirm no orphaned/blank terminal is
+   left behind and the source session was not killed.
+6. Close the second window → confirm the main window's other sessions, tunnels,
+   and embedded/X servers are untouched (app-wide teardown only runs when the
+   last window closes; full close policy is #1903).
+
 ### Guided-Manual Tests in the Python Harness (preferred)
 
 Guided-manual tests are **first-class `pytest` tests** in the Python system-test harness (`tests/system/`). Each one does all the automatable setup through the existing mixins — launch the app, build connections/state — and then prompts the operator for only the irreducibly-manual step (a native OS dialog, xterm-canvas color fidelity, cursor blink). This is the key difference from the legacy YAML runner: the operator does just the un-automatable bit, and the test shares the harness's app/agent orchestration, fixtures, and reporting.

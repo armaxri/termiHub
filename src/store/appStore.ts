@@ -114,7 +114,12 @@ import {
   detachPersistentTab as apiDetachPersistentTab,
   saveShellIntegrationSettings,
   localReadFile,
+  openWindow,
+  sendHandoffToWindow,
+  claimSession,
+  takePendingHandoffs,
 } from "@/services/api";
+import type { MoveWindowTarget, TabHandoffRecord, HandoffTab } from "@/types/window";
 import type {
   ConnectionTypeInfo,
   ContainerSpawn,
@@ -658,6 +663,39 @@ interface AppState {
   getAllPanels: () => LeafPanel[];
   /** Update the backend session ID on a tab (called after the terminal session is created). */
   setTabSessionId: (tabId: string, sessionId: string | null) => void;
+  /** Clear a tab's one-shot scrollback-replay flag after a re-parent (#1900). */
+  clearPendingScrollbackReplay: (tabId: string) => void;
+
+  // ── Multi-window foundation (#1900) ──
+  /**
+   * Session ids currently being re-parented to another window. While a session
+   * is in this set, the source window's {@link Terminal} must NOT close the
+   * backend session on unmount — the destination window is adopting it. The flag
+   * is consumed once by the source's deferred close.
+   */
+  movingSessionIds: string[];
+  /** Whether a session is mid-move (read by the source Terminal's unmount cleanup). */
+  isSessionMoving: (sessionId: string) => boolean;
+  /** Clear a session's moving flag once the source has released its view. */
+  clearMovingSession: (sessionId: string) => void;
+  /**
+   * Re-parent a session-bearing tab into another window (a brand-new window or
+   * an existing one). The backend session keeps running; the source view is
+   * disposed and the destination re-attaches with scrollback replay. This is the
+   * store seam the "Move to Window" UI (#1901) builds on.
+   */
+  moveTabToWindow: (
+    tabId: string,
+    fromPanelId: string,
+    target: MoveWindowTarget
+  ) => Promise<void>;
+  /**
+   * Hydrate a handed-off tab into this window's active group (destination side).
+   * The tab re-attaches to its live backend session and replays scrollback.
+   */
+  hydrateHandoffTab: (record: TabHandoffRecord) => void;
+  /** Drain and hydrate any hand-off records queued for this window. */
+  receivePendingHandoffs: () => Promise<void>;
 
   // Connections
   folders: ConnectionFolder[];
@@ -1868,6 +1906,26 @@ function createTab(
 }
 
 /**
+ * Serialize a tab into the view-model carried across a native-window boundary
+ * (#1900). Placement (`panelId`/`isActive`) is dropped — the destination window
+ * re-assigns it on hydrate — while `sessionId` anchors the re-attach to the same
+ * live backend session.
+ */
+function serializeHandoffTab(tab: TerminalTab): HandoffTab {
+  return {
+    sessionId: tab.sessionId,
+    title: tab.title,
+    connectionType: tab.connectionType,
+    contentType: tab.contentType,
+    config: tab.config,
+    ...(tab.initialCommand ? { initialCommand: tab.initialCommand } : {}),
+    ...(tab.persistentConnectionId ? { persistentConnectionId: tab.persistentConnectionId } : {}),
+    ...(tab.connectionId ? { connectionId: tab.connectionId } : {}),
+    ...(tab.spawned ? { spawned: true } : {}),
+  };
+}
+
+/**
  * Remove a tab from a leaf panel, choosing a new active tab if needed.
  * Returns the updated leaf (may have empty tabs).
  */
@@ -2290,6 +2348,133 @@ export const useAppStore = create<AppState>((set, get) => {
         };
       }),
 
+    // ── Multi-window foundation (#1900) ──
+    movingSessionIds: [],
+    isSessionMoving: (sessionId) => get().movingSessionIds.includes(sessionId),
+    clearMovingSession: (sessionId) =>
+      set((state) => ({
+        movingSessionIds: state.movingSessionIds.filter((id) => id !== sessionId),
+      })),
+
+    moveTabToWindow: async (tabId, fromPanelId, target) => {
+      // Locate the tab in the active group's live rootPanel.
+      const sourceLeaf = getAllLeaves(get().rootPanel).find((l) => l.id === fromPanelId);
+      const tab = sourceLeaf?.tabs.find((t) => t.id === tabId);
+      if (!tab) return;
+
+      const record: TabHandoffRecord = { tab: serializeHandoffTab(tab) };
+      const sessionId = tab.sessionId;
+
+      // Mark the live session as moving so the source window's Terminal does NOT
+      // close the backend session when its view unmounts — the destination
+      // window adopts the still-running session.
+      if (sessionId) {
+        set((state) => ({
+          movingSessionIds: state.movingSessionIds.includes(sessionId)
+            ? state.movingSessionIds
+            : [...state.movingSessionIds, sessionId],
+        }));
+      }
+
+      // Hand the tab off to the destination window (create it, or queue + nudge).
+      try {
+        if (target.kind === "new") {
+          await openWindow(record);
+        } else {
+          await sendHandoffToWindow(target.label, record);
+        }
+      } catch (err) {
+        // Hand-off failed: clear the moving flag so a later close still tears the
+        // session down rather than leaking it.
+        if (sessionId) get().clearMovingSession(sessionId);
+        frontendLog("multi_window", `move tab to window failed: ${String(err)}`);
+        return;
+      }
+
+      // Remove the tab from the source window's tree. The Terminal unmount sees
+      // the moving flag and skips closeTerminal, keeping the backend session
+      // alive for the destination to re-attach and replay.
+      set((state) => {
+        let newRootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
+          removeTabFromLeaf(leaf, tabId)
+        );
+        const updatedSource = findLeaf(newRootPanel, fromPanelId);
+        const allLeaves = getAllLeaves(newRootPanel);
+        if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
+          const removed = removeLeaf(newRootPanel, fromPanelId);
+          newRootPanel = removed ? simplifyTree(removed) : newRootPanel;
+        }
+        const newActivePanelId =
+          state.activePanelId === fromPanelId
+            ? (getAllLeaves(newRootPanel)[0]?.id ?? null)
+            : state.activePanelId;
+        const tabGroups = state.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId
+            ? { ...g, rootPanel: newRootPanel, activePanelId: newActivePanelId }
+            : g
+        );
+        return { rootPanel: newRootPanel, tabGroups, activePanelId: newActivePanelId };
+      });
+    },
+
+    hydrateHandoffTab: (record) =>
+      set((state) => {
+        const h = record.tab;
+        const targetLeaf = getAllLeaves(state.rootPanel)[0];
+        if (!targetLeaf) return state;
+
+        tabCounter++;
+        const newTab: TerminalTab = {
+          id: `tab-${tabCounter}`,
+          sessionId: h.sessionId,
+          title: h.title,
+          connectionType: h.connectionType,
+          contentType: h.contentType,
+          config: h.config,
+          panelId: targetLeaf.id,
+          isActive: true,
+          ...(h.initialCommand ? { initialCommand: h.initialCommand } : {}),
+          ...(h.persistentConnectionId ? { persistentConnectionId: h.persistentConnectionId } : {}),
+          ...(h.connectionId ? { connectionId: h.connectionId } : {}),
+          ...(h.spawned ? { spawned: true } : {}),
+          // Repaint history from the backend ring buffer once the fresh xterm
+          // (re)attaches to the live session.
+          ...(h.sessionId ? { pendingScrollbackReplay: true } : {}),
+        };
+
+        const newRootPanel = updateLeaf(state.rootPanel, targetLeaf.id, (leaf) => ({
+          ...leaf,
+          tabs: [...leaf.tabs.map((t) => ({ ...t, isActive: false })), newTab],
+          activeTabId: newTab.id,
+        }));
+        const tabGroups = state.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId ? { ...g, rootPanel: newRootPanel } : g
+        );
+        return { rootPanel: newRootPanel, tabGroups, activePanelId: targetLeaf.id };
+      }),
+
+    receivePendingHandoffs: async () => {
+      let records: TabHandoffRecord[];
+      try {
+        records = await takePendingHandoffs();
+      } catch (err) {
+        frontendLog("multi_window", `takePendingHandoffs failed: ${String(err)}`);
+        return;
+      }
+      for (const record of records) {
+        // Claim ownership for this window so the backend `session → window` map
+        // points here (single-owner invariant + resize gating).
+        if (record.tab.sessionId) {
+          try {
+            await claimSession(record.tab.sessionId);
+          } catch (err) {
+            frontendLog("multi_window", `claimSession failed: ${String(err)}`);
+          }
+        }
+        get().hydrateHandoffTab(record);
+      }
+    },
+
     draggingTabId: null,
     setDraggingTabId: (id) => set({ draggingTabId: id }),
 
@@ -2654,6 +2839,24 @@ export const useAppStore = create<AppState>((set, get) => {
     activePanelId: initialPanel.id,
 
     getAllPanels: () => getAllLeaves(get().rootPanel),
+
+    clearPendingScrollbackReplay: (tabId) =>
+      set((state) => {
+        const leaf = findLeafByTab(state.rootPanel, tabId);
+        if (!leaf) return state;
+        const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+          ...l,
+          tabs: l.tabs.map((t) =>
+            t.id === tabId && t.pendingScrollbackReplay
+              ? { ...t, pendingScrollbackReplay: false }
+              : t
+          ),
+        }));
+        const tabGroups = state.tabGroups.map((g) =>
+          g.id === state.activeTabGroupId ? { ...g, rootPanel } : g
+        );
+        return { rootPanel, tabGroups };
+      }),
 
     setTabSessionId: (tabId, sessionId) => {
       // For remote-session tabs gaining a session ID, fetch capabilities so

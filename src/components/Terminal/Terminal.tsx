@@ -16,6 +16,7 @@ import {
   closeTerminal,
   detachPersistentTab,
   getAgentSessionBuffer,
+  replaySessionScrollback,
 } from "@/services/api";
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
@@ -228,6 +229,13 @@ interface TerminalProps {
    * panel groups "Spawned Containers" from, surviving this tab's close.
    */
   spawned?: boolean;
+  /**
+   * `true` when this tab was hydrated into a destination window by a "move to
+   * window" re-parent (#1900). On (re)attach the terminal fetches and replays
+   * the session's ring-buffered scrollback once so the fresh xterm repaints
+   * history. Ignored for persistent tabs (they replay via the agent buffer).
+   */
+  replayScrollbackOnAttach?: boolean;
 }
 
 /**
@@ -243,6 +251,7 @@ export function Terminal({
   initialCommand,
   persistentConnectionId,
   spawned,
+  replayScrollbackOnAttach,
 }: TerminalProps) {
   const retryCount = useAppStore((s) => s.terminalRetryCounters[tabId] ?? 0);
   const terminalElRef = useRef<HTMLDivElement | null>(null);
@@ -285,6 +294,10 @@ export function Terminal({
   // destroying the live xterm and leaving a blank terminal. Using a mount-time
   // ref keeps setupTerminal stable after the initial connect.
   const initialSessionIdRef = useRef(existingSessionId);
+  // One-shot: replay the moved session's scrollback on the first attach after a
+  // cross-window re-parent (#1900). Captured at mount so a later store write does
+  // not re-trigger it; cleared once consumed.
+  const replayScrollbackRef = useRef(replayScrollbackOnAttach);
   // Keep the latest persistentConnectionId in a ref so the terminal-creation
   // effect below can read it without listing it as a dependency. Adding it to
   // that effect's deps would dispose and recreate the live xterm instance and
@@ -459,6 +472,33 @@ export function Terminal({
               if (!isCanceled()) {
                 useAppStore.getState().setTerminalReattaching(tabId, false);
               }
+            }
+            if (isCanceled()) return;
+          } else if (replayScrollbackRef.current) {
+            // Cross-window re-parent (#1900): the backend session kept running,
+            // so repaint history from its 1 MiB ring buffer into this fresh
+            // xterm. Mirrors the persistent-reattach replay dance above.
+            useAppStore.getState().setTerminalReattaching(tabId, true);
+            frontendLog("terminal", `Replaying scrollback for moved session ${sessionId}`);
+            try {
+              const buffer = await replaySessionScrollback(sessionId);
+              if (isCanceled()) return;
+              if (buffer.length > 0) {
+                useAppStore.getState().setTerminalReattaching(tabId, false);
+                await waitForUsableDimensions(xterm, fitAddon, terminalElRef.current, isCanceled);
+                if (isCanceled()) return;
+                xterm.reset();
+                await new Promise<void>((resolve) => xterm.write(buffer, resolve));
+              }
+            } catch (err) {
+              frontendLog("terminal", `Failed to replay moved-session scrollback: ${err}`);
+            } finally {
+              if (!isCanceled()) {
+                useAppStore.getState().setTerminalReattaching(tabId, false);
+              }
+              // One-shot: clear the tab flag so a later render never replays again.
+              replayScrollbackRef.current = false;
+              useAppStore.getState().clearPendingScrollbackReplay(tabId);
             }
             if (isCanceled()) return;
           }
@@ -791,6 +831,13 @@ export function Terminal({
               }, 50);
             } else {
               pendingCloseTimerRef.current = setTimeout(() => {
+                // Multi-window (#1900): if this session is being re-parented to
+                // another window, the destination adopts it — do NOT close the
+                // backend session. Consume the moving flag once.
+                if (useAppStore.getState().isSessionMoving(sid)) {
+                  useAppStore.getState().clearMovingSession(sid);
+                  return;
+                }
                 closeTerminal(sid);
               }, 50);
             }

@@ -39,6 +39,7 @@ import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
 import { getCliWorkspace } from "@/services/workspaceApi";
 import { resolveRestoreMode } from "@/utils/restoreMode";
+import { MAIN_WINDOW_LABEL } from "@/types/window";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -166,6 +167,16 @@ function App() {
     (async () => {
       await loadFromBackend();
 
+      // Secondary windows (#1900) boot empty: they never restore the main
+      // window's last session and never auto-save (window-dimension persistence
+      // is #1905). Instead they drain any tabs handed off to them. Live moves to
+      // an already-open window arrive via the `window-handoff` listener below.
+      const isMainWindow = getCurrentWindow().label === MAIN_WINDOW_LABEL;
+      if (!isMainWindow) {
+        await useAppStore.getState().receivePendingHandoffs();
+        return;
+      }
+
       // A workspace launched from the CLI takes precedence over the last session.
       let handledByCli = false;
       try {
@@ -228,6 +239,18 @@ function App() {
   useEffect(() => {
     const unlistenPromise = listen<void>("connections-changed", () => {
       useAppStore.getState().reloadConnectionsFromBackend();
+    });
+    return () => {
+      void unlistenPromise.then((fn) => fn());
+    };
+  }, []);
+
+  // Multi-window (#1900): a tab moved into an already-open window arrives as a
+  // queued hand-off plus a global `window-handoff` nudge. Every window drains
+  // its own queue; only the targeted window has a record, so the rest no-op.
+  useEffect(() => {
+    const unlistenPromise = listen<void>("window-handoff", () => {
+      void useAppStore.getState().receivePendingHandoffs();
     });
     return () => {
       void unlistenPromise.then((fn) => fn());
