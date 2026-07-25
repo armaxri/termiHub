@@ -563,9 +563,10 @@ mod tests {
                 .await
                 .expect("frame")
                 .expect("open");
-            let full = f.rects.iter().any(|r| {
-                r.x == 0 && r.y == 0 && r.width == f.width && r.height == f.height
-            });
+            let full = f
+                .rects
+                .iter()
+                .any(|r| r.x == 0 && r.y == 0 && r.width == f.width && r.height == f.height);
             if full {
                 assert_eq!(f.width, DEFAULT_WIDTH as u32);
                 break;
