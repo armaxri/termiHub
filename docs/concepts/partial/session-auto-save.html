@@ -749,9 +749,13 @@ graph TD
 <p>Use Tauri's <code>on_window_event</code> with <code>WindowEvent::CloseRequested</code> to trigger session snapshot saving. The frontend listens for a <code>before-close</code> event, serializes the current panel tree and open tabs, and sends the snapshot to the backend for persistence before allowing the window to close.</p>
 <hr>
 <h2 id="implementation-status">Implementation Status</h2>
-<p><strong>Status: Partial — session restore shipped; session history not started.</strong> The
-session-restore half shipped and its issue <a href="https://github.com/armaxri/termiHub/issues/586">#586</a>
-is closed (merged 2026-06-16). The MobaXterm-style session-history half is unbuilt.</p>
+<p><strong>Status: Partial — session restore, session history, and the restore-mode dialog all
+shipped; three residual UX refinements remain.</strong> The session-restore half
+(<a href="https://github.com/armaxri/termiHub/issues/586">#586</a>, closed), the MobaXterm-style
+session-history half (<a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a>, closed)
+and the ask/never/always restore-mode dialog (<a href="https://github.com/armaxri/termiHub/issues/1884">#1884</a>,
+closed) are all built and wired end-to-end. The concept stays in <code>partial/</code> only because
+three narrower refinements from the mockups are not yet built (see below).</p>
 <h3 id="what-exists">What exists</h3>
 <ul>
 <li><strong>Automatic session persistence + restore-on-startup</strong> —
@@ -759,38 +763,55 @@ is closed (merged 2026-06-16). The MobaXterm-style session-history half is unbui
   <code>WorkspaceTabGroupDef</code>, <code>LastSessionStorage</code>/<code>LastSessionManager</code>, persisted to
   <code>last-session.json</code>), commands <code>save_last_session</code>/<code>load_last_session</code>/<code>clear_last_session</code>,
   frontend <code>src/services/lastSessionApi.ts</code>. Auto-save is debounced on any layout change
-  (<code>App.tsx</code>), restore runs on launch, guarded by the <code>restoreLastSessionOnStartup</code> setting
-  and covered by <code>appStore.restoreGuard.test.ts</code>/<code>appStore.lastSession.test.ts</code>. The
-  mechanism (save-on-change + silent restore) differs from the concept's save-on-close + restore
-  dialog design.</li>
+  (<code>App.tsx</code>). The mechanism (save-on-change, which survives crashes) differs from the
+  concept's save-on-close design — reconciled in the ledger below.</li>
+<li><strong>Session-history store</strong> — <code>src-tauri/src/session_history/</code>
+  (<code>config.rs</code>, <code>manager.rs</code>, <code>storage.rs</code>) with IPC in
+  <code>src-tauri/src/commands/session_history.rs</code> and frontend
+  <code>src/services/sessionHistoryApi.ts</code>. Sessions are auto-recorded from the
+  <code>addTab</code> flow (<code>recordSession</code> in <code>src/store/appStore.ts</code>, tested in
+  <code>appStore.sessionHistory.test.ts</code>) with dedup, pinning and retention.</li>
+<li><strong>"Recent Sessions" sidebar + quick-connect bar</strong> —
+  <code>src/components/RecentSessionsSidebar/</code> (<code>RecentSessionsSidebar.tsx</code>,
+  <code>QuickConnectBar.tsx</code>, <code>SaveAsConnectionDialog.tsx</code>) with
+  <code>user@host[:port]</code> parsing in <code>src/utils/quickConnect.ts</code>, a per-entry context
+  menu, relative time and "Save as Connection" promotion.</li>
+<li><strong>Restore mode (ask/never/always) + restore dialog</strong> —
+  <code>src/components/SessionRestoreDialog.tsx</code> with a "Remember my choice" opt-out that
+  persists the mode (<code>always</code> on Restore, <code>never</code> on Start Fresh); shown only
+  when the mode is <code>ask</code> and a snapshot exists.</li>
 <li>The workspace system (<code>src-tauri/src/workspace/</code>) remains the manual named-layout foundation.</li>
 </ul>
-<h3 id="what-is-missing">What is missing</h3>
+<h3 id="what-is-missing">Residual refinements (why this stays Partial)</h3>
 <ul>
-<li><strong>Session-history store</strong> — no <code>session-history.json</code>, auto-record on tab open, or
-  dedup logic. Tracked: <a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a>.</li>
-<li><strong>"Recent Sessions" sidebar section</strong> — collapsible history list, pin, per-entry context
-  menu, relative time. Tracked: <a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a>.</li>
-<li><strong>Quick-connect bar</strong> — <code>user@host[:port]</code> fast entry + autocomplete-from-history, and
-  "Save as Connection" promotion. Tracked:
-  <a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a>.</li>
-<li><strong>Restore mode (ask/never/always) + restore dialog</strong> — code has only a boolean setting and
-  restores silently. Tracked: <a href="https://github.com/armaxri/termiHub/issues/1884">#1884</a>.</li>
+<li><strong>Restore dialog per-tab selection + offline-target warnings</strong> — the dialog restores
+  the whole snapshot; the mockups' per-tab checkboxes and the "device offline / host unreachable"
+  warning icon are not built. Tracked:
+  <a href="https://github.com/armaxri/termiHub/issues/1931">#1931</a>.</li>
+<li><strong>Full "Save as Connection" editor</strong> — the promotion dialog does not yet expose the
+  icon picker, editable host/port/user/auth fields and the save-password toggle from the mockups.
+  Tracked: <a href="https://github.com/armaxri/termiHub/issues/1932">#1932</a>.</li>
+<li><strong>"Connect in New Panel" context-menu item</strong> — the Recent Sessions context menu is
+  missing the "Connect in New Panel" entry. Tracked:
+  <a href="https://github.com/armaxri/termiHub/issues/1933">#1933</a>.</li>
 </ul>
 <hr>
 <h2 id="sync">Sync Ledger</h2>
 <blockquote>
 <p>Maintained by <code>/sync-concept session-auto-save</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
 </blockquote>
-<p><strong>Last synced:</strong> 2026-07-24 at commit <code>fb7befbb</code> · <strong>Status:</strong> diverged (partial). Session restore shipped (#586); session history (#1883) and the restore-mode dialog (#1884) remain.</p>
+<p><strong>Last synced:</strong> 2026-07-25 (status reconciliation) · <strong>Status:</strong> diverged (partial). Session restore (#586), session history (#1883) and the ask/never/always restore dialog (#1884) all shipped; three mockup refinements remain, tracked as #1931/#1932/#1933.</p>
 <h3 id="sync-open">Open divergences</h3>
 <div class="table-wrap">
 <table>
 <thead><tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Recommendation</th></tr></thead>
 <tbody>
 <tr><td>1</td><td>Bespoke <code>LastSessionSnapshot</code>/<code>PanelSnapshot</code> schema in <code>src-tauri/src/session/snapshot.rs</code>; save on window <code>CloseRequested</code></td><td>Reuses <code>WorkspaceTabGroupDef</code> in <code>src-tauri/src/workspace/last_session.rs</code>; saves debounced on layout change (survives crashes)</td><td>Design reality</td><td>Concept reconciled to the shipped mechanism; commands are <code>save/load/clear_last_session</code></td></tr>
-<tr><td>2</td><td>Session-history store, Recent Sessions sidebar, quick-connect bar, save-as-connection promotion, history settings</td><td>None exist</td><td>Missing</td><td><a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a></td></tr>
-<tr><td>3</td><td>Restore ask/never/always mode + "Restore Previous Session?" dialog with per-tab checkboxes and offline-target warnings</td><td>Single boolean <code>restoreLastSessionOnStartup</code>; silent restore</td><td>Missing</td><td><a href="https://github.com/armaxri/termiHub/issues/1884">#1884</a></td></tr>
+<tr><td>2</td><td>Session-history store, Recent Sessions sidebar, quick-connect bar, save-as-connection promotion, history settings</td><td><strong>Resolved</strong> — <code>src-tauri/src/session_history/</code> + <code>commands/session_history.rs</code>, <code>RecentSessionsSidebar/</code> (list + <code>QuickConnectBar</code> + <code>SaveAsConnectionDialog</code>), <code>recordSession</code> auto-record from <code>addTab</code></td><td>Resolved</td><td>Landed via <a href="https://github.com/armaxri/termiHub/issues/1883">#1883</a> — closed</td></tr>
+<tr><td>3</td><td>Restore ask/never/always mode + "Restore Previous Session?" dialog</td><td><strong>Resolved</strong> — <code>SessionRestoreDialog.tsx</code> with a "Remember my choice" opt-out that persists <code>always</code>/<code>never</code>; shown only when the mode is <code>ask</code></td><td>Resolved</td><td>Landed via <a href="https://github.com/armaxri/termiHub/issues/1884">#1884</a> — closed</td></tr>
+<tr><td>4</td><td>Restore dialog per-tab checkboxes + offline-target warning icons</td><td>Dialog restores the whole snapshot; per-tab selection and offline warnings not built</td><td>Missing</td><td>Tracked <a href="https://github.com/armaxri/termiHub/issues/1931">#1931</a></td></tr>
+<tr><td>5</td><td>"Save as Connection" full editor: icon picker, editable host/port/user/auth, save-password toggle</td><td>Promotion dialog exists but without the icon picker / editable fields / save-password toggle</td><td>Missing</td><td>Tracked <a href="https://github.com/armaxri/termiHub/issues/1932">#1932</a></td></tr>
+<tr><td>6</td><td>Recent Sessions context menu includes "Connect in New Panel"</td><td>Context menu is missing the "Connect in New Panel" entry</td><td>Missing</td><td>Tracked <a href="https://github.com/armaxri/termiHub/issues/1933">#1933</a></td></tr>
 </tbody>
 </table>
 </div>
