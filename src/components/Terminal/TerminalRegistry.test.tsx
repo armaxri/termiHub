@@ -5,6 +5,8 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { TerminalPortalProvider, useTerminalRegistry } from "./TerminalRegistry";
 import { sendInput } from "@/services/api";
+import { useAppStore } from "@/store/appStore";
+import type { TerminalTab } from "@/types/terminal";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -373,6 +375,51 @@ describe("pasteToTerminal", () => {
 
     expect(sendInput).toHaveBeenCalledTimes(1);
     expect(sendInput).toHaveBeenCalledWith("session-dup", "hello");
+  });
+
+  it("broadcasts paste to all connected targets when broadcast is active (#1981)", async () => {
+    vi.mocked(sendInput).mockClear();
+    mockReadClipboard.mockResolvedValueOnce("cfg");
+    const mkTab = (id: string): TerminalTab => ({
+      id,
+      sessionId: `session-${id}`,
+      title: id,
+      connectionType: "local",
+      contentType: "terminal",
+      config: { type: "local", config: {} },
+      panelId: "leaf-1",
+      isActive: false,
+    });
+    // Two connected terminals, broadcast active from the source. getBroadcast-
+    // TargetTabIds treats a tab with a sessionId and no error/exit flag as
+    // connected (deriveTabStatus default).
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      rootPanel: {
+        type: "leaf",
+        id: "leaf-1",
+        tabs: [mkTab("src"), mkTab("t2")],
+        activeTabId: "src",
+      },
+      activePanelId: "leaf-1",
+      broadcastActive: true,
+      broadcastSourceTabId: "src",
+      broadcastScope: "all",
+      broadcastTargetTabIds: new Set(["src", "t2"]),
+    });
+    act(() => {
+      registryActions.registerSession("src", "session-src");
+      registryActions.registerSession("t2", "session-t2");
+    });
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("src");
+    });
+
+    // Both target sessions receive the paste (not just the source).
+    expect(sendInput).toHaveBeenCalledWith("session-src", "cfg");
+    expect(sendInput).toHaveBeenCalledWith("session-t2", "cfg");
+    expect(sendInput).toHaveBeenCalledTimes(2);
   });
 });
 
