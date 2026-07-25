@@ -136,25 +136,6 @@
   margin-left: var(--spacing-xs);
 }
 
-.keyboard-settings__reset-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.keyboard-settings__reset-btn:hover {
-  background-color: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 .keyboard-settings__actions {
   display: flex;
   gap: var(--spacing-sm);

@@ -47,7 +47,7 @@
   flex-shrink: 0;
 }
 
-.connection-editor__setup-agent-btn {
+.connection-editor__setup-agent {
   align-self: flex-start;
 }
 
@@ -445,23 +445,11 @@
   text-decoration: underline;
 }
 
-/* Help icon button next to boolean field labels */
-.settings-form__help-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  padding: 0;
-  margin-left: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  line-height: 1;
+/* Help icon Button next to boolean field labels: skin comes from the ghost
+   Button primitive; only the inline spacing/alignment is bespoke here. */
+.settings-form__help {
+  margin-left: var(--spacing-xs);
   vertical-align: middle;
-}
-
-.settings-form__help-btn:hover {
-  color: var(--focus-border);
 }
 
 /* Field help dialog */

@@ -1285,7 +1285,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <Button
             variant="secondary"
             size="sm"
-            className="connection-editor__setup-agent-btn"
+            className="connection-editor__setup-agent"
             icon={<KeyRound size={13} aria-hidden />}
             onClick={handleSetupSshAgent}
             data-testid="ssh-setup-agent"

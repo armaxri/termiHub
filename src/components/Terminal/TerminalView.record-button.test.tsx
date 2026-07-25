@@ -20,6 +20,28 @@ vi.mock("@/testbridge/TestBridge", () => ({ TestBridge: () => null }));
 vi.mock("./Terminal", () => ({ Terminal: () => null }));
 vi.mock("@/components/ui", () => ({
   Tooltip: ({ children }: { children: React.ReactNode }) => children,
+  Button: ({
+    icon,
+    children,
+    className,
+    variant: _variant,
+    size: _size,
+    iconOnly: _iconOnly,
+    fullWidth: _fullWidth,
+    pendingLabel: _pendingLabel,
+    errorToast: _errorToast,
+    ...rest
+  }: {
+    icon?: React.ReactNode;
+    children?: React.ReactNode;
+    className?: string;
+    [key: string]: unknown;
+  }) => (
+    <button className={["ui-btn", className].filter(Boolean).join(" ")} {...rest}>
+      {icon}
+      {children}
+    </button>
+  ),
   toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
 }));
 vi.mock("./TabGroupChips", () => ({ TabGroupChips: () => null }));
@@ -60,7 +82,7 @@ describe("TerminalView — macro record button (#1674)", () => {
     const btn = recordButton();
     expect(btn).toBeTruthy();
     expect(btn.getAttribute("aria-pressed")).toBe("false");
-    expect(btn.className).not.toContain("terminal-view__toolbar-btn--recording");
+    expect(btn.className).not.toContain("terminal-view__toolbar-action--recording");
   });
 
   it("clicking starts recording and reflects the active state", () => {
@@ -69,7 +91,7 @@ describe("TerminalView — macro record button (#1674)", () => {
     expect(useAppStore.getState().macroRecording).toBe(true);
     const btn = recordButton();
     expect(btn.getAttribute("aria-pressed")).toBe("true");
-    expect(btn.className).toContain("terminal-view__toolbar-btn--recording");
+    expect(btn.className).toContain("terminal-view__toolbar-action--recording");
   });
 
   it("clicking again stops recording (opening the save dialog after capture)", () => {

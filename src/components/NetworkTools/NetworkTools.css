@@ -45,7 +45,7 @@
 }
 
 /* Field sizing: layout-only classes composed onto the shared `ui/Field`
-   primitive (the same pattern as `.network-sidebar__list-btn` over the ghost
+   primitive (the same pattern as `.network-sidebar__list-action` over the ghost
    `Button`). The label + control + inline-error structure and all its styling
    come from `.ui-field` / `.ui-input` / `.ui-select__trigger`; these classes
    only control how a field flexes within the wrap-row `.network-panel__form`. */
@@ -292,7 +292,7 @@
    sidebar quick-action and New Monitor rows read as full-width, left-aligned
    list rows (the primitive centers content and ghost text is secondary). Shape,
    radius, focus ring, sizing, and hover background all come from the primitive. */
-.network-sidebar__list-btn {
+.network-sidebar__list-action {
   justify-content: flex-start;
   color: var(--text-primary);
 }

@@ -54,25 +54,6 @@
   word-break: break-word;
 }
 
-.file-browser-tab__retry-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-sm) var(--spacing-lg);
-  background-color: var(--accent-color);
-  color: var(--text-on-accent);
-  border: none;
-  border-radius: var(--radius-md);
-  font-size: var(--font-size-sm);
-  font-family: inherit;
-  cursor: pointer;
-  transition: background-color var(--transition-fast);
-}
-
-.file-browser-tab__retry-btn:hover {
-  background-color: var(--accent-hover);
-}
-
 @keyframes file-browser-tab-spin {
   from {
     transform: rotate(0deg);

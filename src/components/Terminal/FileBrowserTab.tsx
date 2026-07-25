@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderOpen, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useAppStore } from "@/store/appStore";
+import { Button } from "@/components/ui";
 import { getAllLeaves } from "@/utils/panelTree";
 import { createTerminal, closeTerminal } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
@@ -147,14 +148,15 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
             />
             <p className="file-browser-tab__heading">Could not open connection</p>
             {error && <p className="file-browser-tab__error">{error}</p>}
-            <button
-              className="file-browser-tab__retry-btn"
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<RefreshCw size={14} />}
               onClick={handleRetry}
               data-testid="file-browser-tab-retry"
             >
-              <RefreshCw size={14} />
               Retry
-            </button>
+            </Button>
           </>
         )}
       </div>

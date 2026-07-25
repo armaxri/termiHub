@@ -4,6 +4,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { LogEntry } from "@/types/terminal";
+import { Button } from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
 import { onFrontendLog } from "@/utils/frontendLog";
@@ -148,8 +149,8 @@ export function LogViewer({ isVisible }: LogViewerProps) {
           {LEVELS.map((level) => (
             <button
               key={level}
-              className={`log-viewer__level-btn log-viewer__level-btn--${level.toLowerCase()} ${
-                activeLevels.has(level) ? "log-viewer__level-btn--active" : ""
+              className={`log-viewer__level-filter log-viewer__level-filter--${level.toLowerCase()} ${
+                activeLevels.has(level) ? "log-viewer__level-filter--active" : ""
               }`}
               onClick={() => toggleLevel(level)}
               title={`Toggle ${level} logs`}
@@ -165,23 +166,31 @@ export function LogViewer({ isVisible }: LogViewerProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <button
-          className={`log-viewer__toolbar-btn ${autoScroll ? "log-viewer__toolbar-btn--active" : ""}`}
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          className={autoScroll ? "log-viewer__toolbar-action--active" : undefined}
+          icon={autoScroll ? <Pause size={14} /> : <Play size={14} />}
           onClick={() => setAutoScroll((v) => !v)}
           title={autoScroll ? "Pause auto-scroll" : "Resume auto-scroll"}
-        >
-          {autoScroll ? <Pause size={14} /> : <Play size={14} />}
-        </button>
-        <button
-          className="log-viewer__toolbar-btn"
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          icon={<Save size={14} />}
           onClick={() => handleSave(filteredEntries)}
           title="Save logs to file"
-        >
-          <Save size={14} />
-        </button>
-        <button className="log-viewer__toolbar-btn" onClick={handleClear} title="Clear logs">
-          <Trash2 size={14} />
-        </button>
+        />
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          icon={<Trash2 size={14} />}
+          onClick={handleClear}
+          title="Clear logs"
+        />
         <span className="log-viewer__count">{filteredEntries.length} entries</span>
       </div>
       <div className="log-viewer__list" ref={listRef}>

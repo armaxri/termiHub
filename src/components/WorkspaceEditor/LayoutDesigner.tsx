@@ -187,7 +187,7 @@ function LayoutNodePreview({
           {hasSizes && (
             <Tooltip content="Reset to Equal" side="top">
               <button
-                className="layout-split-container__action-btn"
+                className="layout-split-container__action"
                 onClick={() => onUpdateSizes(node, null)}
                 aria-label="Reset to Equal"
                 data-testid="layout-size-reset"
@@ -198,7 +198,7 @@ function LayoutNodePreview({
           )}
           <Tooltip content="Split Horizontal" side="top">
             <button
-              className="layout-split-container__action-btn"
+              className="layout-split-container__action"
               onClick={() => onSplitContainer(node, "horizontal")}
               aria-label="Split Horizontal"
             >
@@ -207,7 +207,7 @@ function LayoutNodePreview({
           </Tooltip>
           <Tooltip content="Split Vertical" side="top">
             <button
-              className="layout-split-container__action-btn"
+              className="layout-split-container__action"
               onClick={() => onSplitContainer(node, "vertical")}
               aria-label="Split Vertical"
             >
@@ -365,7 +365,7 @@ function LeafPanel({
         <div className="layout-leaf__actions">
           <Tooltip content="Split Horizontal" side="top">
             <button
-              className="layout-leaf__action-btn"
+              className="layout-leaf__action"
               onClick={(e) => {
                 e.stopPropagation();
                 onSplitH();
@@ -378,7 +378,7 @@ function LeafPanel({
           </Tooltip>
           <Tooltip content="Split Vertical" side="top">
             <button
-              className="layout-leaf__action-btn"
+              className="layout-leaf__action"
               onClick={(e) => {
                 e.stopPropagation();
                 onSplitV();
@@ -391,7 +391,7 @@ function LeafPanel({
           </Tooltip>
           <Tooltip content="Add Connection" side="top">
             <button
-              className="layout-leaf__action-btn"
+              className="layout-leaf__action"
               onClick={(e) => {
                 e.stopPropagation();
                 onAddTab();
