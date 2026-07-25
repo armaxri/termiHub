@@ -29,6 +29,7 @@ import {
   ConnectionTypeInfo,
   SshConfigImportHost,
   SshConfigImportConnection,
+  InventoryHost,
   FileEntry,
   Writability,
   ExternalFileError,
@@ -131,6 +132,16 @@ export async function importSshConfigHosts(): Promise<SshConfigImportHost[]> {
  */
 export async function importSshConfigConnections(): Promise<SshConfigImportConnection[]> {
   return await invoke<SshConfigImportConnection[]>("import_ssh_config_connections");
+}
+
+/**
+ * Parse the CSV / simple inventory file at `path` into importable {@link
+ * InventoryHost} rows for bulk fleet onboarding (#1961). Unlike the SSH-config
+ * importer, the user explicitly picks this file, so a read/parse failure
+ * rejects (the caller toasts it) rather than degrading to an empty list.
+ */
+export async function importInventoryHosts(path: string): Promise<InventoryHost[]> {
+  return await invoke<InventoryHost[]>("import_inventory_hosts", { path });
 }
 
 /**
