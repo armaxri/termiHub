@@ -213,6 +213,16 @@ impl WindowManager {
         recover(self.ownership.lock()).get(session_id).cloned()
     }
 
+    /// A snapshot of the full `session_id → owning_window_label` map.
+    ///
+    /// The Open Connections panel reads this once when it opens to stamp each
+    /// session row with the window that owns it (#1926). Only sessions that have
+    /// been claimed (e.g. moved between windows) appear; an unclaimed session has
+    /// no entry and the panel renders no window badge for it.
+    pub fn all_owners(&self) -> HashMap<String, String> {
+        recover(self.ownership.lock()).clone()
+    }
+
     /// Whether `window_label` may issue `resize` for `session_id`.
     ///
     /// `true` when the session is **unclaimed** (legacy single-window: any
@@ -425,6 +435,27 @@ mod tests {
         assert_eq!(wm.owner_of("s1"), None);
         assert_eq!(wm.owner_of("s2"), None);
         assert_eq!(wm.owner_of("s3"), Some("main".to_string()));
+    }
+
+    #[test]
+    fn all_owners_snapshots_the_full_ownership_map() {
+        let wm = WindowManager::new();
+        assert!(wm.all_owners().is_empty(), "no claims → empty snapshot");
+        wm.claim("s1", "win-1");
+        wm.claim("s2", "win-1");
+        wm.claim("s3", "main");
+        let owners = wm.all_owners();
+        assert_eq!(owners.len(), 3);
+        assert_eq!(owners.get("s1"), Some(&"win-1".to_string()));
+        assert_eq!(owners.get("s2"), Some(&"win-1".to_string()));
+        assert_eq!(owners.get("s3"), Some(&"main".to_string()));
+        // The snapshot is a copy — mutating the manager does not change it.
+        wm.release("s1", "win-1");
+        assert_eq!(
+            owners.get("s1"),
+            Some(&"win-1".to_string()),
+            "snapshot is detached from later releases"
+        );
     }
 
     #[test]
