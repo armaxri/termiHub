@@ -307,9 +307,18 @@ export async function getSessionOwner(sessionId: string): Promise<string | null>
   return await invoke<string | null>("get_session_owner", { sessionId });
 }
 
-/** List all currently open windows (label only). */
+/** List all currently open windows, each with its last-reported tab count. */
 export async function listWindows(): Promise<WindowInfo[]> {
   return await invoke<WindowInfo[]>("list_windows");
+}
+
+/**
+ * Report the *calling* window's current tab count so other windows'
+ * "Move to Window ▸" pickers can show a live "N tabs" hint (#1910). Nudges every
+ * window with `windows-changed` so an open picker refreshes.
+ */
+export async function reportWindowTabCount(count: number): Promise<void> {
+  await invoke("report_window_tab_count", { count });
 }
 
 /**

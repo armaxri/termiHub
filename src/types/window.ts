@@ -16,6 +16,12 @@ export const MAIN_WINDOW_LABEL = "main";
 export interface WindowInfo {
   /** The window's runtime label (`main`, `win-1`, …). */
   label: string;
+  /**
+   * The window's live tab count, sourced from that window's own store via the
+   * backend registry (#1910). `null`/absent when the window has not reported a
+   * count yet — the picker then shows no "N tabs" hint for it.
+   */
+  tabCount?: number | null;
 }
 
 /**

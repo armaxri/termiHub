@@ -36,6 +36,7 @@ import { useAgentUpdatePendingEvents } from "@/hooks/useAgentUpdatePendingEvents
 import { useSpawnChoiceHandler, useSpawnRequests } from "@/hooks/useSpawnRequests";
 import { useHttpMonitorNotifications } from "@/hooks/useHttpMonitorNotifications";
 import { useWebviewZoom } from "@/hooks/useWebviewZoom";
+import { useReportWindowTabCount } from "@/hooks/useReportWindowTabCount";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
 import { getCliWorkspace } from "@/services/workspaceApi";
@@ -123,6 +124,7 @@ function App() {
   useSpawnRequests();
   useHttpMonitorNotifications();
   useWebviewZoom();
+  useReportWindowTabCount();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const checkForUpdates = useAppStore((s) => s.checkForUpdates);
   const settings = useAppStore((s) => s.settings);

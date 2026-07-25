@@ -5,10 +5,15 @@
  * named, current-flagged entries the tab context menu renders.
  */
 import { describe, it, expect } from "vitest";
-import { windowDisplayName, buildWindowPickerEntries, hasOtherWindows } from "./windowPicker";
+import {
+  windowDisplayName,
+  buildWindowPickerEntries,
+  hasOtherWindows,
+  tabCountHint,
+} from "./windowPicker";
 import type { WindowInfo } from "@/types/window";
 
-const w = (label: string): WindowInfo => ({ label });
+const w = (label: string, tabCount?: number | null): WindowInfo => ({ label, tabCount });
 
 describe("windowDisplayName", () => {
   it("names the primary window", () => {
@@ -26,12 +31,17 @@ describe("windowDisplayName", () => {
 });
 
 describe("buildWindowPickerEntries", () => {
-  it("returns an entry per window with display name and current flag", () => {
-    const entries = buildWindowPickerEntries([w("main"), w("win-1")], "main");
+  it("returns an entry per window with display name, current flag and tab count", () => {
+    const entries = buildWindowPickerEntries([w("main", 3), w("win-1", 0)], "main");
     expect(entries).toEqual([
-      { label: "main", name: "Main Window", isCurrent: true },
-      { label: "win-1", name: "Window 1", isCurrent: false },
+      { label: "main", name: "Main Window", isCurrent: true, tabCount: 3 },
+      { label: "win-1", name: "Window 1", isCurrent: false, tabCount: 0 },
     ]);
+  });
+
+  it("defaults an unreported tab count to null", () => {
+    const entries = buildWindowPickerEntries([w("win-1")], "main");
+    expect(entries[0].tabCount).toBeNull();
   });
 
   it("orders main first, then win-N ascending regardless of input order", () => {
@@ -51,6 +61,25 @@ describe("buildWindowPickerEntries", () => {
   it("flags none when the current label is unknown/null", () => {
     const entries = buildWindowPickerEntries([w("main"), w("win-1")], null);
     expect(entries.every((e) => !e.isCurrent)).toBe(true);
+  });
+});
+
+describe("tabCountHint", () => {
+  it("has no hint for an unreported count", () => {
+    expect(tabCountHint(null)).toBeNull();
+  });
+
+  it("renders zero as 'empty'", () => {
+    expect(tabCountHint(0)).toBe("empty");
+  });
+
+  it("singularises one tab", () => {
+    expect(tabCountHint(1)).toBe("1 tab");
+  });
+
+  it("pluralises more than one tab", () => {
+    expect(tabCountHint(2)).toBe("2 tabs");
+    expect(tabCountHint(42)).toBe("42 tabs");
   });
 });
 

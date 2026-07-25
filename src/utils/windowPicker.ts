@@ -4,10 +4,10 @@
  * The backend window registry (`list_windows`, #1900) reports each open window
  * by its runtime label only (`main`, `win-1`, …). These helpers turn that flat
  * label list into the human-readable picker the tab context menu renders: a
- * display name per window and a flag marking the window the menu is opened in
- * (shown disabled, "current"). Tab counts and richer per-window metadata live in
- * separate JS contexts and are not exposed by the foundation, so they are
- * intentionally omitted here.
+ * display name per window, its live tab count (#1910), and a flag marking the
+ * window the menu is opened in (shown disabled, "current"). Tabs live in each
+ * window's own JS context, so the count is sourced from the backend window
+ * registry — every window reports its own count, which the picker reads back.
  */
 
 import { MAIN_WINDOW_LABEL, type WindowInfo } from "@/types/window";
@@ -20,6 +20,11 @@ export interface WindowPickerEntry {
   name: string;
   /** Whether this is the window the picker was opened from (rendered disabled). */
   isCurrent: boolean;
+  /**
+   * The window's live tab count (#1910), or `null` when it has not been reported
+   * yet. Rendered as a "N tabs" / "empty" hint next to the name.
+   */
+  tabCount: number | null;
 }
 
 /**
@@ -32,6 +37,17 @@ export function windowDisplayName(label: string): string {
   const match = /^win-(\d+)$/.exec(label);
   if (match) return `Window ${match[1]}`;
   return label;
+}
+
+/**
+ * The short hint shown next to a window in the picker, matching the concept's
+ * `move-menu` mockup: `null` (unknown, no hint yet) → `null`; `0` → "empty";
+ * `1` → "1 tab"; `n` → "n tabs".
+ */
+export function tabCountHint(tabCount: number | null): string | null {
+  if (tabCount == null) return null;
+  if (tabCount <= 0) return "empty";
+  return tabCount === 1 ? "1 tab" : `${tabCount} tabs`;
 }
 
 /** Numeric sort key for a window label: main first, then `win-N` ascending. */
@@ -57,6 +73,7 @@ export function buildWindowPickerEntries(
       label: w.label,
       name: windowDisplayName(w.label),
       isCurrent: w.label === currentWindowLabel,
+      tabCount: w.tabCount ?? null,
     }));
 }
 
