@@ -274,7 +274,9 @@ mod tests {
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].host, "host-a");
         assert_eq!(rows[0].label, "host-a");
-        assert!(rows.iter().all(|r| r.port.is_none() && r.username.is_none()));
+        assert!(rows
+            .iter()
+            .all(|r| r.port.is_none() && r.username.is_none()));
     }
 
     #[test]
