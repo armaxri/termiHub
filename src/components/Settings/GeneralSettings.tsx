@@ -172,6 +172,21 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           </SettingsField>
         )}
 
+        {show("confirmCloseAttachedTab") && (
+          <SettingsField
+            label="Notify When Closing a Persistent-Session Tab"
+            hint="Show a one-time notice that a persistent session keeps running in the background when its tab is closed (X or middle-click)."
+          >
+            <Toggle
+              checked={settings.confirmCloseAttachedTab ?? true}
+              onCheckedChange={(checked) =>
+                onChange({ ...settings, confirmCloseAttachedTab: checked })
+              }
+              data-testid="settings-confirm-close-attached-tab"
+            />
+          </SettingsField>
+        )}
+
         {show("warnLargePortScan") && (
           <SettingsField
             label="Warn Before a Large Port Scan"

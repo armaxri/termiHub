@@ -63,6 +63,7 @@ import { computeAgentTreeNodes, type AgentVisibleNode } from "@/utils/computeAge
 import { AgentSetupDialog } from "./AgentSetupDialog";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
+import { PersistentStateDot } from "./PersistentStateDot";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
@@ -250,9 +251,11 @@ function AgentConnectionItem({
             size={14}
           />
           {definition.persistent && (
-            <span
-              className={`connection-tree__state-dot ${stateDotClass}`}
-              title={runState ?? "stopped"}
+            <PersistentStateDot
+              runState={runState}
+              stateDotClass={stateDotClass}
+              connectionId={`${agentId}:${definition.id}`}
+              dotTestId={`persistent-state-dot-${definition.id}`}
             />
           )}
           <span className="connection-tree__label">{definition.name}</span>

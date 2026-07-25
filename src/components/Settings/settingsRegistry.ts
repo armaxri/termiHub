@@ -364,6 +364,27 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "confirmCloseAttachedTab",
+    label: "Notify When Closing a Persistent-Session Tab",
+    description:
+      "Show a one-time notice that a persistent session keeps running when its tab is closed",
+    category: "general",
+    keywords: [
+      "confirm",
+      "notice",
+      "close",
+      "tab",
+      "persistent",
+      "session",
+      "background",
+      "attached",
+      "detach",
+      "running",
+      "prompt",
+      "dialog",
+    ],
+  },
+  {
     id: "warnLargePortScan",
     label: "Warn Before a Large Port Scan",
     description:
