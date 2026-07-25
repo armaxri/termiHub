@@ -4,7 +4,7 @@
  *
  * Pins:
  *  - Quick-action / New-monitor rows render the `Button` primitive (ghost, full
- *    width) plus the thin `network-sidebar__list-btn` layout modifier, keep their
+ *    width) plus the thin `network-sidebar__list-action` layout modifier, keep their
  *    `data-testid`, and still trigger their action.
  *  - The Refresh and Stop icon-only controls render as ghost `Button`s wrapped in
  *    a `Tooltip`, keeping their `aria-label` with no bare `title` leak.
@@ -80,7 +80,7 @@ describe("NetworkToolsSidebar — Button primitive migration (#1109)", () => {
     expect(ping?.classList.contains("ui-btn")).toBe(true);
     expect(ping?.classList.contains("ui-btn--ghost")).toBe(true);
     expect(ping?.classList.contains("ui-btn--full")).toBe(true);
-    expect(ping?.classList.contains("network-sidebar__list-btn")).toBe(true);
+    expect(ping?.classList.contains("network-sidebar__list-action")).toBe(true);
     // No leftover bespoke button class.
     expect(ping?.classList.contains("network-sidebar__action")).toBe(false);
   });
@@ -108,7 +108,7 @@ describe("NetworkToolsSidebar — Button primitive migration (#1109)", () => {
     expect(add).not.toBeNull();
     expect(add?.classList.contains("ui-btn--ghost")).toBe(true);
     expect(add?.classList.contains("ui-btn--full")).toBe(true);
-    expect(add?.classList.contains("network-sidebar__list-btn")).toBe(true);
+    expect(add?.classList.contains("network-sidebar__list-action")).toBe(true);
     act(() => add!.click());
     expect(openTab).toHaveBeenCalledWith("http-monitor");
   });

@@ -227,18 +227,19 @@ function BooleanField({ field, value, onChange }: FieldProps) {
       <span className="settings-form__label">
         {field.label}
         {field.helpText && (
-          <button
-            type="button"
-            className="settings-form__help-btn"
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            className="settings-form__help"
+            icon={<HelpCircle size={13} />}
             onClick={(e) => {
               e.preventDefault();
               setDialogOpen(true);
             }}
             title="Learn more"
             data-testid={`field-${field.key}-help`}
-          >
-            <HelpCircle size={13} />
-          </button>
+          />
         )}
       </span>
       <Toggle

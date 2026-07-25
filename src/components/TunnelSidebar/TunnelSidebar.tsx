@@ -1,7 +1,7 @@
 import { useCallback, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { toast } from "@/components/ui";
+import { Button, toast } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
@@ -93,15 +93,16 @@ export function TunnelSidebar() {
   return (
     <div className="tunnel-sidebar" data-testid="tunnel-sidebar">
       <div className="tunnel-sidebar__actions">
-        <button
-          className="tunnel-sidebar__add-btn"
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Plus size={14} />}
           onClick={handleNew}
           title="New Tunnel"
           data-testid="tunnel-new-btn"
         >
-          <Plus size={14} />
           New Tunnel
-        </button>
+        </Button>
       </div>
       {tunnels.length === 0 ? (
         <div className="tunnel-sidebar__empty" data-testid="tunnel-empty-message">

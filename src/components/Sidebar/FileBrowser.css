@@ -254,30 +254,6 @@
   border-color: var(--text-accent);
 }
 
-.file-browser__picker-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--spacing-xs);
-  padding: 6px 12px;
-  font-size: var(--font-size-sm);
-  color: var(--text-primary);
-  background: var(--bg-hover);
-  border: 1px solid var(--border-secondary);
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background-color var(--transition-fast);
-}
-
-.file-browser__picker-btn:hover:not(:disabled) {
-  background: var(--bg-secondary);
-}
-
-.file-browser__picker-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 /* Error display */
 .file-browser__error {
   display: flex;

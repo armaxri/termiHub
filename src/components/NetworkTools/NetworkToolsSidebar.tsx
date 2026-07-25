@@ -45,7 +45,7 @@ function QuickAction({ label, tool }: QuickActionProps) {
       variant="ghost"
       size="sm"
       fullWidth
-      className="network-sidebar__list-btn"
+      className="network-sidebar__list-action"
       icon={<Play size={12} />}
       onClick={() => openNetworkDiagnosticTab(tool)}
       data-testid={`network-quick-action-${tool}`}
@@ -351,7 +351,7 @@ export function NetworkToolsSidebar() {
           variant="ghost"
           size="sm"
           fullWidth
-          className="network-sidebar__list-btn"
+          className="network-sidebar__list-action"
           icon={<Plus size={12} />}
           onClick={() => openNetworkDiagnosticTab("http-monitor")}
           data-testid="network-new-monitor"

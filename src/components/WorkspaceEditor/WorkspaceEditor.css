@@ -182,24 +182,6 @@
   padding: 4px 0;
 }
 
-.layout-designer__tool-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  background: var(--bg-secondary);
-  color: var(--text-secondary);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.layout-designer__tool-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 .layout-designer__info {
   margin-left: auto;
   font-size: 11px;

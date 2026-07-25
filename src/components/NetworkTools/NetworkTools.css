@@ -292,7 +292,7 @@
    sidebar quick-action and New Monitor rows read as full-width, left-aligned
    list rows (the primitive centers content and ghost text is secondary). Shape,
    radius, focus ring, sizing, and hover background all come from the primitive. */
-.network-sidebar__list-btn {
+.network-sidebar__list-action {
   justify-content: flex-start;
   color: var(--text-primary);
 }

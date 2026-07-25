@@ -12,24 +12,6 @@
   border-bottom: 1px solid var(--border-color);
 }
 
-.tunnel-sidebar__add-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border: none;
-  background: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-  border-radius: var(--radius-sm);
-}
-
-.tunnel-sidebar__add-btn:hover {
-  background: var(--bg-hover);
-  color: var(--text-primary);
-}
-
 .tunnel-sidebar__list {
   flex: 1;
   overflow-y: auto;
