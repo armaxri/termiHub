@@ -1,0 +1,26 @@
+/* Fleet-onboard dialog (#1961). Reuses the bulk SSH import chrome
+   (.bulk-ssh-import__*, .ssh-config-import__*) and adds the template/preview
+   specifics. */
+
+.fleet-onboard__dedupe {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 2px;
+  cursor: pointer;
+}
+
+.fleet-onboard__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 4px);
+}
+
+.fleet-onboard__row:hover {
+  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+  border-color: var(--border-color, rgba(127, 127, 127, 0.25));
+}

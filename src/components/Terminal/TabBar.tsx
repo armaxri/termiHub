@@ -44,6 +44,10 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
   const terminalDisconnectErrors = useAppStore((s) => s.terminalDisconnectErrors);
   const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
+  // Broadcast participation (#1957): the badge shows on every tab in the target
+  // set, active or not, so participation is visible at a glance.
+  const broadcastActive = useAppStore((s) => s.broadcastActive);
+  const broadcastTargetTabIds = useAppStore((s) => s.broadcastTargetTabIds);
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard, openTerminalInEditor } =
     useTerminalRegistry();
 
@@ -183,6 +187,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onMoveToNewWindow={() => handleMoveTabToWindow(tab.id, { kind: "new" })}
               onMoveToWindow={(label) => handleMoveTabToWindow(tab.id, { kind: "existing", label })}
               displayTitle={getEditorTabDisplayTitle(tab, allTabs)}
+              isBroadcast={broadcastActive && broadcastTargetTabIds.has(tab.id)}
               status={
                 tab.contentType === "terminal"
                   ? deriveTabStatus(

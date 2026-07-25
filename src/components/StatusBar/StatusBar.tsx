@@ -38,6 +38,7 @@ import { TransferQueueIndicator } from "@/components/TransferQueue";
 import { Tooltip, toast } from "@/components/ui";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
+import { BroadcastStatus } from "./BroadcastStatus";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -108,6 +109,7 @@ export function StatusBar() {
     <div className="status-bar" data-testid="status-bar">
       <div className="status-bar__section status-bar__section--left">
         <WindowIndicator />
+        <BroadcastStatus />
         <PortableBadge />
         <JumpHostStatus />
         <RemoteDesktopStatus />

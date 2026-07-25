@@ -164,6 +164,23 @@ export interface SshConfigImportConnection {
   proxyJump: JumpHostConfig[];
 }
 
+/**
+ * One host parsed from a CSV / simple inventory file (#1961), offered to the
+ * fleet-onboard flow to stamp onto a chosen connection template.
+ *
+ * Mirrors the Rust `InventoryHost` (`commands/inventory_import.rs`). `label` is
+ * the created connection's display name (defaults to `host` when the file gives
+ * none); `port`/`username` are optional per-host overrides — `undefined` means
+ * "inherit the template's value". The same shape also carries scan-result hosts
+ * into the flow, so ping-sweep / port-scanner rows reuse one code path.
+ */
+export interface InventoryHost {
+  label: string;
+  host: string;
+  port?: number;
+  username?: string;
+}
+
 export type ConnectionTreeItem =
   | { type: "folder"; folder: ConnectionFolder }
   | { type: "connection"; connection: SavedConnection };

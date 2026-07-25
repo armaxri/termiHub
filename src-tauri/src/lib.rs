@@ -813,6 +813,7 @@ pub fn run() {
             commands::connection_path::cancel_connection_path_probe,
             commands::ssh_config_import::import_ssh_config_hosts,
             commands::ssh_config_import::import_ssh_config_connections,
+            commands::inventory_import::import_inventory_hosts,
             commands::session::get_connection_types,
             commands::session::send_input,
             commands::session::set_session_line_ending,

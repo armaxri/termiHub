@@ -57,6 +57,9 @@ hex = "0.4"
 # SHA-256 hashing: agent-binary integrity verification (all platforms) and
 # Windows VcXsrv checksum validation.
 sha2 = "0.10"
+# CSV / inventory parsing for bulk host onboarding (#1961) — quoting and
+# delimiter handling delegated to the maintained crate rather than hand-rolled.
+csv = "1"
 serde_json = { workspace = true }
 portable-pty = "0.8"
 russh = { workspace = true }
