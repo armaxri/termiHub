@@ -473,7 +473,7 @@
       <header class="concept-header">
         <h1>UI Modernization — Design System</h1>
         <div class="concept-meta">
-          <span class="concept-status">Partial</span>
+          <span class="concept-status">Implemented</span>
           <span
             >Issues:
             <a href="https://github.com/armaxri/termiHub/issues/1059">#1059</a>
@@ -482,7 +482,7 @@
             <a href="https://github.com/armaxri/termiHub/issues/1062">#1062</a>
             <a href="https://github.com/armaxri/termiHub/issues/1063">#1063</a>
           </span>
-          <span><code>docs/concepts/partial/ui-modernization.html</code></span>
+          <span><code>docs/concepts/implemented/ui-modernization.html</code></span>
         </div>
       </header>
 
@@ -1267,19 +1267,19 @@ stateDiagram-v2
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-24 (status reconciliation) ·
-          <strong>Status:</strong> effectively implemented, pending a maintainer call on the folder
-          move. All five roadmap phases shipped and their issues (#1059–#1063) are closed — the
-          phase-4 dialog/form migration is <strong>complete</strong>: every <code>&lt;Modal&gt;</code>
-          call site (including the Port Scanner large-scan warning, WoL save modal and
-          <code>Sidebar/ConfirmDeleteDialog.tsx</code>) composes the shared primitives, and there are
-          no open UI-modernization issues. The one residual is <strong>bespoke <code>__btn</code>
-          classes in ~15 non-dialog panel/banner/sidebar surfaces</strong>, now tracked as
-          <a href="https://github.com/armaxri/termiHub/issues/1885">#1885</a>. Whether to move this
-          concept to <code>implemented/</code> now (accepting that residual as out-of-original-scope)
-          or hold it in <code>partial/</code> until #1885 lands is a maintainer decision; it also
-          serves as the design-system source of truth referenced by <code>.claude/CLAUDE.md</code>,
-          so any move must update that reference.
+          <strong>Last synced:</strong> 2026-07-25 (status reconciliation) ·
+          <strong>Status:</strong> implemented. All five roadmap phases shipped and their issues
+          (#1059–#1063) are closed — the phase-4 dialog/form migration is <strong>complete</strong>:
+          every <code>&lt;Modal&gt;</code> call site (including the Port Scanner large-scan warning, WoL
+          save modal and <code>Sidebar/ConfirmDeleteDialog.tsx</code>) composes the shared primitives.
+          The last residual — <strong>bespoke <code>__btn</code> classes in ~15 non-dialog
+          panel/banner/sidebar surfaces</strong> (<a href="https://github.com/armaxri/termiHub/issues/1885">#1885</a>)
+          — has since landed via PR
+          <a href="https://github.com/armaxri/termiHub/pull/1906">#1906</a>, so those surfaces now
+          compose <code>ui/Button</code>. Concept moved <code>partial/</code> →
+          <code>implemented/</code>; because it is the design-system source of truth referenced by
+          <code>.claude/CLAUDE.md</code>, <code>.claude/agents/ui-design.md</code> and
+          <code>docs/architecture.md</code>, that move updated those references too.
         </p>
         <div class="table-wrap">
           <table>
@@ -1352,13 +1352,17 @@ stateDiagram-v2
                   Phase-4 acceptance: "no component defines its own <code>__btn</code>"
                 </td>
                 <td>
-                  Not literally met — ~15 non-dialog panel/banner/sidebar CSS files still define
-                  bespoke <code>__btn</code>/<code>-btn</code> classes (e.g. <code>ConnectionEditor.css</code>,
-                  <code>NetworkTools.css</code>, <code>TunnelSidebar.css</code>, <code>TerminalReconnectPrompt.css</code>),
-                  untracked when #1062 closed
+                  <strong>Resolved</strong> — the ~15 non-dialog panel/banner/sidebar surfaces that
+                  still defined bespoke <code>__btn</code>/<code>-btn</code> classes (e.g.
+                  <code>ConnectionEditor.css</code>, <code>NetworkTools.css</code>,
+                  <code>TunnelSidebar.css</code>, <code>TerminalReconnectPrompt.css</code>) were migrated
+                  onto <code>ui/Button</code>.
                 </td>
-                <td>Missing</td>
-                <td>Migrate onto <code>ui/Button</code> (<a href="https://github.com/armaxri/termiHub/issues/1885">#1885</a>)</td>
+                <td>Resolved</td>
+                <td>
+                  Landed via <a href="https://github.com/armaxri/termiHub/issues/1885">#1885</a> (PR
+                  <a href="https://github.com/armaxri/termiHub/pull/1906">#1906</a>) — closed.
+                </td>
               </tr>
             </tbody>
           </table>

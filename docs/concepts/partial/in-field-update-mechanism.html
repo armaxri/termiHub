@@ -655,43 +655,49 @@ This concept is the <em>desktop app</em> self-update, distinct from the already-
   <code>get_update_settings</code>, <code>get_app_info</code>; security detection via the
   <code>&lt;!-- security --&gt;</code> release-body marker; settings under <code>updates.*</code>
   (<code>connection/settings.rs</code>). Extensive unit tests.</li>
+<li><strong>Release-notes security marker emission</strong> — the release workflow now emits the
+  <code>&lt;!-- security --&gt;</code> marker: <code>.github/workflows/release.yml</code> runs
+  <code>scripts/internal/emit-release-notes.mjs</code>, which stamps the marker onto a release whose
+  body signals a security fix, so the app's bypass path actually fires. Shipped via
+  <a href="https://github.com/armaxri/termiHub/issues/1878">#1878</a> (closed).</li>
 <li><strong>Frontend</strong> — <code>StatusBar/UpdateIndicator.tsx</code> (amber/red version chip),
   <code>UpdateNotification/UpdateNotification.tsx</code> (non-blocking popup; security variant drops
   "Skip this version"), <code>Settings/UpdateSettings.tsx</code> (Check Now, On-startup/Never,
   skipped-version + Clear). Store + scheduling (5s startup delay, 24h interval) in
   <code>appStore.ts</code>/<code>App.tsx</code>.</li>
 </ul>
-<h3 id="what-is-missing">What is missing</h3>
+<h3 id="what-is-missing">Why this stays Partial — Variants B/C (maintainer/budget decision)</h3>
+<p>Variant A is complete end to end (including the security marker, now closed). The concept stays
+in <code>partial/</code> only because Variants B and C are deliberately unbuilt — and they are
+<strong>not</strong> a straightforward implementation task that an agent can pick up:</p>
 <ul>
-<li><strong>Release-notes security marker emission</strong> — the app consumes <code>&lt;!-- security --&gt;</code>
-  but nothing in the release workflow emits it, so security releases never trigger the bypass.
-  Tracked: <a href="https://github.com/armaxri/termiHub/issues/1878">#1878</a>.</li>
 <li><strong>Variant B — Download + Prompt</strong> and <strong>Variant C — Fully Automatic</strong>: not built.
   Both need <code>tauri-plugin-updater</code>, a signed <code>latest.json</code> manifest, and — critically —
-  macOS + Windows <strong>code signing</strong>. See the maintainer decision below; no
-  <code>Ready2Implement</code> issue is filed for these because whether to pursue them is a product/infra
-  call, not a straightforward implementation task.</li>
+  macOS + Windows <strong>code signing</strong>.</li>
 </ul>
 <blockquote>
-<p><strong>Maintainer decision (flagged, not filed):</strong> Variants B/C require paid code-signing
-certificates (~$99/yr Apple + ~$200–600/yr Windows) and an in-app installer-replacement flow. The
-concept itself calls Variant C "likely overkill for a developer/ops tool." Whether to advance past
-Variant A is a maintainer product/budget decision — file implementation issues only once that
-direction is chosen.</p>
+<p><strong>Maintainer / budget decision (deliberately not filed as an implementation issue):</strong>
+Advancing past Variant A is gated on a purchasing decision, not on engineering readiness. Variants
+B/C require <strong>paid code-signing certificates</strong> (~$99/yr Apple Developer Program +
+~$200–600/yr Windows OV/EV) plus an in-app installer-replacement flow, and the concept itself calls
+Variant C "likely overkill for a developer/ops tool." Because the blocker is a product/budget call
+that only the maintainer can make, <strong>no <code>Ready2Implement</code> issue is filed for B/C</strong>
+— implementation issues should be created only once the maintainer chooses to buy the certificates
+and pursue that direction.</p>
 </blockquote>
 <hr>
 <h2 id="sync">Sync Ledger</h2>
 <blockquote>
 <p>Maintained by <code>/sync-concept in-field-update-mechanism</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
 </blockquote>
-<p><strong>Last synced:</strong> 2026-07-24 at commit <code>fb7befbb</code> · <strong>Status:</strong> diverged (partial). Variant A shipped and matches the mockups; Variants B/C flagged as a maintainer decision.</p>
+<p><strong>Last synced:</strong> 2026-07-25 (status reconciliation) · <strong>Status:</strong> diverged (partial). Variant A shipped end-to-end and matches the mockups (including the security-marker emission, <a href="https://github.com/armaxri/termiHub/issues/1878">#1878</a>, now closed); Variants B/C stay unbuilt as a maintainer/budget decision (paid code-signing certificates).</p>
 <h3 id="sync-open">Open divergences</h3>
 <div class="table-wrap">
 <table>
 <thead><tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Recommendation</th></tr></thead>
 <tbody>
 <tr><td>1</td><td>Variant A described as "to build" (new <code>commands/update.rs</code>, new components)</td><td>All shipped and wired end-to-end</td><td>Match</td><td>Reframe Variant-A prose as implemented</td></tr>
-<tr><td>2</td><td><code>&lt;!-- security --&gt;</code> marker gates the security-update path</td><td>Consumed by the app, but not emitted by the release workflow</td><td>Missing</td><td><a href="https://github.com/armaxri/termiHub/issues/1878">#1878</a></td></tr>
+<tr><td>2</td><td><code>&lt;!-- security --&gt;</code> marker gates the security-update path</td><td><strong>Resolved</strong> — consumed by the app and now emitted by the release workflow (<code>release.yml</code> → <code>scripts/internal/emit-release-notes.mjs</code>)</td><td>Resolved</td><td>Landed via <a href="https://github.com/armaxri/termiHub/issues/1878">#1878</a> — closed.</td></tr>
 <tr><td>3</td><td>Variants B (download+prompt) and C (auto-install) with <code>tauri-plugin-updater</code></td><td>Not built; plugin absent from Cargo/npm/tauri.conf</td><td>Missing (design reality)</td><td>Maintainer decision — gated on code signing; no issue filed</td></tr>
 </tbody>
 </table>
