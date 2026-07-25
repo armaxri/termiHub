@@ -52,9 +52,7 @@ function seedLiveTab(opts: {
 }): string {
   return useAppStore.getState().addTab(opts.title, opts.connectionType, undefined, {
     sessionId: opts.sessionId,
-    ...(opts.persistentConnectionId
-      ? { persistentConnectionId: opts.persistentConnectionId }
-      : {}),
+    ...(opts.persistentConnectionId ? { persistentConnectionId: opts.persistentConnectionId } : {}),
   });
 }
 
@@ -139,18 +137,14 @@ describe("appStore — close-with-live-tabs decision (#1903)", () => {
       seedLiveTab({ title: "server-1", connectionType: "ssh", sessionId: "s1" });
       seedLiveTab({ title: "build", connectionType: "local", sessionId: "s2" });
 
-      await useAppStore
-        .getState()
-        .moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
+      await useAppStore.getState().moveWindowSessionsToWindow({ kind: "existing", label: "win-1" });
 
       expect(sendHandoffToWindow).toHaveBeenCalledTimes(2);
       const targets = sendHandoffToWindow.mock.calls.map((c) => c[0]);
       expect(targets).toEqual(["win-1", "win-1"]);
       // Both sessions are flagged moving so the source Terminals do not tear
       // them down on unmount.
-      expect(useAppStore.getState().movingSessionIds).toEqual(
-        expect.arrayContaining(["s1", "s2"])
-      );
+      expect(useAppStore.getState().movingSessionIds).toEqual(expect.arrayContaining(["s1", "s2"]));
       expect(openWindow).not.toHaveBeenCalled();
     });
 
