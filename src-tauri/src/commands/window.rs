@@ -91,7 +91,14 @@ pub fn claim_session(
     window: WebviewWindow,
     window_manager: State<'_, WindowManager>,
 ) -> Option<String> {
-    window_manager.claim(&session_id, window.label())
+    let previous = window_manager.claim(&session_id, window.label());
+    // Push the ownership change to every window (#1985) so a non-owning window
+    // refreshes its `session → window` mirror immediately, instead of only once
+    // a `transfer-progress` event happens to flow (which caused a brief flash).
+    if let Err(e) = window.app_handle().emit("session-ownership-changed", ()) {
+        tracing::warn!("Failed to emit session-ownership-changed on claim: {e}");
+    }
+    previous
 }
 
 /// Release `session_id` from the **calling** window. No-op unless the calling
@@ -102,7 +109,14 @@ pub fn release_session(
     window: WebviewWindow,
     window_manager: State<'_, WindowManager>,
 ) -> bool {
-    window_manager.release(&session_id, window.label())
+    let removed = window_manager.release(&session_id, window.label());
+    // Only a real removal changed the map; a non-owner no-op release does not.
+    if removed {
+        if let Err(e) = window.app_handle().emit("session-ownership-changed", ()) {
+            tracing::warn!("Failed to emit session-ownership-changed on release: {e}");
+        }
+    }
+    removed
 }
 
 /// The window label currently rendering `session_id`, if any.
