@@ -2199,6 +2199,63 @@ function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
 }
 
 /**
+ * The trimmed on-reconnect command configured for a tab's connection (#1978), or
+ * `undefined` when none is set. This is the command run once in the fresh remote
+ * shell after a *successful* automatic reconnect to recover some server-side
+ * context (e.g. `tmux attach`) that an agentless reconnect otherwise loses.
+ * Empty/whitespace-only values are treated as "no command".
+ */
+function onReconnectCommandForTab(tab: TerminalTab | undefined): string | undefined {
+  if (!tab) return undefined;
+  const cfg = tab.config?.config as { onReconnectCommand?: unknown } | undefined;
+  const raw = cfg?.onReconnectCommand;
+  if (typeof raw !== "string") return undefined;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * Find a terminal tab by id across the active panel tree (#1978 helper). Used by
+ * the auto-reconnect loop to read a tab's live connection config when settling.
+ */
+function findTabById(tabId: string): TerminalTab | undefined {
+  return getAllLeaves(useAppStore.getState().rootPanel)
+    .flatMap((l) => l.tabs)
+    .find((t) => t.id === tabId);
+}
+
+/**
+ * Send the configured on-reconnect command once into a tab after its resilient
+ * reconnect settled (#1978). Routes through the shared terminal-input injector —
+ * the same `send_input` choke point interactive typing and macros use — so the
+ * command is delivered to the fresh remote shell exactly as if typed, with a
+ * trailing newline to execute it. A missing command or absent injector is a
+ * silent no-op; delivery failures are logged, never thrown.
+ */
+function runOnReconnectCommand(tabId: string): void {
+  const command = onReconnectCommandForTab(findTabById(tabId));
+  if (!command) return;
+  const injector = getTerminalInputInjector();
+  if (!injector) {
+    frontendLog(
+      "disconnect",
+      `auto-reconnect tab=${tabId}: on-reconnect command skipped (no injector)`
+    );
+    return;
+  }
+  void Promise.resolve(injector(tabId, command + "\n"))
+    .then((delivered) => {
+      frontendLog(
+        "disconnect",
+        `auto-reconnect tab=${tabId}: on-reconnect command ${delivered ? "sent" : "not delivered"}`
+      );
+    })
+    .catch(() => {
+      frontendLog("disconnect", `auto-reconnect tab=${tabId}: on-reconnect command failed`);
+    });
+}
+
+/**
  * Drive the resilient-reconnect state machine for one tab by feeding it an event
  * (#1962), then reconcile the imperative side effects (backoff timer, redriving
  * the connection, overlay state) with the resulting phase. Centralising this
@@ -2232,6 +2289,10 @@ function driveAutoReconnect(
 
   clearAutoReconnectTimer(tabId);
 
+  // The configured on-reconnect command (#1978), echoed into the display state so
+  // the countdown overlay can announce what will run once the link is back.
+  const onReconnectCommand = onReconnectCommandForTab(findTabById(tabId));
+
   switch (next.phase) {
     case "waiting": {
       const nextAttemptAt = Date.now() + next.delayMs;
@@ -2241,6 +2302,7 @@ function driveAutoReconnect(
         maxAttempts: autoReconnectConfig.maxAttempts,
         delayMs: next.delayMs,
         nextAttemptAt,
+        ...(onReconnectCommand ? { onReconnectCommand } : {}),
       };
       useAppStore.setState((state) => ({
         terminalAutoReconnect: { ...state.terminalAutoReconnect, [tabId]: record },
@@ -2268,6 +2330,7 @@ function driveAutoReconnect(
         maxAttempts: autoReconnectConfig.maxAttempts,
         delayMs: 0,
         nextAttemptAt: 0,
+        ...(onReconnectCommand ? { onReconnectCommand } : {}),
       };
       useAppStore.setState((state) => ({
         terminalAutoReconnect: { ...state.terminalAutoReconnect, [tabId]: record },
@@ -2287,6 +2350,10 @@ function driveAutoReconnect(
         terminalAutoReconnect: omitKey(state.terminalAutoReconnect, tabId),
       }));
       frontendLog("disconnect", `auto-reconnect tab=${tabId}: reconnected`);
+      // Run the optional on-reconnect command once in the fresh remote shell to
+      // recover some server-side context (#1978). Only reached on an *automatic*
+      // reconnect success — the initial manual connect never drives this loop.
+      runOnReconnectCommand(tabId);
       break;
 
     case "gaveup":

@@ -67,6 +67,26 @@ describe("TerminalDisconnectOverlay — agentless auto-reconnect variant (#1962)
     expect(container.textContent).toContain("not restored");
   });
 
+  it("announces the on-reconnect command when one is configured (#1978)", () => {
+    setAuto("tab-1", { onReconnectCommand: "tmux attach" });
+    act(() => {
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+    });
+
+    const note = container.querySelector("[data-testid='terminal-auto-reconnect-command']");
+    expect(note).not.toBeNull();
+    expect(note?.textContent).toContain("Will run");
+    expect(note?.querySelector("code")?.textContent).toBe("tmux attach");
+  });
+
+  it("omits the on-reconnect note when no command is configured (#1978)", () => {
+    setAuto("tab-1", {});
+    act(() => {
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+    });
+    expect(container.querySelector("[data-testid='terminal-auto-reconnect-command']")).toBeNull();
+  });
+
   it("takes precedence over the exited/disconnected overlay", () => {
     setAuto("tab-1", {});
     act(() => {
