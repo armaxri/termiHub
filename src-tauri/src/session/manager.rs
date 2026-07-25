@@ -189,6 +189,13 @@ async fn recv_optional(rx: &mut Option<MonitorStatusReceiver>) -> Option<Monitor
     }
 }
 
+/// Per-session scrollback capture buffers, keyed by `session_id` (#1900).
+///
+/// The outer lock guards the map (held only at create/replay/cleanup); each
+/// inner lock guards one session's [`RingBuffer`], written on the hot output
+/// path and read on replay.
+type OutputBuffers = Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>>;
+
 /// Manages all active connection sessions.
 ///
 /// Holds a [`ConnectionTypeRegistry`] for creating local connections and
@@ -217,7 +224,7 @@ pub struct SessionManager {
     /// scrollback — the multi-window foundation's "detach a view and re-attach it
     /// later with replay" primitive. The outer lock is held only briefly at
     /// create/replay/cleanup; the hot output path writes through the inner lock.
-    output_buffers: Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>>,
+    output_buffers: OutputBuffers,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -1406,7 +1413,7 @@ impl SessionManager {
         sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
         wait_for_clear: bool,
         capture: Arc<StdMutex<RingBuffer>>,
-        output_buffers: Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>>,
+        output_buffers: OutputBuffers,
     ) {
         // Phase 1: optionally buffer until the screen-clear sequence.
         if wait_for_clear {
@@ -1486,7 +1493,14 @@ impl SessionManager {
             }
         }
 
-        Self::emit_and_cleanup(&session_id, Vec::new(), &emitter, &sessions, &output_buffers).await;
+        Self::emit_and_cleanup(
+            &session_id,
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &output_buffers,
+        )
+        .await;
     }
 
     /// Mirror emitted output into a session's scrollback capture buffer (#1900).
@@ -1512,7 +1526,7 @@ impl SessionManager {
         data: Vec<u8>,
         emitter: &E,
         sessions: &Arc<Mutex<HashMap<String, SessionEntry>>>,
-        output_buffers: &Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>>,
+        output_buffers: &OutputBuffers,
     ) {
         if !data.is_empty() {
             let event = TerminalOutputEvent {
@@ -1631,7 +1645,7 @@ mod tests {
     }
 
     /// A fresh, empty `output_buffers` map for the cleanup path (#1900).
-    fn new_output_buffers() -> Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>> {
+    fn new_output_buffers() -> OutputBuffers {
         Arc::new(StdMutex::new(HashMap::new()))
     }
 
@@ -1801,7 +1815,10 @@ mod tests {
         assert!(manager.sessions.lock().await.contains_key("sess-move"));
 
         // An unknown session replays empty rather than erroring.
-        assert!(manager.replay_scrollback("no-such-session").await.is_empty());
+        assert!(manager
+            .replay_scrollback("no-such-session")
+            .await
+            .is_empty());
     }
 
     /// Regression test for #792: the settings-driven initial command must honor

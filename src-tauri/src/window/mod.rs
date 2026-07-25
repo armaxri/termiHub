@@ -39,10 +39,6 @@ use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-/// Runtime label of the primary application window (declared in
-/// `tauri.conf.json` → `app.windows[]`).
-pub const MAIN_WINDOW_LABEL: &str = "main";
-
 /// A serialized tab view-model handed from one window to another during a
 /// re-parent ("move to window") operation.
 ///
