@@ -23,10 +23,12 @@ vi.mock("@/services/storage", () => ({
   getRecoveryWarnings: vi.fn(() => Promise.resolve([])),
 }));
 
-const openWindow = vi.fn(() => Promise.resolve("win-1"));
-const sendHandoffToWindow = vi.fn(() => Promise.resolve());
-const claimSession = vi.fn(() => Promise.resolve(null));
-const takePendingHandoffs = vi.fn(() => Promise.resolve([]));
+// Untyped mocks so their call signatures accept any args (the spread wrappers
+// below forward `unknown[]`) and their resolved values are set per-test.
+const openWindow = vi.fn();
+const sendHandoffToWindow = vi.fn();
+const claimSession = vi.fn();
+const takePendingHandoffs = vi.fn();
 
 vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
@@ -56,10 +58,13 @@ function seedLiveTab(sessionId: string): { tabId: string; panelId: string } {
 describe("appStore — multi-window re-parenting seam (#1900)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
-    openWindow.mockClear();
-    sendHandoffToWindow.mockClear();
-    claimSession.mockClear();
-    takePendingHandoffs.mockClear();
+    openWindow.mockReset();
+    sendHandoffToWindow.mockReset();
+    claimSession.mockReset();
+    takePendingHandoffs.mockReset();
+    openWindow.mockResolvedValue("win-1");
+    sendHandoffToWindow.mockResolvedValue(undefined);
+    claimSession.mockResolvedValue(null);
     takePendingHandoffs.mockResolvedValue([]);
   });
 
