@@ -28,12 +28,20 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(() => Promise.resolve([])),
   sftpRealpath: vi.fn(() => Promise.resolve("/home/alice")),
   sftpCancelTransfer: vi.fn(() => Promise.resolve()),
+  claimSession: vi.fn(() => Promise.resolve(null)),
+  releaseSession: vi.fn(() => Promise.resolve(true)),
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
 import { useAppStore } from "./appStore";
-import { sftpClose, sftpCancelTransfer, type TransferProgress } from "@/services/api";
+import {
+  sftpClose,
+  sftpCancelTransfer,
+  listSessionOwners,
+  type TransferProgress,
+} from "@/services/api";
 
 function progress(overrides: Partial<TransferProgress> = {}): TransferProgress {
   return {
@@ -112,6 +120,96 @@ describe("appStore — SFTP transfer progress (S2/D3)", () => {
       const transfers = useAppStore.getState().transfers;
       expect(transfers["t1"]).toBeUndefined();
       expect(transfers["t2"]).toBeDefined();
+    });
+  });
+
+  describe("window-scoped folding (#1964)", () => {
+    it("folds a transfer for a session with no ownership entry (background / single-window)", () => {
+      // sessionOwners is empty by default → unclaimed session folds everywhere,
+      // preserving single-window behavior and background/spawned transfers.
+      useAppStore.getState().applyTransferProgress(progress({ sessionId: "sess-a" }));
+      expect(useAppStore.getState().transfers["t1"]).toBeDefined();
+    });
+
+    it("suppresses a transfer for a session owned by another window", () => {
+      useAppStore.setState({ windowLabel: "main", sessionOwners: { "sess-a": "win-1" } });
+      useAppStore.getState().applyTransferProgress(progress({ sessionId: "sess-a" }));
+      expect(useAppStore.getState().transfers["t1"]).toBeUndefined();
+    });
+
+    it("folds a transfer for a session this window owns in the map", () => {
+      useAppStore.setState({ windowLabel: "main", sessionOwners: { "sess-a": "main" } });
+      useAppStore.getState().applyTransferProgress(progress({ sessionId: "sess-a" }));
+      expect(useAppStore.getState().transfers["t1"]).toBeDefined();
+    });
+
+    it("folds a transfer this window renders locally even if a stale map says otherwise", () => {
+      // An SFTP sidebar session in this window's own store is authoritative for
+      // this window, regardless of how stale the ownership snapshot is.
+      useAppStore.setState({
+        windowLabel: "main",
+        sessionOwners: { "sess-a": "win-1" },
+        sftpSessions: { "sess-a": { hostLabel: "alice@a:22", owningTabId: "tab-1" } },
+      });
+      useAppStore.getState().applyTransferProgress(progress({ sessionId: "sess-a" }));
+      expect(useAppStore.getState().transfers["t1"]).toBeDefined();
+    });
+  });
+
+  describe("setSessionOwners prunes foreign rows (#1964)", () => {
+    it("drops a folded row once the map shows another window owns its session", () => {
+      const store = useAppStore.getState();
+      store.applyTransferProgress(progress({ transferId: "t1", sessionId: "sess-a" }));
+      expect(useAppStore.getState().transfers["t1"]).toBeDefined();
+
+      useAppStore.getState().setSessionOwners({ "sess-a": "win-1" });
+      expect(useAppStore.getState().transfers["t1"]).toBeUndefined();
+    });
+
+    it("keeps rows for sessions this window owns or renders locally", () => {
+      useAppStore.setState({
+        windowLabel: "main",
+        sftpSessions: { "sess-local": { hostLabel: "alice@a:22", owningTabId: "tab-1" } },
+      });
+      const store = useAppStore.getState();
+      store.applyTransferProgress(progress({ transferId: "t-own", sessionId: "sess-own" }));
+      store.applyTransferProgress(progress({ transferId: "t-local", sessionId: "sess-local" }));
+      store.applyTransferProgress(progress({ transferId: "t-foreign", sessionId: "sess-foreign" }));
+
+      useAppStore.getState().setSessionOwners({
+        "sess-own": "main",
+        "sess-local": "win-1", // stale — but locally rendered, so kept
+        "sess-foreign": "win-1",
+      });
+
+      const transfers = useAppStore.getState().transfers;
+      expect(transfers["t-own"]).toBeDefined();
+      expect(transfers["t-local"]).toBeDefined();
+      expect(transfers["t-foreign"]).toBeUndefined();
+    });
+  });
+
+  describe("refreshSessionOwners", () => {
+    it("mirrors the backend map and prunes foreign rows", async () => {
+      vi.mocked(listSessionOwners).mockResolvedValueOnce({ "sess-a": "win-1" });
+      useAppStore
+        .getState()
+        .applyTransferProgress(progress({ transferId: "t1", sessionId: "sess-a" }));
+      expect(useAppStore.getState().transfers["t1"]).toBeDefined();
+
+      await useAppStore.getState().refreshSessionOwners();
+
+      expect(useAppStore.getState().sessionOwners).toEqual({ "sess-a": "win-1" });
+      expect(useAppStore.getState().transfers["t1"]).toBeUndefined();
+    });
+
+    it("leaves the map unchanged when the backend refetch fails", async () => {
+      useAppStore.setState({ sessionOwners: { "sess-a": "main" } });
+      vi.mocked(listSessionOwners).mockRejectedValueOnce(new Error("ipc down"));
+
+      await useAppStore.getState().refreshSessionOwners();
+
+      expect(useAppStore.getState().sessionOwners).toEqual({ "sess-a": "main" });
     });
   });
 
