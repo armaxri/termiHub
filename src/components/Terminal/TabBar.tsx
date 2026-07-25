@@ -37,6 +37,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
+  const setPendingAttachedTabCloseConfirm = useAppStore((s) => s.setPendingAttachedTabCloseConfirm);
   // Tab-id-keyed lifecycle maps that drive the per-tab connection status dot.
   const terminalConnecting = useAppStore((s) => s.terminalConnecting);
   const terminalReconnectingTabs = useAppStore((s) => s.terminalReconnectingTabs);
@@ -88,6 +89,15 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
 
     if (!tab) {
       closeTab(tabId, panelId);
+      return;
+    }
+
+    // A tab attached to a persistent background session is not torn down by
+    // closing it — it merely detaches, leaving the process running. Show a
+    // one-time reassuring notice (unless opted out) instead of the live-session
+    // warning, which would wrongly imply the session ends (#1930).
+    if (tab.persistentConnectionId && state.settings.confirmCloseAttachedTab !== false) {
+      setPendingAttachedTabCloseConfirm({ tabId, panelId, label: tab.title });
       return;
     }
 

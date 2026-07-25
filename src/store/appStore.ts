@@ -673,6 +673,17 @@ interface AppState {
    */
   pendingSessionCloseConfirm: SessionCloseConfirmRequest | null;
   setPendingSessionCloseConfirm: (req: SessionCloseConfirmRequest | null) => void;
+  /**
+   * One-time notice shown when the user closes a tab attached to a persistent
+   * background session, while `settings.confirmCloseAttachedTab` is enabled.
+   * Closing such a tab only detaches it — the session keeps running — so the
+   * notice reassures the user rather than warning of data loss. Null when no
+   * dialog is open.
+   */
+  pendingAttachedTabCloseConfirm: { tabId: string; panelId: string; label: string } | null;
+  setPendingAttachedTabCloseConfirm: (
+    req: { tabId: string; panelId: string; label: string } | null
+  ) => void;
   closeTab: (tabId: string, panelId: string) => void;
   setActiveTab: (tabId: string, panelId: string) => void;
   moveTab: (tabId: string, fromPanelId: string, toPanelId: string, newIndex: number) => void;
@@ -3662,6 +3673,8 @@ export const useAppStore = create<AppState>((set, get) => {
 
     pendingSessionCloseConfirm: null,
     setPendingSessionCloseConfirm: (req) => set({ pendingSessionCloseConfirm: req }),
+    pendingAttachedTabCloseConfirm: null,
+    setPendingAttachedTabCloseConfirm: (req) => set({ pendingAttachedTabCloseConfirm: req }),
 
     closeTab: (tabId, panelId) => {
       // Close every SFTP session owned by this tab and drop it from the map —
@@ -3988,6 +4001,7 @@ export const useAppStore = create<AppState>((set, get) => {
       fileBrowserEnabled: true,
       confirmCloseTabOnShortcut: true,
       confirmCloseLiveSession: true,
+      confirmCloseAttachedTab: true,
       askOpenSavedFileInTab: true,
       warnLargePortScan: true,
     },
@@ -3998,6 +4012,7 @@ export const useAppStore = create<AppState>((set, get) => {
       fileBrowserEnabled: true,
       confirmCloseTabOnShortcut: true,
       confirmCloseLiveSession: true,
+      confirmCloseAttachedTab: true,
       askOpenSavedFileInTab: true,
       warnLargePortScan: true,
     },

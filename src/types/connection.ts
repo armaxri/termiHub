@@ -494,6 +494,14 @@ export interface AppSettings {
    */
   confirmCloseLiveSession?: boolean;
   /**
+   * Show a one-time notice when closing a tab attached to a persistent
+   * background session (via the tab X or middle-click), reassuring the user that
+   * the session keeps running and can be stopped from the sidebar. Defaults to
+   * true. The notice's "Don't show again" opt-out flips this off; it can be
+   * re-enabled from General settings.
+   */
+  confirmCloseAttachedTab?: boolean;
+  /**
    * When true (default), saving terminal content to a file shows a dialog
    * offering to open the saved file in a Monaco editor tab. When false, the
    * file is saved silently and no dialog or editor tab is opened.
