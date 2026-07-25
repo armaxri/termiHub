@@ -346,9 +346,7 @@ export function TerminalView() {
                 variant="ghost"
                 size="sm"
                 iconOnly
-                className={
-                  macroRecording ? "terminal-view__toolbar-action--recording" : undefined
-                }
+                className={macroRecording ? "terminal-view__toolbar-action--recording" : undefined}
                 icon={
                   macroRecording ? <Square size={14} fill="currentColor" /> : <Circle size={16} />
                 }
