@@ -785,8 +785,9 @@ export function Terminal({
           // session instead of only this one. The source tab is included in the
           // target set, so the loop is uniform (no separate self-send).
           // Non-source terminals and the inactive state fall through to the
-          // normal single-session path below. Paste flows through onData too, so
-          // it is broadcast like typed input.
+          // normal single-session path below. Context-menu/native paste flows
+          // through onData and is broadcast here; keyboard-shortcut paste is
+          // preventDefault'd and broadcast in pasteToTerminal instead (#1981).
           if (store.broadcastActive && store.broadcastSourceTabId === tabId) {
             for (const targetTabId of store.getBroadcastTargetTabIds()) {
               const targetSessionId = getSessionId(targetTabId);

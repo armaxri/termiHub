@@ -326,32 +326,49 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     useAppStore.getState().setTabSessionId(tabId, null);
   }, []);
 
-  const pasteToTerminal = useCallback(async (tabId: string) => {
-    const sessionId = sessionRegistryRef.current.get(tabId);
-    if (!sessionId) return;
-    const text = await readClipboard();
-    if (!text) return;
+  const pasteToTerminal = useCallback(
+    async (tabId: string) => {
+      const sessionId = sessionRegistryRef.current.get(tabId);
+      if (!sessionId) return;
+      const text = await readClipboard();
+      if (!text) return;
 
-    const doPaste = async () => {
-      const xterm = xtermRegistryRef.current.get(tabId);
-      // Line endings are normalized in the backend send_input choke point using
-      // the session's configured ending, so paste only handles bracketing here.
-      let payload = text;
+      const doPaste = async () => {
+        // Bracket the payload per-terminal — bracketed-paste mode is a per-terminal
+        // protocol state; line-ending normalization happens in the backend
+        // send_input choke point, so paste only handles bracketing here.
+        const pasteInto = (targetTabId: string, targetSessionId: SessionId) => {
+          const xterm = xtermRegistryRef.current.get(targetTabId);
+          const payload =
+            xterm && xterm.modes.bracketedPasteMode ? `\x1b[200~${text}\x1b[201~` : text;
+          return sendInput(targetSessionId, payload);
+        };
 
-      // Wrap in bracketed paste escape sequences if the terminal supports it
-      if (xterm && xterm.modes.bracketedPasteMode) {
-        payload = `\x1b[200~${text}\x1b[201~`;
+        // Broadcast fan-out (#1981): when this tab is the active broadcast source,
+        // paste into every connected target — matching the onData fan-out and the
+        // context-menu paste path — not just the source session.
+        const store = useAppStore.getState();
+        if (store.broadcastActive && store.broadcastSourceTabId === tabId) {
+          await Promise.all(
+            store.getBroadcastTargetTabIds().flatMap((targetTabId) => {
+              const targetSessionId = getSessionId(targetTabId);
+              return targetSessionId ? [pasteInto(targetTabId, targetSessionId)] : [];
+            })
+          );
+          return;
+        }
+
+        await pasteInto(tabId, sessionId);
+      };
+
+      if (text.length > LARGE_PASTE_THRESHOLD) {
+        useAppStore.getState().showLargePasteDialog(text.length, doPaste);
+      } else {
+        await doPaste();
       }
-
-      await sendInput(sessionId, payload);
-    };
-
-    if (text.length > LARGE_PASTE_THRESHOLD) {
-      useAppStore.getState().showLargePasteDialog(text.length, doPaste);
-    } else {
-      await doPaste();
-    }
-  }, []);
+    },
+    [getSessionId]
+  );
 
   const sendInputToTerminal = useCallback(async (tabId: string, data: string): Promise<boolean> => {
     const sessionId = sessionRegistryRef.current.get(tabId);
