@@ -47,6 +47,16 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
   },
   {
+    action: "new-window",
+    label: "New Window",
+    category: "general",
+    // Opens a new empty native window (#1902). Ctrl/Cmd+Shift+N does not collide
+    // with the shell key map and mirrors the familiar "new window" convention.
+    macDefault: { key: "N", meta: true, shift: true },
+    winLinuxDefault: { key: "N", ctrl: true, shift: true },
+    configurable: true,
+  },
+  {
     action: "show-shortcuts",
     label: "Keyboard Shortcuts",
     category: "general",

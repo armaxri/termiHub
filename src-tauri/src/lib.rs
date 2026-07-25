@@ -1130,6 +1130,16 @@ pub fn run() {
                         window = %label,
                         "Secondary window destroyed; skipping app-wide teardown (#1900)"
                     );
+                    // Notify the remaining windows that the window set shrank so
+                    // the status-bar affordance (#1902) refreshes its count.
+                    // emit() must run off the event-loop thread: calling it
+                    // directly here re-enters a RefCell Tauri already holds.
+                    let handle = app_handle.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = handle.emit("windows-changed", ()) {
+                            tracing::warn!("Failed to emit windows-changed on destroy: {e}");
+                        }
+                    });
                     return;
                 }
 

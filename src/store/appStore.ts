@@ -699,6 +699,12 @@ interface AppState {
   hydrateHandoffTab: (record: TabHandoffRecord) => void;
   /** Drain and hydrate any hand-off records queued for this window. */
   receivePendingHandoffs: () => Promise<void>;
+  /**
+   * Open a brand-new, empty native window (no hand-off) — the top-level "New
+   * Window" command (#1902). The window boots into the empty-window CTA state.
+   * Failures are surfaced as a recoverable toast rather than thrown.
+   */
+  openNewWindow: () => Promise<void>;
 
   /**
    * Pending close-with-live-tabs decision (#1903). Non-null while the
@@ -2520,6 +2526,18 @@ export const useAppStore = create<AppState>((set, get) => {
           }
         }
         get().hydrateHandoffTab(record);
+      }
+    },
+
+    openNewWindow: async () => {
+      // No hand-off record: the new window boots empty and shows the
+      // empty-window CTA (#1902). Window creation is a fast native op, so no
+      // pending toast — only a recoverable error toast if it fails.
+      try {
+        await openWindow();
+      } catch (err) {
+        frontendLog("multi_window", `openNewWindow failed: ${String(err)}`);
+        toast.error("Could not open a new window");
       }
     },
 
