@@ -1,12 +1,18 @@
 /**
- * The terminal toolbar exposes a record/stop button wired to the macro
- * recording store slice (#1674): it toggles recording and reflects the active
- * state so the user always sees whether input is being captured.
+ * The terminal toolbar exposes a session-logging toggle (#1960): it starts and
+ * stops writing the active session's output to a file. With no terminal focused
+ * it surfaces guidance rather than silently doing nothing.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { toast } from "sonner";
+import { sessionLoggingStart } from "@/services/api";
+
+vi.mock("sonner", () => ({
+  toast: { info: vi.fn(), success: vi.fn(), error: vi.fn() },
+}));
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(() => Promise.resolve(() => {})),
@@ -63,11 +69,13 @@ import { TerminalView } from "./TerminalView";
 let container: HTMLDivElement;
 let root: Root;
 
-function recordButton(): HTMLButtonElement {
-  return document.querySelector('[data-testid="terminal-view-record-macro"]') as HTMLButtonElement;
+function loggingButton(): HTMLButtonElement {
+  return document.querySelector(
+    '[data-testid="terminal-view-toggle-logging"]'
+  ) as HTMLButtonElement;
 }
 
-describe("TerminalView — macro record button (#1674)", () => {
+describe("TerminalView — session logging button (#1960)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     container = document.createElement("div");
@@ -82,29 +90,17 @@ describe("TerminalView — macro record button (#1674)", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the record button in an idle state", () => {
-    const btn = recordButton();
+  it("renders the logging button in an idle (not-logging) state", () => {
+    const btn = loggingButton();
     expect(btn).toBeTruthy();
     expect(btn.getAttribute("aria-pressed")).toBe("false");
-    expect(btn.className).not.toContain("terminal-view__toolbar-action--recording");
+    expect(btn.className).not.toContain("terminal-view__toolbar-action--active");
   });
 
-  it("clicking starts recording and reflects the active state", () => {
-    act(() => recordButton().click());
+  it("guides the user instead of logging when no terminal is focused", () => {
+    act(() => loggingButton().click());
 
-    expect(useAppStore.getState().macroRecording).toBe(true);
-    const btn = recordButton();
-    expect(btn.getAttribute("aria-pressed")).toBe("true");
-    expect(btn.className).toContain("terminal-view__toolbar-action--recording");
-  });
-
-  it("clicking again stops recording (opening the save dialog after capture)", () => {
-    act(() => recordButton().click());
-    // Simulate captured input so stopping routes to the save dialog.
-    act(() => useAppStore.getState().recordMacroInput("ls\r"));
-    act(() => recordButton().click());
-
-    expect(useAppStore.getState().macroRecording).toBe(false);
-    expect(useAppStore.getState().macroSaveDialogOpen).toBe(true);
+    expect(toast.info).toHaveBeenCalledTimes(1);
+    expect(sessionLoggingStart).not.toHaveBeenCalled();
   });
 });

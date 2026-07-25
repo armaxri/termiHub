@@ -75,6 +75,9 @@ vi.mock("@/services/api", () => ({
   sessionGetCapabilities: vi.fn(() => Promise.resolve({ monitoring: false, fileBrowser: false })),
   sessionMonitoringOpen: vi.fn(() => Promise.resolve()),
   sessionMonitoringClose: vi.fn(() => Promise.resolve()),
+  sessionLoggingStart: vi.fn(() => Promise.resolve("/tmp/session.log")),
+  sessionLoggingStop: vi.fn(() => Promise.resolve(null)),
+  sessionLoggingStatus: vi.fn(() => Promise.resolve(null)),
 }));
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
