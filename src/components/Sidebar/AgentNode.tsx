@@ -264,48 +264,48 @@ function AgentConnectionItem({
             <span className="connection-tree__persistent-actions">
               {!runState || runState === "stopped" || runState === "error" ? (
                 <Tooltip content="Start session" side="top">
-                  <button
-                    type="button"
-                    className="connection-tree__action"
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    iconOnly
+                    icon={<Play size={12} />}
                     aria-label="Start session"
                     data-testid={`persistent-start-${definition.id}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       onStartPersistent(agentId, definition);
                     }}
-                  >
-                    <Play size={12} />
-                  </button>
+                  />
                 </Tooltip>
               ) : isRunning ? (
                 <>
                   <Tooltip content="Attach new tab" side="top">
-                    <button
-                      type="button"
-                      className="connection-tree__action"
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      iconOnly
+                      icon={<Link size={12} />}
                       aria-label="Attach new tab"
                       data-testid={`persistent-attach-${definition.id}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onAttachPersistent(agentId, definition);
                       }}
-                    >
-                      <Link size={12} />
-                    </button>
+                    />
                   </Tooltip>
                   <Tooltip content="Stop session" side="top">
-                    <button
-                      type="button"
-                      className="connection-tree__action connection-tree__action--danger"
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      iconOnly
+                      icon={<Square size={12} />}
                       aria-label="Stop session"
                       data-testid={`persistent-stop-${definition.id}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onStopPersistent(agentId, definition);
                       }}
-                    >
-                      <Square size={12} />
-                    </button>
+                    />
                   </Tooltip>
                 </>
               ) : null}

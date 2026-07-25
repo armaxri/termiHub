@@ -444,48 +444,48 @@ function ConnectionItem({
                 <span className="connection-tree__persistent-actions">
                   {isPersistentStopped ? (
                     <Tooltip content="Start session" side="top">
-                      <button
-                        type="button"
-                        className="connection-tree__action"
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        iconOnly
+                        icon={<Play size={12} />}
                         aria-label="Start session"
                         data-testid={`persistent-start-${connection.id}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           handleStartPersistent();
                         }}
-                      >
-                        <Play size={12} />
-                      </button>
+                      />
                     </Tooltip>
                   ) : (
                     <>
                       <Tooltip content="Attach new tab" side="top">
-                        <button
-                          type="button"
-                          className="connection-tree__action"
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          iconOnly
+                          icon={<Link size={12} />}
                           aria-label="Attach new tab"
                           data-testid={`persistent-attach-${connection.id}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleAttachPersistent();
                           }}
-                        >
-                          <Link size={12} />
-                        </button>
+                        />
                       </Tooltip>
                       <Tooltip content="Stop session" side="top">
-                        <button
-                          type="button"
-                          className="connection-tree__action connection-tree__action--danger"
+                        <Button
+                          variant="ghost"
+                          size="xs"
+                          iconOnly
+                          icon={<Square size={12} />}
                           aria-label="Stop session"
                           data-testid={`persistent-stop-${connection.id}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleStopPersistent();
                           }}
-                        >
-                          <Square size={12} />
-                        </button>
+                        />
                       </Tooltip>
                     </>
                   )}
@@ -494,9 +494,12 @@ function ConnectionItem({
             </button>
             {!persistentCapable && (
               <Tooltip content="Connect" side="right">
-                <button
-                  type="button"
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  iconOnly
                   className="connection-tree__connect"
+                  icon={<Play size={14} />}
                   aria-label={`Connect to ${connection.name}`}
                   tabIndex={-1}
                   onClick={(e) => {
@@ -504,9 +507,7 @@ function ConnectionItem({
                     onConnect(connection);
                   }}
                   data-testid={`connection-connect-${connection.id}`}
-                >
-                  <Play size={14} />
-                </button>
+                />
               </Tooltip>
             )}
           </div>
