@@ -28,22 +28,8 @@
   white-space: nowrap;
 }
 
-.terminal-view-mode-banner__reconnect-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px var(--spacing-sm);
-  background: var(--accent-color);
-  color: var(--text-on-accent);
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs, 11px);
-  font-family: inherit;
-  cursor: pointer;
+/* Keep the reconnect Button from stretching the thin banner: the primitive
+   supplies the skin; the banner only needs it to stay compact and not shrink. */
+.terminal-view-mode-banner .ui-btn {
   flex-shrink: 0;
-  transition: background-color var(--transition-fast);
-}
-
-.terminal-view-mode-banner__reconnect-btn:hover {
-  background-color: var(--accent-hover);
 }

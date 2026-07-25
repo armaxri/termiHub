@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { WifiOff, RefreshCw, X, AlertTriangle, Loader2, CheckCircle2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Tooltip } from "@/components/ui";
+import { Button, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import "./TerminalDisconnectOverlay.css";
 
@@ -105,13 +105,14 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
             </div>
           )}
           <div className="terminal-disconnect-overlay__actions">
-            <button
-              className="terminal-disconnect-overlay__view-btn"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={handleStop}
               data-testid="terminal-disconnect-stop-btn"
             >
               Stop
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -154,21 +155,23 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
           </div>
 
           <div className="terminal-disconnect-overlay__actions">
-            <button
-              className="terminal-disconnect-overlay__reconnect-btn"
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<RefreshCw size={14} />}
               onClick={handleReconnect}
               data-testid="terminal-disconnect-reconnect-btn"
             >
-              <RefreshCw size={14} />
               Try Again
-            </button>
-            <button
-              className="terminal-disconnect-overlay__view-btn"
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={handleDismiss}
               data-testid="terminal-disconnect-view-btn"
             >
               View Scrollback
-            </button>
+            </Button>
           </div>
         </div>
       </div>
@@ -201,21 +204,23 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
         <p className="terminal-disconnect-overlay__subheading">{copy.subheading}</p>
 
         <div className="terminal-disconnect-overlay__actions">
-          <button
-            className="terminal-disconnect-overlay__reconnect-btn"
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<RefreshCw size={14} />}
             onClick={handleReconnect}
             data-testid="terminal-disconnect-reconnect-btn"
           >
-            <RefreshCw size={14} />
             Reconnect
-          </button>
-          <button
-            className="terminal-disconnect-overlay__view-btn"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleDismiss}
             data-testid="terminal-disconnect-view-btn"
           >
             View Scrollback
-          </button>
+          </Button>
         </div>
       </div>
     </div>

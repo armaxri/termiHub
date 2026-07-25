@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { Button } from "@/components/ui";
 import "./TerminalViewModeBanner.css";
 
 interface TerminalViewModeBannerProps {
@@ -26,14 +27,15 @@ export function TerminalViewModeBanner({ tabId }: TerminalViewModeBannerProps) {
       <span className="terminal-view-mode-banner__label">
         Session ended — press Enter or click Reconnect to start a new session
       </span>
-      <button
-        className="terminal-view-mode-banner__reconnect-btn"
+      <Button
+        variant="primary"
+        size="sm"
+        icon={<RefreshCw size={11} />}
         onClick={handleReconnect}
         data-testid="terminal-view-mode-reconnect-btn"
       >
-        <RefreshCw size={11} />
         Reconnect
-      </button>
+      </Button>
     </div>
   );
 }

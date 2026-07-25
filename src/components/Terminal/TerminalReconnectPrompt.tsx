@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { Button } from "@/components/ui";
 import "./TerminalReconnectPrompt.css";
 
 interface TerminalReconnectPromptProps {
@@ -32,22 +33,24 @@ export function TerminalReconnectPrompt({ tabId }: TerminalReconnectPromptProps)
           This session has ended. Would you like to reconnect?
         </p>
         <div className="terminal-reconnect-prompt__actions">
-          <button
-            className="terminal-reconnect-prompt__reconnect-btn"
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<RefreshCw size={13} />}
             onClick={handleReconnect}
             data-testid="terminal-reconnect-prompt-reconnect-btn"
             autoFocus
           >
-            <RefreshCw size={13} />
             Reconnect
-          </button>
-          <button
-            className="terminal-reconnect-prompt__stay-btn"
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleStay}
             data-testid="terminal-reconnect-prompt-stay-btn"
           >
             Stay in View Mode
-          </button>
+          </Button>
         </div>
       </div>
     </div>

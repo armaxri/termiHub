@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { Button } from "@/components/ui";
 import { AgentErrorMeta } from "@/types/terminal";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
@@ -90,15 +91,16 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
         </div>
 
         <div className="agent-error-tab__actions">
-          <button
-            className="agent-error-tab__reconnect-btn"
-            onClick={handleReconnect}
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<RefreshCw size={14} className={isReconnecting ? "agent-error-tab__spin" : ""} />}
+            onClick={() => void handleReconnect()}
             disabled={isReconnecting}
             data-testid="agent-error-reconnect-btn"
           >
-            <RefreshCw size={14} className={isReconnecting ? "agent-error-tab__spin" : ""} />
             {isReconnecting ? "Reconnecting…" : "Reconnect"}
-          </button>
+          </Button>
           {reconnectError && (
             <span className="agent-error-tab__reconnect-error">{reconnectError}</span>
           )}
