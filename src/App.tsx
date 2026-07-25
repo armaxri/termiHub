@@ -192,6 +192,11 @@ function App() {
         await useAppStore.getState().receivePendingWindowRestore();
         await useAppStore.getState().receivePendingHandoffs();
         enableSecondaryLayoutReport();
+        // Report the current slice once now (#1925): the subscription above only
+        // fires on a *later* change, so without this the window's initial layout —
+        // a restored/handed-off tree, or the empty-window state — would be missing
+        // from the aggregation authority and dropped from the main window's save.
+        void useAppStore.getState().reportOwnWindowLayout();
         return;
       }
 
