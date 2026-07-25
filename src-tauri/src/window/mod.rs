@@ -62,6 +62,13 @@ pub struct WindowManager {
     ownership: Mutex<HashMap<String, String>>,
     /// `window_label → queued hand-off records` awaiting the window's boot/claim.
     pending: Mutex<HashMap<String, Vec<HandoffRecord>>>,
+    /// `window_label → the window's live tab count`, last reported by that
+    /// window (#1910). Tabs live in a window's own JS context, so a window
+    /// cannot see another window's count; each window reports its own here and
+    /// the "Move to Window ▸" picker reads the map to show a per-window "N tabs"
+    /// hint sourced from real state rather than a placeholder. Absent until a
+    /// window first reports (a freshly-booted window that has not yet reported).
+    tab_counts: Mutex<HashMap<String, usize>>,
 }
 
 /// Recover a lock guard even if a previous holder panicked. Multi-window
@@ -173,6 +180,29 @@ impl WindowManager {
             None => true,
             Some(owner) => owner == window_label,
         }
+    }
+
+    // ── Per-window tab count (#1910) ─────────────────────────────────────
+
+    /// Record `window_label`'s current tab count, as reported by that window.
+    ///
+    /// Each window owns its own tab set in a separate JS context, so it reports
+    /// its count here whenever the count changes; the "Move to Window ▸" picker
+    /// in every *other* window reads it back via [`Self::tab_count_of`].
+    pub fn set_tab_count(&self, window_label: &str, count: usize) {
+        recover(self.tab_counts.lock()).insert(window_label.to_string(), count);
+    }
+
+    /// The last tab count reported by `window_label`, or `None` if it has not
+    /// reported yet (a window that just booted and has not drawn its tabs).
+    pub fn tab_count_of(&self, window_label: &str) -> Option<usize> {
+        recover(self.tab_counts.lock()).get(window_label).copied()
+    }
+
+    /// Forget a window's reported tab count (the window was destroyed), so the
+    /// map never grows a stale entry for a window that no longer exists.
+    pub fn forget_tab_count(&self, window_label: &str) {
+        recover(self.tab_counts.lock()).remove(window_label);
     }
 
     // ── Hand-off queue ───────────────────────────────────────────────────
@@ -308,6 +338,27 @@ mod tests {
             assert!(!should_prevent_exit(None));
             assert!(!should_prevent_exit(Some(0)));
         }
+    }
+
+    #[test]
+    fn tab_count_is_reported_read_back_and_forgotten() {
+        let wm = WindowManager::new();
+        // Unreported window has no count (freshly booted, tabs not yet drawn).
+        assert_eq!(wm.tab_count_of("win-1"), None);
+
+        wm.set_tab_count("win-1", 2);
+        wm.set_tab_count("main", 0);
+        assert_eq!(wm.tab_count_of("win-1"), Some(2));
+        assert_eq!(wm.tab_count_of("main"), Some(0), "zero is 'empty', not absent");
+
+        // A re-report overwrites the previous value.
+        wm.set_tab_count("win-1", 5);
+        assert_eq!(wm.tab_count_of("win-1"), Some(5));
+
+        // Forgetting a destroyed window drops only its entry.
+        wm.forget_tab_count("win-1");
+        assert_eq!(wm.tab_count_of("win-1"), None);
+        assert_eq!(wm.tab_count_of("main"), Some(0));
     }
 
     #[test]
