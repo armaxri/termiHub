@@ -40,6 +40,8 @@ describe("buildCommands", () => {
     expect(ids).toContain("find-in-terminal");
     // …including the multi-window tear-out command (#1901)…
     expect(ids).toContain("move-tab-to-new-window");
+    // …and the top-level New Window command (#1902)…
+    expect(ids).toContain("new-window");
     // …while the palette's own shortcut has no runner and stays out.
     expect(ids).not.toContain("command-palette");
   });
@@ -50,6 +52,16 @@ describe("buildCommands", () => {
     const cmd = buildCommands().find((c) => c.id === "toggle-sidebar");
     cmd!.run();
     expect(toggleSidebar).toHaveBeenCalledOnce();
+  });
+
+  it("runs openNewWindow for the New Window command (#1902)", () => {
+    const openNewWindow = vi.fn();
+    useAppStore.setState({ openNewWindow });
+    const cmd = buildCommands().find((c) => c.id === "new-window");
+    expect(cmd).toBeDefined();
+    expect(cmd!.label).toBe("New Window");
+    cmd!.run();
+    expect(openNewWindow).toHaveBeenCalledOnce();
   });
 
   it("marks store-only commands as always available", () => {

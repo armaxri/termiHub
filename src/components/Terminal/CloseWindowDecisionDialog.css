@@ -1,0 +1,98 @@
+/* Close-with-live-tabs decision dialog (#1903). Token-only styling; composes
+   the shared Modal + Button primitives. */
+
+.close-window-decision__lead {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: flex-start;
+  margin-bottom: var(--spacing-md);
+  color: var(--text-primary);
+}
+
+.close-window-decision__lead-icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  color: var(--color-warning);
+}
+
+.close-window-decision__target {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-md);
+}
+
+.close-window-decision__target-label {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.close-window-decision__rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.close-window-decision__row {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: center;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+}
+
+.close-window-decision__row-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+}
+
+.close-window-decision__row-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.close-window-decision__row-type {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.close-window-decision__pill {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: var(--spacing-xs);
+  align-items: center;
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  white-space: nowrap;
+}
+
+.close-window-decision__pill .li,
+.close-window-decision__row-icon.li,
+.close-window-decision__lead-icon.li {
+  width: 14px;
+  height: 14px;
+}
+
+.close-window-decision__pill--detach {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 16%, transparent);
+}
+
+.close-window-decision__pill--terminate {
+  color: var(--color-error);
+  background: color-mix(in srgb, var(--color-error) 16%, transparent);
+}

@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
-import { getAllLeaves, findLeafByTab } from "@/utils/panelTree";
+import { getAllLeaves, findLeafByTab, isWindowEmpty } from "@/utils/panelTree";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { isWindows, isMac } from "@/utils/platform";
 import { usePaneFileDrop } from "@/hooks/usePaneFileDrop";
@@ -59,6 +59,7 @@ import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconn
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
 import { PanelDropZone } from "./PanelDropZone";
+import { EmptyWindowState } from "./EmptyWindowState";
 import "./SplitView.css";
 
 export function SplitView() {
@@ -106,6 +107,15 @@ export function SplitView() {
     const allTabs = getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs);
     return getEditorTabDisplayTitle(zoomedTab, allTabs);
   }, [zoomedTab, rootPanel]);
+
+  // Empty-window first-class state (#1902): the window holds zero tabs across
+  // every tab group — right after "New Window", or after its last tab was moved
+  // or closed. When empty we render the CTA in place of the tab-bar/panel tree
+  // (see below).
+  const windowEmpty = useMemo(
+    () => isWindowEmpty(rootPanel, tabGroups, activeTabGroupId),
+    [rootPanel, tabGroups, activeTabGroupId]
+  );
 
   const dismissZoom = useCallback(() => setZoomedTabId(null), [setZoomedTabId]);
 
@@ -231,6 +241,14 @@ export function SplitView() {
       setDraggingTabId,
     ]
   );
+
+  if (windowEmpty) {
+    return (
+      <div className="split-view-groups">
+        <EmptyWindowState />
+      </div>
+    );
+  }
 
   return (
     <div className="split-view-groups">

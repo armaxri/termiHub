@@ -54,3 +54,53 @@ export interface TabHandoffRecord {
  * the foundation only provides the store action and the seam.
  */
 export type MoveWindowTarget = { kind: "new" } | { kind: "existing"; label: string };
+
+/**
+ * What would happen to one live session owned by a window being closed (#1903):
+ * a persistent/agent session `detach`es (its backend process keeps running and
+ * can be re-attached later), while a non-persistent one would be `terminate`d.
+ */
+export type WindowCloseOutcome = "detach" | "terminate";
+
+/**
+ * One live session owned by a closing window, with the outcome its close would
+ * have — the per-session row rendered in the detach-vs-terminate decision
+ * dialog (#1903).
+ */
+export interface WindowCloseSessionRow {
+  /** Owning tab id (used to detach/move the exact tab). */
+  tabId: string;
+  /** The live backend session id. */
+  sessionId: string;
+  /** Tab title, for display. */
+  title: string;
+  /** Connection type (`local`, `ssh`, `serial`, …), for display/icon. */
+  connectionType: string;
+  /** The tab's content type, for the row icon. */
+  contentType: TabContentType;
+  /** Whether this session detaches (survives) or would be terminated. */
+  outcome: WindowCloseOutcome;
+}
+
+/**
+ * A pending close-with-live-tabs decision (#1903). Raised only when at least one
+ * owned session would actually be lost (a non-persistent `terminate`); an empty
+ * or all-persistent window closes without a dialog.
+ */
+export interface WindowCloseRequest {
+  /** The live sessions owned by the window being closed, and their outcomes. */
+  sessions: WindowCloseSessionRow[];
+  /** Other open windows this window's tabs could be moved to (excludes self). */
+  otherWindows: WindowInfo[];
+}
+
+/**
+ * A friendly display name for a window label (`main` → "Main window",
+ * `win-3` → "Window 3"). The richer window picker is #1901/#1902; this is the
+ * minimal label formatter the close-decision dialog needs.
+ */
+export function windowDisplayName(label: string): string {
+  if (label === MAIN_WINDOW_LABEL) return "Main window";
+  const match = /^win-(\d+)$/.exec(label);
+  return match ? `Window ${match[1]}` : label;
+}
