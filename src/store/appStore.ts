@@ -684,11 +684,7 @@ interface AppState {
    * disposed and the destination re-attaches with scrollback replay. This is the
    * store seam the "Move to Window" UI (#1901) builds on.
    */
-  moveTabToWindow: (
-    tabId: string,
-    fromPanelId: string,
-    target: MoveWindowTarget
-  ) => Promise<void>;
+  moveTabToWindow: (tabId: string, fromPanelId: string, target: MoveWindowTarget) => Promise<void>;
   /**
    * Hydrate a handed-off tab into this window's active group (destination side).
    * The tab re-attaches to its live backend session and replays scrollback.
