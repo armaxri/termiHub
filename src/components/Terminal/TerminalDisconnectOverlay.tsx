@@ -48,17 +48,6 @@ function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
 }
 
 /**
- * Shown as an absolute overlay on top of the terminal content when the session
- * exits unexpectedly or while the agent is auto-reconnecting.
- *
- * Three variants (determined from store state):
- *   - "reconnecting"  — spinner, optional trigger error, Stop button
- *   - "error"         — error box, "Reconnect failed" heading, retry + view-scrollback buttons
- *   - "disconnected"  — standard disconnect, reconnect + view-scrollback buttons
- *
- * The scrollback buffer is always preserved below the overlay.
- */
-/**
  * Auto-reconnect countdown variant (#1962): shown while the agentless resilient-
  * reconnect loop is waiting to make its next attempt. Renders a live countdown,
  * the attempt progress, an honest note that server-side state is not preserved
@@ -105,8 +94,8 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
             : `Reconnecting… · ${attemptLabel}`}
         </p>
         <p className="terminal-disconnect-overlay__subheading terminal-disconnect-overlay__note">
-          Local scrollback is preserved. Without an agent, the remote shell state
-          (running commands, working directory) is not restored — a fresh shell opens.
+          Local scrollback is preserved. Without an agent, the remote shell state (running commands,
+          working directory) is not restored — a fresh shell opens.
         </p>
         <div className="terminal-disconnect-overlay__actions">
           <Button
@@ -123,6 +112,18 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
   );
 }
 
+/**
+ * Shown as an absolute overlay on top of the terminal content when the session
+ * exits unexpectedly or while a reconnect is in progress.
+ *
+ * Variants (determined from store state, in priority order):
+ *   - "auto-reconnect" — agentless resilient-reconnect countdown + Cancel (#1962)
+ *   - "reconnecting"   — spinner, optional trigger error, Stop button
+ *   - "error"          — error box, "Reconnect failed" heading, retry + view buttons
+ *   - "disconnected"   — standard disconnect, reconnect + view-scrollback buttons
+ *
+ * The scrollback buffer is always preserved below the overlay.
+ */
 export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
