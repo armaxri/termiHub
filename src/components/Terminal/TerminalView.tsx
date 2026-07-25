@@ -332,17 +332,12 @@ export function TerminalView() {
         <div className="terminal-view__toolbar">
           <TabGroupChips />
           <div className="terminal-view__toolbar-actions">
-            <Tooltip
-              content={broadcastActive ? "Stop Broadcast" : "Broadcast Input"}
-              side="bottom"
-            >
+            <Tooltip content={broadcastActive ? "Stop Broadcast" : "Broadcast Input"} side="bottom">
               <Button
                 variant="ghost"
                 size="sm"
                 iconOnly
-                className={
-                  broadcastActive ? "terminal-view__toolbar-action--broadcast" : undefined
-                }
+                className={broadcastActive ? "terminal-view__toolbar-action--broadcast" : undefined}
                 icon={<Radio size={16} />}
                 onClick={handleToggleBroadcast}
                 aria-label={broadcastActive ? "Stop Broadcast" : "Broadcast Input"}

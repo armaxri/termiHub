@@ -150,9 +150,7 @@ describe("appStore — broadcast input slice (#1955)", () => {
         terminalExitedTabs: { t3: true },
         terminalConnecting: { t4: true },
       });
-      useAppStore
-        .getState()
-        .startBroadcast("all", "src", ["t2", "t3", "t4", "t5", "t6"]);
+      useAppStore.getState().startBroadcast("all", "src", ["t2", "t3", "t4", "t5", "t6"]);
 
       const result = useAppStore.getState().getBroadcastTargetTabIds().sort();
       expect(result).toEqual(["src", "t2"]);
@@ -207,10 +205,7 @@ describe("appStore — broadcast input slice (#1955)", () => {
   describe("closeTab teardown", () => {
     it("closing the source tab ends broadcast entirely", () => {
       // sessionId null avoids the backend session-release path in closeTab.
-      seedTabs([
-        makeTab({ id: "src", sessionId: null }),
-        makeTab({ id: "t2", sessionId: null }),
-      ]);
+      seedTabs([makeTab({ id: "src", sessionId: null }), makeTab({ id: "t2", sessionId: null })]);
       useAppStore.getState().startBroadcast("all", "src", ["t2"]);
 
       useAppStore.getState().closeTab("src", "leaf-1");
@@ -222,10 +217,7 @@ describe("appStore — broadcast input slice (#1955)", () => {
     });
 
     it("closing a plain target drops it from the set but keeps broadcast active", () => {
-      seedTabs([
-        makeTab({ id: "src", sessionId: null }),
-        makeTab({ id: "t2", sessionId: null }),
-      ]);
+      seedTabs([makeTab({ id: "src", sessionId: null }), makeTab({ id: "t2", sessionId: null })]);
       useAppStore.getState().startBroadcast("all", "src", ["t2"]);
 
       useAppStore.getState().closeTab("t2", "leaf-1");
