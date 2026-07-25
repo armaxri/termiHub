@@ -7,6 +7,7 @@ import { TransferQueue } from "@/components/TransferQueue";
 import { ShellIntegrationBanner } from "@/components/ShellIntegrationBanner";
 import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
+import { SshHostKeyPrompt } from "@/components/SshHostKeyPrompt/SshHostKeyPrompt";
 import { LocalProcessAuthDialog } from "@/components/WorkflowSidebar/LocalProcessAuthDialog";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { ExportDialog, ImportDialog } from "@/components/ExportImport";
@@ -379,6 +380,7 @@ function App() {
           <TransferQueue />
           {layoutConfig.statusBarVisible && <StatusBar />}
           <PasswordPrompt />
+          <SshHostKeyPrompt />
           <LocalProcessAuthDialog />
           <CustomizeLayoutDialog />
           <ExportDialog />
