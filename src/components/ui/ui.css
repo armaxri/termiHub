@@ -49,6 +49,19 @@
   font-size: var(--font-size-sm);
 }
 
+/*
+ * `xs` (24px = --control-height-sm): the compact floor for dense affordances
+ * that used to hand-roll their own sub-`sm` geometry — sidebar action rows,
+ * inline confirm/cancel, the LayoutDesigner schematic. Pair with `iconOnly` for
+ * a 24px square icon button; the tighter radius keeps it visually compact.
+ */
+.ui-btn--xs {
+  height: var(--control-height-sm);
+  padding: 0 var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+}
+
 .ui-btn--full {
   width: 100%;
 }
@@ -58,7 +71,7 @@
  * drops the label padding, for dense action rows (tunnel rows, network-monitor
  * rows). Geometry only — color, hover, radius, focus ring, and the async
  * pending/success affordances all come from the variant + base classes.
- * `aspect-ratio: 1` keeps it square at either size (32px for md, 28px for sm).
+ * `aspect-ratio: 1` keeps it square at any size (32px md, 28px sm, 24px xs).
  * Icon-only buttons require an accessible name (aria-label/tooltip); the
  * primitive warns in the LogViewer when one is missing (issue 1284).
  */

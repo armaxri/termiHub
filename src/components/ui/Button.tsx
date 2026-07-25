@@ -6,8 +6,8 @@ import "./ui.css";
 /** Visual variant of the button. */
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 
-/** Control size. `md` (default) is 32px tall; `sm` is 28px. */
-export type ButtonSize = "sm" | "md";
+/** Control size. `md` (default) is 32px tall; `sm` is 28px; `xs` is 24px. */
+export type ButtonSize = "xs" | "sm" | "md";
 
 /** Internal lifecycle state for an async click. */
 type AsyncState = "idle" | "pending" | "success";
@@ -20,6 +20,13 @@ const VARIANT_CLASS: Record<ButtonVariant, string> = {
   secondary: "ui-btn--secondary",
   ghost: "ui-btn--ghost",
   danger: "ui-btn--danger",
+};
+
+/** Size → modifier class. `md` is the base geometry, so it carries no modifier. */
+const SIZE_CLASS: Record<ButtonSize, string> = {
+  xs: "ui-btn--xs",
+  sm: "ui-btn--sm",
+  md: "",
 };
 
 /**
@@ -225,7 +232,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   const classes = [
     "ui-btn",
     VARIANT_CLASS[variant],
-    size === "sm" ? "ui-btn--sm" : "",
+    SIZE_CLASS[size],
     iconOnly ? "ui-btn--icon-only" : "",
     fullWidth ? "ui-btn--full" : "",
     pending ? "ui-btn--pending" : "",
