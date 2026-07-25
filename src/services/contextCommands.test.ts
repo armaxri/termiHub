@@ -43,10 +43,38 @@ describe("CONTEXT_COMMANDS registry", () => {
         "focus-left",
         "focus-right",
         "focus-up",
+        "move-tab-to-new-window",
         "next-tab",
         "prev-tab",
       ].sort()
     );
+  });
+});
+
+describe("move-tab-to-new-window", () => {
+  const cmd = CONTEXT_COMMANDS["move-tab-to-new-window"];
+
+  it("is available only when the active tab is a terminal", () => {
+    expect(cmd.isAvailable()).toBe(false);
+    addActiveTab("editor");
+    expect(cmd.isAvailable()).toBe(false);
+    addActiveTab("terminal");
+    expect(cmd.isAvailable()).toBe(true);
+  });
+
+  it("tears the active terminal tab out through moveTabToWindow with kind:new", () => {
+    const tabId = addActiveTab("terminal");
+    const panelId = activeLeaf()!.id;
+    const spy = vi.spyOn(useAppStore.getState(), "moveTabToWindow").mockResolvedValue(undefined);
+    cmd.run();
+    expect(spy).toHaveBeenCalledWith(tabId, panelId, { kind: "new" });
+  });
+
+  it("run() is inert on a non-terminal tab", () => {
+    addActiveTab("editor");
+    const spy = vi.spyOn(useAppStore.getState(), "moveTabToWindow").mockResolvedValue(undefined);
+    cmd.run();
+    expect(spy).not.toHaveBeenCalled();
   });
 });
 

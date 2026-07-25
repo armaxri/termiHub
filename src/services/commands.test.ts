@@ -38,6 +38,8 @@ describe("buildCommands", () => {
     expect(ids).toContain("focus-up");
     expect(ids).toContain("clear-terminal");
     expect(ids).toContain("find-in-terminal");
+    // …including the multi-window tear-out command (#1901)…
+    expect(ids).toContain("move-tab-to-new-window");
     // …while the palette's own shortcut has no runner and stays out.
     expect(ids).not.toContain("command-palette");
   });
