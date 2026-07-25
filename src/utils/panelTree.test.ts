@@ -1,11 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type {
-  LeafPanel,
-  SplitContainer,
-  TerminalTab,
-  PanelNode,
-  TabGroup,
-} from "@/types/terminal";
+import type { LeafPanel, SplitContainer, TerminalTab, PanelNode, TabGroup } from "@/types/terminal";
 import {
   createLeafPanel,
   findLeaf,
