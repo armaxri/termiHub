@@ -720,6 +720,7 @@ pub fn run() {
             // Remote-desktop (graphical) commands — protocol-blind (#1680)
             commands::remote_desktop::remote_desktop_connect,
             commands::remote_desktop::remote_desktop_resize,
+            commands::remote_desktop::remote_desktop_request_full_frame,
             commands::remote_desktop::remote_desktop_send_input,
             commands::remote_desktop::remote_desktop_send_clipboard,
             commands::remote_desktop::remote_desktop_get_clipboard,

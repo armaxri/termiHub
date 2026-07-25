@@ -424,6 +424,17 @@ export async function remoteDesktopResize(
   await invoke("remote_desktop_resize", { sessionId, width, height });
 }
 
+/**
+ * Ask the backend to re-emit a full framebuffer frame (#1904).
+ *
+ * Invoked when a graphical tab is moved into another window: the destination
+ * canvas is blank until the next full frame, so this forces a prompt repaint
+ * instead of waiting for the protocol's next natural keyframe.
+ */
+export async function remoteDesktopRequestFullFrame(sessionId: SessionId): Promise<void> {
+  await invoke("remote_desktop_request_full_frame", { sessionId });
+}
+
 /** Forward a protocol-agnostic input event (key / pointer / wheel). */
 export async function remoteDesktopSendInput(
   sessionId: SessionId,
