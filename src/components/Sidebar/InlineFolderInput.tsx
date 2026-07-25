@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Folder, Check, X } from "lucide-react";
-import { Input, Tooltip } from "@/components/ui";
+import { Button, Input, Tooltip } from "@/components/ui";
 
 interface InlineFolderInputProps {
   depth: number;
@@ -37,30 +37,32 @@ export function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderIn
         data-testid="inline-folder-name-input"
       />
       <Tooltip content="Confirm" side="top">
-        <button
-          className="connection-tree__inline"
+        <Button
+          variant="ghost"
+          size="xs"
+          iconOnly
+          icon={<Check size={14} />}
           onMouseDown={(e) => {
             e.preventDefault();
             if (name.trim()) onConfirm(name.trim());
           }}
           aria-label="Confirm"
           data-testid="inline-folder-confirm"
-        >
-          <Check size={14} />
-        </button>
+        />
       </Tooltip>
       <Tooltip content="Cancel" side="top">
-        <button
-          className="connection-tree__inline"
+        <Button
+          variant="ghost"
+          size="xs"
+          iconOnly
+          icon={<X size={14} />}
           onMouseDown={(e) => {
             e.preventDefault();
             onCancel();
           }}
           aria-label="Cancel"
           data-testid="inline-folder-cancel"
-        >
-          <X size={14} />
-        </button>
+        />
       </Tooltip>
     </div>
   );

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { SplitSquareHorizontal, SplitSquareVertical, Plus, X, RotateCcw } from "lucide-react";
-import { NumberInput, Tooltip } from "@/components/ui";
+import { Button, NumberInput, Tooltip } from "@/components/ui";
 import { WorkspaceLayoutNode, WorkspaceSplitNode, WorkspaceTabDef } from "@/types/workspace";
 import {
   getWorkspaceLeaves,
@@ -186,33 +186,36 @@ function LayoutNodePreview({
         <div className="layout-split-container__actions">
           {hasSizes && (
             <Tooltip content="Reset to Equal" side="top">
-              <button
-                className="layout-split-container__action"
+              <Button
+                variant="secondary"
+                size="xs"
+                iconOnly
+                icon={<RotateCcw size={10} />}
                 onClick={() => onUpdateSizes(node, null)}
                 aria-label="Reset to Equal"
                 data-testid="layout-size-reset"
-              >
-                <RotateCcw size={10} />
-              </button>
+              />
             </Tooltip>
           )}
           <Tooltip content="Split Horizontal" side="top">
-            <button
-              className="layout-split-container__action"
+            <Button
+              variant="secondary"
+              size="xs"
+              iconOnly
+              icon={<SplitSquareHorizontal size={10} />}
               onClick={() => onSplitContainer(node, "horizontal")}
               aria-label="Split Horizontal"
-            >
-              <SplitSquareHorizontal size={10} />
-            </button>
+            />
           </Tooltip>
           <Tooltip content="Split Vertical" side="top">
-            <button
-              className="layout-split-container__action"
+            <Button
+              variant="secondary"
+              size="xs"
+              iconOnly
+              icon={<SplitSquareVertical size={10} />}
               onClick={() => onSplitContainer(node, "vertical")}
               aria-label="Split Vertical"
-            >
-              <SplitSquareVertical size={10} />
-            </button>
+            />
           </Tooltip>
         </div>
       </div>
@@ -364,43 +367,46 @@ function LeafPanel({
       <div className="layout-leaf__header">
         <div className="layout-leaf__actions">
           <Tooltip content="Split Horizontal" side="top">
-            <button
-              className="layout-leaf__action"
+            <Button
+              variant="secondary"
+              size="xs"
+              iconOnly
+              icon={<SplitSquareHorizontal size={10} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onSplitH();
               }}
               aria-label="Split Horizontal"
               data-testid={`layout-leaf-split-h-${idx}`}
-            >
-              <SplitSquareHorizontal size={10} />
-            </button>
+            />
           </Tooltip>
           <Tooltip content="Split Vertical" side="top">
-            <button
-              className="layout-leaf__action"
+            <Button
+              variant="secondary"
+              size="xs"
+              iconOnly
+              icon={<SplitSquareVertical size={10} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onSplitV();
               }}
               aria-label="Split Vertical"
               data-testid={`layout-leaf-split-v-${idx}`}
-            >
-              <SplitSquareVertical size={10} />
-            </button>
+            />
           </Tooltip>
           <Tooltip content="Add Connection" side="top">
-            <button
-              className="layout-leaf__action"
+            <Button
+              variant="secondary"
+              size="xs"
+              iconOnly
+              icon={<Plus size={10} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onAddTab();
               }}
               aria-label="Add Connection"
               data-testid={`layout-leaf-add-tab-${idx}`}
-            >
-              <Plus size={10} />
-            </button>
+            />
           </Tooltip>
         </div>
         {leafCount > 1 && (

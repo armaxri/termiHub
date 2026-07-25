@@ -73,6 +73,36 @@ describe("Button", () => {
     );
   });
 
+  it("applies the xs size modifier and omits the other size modifiers", () => {
+    render(
+      <Button data-testid="xs" size="xs">
+        X
+      </Button>
+    );
+    const xs = document.querySelector('[data-testid="xs"]')!;
+    expect(xs.classList.contains("ui-btn--xs")).toBe(true);
+    expect(xs.classList.contains("ui-btn--sm")).toBe(false);
+
+    // sm and md must never pick up the xs modifier.
+    render(
+      <Button data-testid="sm2" size="sm">
+        S
+      </Button>
+    );
+    expect(document.querySelector('[data-testid="sm2"]')!.classList.contains("ui-btn--xs")).toBe(
+      false
+    );
+
+    render(
+      <Button data-testid="md2" size="md">
+        M
+      </Button>
+    );
+    expect(document.querySelector('[data-testid="md2"]')!.classList.contains("ui-btn--xs")).toBe(
+      false
+    );
+  });
+
   it("applies the full-width modifier when fullWidth is set", () => {
     render(
       <Button data-testid="btn" fullWidth>
