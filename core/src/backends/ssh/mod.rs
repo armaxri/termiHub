@@ -10,6 +10,7 @@ pub mod connector;
 pub mod exec;
 mod file_browser;
 pub mod handler;
+pub mod host_key;
 pub mod jump_host;
 mod legacy_pem;
 mod monitoring;
