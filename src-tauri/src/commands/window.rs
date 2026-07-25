@@ -46,7 +46,7 @@ pub fn open_window(
     let app_for_build = app.clone();
     let label_for_build = label.clone();
     app.run_on_main_thread(move || {
-        if let Err(e) = WebviewWindowBuilder::new(
+        match WebviewWindowBuilder::new(
             &app_for_build,
             &label_for_build,
             WebviewUrl::App("index.html".into()),
@@ -56,7 +56,16 @@ pub fn open_window(
         .min_inner_size(800.0, 600.0)
         .build()
         {
-            tracing::error!("Failed to create window {label_for_build}: {e}");
+            Ok(_) => {
+                // Notify every open window that the window set changed so the
+                // status-bar affordance (#1902) can refresh its count. The
+                // matching close-side emit lives in the `Destroyed` RunEvent
+                // handler in `lib.rs`.
+                if let Err(e) = app_for_build.emit("windows-changed", ()) {
+                    tracing::warn!("Failed to emit windows-changed for {label_for_build}: {e}");
+                }
+            }
+            Err(e) => tracing::error!("Failed to create window {label_for_build}: {e}"),
         }
     })
     .map_err(|e| e.to_string())?;
