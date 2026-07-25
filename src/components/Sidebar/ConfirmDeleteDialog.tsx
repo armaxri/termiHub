@@ -18,6 +18,7 @@ export function ConfirmDeleteDialog({
     <ConfirmDialog
       open={open}
       title="Confirm Delete"
+      variant="danger"
       message={message}
       confirmLabel="Delete"
       confirmVariant="danger"
