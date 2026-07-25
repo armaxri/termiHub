@@ -1907,6 +1907,16 @@ function teardownAllSessions(state: {
     } else {
       apiCloseTerminal(tab.sessionId).catch(() => {});
     }
+    // This window stops rendering the session, so relinquish its ownership
+    // (#1939) — the window is not being destroyed here (a restore/launch is
+    // replacing its tabs in place), so the backend's window-destroy
+    // `release_all_for_window` will not fire. Best-effort, like the other
+    // ownership calls.
+    try {
+      void releaseSession(tab.sessionId).catch(() => {});
+    } catch {
+      // api layer unavailable under unit tests — see setTabSessionId.
+    }
   }
   if (closed > 0) {
     frontendLog("workspace", `tore down ${closed} live session(s) before restore/launch`);
