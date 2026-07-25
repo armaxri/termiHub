@@ -12,8 +12,8 @@
       <header class="concept-header">
         <h1>In-Field Update Mechanism</h1>
         <div class="concept-meta">
-          <span class="concept-status">Partial</span>
-          <span><code>docs/concepts/partial/in-field-update-mechanism.html</code></span>
+          <span class="concept-status">Future · not planned</span>
+          <span><code>docs/concepts/future/in-field-update-mechanism.html</code></span>
         </div>
       </header>
       <nav class="concept-toc">
@@ -643,10 +643,12 @@ GitHub Release for manual rollback, rather than implementing automatic rollback.
 <p><code>pending_install_version</code> is only used by Variant C to persist a staged update across restarts.</p>
 <hr>
 <h2 id="implementation-status">Implementation Status</h2>
-<p><strong>Status: Partial — Variant A (Notify Only) fully shipped; Variants B and C not built.</strong>
-This concept is the <em>desktop app</em> self-update, distinct from the already-implemented remote
-<em>agent</em> update strategy. Variant A is complete; advancing past it is a maintainer decision
-(see below).</p>
+<p><strong>Status: Future (not planned) — Variant A (Notify Only) fully shipped; Variants B and C
+are deferred and not planned.</strong> This concept is the <em>desktop app</em> self-update, distinct
+from the already-implemented remote <em>agent</em> update strategy. Variant A is complete and lives in
+the product today; the auto-download / auto-install variants (B/C) are <strong>not planned</strong> —
+they are gated on a paid code-signing-certificate budget the maintainer has declined for now, and this
+document is retained in <code>future/</code> as reference should that decision be revisited.</p>
 <h3 id="what-is-implemented">What is implemented (Variant A)</h3>
 <ul>
 <li><strong>Backend</strong> — <code>src-tauri/src/commands/update.rs</code>: <code>check_for_updates</code> (GitHub Releases
@@ -666,10 +668,10 @@ This concept is the <em>desktop app</em> self-update, distinct from the already-
   skipped-version + Clear). Store + scheduling (5s startup delay, 24h interval) in
   <code>appStore.ts</code>/<code>App.tsx</code>.</li>
 </ul>
-<h3 id="what-is-missing">Why this stays Partial — Variants B/C (maintainer/budget decision)</h3>
-<p>Variant A is complete end to end (including the security marker, now closed). The concept stays
-in <code>partial/</code> only because Variants B and C are deliberately unbuilt — and they are
-<strong>not</strong> a straightforward implementation task that an agent can pick up:</p>
+<h3 id="what-is-missing">Why this is Future / not planned — Variants B/C (maintainer/budget decision)</h3>
+<p>Variant A is complete end to end (including the security marker, now closed). The concept sits
+in <code>future/</code> because Variants B and C are <strong>not planned</strong> — they are not a
+straightforward implementation task that an agent can pick up:</p>
 <ul>
 <li><strong>Variant B — Download + Prompt</strong> and <strong>Variant C — Fully Automatic</strong>: not built.
   Both need <code>tauri-plugin-updater</code>, a signed <code>latest.json</code> manifest, and — critically —
@@ -690,7 +692,7 @@ and pursue that direction.</p>
 <blockquote>
 <p>Maintained by <code>/sync-concept in-field-update-mechanism</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
 </blockquote>
-<p><strong>Last synced:</strong> 2026-07-25 (status reconciliation) · <strong>Status:</strong> diverged (partial). Variant A shipped end-to-end and matches the mockups (including the security-marker emission, <a href="https://github.com/armaxri/termiHub/issues/1878">#1878</a>, now closed); Variants B/C stay unbuilt as a maintainer/budget decision (paid code-signing certificates).</p>
+<p><strong>Last synced:</strong> 2026-07-25 (status reconciliation) · <strong>Status:</strong> future (not planned). Variant A shipped end-to-end and matches the mockups (including the security-marker emission, <a href="https://github.com/armaxri/termiHub/issues/1878">#1878</a>, now closed); Variants B/C are not planned — deferred on a paid code-signing-certificate budget decision the maintainer has declined for now, and this document is retired to <code>future/</code>.</p>
 <h3 id="sync-open">Open divergences</h3>
 <div class="table-wrap">
 <table>
