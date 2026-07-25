@@ -15,6 +15,11 @@ interface RemoteDesktopCanvasProps {
   onResize: (width: number, height: number) => void;
   /** Notified when the remote framebuffer resolution changes. */
   onDimensions?: (width: number, height: number) => void;
+  /**
+   * Fired once, on the first frame this canvas paints. Used to clear the
+   * "reconnecting view…" placeholder after a cross-window tab move (#1904).
+   */
+  onFirstFrame?: () => void;
 }
 
 /** Draw geometry mapping framebuffer pixels ↔ on-screen pixels. */
@@ -46,6 +51,7 @@ export function RemoteDesktopCanvas({
   onInput,
   onResize,
   onDimensions,
+  onFirstFrame,
 }: RemoteDesktopCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -65,6 +71,12 @@ export function RemoteDesktopCanvas({
     visible: false,
   });
   const resizeTimerRef = useRef<number | null>(null);
+  // Whether this canvas has painted a frame yet (per session), so the first
+  // repaint can clear the cross-window "reconnecting view…" placeholder (#1904).
+  const firstFramePaintedRef = useRef(false);
+  // Latest onFirstFrame, held in a ref so it never re-subscribes the frame feed.
+  const onFirstFrameRef = useRef(onFirstFrame);
+  onFirstFrameRef.current = onFirstFrame;
   // Pressed pointer-button bitmask (DOM MouseEvent.buttons convention).
   const buttonsRef = useRef(0);
   // Held modifier keys, released on focus loss to avoid stuck keys.
@@ -154,6 +166,8 @@ export function RemoteDesktopCanvas({
   useEffect(() => {
     let disposed = false;
     const unlisteners: Array<() => void> = [];
+    // A fresh (re)attach has painted nothing yet.
+    firstFramePaintedRef.current = false;
 
     void onRemoteDesktopFrame((payload) => {
       if (disposed || payload.session_id !== sessionId) return;
@@ -170,6 +184,11 @@ export function RemoteDesktopCanvas({
         ctx.putImageData(img, rect.x, rect.y);
       }
       repaint();
+      // First frame painted: clear the cross-window reconnecting placeholder.
+      if (!firstFramePaintedRef.current) {
+        firstFramePaintedRef.current = true;
+        onFirstFrameRef.current?.();
+      }
     }).then((un) => (disposed ? un() : unlisteners.push(un)));
 
     void onRemoteDesktopCursor((payload) => {
