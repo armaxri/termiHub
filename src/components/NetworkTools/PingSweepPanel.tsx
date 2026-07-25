@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
-import { Play, StopCircle } from "lucide-react";
+import { Play, ServerCog, StopCircle } from "lucide-react";
 import { Button, ConfirmDialog, Field, Input, NumberInput } from "@/components/ui";
+import { FleetOnboardDialog } from "@/components/Sidebar/FleetOnboardDialog";
+import { pingSweepResultsToRows } from "@/services/fleetOnboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkPingSweep,
@@ -44,6 +46,7 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
   const [results, setResults] = useState<SweepRow[]>([]);
   const [summary, setSummary] = useState<PingSweepSummary | null>(null);
   const [warnOpen, setWarnOpen] = useState(false);
+  const [onboardOpen, setOnboardOpen] = useState(false);
   // Local, deferred opt-out state — committed to settings only on confirm,
   // discarded on cancel (honours the ConfirmDialog checkbox contract).
   const [dontWarnAgain, setDontWarnAgain] = useState(false);
@@ -153,6 +156,17 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
       <div className="network-panel__header">
         <span className="network-panel__title">Ping Sweep</span>
         <div className="network-panel__actions">
+          {results.length > 0 && status !== "running" && (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<ServerCog size={14} />}
+              onClick={() => setOnboardOpen(true)}
+              data-testid="ping-sweep-onboard"
+            >
+              Add as connections
+            </Button>
+          )}
           {status === "running" ? (
             <Button
               variant="danger"
@@ -266,6 +280,13 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
         }}
         onConfirm={handleConfirmLargeSweep}
         onCancel={handleCancelLargeSweep}
+      />
+
+      <FleetOnboardDialog
+        open={onboardOpen}
+        onOpenChange={setOnboardOpen}
+        rows={pingSweepResultsToRows(results)}
+        sourceLabel="the ping sweep results"
       />
     </form>
   );

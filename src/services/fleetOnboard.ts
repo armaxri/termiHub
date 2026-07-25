@@ -15,8 +15,20 @@
  */
 
 import type { InventoryHost, SavedConnection } from "@/types/connection";
-import type { PingSweepResult, PortScanResult } from "@/types/network";
 import { uniqueConnectionName } from "@/services/sshConfigImport";
+
+/** Minimal ping-sweep row this module needs (a responding host). */
+export interface SweepHost {
+  host: string;
+  hostname?: string;
+}
+
+/** Minimal port-scan row this module needs (a probed host/port and its state). */
+export interface ScannedPort {
+  host: string;
+  port: number;
+  state: string;
+}
 
 /** The result of building templated connections from inventory rows. */
 export interface FleetBuildResult {
@@ -131,7 +143,7 @@ export function buildTemplatedConnections(
  * `hostname`, when present, becomes the label so the created connections read
  * better than a bare IP; otherwise the address is used.
  */
-export function pingSweepResultsToRows(results: PingSweepResult[]): InventoryHost[] {
+export function pingSweepResultsToRows(results: SweepHost[]): InventoryHost[] {
   return results.map((r) => ({
     host: r.host,
     label: r.hostname && r.hostname.trim() !== "" ? r.hostname : r.host,
@@ -144,7 +156,7 @@ export function pingSweepResultsToRows(results: PingSweepResult[]): InventoryHos
  * port for a host is the same single port — carries that port as a per-row
  * override so the created connection targets it.
  */
-export function portScanResultsToRows(results: PortScanResult[]): InventoryHost[] {
+export function portScanResultsToRows(results: ScannedPort[]): InventoryHost[] {
   const openByHost = new Map<string, Set<number>>();
   const order: string[] = [];
   for (const r of results) {

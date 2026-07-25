@@ -31,12 +31,15 @@ import {
   Search,
   X,
   FileDown,
+  FileSpreadsheet,
   Link,
   Square,
 } from "lucide-react";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
-import { SavedConnection, ConnectionFolder } from "@/types/connection";
-import { type AgentDefinitionInfo } from "@/services/api";
+import { SavedConnection, ConnectionFolder, InventoryHost } from "@/types/connection";
+import { type AgentDefinitionInfo, importInventoryHosts } from "@/services/api";
+import { toast } from "@/components/ui";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Button, Tooltip, Input, ConfirmDialog } from "@/components/ui";
@@ -56,6 +59,7 @@ import {
 } from "@/utils/jumpHost";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { BulkSshImportDialog } from "./BulkSshImportDialog";
+import { FleetOnboardDialog } from "./FleetOnboardDialog";
 import { AgentNode } from "./AgentNode";
 import { PersistentStateDot } from "./PersistentStateDot";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
@@ -624,6 +628,7 @@ function buildExpandedIndexMap(sectionsExpanded: boolean[]): { map: number[]; co
 export function ConnectionList() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [fleetRows, setFleetRows] = useState<InventoryHost[] | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [agentFilterQuery, setAgentFilterQuery] = useState("");
   const [draggingConnection, setDraggingConnection] = useState<SavedConnection | null>(null);
@@ -966,6 +971,29 @@ export function ConnectionList() {
     openConnectionEditorTab("new");
   }, [openConnectionEditorTab]);
 
+  /**
+   * Pick a CSV / inventory file and open the fleet-onboard dialog with its hosts
+   * (#1961). A cancelled picker is a no-op; a read/parse failure or an
+   * empty/host-less file surfaces a toast rather than an empty dialog.
+   */
+  const handleImportCsv = useCallback(async () => {
+    const selected = await openFileDialog({
+      multiple: false,
+      filters: [{ name: "Inventory", extensions: ["csv", "txt", "tsv"] }],
+    });
+    if (typeof selected !== "string") return;
+    try {
+      const hosts = await importInventoryHosts(selected);
+      if (hosts.length === 0) {
+        toast.info("No hosts found in that file.");
+        return;
+      }
+      setFleetRows(hosts);
+    } catch {
+      toast.error("Could not read that inventory file.");
+    }
+  }, []);
+
   const handleNewConnectionInFolder = useCallback(
     (folderId: string) => {
       openConnectionEditorTab("new", folderId);
@@ -1256,6 +1284,17 @@ export function ConnectionList() {
                   data-testid="connection-list-import-ssh-config"
                 />
               </Tooltip>
+              <Tooltip content="Onboard hosts from a CSV / inventory" side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  icon={<FileSpreadsheet size={16} />}
+                  onClick={handleImportCsv}
+                  aria-label="Onboard hosts from a CSV / inventory"
+                  data-testid="connection-list-import-csv"
+                />
+              </Tooltip>
             </div>
           </div>
           {!localCollapsed && (
@@ -1497,6 +1536,14 @@ export function ConnectionList() {
         folders={folders}
         existingConnections={connections}
         onImport={bulkAddConnections}
+      />
+      <FleetOnboardDialog
+        open={fleetRows !== null}
+        onOpenChange={(open) => {
+          if (!open) setFleetRows(null);
+        }}
+        rows={fleetRows ?? []}
+        sourceLabel="a CSV inventory"
       />
     </div>
   );
