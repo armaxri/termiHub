@@ -137,29 +137,45 @@
   gap: 8px;
 }
 
-/* --- Save-as-connection dialog details --- */
-.recent-sessions__save-details {
+/* --- Save-as-connection dialog: icon row --- */
+.recent-sessions__save-icon-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- Save-as-connection dialog: editable connection details --- */
+.recent-sessions__save-fields {
   margin: 8px 0 0;
-  padding: 8px 12px;
+  padding: 8px 12px 12px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md, 6px);
   background: var(--bg-secondary);
 }
 
-.recent-sessions__save-detail {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px 0;
+.recent-sessions__save-fields-legend {
+  padding: 0 6px;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 
-.recent-sessions__save-detail dt {
-  color: var(--text-secondary);
+/* --- Save-as-connection dialog: save-password section --- */
+.recent-sessions__save-password {
+  margin-top: 8px;
 }
 
-.recent-sessions__save-detail dd {
-  margin: 0;
+.recent-sessions__save-password-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
   color: var(--text-primary);
-  font-family: var(--font-mono);
+  cursor: pointer;
+}
+
+.recent-sessions__save-password-hint {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
