@@ -28,6 +28,9 @@ mod spawn;
 mod terminal;
 mod tunnel;
 mod utils;
+/// Multi-window foundation (#1900): window creation/labelling, the
+/// `session_id → owning_window` ownership map, and the tab hand-off queue.
+mod window;
 /// Native Windows clipboard binding for pasting remote-copied RDP clipboard files
 /// into local apps with delayed rendering (`CF_HDROP`, #1814). Windows-only.
 #[cfg(windows)]
@@ -232,6 +235,7 @@ pub fn run() {
         .manage(x_server_manager.clone())
         .manage(x_server_consent_registry.clone())
         .manage(spawn::handler::PendingSpawn::default())
+        .manage(window::WindowManager::new())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(commands::local_process::LocalProcessRegistry::default())
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
@@ -892,6 +896,15 @@ pub fn run() {
             commands::workspace::save_last_session,
             commands::workspace::load_last_session,
             commands::workspace::clear_last_session,
+            // Multi-window foundation (#1900)
+            commands::window::open_window,
+            commands::window::claim_session,
+            commands::window::release_session,
+            commands::window::get_session_owner,
+            commands::window::list_windows,
+            commands::window::take_pending_handoffs,
+            commands::window::send_handoff_to_window,
+            commands::window::replay_session_scrollback,
             // Macros
             commands::macros::list_macros,
             commands::macros::get_macro,
@@ -993,10 +1006,40 @@ pub fn run() {
             }
 
             if let RunEvent::WindowEvent {
+                label,
                 event: WindowEvent::Destroyed,
                 ..
             } = &event
             {
+                // Release any session ownership held by the destroyed window so the
+                // `session_id → window` map never points at a window that no longer
+                // exists (#1900). Cheap, synchronous, safe on the event-loop thread.
+                if let Some(wm) = app_handle.try_state::<window::WindowManager>() {
+                    let released = wm.release_all_for_window(label);
+                    if !released.is_empty() {
+                        info!(
+                            window = %label,
+                            count = released.len(),
+                            "Released session ownership for destroyed window (#1900)"
+                        );
+                    }
+                }
+
+                // App-wide teardown (tunnels, embedded/X servers, transfers, SFTP)
+                // must only run when the *last* window closes — i.e. the app is
+                // actually going away. With multi-window (#1900) a secondary window
+                // closing must not tear down resources the remaining windows still
+                // use. The detach-vs-terminate close policy is #1903; this guard is
+                // the minimal correctness floor the foundation needs.
+                let is_last_window = app_handle.webview_windows().is_empty();
+                if !is_last_window {
+                    info!(
+                        window = %label,
+                        "Secondary window destroyed; skipping app-wide teardown (#1900)"
+                    );
+                    return;
+                }
+
                 // Spawn cleanup off the event-loop thread.  Calling emit() directly
                 // inside this handler would re-enter a RefCell that Tauri already
                 // holds mutably, causing a panic.  Running the work on the async
