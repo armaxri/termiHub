@@ -479,7 +479,11 @@ mod tests {
         // must not change single-window resize gating: the owning window still
         // resizes it.
         let wm = WindowManager::new();
-        assert_eq!(wm.claim("s1", "main"), None, "first render claims the session");
+        assert_eq!(
+            wm.claim("s1", "main"),
+            None,
+            "first render claims the session"
+        );
         assert!(
             wm.may_resize("s1", "main"),
             "the sole window that rendered (and claimed) the session still resizes it"
