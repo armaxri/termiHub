@@ -216,9 +216,11 @@ impl WindowManager {
     /// A snapshot of the full `session_id → owning_window_label` map.
     ///
     /// The Open Connections panel reads this once when it opens to stamp each
-    /// session row with the window that owns it (#1926). Only sessions that have
-    /// been claimed (e.g. moved between windows) appear; an unclaimed session has
-    /// no entry and the panel renders no window badge for it.
+    /// session row with the window that owns it (#1926). Since #1939 every window
+    /// claims the sessions it renders (on open/attach/restore, not only on a
+    /// hand-off), so this normally covers every live session; a session still
+    /// carries no entry only in the brief window before its rendering tab has
+    /// claimed it, and the panel renders no window badge for it until then.
     pub fn all_owners(&self) -> HashMap<String, String> {
         recover(self.ownership.lock()).clone()
     }

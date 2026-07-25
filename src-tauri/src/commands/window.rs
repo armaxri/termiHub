@@ -118,8 +118,10 @@ pub fn get_session_owner(
 ///
 /// The Open Connections panel reads this once when it opens to stamp each
 /// session row with an owning-window badge (and a "focus owning window"
-/// affordance). Only claimed sessions appear — an unclaimed session has no
-/// entry, so its row shows no window badge.
+/// affordance). Since #1939 every window claims the sessions it renders, so this
+/// normally covers every live session — a session lacks an entry only in the
+/// brief moment before its rendering tab has claimed it, and its row shows no
+/// window badge until then.
 #[tauri::command]
 pub fn list_session_owners(
     window_manager: State<'_, WindowManager>,
