@@ -14,7 +14,9 @@ use termihub_core::files::FileEntry;
 
 use crate::connection::manager::ConnectionManager;
 use crate::session::line_ending::LineEnding;
-use crate::session::manager::{PersistentSessionSummary, SessionInfo, SessionManager};
+use crate::session::manager::{
+    PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager,
+};
 use crate::utils::errors::TerminalError;
 use crate::utils::shell_detect;
 use crate::window::WindowManager;
@@ -427,6 +429,55 @@ pub async fn session_monitoring_cancel(
 ) -> Result<(), TerminalError> {
     info!(session_id, "Cancelling session monitoring connect");
     manager.cancel_session_monitoring(&session_id).await
+}
+
+// --- Session output logging commands (#1960) ---
+
+/// Start writing a session's output to a file.
+///
+/// `path` is the destination; when omitted a default
+/// `<connection>-<timestamp>.log` under the platform log directory's `sessions`
+/// subfolder is used. `timestamps` prefixes each line with a wall-clock stamp.
+/// Returns the resolved transcript path.
+#[tauri::command]
+pub async fn session_logging_start(
+    session_id: String,
+    path: Option<String>,
+    timestamps: Option<bool>,
+    manager: State<'_, SessionManager>,
+) -> Result<String, TerminalError> {
+    info!(session_id, timestamps = ?timestamps, "Starting session logging");
+    let resolved = manager
+        .start_session_logging(
+            &session_id,
+            path.map(std::path::PathBuf::from),
+            timestamps.unwrap_or(false),
+        )
+        .await?;
+    Ok(resolved.to_string_lossy().into_owned())
+}
+
+/// Stop writing a session's output to a file.
+///
+/// Returns the transcript path if logging was active, else `null`.
+#[tauri::command]
+pub fn session_logging_stop(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Option<String> {
+    info!(session_id, "Stopping session logging");
+    manager
+        .stop_session_logging(&session_id)
+        .map(|p| p.to_string_lossy().into_owned())
+}
+
+/// Current logging status for a session, or `null` when not logging.
+#[tauri::command]
+pub fn session_logging_status(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Option<SessionLogStatus> {
+    manager.session_logging_status(&session_id)
 }
 
 // --- Persistent session commands ---

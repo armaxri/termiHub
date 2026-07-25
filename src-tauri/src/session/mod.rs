@@ -4,5 +4,6 @@ pub mod manager;
 pub mod rdp_trust_store;
 pub mod registry;
 pub mod remote_proxy;
+pub mod session_log;
 pub mod ssh_host_key_verifier;
 pub mod ssh_trust_store;

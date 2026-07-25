@@ -235,6 +235,14 @@ export interface TerminalOptions {
   /** Per-connection line-ending override. Falls back to the global default. */
   lineEnding?: LineEnding;
   /**
+   * When `true`, this connection's session output is logged to a file on
+   * connect (#1960), using the default `<connection>-<timestamp>.log` location.
+   * Absent/false → no automatic logging (the toolbar toggle still works).
+   */
+  logToFile?: boolean;
+  /** When logging to a file, prefix each line with a timestamp (#1960). */
+  logTimestamps?: boolean;
+  /**
    * Per-connection syntax-highlighting override (epic #1696). Absent → the
    * connection follows the global setting (`override: "global"`). See
    * `services/syntaxHighlightingConfig.ts` → `resolveHighlightingConfig`.

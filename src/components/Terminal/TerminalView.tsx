@@ -1,5 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft, Circle, Square, Play, Radio } from "lucide-react";
+import {
+  Plus,
+  Columns2,
+  Rows2,
+  X,
+  PanelLeft,
+  Circle,
+  Square,
+  Play,
+  Radio,
+  ScrollText,
+} from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
@@ -18,7 +29,12 @@ import { MacroPlaybackDialog } from "./MacroPlaybackDialog";
 import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
-import { listAgentSessions } from "@/services/api";
+import {
+  listAgentSessions,
+  sessionLoggingStart,
+  sessionLoggingStop,
+  sessionLoggingStatus,
+} from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import "./TerminalView.css";
 
@@ -264,13 +280,79 @@ export function TerminalView() {
   const [macroPlaybackDialogOpen, setMacroPlaybackDialogOpen] = useState(false);
   const [broadcastDialogOpen, setBroadcastDialogOpen] = useState(false);
   const [broadcastSourceTabId, setBroadcastSourceTabId] = useState<string | null>(null);
+  // Session output logging (#1960): the set of session IDs currently logging to
+  // a file. The toolbar toggle drives the active terminal's session; the backend
+  // is the source of truth, so the active session's state is synced on change.
+  const [loggingSessions, setLoggingSessions] = useState<Set<string>>(new Set());
+  const activeSessionId = useAppStore((s) => {
+    const tab = getActiveTab(s);
+    return tab && tab.contentType === "terminal" ? (tab.sessionId ?? null) : null;
+  });
   const isMac = navigator.platform.toUpperCase().includes("MAC");
   const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
 
   const allLeaves = getAllLeaves(rootPanel);
 
+  // Keep the toggle's pressed state honest when the active terminal changes:
+  // logging may have been started elsewhere (per-connection setting) or stopped
+  // by the session ending, so re-query the backend for the active session.
+  useEffect(() => {
+    if (!activeSessionId) return;
+    let cancelled = false;
+    sessionLoggingStatus(activeSessionId)
+      .then((status) => {
+        if (cancelled) return;
+        setLoggingSessions((prev) => {
+          const isLogging = prev.has(activeSessionId);
+          if (!!status === isLogging) return prev;
+          const next = new Set(prev);
+          if (status) next.add(activeSessionId);
+          else next.delete(activeSessionId);
+          return next;
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeSessionId]);
+
+  const isActiveSessionLogging = activeSessionId ? loggingSessions.has(activeSessionId) : false;
+
   const handleNewTerminal = () => {
     addTab("Terminal", "local");
+  };
+
+  // Session output logging toggle (#1960): start/stop writing the active
+  // terminal's output to a timestamped file on demand.
+  const handleToggleLogging = async () => {
+    const tab = getActiveTab(useAppStore.getState());
+    if (!tab || tab.contentType !== "terminal" || !tab.sessionId) {
+      toast.info("Focus a terminal to log its output");
+      return;
+    }
+    const sid = tab.sessionId;
+    if (loggingSessions.has(sid)) {
+      try {
+        await sessionLoggingStop(sid);
+        setLoggingSessions((prev) => {
+          const next = new Set(prev);
+          next.delete(sid);
+          return next;
+        });
+        toast.success("Stopped session logging");
+      } catch (e) {
+        toast.error(`Failed to stop logging: ${String(e)}`);
+      }
+      return;
+    }
+    try {
+      const path = await sessionLoggingStart(sid, undefined, true);
+      setLoggingSessions((prev) => new Set(prev).add(sid));
+      toast.success(`Logging session output to ${path}`);
+    } catch (e) {
+      toast.error(`Failed to start logging: ${String(e)}`);
+    }
   };
 
   // Broadcast toggle (#1956): clicking opens the scope-selection dialog (All /
@@ -339,6 +421,24 @@ export function TerminalView() {
                 aria-label={broadcastActive ? "Stop Broadcast" : "Broadcast Input"}
                 aria-pressed={broadcastActive}
                 data-testid="terminal-view-broadcast"
+              />
+            </Tooltip>
+            <Tooltip
+              content={isActiveSessionLogging ? "Stop Logging Output" : "Log Session Output"}
+              side="bottom"
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                className={
+                  isActiveSessionLogging ? "terminal-view__toolbar-action--active" : undefined
+                }
+                icon={<ScrollText size={16} />}
+                onClick={() => void handleToggleLogging()}
+                aria-label={isActiveSessionLogging ? "Stop Logging Output" : "Log Session Output"}
+                aria-pressed={isActiveSessionLogging}
+                data-testid="terminal-view-toggle-logging"
               />
             </Tooltip>
             <Tooltip content="New Terminal" side="bottom">

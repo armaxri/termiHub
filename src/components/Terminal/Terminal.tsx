@@ -12,6 +12,7 @@ import {
   cancelConnecting,
   sendInput,
   setSessionLineEnding,
+  sessionLoggingStart,
   resizeTerminal,
   closeTerminal,
   detachPersistentTab,
@@ -210,6 +211,24 @@ async function pushLineEnding(tabId: string, sessionId: string): Promise<void> {
     await setSessionLineEnding(sessionId, ending);
   } catch (e) {
     frontendLog("terminal", `failed to set line ending for session ${sessionId}: ${String(e)}`);
+  }
+}
+
+/**
+ * Auto-start per-session output logging when the connection opts in (#1960).
+ *
+ * Reads the per-connection `logToFile` / `logTimestamps` terminal options and,
+ * when enabled, starts logging to the default `<connection>-<timestamp>.log`
+ * location. Best-effort: a failure is logged but never blocks establishment,
+ * and the toolbar toggle remains available regardless.
+ */
+async function pushSessionLogging(tabId: string, sessionId: string): Promise<void> {
+  const options = useAppStore.getState().tabTerminalOptions[tabId];
+  if (!options?.logToFile) return;
+  try {
+    await sessionLoggingStart(sessionId, undefined, options.logTimestamps ?? false);
+  } catch (e) {
+    frontendLog("terminal", `failed to start session logging for ${sessionId}: ${String(e)}`);
   }
 }
 
@@ -643,6 +662,11 @@ export function Terminal({
         // reconnect) passes through; later setting changes are synced by the
         // effect below.
         await pushLineEnding(tabId, sessionId);
+
+        // Auto-start per-session output logging when the connection opts in
+        // (#1960). Idempotent on the backend, so reattach/reconnect paths that
+        // pass through here again do not double-open the transcript.
+        await pushSessionLogging(tabId, sessionId);
 
         // Resize-deduplication: track the last (cols, rows) sent to the PTY
         // to avoid spurious SIGWINCH signals.  Multiple rapid fit() calls

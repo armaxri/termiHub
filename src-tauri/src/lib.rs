@@ -846,6 +846,10 @@ pub fn run() {
             commands::session::session_monitoring_set_paused,
             commands::session::session_monitoring_set_interval,
             commands::session::session_monitoring_cancel,
+            // Session output logging (#1960)
+            commands::session::session_logging_start,
+            commands::session::session_logging_stop,
+            commands::session::session_logging_status,
             // Persistent session management
             commands::session::start_persistent_session,
             commands::session::adopt_persistent_session,
