@@ -217,6 +217,34 @@
   width: 14px;
 }
 
+/* Submenu trigger (e.g. "Move to Window ▸") and its trailing chevron. */
+.context-menu__sub-trigger[data-state="open"] {
+  background-color: var(--bg-hover);
+}
+
+.context-menu__sub-arrow {
+  margin-left: auto;
+  color: var(--text-secondary);
+}
+
+/* Trailing hint on a submenu row (e.g. "current"). */
+.context-menu__sub-label {
+  margin-left: auto;
+  padding-left: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.context-menu__item[data-disabled] {
+  color: var(--text-secondary);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.context-menu__item[data-disabled]:hover {
+  background-color: transparent;
+}
+
 /* Inline folder editing */
 .connection-tree__folder--editing {
   display: flex;
