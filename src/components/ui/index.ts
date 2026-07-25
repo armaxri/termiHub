@@ -21,7 +21,7 @@ export { Field } from "./Field";
 export type { FieldProps } from "./Field";
 
 export { Select, SelectItem } from "./Select";
-export type { SelectProps, SelectOption } from "./Select";
+export type { SelectProps, SelectOption, SelectItemProps } from "./Select";
 
 export { Modal, useModalPortalContainer } from "./Modal";
 export type { ModalProps } from "./Modal";
