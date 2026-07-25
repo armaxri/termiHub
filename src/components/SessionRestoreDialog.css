@@ -14,7 +14,6 @@
 .session-restore__tab {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--spacing-sm);
   padding: var(--spacing-xs) var(--spacing-sm);
   border: 1px solid var(--border-secondary);
@@ -23,11 +22,26 @@
 }
 
 .session-restore__tab-title {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--text-primary);
   font-size: var(--font-size-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-restore__tab-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+  color: var(--color-warning);
+  font-size: var(--font-size-xs);
+}
+
+.session-restore__tab-warning-text {
+  letter-spacing: var(--letter-spacing-ui);
 }
 
 .session-restore__tab-type {

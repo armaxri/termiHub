@@ -6,6 +6,7 @@ export { solarizedLightTheme } from "./solarized-light";
 export {
   applyTheme,
   previewTheme,
+  resolveTheme,
   getXtermTheme,
   getCurrentTheme,
   onThemeChange,

@@ -2,7 +2,15 @@ import { useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { AppSettings } from "@/types/connection";
-import { Button, NumberInput, Select, toast } from "@/components/ui";
+import {
+  Button,
+  NumberInput,
+  Select,
+  SelectItem,
+  Tooltip,
+  TooltipProvider,
+  toast,
+} from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import {
   applyTheme,
@@ -13,11 +21,13 @@ import {
   findCustomTheme,
   isCustomThemeSetting,
   parseThemeFile,
+  resolveTheme,
   serializeTheme,
   themeFileName,
 } from "@/themes";
 import type { ThemeDefinition, ThemeImportResult } from "@/themes";
 import { ThemeEditor } from "@/components/ThemeEditor/ThemeEditor";
+import { ThemePreview } from "./ThemePreview";
 import { SettingsField } from "./SettingsField";
 import "./AppearanceSettings.css";
 
@@ -168,12 +178,28 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       {show("theme") && (
         <>
           <SettingsField label="Theme" hint="Application color theme.">
-            <Select
-              data-testid="appearance-theme-select"
-              value={settings.theme ?? "dark"}
-              onChange={(value) => onChange({ ...settings, theme: value as AppSettings["theme"] })}
-              options={themeOptions}
-            />
+            {/* Local provider so each option can reveal a hover preview even when
+                this panel renders outside the app-root TooltipProvider. */}
+            <TooltipProvider>
+              <Select
+                data-testid="appearance-theme-select"
+                value={settings.theme ?? "dark"}
+                onChange={(value) =>
+                  onChange({ ...settings, theme: value as AppSettings["theme"] })
+                }
+              >
+                {themeOptions.map((opt) => (
+                  <Tooltip
+                    key={opt.value}
+                    side="right"
+                    content={<ThemePreview theme={resolveTheme(opt.value, customThemes)} />}
+                    data-testid={`appearance-theme-preview-${opt.value}`}
+                  >
+                    <SelectItem value={opt.value}>{opt.label}</SelectItem>
+                  </Tooltip>
+                ))}
+              </Select>
+            </TooltipProvider>
           </SettingsField>
           <div className="appearance-settings__theme-actions">
             <Button

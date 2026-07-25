@@ -91,8 +91,15 @@ let mediaQuery: MediaQueryList | null = null;
 let mediaListener: EventListener | null = null;
 const changeCallbacks = new Set<ThemeChangeCallback>();
 
-/** Resolve the theme setting string to an actual ThemeDefinition. */
-function resolveTheme(
+/**
+ * Resolve a theme setting string (`"dark"`, `"light"`, `"system"`,
+ * `"custom:<id>"`, …) to a fully-resolved {@link ThemeDefinition}. Custom themes
+ * are run through {@link resolveCustomTheme} so every color falls back to its
+ * base; a missing/deleted custom theme and any unknown setting fall back to
+ * dark. `"system"` reads `prefers-color-scheme`, treating a missing `matchMedia`
+ * (e.g. under jsdom) as light.
+ */
+export function resolveTheme(
   setting: string | undefined,
   customThemes: ThemeDefinition[] = []
 ): ThemeDefinition {
@@ -101,7 +108,9 @@ function resolveTheme(
   if (setting === "solarized-light") return solarizedLightTheme;
   if (setting === "system") {
     const prefersDark =
-      typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      typeof window !== "undefined" &&
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches;
     return prefersDark ? darkTheme : lightTheme;
   }
   if (isCustomThemeSetting(setting)) {

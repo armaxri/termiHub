@@ -980,6 +980,7 @@ pub fn run() {
             // Network diagnostics
             commands::network::network_port_scan,
             commands::network::network_port_scan_cancel,
+            commands::network::probe_target_reachable,
             commands::network::network_ping_start,
             commands::network::network_ping_stop,
             commands::network::network_ping_sweep,
