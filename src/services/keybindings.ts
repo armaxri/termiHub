@@ -143,6 +143,19 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     winLinuxDefault: null,
     configurable: true,
   },
+  {
+    action: "toggle-broadcast",
+    label: "Toggle Broadcast Input",
+    category: "terminal",
+    macDefault: { key: "B", meta: true, shift: true },
+    // Ctrl+Shift+B is already the default for toggle-sidebar on Windows/Linux
+    // (relocated there to dodge tmux's Ctrl+B prefix), so broadcast adopts the
+    // Alt+Shift+<letter> pattern shared with split/focus rather than colliding.
+    // The macOS default matches the concept exactly (Cmd+Shift+B is free there,
+    // since toggle-sidebar uses Cmd+B). See #1958.
+    winLinuxDefault: { key: "B", alt: true, shift: true },
+    configurable: true,
+  },
 
   // Clipboard
   {

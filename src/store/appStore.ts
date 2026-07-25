@@ -1470,6 +1470,15 @@ interface AppState {
   startBroadcast: (scope: BroadcastScope, sourceTabId: string, targetTabIds: string[]) => void;
   /** Leave broadcast mode and clear the source/target selection. */
   stopBroadcast: () => void;
+  /**
+   * Toggle broadcast from the keyboard shortcut (#1958). When broadcast is
+   * active it stops; otherwise it starts against the active terminal tab using
+   * the remembered {@link lastBroadcastScope} — skipping the scope dropdown. A
+   * remembered `"custom"` scope cannot be reconstructed without the picker, so
+   * the shortcut falls back to `"all"`. Emits a hint toast when no terminal tab
+   * is focused (nothing to broadcast from).
+   */
+  toggleBroadcast: () => void;
   /** Add a tab to the broadcast target set (no-op when inactive). */
   addBroadcastTarget: (tabId: string) => void;
   /** Remove a tab from the broadcast target set. */
@@ -7148,6 +7157,29 @@ export const useAppStore = create<AppState>((set, get) => {
         broadcastSourceTabId: null,
         broadcastTargetTabIds: new Set<string>(),
       });
+    },
+
+    toggleBroadcast: () => {
+      const state = get();
+      // Second press (or any press while active) turns broadcast off, regardless
+      // of which tab is focused — mirrors the toolbar toggle and the status-bar
+      // Stop pill.
+      if (state.broadcastActive) {
+        get().stopBroadcast();
+        return;
+      }
+      const source = getActiveTab(state);
+      if (!source || source.contentType !== "terminal") {
+        toast.info("Focus a terminal to start broadcasting input");
+        return;
+      }
+      // Reuse the last scope, skipping the dropdown. A remembered "custom"
+      // selection lives only in the picker and cannot be rebuilt here, so it
+      // degrades to "all terminals" (#1958).
+      const scope: BroadcastScope =
+        state.lastBroadcastScope === "custom" ? "all" : state.lastBroadcastScope;
+      const targets = resolveBroadcastTargetTabIds(state, scope, source.id);
+      get().startBroadcast(scope, source.id, targets);
     },
 
     addBroadcastTarget: (tabId) => {
