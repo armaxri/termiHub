@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import type { LeafPanel, SplitContainer, TerminalTab, PanelNode } from "@/types/terminal";
+import type {
+  LeafPanel,
+  SplitContainer,
+  TerminalTab,
+  PanelNode,
+  TabGroup,
+} from "@/types/terminal";
 import {
   createLeafPanel,
   findLeaf,
@@ -13,6 +19,8 @@ import {
   findAdjacentLeaf,
   markActiveLeaf,
   normalizeSizes,
+  countTabsInTree,
+  isWindowEmpty,
 } from "./panelTree";
 
 /** Create a minimal tab for testing. */
@@ -570,5 +578,60 @@ describe("removeLeaf with sized parent", () => {
     };
     const result = removeLeaf(root, "leaf-1");
     expect(result).toBe(leaf2);
+  });
+});
+
+/** Wrap a panel tree in a minimal TabGroup for the empty-window helpers. */
+function makeGroup(id: string, rootPanel: PanelNode): TabGroup {
+  return { id, name: id, rootPanel, activePanelId: null };
+}
+
+describe("countTabsInTree", () => {
+  it("counts zero for an empty leaf", () => {
+    expect(countTabsInTree(makeLeaf("leaf-1"))).toBe(0);
+  });
+
+  it("sums tabs across every leaf in a split tree", () => {
+    const tree = makeSplit("split-1", "horizontal", [
+      makeLeaf("leaf-1", ["a", "b"]),
+      makeLeaf("leaf-2", ["c"]),
+    ]);
+    expect(countTabsInTree(tree)).toBe(3);
+  });
+});
+
+describe("isWindowEmpty (#1902)", () => {
+  it("is empty when the active group's tree has no tabs and it is the only group", () => {
+    const active = makeLeaf("leaf-1");
+    const groups = [makeGroup("g1", active)];
+    expect(isWindowEmpty(active, groups, "g1")).toBe(true);
+  });
+
+  it("is not empty when the active group holds a tab", () => {
+    const active = makeLeaf("leaf-1", ["a"]);
+    const groups = [makeGroup("g1", active)];
+    expect(isWindowEmpty(active, groups, "g1")).toBe(false);
+  });
+
+  it("is not empty when an inactive group still holds tabs", () => {
+    const active = makeLeaf("leaf-1");
+    const inactive = makeLeaf("leaf-2", ["a"]);
+    const groups = [makeGroup("g1", active), makeGroup("g2", inactive)];
+    expect(isWindowEmpty(active, groups, "g1")).toBe(false);
+  });
+
+  it("is empty when every group across the window is empty", () => {
+    const active = makeLeaf("leaf-1");
+    const groups = [makeGroup("g1", active), makeGroup("g2", makeLeaf("leaf-2"))];
+    expect(isWindowEmpty(active, groups, "g1")).toBe(true);
+  });
+
+  it("uses the live active tree, not the stale copy stored in tabGroups", () => {
+    // The active group's stored rootPanel is stale (empty) but the live tree
+    // passed separately holds a tab — the window is not empty.
+    const liveActive = makeLeaf("leaf-1", ["a"]);
+    const staleStored = makeLeaf("leaf-1");
+    const groups = [makeGroup("g1", staleStored)];
+    expect(isWindowEmpty(liveActive, groups, "g1")).toBe(false);
   });
 });

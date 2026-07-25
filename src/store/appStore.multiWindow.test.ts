@@ -136,6 +136,20 @@ describe("appStore — multi-window re-parenting seam (#1900)", () => {
     });
   });
 
+  describe("openNewWindow (top-level New Window command #1902)", () => {
+    it("opens an empty window with no hand-off record", async () => {
+      await useAppStore.getState().openNewWindow();
+      expect(openWindow).toHaveBeenCalledTimes(1);
+      // No hand-off: the new window boots into the empty-window CTA state.
+      expect(openWindow.mock.calls[0][0]).toBeUndefined();
+    });
+
+    it("does not throw when window creation fails", async () => {
+      openWindow.mockRejectedValueOnce(new Error("no backend"));
+      await expect(useAppStore.getState().openNewWindow()).resolves.toBeUndefined();
+    });
+  });
+
   describe("receivePendingHandoffs (boot / nudge drain)", () => {
     it("claims ownership and hydrates each queued record", async () => {
       takePendingHandoffs.mockResolvedValue([
