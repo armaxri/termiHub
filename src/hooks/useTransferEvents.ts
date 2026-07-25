@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
-import { onTransferProgress } from "@/services/events";
+import { onTransferProgress, onSessionOwnershipChanged } from "@/services/events";
 import { toast } from "@/components/ui";
 import type { TransferProgress } from "@/services/api";
 
@@ -71,12 +71,21 @@ export function useTransferEvents(): void {
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
+    let unlistenOwnership: (() => void) | null = null;
 
     // Seed the ownership map so scoping is correct from the first event, before
     // any transfer has flowed.
     void refreshSessionOwners();
 
     const setup = async () => {
+      // Push path (#1985): refresh the ownership mirror the moment the backend
+      // reports a claim/release/window-destroy, so a sibling window's claim is
+      // reflected here immediately — no flash-then-prune waiting on the first
+      // transfer-progress event. Debounced (shared coalescer) to avoid a storm
+      // during multi-session restore.
+      unlistenOwnership = await onSessionOwnershipChanged(() => {
+        scheduleOwnersRefresh(() => void refreshSessionOwners());
+      });
       unlisten = await onTransferProgress((progress) => {
         // Keep the ownership map fresh while transfers flow (coalesced) so a
         // session claimed by a sibling window is scoped out here (#1964).
@@ -94,6 +103,7 @@ export function useTransferEvents(): void {
 
     return () => {
       unlisten?.();
+      unlistenOwnership?.();
     };
   }, [applyTransferProgress, applyTransferProgressToQueue, refreshSessionOwners]);
 }

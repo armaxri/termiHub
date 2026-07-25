@@ -3,11 +3,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // A settable callback the mocked `onTransferProgress` hands the event stream to,
 // so tests can drive terminal `transfer-progress` phases directly.
 let emit: ((progress: TransferProgress) => void) | undefined;
+// A settable callback the mocked `onSessionOwnershipChanged` hands the ownership
+// push-event to, so a test can fire it directly (#1985).
+let emitOwnership: (() => void) | undefined;
 const unlisten = vi.fn();
 
 vi.mock("@/services/events", () => ({
   onTransferProgress: vi.fn((cb: (progress: TransferProgress) => void) => {
     emit = cb;
+    return Promise.resolve(unlisten);
+  }),
+  onSessionOwnershipChanged: vi.fn((cb: () => void) => {
+    emitOwnership = cb;
     return Promise.resolve(unlisten);
   }),
 }));
@@ -53,6 +60,7 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     emit = undefined;
+    emitOwnership = undefined;
     vi.clearAllMocks();
   });
 
@@ -87,6 +95,27 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     expect(vi.mocked(toast.success).mock.calls[0][0]).toContain("Downloaded");
     expect(vi.mocked(toast.success).mock.calls[0][0]).toContain("file.txt");
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the ownership map on a session-ownership-changed event, debounced (#1985)", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ refreshSessionOwners: refresh });
+    await mountHook();
+    // Drain the on-mount seed call and any debounce pending from earlier tests.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 200));
+    });
+    refresh.mockClear();
+
+    // The backend pushed an ownership change → the hook refreshes (debounced).
+    act(() => {
+      emitOwnership!();
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 200));
+    });
+
+    expect(refresh).toHaveBeenCalledTimes(1);
   });
 
   it("labels an uploaded file with 'Uploaded'", async () => {

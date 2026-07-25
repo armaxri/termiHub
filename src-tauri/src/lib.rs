@@ -1193,6 +1193,13 @@ pub fn run() {
                         if let Err(e) = handle.emit("windows-changed", ()) {
                             tracing::warn!("Failed to emit windows-changed on destroy: {e}");
                         }
+                        // The destroyed window's sessions were just released
+                        // (release_all_for_window above), so push the ownership
+                        // change too (#1985) — a surviving window refreshes its
+                        // mirror without waiting on a transfer-progress event.
+                        if let Err(e) = handle.emit("session-ownership-changed", ()) {
+                            tracing::warn!("Failed to emit session-ownership-changed on destroy: {e}");
+                        }
                     });
                     return;
                 }

@@ -125,6 +125,17 @@ export async function onTerminalExit(
 }
 
 /**
+ * Listen for backend `session → window` ownership changes (#1985): a window
+ * claimed or released a session, or a window was destroyed and its sessions
+ * released. Fires with no payload — the listener refetches the ownership map so
+ * a non-owning window learns of a sibling's claim immediately (push), rather
+ * than only once a `transfer-progress` event happens to flow.
+ */
+export async function onSessionOwnershipChanged(callback: () => void): Promise<UnlistenFn> {
+  return await listen("session-ownership-changed", () => callback());
+}
+
+/**
  * Singleton dispatcher that registers one global Tauri listener for each
  * terminal event type and routes events to per-session callbacks via Map
  * lookup. This replaces the O(N) fan-out pattern where each Terminal
