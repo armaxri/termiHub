@@ -513,11 +513,26 @@ export interface AppSettings {
   /** Stop the auto-provided X server once no connection is using it. */
   stopXServerWhenIdle?: boolean;
   /**
+   * @deprecated Superseded by {@link restoreLastSessionMode}. Retained for
+   * backward-compatible migration: `false` maps to `"never"`, otherwise the
+   * effective mode falls through to the `"ask"` default. New code should read
+   * the mode via `resolveRestoreMode` rather than this boolean.
+   *
    * When true (default), the open tab groups and layout are auto-saved on every
    * change and restored on the next startup. When false, the app always starts
    * with a fresh empty session.
    */
   restoreLastSessionOnStartup?: boolean;
+  /**
+   * How the previous session is restored on startup:
+   * - `"never"` — start fresh, never restore;
+   * - `"ask"` — show a dialog offering to restore (default);
+   * - `"always"` — restore silently.
+   *
+   * Unset migrates from the legacy {@link restoreLastSessionOnStartup} boolean
+   * (`false` → `"never"`, otherwise `"ask"`). Resolve via `resolveRestoreMode`.
+   */
+  restoreLastSessionMode?: "never" | "ask" | "always";
   /**
    * When true (default), every terminal session opened is recorded to the
    * browsable session history. Turning it off stops all automatic recording;
