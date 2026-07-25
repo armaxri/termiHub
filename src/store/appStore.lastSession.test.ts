@@ -52,6 +52,7 @@ vi.mock("@/components/ui", () => ({
 import { useAppStore } from "./appStore";
 import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
 import { toast } from "@/components/ui";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { LastSession } from "@/types/lastSession";
 import { getAllLeaves } from "@/utils/panelTree";
 
@@ -59,6 +60,7 @@ const mockSave = vi.mocked(saveLastSession);
 const mockLoad = vi.mocked(loadLastSession);
 const mockClear = vi.mocked(clearLastSession);
 const mockToast = vi.mocked(toast);
+const mockCurrentWindow = vi.mocked(getCurrentWindow);
 
 describe("last session persistence", () => {
   beforeEach(() => {
@@ -112,6 +114,53 @@ describe("last session persistence", () => {
 
       const payload = mockSave.mock.calls[0][0] as LastSession;
       expect(payload.tabGroups).toHaveLength(0);
+    });
+  });
+
+  // Window dimension (#1905): the save path stamps the capturing window and the
+  // restore path is non-lossy for a multi-window session.
+  describe("window dimension", () => {
+    it("omits windowId and windows for the main window (legacy shape)", async () => {
+      await useAppStore.getState().saveLastSession();
+
+      const payload = mockSave.mock.calls[0][0] as LastSession;
+      expect(payload.windows).toBeUndefined();
+      expect(payload.tabGroups.every((g) => g.windowId === undefined)).toBe(true);
+    });
+
+    it("stamps the capturing window and records windows[] for a secondary window", async () => {
+      mockCurrentWindow.mockReturnValueOnce({
+        label: "win-2",
+      } as unknown as ReturnType<typeof getCurrentWindow>);
+
+      await useAppStore.getState().saveLastSession();
+
+      const payload = mockSave.mock.calls[0][0] as LastSession;
+      expect(payload.tabGroups.every((g) => g.windowId === "win-2")).toBe(true);
+      expect(payload.windows).toEqual([{ id: "win-2" }]);
+    });
+
+    it("restores a multi-window session non-lossily (all groups, main first)", async () => {
+      // A saved session spanning main (group A) + win-1 (group B).
+      const leaf = (title: string) => ({
+        type: "leaf" as const,
+        tabs: [{ inlineConfig: { type: "local", config: { shell: "bash" } }, title }],
+      });
+      mockLoad.mockResolvedValue({
+        version: "1",
+        activeGroupIndex: 0,
+        tabGroups: [
+          { name: "A", layout: leaf("a") },
+          { name: "B", layout: leaf("b"), windowId: "win-1" },
+        ],
+        windows: [{ id: "main" }, { id: "win-1" }],
+      });
+
+      const ok = await useAppStore.getState().restoreLastSession();
+
+      expect(ok).toBe(true);
+      const groups = useAppStore.getState().tabGroups;
+      expect(groups.map((g) => g.name)).toEqual(["A", "B"]);
     });
   });
 
