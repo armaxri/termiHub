@@ -88,8 +88,18 @@ beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
 });
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount());
+  // The session hook defers its on-unmount disconnect behind a real 50ms timer
+  // (the StrictMode mount→unmount→mount guard). The whole file normally runs in
+  // well under 50ms, so those timers fire harmlessly after the suite — but on a
+  // starved CI runner an early test's deferred close can instead fire *during* a
+  // later test and inflate its `remoteDesktopDisconnect` call count, tripping the
+  // "must NOT be torn down" assertion (#1904). Drain the timers here so every
+  // deferred close is attributed to (and cleared with) the test that scheduled it.
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
   container.remove();
 });
 
