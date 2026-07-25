@@ -147,6 +147,52 @@ fn handle_shell_integration_command(install: bool) -> ! {
     }
 }
 
+/// Run app-wide teardown (tunnels, embedded/X servers, HTTP monitors,
+/// transfers, SFTP) when the app is actually going away.
+///
+/// Spawned off the event-loop thread: calling `emit()` (or otherwise re-entering
+/// Tauri) directly inside a `RunEvent` handler re-borrows a `RefCell` Tauri
+/// already holds mutably and panics, so the cleanup runs on the async runtime.
+///
+/// Invoked when the last window closes on Windows/Linux, and on an explicit quit
+/// on macOS (where last-window-close instead keeps the app alive) — see the
+/// per-OS policy in [`window::should_teardown_on_last_window`] /
+/// [`window::should_prevent_exit`] (#1903).
+fn run_app_teardown(app_handle: &tauri::AppHandle) {
+    let handle = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Some(mgr) = handle.try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>() {
+            mgr.stop_all();
+        }
+        if let Some(mgr) =
+            handle.try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
+        {
+            mgr.stop_all();
+        }
+        // Stop the managed X server so no orphan vcxsrv.exe is left behind
+        // (issue #1049). Adopted external servers are untouched.
+        if let Some(mgr) = handle.try_state::<Arc<terminal::xserver::XServerManager>>() {
+            mgr.stop();
+        }
+        // Cancel all HTTP monitor poll loops so in-flight reqwest requests are
+        // aborted rather than abandoned on exit (#1147).
+        if let Some(mgr) = handle.try_state::<NetworkManager>() {
+            mgr.stop_all_http_monitors();
+        }
+        // Cancel every in-flight transfer *before* closing sessions, so no
+        // half-written file keeps a dedicated channel open during teardown
+        // (#1245).
+        if let Some(reg) = handle.try_state::<TransferRegistry>() {
+            reg.cancel_all();
+        }
+        // Close every open SFTP session so no SSH+SFTP connection is left
+        // dangling on the server until it times out (#1244).
+        if let Some(mgr) = handle.try_state::<SftpManager>() {
+            mgr.close_all();
+        }
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Pre-init CLI routing: `spawn` / `(un)install-shell-integration` must be
@@ -1005,6 +1051,54 @@ pub fn run() {
                 _ => {}
             }
 
+            // Per-OS quit policy (#1903). On macOS, closing the last window does
+            // NOT quit the app (WKWebView convention: it stays in the Dock), so
+            // an `ExitRequested` triggered by that close is prevented; an
+            // explicit quit (menu Quit / `AppHandle::exit`, `code == Some`) runs
+            // teardown and proceeds. Windows/Linux fall through to the default
+            // (quit), tearing down when the last window is destroyed below.
+            if let RunEvent::ExitRequested { code, api, .. } = &event {
+                if window::should_prevent_exit(*code) {
+                    info!("Last window closed; keeping app alive (macOS Dock) (#1903)");
+                    api.prevent_exit();
+                } else if cfg!(target_os = "macos") {
+                    // Explicit quit on macOS: teardown was deferred from the
+                    // last window's Destroyed, so run it now before exiting.
+                    info!("Explicit quit; running app-wide teardown (#1903)");
+                    run_app_teardown(app_handle);
+                }
+            }
+
+            // On macOS the app can outlive its windows; a Dock-icon click with no
+            // open windows must recreate one so the app is reachable again. The
+            // richer restore-on-reopen behaviour is #1905; this creates a fresh
+            // empty window (as a "Move to Window" / "New Window" destination).
+            #[cfg(target_os = "macos")]
+            if let RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } = &event
+            {
+                if app_handle.webview_windows().is_empty() {
+                    info!("Reopen with no windows; recreating a window (#1903)");
+                    if let Some(wm) = app_handle.try_state::<window::WindowManager>() {
+                        let label = wm.next_label();
+                        if let Err(e) = tauri::WebviewWindowBuilder::new(
+                            app_handle,
+                            &label,
+                            tauri::WebviewUrl::App("index.html".into()),
+                        )
+                        .title("termiHub")
+                        .inner_size(1280.0, 800.0)
+                        .min_inner_size(800.0, 600.0)
+                        .build()
+                        {
+                            tracing::error!("Failed to recreate window on reopen: {e}");
+                        }
+                    }
+                }
+            }
+
             if let RunEvent::WindowEvent {
                 label,
                 event: WindowEvent::Destroyed,
@@ -1029,8 +1123,7 @@ pub fn run() {
                 // must only run when the *last* window closes — i.e. the app is
                 // actually going away. With multi-window (#1900) a secondary window
                 // closing must not tear down resources the remaining windows still
-                // use. The detach-vs-terminate close policy is #1903; this guard is
-                // the minimal correctness floor the foundation needs.
+                // use.
                 let is_last_window = app_handle.webview_windows().is_empty();
                 if !is_last_window {
                     info!(
@@ -1050,44 +1143,19 @@ pub fn run() {
                     return;
                 }
 
-                // Spawn cleanup off the event-loop thread.  Calling emit() directly
-                // inside this handler would re-enter a RefCell that Tauri already
-                // holds mutably, causing a panic.  Running the work on the async
-                // runtime avoids that borrow while still performing the cleanup.
-                let handle = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Some(mgr) =
-                        handle.try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>()
-                    {
-                        mgr.stop_all();
-                    }
-                    if let Some(mgr) = handle
-                        .try_state::<embedded_servers::server_manager::EmbeddedServerManager>()
-                    {
-                        mgr.stop_all();
-                    }
-                    // Stop the managed X server so no orphan vcxsrv.exe is left
-                    // behind (issue #1049). Adopted external servers are untouched.
-                    if let Some(mgr) = handle.try_state::<Arc<terminal::xserver::XServerManager>>() {
-                        mgr.stop();
-                    }
-                    // Cancel all HTTP monitor poll loops so in-flight reqwest
-                    // requests are aborted rather than abandoned on exit (#1147).
-                    if let Some(mgr) = handle.try_state::<NetworkManager>() {
-                        mgr.stop_all_http_monitors();
-                    }
-                    // Cancel every in-flight transfer *before* closing sessions,
-                    // so no half-written file keeps a dedicated channel open
-                    // during teardown (#1245).
-                    if let Some(reg) = handle.try_state::<TransferRegistry>() {
-                        reg.cancel_all();
-                    }
-                    // Close every open SFTP session so no SSH+SFTP connection is
-                    // left dangling on the server until it times out (#1244).
-                    if let Some(mgr) = handle.try_state::<SftpManager>() {
-                        mgr.close_all();
-                    }
-                });
+                // Last window closed. Per-OS policy (#1903): Windows/Linux quit
+                // now, so tear down here; macOS keeps the app alive in the Dock,
+                // deferring teardown to an explicit quit (handled above in
+                // `ExitRequested`) so a reopened window still has its resources.
+                if window::should_teardown_on_last_window() {
+                    info!(window = %label, "Last window closed; running app-wide teardown (#1903)");
+                    run_app_teardown(app_handle);
+                } else {
+                    info!(
+                        window = %label,
+                        "Last window closed on macOS; app stays alive, teardown deferred (#1903)"
+                    );
+                }
             }
         });
 }

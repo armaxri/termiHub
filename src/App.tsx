@@ -20,6 +20,7 @@ import { LargePasteDialog } from "@/components/Terminal/LargePasteDialog";
 import { OpenSavedFileDialog } from "@/components/Terminal/OpenSavedFileDialog";
 import { ConfirmCloseTabDialog } from "@/components/Terminal/ConfirmCloseTabDialog";
 import { ConfirmSessionCloseDialog } from "@/components/Terminal/ConfirmSessionCloseDialog";
+import { CloseWindowDecisionDialog } from "@/components/Terminal/CloseWindowDecisionDialog";
 import { SessionRestoreDialog } from "@/components/SessionRestoreDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { XServerConnectConsent } from "@/components/OpenConnections/XServerConnectConsent";
@@ -40,6 +41,7 @@ import { useAppStore } from "@/store/appStore";
 import { getCliWorkspace } from "@/services/workspaceApi";
 import { resolveRestoreMode } from "@/utils/restoreMode";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
+import { listWindows } from "@/services/api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
@@ -257,6 +259,36 @@ function App() {
     };
   }, []);
 
+  // Multi-window (#1903): intercept this window's close so live sessions are not
+  // silently killed. `prepareWindowClose` decides: an empty or all-persistent
+  // window closes straight away (persistent sessions detach, with a toast),
+  // while a window that would lose a non-persistent session raises the
+  // detach-vs-terminate decision dialog, which destroys the window itself once
+  // the user resolves it. The backend applies the per-OS quit policy when the
+  // window is actually destroyed.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const unlistenPromise = win.onCloseRequested(async (event) => {
+      event.preventDefault();
+      let others: Awaited<ReturnType<typeof listWindows>> = [];
+      try {
+        others = (await listWindows()).filter((w) => w.label !== win.label);
+      } catch {
+        // Window listing unavailable (e.g. browser dev mode) — fall back to the
+        // no-other-windows case, which still classifies and prompts correctly.
+      }
+      const decision = await useAppStore.getState().prepareWindowClose(others);
+      if (decision === "proceed") {
+        await win.destroy();
+      }
+      // "prompt": the decision dialog is up and will destroy the window on
+      // resolve — do nothing here.
+    });
+    return () => {
+      void unlistenPromise.then((fn) => fn());
+    };
+  }, []);
+
   // Schedule update check: 5-second delay on startup, then every 24 hours.
   useEffect(() => {
     if (!settings.updates?.autoCheck && settings.updates?.autoCheck !== undefined) return;
@@ -366,6 +398,7 @@ function App() {
           <UpdateNotification />
           <ConfirmCloseTabDialog />
           <ConfirmSessionCloseDialog />
+          <CloseWindowDecisionDialog />
           <SessionRestoreDialog />
           <XServerConnectConsent />
           <ToastProvider />

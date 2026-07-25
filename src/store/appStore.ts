@@ -119,7 +119,14 @@ import {
   claimSession,
   takePendingHandoffs,
 } from "@/services/api";
-import type { MoveWindowTarget, TabHandoffRecord, HandoffTab } from "@/types/window";
+import type {
+  MoveWindowTarget,
+  TabHandoffRecord,
+  HandoffTab,
+  WindowInfo,
+  WindowCloseRequest,
+} from "@/types/window";
+import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
 import type {
   ConnectionTypeInfo,
   ContainerSpawn,
@@ -698,6 +705,37 @@ interface AppState {
    * Failures are surfaced as a recoverable toast rather than thrown.
    */
   openNewWindow: () => Promise<void>;
+
+  /**
+   * Pending close-with-live-tabs decision (#1903). Non-null while the
+   * detach-vs-terminate dialog is open for this window; set by
+   * {@link prepareWindowClose} and cleared when the dialog resolves.
+   */
+  pendingWindowClose: WindowCloseRequest | null;
+  /** Set or clear the pending close-with-live-tabs decision (#1903). */
+  setPendingWindowClose: (request: WindowCloseRequest | null) => void;
+  /**
+   * Assess this window's owned live sessions when the OS requests its close
+   * (#1903) and pick the next step:
+   *
+   * - `"proceed"` — nothing would be lost: the window is empty, or every live
+   *   session is persistent/agent and is detached here (kept running) with a
+   *   toast. The caller may destroy the window.
+   * - `"prompt"` — at least one non-persistent session would be terminated, so
+   *   the decision dialog is raised ({@link pendingWindowClose}); the caller
+   *   must NOT destroy the window — the dialog resolves it.
+   */
+  prepareWindowClose: (otherWindows: WindowInfo[]) => Promise<"proceed" | "prompt">;
+  /**
+   * Destructive close outcome (#1903): detach every persistent/agent session
+   * and terminate every non-persistent one owned by this window.
+   */
+  endWindowSessions: () => Promise<void>;
+  /**
+   * Safe close outcome (#1903): re-parent every owned live session tab into
+   * another window so nothing is lost, reusing the #1900 hand-off seam.
+   */
+  moveWindowSessionsToWindow: (target: MoveWindowTarget) => Promise<void>;
 
   // Connections
   folders: ConnectionFolder[];
@@ -1706,15 +1744,29 @@ function beginRestoreGuard(setState: (partial: Partial<AppState>) => void): void
  * makes. Failures are swallowed: a best-effort close must never block the
  * launch/restore that follows.
  */
+/**
+ * Every tab across all of this window's tab groups, with the active group read
+ * from the live `rootPanel` (the inactive groups keep their snapshot tree).
+ * Used wherever a "whole window" operation must span groups — session teardown
+ * on restore/launch and the close-with-live-tabs decision (#1903).
+ */
+function collectWindowTabs(state: {
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  rootPanel: PanelNode;
+}): TerminalTab[] {
+  const trees = state.tabGroups.map((g) =>
+    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
+  );
+  return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+}
+
 function teardownAllSessions(state: {
   tabGroups: TabGroup[];
   activeTabGroupId: string;
   rootPanel: PanelNode;
 }): void {
-  const trees = state.tabGroups.map((g) =>
-    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
-  );
-  const tabs = trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+  const tabs = collectWindowTabs(state);
   let closed = 0;
   for (const tab of tabs) {
     if (!tab.sessionId) continue;
@@ -2486,6 +2538,79 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         frontendLog("multi_window", `openNewWindow failed: ${String(err)}`);
         toast.error("Could not open a new window");
+      }
+    },
+
+    // ── Close-with-live-tabs decision surface (#1903) ────────────────────
+    pendingWindowClose: null,
+    setPendingWindowClose: (request) => set({ pendingWindowClose: request }),
+
+    prepareWindowClose: async (otherWindows) => {
+      const sessions = classifyWindowCloseSessions(collectWindowTabs(get()));
+      if (sessions.length === 0) {
+        // Empty window (no live sessions) — nothing to decide, just close.
+        return "proceed";
+      }
+      if (!windowCloseWouldLoseData(sessions)) {
+        // Every owned session detaches cleanly — no data is lost, so close with
+        // just a toast instead of a dialog (concept: "All-persistent → no
+        // dialog").
+        await get().endWindowSessions();
+        toast.success(
+          `${sessions.length} session${sessions.length === 1 ? "" : "s"} detached — still running`
+        );
+        return "proceed";
+      }
+      // At least one non-persistent session would be terminated — raise the
+      // detach-vs-terminate decision surface.
+      set({ pendingWindowClose: { sessions, otherWindows } });
+      return "prompt";
+    },
+
+    endWindowSessions: async () => {
+      const tabs = collectWindowTabs(get()).filter((tab) => tab.sessionId);
+      await Promise.all(
+        tabs.map((tab) => {
+          const sessionId = tab.sessionId as string;
+          return tab.persistentConnectionId
+            ? apiDetachPersistentTab(sessionId, tab.id).catch(() => {})
+            : apiCloseTerminal(sessionId).catch(() => {});
+        })
+      );
+    },
+
+    moveWindowSessionsToWindow: async (target) => {
+      const tabs = collectWindowTabs(get()).filter((tab) => tab.sessionId);
+      if (tabs.length === 0) return;
+
+      // Mark every session as moving up front so a source Terminal unmounting
+      // during the window teardown does NOT tear down the backend session — the
+      // destination window adopts each still-running session (#1900 seam).
+      const sessionIds = tabs.map((tab) => tab.sessionId as string);
+      set((state) => ({
+        movingSessionIds: Array.from(new Set([...state.movingSessionIds, ...sessionIds])),
+      }));
+
+      const records: TabHandoffRecord[] = tabs.map((tab) => ({ tab: serializeHandoffTab(tab) }));
+      try {
+        if (target.kind === "new") {
+          // Create the destination window seeded with the first tab, then queue
+          // the rest for it to drain on boot / on the nudge.
+          const label = await openWindow(records[0]);
+          for (const record of records.slice(1)) {
+            await sendHandoffToWindow(label, record);
+          }
+        } else {
+          for (const record of records) {
+            await sendHandoffToWindow(target.label, record);
+          }
+        }
+      } catch (err) {
+        // Hand-off failed: clear the moving flags so a later close still tears
+        // the sessions down rather than leaking them.
+        for (const sessionId of sessionIds) get().clearMovingSession(sessionId);
+        frontendLog("multi_window", `move window sessions failed: ${String(err)}`);
+        throw err;
       }
     },
 
