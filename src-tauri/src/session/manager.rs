@@ -6,6 +6,7 @@
 //! remote connections use [`RemoteProxy`](super::remote_proxy::RemoteProxy).
 
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,7 @@ use termihub_core::files::FileEntry;
 use termihub_core::monitoring::{MonitorStatus, MonitorStatusReceiver, SystemStats};
 use termihub_core::output::coalescer::OutputCoalescer;
 use termihub_core::output::screen_clear::ScreenClearDetector;
+use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
 use tracing::{error, info, warn};
 
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -29,6 +31,7 @@ use crate::utils::errors::TerminalError;
 
 use super::line_ending::{normalize_line_endings, LineEnding};
 use super::remote_proxy::RemoteProxy;
+use super::session_log::{default_session_log_path, desktop_clock};
 
 /// Maximum number of concurrent sessions.
 const MAX_SESSIONS: usize = 50;
@@ -196,6 +199,24 @@ async fn recv_optional(rx: &mut Option<MonitorStatusReceiver>) -> Option<Monitor
 /// path and read on replay.
 type OutputBuffers = Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>>;
 
+/// Per-session output-to-file loggers, keyed by `session_id` (#1960).
+///
+/// An entry exists only while a session is actively logging (started via the
+/// toolbar toggle or a per-connection setting). The output reader looks the
+/// logger up on each emitted chunk, so logging can be started and stopped mid
+/// session without disturbing the reader.
+type SessionLoggers = Arc<StdMutex<HashMap<String, Arc<StdMutex<SessionLogger>>>>>;
+
+/// Status of a session's output logging, returned to the frontend.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLogStatus {
+    /// Absolute path of the active transcript file.
+    pub path: String,
+    /// Whether each line is prefixed with a timestamp.
+    pub timestamps: bool,
+}
+
 /// Manages all active connection sessions.
 ///
 /// Holds a [`ConnectionTypeRegistry`] for creating local connections and
@@ -225,6 +246,12 @@ pub struct SessionManager {
     /// later with replay" primitive. The outer lock is held only briefly at
     /// create/replay/cleanup; the hot output path writes through the inner lock.
     output_buffers: OutputBuffers,
+    /// Per-session output-to-file loggers (#1960), keyed by `session_id`.
+    ///
+    /// Populated only for sessions with logging active. The output reader writes
+    /// each emitted chunk through the matching logger, so a session's transcript
+    /// captures exactly what the frontend receives — for every session type.
+    session_loggers: SessionLoggers,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -254,6 +281,126 @@ impl SessionManager {
             persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
             connecting: Arc::new(StdMutex::new(HashMap::new())),
             output_buffers: Arc::new(StdMutex::new(HashMap::new())),
+            session_loggers: Arc::new(StdMutex::new(HashMap::new())),
+        }
+    }
+
+    // ── Per-session output logging (#1960) ─────────────────────────────
+
+    /// Start writing the session's output to a file.
+    ///
+    /// `path` chooses the destination; when `None`, a default
+    /// `<connection>-<timestamp>.log` under the platform log directory's
+    /// `sessions` subfolder is used. `timestamps` prefixes each line with a
+    /// wall-clock stamp. Returns the resolved transcript path.
+    ///
+    /// Idempotent: if the session is already logging, the existing transcript
+    /// path is returned unchanged.
+    pub async fn start_session_logging(
+        &self,
+        session_id: &str,
+        path: Option<PathBuf>,
+        timestamps: bool,
+    ) -> Result<PathBuf, TerminalError> {
+        // Validate the session exists and grab its title for default naming.
+        let title = {
+            let sessions = self.sessions.lock().await;
+            sessions
+                .get(session_id)
+                .map(|e| e.info.title.clone())
+                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?
+        };
+
+        // Already logging → return the current path without reopening.
+        {
+            let map = self
+                .session_loggers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(existing) = map.get(session_id) {
+                let path = existing
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .path()
+                    .to_path_buf();
+                return Ok(path);
+            }
+        }
+
+        let path = match path {
+            Some(p) => p,
+            None => default_session_log_path(&title).ok_or_else(|| {
+                TerminalError::SpawnFailed(
+                    "could not resolve the default session-log directory".to_string(),
+                )
+            })?,
+        };
+
+        let logger = SessionLogger::open(SessionLogConfig::new(&path, timestamps), desktop_clock())
+            .map_err(|e| TerminalError::WriteFailed(format!("open session log: {e}")))?;
+        let resolved = logger.path().to_path_buf();
+        self.session_loggers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(session_id.to_string(), Arc::new(StdMutex::new(logger)));
+
+        info!(session_id, path = %resolved.display(), timestamps, "Started session logging");
+        Ok(resolved)
+    }
+
+    /// Stop logging the session's output, flushing the transcript.
+    ///
+    /// Returns the transcript path if logging was active, else `None`.
+    pub fn stop_session_logging(&self, session_id: &str) -> Option<PathBuf> {
+        let logger = self
+            .session_loggers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id)?;
+        let mut logger = logger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let path = logger.path().to_path_buf();
+        let _ = logger.flush();
+        info!(session_id, path = %path.display(), "Stopped session logging");
+        Some(path)
+    }
+
+    /// Current logging status for a session, or `None` when not logging.
+    pub fn session_logging_status(&self, session_id: &str) -> Option<SessionLogStatus> {
+        let map = self
+            .session_loggers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let logger = map.get(session_id)?;
+        let logger = logger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Some(SessionLogStatus {
+            path: logger.path().to_string_lossy().into_owned(),
+            timestamps: logger.timestamps_enabled(),
+        })
+    }
+
+    /// Write emitted output to the session's logger, if one is active (#1960).
+    ///
+    /// Looks the logger up per call so start/stop can happen mid-session. A
+    /// write error is logged and swallowed — a failing transcript must never
+    /// tear down the live session's output stream.
+    fn log_output(session_loggers: &SessionLoggers, session_id: &str, data: &[u8]) {
+        let logger = {
+            let map = session_loggers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            map.get(session_id).cloned()
+        };
+        if let Some(logger) = logger {
+            let mut logger = logger
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Err(e) = logger.write(data) {
+                warn!(session_id, error = %e, "Session log write failed");
+            }
         }
     }
 
@@ -432,6 +579,7 @@ impl SessionManager {
         let sessions_clone = self.sessions.clone();
         let capture = self.ensure_output_buffer(&session_id);
         let output_buffers = self.output_buffers.clone();
+        let session_loggers = self.session_loggers.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
             Self::run_output_reader(
@@ -442,6 +590,7 @@ impl SessionManager {
                 has_initial_command,
                 capture,
                 output_buffers,
+                session_loggers,
             )
             .await;
         });
@@ -1160,6 +1309,7 @@ impl SessionManager {
                     let emitter_clone = emitter.clone();
                     let capture = self.ensure_output_buffer(&session_id);
                     let output_buffers = self.output_buffers.clone();
+                    let session_loggers = self.session_loggers.clone();
                     let sid = session_id.clone();
                     tokio::spawn(async move {
                         Self::run_output_reader(
@@ -1170,6 +1320,7 @@ impl SessionManager {
                             false,
                             capture,
                             output_buffers,
+                            session_loggers,
                         )
                         .await;
                     });
@@ -1414,6 +1565,7 @@ impl SessionManager {
         wait_for_clear: bool,
         capture: Arc<StdMutex<RingBuffer>>,
         output_buffers: OutputBuffers,
+        session_loggers: SessionLoggers,
     ) {
         // Phase 1: optionally buffer until the screen-clear sequence.
         if wait_for_clear {
@@ -1438,12 +1590,14 @@ impl SessionManager {
                     Ok(None) => {
                         // Channel closed during startup.
                         Self::capture_bytes(&capture, &buffer);
+                        Self::log_output(&session_loggers, &session_id, &buffer);
                         Self::emit_and_cleanup(
                             &session_id,
                             buffer,
                             &emitter,
                             &sessions,
                             &output_buffers,
+                            &session_loggers,
                         )
                         .await;
                         return;
@@ -1455,6 +1609,7 @@ impl SessionManager {
             // Flush the buffered output as a single event.
             if !buffer.is_empty() {
                 Self::capture_bytes(&capture, &buffer);
+                Self::log_output(&session_loggers, &session_id, &buffer);
                 let event = TerminalOutputEvent {
                     session_id: session_id.clone(),
                     data: buffer,
@@ -1482,6 +1637,7 @@ impl SessionManager {
 
             if let Some(data) = coalescer.flush() {
                 Self::capture_bytes(&capture, &data);
+                Self::log_output(&session_loggers, &session_id, &data);
                 let event = TerminalOutputEvent {
                     session_id: session_id.clone(),
                     data,
@@ -1499,6 +1655,7 @@ impl SessionManager {
             &emitter,
             &sessions,
             &output_buffers,
+            &session_loggers,
         )
         .await;
     }
@@ -1527,6 +1684,7 @@ impl SessionManager {
         emitter: &E,
         sessions: &Arc<Mutex<HashMap<String, SessionEntry>>>,
         output_buffers: &OutputBuffers,
+        session_loggers: &SessionLoggers,
     ) {
         if !data.is_empty() {
             let event = TerminalOutputEvent {
@@ -1553,6 +1711,19 @@ impl SessionManager {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(session_id);
+
+        // Flush and drop the session's output logger (#1960) so the transcript's
+        // tail is persisted and its file handle is released when the session ends.
+        if let Some(logger) = session_loggers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id)
+        {
+            let _ = logger
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .flush();
+        }
 
         info!("Session ended: {session_id}");
     }
@@ -1646,6 +1817,11 @@ mod tests {
 
     /// A fresh, empty `output_buffers` map for the cleanup path (#1900).
     fn new_output_buffers() -> OutputBuffers {
+        Arc::new(StdMutex::new(HashMap::new()))
+    }
+
+    /// A fresh, empty `session_loggers` map for the logging path (#1960).
+    fn new_session_loggers() -> SessionLoggers {
         Arc::new(StdMutex::new(HashMap::new()))
     }
 
@@ -1921,6 +2097,7 @@ mod tests {
             &emitter,
             &sessions,
             &output_buffers,
+            &new_session_loggers(),
         )
         .await;
 
@@ -1945,6 +2122,7 @@ mod tests {
             &emitter,
             &sessions,
             &output_buffers,
+            &new_session_loggers(),
         )
         .await;
 
@@ -1975,6 +2153,7 @@ mod tests {
             false,
             capture.clone(),
             output_buffers,
+            new_session_loggers(),
         )
         .await;
 
@@ -2008,6 +2187,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_output_reader_writes_to_active_session_logger() {
+        let emitter = MockEventEmitter::new();
+        let sessions = sessions_with_mock("sess-log").await;
+        let session_loggers = new_session_loggers();
+
+        // Point a logger at a temp file and register it as the active logger for
+        // the session, mirroring what `start_session_logging` does.
+        let dir = std::env::temp_dir().join(format!(
+            "termihub-mgr-log-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("out.log");
+        let logger = SessionLogger::open(
+            SessionLogConfig::new(&path, false),
+            Box::new(|| "T".to_string()),
+        )
+        .unwrap();
+        session_loggers
+            .lock()
+            .unwrap()
+            .insert("sess-log".to_string(), Arc::new(StdMutex::new(logger)));
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
+        tx.send(b"logged output\n".to_vec()).await.unwrap();
+        drop(tx); // EOF → reader runs cleanup, flushing + dropping the logger
+
+        SessionManager::run_output_reader(
+            "sess-log".to_string(),
+            rx,
+            emitter,
+            sessions,
+            false,
+            new_capture(),
+            new_output_buffers(),
+            session_loggers.clone(),
+        )
+        .await;
+
+        // The transcript captured the streamed output...
+        let contents = std::fs::read(&path).unwrap();
+        assert!(
+            contents.windows(6).any(|w| w == b"logged"),
+            "expected streamed output in the transcript file"
+        );
+        // ...and cleanup removed the logger from the active map.
+        assert!(
+            !session_loggers.lock().unwrap().contains_key("sess-log"),
+            "logger should be dropped when the session ends"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn run_output_reader_stops_on_emitter_failure() {
         let emitter = MockEventEmitter::failing();
         let sessions = sessions_with_mock("sess-fail").await;
@@ -2024,6 +2259,7 @@ mod tests {
             false,
             new_capture(),
             new_output_buffers(),
+            new_session_loggers(),
         )
         .await;
 
@@ -2062,6 +2298,7 @@ mod tests {
             &emitter,
             &sessions,
             &new_output_buffers(),
+            &new_session_loggers(),
         )
         .await;
 
