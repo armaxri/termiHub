@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::config::WorkspaceTabGroupDef;
+use super::config::{WorkspaceTabGroupDef, WorkspaceWindowDef};
 use crate::utils::config_paths::resolve_config_dir;
 
 const FILE_NAME: &str = "last-session.json";
@@ -27,6 +27,11 @@ pub struct LastSession {
     /// Index into `tab_groups` of the group that was active.
     #[serde(default)]
     pub active_group_index: usize,
+    /// The set of windows the session spanned, in restore order (multi-window
+    /// persistence, #1905). Absent/empty for a legacy single-window session,
+    /// which restores entirely into the main window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<Vec<WorkspaceWindowDef>>,
 }
 
 impl LastSession {
@@ -147,9 +152,11 @@ mod tests {
             tab_groups: vec![WorkspaceTabGroupDef {
                 name: "Group 1".to_string(),
                 color: None,
+                window_id: None,
                 layout: WorkspaceLayoutNode::Leaf { tabs: vec![] },
             }],
             active_group_index: 0,
+            windows: None,
         }
     }
 
@@ -215,6 +222,45 @@ mod tests {
     }
 
     #[test]
+    fn window_dimension_round_trips() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let mut session = sample_session();
+        session.tab_groups[0].window_id = Some("win-1".to_string());
+        session.windows = Some(vec![
+            WorkspaceWindowDef {
+                id: "main".to_string(),
+            },
+            WorkspaceWindowDef {
+                id: "win-1".to_string(),
+            },
+        ]);
+
+        storage.save(&session).unwrap();
+        let loaded = storage.load().unwrap().unwrap();
+
+        assert_eq!(loaded, session);
+        assert_eq!(loaded.windows.unwrap().len(), 2);
+        assert_eq!(loaded.tab_groups[0].window_id.as_deref(), Some("win-1"));
+    }
+
+    #[test]
+    fn legacy_session_without_window_dimension_deserializes() {
+        // A pre-multi-window last session: no windows set, no windowId.
+        let json =
+            r#"{"version":"1","tabGroups":[{"name":"Main","layout":{"type":"leaf","tabs":[]}}]}"#;
+        let session: LastSession = serde_json::from_str(json).unwrap();
+        assert!(session.windows.is_none());
+        assert!(session.tab_groups[0].window_id.is_none());
+    }
+
+    #[test]
+    fn windows_omitted_when_none_in_json() {
+        let json = serde_json::to_string(&sample_session()).unwrap();
+        assert!(!json.contains("\"windows\""));
+    }
+
+    #[test]
     fn manager_save_empty_session_clears_file() {
         let dir = TempDir::new().unwrap();
         let storage = LastSessionStorage {
@@ -231,6 +277,7 @@ mod tests {
                 version: "1".to_string(),
                 tab_groups: vec![],
                 active_group_index: 0,
+                windows: None,
             })
             .unwrap();
 

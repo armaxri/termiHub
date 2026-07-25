@@ -66,6 +66,29 @@ pub struct WorkspaceTabGroupDef {
     pub color: Option<String>,
     /// The panel layout tree for this group.
     pub layout: WorkspaceLayoutNode,
+    /// Logical id of the native window this group belongs to (multi-window
+    /// persistence, #1905), referencing a [`WorkspaceWindowDef::id`]. Omitted for
+    /// the primary window and for legacy single-window saves; an absent value
+    /// restores into the main window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_id: Option<String>,
+}
+
+/// A native window recorded in a saved layout (multi-window persistence, #1905).
+///
+/// Windows are identified by a **logical** id referenced from
+/// [`WorkspaceTabGroupDef::window_id`]; the primary window uses the `"main"`
+/// sentinel. The id is a grouping key, not a runtime window label — restore
+/// recreates the secondary windows and maps each logical id onto a freshly
+/// allocated `win-N`. Recorded explicitly (rather than inferred from the groups)
+/// so an **empty** window — one holding zero tab groups — still survives a
+/// save/restore round trip. Legacy single-window saves omit the window
+/// dimension entirely.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceWindowDef {
+    /// Logical window id referenced by tab groups. `"main"` is the primary window.
+    pub id: String,
 }
 
 /// A complete workspace definition.
@@ -81,6 +104,11 @@ pub struct WorkspaceDefinition {
     pub description: Option<String>,
     /// The tab groups in this workspace (always at least one).
     pub tab_groups: Vec<WorkspaceTabGroupDef>,
+    /// The set of windows this layout spans, in restore order (multi-window
+    /// persistence, #1905). Absent/empty on legacy single-window saves, which
+    /// restore entirely into the main window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<Vec<WorkspaceWindowDef>>,
 }
 
 /// Summary of a workspace for list display (without full layout details).
@@ -152,6 +180,10 @@ pub struct WorkspaceExportEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub tab_groups: Vec<WorkspaceTabGroupDef>,
+    /// The set of windows this layout spans (multi-window persistence, #1905).
+    /// Window ids are logical (`"main"`/synthetic) and portable across machines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub windows: Option<Vec<WorkspaceWindowDef>>,
 }
 
 /// Preview of a workspace import file.
@@ -188,6 +220,7 @@ mod tests {
                     initial_command: None,
                 }],
             },
+            window_id: None,
         }
     }
 
@@ -196,10 +229,12 @@ mod tests {
             id: "ws-1".to_string(),
             name: "Dev Setup".to_string(),
             description: Some("My daily dev layout".to_string()),
+            windows: None,
             tab_groups: vec![
                 WorkspaceTabGroupDef {
                     name: "Dev".to_string(),
                     color: None,
+                    window_id: None,
                     layout: WorkspaceLayoutNode::Split {
                         direction: SplitDirection::Horizontal,
                         children: vec![
@@ -400,6 +435,7 @@ mod tests {
             name: "Simple".to_string(),
             description: None,
             tab_groups: vec![sample_tab_group("Main", "conn-1")],
+            windows: None,
         };
         let summary = ws.to_summary();
         assert_eq!(summary.id, "ws-1");
@@ -513,6 +549,7 @@ mod tests {
             name: "Simple".to_string(),
             description: None,
             tab_groups: vec![sample_tab_group("Main", "conn-1")],
+            windows: None,
         };
         let json = serde_json::to_string(&ws).unwrap();
         assert!(!json.contains("description"));
@@ -531,6 +568,7 @@ mod tests {
             name: "Dev".to_string(),
             color: Some("#ff6b6b".to_string()),
             layout: WorkspaceLayoutNode::Leaf { tabs: vec![] },
+            window_id: None,
         };
         let json = serde_json::to_string(&group).unwrap();
         let deserialized: WorkspaceTabGroupDef = serde_json::from_str(&json).unwrap();
@@ -594,5 +632,76 @@ mod tests {
         };
         let json = serde_json::to_string(&split).unwrap();
         assert!(!json.contains("sizes"));
+    }
+
+    // ── Window dimension (#1905) ─────────────────────────────────────────
+
+    #[test]
+    fn tab_group_window_id_omitted_when_none() {
+        let group = sample_tab_group("Main", "conn-1");
+        let json = serde_json::to_string(&group).unwrap();
+        assert!(
+            !json.contains("windowId"),
+            "a main-window/legacy group omits windowId"
+        );
+    }
+
+    #[test]
+    fn tab_group_window_id_round_trips() {
+        let group = WorkspaceTabGroupDef {
+            name: "Logs".to_string(),
+            color: None,
+            layout: WorkspaceLayoutNode::Leaf { tabs: vec![] },
+            window_id: Some("win-2".to_string()),
+        };
+        let json = serde_json::to_string(&group).unwrap();
+        assert!(json.contains("\"windowId\":\"win-2\""));
+        let back: WorkspaceTabGroupDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.window_id.as_deref(), Some("win-2"));
+    }
+
+    #[test]
+    fn workspace_windows_round_trips() {
+        let mut ws = sample_workspace();
+        ws.windows = Some(vec![
+            WorkspaceWindowDef {
+                id: "main".to_string(),
+            },
+            WorkspaceWindowDef {
+                id: "win-1".to_string(),
+            },
+        ]);
+        ws.tab_groups[1].window_id = Some("win-1".to_string());
+        let json = serde_json::to_string(&ws).unwrap();
+        let back: WorkspaceDefinition = serde_json::from_str(&json).unwrap();
+        let windows = back.windows.expect("windows preserved");
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[1].id, "win-1");
+        assert_eq!(back.tab_groups[1].window_id.as_deref(), Some("win-1"));
+    }
+
+    #[test]
+    fn workspace_windows_omitted_when_none() {
+        let ws = sample_workspace();
+        let json = serde_json::to_string(&ws).unwrap();
+        assert!(
+            !json.contains("\"windows\""),
+            "a single-window layout omits the windows set"
+        );
+    }
+
+    #[test]
+    fn legacy_workspace_without_window_dimension_deserializes() {
+        // A pre-multi-window save: no windowId on groups, no windows set.
+        let json = r#"{
+            "id": "ws-legacy",
+            "name": "Legacy",
+            "tabGroups": [
+                { "name": "Main", "layout": { "type": "leaf", "tabs": [] } }
+            ]
+        }"#;
+        let ws: WorkspaceDefinition = serde_json::from_str(json).unwrap();
+        assert!(ws.windows.is_none());
+        assert!(ws.tab_groups[0].window_id.is_none());
     }
 }

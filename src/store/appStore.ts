@@ -126,6 +126,14 @@ import type {
   WindowInfo,
   WindowCloseRequest,
 } from "@/types/window";
+import { MAIN_WINDOW_LABEL } from "@/types/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  stampWindowId,
+  buildWindowsMeta,
+  planWindowRestore,
+  hasWindowDimension,
+} from "@/utils/windowPersistence";
 import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
 import type {
   ConnectionTypeInfo,
@@ -1702,6 +1710,20 @@ function generateWorkflowId(): string {
 let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
 /** Debounce timer for auto-saving the last session on layout changes. */
 let lastSessionPersistTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * The runtime label of the window this store belongs to (multi-window
+ * persistence, #1905), used to stamp captured tab groups with their owning
+ * window. Falls back to {@link MAIN_WINDOW_LABEL} when the Tauri window API is
+ * unavailable (e.g. browser dev mode) so capture never throws.
+ */
+function currentWindowLabel(): string {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return MAIN_WINDOW_LABEL;
+  }
+}
 const LAST_SESSION_SAVE_DEBOUNCE_MS = 500;
 /**
  * Settle timer for the restore-in-progress guard (GAP G5, #1146). After a
@@ -7190,8 +7212,19 @@ export const useAppStore = create<AppState>((set, get) => {
                 state.rootPanel,
                 state.connections
               );
+        // Window dimension (#1905): record which window owns each group so a
+        // saved multi-window layout restores its window arrangement. For the
+        // single main-window store this omits the dimension (legacy shape).
+        const stampedGroups = stampWindowId(tabGroups, currentWindowLabel());
+        const windows = buildWindowsMeta(stampedGroups);
         const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-        await apiSaveWorkspace({ id, name, description, tabGroups });
+        await apiSaveWorkspace({
+          id,
+          name,
+          description,
+          tabGroups: stampedGroups,
+          ...(windows ? { windows } : {}),
+        });
         await get().loadWorkspaces();
         set({ activeWorkspaceName: name });
       } catch (err) {
@@ -7223,11 +7256,18 @@ export const useAppStore = create<AppState>((set, get) => {
         0,
         state.tabGroups.findIndex((g) => g.id === state.activeTabGroupId)
       );
+      // Window dimension (#1905): stamp which window owns each captured group so
+      // a multi-window session restores its window arrangement. For the main
+      // window (the only store today) this omits windowId and the windows set,
+      // keeping the payload identical to the legacy single-window shape.
+      const stampedGroups = stampWindowId(tabGroups, currentWindowLabel());
+      const windows = buildWindowsMeta(stampedGroups);
       try {
         await apiSaveLastSession({
           version: "1",
-          tabGroups: totalTabs > 0 ? tabGroups : [],
+          tabGroups: totalTabs > 0 ? stampedGroups : [],
           activeGroupIndex,
+          ...(totalTabs > 0 && windows ? { windows } : {}),
         });
       } catch (err) {
         console.error("Failed to save last session:", err);
@@ -7268,8 +7308,23 @@ export const useAppStore = create<AppState>((set, get) => {
           })),
           definitions: state.agentDefinitions,
         };
+        // Window dimension (#1905): partition the saved groups by window. Spawning
+        // and hydrating the secondary native windows is cross-window runtime owned
+        // by the epic's runtime work; until it lands, restore is deliberately
+        // NON-LOSSY — every window's groups are restored (plan order, main first)
+        // into this main window rather than dropped. A legacy session has a single
+        // main entry, so this is a no-op there.
+        const plan = planWindowRestore(session.tabGroups, session.windows);
+        if (hasWindowDimension(session.tabGroups, session.windows)) {
+          frontendLog(
+            "multi_window",
+            `restoreLastSession: ${plan.length} saved windows collapsed into the main ` +
+              `window (multi-window spawn-on-restore not yet wired)`
+          );
+        }
+        const orderedGroups = plan.flatMap((entry) => entry.tabGroups);
         const builtGroups = buildTabGroupsFromWorkspace(
-          session.tabGroups,
+          orderedGroups,
           state.connections,
           state.defaultShell,
           agentContext
