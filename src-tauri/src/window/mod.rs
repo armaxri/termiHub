@@ -531,7 +531,11 @@ mod tests {
     fn pending_restore_is_queued_and_drained_once() {
         let wm = WindowManager::new();
         let payload = serde_json::json!({ "tabGroups": [{ "name": "g" }] });
-        assert_eq!(wm.take_restore("win-1"), None, "unseeded window has nothing");
+        assert_eq!(
+            wm.take_restore("win-1"),
+            None,
+            "unseeded window has nothing"
+        );
 
         wm.queue_restore("win-1", payload.clone());
         assert_eq!(wm.take_restore("win-1"), Some(payload));

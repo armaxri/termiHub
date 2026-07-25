@@ -190,9 +190,7 @@ pub fn report_window_layout(
 /// Every open window's reported layout slice, main-window-first, for the main
 /// window to assemble the full multi-window persisted document (#1925).
 #[tauri::command]
-pub fn collect_window_layouts(
-    window_manager: State<'_, WindowManager>,
-) -> Vec<WindowLayoutReport> {
+pub fn collect_window_layouts(window_manager: State<'_, WindowManager>) -> Vec<WindowLayoutReport> {
     window_manager.collect_layouts()
 }
 
