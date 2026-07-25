@@ -19,6 +19,7 @@ import {
   remoteDesktopRemoteClipboardFiles,
   remoteDesktopBindClipboardFiles,
   remoteDesktopCertDecision,
+  remoteDesktopRequestFullFrame,
 } from "@/services/api";
 import type {
   RemoteClipboardFile,
@@ -42,6 +43,7 @@ vi.mock("@/services/api", () => ({
   remoteDesktopRemoteClipboardFiles: vi.fn(() => Promise.resolve([])),
   remoteDesktopBindClipboardFiles: vi.fn(() => Promise.resolve(0)),
   remoteDesktopCertDecision: vi.fn(() => Promise.resolve()),
+  remoteDesktopRequestFullFrame: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock("@/services/events", () => ({
@@ -69,6 +71,7 @@ const mockedSendClipboard = vi.mocked(remoteDesktopSendClipboard);
 const mockedRemoteClipboardFiles = vi.mocked(remoteDesktopRemoteClipboardFiles);
 const mockedBindClipboardFiles = vi.mocked(remoteDesktopBindClipboardFiles);
 const mockedCertDecision = vi.mocked(remoteDesktopCertDecision);
+const mockedRequestFullFrame = vi.mocked(remoteDesktopRequestFullFrame);
 
 let container: HTMLDivElement;
 let root: Root;
@@ -101,6 +104,32 @@ function addTab(viewOnly = false): string {
     },
     { contentType: "remote-desktop" }
   );
+}
+
+/**
+ * Hydrate a graphical tab handed off from another window (#1904) and return its
+ * id — the same path `moveTabToWindow` drives on the destination side. The tab
+ * carries a live `sessionId` plus the `pendingScrollbackReplay` move marker.
+ */
+function addMovedInTab(sessionId = "rd-moved"): string {
+  act(() =>
+    useAppStore.getState().hydrateHandoffTab({
+      tab: {
+        sessionId,
+        title: "Moved RD",
+        connectionType: "mock-remote-desktop",
+        contentType: "remote-desktop",
+        config: { type: "mock-remote-desktop", config: { host: "mock.local", scaleMode: "fit" } },
+      },
+    })
+  );
+  const tab = useAppStore
+    .getState()
+    .getAllPanels()
+    .flatMap((l) => l.tabs)
+    .find((t) => t.sessionId === sessionId);
+  if (!tab) throw new Error("moved-in tab not hydrated");
+  return tab.id;
 }
 
 /** Render the hook onto a closure so assertions read its latest value. */
@@ -293,5 +322,56 @@ describe("useRemoteDesktopSession", () => {
 
     expect(mockedDisconnect).toHaveBeenCalledWith("rd-1");
     expect(mockedConnect).toHaveBeenCalledTimes(2);
+  });
+
+  // ── Cross-window tab move (#1904) ──
+
+  it("adopts a moved-in session without opening a new connection", async () => {
+    const tabId = addMovedInTab("rd-moved");
+    const h = renderSession(tabId);
+    await flush();
+
+    // The destination re-attaches to the live session — never a fresh connect.
+    expect(mockedConnect).not.toHaveBeenCalled();
+    expect(h.get().sessionId).toBe("rd-moved");
+    expect(h.get().state).toBe("active");
+    // A full frame is requested so the blank canvas repaints promptly.
+    expect(mockedRequestFullFrame).toHaveBeenCalledWith("rd-moved");
+    // The reconnecting-view placeholder shows until the first frame.
+    expect(h.get().awaitingFirstFrame).toBe(true);
+    // The one-shot move marker is consumed on the adopting tab.
+    const tab = useAppStore
+      .getState()
+      .getAllPanels()
+      .flatMap((l) => l.tabs)
+      .find((t) => t.id === tabId);
+    expect(tab?.pendingScrollbackReplay).toBeFalsy();
+  });
+
+  it("clears the reconnecting-view placeholder once a frame paints", async () => {
+    const tabId = addMovedInTab("rd-moved");
+    const h = renderSession(tabId);
+    await flush();
+    expect(h.get().awaitingFirstFrame).toBe(true);
+
+    act(() => h.get().noteFirstFrame());
+    expect(h.get().awaitingFirstFrame).toBe(false);
+  });
+
+  it("keeps the backend session alive when the source tab is moved out", async () => {
+    const tabId = addTab();
+    renderSession(tabId);
+    await flush();
+    expect(mockedConnect).toHaveBeenCalledTimes(1);
+
+    // The move marks the session as moving before the source view unmounts.
+    act(() => useAppStore.setState({ movingSessionIds: ["rd-1"] }));
+    // Unmount the source view (the tab left this window's tree).
+    act(() => root.render(<div />));
+
+    // The still-running backend session must NOT be torn down, and the moving
+    // flag is consumed so a later real close still cleans up.
+    expect(mockedDisconnect).not.toHaveBeenCalled();
+    expect(useAppStore.getState().isSessionMoving("rd-1")).toBe(false);
   });
 });
