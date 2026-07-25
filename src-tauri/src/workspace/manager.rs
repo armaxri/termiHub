@@ -556,6 +556,46 @@ mod tests {
     }
 
     #[test]
+    fn window_dimension_survives_duplicate_and_export_import() {
+        use crate::workspace::config::WorkspaceWindowDef;
+
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+
+        // A multi-window layout: the second group lives in win-1.
+        let mut def = multi_group_definition("ws-1", "Multi Window");
+        def.tab_groups[1].window_id = Some("win-1".to_string());
+        def.windows = Some(vec![
+            WorkspaceWindowDef {
+                id: "main".to_string(),
+            },
+            WorkspaceWindowDef {
+                id: "win-1".to_string(),
+            },
+        ]);
+        mgr.save_workspace(def).unwrap();
+
+        // Duplicate preserves the window dimension.
+        let new_id = mgr.duplicate_workspace("ws-1").unwrap();
+        let dup = mgr.load_workspace(&new_id).unwrap();
+        assert_eq!(dup.windows.as_ref().unwrap().len(), 2);
+        assert_eq!(dup.tab_groups[1].window_id.as_deref(), Some("win-1"));
+
+        // Export then re-import into a fresh manager preserves it too.
+        let json = mgr.export_json(&HashMap::new()).unwrap();
+        assert!(json.contains("\"windowId\""));
+        assert!(json.contains("\"windows\""));
+
+        let dir2 = TempDir::new().unwrap();
+        let mgr2 = create_test_manager(&dir2);
+        mgr2.import_json(&json, &HashMap::new()).unwrap();
+        let imported = mgr2.get_workspaces().unwrap();
+        let ws = mgr2.load_workspace(&imported[0].id).unwrap();
+        assert_eq!(ws.windows.as_ref().unwrap().len(), 2);
+        assert_eq!(ws.tab_groups[1].window_id.as_deref(), Some("win-1"));
+    }
+
+    #[test]
     fn export_replaces_ids_with_names() {
         let dir = TempDir::new().unwrap();
         let mgr = create_test_manager(&dir);

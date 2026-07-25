@@ -633,4 +633,75 @@ mod tests {
         let json = serde_json::to_string(&split).unwrap();
         assert!(!json.contains("sizes"));
     }
+
+    // ── Window dimension (#1905) ─────────────────────────────────────────
+
+    #[test]
+    fn tab_group_window_id_omitted_when_none() {
+        let group = sample_tab_group("Main", "conn-1");
+        let json = serde_json::to_string(&group).unwrap();
+        assert!(
+            !json.contains("windowId"),
+            "a main-window/legacy group omits windowId"
+        );
+    }
+
+    #[test]
+    fn tab_group_window_id_round_trips() {
+        let group = WorkspaceTabGroupDef {
+            name: "Logs".to_string(),
+            color: None,
+            layout: WorkspaceLayoutNode::Leaf { tabs: vec![] },
+            window_id: Some("win-2".to_string()),
+        };
+        let json = serde_json::to_string(&group).unwrap();
+        assert!(json.contains("\"windowId\":\"win-2\""));
+        let back: WorkspaceTabGroupDef = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.window_id.as_deref(), Some("win-2"));
+    }
+
+    #[test]
+    fn workspace_windows_round_trips() {
+        let mut ws = sample_workspace();
+        ws.windows = Some(vec![
+            WorkspaceWindowDef {
+                id: "main".to_string(),
+            },
+            WorkspaceWindowDef {
+                id: "win-1".to_string(),
+            },
+        ]);
+        ws.tab_groups[1].window_id = Some("win-1".to_string());
+        let json = serde_json::to_string(&ws).unwrap();
+        let back: WorkspaceDefinition = serde_json::from_str(&json).unwrap();
+        let windows = back.windows.expect("windows preserved");
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[1].id, "win-1");
+        assert_eq!(back.tab_groups[1].window_id.as_deref(), Some("win-1"));
+    }
+
+    #[test]
+    fn workspace_windows_omitted_when_none() {
+        let ws = sample_workspace();
+        let json = serde_json::to_string(&ws).unwrap();
+        assert!(
+            !json.contains("\"windows\""),
+            "a single-window layout omits the windows set"
+        );
+    }
+
+    #[test]
+    fn legacy_workspace_without_window_dimension_deserializes() {
+        // A pre-multi-window save: no windowId on groups, no windows set.
+        let json = r#"{
+            "id": "ws-legacy",
+            "name": "Legacy",
+            "tabGroups": [
+                { "name": "Main", "layout": { "type": "leaf", "tabs": [] } }
+            ]
+        }"#;
+        let ws: WorkspaceDefinition = serde_json::from_str(json).unwrap();
+        assert!(ws.windows.is_none());
+        assert!(ws.tab_groups[0].window_id.is_none());
+    }
 }
