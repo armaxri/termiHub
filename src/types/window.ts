@@ -4,7 +4,7 @@
  * termiHub can host multiple native windows and move a live session tab between
  * them without tearing down the backend session. These types describe the
  * frontend seam the backend `session_id → owning_window` ownership map and the
- * tab hand-off queue expose. See `docs/concepts/backlog/multi-window.html`.
+ * tab hand-off queue expose. See `docs/concepts/implemented/multi-window.html`.
  */
 
 import type { ConnectionConfig, TabContentType } from "@/types/terminal";

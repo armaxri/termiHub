@@ -4,7 +4,7 @@
 //! separate JavaScript contexts with no shared store, so the backend — which
 //! already owns session state keyed by `session_id` — is the natural home for
 //! the cross-window coordination the frontend cannot do itself (concept:
-//! `docs/concepts/backlog/multi-window.html` → "State Ownership & Event
+//! `docs/concepts/implemented/multi-window.html` → "State Ownership & Event
 //! Retargeting").
 //!
 //! [`WindowManager`] coordinates three things:
@@ -126,7 +126,7 @@ fn recover<T>(result: Result<T, PoisonError<T>>) -> T {
 //
 // With one window, "window closed" ≈ "app quit". Multi-window breaks that
 // identity, so the last-window-close behaviour must follow platform convention
-// (concept: `docs/concepts/backlog/multi-window.html` → "Per-Platform
+// (concept: `docs/concepts/implemented/multi-window.html` → "Per-Platform
 // Constraints"). These are pure, `#[cfg]`-gated decisions so the branches are
 // unit-testable without a running event loop; `lib.rs` calls them from the
 // `RunEvent` handler.

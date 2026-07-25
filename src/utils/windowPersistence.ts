@@ -15,7 +15,7 @@
  * label: the primary window uses the {@link MAIN_WINDOW_LABEL} sentinel and its
  * groups omit the field, so a single-window save is byte-identical to the legacy
  * schema and a legacy save (no window dimension) restores entirely into the main
- * window. See `docs/concepts/backlog/multi-window.html` → "Persistence &
+ * window. See `docs/concepts/implemented/multi-window.html` → "Persistence &
  * lifecycle have no window dimension".
  */
 
