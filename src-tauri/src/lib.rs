@@ -499,6 +499,32 @@ pub fn run() {
             );
             app.manage(graphical_manager);
 
+            // SSH host-key verification (#1959): register the process-wide
+            // verifier so the core SSH handshake stops blindly accepting host
+            // keys. It persists trust-on-first-use decisions to the config dir
+            // (portable-aware; in-memory on failure) and prompts the UI via the
+            // app handle for unknown or changed keys.
+            let ssh_trust_store = std::sync::Arc::new(
+                match crate::utils::config_paths::resolve_config_dir(Some(app.handle())) {
+                    Ok(dir) => crate::session::ssh_trust_store::SshTrustStore::open(dir),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "could not resolve config dir for SSH trust store; using in-memory");
+                        crate::session::ssh_trust_store::SshTrustStore::in_memory()
+                    }
+                },
+            );
+            let ssh_host_key_verifier =
+                std::sync::Arc::new(crate::session::ssh_host_key_verifier::SshHostKeyVerifier::new(
+                    ssh_trust_store,
+                    std::sync::Arc::new(app.handle().clone()),
+                ));
+            if !termihub_core::backends::ssh::host_key::set_host_key_verifier(
+                ssh_host_key_verifier.clone(),
+            ) {
+                tracing::warn!("SSH host-key verifier was already registered");
+            }
+            app.manage(ssh_host_key_verifier);
+
             // X server provisioning (#1052): register the provisioner so the SSH
             // connect path can ensure a local X server before X11 forwarding
             // starts. The manager itself (#1049) is created and managed above.
@@ -776,6 +802,10 @@ pub fn run() {
             commands::remote_desktop::remote_desktop_disconnect,
             commands::remote_desktop::rdp_trust_list,
             commands::remote_desktop::rdp_trust_forget,
+            // SSH host-key trust (#1959)
+            commands::ssh_host_key::ssh_host_key_decision,
+            commands::ssh_host_key::ssh_trust_list,
+            commands::ssh_host_key::ssh_trust_forget,
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::cancel_connecting,

@@ -15,6 +15,7 @@ pub mod session_history;
 pub mod shell_integration;
 pub mod spawn;
 pub mod ssh_config_import;
+pub mod ssh_host_key;
 pub mod transfer;
 pub mod tunnel;
 pub mod update;
