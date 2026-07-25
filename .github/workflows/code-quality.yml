@@ -226,6 +226,16 @@ jobs:
       - name: Run machinery suite
         run: ./tests/system/pytest.sh -m "not integration" -q
 
+      # Optional, non-blocking test-inventory + coverage-gap report (#1950). It
+      # statically introspects the harness (stdlib-only, no app build) and lists
+      # feature areas with zero automated/manual coverage. `continue-on-error`
+      # keeps it advisory: a coverage gap is surfaced in the step summary, never
+      # a failed build.
+      - name: Test inventory + coverage-gap report (advisory)
+        continue-on-error: true
+        run: |
+          python3 scripts/build-test-inventory.py --stdout >> "$GITHUB_STEP_SUMMARY"
+
   # Dependency Security Audit
   security-audit:
     name: Security Audit

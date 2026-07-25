@@ -70,6 +70,13 @@ __pycache__/
 # CI (#1528). CI regenerates and verifies coverage instead of diffing it.
 tests/system/testid-catalog.md
 
+# Generated test-inventory + coverage-gap report (#1950) — a local, regenerated
+# reference like the testid catalog above, NOT committed: a single committed file
+# goes stale on every branch the moment any test changes on develop (#1528). CI
+# regenerates it in a non-blocking step instead of diffing it.
+tests/system/test-inventory.md
+tests/system/test-inventory.json
+
 # RDP sidecar (#1747) is an excluded crate with its own target dir
 /rdp-sidecar/target/
 
