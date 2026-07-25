@@ -57,6 +57,7 @@ import {
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { BulkSshImportDialog } from "./BulkSshImportDialog";
 import { AgentNode } from "./AgentNode";
+import { PersistentStateDot } from "./PersistentStateDot";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
@@ -409,10 +410,11 @@ function ConnectionItem({
             >
               <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
               {persistentCapable && (
-                <span
-                  className={`connection-tree__state-dot ${stateDotClass}`}
-                  title={runState ?? "stopped"}
-                  data-testid={`persistent-state-dot-${connection.id}`}
+                <PersistentStateDot
+                  runState={runState}
+                  stateDotClass={stateDotClass}
+                  connectionId={connection.id}
+                  dotTestId={`persistent-state-dot-${connection.id}`}
                 />
               )}
               <span className="connection-tree__label">{connection.name}</span>

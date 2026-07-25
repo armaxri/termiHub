@@ -505,6 +505,35 @@
   top: 0;
 }
 
+/* Wrapper anchoring the attached-tab count badge over the run-state dot. */
+.connection-tree__state-dot-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* Numeric count badge overlaid on the dot when a session is attached to >1 tab. */
+.connection-tree__state-badge {
+  position: absolute;
+  top: -6px;
+  left: 5px;
+  min-width: 11px;
+  height: 11px;
+  padding: 0 2px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: var(--radius-full);
+  background-color: var(--accent-color);
+  color: var(--text-on-accent);
+  pointer-events: none;
+}
+
 .connection-tree__state-dot--running {
   background-color: var(--state-connected);
 }

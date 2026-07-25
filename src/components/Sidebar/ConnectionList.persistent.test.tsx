@@ -20,6 +20,7 @@ import type {
   PersistentSessionEntry,
   RemoteAgentDefinition,
 } from "@/types/connection";
+import type { PanelNode, TabGroup, TerminalTab } from "@/types/terminal";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -76,7 +77,8 @@ function render(
     startPersistentSession: () => Promise<void>;
     attachPersistentSession: () => Promise<void>;
     stopPersistentSession: () => Promise<void>;
-  }> = {}
+  }> = {},
+  extra: Partial<{ rootPanel: PanelNode; tabGroups: TabGroup[]; activeTabGroupId: string }> = {}
 ) {
   const initial = useAppStore.getInitialState();
   useAppStore.setState({
@@ -84,6 +86,7 @@ function render(
     connections: [SSH_CONN, TELNET_CONN],
     connectionTypes: [SSH_TYPE, TELNET_TYPE],
     persistentSessions,
+    ...extra,
     ...actionOverrides,
   });
   act(() => {
@@ -100,8 +103,41 @@ function q(testid: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testid}"]`);
 }
 
-function entry(state: PersistentSessionEntry["state"]): PersistentSessionEntry {
-  return { connectionId: "ssh-1", sessionId: "sess-1", state, attachedTabIds: [] };
+function entry(
+  state: PersistentSessionEntry["state"],
+  attachedTabIds: string[] = []
+): PersistentSessionEntry {
+  return { connectionId: "ssh-1", sessionId: "sess-1", state, attachedTabIds };
+}
+
+function tab(id: string, title: string): TerminalTab {
+  return {
+    id,
+    sessionId: "sess-1",
+    title,
+    connectionType: "ssh",
+    contentType: "terminal",
+    config: { type: "ssh", config: { host: "example.com" } },
+    panelId: "panel-1",
+    isActive: false,
+    persistentConnectionId: "ssh-1",
+  };
+}
+
+/** A single-group layout whose active group's root panel holds `tabs`. */
+function layoutWithTabs(tabs: TerminalTab[]): {
+  rootPanel: PanelNode;
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+} {
+  const rootPanel: PanelNode = {
+    type: "leaf",
+    id: "panel-1",
+    tabs,
+    activeTabId: tabs[0]?.id ?? null,
+  };
+  const group: TabGroup = { id: "group-1", name: "Group 1", rootPanel, activePanelId: "panel-1" };
+  return { rootPanel, tabGroups: [group], activeTabGroupId: "group-1" };
 }
 
 beforeEach(() => {
@@ -185,5 +221,34 @@ describe("ConnectionList — desktop-local persistent controls", () => {
     expect(q("persistent-stop-ssh-1")).toBeNull();
     // The badge/dot still render.
     expect(q("persistent-badge-ssh-1")).not.toBeNull();
+  });
+
+  describe("attached-tab count badge (#1930)", () => {
+    it("shows a count badge only when attached to more than one tab", () => {
+      const tabs = [tab("t1", "Shell"), tab("t2", "Logs")];
+      render({ "ssh-1": entry("attached", ["t1", "t2"]) }, {}, layoutWithTabs(tabs));
+      const badge = q("persistent-state-dot-ssh-1-badge");
+      expect(badge).not.toBeNull();
+      expect(badge!.textContent).toBe("2");
+    });
+
+    it("does not show the badge for a single attached tab", () => {
+      render({ "ssh-1": entry("attached", ["t1"]) }, {}, layoutWithTabs([tab("t1", "Shell")]));
+      expect(q("persistent-state-dot-ssh-1-badge")).toBeNull();
+    });
+
+    it("does not show the badge when running but not attached", () => {
+      render({ "ssh-1": entry("running", ["t1", "t2"]) });
+      expect(q("persistent-state-dot-ssh-1-badge")).toBeNull();
+    });
+
+    it("lists the attached tab names in the dot tooltip", () => {
+      const tabs = [tab("t1", "Shell"), tab("t2", "Logs")];
+      render({ "ssh-1": entry("attached", ["t1", "t2"]) }, {}, layoutWithTabs(tabs));
+      const title = q("persistent-state-dot-ssh-1")!.getAttribute("title") ?? "";
+      expect(title).toContain("2 tabs attached:");
+      expect(title).toContain("Shell");
+      expect(title).toContain("Logs");
+    });
   });
 });
