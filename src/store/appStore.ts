@@ -2324,28 +2324,38 @@ function driveAutoReconnect(
  * — non-terminal tabs (editors, SFTP/file browsers, ...) are never broadcast
  * targets, matching the concept's "Non-terminal tabs never appear" rule.
  *
- * - `"all"` — every terminal tab in the active tab group.
+ * - `"all"` — every terminal tab in the source tab's own group.
  * - `"panel"` — every terminal tab in the same split panel as the source.
  * - `"custom"` — `[]`; membership comes from the user's picker, not the scope.
  *
  * Exported for the scope dropdown's live counts and the dynamic-membership tests
- * (#1956). Operates on the active group's `rootPanel`, matching the foundation's
- * (#1955) all-terminals fan-out.
+ * (#1956). Resolves within the **source tab's own group tree** — not the active
+ * group — so broadcast never silently retargets to a terminal in a different,
+ * possibly invisible tab group when the source is not in the active group
+ * (#1980). The active group's live tree is `state.rootPanel`; every other
+ * group keeps its tree in `group.rootPanel`.
  */
 export function resolveBroadcastTargetTabIds(
-  state: { rootPanel: PanelNode },
+  state: { tabGroups: TabGroup[]; activeTabGroupId: string; rootPanel: PanelNode },
   scope: BroadcastScope,
   sourceTabId: string
 ): string[] {
   if (scope === "custom") return [];
   const isTerminal = (t: TerminalTab): boolean => t.contentType === "terminal";
+  // Find the source's own group tree (active group's live tree is `rootPanel`;
+  // inactive groups keep theirs in `group.rootPanel`). Fall back to the active
+  // tree if the source cannot be located (shouldn't happen for a live source).
+  const trees = state.tabGroups.map((g) =>
+    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
+  );
+  const sourceTree = trees.find((tree) => findLeafByTab(tree, sourceTabId)) ?? state.rootPanel;
   if (scope === "panel") {
-    const leaf = findLeafByTab(state.rootPanel, sourceTabId);
+    const leaf = findLeafByTab(sourceTree, sourceTabId);
     if (!leaf) return [];
     return leaf.tabs.filter(isTerminal).map((t) => t.id);
   }
-  // "all"
-  return getAllLeaves(state.rootPanel)
+  // "all" — every terminal tab in the source's group
+  return getAllLeaves(sourceTree)
     .flatMap((leaf) => leaf.tabs)
     .filter(isTerminal)
     .map((t) => t.id);
@@ -2861,7 +2871,7 @@ export const useAppStore = create<AppState>((set, get) => {
         return { tabGroups: groups };
       }),
 
-    moveTabToGroup: (tabId, fromPanelId, targetGroupId) =>
+    moveTabToGroup: (tabId, fromPanelId, targetGroupId) => {
       set((state) => {
         if (targetGroupId === state.activeTabGroupId) return state;
 
@@ -2914,7 +2924,12 @@ export const useAppStore = create<AppState>((set, get) => {
           tabGroups: newTabGroups,
           activePanelId: newActivePanelId,
         };
-      }),
+      });
+      // Moving a tab across groups changes broadcast membership when the source
+      // or a target crosses the group boundary (#1980) — re-resolve so an
+      // "all"/"panel" scope drops/adds it in the source's own group.
+      get().refreshBroadcastMembership();
+    },
 
     addTabGroupWithTab: (tabId, fromPanelId) =>
       set((state) => {
