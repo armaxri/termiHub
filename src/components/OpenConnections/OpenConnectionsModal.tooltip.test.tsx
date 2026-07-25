@@ -17,6 +17,7 @@ import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab } from "@/types/terminal";
 
 vi.mock("@/services/api", () => ({
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
   listLocalSessions: vi.fn(() => Promise.resolve([])),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
   closeTerminal: vi.fn(() => Promise.resolve()),

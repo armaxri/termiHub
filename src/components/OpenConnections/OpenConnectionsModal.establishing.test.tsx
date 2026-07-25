@@ -15,6 +15,7 @@ const cancelConnectAgent = vi.fn((_id: string) => Promise.resolve(true));
 const disconnectAgent = vi.fn((_id: string) => Promise.resolve());
 
 vi.mock("@/services/api", () => ({
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
   listLocalSessions: vi.fn(() => Promise.resolve([])),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
   closeTerminal: vi.fn(() => Promise.resolve()),
