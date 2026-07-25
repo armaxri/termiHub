@@ -383,6 +383,27 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "warnLargePingSweep",
+    label: "Warn Before a Large Ping Sweep",
+    description:
+      "Show a warning before starting a Ping Sweep across a very large number of hosts (e.g. a wide CIDR block)",
+    category: "general",
+    keywords: [
+      "warn",
+      "ping",
+      "sweep",
+      "subnet",
+      "range",
+      "cidr",
+      "large",
+      "network",
+      "confirm",
+      "prompt",
+      "dialog",
+      "host",
+    ],
+  },
+  {
     id: "experimentalFeaturesEnabled",
     label: "Allow Experimental Features",
     description:

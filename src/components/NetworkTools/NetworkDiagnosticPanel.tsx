@@ -2,6 +2,7 @@ import type { NetworkDiagnosticMeta } from "@/types/terminal";
 import "./NetworkTools.css";
 import { PortScannerPanel } from "./PortScannerPanel";
 import { PingPanel } from "./PingPanel";
+import { PingSweepPanel } from "./PingSweepPanel";
 import { DnsLookupPanel } from "./DnsLookupPanel";
 import { HttpMonitorPanel } from "./HttpMonitorPanel";
 import { TraceroutePanel } from "./TraceroutePanel";
@@ -24,6 +25,8 @@ export function NetworkDiagnosticPanel({ meta, isVisible }: NetworkDiagnosticPan
       return <PortScannerPanel prefillHost={meta.prefillHost} />;
     case "ping":
       return <PingPanel prefillHost={meta.prefillHost} />;
+    case "ping-sweep":
+      return <PingSweepPanel prefillHost={meta.prefillHost} />;
     case "dns-lookup":
       return <DnsLookupPanel prefillHost={meta.prefillHost} />;
     case "http-monitor":

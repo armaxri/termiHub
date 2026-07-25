@@ -506,6 +506,13 @@ export interface AppSettings {
    * re-enabled from General settings.
    */
   warnLargePortScan?: boolean;
+  /**
+   * Show a warning before starting a Ping Sweep across a very large number of
+   * hosts (e.g. a wide CIDR block). Defaults to true. The warning dialog's
+   * "Don't warn again" opt-out flips this off; it can be re-enabled from
+   * General settings.
+   */
+  warnLargePingSweep?: boolean;
   defaultShellIntegration?: boolean;
   defaultX11Forwarding?: boolean;
   /** Start/provide a local X server automatically for SSH X11 forwarding. Unset → platform default (on for Windows). */

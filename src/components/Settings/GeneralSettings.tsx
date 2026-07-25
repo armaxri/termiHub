@@ -185,6 +185,19 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           </SettingsField>
         )}
 
+        {show("warnLargePingSweep") && (
+          <SettingsField
+            label="Warn Before a Large Ping Sweep"
+            hint="Show a warning before starting a Ping Sweep across a very large number of hosts (e.g. a wide CIDR block)."
+          >
+            <Toggle
+              checked={settings.warnLargePingSweep ?? true}
+              onCheckedChange={(checked) => onChange({ ...settings, warnLargePingSweep: checked })}
+              data-testid="settings-warn-large-ping-sweep"
+            />
+          </SettingsField>
+        )}
+
         {show("experimentalFeaturesEnabled") && (
           <SettingsField
             label="Allow Experimental Features"

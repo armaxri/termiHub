@@ -3247,6 +3247,7 @@ export const useAppStore = create<AppState>((set, get) => {
         const toolLabel: Record<NetworkTool, string> = {
           "port-scanner": "Port Scanner",
           ping: "Ping",
+          "ping-sweep": "Ping Sweep",
           "dns-lookup": "DNS Lookup",
           "http-monitor": "HTTP Monitor",
           traceroute: "Traceroute",
@@ -3812,6 +3813,7 @@ export const useAppStore = create<AppState>((set, get) => {
       confirmCloseLiveSession: true,
       askOpenSavedFileInTab: true,
       warnLargePortScan: true,
+      warnLargePingSweep: true,
     },
     savedSettings: {
       version: "1",
@@ -3822,6 +3824,7 @@ export const useAppStore = create<AppState>((set, get) => {
       confirmCloseLiveSession: true,
       askOpenSavedFileInTab: true,
       warnLargePortScan: true,
+      warnLargePingSweep: true,
     },
 
     // Layout

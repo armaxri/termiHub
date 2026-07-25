@@ -312,6 +312,7 @@ export function NetworkToolsSidebar() {
       <div className="network-sidebar__section">
         <div className="network-sidebar__section-title">Quick Actions</div>
         <QuickAction label="Ping Host…" tool="ping" />
+        <QuickAction label="Ping Sweep…" tool="ping-sweep" />
         <QuickAction label="Scan Ports…" tool="port-scanner" />
         <QuickAction label="DNS Lookup…" tool="dns-lookup" />
         <QuickAction label="Wake-on-LAN…" tool="wol" />
