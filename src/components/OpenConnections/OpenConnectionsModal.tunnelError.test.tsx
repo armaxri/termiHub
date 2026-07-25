@@ -31,6 +31,8 @@ if (!Element.prototype.hasPointerCapture) {
 }
 
 vi.mock("@/services/api", () => ({
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
+  focusWindow: vi.fn(() => Promise.resolve()),
   listLocalSessions: vi.fn(() => Promise.resolve([])),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
   closeTerminal: vi.fn(() => Promise.resolve()),
