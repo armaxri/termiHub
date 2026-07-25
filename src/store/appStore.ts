@@ -722,6 +722,16 @@ interface AppState {
    * is consumed once by the source's deferred close.
    */
   movingSessionIds: string[];
+  /**
+   * Session ids whose Transfer Queue rows this window handed off to another
+   * window (#1951). While a session id is in this set, this window's transfer
+   * folds ({@link applyTransferProgress}, {@link applyTransferProgressToQueue})
+   * ignore its broadcast `transfer-progress` events, so a moved-away transfer is
+   * not re-adopted into the source window's queue. Cleared for a session when it
+   * is hydrated back in ({@link hydrateHandoffTab}) or a new local transfer is
+   * seeded for it ({@link seedTransferQueue}).
+   */
+  releasedTransferSessions: string[];
   /** Whether a session is mid-move (read by the source Terminal's unmount cleanup). */
   isSessionMoving: (sessionId: string) => boolean;
   /** Clear a session's moving flag once the source has released its view. */
@@ -2214,6 +2224,87 @@ function serializeHandoffTab(tab: TerminalTab): HandoffTab {
 }
 
 /**
+ * The backend session ids whose transfers belong to `tab` (#1951): the tab's own
+ * `sessionId` (FTP `file-browser` tabs transfer on the tab session directly) plus
+ * every SFTP sidebar session bound to the tab via `sftpSessions[…].owningTabId`
+ * (an SSH tab's SFTP browser runs on a separate session). A Transfer Queue row is
+ * attributed to `tab` when its `sessionId` is in this set, so the rows can follow
+ * the tab across a window move.
+ */
+function tabTransferSessionIds(
+  state: { sftpSessions: Record<string, SftpSessionEntry> },
+  tab: TerminalTab
+): string[] {
+  const ids = new Set<string>();
+  if (tab.sessionId) ids.add(tab.sessionId);
+  for (const [sid, entry] of Object.entries(state.sftpSessions)) {
+    if (entry.owningTabId === tab.id) ids.add(sid);
+  }
+  return [...ids];
+}
+
+/**
+ * Build the hand-off record for `tab`, attaching the Transfer Queue rows that
+ * belong to its session(s) so they follow the tab to the destination window
+ * (#1951). Returns both the record and the transfer session ids, so the caller
+ * can drop the moved rows from the source queue and mark the sessions released.
+ */
+function buildTransferAwareHandoff(
+  state: {
+    sftpSessions: Record<string, SftpSessionEntry>;
+    transferQueue: Record<string, TransferEntry>;
+  },
+  tab: TerminalTab
+): { record: TabHandoffRecord; transferSessionIds: string[]; movedTransferIds: string[] } {
+  const transferSessionIds = tabTransferSessionIds(state, tab);
+  const carried = Object.values(state.transferQueue).filter((t) =>
+    transferSessionIds.includes(t.sessionId)
+  );
+  const record: TabHandoffRecord = {
+    tab: {
+      ...serializeHandoffTab(tab),
+      ...(carried.length ? { transfers: carried } : {}),
+    },
+  };
+  return { record, transferSessionIds, movedTransferIds: carried.map((t) => t.id) };
+}
+
+/**
+ * Source-side state changes when a tab's transfers are handed to another window
+ * (#1951): drop the moved rows from the persistent {@link AppState.transferQueue}
+ * and the transient {@link AppState.transfers} map, and add their session ids to
+ * {@link AppState.releasedTransferSessions} so broadcast progress events can no
+ * longer re-create the rows in this window. Returns a partial state slice.
+ */
+function removeTransferSessionsFromWindow(
+  state: {
+    transferQueue: Record<string, TransferEntry>;
+    transfers: Record<string, TransferState>;
+    releasedTransferSessions: string[];
+  },
+  transferSessionIds: string[],
+  movedTransferIds: string[]
+): Partial<{
+  transferQueue: Record<string, TransferEntry>;
+  transfers: Record<string, TransferState>;
+  releasedTransferSessions: string[];
+}> {
+  if (transferSessionIds.length === 0) return {};
+  const releaseSet = new Set(transferSessionIds);
+  const transferQueue = movedTransferIds.reduce(
+    (acc, id) => (id in acc ? omitKey(acc, id) : acc),
+    state.transferQueue
+  );
+  const transfers = Object.fromEntries(
+    Object.entries(state.transfers).filter(([, t]) => !releaseSet.has(t.sessionId))
+  );
+  const releasedTransferSessions = Array.from(
+    new Set([...state.releasedTransferSessions, ...transferSessionIds])
+  );
+  return { transferQueue, transfers, releasedTransferSessions };
+}
+
+/**
  * Remove a tab from a leaf panel, choosing a new active tab if needed.
  * Returns the updated leaf (may have empty tabs).
  */
@@ -2638,6 +2729,7 @@ export const useAppStore = create<AppState>((set, get) => {
 
     // ── Multi-window foundation (#1900) ──
     movingSessionIds: [],
+    releasedTransferSessions: [],
     isSessionMoving: (sessionId) => get().movingSessionIds.includes(sessionId),
     clearMovingSession: (sessionId) =>
       set((state) => ({
@@ -2650,7 +2742,12 @@ export const useAppStore = create<AppState>((set, get) => {
       const tab = sourceLeaf?.tabs.find((t) => t.id === tabId);
       if (!tab) return;
 
-      const record: TabHandoffRecord = { tab: serializeHandoffTab(tab) };
+      // Carry this tab's Transfer Queue rows so its transfers follow the tab to
+      // the destination window rather than staying orphaned here (#1951).
+      const { record, transferSessionIds, movedTransferIds } = buildTransferAwareHandoff(
+        get(),
+        tab
+      );
       const sessionId = tab.sessionId;
 
       // Mark the live session as moving so the source window's Terminal does NOT
@@ -2701,7 +2798,20 @@ export const useAppStore = create<AppState>((set, get) => {
             ? { ...g, rootPanel: newRootPanel, activePanelId: newActivePanelId }
             : g
         );
-        return { rootPanel: newRootPanel, tabGroups, activePanelId: newActivePanelId };
+        // Drop the moved tab's transfer rows and mark its sessions released so
+        // ongoing broadcast `transfer-progress` events do not re-adopt them here
+        // (#1951). The destination window seeds the carried rows on hydrate.
+        const transferMoved = removeTransferSessionsFromWindow(
+          state,
+          transferSessionIds,
+          movedTransferIds
+        );
+        return {
+          rootPanel: newRootPanel,
+          tabGroups,
+          activePanelId: newActivePanelId,
+          ...transferMoved,
+        };
       });
     },
 
@@ -2738,7 +2848,31 @@ export const useAppStore = create<AppState>((set, get) => {
         const tabGroups = state.tabGroups.map((g) =>
           g.id === state.activeTabGroupId ? { ...g, rootPanel: newRootPanel } : g
         );
-        return { rootPanel: newRootPanel, tabGroups, activePanelId: targetLeaf.id };
+
+        // Seed the transfers carried with the tab so they follow it into this
+        // window's queue (#1951). Existing rows win over carried ones — a
+        // broadcast event that already advanced a row here must not be clobbered
+        // by the (possibly staler) carried snapshot. The carried sessions are
+        // un-released so this window resumes folding their live progress events.
+        const carried = h.transfers ?? [];
+        const transferQueue = carried.length
+          ? { ...Object.fromEntries(carried.map((t) => [t.id, t])), ...state.transferQueue }
+          : state.transferQueue;
+        const unrelease = new Set(
+          [h.sessionId, ...carried.map((t) => t.sessionId)].filter((id): id is string => !!id)
+        );
+        const releasedTransferSessions =
+          unrelease.size > 0
+            ? state.releasedTransferSessions.filter((id) => !unrelease.has(id))
+            : state.releasedTransferSessions;
+
+        return {
+          rootPanel: newRootPanel,
+          tabGroups,
+          activePanelId: targetLeaf.id,
+          transferQueue,
+          releasedTransferSessions,
+        };
       }),
 
     receivePendingHandoffs: async () => {
@@ -2907,7 +3041,14 @@ export const useAppStore = create<AppState>((set, get) => {
         movingSessionIds: Array.from(new Set([...state.movingSessionIds, ...sessionIds])),
       }));
 
-      const records: TabHandoffRecord[] = tabs.map((tab) => ({ tab: serializeHandoffTab(tab) }));
+      // Carry each tab's Transfer Queue rows so its transfers follow it to the
+      // destination window rather than being lost when this window closes
+      // (#1951). This window is being emptied/torn down, so no source-side
+      // removal is needed — only the destination must receive them.
+      const state = get();
+      const records: TabHandoffRecord[] = tabs.map(
+        (tab) => buildTransferAwareHandoff(state, tab).record
+      );
       try {
         if (target.kind === "new") {
           // Create the destination window seeded with the first tab, then queue
@@ -4999,6 +5140,10 @@ export const useAppStore = create<AppState>((set, get) => {
 
     applyTransferProgress: (progress: TransferState) =>
       set((state) => {
+        // A transfer whose session this window handed to another window (#1951)
+        // is no longer ours: ignore its broadcast progress so a moved-away row is
+        // not re-created here.
+        if (state.releasedTransferSessions.includes(progress.sessionId)) return {};
         // A terminal phase clears the row (D1 already removed any partial local
         // file on cancel/error). done/error toasts are the D2 follow-up.
         if (progress.phase !== "transferring") {
@@ -5053,6 +5198,9 @@ export const useAppStore = create<AppState>((set, get) => {
 
     applyTransferProgressToQueue: (progress: TransferProgress) =>
       set((state) => {
+        // Ignore transfers whose session was handed to another window (#1951) so
+        // a moved-away queue row is not re-adopted from a broadcast event.
+        if (state.releasedTransferSessions.includes(progress.sessionId)) return {};
         const prev = state.transferQueue[progress.transferId];
         const entry = transferEntryFromProgress(progress, prev, Date.now());
         return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
@@ -5063,7 +5211,15 @@ export const useAppStore = create<AppState>((set, get) => {
         // Idempotent: never overwrite a row an event already advanced (#1632).
         if (seed.id in state.transferQueue) return {};
         const entry = transferEntryFromSeed(seed, Date.now());
-        return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
+        // Starting a transfer for a session here means this window owns it again,
+        // so clear any stale "released" mark from a prior hand-off (#1951).
+        const releasedTransferSessions = state.releasedTransferSessions.includes(seed.sessionId)
+          ? state.releasedTransferSessions.filter((id) => id !== seed.sessionId)
+          : state.releasedTransferSessions;
+        return {
+          transferQueue: { ...state.transferQueue, [entry.id]: entry },
+          releasedTransferSessions,
+        };
       }),
 
     reconcileTransferQueue: (snapshots: TransferSnapshot[]) =>

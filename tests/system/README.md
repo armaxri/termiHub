@@ -122,6 +122,47 @@ python scripts/build-testid-catalog.py            # rewrite the local catalog
 python scripts/build-testid-catalog.py --stdout    # print without writing
 ```
 
+## Test inventory & coverage gaps
+
+The testid catalog answers _"does this selector exist?"_. It does **not** answer
+_"what do we verify for feature X (automated **and** manual), and which features
+have **zero** coverage?"_ — the harness is discoverable only by the
+`test_<feature>.py` filename convention plus `pytest --collect-only`, with just
+the `integration` / `manual` markers. `scripts/build-test-inventory.py` builds
+that missing **test → feature** map (#1950).
+
+It **statically introspects** the test modules with the stdlib `ast` module (the
+same stdlib-only approach as the testid catalog) rather than importing them, so
+it runs anywhere — no `.venv`, no dependencies, no app build. It emits Markdown +
+JSON at `tests/system/test-inventory.{md,json}` (local, git-ignored artifacts,
+regenerated — never committed, for the same per-branch staleness reason as the
+testid catalog, #1528):
+
+```sh
+python scripts/build-test-inventory.py            # rewrite the local .md + .json
+python scripts/build-test-inventory.py --stdout    # print markdown, no write
+python scripts/build-test-inventory.py --json      # print json, no write
+```
+
+Each test is mapped to:
+
+- **feature** (category) — the `test_<feature>.py` filename stem, or an explicit
+  `@pytest.mark.category("ssh")` override on the test / class / module
+  `pytestmark` (use it to roll several files up under one feature, e.g. the
+  `test_ssh_*.py` suites under `ssh`).
+- **lane** — `manual` when the `manual` marker applies, else `automated`.
+- **platforms** — `linux` / `macos` / `windows`; narrowed (best-effort) from a
+  recognized `skipif` gate such as `skip_on_non_windows` or
+  `sys.platform == 'darwin'`.
+
+The **"Features with no coverage"** section flags entries in the generator's
+curated `FEATURE_AREAS` map that have **no** automated and **no** manual test —
+that map is the source of truth for _"what features do we track"_, so add a row
+there when you add a feature. A **"Categories not mapped to a feature area"**
+section guards against the map drifting behind new suites. The report also runs
+as an advisory, **non-blocking** CI step (it never fails the build on a gap).
+Grouping/gap logic is unit-tested in `tests/test_test_inventory.py`.
+
 ## Setup (manual, if you prefer)
 
 ```sh

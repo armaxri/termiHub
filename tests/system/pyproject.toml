@@ -31,4 +31,5 @@ testpaths = ["tests"]
 markers = [
     "integration: launches the real built app/agent (needs `pnpm tauri build`)",
     "manual: guided-manual test — automated setup then an operator prompt (skipped unless --manual + TTY)",
+    "category: optional feature-category override for the test inventory (scripts/build-test-inventory.py); e.g. @pytest.mark.category(\"ssh\")",
 ]
