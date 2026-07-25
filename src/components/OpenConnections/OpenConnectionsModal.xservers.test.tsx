@@ -14,6 +14,8 @@ import type { XServerStatusReport } from "@/types/xserver";
 const xServerStatus = vi.fn<() => Promise<XServerStatusReport>>();
 const xServerStop = vi.fn(() => Promise.resolve());
 vi.mock("@/services/api", () => ({
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
+  focusWindow: vi.fn(() => Promise.resolve()),
   listLocalSessions: vi.fn(() => Promise.resolve([])),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
   closeTerminal: vi.fn(() => Promise.resolve()),

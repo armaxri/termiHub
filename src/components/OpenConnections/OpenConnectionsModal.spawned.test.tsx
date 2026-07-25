@@ -22,6 +22,8 @@ const closeTerminal = vi.fn((_id: string) => Promise.resolve());
 const listLocalSessions = vi.fn<() => Promise<LocalSessionInfo[]>>();
 
 vi.mock("@/services/api", () => ({
+  listSessionOwners: vi.fn(() => Promise.resolve({})),
+  focusWindow: vi.fn(() => Promise.resolve()),
   listLocalSessions: () => listLocalSessions(),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
   closeTerminal: (id: string) => closeTerminal(id),
