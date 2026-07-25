@@ -143,6 +143,37 @@ describe("resolveBroadcastTargetTabIds (#1956)", () => {
     seed(leaf("leaf-1", [makeTab({ id: "src" })]));
     expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "panel", "ghost")).toEqual([]);
   });
+
+  it("resolves within the source's OWN group, not the active group (#1980)", () => {
+    // Regression: a source in a non-active tab group must resolve targets in ITS
+    // group's tree — never the active group's — so broadcast input can't silently
+    // reach a terminal in a different, invisible group.
+    const groupA = leaf("leaf-A", [
+      makeTab({ id: "srcA", panelId: "leaf-A" }),
+      makeTab({ id: "a2", panelId: "leaf-A" }),
+    ]);
+    const groupB = leaf("leaf-B", [makeTab({ id: "b1", panelId: "leaf-B" })]);
+    useAppStore.setState({
+      // Active group is B; its live tree is `rootPanel`. Group A is inactive and
+      // keeps its tree in `group.rootPanel`.
+      activeTabGroupId: "gB",
+      rootPanel: groupB,
+      activePanelId: "leaf-B",
+      tabGroups: [
+        { id: "gA", name: "A", rootPanel: groupA, activePanelId: "leaf-A" },
+        { id: "gB", name: "B", rootPanel: groupB, activePanelId: "leaf-B" },
+      ],
+    });
+    // Source lives in the INACTIVE group A → targets are A's terminals only.
+    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "all", "srcA").sort()).toEqual([
+      "a2",
+      "srcA",
+    ]);
+    // The active group B's terminal is never pulled in for a source in A.
+    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "all", "srcA")).not.toContain("b1");
+    // And a source in the active group B resolves B's terminals only.
+    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "all", "b1")).toEqual(["b1"]);
+  });
 });
 
 describe("refreshBroadcastMembership — dynamic add on open (#1956)", () => {

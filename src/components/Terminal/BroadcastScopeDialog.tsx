@@ -49,8 +49,17 @@ export function BroadcastScopeDialog({
   sourceTabId,
 }: BroadcastScopeDialogProps) {
   const rootPanel = useAppStore((s) => s.rootPanel);
+  const tabGroups = useAppStore((s) => s.tabGroups);
+  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   const lastBroadcastScope = useAppStore((s) => s.lastBroadcastScope);
   const startBroadcast = useAppStore((s) => s.startBroadcast);
+
+  // Resolve broadcast membership against the source's own group tree (#1980),
+  // not just the active `rootPanel`.
+  const resolveState = useMemo(
+    () => ({ tabGroups, activeTabGroupId, rootPanel }),
+    [tabGroups, activeTabGroupId, rootPanel]
+  );
 
   const [scope, setScope] = useState<BroadcastScope>(lastBroadcastScope);
   const [customSelected, setCustomSelected] = useState<Set<string>>(new Set());
@@ -76,14 +85,13 @@ export function BroadcastScopeDialog({
   }, [open, lastBroadcastScope, terminalTabs]);
 
   const allCount = useMemo(
-    () =>
-      sourceTabId ? resolveBroadcastTargetTabIds({ rootPanel }, "all", sourceTabId).length : 0,
-    [rootPanel, sourceTabId]
+    () => (sourceTabId ? resolveBroadcastTargetTabIds(resolveState, "all", sourceTabId).length : 0),
+    [resolveState, sourceTabId]
   );
   const panelCount = useMemo(
     () =>
-      sourceTabId ? resolveBroadcastTargetTabIds({ rootPanel }, "panel", sourceTabId).length : 0,
-    [rootPanel, sourceTabId]
+      sourceTabId ? resolveBroadcastTargetTabIds(resolveState, "panel", sourceTabId).length : 0,
+    [resolveState, sourceTabId]
   );
 
   const scopeOptions = useMemo(
@@ -102,8 +110,8 @@ export function BroadcastScopeDialog({
       const terminalIds = new Set(terminalTabs.map((t) => t.id));
       return [...customSelected].filter((id) => terminalIds.has(id));
     }
-    return resolveBroadcastTargetTabIds({ rootPanel }, scope, sourceTabId);
-  }, [scope, sourceTabId, rootPanel, customSelected, terminalTabs]);
+    return resolveBroadcastTargetTabIds(resolveState, scope, sourceTabId);
+  }, [scope, sourceTabId, resolveState, customSelected, terminalTabs]);
 
   const canStart = sourceTabId !== null && resolvedTargets.length > 0;
 
