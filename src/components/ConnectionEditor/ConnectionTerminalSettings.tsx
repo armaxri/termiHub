@@ -313,6 +313,42 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
       </label>
 
       <div className="settings-form__field">
+        <span className="settings-form__label">Log Session Output</span>
+        <Toggle
+          checked={options.logToFile ?? false}
+          onCheckedChange={(v) =>
+            onChange({
+              ...options,
+              logToFile: v || undefined,
+              // Drop the timestamp sub-option when logging is turned off so the
+              // connection does not persist a dangling override.
+              logTimestamps: v ? options.logTimestamps : undefined,
+            })
+          }
+          aria-label="Log Session Output"
+          data-testid="connection-log-to-file"
+        />
+        <span className="settings-form__hint">
+          Write this connection&rsquo;s session output to a file on connect (
+          <code>&lt;connection&gt;-&lt;timestamp&gt;.log</code>). The terminal toolbar can also
+          start and stop logging on demand.
+        </span>
+      </div>
+
+      {options.logToFile ? (
+        <div className="settings-form__field">
+          <span className="settings-form__label">Timestamp Each Line</span>
+          <Toggle
+            checked={options.logTimestamps ?? false}
+            onCheckedChange={(v) => onChange({ ...options, logTimestamps: v || undefined })}
+            aria-label="Timestamp Each Line"
+            data-testid="connection-log-timestamps"
+          />
+          <span className="settings-form__hint">Prefix each logged line with a timestamp.</span>
+        </div>
+      ) : null}
+
+      <div className="settings-form__field">
         <span className="settings-form__label">Cursor Blink</span>
         <Toggle
           checked={options.cursorBlink ?? globalCursorBlink}

@@ -316,9 +316,11 @@ mod tests {
     fn per_line_timestamps_prefix_each_line() {
         let dir = temp_dir();
         let path = dir.join("ts.log");
-        let mut logger =
-            SessionLogger::open(SessionLogConfig::new(&path, true), fixed_clock("2026-07-25"))
-                .unwrap();
+        let mut logger = SessionLogger::open(
+            SessionLogConfig::new(&path, true),
+            fixed_clock("2026-07-25"),
+        )
+        .unwrap();
         logger.write(b"first\nsecond\n").unwrap();
         logger.flush().unwrap();
 

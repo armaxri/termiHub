@@ -471,6 +471,43 @@ export async function setSessionLineEnding(
   await invoke("set_session_line_ending", { sessionId, lineEnding });
 }
 
+/** Status of a session's output-to-file logging (#1960). */
+export interface SessionLogStatus {
+  /** Absolute path of the active transcript file. */
+  path: string;
+  /** Whether each line is prefixed with a timestamp. */
+  timestamps: boolean;
+}
+
+/**
+ * Start writing a session's output to a file (#1960).
+ *
+ * When `path` is omitted the backend picks a default
+ * `<connection>-<timestamp>.log` under the platform log directory. When
+ * `timestamps` is true each line is prefixed with a wall-clock stamp. Resolves
+ * to the transcript path actually used.
+ */
+export async function sessionLoggingStart(
+  sessionId: SessionId,
+  path?: string,
+  timestamps?: boolean
+): Promise<string> {
+  return await invoke<string>("session_logging_start", { sessionId, path, timestamps });
+}
+
+/**
+ * Stop writing a session's output to a file (#1960). Resolves to the transcript
+ * path if logging was active, else `null`.
+ */
+export async function sessionLoggingStop(sessionId: SessionId): Promise<string | null> {
+  return await invoke<string | null>("session_logging_stop", { sessionId });
+}
+
+/** Current logging status for a session, or `null` when not logging (#1960). */
+export async function sessionLoggingStatus(sessionId: SessionId): Promise<SessionLogStatus | null> {
+  return await invoke<SessionLogStatus | null>("session_logging_status", { sessionId });
+}
+
 /** Resize a terminal session */
 export async function resizeTerminal(
   sessionId: SessionId,
