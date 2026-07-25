@@ -34,6 +34,7 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab, isWindowEmpty } from "@/utils/panelTree";
+import { broadcastPanelClass } from "@/utils/broadcastPanel";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { isWindows, isMac } from "@/utils/platform";
 import { usePaneFileDrop } from "@/hooks/usePaneFileDrop";
@@ -593,15 +594,11 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const broadcastActive = useAppStore((s) => s.broadcastActive);
   const broadcastSourceTabId = useAppStore((s) => s.broadcastSourceTabId);
   const broadcastTargetTabIds = useAppStore((s) => s.broadcastTargetTabIds);
-  const activeTabId = panel.activeTabId;
-  const broadcastPanelClass =
-    broadcastActive && activeTabId
-      ? activeTabId === broadcastSourceTabId
-        ? " panel--broadcast-source"
-        : broadcastTargetTabIds.has(activeTabId)
-          ? " panel--broadcast-target"
-          : ""
-      : "";
+  const panelBroadcastClass = broadcastPanelClass(panel.activeTabId, {
+    broadcastActive,
+    broadcastSourceTabId,
+    broadcastTargetTabIds,
+  });
 
   const {
     clearTerminal,
@@ -654,7 +651,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
 
   return (
     <div
-      className={`split-view__panel-content${broadcastPanelClass}`}
+      className={`split-view__panel-content${panelBroadcastClass ? ` ${panelBroadcastClass}` : ""}`}
       data-testid={`panel-content-${panel.id}`}
       onClick={() => setActivePanel(panel.id)}
     >
