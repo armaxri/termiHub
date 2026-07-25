@@ -13,7 +13,7 @@
  *
  * The decision surface (`CloseWindowDecisionDialog`) appears only when something
  * would actually be lost — i.e. at least one `terminate`. See
- * `docs/concepts/backlog/multi-window.html` → "Closing a window that owns live
+ * `docs/concepts/implemented/multi-window.html` → "Closing a window that owns live
  * tabs".
  */
 

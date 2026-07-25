@@ -478,21 +478,33 @@
       <header class="concept-header">
         <h1>Multi-Window Support</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span
-            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/1806">#1806</a></span
+            >GitHub Issue: epic
+            <a href="https://github.com/armaxri/termiHub/issues/1899">#1899</a> (children
+            <a href="https://github.com/armaxri/termiHub/issues/1900">#1900</a>,
+            <a href="https://github.com/armaxri/termiHub/issues/1901">#1901</a>,
+            <a href="https://github.com/armaxri/termiHub/issues/1902">#1902</a>,
+            <a href="https://github.com/armaxri/termiHub/issues/1903">#1903</a>,
+            <a href="https://github.com/armaxri/termiHub/issues/1904">#1904</a>,
+            <a href="https://github.com/armaxri/termiHub/issues/1905">#1905</a>,
+            <a href="https://github.com/armaxri/termiHub/issues/1910">#1910</a>,
+            <a href="https://github.com/armaxri/termiHub/issues/1925">#1925</a>,
+            <a href="https://github.com/armaxri/termiHub/issues/1926">#1926</a>,
+            <a href="https://github.com/armaxri/termiHub/issues/1939">#1939</a>)</span
           >
-          <span><code>docs/concepts/backlog/multi-window.html</code></span>
+          <span><code>docs/concepts/implemented/multi-window.html</code></span>
         </div>
       </header>
 
       <blockquote>
         <p>
-          <strong>Two-step concept.</strong> This document is <strong>step 1</strong> — the
-          <em>technical</em> concept and honest limitations, authored by an engineer against the
-          real codebase. <strong>Step 2</strong> (a UX designer) adds the interaction design and
-          inline mockups where the <code>MOCKUPS</code> placeholder appears in
-          <a href="#ui">UI Interface</a>. Nothing here is an implementation commitment.
+          <strong>Implemented.</strong> This concept shipped under epic
+          <a href="https://github.com/armaxri/termiHub/issues/1899">#1899</a> (children #1900–#1905,
+          #1910, #1925, #1926, #1939). It began as a <strong>two-step concept</strong> — step 1 the
+          <em>technical</em> concept and honest limitations, step 2 the interaction design and
+          inline mockups in <a href="#ui">UI Interface</a> — and the design below is the delivered
+          feature. See the <a href="#sync">Sync Ledger</a> for what landed and what stays deferred.
         </p>
       </blockquote>
 
@@ -2069,8 +2081,9 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged
-          (by design — concept only)
+          <strong>Last synced:</strong> at promotion to <code>implemented/</code> ·
+          <strong>Status:</strong> implemented (epic #1899 closed; children #1900–#1905, #1910,
+          #1925, #1926, #1939 merged)
         </p>
         <div class="table-wrap">
           <table>
@@ -2088,39 +2101,85 @@ sequenceDiagram
                 <td>1</td>
                 <td>Multiple application windows</td>
                 <td>
-                  Single <code>"main"</code> window; no <code>WebviewWindowBuilder</code> in
-                  production
+                  <code>WindowManager</code> (<code>src-tauri/src/window/mod.rs</code>) creates
+                  labelled <code>WebviewWindow</code>s (<code>win-N</code>) with a session↔window
+                  ownership map
                 </td>
-                <td>Missing</td>
-                <td>Implement per this concept, then re-sync</td>
+                <td>Implemented</td>
+                <td>Landed in #1900 (foundation); windows own sessions</td>
               </tr>
               <tr>
                 <td>2</td>
                 <td>Cross-window tab move (session survives)</td>
                 <td>
-                  Backend session survival + detach/re-attach replay already exist; no cross-window
-                  plumbing
+                  View re-parenting seam reuses the detach/re-attach replay path; Move to New Window
+                  / Move to Window ▸ N commands ship
                 </td>
-                <td>Partial substrate</td>
-                <td>Reuse existing replay/adopt path; add window ownership + hand-off</td>
+                <td>Implemented</td>
+                <td>Landed in #1900/#1901 (+ #1910 picker, #1904 graphical, #1939 ownership)</td>
               </tr>
               <tr>
                 <td>3</td>
                 <td>Drag a tab between windows</td>
                 <td><code>@dnd-kit</code> single-document; no cross-window drag</td>
-                <td>Constraint</td>
-                <td>Ship as command; drag gesture is an open research item</td>
+                <td>Deferred (constraint)</td>
+                <td>Shipped as commands; drag-to-tear gesture stays a future enhancement</td>
               </tr>
               <tr>
                 <td>4</td>
                 <td>Window layout persists across restart</td>
-                <td>No window field in <code>WorkspaceDefinition</code> / last-session</td>
-                <td>Missing</td>
-                <td>Add window-assignment dimension to persistence schema</td>
+                <td>
+                  Window dimension added to workspace / last-session persistence; secondary windows
+                  spawn + hydrate on restore
+                </td>
+                <td>Implemented</td>
+                <td>Landed in #1905 (schema) / #1925 (restore)</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>Editor (Monaco) dirty-state moves with the tab</td>
+                <td>Unsaved buffer + cursor live in the source window's Monaco</td>
+                <td>Deferred</td>
+                <td>v1 restricts editor moves to saved files; dirty-state transfer deferred</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>Transfer-queue ownership scoped to the owning window on move</td>
+                <td>Transfer Queue is app-scoped; not yet re-scoped to the moved-to window</td>
+                <td>Deferred</td>
+                <td>Tracked in #1951</td>
               </tr>
             </tbody>
           </table>
         </div>
+
+        <h3>Resolved decisions &amp; deferred items</h3>
+        <ul>
+          <li>
+            <strong>Resolved — windows own sessions.</strong> The open question "do windows map onto
+            tab groups?" was settled in favour of a backend-brokered
+            <code>session → window</code> ownership map (<code>WindowManager</code>): a window owns
+            the sessions currently rendered in it, and #1939 extended ownership to non-handoff
+            sessions so the Open Connections window badge covers every session.
+          </li>
+          <li>
+            <strong>Still deferred — drag-to-tear gesture.</strong> Tearing/moving tabs ships as
+            commands (Move to New Window / Move to Window ▸ N). A cross-window drag gesture remains
+            a future enhancement (blocked by <code>@dnd-kit</code> single-document + no Tauri
+            webview→webview drag).
+          </li>
+          <li>
+            <strong>Still deferred — editor dirty-state transfer.</strong> Moving a Monaco editor
+            tab is restricted to saved files in v1; transferring an unsaved buffer + cursor across
+            the window boundary is not yet built.
+          </li>
+          <li>
+            <strong>Still deferred — transfer-queue ownership on move.</strong> The shared Transfer
+            Queue is app-scoped; scoping its ownership to the owning window when an SFTP/FTP tab
+            with in-flight transfers moves is tracked in
+            <a href="https://github.com/armaxri/termiHub/issues/1951">#1951</a>.
+          </li>
+        </ul>
       </section>
     </div>
 
