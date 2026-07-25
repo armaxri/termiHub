@@ -701,3 +701,25 @@
   color: var(--text-secondary);
   cursor: pointer;
 }
+
+/* Variant-driven title accent icon (see ConfirmDialogVariant). */
+.ui-confirm__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.ui-confirm__title-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  /* `default` (caller-supplied glyph) inherits the title text colour. */
+  color: inherit;
+}
+
+.ui-confirm__title-icon--danger {
+  color: var(--color-error);
+}
+
+.ui-confirm__title-icon--warn {
+  color: var(--color-warning);
+}

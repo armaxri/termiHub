@@ -239,6 +239,7 @@ export function WolPanel() {
       <ConfirmDialog
         open={saveModalOpen}
         title="Save Wake-on-LAN Device"
+        icon={<Save size={16} />}
         confirmLabel="Save"
         confirmVariant="primary"
         confirmDisabled={!canSaveDevice}

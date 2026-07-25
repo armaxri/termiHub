@@ -948,6 +948,8 @@ pub fn run() {
             commands::window::claim_session,
             commands::window::release_session,
             commands::window::get_session_owner,
+            commands::window::list_session_owners,
+            commands::window::focus_window,
             commands::window::list_windows,
             commands::window::report_window_tab_count,
             commands::window::report_window_layout,

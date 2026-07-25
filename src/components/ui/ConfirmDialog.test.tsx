@@ -219,6 +219,106 @@ describe("ConfirmDialog", () => {
     expect(onChange).toHaveBeenCalledWith(true);
   });
 
+  describe("title accent icon (per variant)", () => {
+    /** The title accent-icon wrapper, or null when the variant renders none. */
+    function titleIcon(base = "confirm-dialog"): HTMLElement | null {
+      return document.querySelector(`[data-testid="${base}-title-icon"]`);
+    }
+
+    it("renders no accent icon for the default variant", () => {
+      render(<ConfirmDialog open title="T" message="M" onConfirm={vi.fn()} onCancel={vi.fn()} />);
+      expect(titleIcon()).toBeNull();
+    });
+
+    it("renders a danger-tinted alert triangle for variant=danger", () => {
+      render(
+        <ConfirmDialog
+          open
+          variant="danger"
+          title="Delete"
+          message="M"
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      );
+      const icon = titleIcon();
+      expect(icon).toBeTruthy();
+      expect(icon!.classList.contains("ui-confirm__title-icon--danger")).toBe(true);
+      expect(icon!.querySelector("svg")?.classList.contains("lucide-triangle-alert")).toBe(true);
+    });
+
+    it("renders a warning-tinted alert triangle for variant=warn", () => {
+      render(
+        <ConfirmDialog
+          open
+          variant="warn"
+          title="Large scan"
+          message="M"
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      );
+      const icon = titleIcon();
+      expect(icon).toBeTruthy();
+      expect(icon!.classList.contains("ui-confirm__title-icon--warn")).toBe(true);
+      expect(icon!.querySelector("svg")?.classList.contains("lucide-triangle-alert")).toBe(true);
+    });
+
+    // The WoL "save device" case: a default-variant dialog with a caller icon.
+    it("renders a caller-supplied icon untinted on the default variant", () => {
+      render(
+        <ConfirmDialog
+          open
+          title="Save Wake-on-LAN Device"
+          icon={<svg data-testid="my-icon" />}
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+        >
+          <input data-testid="body-field" />
+        </ConfirmDialog>
+      );
+      const icon = titleIcon();
+      expect(icon).toBeTruthy();
+      expect(icon!.classList.contains("ui-confirm__title-icon--default")).toBe(true);
+      expect(icon!.querySelector('[data-testid="my-icon"]')).toBeTruthy();
+    });
+
+    // A caller icon overrides the variant's default glyph but keeps the tint.
+    it("lets a caller icon override the variant default icon while keeping the tint", () => {
+      render(
+        <ConfirmDialog
+          open
+          variant="danger"
+          title="Delete"
+          message="M"
+          icon={<svg data-testid="my-icon" />}
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      );
+      const icon = titleIcon();
+      expect(icon!.classList.contains("ui-confirm__title-icon--danger")).toBe(true);
+      expect(icon!.querySelector('[data-testid="my-icon"]')).toBeTruthy();
+      expect(icon!.querySelector(".lucide-triangle-alert")).toBeNull();
+    });
+
+    it("derives the title-icon test id from testIdBase", () => {
+      render(
+        <ConfirmDialog
+          open
+          variant="danger"
+          title="Delete"
+          message="M"
+          testIdBase="confirm-delete"
+          onConfirm={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      );
+      expect(titleIcon("confirm-delete")).toBeTruthy();
+      expect(titleIcon("confirm-dialog")).toBeNull();
+    });
+  });
+
   // WAI-ARIA: Space activates a checkbox, Enter does not. Enter inside the
   // dialog stays the confirm shortcut rather than ticking the opt-out.
   it("confirms rather than ticking the opt-out when Enter is pressed on it", () => {
