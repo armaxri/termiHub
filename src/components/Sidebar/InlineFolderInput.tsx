@@ -38,7 +38,7 @@ export function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderIn
       />
       <Tooltip content="Confirm" side="top">
         <button
-          className="connection-tree__inline-btn"
+          className="connection-tree__inline"
           onMouseDown={(e) => {
             e.preventDefault();
             if (name.trim()) onConfirm(name.trim());
@@ -51,7 +51,7 @@ export function InlineFolderInput({ depth, onConfirm, onCancel }: InlineFolderIn
       </Tooltip>
       <Tooltip content="Cancel" side="top">
         <button
-          className="connection-tree__inline-btn"
+          className="connection-tree__inline"
           onMouseDown={(e) => {
             e.preventDefault();
             onCancel();

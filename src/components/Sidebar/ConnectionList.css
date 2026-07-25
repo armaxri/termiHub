@@ -239,7 +239,7 @@
   outline: none;
 }
 
-.connection-tree__inline-btn {
+.connection-tree__inline {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -250,7 +250,7 @@
   color: var(--text-secondary);
 }
 
-.connection-tree__inline-btn:hover {
+.connection-tree__inline:hover {
   color: var(--text-primary);
   background-color: var(--bg-hover);
 }
@@ -347,7 +347,7 @@
   width: 100%;
 }
 
-.connection-tree__connect-btn {
+.connection-tree__connect {
   position: absolute;
   right: var(--spacing-sm);
   display: flex;
@@ -365,13 +365,13 @@
     opacity var(--transition-fast);
 }
 
-.connection-tree__item-row:hover .connection-tree__connect-btn,
-.connection-tree__item-row:focus-within .connection-tree__connect-btn {
+.connection-tree__item-row:hover .connection-tree__connect,
+.connection-tree__item-row:focus-within .connection-tree__connect {
   opacity: 1;
   pointer-events: auto;
 }
 
-.connection-tree__connect-btn:hover {
+.connection-tree__connect:hover {
   color: var(--accent-color);
   background-color: var(--bg-hover);
 }
@@ -383,7 +383,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .connection-tree__connect-btn {
+  .connection-tree__connect {
     transition: none;
   }
 }
@@ -508,7 +508,7 @@
   display: flex;
 }
 
-.connection-tree__action-btn {
+.connection-tree__action {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -525,12 +525,12 @@
     color var(--transition-fast);
 }
 
-.connection-tree__action-btn:hover {
+.connection-tree__action:hover {
   background-color: var(--bg-hover);
   color: var(--text-primary);
 }
 
-.connection-tree__action-btn--danger:hover {
+.connection-tree__action--danger:hover {
   background-color: color-mix(in srgb, var(--color-error) 15%, transparent);
   color: var(--color-error);
 }

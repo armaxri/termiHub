@@ -73,7 +73,7 @@
   gap: 8px;
 }
 
-.tunnel-editor__type-btn {
+.tunnel-editor__type-option {
   flex: 1;
   padding: 8px 12px;
   border: 1px solid var(--border-color);
@@ -88,22 +88,22 @@
     background 0.15s;
 }
 
-.tunnel-editor__type-btn:hover {
+.tunnel-editor__type-option:hover {
   background: var(--bg-hover);
 }
 
-.tunnel-editor__type-btn--active {
+.tunnel-editor__type-option--active {
   border-color: var(--accent-color);
   color: var(--text-primary);
   background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-secondary));
 }
 
-.tunnel-editor__type-btn-title {
+.tunnel-editor__type-option-title {
   font-weight: 600;
   display: block;
 }
 
-.tunnel-editor__type-btn-desc {
+.tunnel-editor__type-option-desc {
   font-size: 11px;
   color: var(--text-secondary);
   margin-top: 2px;

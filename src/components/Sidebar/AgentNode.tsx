@@ -263,7 +263,7 @@ function AgentConnectionItem({
                 <Tooltip content="Start session" side="top">
                   <button
                     type="button"
-                    className="connection-tree__action-btn"
+                    className="connection-tree__action"
                     aria-label="Start session"
                     data-testid={`persistent-start-${definition.id}`}
                     onClick={(e) => {
@@ -279,7 +279,7 @@ function AgentConnectionItem({
                   <Tooltip content="Attach new tab" side="top">
                     <button
                       type="button"
-                      className="connection-tree__action-btn"
+                      className="connection-tree__action"
                       aria-label="Attach new tab"
                       data-testid={`persistent-attach-${definition.id}`}
                       onClick={(e) => {
@@ -293,7 +293,7 @@ function AgentConnectionItem({
                   <Tooltip content="Stop session" side="top">
                     <button
                       type="button"
-                      className="connection-tree__action-btn connection-tree__action-btn--danger"
+                      className="connection-tree__action connection-tree__action--danger"
                       aria-label="Stop session"
                       data-testid={`persistent-stop-${definition.id}`}
                       onClick={(e) => {
@@ -1203,22 +1203,24 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
             {isConnected && (
               <div className="connection-list__group-actions">
                 <Tooltip content="New Folder" side="top">
-                  <button
-                    className="connection-list__add-btn"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<FolderPlus size={16} />}
                     onClick={() => setCreatingFolder(true)}
                     aria-label="New Folder"
-                  >
-                    <FolderPlus size={16} />
-                  </button>
+                  />
                 </Tooltip>
                 <Tooltip content="New Connection" side="top">
-                  <button
-                    className="connection-list__add-btn"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<Plus size={16} />}
                     onClick={() => handleNewConnection(null)}
                     aria-label="New Connection"
-                  >
-                    <Plus size={16} />
-                  </button>
+                  />
                 </Tooltip>
                 {/* Two distinct teardown intents (G9, #1237). Detach keeps the
                     remote sessions running; Shutdown stops them. Both go through
@@ -1251,14 +1253,15 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
               // context menu (G1, #1235).
               <div className="connection-list__group-actions">
                 <Tooltip content="Cancel Connect" side="top">
-                  <button
-                    className="connection-list__add-btn"
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<XCircle size={16} />}
                     onClick={() => void handleCancelConnect()}
                     aria-label="Cancel Connect"
                     data-testid={`agent-cancel-connect-${agent.id}`}
-                  >
-                    <XCircle size={16} />
-                  </button>
+                  />
                 </Tooltip>
               </div>
             )}

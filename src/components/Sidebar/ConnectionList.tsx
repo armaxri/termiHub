@@ -444,7 +444,7 @@ function ConnectionItem({
                     <Tooltip content="Start session" side="top">
                       <button
                         type="button"
-                        className="connection-tree__action-btn"
+                        className="connection-tree__action"
                         aria-label="Start session"
                         data-testid={`persistent-start-${connection.id}`}
                         onClick={(e) => {
@@ -460,7 +460,7 @@ function ConnectionItem({
                       <Tooltip content="Attach new tab" side="top">
                         <button
                           type="button"
-                          className="connection-tree__action-btn"
+                          className="connection-tree__action"
                           aria-label="Attach new tab"
                           data-testid={`persistent-attach-${connection.id}`}
                           onClick={(e) => {
@@ -474,7 +474,7 @@ function ConnectionItem({
                       <Tooltip content="Stop session" side="top">
                         <button
                           type="button"
-                          className="connection-tree__action-btn connection-tree__action-btn--danger"
+                          className="connection-tree__action connection-tree__action--danger"
                           aria-label="Stop session"
                           data-testid={`persistent-stop-${connection.id}`}
                           onClick={(e) => {
@@ -494,7 +494,7 @@ function ConnectionItem({
               <Tooltip content="Connect" side="right">
                 <button
                   type="button"
-                  className="connection-tree__connect-btn"
+                  className="connection-tree__connect"
                   aria-label={`Connect to ${connection.name}`}
                   tabIndex={-1}
                   onClick={(e) => {
