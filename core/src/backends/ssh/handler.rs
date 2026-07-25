@@ -86,21 +86,32 @@ pub struct TermiHubHandler {
     /// forwarding channel that arrives without our opt-in is rejected, so a server
     /// cannot reach the local agent unsolicited.
     forward_agent: bool,
+    /// The host this connection targets, used to key host-key verification
+    /// (#1959). For a jump-host hop it is the hop/target of *that* leg, so each
+    /// hop's key is verified against the right host.
+    host: String,
+    /// The TCP port this connection targets, paired with `host` for host-key
+    /// verification (#1959).
+    port: u16,
 }
 
 impl TermiHubHandler {
     /// Create a new handler together with the shared channel registry and the
     /// session-liveness watch (#1297) the tunnel supervisor observes.
     ///
-    /// Agent forwarding is off; use [`new_with_forwarding`](Self::new_with_forwarding)
-    /// to enable it for a connection that opted in.
+    /// Agent forwarding is off and the target host/port are empty; use
+    /// [`new_with_forwarding`](Self::new_with_forwarding) to set them for a real
+    /// connection. Intended for tests that never reach host-key verification.
     pub fn new() -> (Self, ForwardedChannelRegistry, LivenessWatch) {
-        Self::new_with_forwarding(false)
+        Self::new_with_forwarding(String::new(), 0, false)
     }
 
-    /// Like [`new`](Self::new), but sets whether the session should bridge a
-    /// server-opened agent-forwarding channel to the local `ssh-agent` (#1699).
+    /// Build a handler for a connection to `host:port`, setting whether the
+    /// session should bridge a server-opened agent-forwarding channel to the
+    /// local `ssh-agent` (#1699). `host`/`port` key host-key verification (#1959).
     pub fn new_with_forwarding(
+        host: String,
+        port: u16,
         forward_agent: bool,
     ) -> (Self, ForwardedChannelRegistry, LivenessWatch) {
         let registry: ForwardedChannelRegistry = Arc::new(Mutex::new(HashMap::new()));
@@ -109,6 +120,8 @@ impl TermiHubHandler {
             forwarded_channel_registry: registry.clone(),
             liveness_tx,
             forward_agent,
+            host,
+            port,
         };
         (handler, registry, LivenessWatch { rx: liveness_rx })
     }
@@ -143,18 +156,40 @@ impl russh::client::Handler for TermiHubHandler {
         }
     }
 
-    /// Accept the server's host key without verification.
+    /// Verify the server's host key before completing the handshake (#1959).
     ///
-    /// # Security note
-    /// Proper host-key verification (known-hosts file check) should be
-    /// implemented in a follow-up issue. For now we accept all keys to
-    /// maintain the same behaviour as the previous libssh2 implementation,
-    /// which also did not verify host keys.
+    /// Computes the presented key's SHA-256 fingerprint and delegates the
+    /// trust decision to the process-wide [`HostKeyVerifier`](super::host_key)
+    /// (trust-on-first-use against a persisted store, with an interactive prompt
+    /// for unknown or changed keys). Returning `Ok(false)` aborts the handshake,
+    /// so a man-in-the-middle presenting an untrusted key is rejected instead of
+    /// blindly accepted as it was before this issue.
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::PublicKey,
+        server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        // Respect the user's own `~/.ssh/known_hosts`: a host key already
+        // recorded there is trusted silently, exactly as `ssh` would, so
+        // termiHub does not re-prompt for hosts the user already knows. A
+        // missing file or absent host falls through to the verifier; a
+        // *changed* key there is not auto-accepted (it returns `Err`), so it
+        // also falls through and is caught by the trust store / prompt.
+        if !self.host.is_empty()
+            && matches!(
+                russh::keys::check_known_hosts(&self.host, self.port, server_public_key),
+                Ok(true)
+            )
+        {
+            return Ok(true);
+        }
+
+        let info = super::host_key::HostKeyInfo {
+            host: self.host.clone(),
+            port: self.port,
+            key_type: super::host_key::key_algorithm(server_public_key),
+            fingerprint: super::host_key::fingerprint_sha256(server_public_key),
+        };
+        Ok(super::host_key::verify_host_key(&info).await)
     }
 
     /// Route an incoming server-initiated forwarded channel to the registered
@@ -282,7 +317,8 @@ mod tests {
     /// the server's agent channel to the local agent.
     #[test]
     fn forwarding_enabled_when_requested() {
-        let (handler, _registry, _watch) = TermiHubHandler::new_with_forwarding(true);
+        let (handler, _registry, _watch) =
+            TermiHubHandler::new_with_forwarding("host".to_string(), 22, true);
         assert!(handler.forward_agent);
     }
 

@@ -573,6 +573,22 @@ export async function remoteDesktopCertDecision(
   await invoke("remote_desktop_cert_decision", { sessionId, accept, remember });
 }
 
+/**
+ * Deliver the user's verdict for a pending SSH host-key prompt (#1959).
+ *
+ * `accept` proceeds with the connection; `remember` (only meaningful with
+ * `accept`) persists the fingerprint so the host is trusted on future connects.
+ * Returns whether a prompt with `promptId` was actually waiting (a stale reply
+ * returns `false`).
+ */
+export async function sshHostKeyDecision(
+  promptId: string,
+  accept: boolean,
+  remember: boolean
+): Promise<boolean> {
+  return await invoke<boolean>("ssh_host_key_decision", { promptId, accept, remember });
+}
+
 /** Disconnect a graphical remote-desktop session. */
 export async function remoteDesktopDisconnect(sessionId: SessionId): Promise<void> {
   await invoke("remote_desktop_disconnect", { sessionId });

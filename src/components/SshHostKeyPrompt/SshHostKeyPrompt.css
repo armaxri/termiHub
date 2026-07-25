@@ -1,0 +1,86 @@
+/* Interactive SSH host-key trust dialog (#1959). Tokens only — no magic values.
+   Composed on top of the shared Modal/Button primitives; mirrors the RDP
+   certificate-prompt dialog. */
+
+.ssh-hostkey__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.ssh-hostkey__title-icon {
+  color: var(--color-accent, var(--text-primary));
+}
+
+.ssh-hostkey__title-icon--warn {
+  color: var(--color-warning);
+}
+
+.ssh-hostkey__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.ssh-hostkey__lead {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-md);
+}
+
+.ssh-hostkey__warning {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: flex-start;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-warning);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.ssh-hostkey__warning-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--color-warning);
+}
+
+.ssh-hostkey__facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--spacing-xs) var(--spacing-md);
+  margin: 0;
+}
+
+.ssh-hostkey__facts dt {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.ssh-hostkey__facts dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  word-break: break-word;
+}
+
+.ssh-hostkey__fingerprint {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.ssh-hostkey__hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.ssh-hostkey__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+}

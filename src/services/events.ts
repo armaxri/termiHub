@@ -8,6 +8,7 @@ import { TunnelState, TunnelStats } from "@/types/tunnel";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
 import { XServerConsentRequest, XServerProgress } from "@/types/xserver";
+import { SshHostKeyPromptPayload } from "@/types/sshHostKey";
 import type { TransferProgress } from "@/services/api";
 import type {
   RemoteDesktopFramePayload,
@@ -95,6 +96,20 @@ export async function onRemoteDesktopCertPrompt(
   callback: (payload: RemoteDesktopCertPromptPayload) => void
 ): Promise<UnlistenFn> {
   return await listen<RemoteDesktopCertPromptPayload>("remote-desktop-cert-prompt", (event) => {
+    callback(event.payload);
+  });
+}
+
+/**
+ * Subscribe to interactive SSH host-key trust prompts (#1959). Fires when an SSH
+ * server presents an untrusted (unknown or changed) host key; the global
+ * `SshHostKeyPrompt` dialog shows the SHA-256 fingerprint and routes the verdict
+ * back via `sshHostKeyDecision`.
+ */
+export async function onSshHostKeyPrompt(
+  callback: (payload: SshHostKeyPromptPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<SshHostKeyPromptPayload>("ssh-host-key-prompt", (event) => {
     callback(event.payload);
   });
 }
