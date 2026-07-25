@@ -32,6 +32,13 @@
   color: var(--text-primary);
 }
 
+/* Active-broadcast indicator: the broadcast toggle takes the accent color while
+   typed input is being mirrored to every target terminal (#1955). */
+.ui-btn.terminal-view__toolbar-action--broadcast,
+.ui-btn.terminal-view__toolbar-action--broadcast:hover {
+  color: var(--accent-color);
+}
+
 /* Active-recording indicator: the record button turns the error/red accent and
    gently pulses so the user always knows input is being captured (#1674). */
 .ui-btn.terminal-view__toolbar-action--recording,

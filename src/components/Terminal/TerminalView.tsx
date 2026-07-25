@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Columns2, Rows2, X, PanelLeft, Circle, Square, Play } from "lucide-react";
+import { Plus, Columns2, Rows2, X, PanelLeft, Circle, Square, Play, Radio } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
-import { useAppStore } from "@/store/appStore";
+import { toast } from "sonner";
+import { useAppStore, getActiveTab } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
 import { countLiveSessions } from "@/utils/tabLiveSession";
@@ -253,6 +254,9 @@ export function TerminalView() {
   const macroRecordingStepCount = useAppStore((s) => s.macroRecordingSteps.length);
   const saveRecordedMacro = useAppStore((s) => s.saveRecordedMacro);
   const discardRecordedMacro = useAppStore((s) => s.discardRecordedMacro);
+  const broadcastActive = useAppStore((s) => s.broadcastActive);
+  const startBroadcast = useAppStore((s) => s.startBroadcast);
+  const stopBroadcast = useAppStore((s) => s.stopBroadcast);
   const macros = useAppStore((s) => s.macros);
   const macroPlayback = useAppStore((s) => s.macroPlayback);
   const playMacro = useAppStore((s) => s.playMacro);
@@ -265,6 +269,29 @@ export function TerminalView() {
 
   const handleNewTerminal = () => {
     addTab("Terminal", "local");
+  };
+
+  // Minimal broadcast toggle (#1955): activates the "all terminals" scope
+  // directly (no scope dropdown yet — that is the #1956 follow-up) and toggles
+  // off on the second click. The source is the active terminal tab; every
+  // terminal tab in the current group is a target (the source included, so the
+  // fan-out loop stays uniform). Connected-only filtering happens at the seam.
+  const handleToggleBroadcast = () => {
+    if (broadcastActive) {
+      stopBroadcast();
+      return;
+    }
+    const state = useAppStore.getState();
+    const source = getActiveTab(state);
+    if (!source || source.contentType !== "terminal") {
+      toast.info("Focus a terminal to start broadcasting input");
+      return;
+    }
+    const terminalTabIds = getAllLeaves(state.rootPanel)
+      .flatMap((leaf) => leaf.tabs)
+      .filter((tab) => tab.contentType === "terminal")
+      .map((tab) => tab.id);
+    startBroadcast("all", source.id, terminalTabIds);
   };
 
   const handleSplitHorizontal = () => {
@@ -305,6 +332,24 @@ export function TerminalView() {
         <div className="terminal-view__toolbar">
           <TabGroupChips />
           <div className="terminal-view__toolbar-actions">
+            <Tooltip
+              content={broadcastActive ? "Stop Broadcast" : "Broadcast Input"}
+              side="bottom"
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                className={
+                  broadcastActive ? "terminal-view__toolbar-action--broadcast" : undefined
+                }
+                icon={<Radio size={16} />}
+                onClick={handleToggleBroadcast}
+                aria-label={broadcastActive ? "Stop Broadcast" : "Broadcast Input"}
+                aria-pressed={broadcastActive}
+                data-testid="terminal-view-broadcast"
+              />
+            </Tooltip>
             <Tooltip content="New Terminal" side="bottom">
               <Button
                 variant="ghost"

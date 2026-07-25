@@ -278,6 +278,49 @@ export interface ConnectionConfig {
   config: Record<string, unknown>;
 }
 
+/**
+ * Which terminals a broadcast session targets. Only `"all"` is wired up by the
+ * broadcast foundation (#1955); `"panel"` and `"custom"` are reserved for the
+ * scope-selection follow-up (#1956).
+ */
+export type BroadcastScope = "all" | "panel" | "custom";
+
+/**
+ * Broadcast-input state (#1955). When {@link BroadcastState.broadcastActive} is
+ * set, typed input in the source terminal is mirrored to every connected target
+ * session. The source tab is itself included in `broadcastTargetTabIds`, so the
+ * fan-out loop treats it as just another target.
+ */
+export interface BroadcastState {
+  /** Whether broadcast mode is currently active. */
+  broadcastActive: boolean;
+  /** The tab ID of the terminal where the user types (source of input). */
+  broadcastSourceTabId: string | null;
+  /** The scope used for the current broadcast session. */
+  broadcastScope: BroadcastScope;
+  /** Set of tab IDs that are broadcast targets (includes the source). */
+  broadcastTargetTabIds: Set<string>;
+  /** Last used scope, retained for the keyboard-shortcut toggle (#1958). */
+  lastBroadcastScope: BroadcastScope;
+}
+
+/**
+ * Broadcast-input actions (#1955). Mutate {@link BroadcastState}; the input
+ * fan-out itself lives at the `xterm.onData` seam in `Terminal.tsx`.
+ */
+export interface BroadcastActions {
+  /** Enter broadcast mode with the given scope, source tab, and target tabs. */
+  startBroadcast: (scope: BroadcastScope, sourceTabId: string, targetTabIds: string[]) => void;
+  /** Leave broadcast mode and clear the source/target selection. */
+  stopBroadcast: () => void;
+  /** Add a tab to the broadcast target set (no-op when inactive). */
+  addBroadcastTarget: (tabId: string) => void;
+  /** Remove a tab from the broadcast target set. */
+  removeBroadcastTarget: (tabId: string) => void;
+  /** Whether the given tab is currently a broadcast target. */
+  isBroadcastTarget: (tabId: string) => boolean;
+}
+
 export interface TerminalTab {
   id: string;
   sessionId: SessionId | null;

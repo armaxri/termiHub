@@ -70,6 +70,13 @@ interface TerminalRegistryContextType {
   clearTerminalSelection: (tabId: string) => void;
   /** Copy the current text selection to the clipboard (no-op if nothing selected). */
   copySelectionToClipboard: (tabId: string) => Promise<void>;
+  /**
+   * Resolve a tab's live backend session ID, or `undefined` when no session is
+   * registered for the tab. Stable accessor over the internal `tabId → sessionId`
+   * map; used by the broadcast-input fan-out (#1955) to dispatch typed input to
+   * every target session.
+   */
+  getSessionId: (tabId: string) => SessionId | undefined;
   /** Associate a backend session ID with a tab for paste support. */
   registerSession: (tabId: string, sessionId: SessionId) => void;
   /** Remove the session ID association for a tab. */
@@ -305,6 +312,10 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     [getTerminalSelection]
   );
 
+  const getSessionId = useCallback((tabId: string): SessionId | undefined => {
+    return sessionRegistryRef.current.get(tabId);
+  }, []);
+
   const registerSession = useCallback((tabId: string, sessionId: SessionId) => {
     sessionRegistryRef.current.set(tabId, sessionId);
     useAppStore.getState().setTabSessionId(tabId, sessionId);
@@ -401,6 +412,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       getTerminalSelection,
       clearTerminalSelection,
       copySelectionToClipboard,
+      getSessionId,
       registerSession,
       unregisterSession,
       pasteToTerminal,
@@ -427,6 +439,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       getTerminalSelection,
       clearTerminalSelection,
       copySelectionToClipboard,
+      getSessionId,
       registerSession,
       unregisterSession,
       pasteToTerminal,

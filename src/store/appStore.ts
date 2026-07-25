@@ -20,6 +20,7 @@ import {
   TabGroup,
   TerminalExitInfo,
   SessionCloseConfirmRequest,
+  BroadcastScope,
 } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import {
@@ -68,6 +69,7 @@ import {
 } from "@/services/sessionHistoryApi";
 import { SessionHistoryEntry } from "@/types/sessionHistory";
 import { sessionHistoryTitle } from "@/utils/sessionHistoryTitle";
+import { deriveTabStatus, type TabStatusMaps } from "@/utils/tabStatus";
 import {
   sftpOpen,
   sftpClose,
@@ -1442,6 +1444,36 @@ interface AppState {
   playMacro: (macroId: string, opts?: PlayMacroOptions) => Promise<void>;
   /** Cancel the in-flight macro playback, if any. Idempotent. */
   cancelMacroPlayback: () => void;
+
+  // Broadcast input (#1955) — mirror typed input from a source terminal to many.
+  /** Whether broadcast mode is currently active. */
+  broadcastActive: boolean;
+  /** The tab ID of the source terminal (where the user types). */
+  broadcastSourceTabId: string | null;
+  /** The scope used for the current broadcast session. */
+  broadcastScope: BroadcastScope;
+  /** Set of tab IDs that are broadcast targets (includes the source). */
+  broadcastTargetTabIds: Set<string>;
+  /** Last used scope, retained for the keyboard-shortcut toggle (#1958). */
+  lastBroadcastScope: BroadcastScope;
+  /** Enter broadcast mode with the given scope, source tab, and target tabs. */
+  startBroadcast: (scope: BroadcastScope, sourceTabId: string, targetTabIds: string[]) => void;
+  /** Leave broadcast mode and clear the source/target selection. */
+  stopBroadcast: () => void;
+  /** Add a tab to the broadcast target set (no-op when inactive). */
+  addBroadcastTarget: (tabId: string) => void;
+  /** Remove a tab from the broadcast target set. */
+  removeBroadcastTarget: (tabId: string) => void;
+  /** Whether the given tab is currently a broadcast target. */
+  isBroadcastTarget: (tabId: string) => boolean;
+  /**
+   * The subset of {@link broadcastTargetTabIds} that are *connected* terminal
+   * tabs — the tabs the `onData` fan-out should mirror input to. Disconnected,
+   * connecting, and non-terminal tabs are filtered out silently. Returns `[]`
+   * when broadcast is inactive. Resolution of each tab id to a live session id
+   * is done by the terminal registry at the dispatch seam.
+   */
+  getBroadcastTargetTabIds: () => string[];
 
   // Workflows (#1852) — the foundation of the Workflow Automation epic (#1851).
   /** All stored workflows. */
@@ -3920,6 +3952,17 @@ export const useAppStore = create<AppState>((set, get) => {
           ...sftpBrowserReset,
         };
       });
+
+      // Broadcast (#1955): closing the source tab ends broadcast entirely;
+      // closing a plain target silently drops it from the set.
+      const bc = get();
+      if (bc.broadcastActive) {
+        if (bc.broadcastSourceTabId === tabId) {
+          bc.stopBroadcast();
+        } else if (bc.broadcastTargetTabIds.has(tabId)) {
+          bc.removeBroadcastTarget(tabId);
+        }
+      }
     },
 
     setActiveTab: (tabId, panelId) =>
@@ -6873,6 +6916,75 @@ export const useAppStore = create<AppState>((set, get) => {
       if (activeMacroPlayback) {
         activeMacroPlayback.cancel();
       }
+    },
+
+    // Broadcast input (#1955)
+    broadcastActive: false,
+    broadcastSourceTabId: null,
+    broadcastScope: "all",
+    broadcastTargetTabIds: new Set<string>(),
+    lastBroadcastScope: "all",
+
+    startBroadcast: (scope, sourceTabId, targetTabIds) => {
+      set({
+        broadcastActive: true,
+        broadcastScope: scope,
+        lastBroadcastScope: scope,
+        broadcastSourceTabId: sourceTabId,
+        // The source is just another target — keeping the fan-out loop uniform.
+        broadcastTargetTabIds: new Set<string>([sourceTabId, ...targetTabIds]),
+      });
+    },
+
+    stopBroadcast: () => {
+      set({
+        broadcastActive: false,
+        broadcastSourceTabId: null,
+        broadcastTargetTabIds: new Set<string>(),
+      });
+    },
+
+    addBroadcastTarget: (tabId) => {
+      set((state) => {
+        if (state.broadcastTargetTabIds.has(tabId)) return {};
+        const next = new Set(state.broadcastTargetTabIds);
+        next.add(tabId);
+        return { broadcastTargetTabIds: next };
+      });
+    },
+
+    removeBroadcastTarget: (tabId) => {
+      set((state) => {
+        if (!state.broadcastTargetTabIds.has(tabId)) return {};
+        const next = new Set(state.broadcastTargetTabIds);
+        next.delete(tabId);
+        return { broadcastTargetTabIds: next };
+      });
+    },
+
+    isBroadcastTarget: (tabId) => get().broadcastTargetTabIds.has(tabId),
+
+    getBroadcastTargetTabIds: () => {
+      const state = get();
+      if (!state.broadcastActive) return [];
+      const statusMaps: TabStatusMaps = {
+        terminalConnecting: state.terminalConnecting,
+        terminalReconnectingTabs: state.terminalReconnectingTabs,
+        terminalSpawnErrors: state.terminalSpawnErrors,
+        terminalDisconnectErrors: state.terminalDisconnectErrors,
+        terminalExitedTabs: state.terminalExitedTabs,
+      };
+      const tabsById = new Map(collectLiveTabs(state).map((t) => [t.id, t]));
+      const result: string[] = [];
+      for (const tabId of state.broadcastTargetTabIds) {
+        const tab = tabsById.get(tabId);
+        // Only connected terminal sessions receive input. Disconnected/
+        // connecting sessions and non-terminal tabs are skipped silently.
+        if (!tab || tab.contentType !== "terminal" || !tab.sessionId) continue;
+        if (deriveTabStatus(statusMaps, tabId) !== "connected") continue;
+        result.push(tabId);
+      }
+      return result;
     },
 
     // Workflows (#1852)

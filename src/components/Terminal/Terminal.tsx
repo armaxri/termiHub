@@ -312,6 +312,7 @@ export function Terminal({
   const {
     register,
     unregister,
+    getSessionId,
     registerSession,
     unregisterSession,
     copySelectionToClipboard,
@@ -754,7 +755,25 @@ export function Terminal({
         // Send user input to backend
         const onDataDisposable = xterm.onData((data) => {
           lastInputTimeRef.current = Date.now();
-          if (sessionIdRef.current) {
+          const store = useAppStore.getState();
+          // Broadcast fan-out (#1955): when this terminal is the active
+          // broadcast source, mirror typed input to every connected target
+          // session instead of only this one. The source tab is included in the
+          // target set, so the loop is uniform (no separate self-send).
+          // Non-source terminals and the inactive state fall through to the
+          // normal single-session path below. Paste flows through onData too, so
+          // it is broadcast like typed input.
+          if (store.broadcastActive && store.broadcastSourceTabId === tabId) {
+            for (const targetTabId of store.getBroadcastTargetTabIds()) {
+              const targetSessionId = getSessionId(targetTabId);
+              // Fire-and-forget, dispatched in parallel; line-ending
+              // translation happens in the backend send_input choke point.
+              if (targetSessionId) sendInput(targetSessionId, data);
+            }
+            // Tap the input stream for macro recording (#1674) once, for the
+            // source's keystrokes only. No-op unless a recording is active.
+            store.recordMacroInput(data);
+          } else if (sessionIdRef.current) {
             // Line-ending translation (Enter / paste) happens in the backend
             // send_input choke point using the session's configured ending.
             sendInput(sessionIdRef.current, data);
@@ -762,7 +781,7 @@ export function Terminal({
             // single point where user-typed bytes flow to the PTY, so it
             // captures input only (never terminal output). No-op unless a
             // recording is active — the store guards on the recording flag.
-            useAppStore.getState().recordMacroInput(data);
+            store.recordMacroInput(data);
           }
         });
 
@@ -855,7 +874,7 @@ export function Terminal({
     // captured at mount time and must not trigger re-setup when the store writes
     // the session ID back after creation (which would blank the terminal).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [config, tabId, registerSession, unregisterSession]
+    [config, tabId, getSessionId, registerSession, unregisterSession]
   );
 
   // Resolve the effective highlighting state for this terminal and apply it to
