@@ -1553,10 +1553,7 @@ interface AppState {
    * stored session. `selectedIndices` restricts the restore to the checked tabs
    * (#1931); omitting it restores every stored tab.
    */
-  confirmRestorePrompt: (
-    remember: boolean,
-    selectedIndices?: readonly number[]
-  ) => Promise<void>;
+  confirmRestorePrompt: (remember: boolean, selectedIndices?: readonly number[]) => Promise<void>;
   /**
    * Resolve the restore prompt with "Start Fresh": optionally persist
    * `restoreLastSessionMode: "never"` (when `remember`), then clear the stored

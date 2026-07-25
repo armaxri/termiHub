@@ -46,12 +46,9 @@ export function SessionRestoreDialog(): React.ReactElement | null {
   const { tabCount, tabs } = restorePrompt;
   const tabWord = tabCount === 1 ? "tab" : "tabs";
 
-  const selectedIndices = tabs
-    .map((_, i) => i)
-    .filter((i) => isTabChecked(tabs[i], overrides[i]));
+  const selectedIndices = tabs.map((_, i) => i).filter((i) => isTabChecked(tabs[i], overrides[i]));
   const selectedCount = selectedIndices.length;
-  const confirmLabel =
-    selectedCount === tabCount ? "Restore" : `Restore ${selectedCount} Selected`;
+  const confirmLabel = selectedCount === tabCount ? "Restore" : `Restore ${selectedCount} Selected`;
 
   return (
     <ConfirmDialog
@@ -87,9 +84,7 @@ export function SessionRestoreDialog(): React.ReactElement | null {
             >
               <Checkbox
                 checked={checked}
-                onCheckedChange={(next) =>
-                  setOverrides((prev) => ({ ...prev, [index]: next }))
-                }
+                onCheckedChange={(next) => setOverrides((prev) => ({ ...prev, [index]: next }))}
                 aria-label={`Restore ${tab.title}`}
                 data-testid={`session-restore-tab-checkbox-${index}`}
               />
