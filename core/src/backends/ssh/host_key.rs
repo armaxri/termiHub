@@ -297,8 +297,7 @@ mod tests {
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICiH/XInTaWEkjc02WF1n/O5ypuoc/j8XMLlY9CRkplT impostor";
 
     fn public_key(openssh: &str) -> russh::keys::PublicKey {
-        let mut key =
-            russh::keys::PublicKey::from_openssh(openssh).expect("parse test public key");
+        let mut key = russh::keys::PublicKey::from_openssh(openssh).expect("parse test public key");
         // A server key off the wire (and a key parsed out of `known_hosts`) has
         // no comment; clear it so equality is by key material, as in production.
         key.set_comment("");
