@@ -168,26 +168,24 @@ impl russh::client::Handler for TermiHubHandler {
         &mut self,
         server_public_key: &russh::keys::PublicKey,
     ) -> Result<bool, Self::Error> {
-        // Respect the user's own `~/.ssh/known_hosts`: a host key already
-        // recorded there is trusted silently, exactly as `ssh` would, so
-        // termiHub does not re-prompt for hosts the user already knows. A
-        // missing file or absent host falls through to the verifier; a
-        // *changed* key there is not auto-accepted (it returns `Err`), so it
-        // also falls through and is caught by the trust store / prompt.
-        if !self.host.is_empty()
-            && matches!(
-                russh::keys::check_known_hosts(&self.host, self.port, server_public_key),
-                Ok(true)
-            )
-        {
-            return Ok(true);
-        }
-
+        // Consult the host's own `~/.ssh/known_hosts` once and carry the verdict
+        // into the trust decision (#1969). A recorded key is trusted silently by
+        // every path (exactly as `ssh` would); a *changed* key there is the
+        // possible-MITM case and is never quietly accepted; an unknown host or
+        // unreadable file falls through. The strict headless default (no
+        // verifier registered, e.g. the remote agent) trusts only a recorded key
+        // and refuses the rest, while the desktop verifier can additionally
+        // prompt the user for an unknown key.
         let info = super::host_key::HostKeyInfo {
             host: self.host.clone(),
             port: self.port,
             key_type: super::host_key::key_algorithm(server_public_key),
             fingerprint: super::host_key::fingerprint_sha256(server_public_key),
+            known_hosts: super::host_key::check_system_known_hosts(
+                &self.host,
+                self.port,
+                server_public_key,
+            ),
         };
         Ok(super::host_key::verify_host_key(&info).await)
     }
