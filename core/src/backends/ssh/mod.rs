@@ -509,6 +509,33 @@ impl ConnectionType for Ssh {
                             supports_tilde_expansion: false,
                             visible_when: None,
                         },
+                        SettingsField {
+                            key: "onReconnectCommand".to_string(),
+                            label: "On-reconnect Command".to_string(),
+                            description: Some(
+                                "Command to run once after an automatic resilient reconnect"
+                                    .to_string(),
+                            ),
+                            help_text: Some(concat!(
+                                "When resilient reconnect re-establishes a dropped SSH connection, ",
+                                "termiHub can run a single command in the fresh remote shell to help ",
+                                "you recover some server-side context — for example `tmux attach`, ",
+                                "`screen -r`, or `cd \"$LAST_DIR\"`.\n\n",
+                                "The command runs only after an *automatic* reconnect (never on the ",
+                                "first manual connect) and only while Resilient Reconnect is enabled. ",
+                                "Leave empty to run nothing.",
+                            ).to_string()),
+                            field_type: FieldType::Text,
+                            required: false,
+                            default: None,
+                            placeholder: Some("tmux attach".to_string()),
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: Some(Condition {
+                                field: "resilientReconnect".to_string(),
+                                equals: serde_json::json!(true),
+                            }),
+                        },
                     ],
                 },
             ],
@@ -899,9 +926,28 @@ mod tests {
                 "connectTimeoutSecs",
                 "env",
                 "shellIntegration",
-                "resilientReconnect"
+                "resilientReconnect",
+                "onReconnectCommand"
             ]
         );
+    }
+
+    #[test]
+    fn schema_on_reconnect_command_is_gated_on_resilient_reconnect() {
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let group = &schema.groups[2];
+        let field = group
+            .fields
+            .iter()
+            .find(|f| f.key == "onReconnectCommand")
+            .expect("onReconnectCommand field present");
+        let condition = field
+            .visible_when
+            .as_ref()
+            .expect("onReconnectCommand is conditionally visible");
+        assert_eq!(condition.field, "resilientReconnect");
+        assert_eq!(condition.equals, serde_json::json!(true));
     }
 
     #[test]

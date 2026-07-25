@@ -221,6 +221,14 @@ export interface TerminalAutoReconnectState {
    * used by the overlay to render a live countdown. `0` while `connecting`.
    */
   nextAttemptAt: number;
+  /**
+   * Optional per-connection command run once in the fresh remote shell after a
+   * successful automatic reconnect (#1978) — e.g. `tmux attach` / `screen -r` —
+   * to recover some server-side context an agentless reconnect otherwise loses.
+   * Present here (echoed from the connection config) so the overlay can surface
+   * "will run `<cmd>` on reconnect" while the loop is active. Absent = nothing runs.
+   */
+  onReconnectCommand?: string;
 }
 
 export interface TerminalOptions {

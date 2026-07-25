@@ -97,6 +97,14 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
           Local scrollback is preserved. Without an agent, the remote shell state (running commands,
           working directory) is not restored — a fresh shell opens.
         </p>
+        {auto.onReconnectCommand && (
+          <p
+            className="terminal-disconnect-overlay__subheading terminal-disconnect-overlay__note"
+            data-testid="terminal-auto-reconnect-command"
+          >
+            Will run <code>{auto.onReconnectCommand}</code> on reconnect.
+          </p>
+        )}
         <div className="terminal-disconnect-overlay__actions">
           <Button
             variant="secondary"
