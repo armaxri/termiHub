@@ -2218,7 +2218,10 @@ function tabTransferSessionIds(
  * can drop the moved rows from the source queue and mark the sessions released.
  */
 function buildTransferAwareHandoff(
-  state: { sftpSessions: Record<string, SftpSessionEntry>; transferQueue: Record<string, TransferEntry> },
+  state: {
+    sftpSessions: Record<string, SftpSessionEntry>;
+    transferQueue: Record<string, TransferEntry>;
+  },
   tab: TerminalTab
 ): { record: TabHandoffRecord; transferSessionIds: string[]; movedTransferIds: string[] } {
   const transferSessionIds = tabTransferSessionIds(state, tab);
