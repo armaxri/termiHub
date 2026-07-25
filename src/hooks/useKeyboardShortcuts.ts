@@ -170,6 +170,13 @@ export function useKeyboardShortcuts() {
           useAppStore.getState().toggleMacroRecording();
           break;
 
+        case "toggle-broadcast":
+          // Consume the keystroke so it never reaches the terminal (and is thus
+          // never itself broadcast), then toggle broadcast with the last scope.
+          e.preventDefault();
+          useAppStore.getState().toggleBroadcast();
+          break;
+
         case "close-tab-group": {
           e.preventDefault();
           const { tabGroups, activeTabGroupId, settings } = useAppStore.getState();

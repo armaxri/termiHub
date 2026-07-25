@@ -258,6 +258,24 @@ describe("useKeyboardShortcuts", () => {
     });
   });
 
+  describe("toggle-broadcast", () => {
+    it("dispatches the store toggle and consumes the keystroke", () => {
+      act(() => {
+        root.render(createElement(KeyboardHarness));
+      });
+      const spy = vi.spyOn(useAppStore.getState(), "toggleBroadcast");
+      mockProcessKeyEvent.mockReturnValue("toggle-broadcast");
+
+      const prevented = fireKey("B", { altKey: true, shiftKey: true });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      // The shortcut keystroke is consumed so it never reaches the terminal and
+      // is therefore never itself broadcast (chord-safety, #1958).
+      expect(prevented).toBe(true);
+      spy.mockRestore();
+    });
+  });
+
   describe("new-terminal", () => {
     it("adds a new local terminal tab", () => {
       act(() => {

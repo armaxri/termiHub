@@ -151,6 +151,20 @@ describe("findMatchingAction (Linux/Win context)", () => {
     expect(findMatchingAction(event)).toBeNull();
   });
 
+  it("finds toggle-broadcast for Alt+Shift+B (Ctrl+Shift+B is owned by toggle-sidebar)", () => {
+    const event = makeKeyEvent("B", { alt: true, shift: true });
+    expect(findMatchingAction(event)).toBe("toggle-broadcast");
+  });
+
+  it("toggle-broadcast ships bound and rebindable by default", () => {
+    const combo = getEffectiveCombo("toggle-broadcast");
+    expect(combo).not.toBeNull();
+    expect(isUnboundCombo(combo!)).toBe(false);
+    expect(getDefaultBindings().find((b) => b.action === "toggle-broadcast")?.configurable).toBe(
+      true
+    );
+  });
+
   it("finds close-tab for Ctrl+Shift+W (relocated to avoid readline delete-word)", () => {
     const event = makeKeyEvent("W", { ctrl: true, shift: true });
     expect(findMatchingAction(event)).toBe("close-tab");
