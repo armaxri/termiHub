@@ -70,6 +70,37 @@ fn recover<T>(result: Result<T, PoisonError<T>>) -> T {
     result.unwrap_or_else(PoisonError::into_inner)
 }
 
+// ── Per-OS window-close / quit policy (#1903) ────────────────────────────────
+//
+// With one window, "window closed" ≈ "app quit". Multi-window breaks that
+// identity, so the last-window-close behaviour must follow platform convention
+// (concept: `docs/concepts/backlog/multi-window.html` → "Per-Platform
+// Constraints"). These are pure, `#[cfg]`-gated decisions so the branches are
+// unit-testable without a running event loop; `lib.rs` calls them from the
+// `RunEvent` handler.
+
+/// Whether app-wide teardown (tunnels, embedded/X servers, transfers, SFTP)
+/// should run when the **last** window is destroyed.
+///
+/// - **Windows/Linux**: closing the last window quits the app, so tear down now.
+/// - **macOS**: the app stays alive in the Dock (WKWebView convention), so
+///   teardown is deferred to an actual quit ([`should_prevent_exit`] returns
+///   `false` for an explicit exit) rather than run on window close.
+pub fn should_teardown_on_last_window() -> bool {
+    cfg!(not(target_os = "macos"))
+}
+
+/// Whether an `ExitRequested` should be prevented to keep the app running.
+///
+/// - **macOS**: a user-triggered exit (last window closed → `code == None`)
+///   keeps the app alive in the Dock; an explicit programmatic quit
+///   (`code == Some`, e.g. the app menu's Quit / `AppHandle::exit`) always
+///   proceeds.
+/// - **Windows/Linux**: never stays alive — the exit always proceeds.
+pub fn should_prevent_exit(code: Option<i32>) -> bool {
+    cfg!(target_os = "macos") && code.is_none()
+}
+
 impl WindowManager {
     /// Create an empty manager (no extra windows, nothing claimed).
     pub fn new() -> Self {
@@ -252,6 +283,31 @@ mod tests {
         wm.claim("s1", "win-1");
         assert!(wm.may_resize("s1", "win-1"));
         assert!(!wm.may_resize("s1", "main"));
+    }
+
+    #[test]
+    fn last_window_teardown_policy_is_per_os() {
+        // macOS keeps the app alive on last-window-close, so teardown is
+        // deferred; every other platform tears down when the last window goes.
+        if cfg!(target_os = "macos") {
+            assert!(!should_teardown_on_last_window());
+        } else {
+            assert!(should_teardown_on_last_window());
+        }
+    }
+
+    #[test]
+    fn prevent_exit_only_on_macos_user_triggered_close() {
+        if cfg!(target_os = "macos") {
+            // Last window closed (no explicit code) → stay alive in the Dock.
+            assert!(should_prevent_exit(None));
+            // Explicit quit (menu Quit / AppHandle::exit) → proceed.
+            assert!(!should_prevent_exit(Some(0)));
+        } else {
+            // Windows/Linux never stay alive.
+            assert!(!should_prevent_exit(None));
+            assert!(!should_prevent_exit(Some(0)));
+        }
     }
 
     #[test]

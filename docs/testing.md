@@ -912,6 +912,42 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### Multi-window close-with-live-tabs & per-OS quit policy (#1903)
+
+The close decision surface and the classification/store branches are covered by
+unit tests (`src/utils/windowClose.test.ts`, `src/store/appStore.windowClose.test.ts`,
+`src/components/Terminal/CloseWindowDecisionDialog.test.tsx`) and the per-OS
+policy by Rust unit tests (`src-tauri/src/window/mod.rs`). The steps below verify
+the native-window behaviour, which cannot be automated — `tauri-driver` has no
+macOS WKWebView driver (ADR-5) and window-close/Dock behaviour is OS-native.
+
+1. **Detach-vs-terminate dialog.** Open a window with at least one persistent
+   session (SSH/agent) **and** one non-persistent session (local shell), e.g. via
+   "Move to New Window" (#1901). Close that window (title-bar X). **Expected:** a
+   "Close this window?" dialog lists each session — the persistent one as
+   "Detaches — keeps running", the local shell as "Would be terminated" — with
+   **Move tabs to …** as the primary (blue) action, **Close & end sessions** as
+   the red action, and **Cancel**.
+2. **Move (safe).** Click **Move tabs to Window N**. **Expected:** the window
+   closes and all its tabs reappear in the target window, sessions still live
+   (scrollback replays); nothing was terminated.
+3. **Close & end.** Reopen a similar window, close it, click **Close & end
+   sessions**. **Expected:** the window closes; the persistent session detaches
+   (still visible in the Open Connections panel), the local shell is terminated.
+4. **Cancel.** Close a window with a live local shell and click **Cancel**.
+   **Expected:** the window stays open, no session is touched.
+5. **All-persistent → no dialog.** Close a window whose sessions are all
+   persistent/agent. **Expected:** no dialog; a toast reads "N sessions detached
+   — still running" and the window closes.
+6. **Empty window → no prompt.** Close a window with no live sessions.
+   **Expected:** it closes immediately, no dialog.
+7. **Per-OS quit policy — macOS.** With multiple windows, close a non-last window
+   → only that window closes, the app keeps running. Close the **last** window →
+   the app **stays alive in the Dock**; clicking the Dock icon **recreates a
+   window**. Cmd+Q quits the app.
+8. **Per-OS quit policy — Windows/Linux.** Closing the **last** window **quits**
+   the app; closing a non-last window closes only that window and never quits.
+
 ### VNC VeNCrypt / TLS authentication (#1714)
 
 The VNC backend auto-negotiates **VeNCrypt** (RFB security type 19) when the
