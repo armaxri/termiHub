@@ -113,6 +113,17 @@ function findInActiveTerminal(): void {
 }
 
 /**
+ * Tear the active session tab out into a brand-new window (#1901), routed
+ * through the same `moveTabToWindow` handoff seam as the tab context menu.
+ */
+function moveActiveTabToNewWindow(): void {
+  const panel = activeLeaf();
+  const tab = activeTerminalTab();
+  if (!panel || !tab) return;
+  void useAppStore.getState().moveTabToWindow(tab.id, panel.id, { kind: "new" });
+}
+
+/**
  * Registry of context-bound commands, keyed by keybinding action id. Consumed by
  * both the keyboard handler and the command palette so the two never diverge.
  */
@@ -128,5 +139,9 @@ export const CONTEXT_COMMANDS: Record<string, ContextCommand> = {
   "find-in-terminal": {
     isAvailable: () => activeTerminalTab() !== null,
     run: findInActiveTerminal,
+  },
+  "move-tab-to-new-window": {
+    isAvailable: () => activeTerminalTab() !== null,
+    run: moveActiveTabToNewWindow,
   },
 };

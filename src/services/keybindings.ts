@@ -113,6 +113,16 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     scope: "terminal",
   },
   {
+    action: "move-tab-to-new-window",
+    label: "Move Tab to New Window",
+    category: "terminal",
+    // Ships unbound: the primary surface is the tab context menu (#1901); this
+    // entry exists so the action is command-palette reachable.
+    macDefault: null,
+    winLinuxDefault: null,
+    configurable: true,
+  },
+  {
     action: "toggle-macro-recording",
     label: "Record Macro (Start/Stop)",
     category: "terminal",

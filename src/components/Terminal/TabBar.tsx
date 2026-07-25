@@ -1,7 +1,11 @@
 import { useMemo, useState } from "react";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
+import type { WindowInfo } from "@/types/window";
+import { listWindows } from "@/services/api";
+import { frontendLog } from "@/utils/frontendLog";
 import { getAllLeaves } from "@/utils/panelTree";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { deriveTabStatus } from "@/utils/tabStatus";
@@ -29,6 +33,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
   const renameTab = useAppStore((s) => s.renameTab);
+  const moveTabToWindow = useAppStore((s) => s.moveTabToWindow);
   const editorDirtyTabs = useAppStore((s) => s.editorDirtyTabs);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
@@ -43,6 +48,31 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
 
   const [colorPickerTabId, setColorPickerTabId] = useState<string | null>(null);
   const [renameTabId, setRenameTabId] = useState<string | null>(null);
+  // Open native windows for the "Move to Window ▸" picker (#1901). Refreshed
+  // each time a tab context menu opens, since windows live in separate JS
+  // contexts and can open/close without notifying this one.
+  const [windows, setWindows] = useState<WindowInfo[]>([]);
+  const currentWindowLabel = useMemo(() => {
+    try {
+      return getCurrentWindow().label;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Refresh the window list when a tab context menu opens, so "Move to Window ▸"
+  // always reflects the live set of windows.
+  const refreshWindowsOnOpen = (open: boolean) => {
+    if (!open) return;
+    listWindows()
+      .then(setWindows)
+      .catch((err) => frontendLog("multi_window", `listWindows failed: ${String(err)}`));
+  };
+
+  // Move a tab to a new or existing window through the #1900 handoff seam.
+  const handleMoveTabToWindow = (tabId: string, target: { kind: "new" } | { kind: "existing"; label: string }) => {
+    void moveTabToWindow(tabId, panelId, target);
+  };
   // Tab awaiting confirmation in the shared unsaved-changes dialog (fallback for
   // dirty tabs whose editor does not route through `setPendingCloseRequest`).
   const [unsavedCloseTabId, setUnsavedCloseTabId] = useState<string | null>(null);
@@ -134,6 +164,13 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               tabColor={tabColors[tab.id]}
               onRename={() => setRenameTabId(tab.id)}
               onSetColor={() => setColorPickerTabId(tab.id)}
+              windows={windows}
+              currentWindowLabel={currentWindowLabel}
+              onContextMenuOpenChange={refreshWindowsOnOpen}
+              onMoveToNewWindow={() => handleMoveTabToWindow(tab.id, { kind: "new" })}
+              onMoveToWindow={(label) =>
+                handleMoveTabToWindow(tab.id, { kind: "existing", label })
+              }
               displayTitle={getEditorTabDisplayTitle(tab, allTabs)}
               status={
                 tab.contentType === "terminal"

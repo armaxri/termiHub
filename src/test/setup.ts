@@ -201,6 +201,20 @@ vi.mock("@tauri-apps/api/event", () => ({
   emit: vi.fn(),
 }));
 
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: vi.fn(() => ({
+    label: "main",
+    onFocusChanged: vi.fn(() => Promise.resolve(() => {})),
+    setSize: vi.fn(() => Promise.resolve()),
+  })),
+  LogicalSize: class {
+    constructor(
+      public width: number,
+      public height: number
+    ) {}
+  },
+}));
+
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(),
   save: vi.fn(),

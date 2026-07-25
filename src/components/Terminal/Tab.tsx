@@ -16,11 +16,17 @@ import {
   Palette,
   Pencil,
   FileSearch,
+  ExternalLink,
+  AppWindow,
+  Plus,
+  ChevronRight,
 } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { TabStatus } from "@/utils/tabStatus";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Tooltip } from "@/components/ui";
+import type { WindowInfo } from "@/types/window";
+import { buildWindowPickerEntries, hasOtherWindows } from "@/utils/windowPicker";
 
 /** Human-readable label for each connection status, used as the dot's tooltip. */
 const STATUS_LABELS: Record<TabStatus, string> = {
@@ -51,6 +57,20 @@ interface TabProps {
    * (#1640). Falls back to `tab.title` when omitted.
    */
   displayTitle?: string;
+  /**
+   * All currently-open native windows (#1901), used to populate the
+   * "Move to Window ▸" picker. Empty until the context menu opens and the list
+   * is fetched.
+   */
+  windows?: WindowInfo[];
+  /** Runtime label of the window this tab renders in (the "current" window). */
+  currentWindowLabel?: string | null;
+  /** Refresh the window list — fired when the tab context menu opens (#1901). */
+  onContextMenuOpenChange?: (open: boolean) => void;
+  /** Tear this tab out into a brand-new window (#1901). */
+  onMoveToNewWindow?: () => void;
+  /** Move this tab into an existing window addressed by `label` (#1901). */
+  onMoveToWindow?: (label: string) => void;
 }
 
 export function Tab({
@@ -69,8 +89,15 @@ export function Tab({
   onSetColor,
   status,
   displayTitle,
+  windows = [],
+  currentWindowLabel = null,
+  onContextMenuOpenChange,
+  onMoveToNewWindow,
+  onMoveToWindow,
 }: TabProps) {
   const shownTitle = displayTitle ?? tab.title;
+  const pickerEntries = buildWindowPickerEntries(windows, currentWindowLabel);
+  const showMoveToExisting = hasOtherWindows(windows, currentWindowLabel);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: tab.id,
     data: { panelId: tab.panelId, type: "tab" },
@@ -175,7 +202,7 @@ export function Tab({
   }
 
   return (
-    <ContextMenu.Root>
+    <ContextMenu.Root onOpenChange={(open) => onContextMenuOpenChange?.(open)}>
       <ContextMenu.Trigger asChild>{tabElement}</ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
@@ -186,6 +213,56 @@ export function Tab({
           >
             <Pencil size={14} /> Rename
           </ContextMenu.Item>
+          <ContextMenu.Separator className="context-menu__separator" />
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => onMoveToNewWindow?.()}
+            data-testid="tab-context-move-new-window"
+          >
+            <ExternalLink size={14} /> Move to New Window
+          </ContextMenu.Item>
+          {showMoveToExisting && (
+            <ContextMenu.Sub>
+              <ContextMenu.SubTrigger
+                className="context-menu__item context-menu__sub-trigger"
+                data-testid="tab-context-move-window"
+              >
+                <AppWindow size={14} /> Move to Window
+                <ChevronRight size={14} className="context-menu__sub-arrow" />
+              </ContextMenu.SubTrigger>
+              <ContextMenu.Portal>
+                <ContextMenu.SubContent
+                  className="context-menu__content"
+                  data-testid="tab-context-move-window-submenu"
+                >
+                  <ContextMenu.Item
+                    className="context-menu__item"
+                    onSelect={() => onMoveToNewWindow?.()}
+                    data-testid="tab-context-move-window-new"
+                  >
+                    <Plus size={14} /> New Window
+                  </ContextMenu.Item>
+                  <ContextMenu.Separator className="context-menu__separator" />
+                  {pickerEntries.map((entry) => (
+                    <ContextMenu.Item
+                      key={entry.label}
+                      className="context-menu__item"
+                      disabled={entry.isCurrent}
+                      onSelect={() => {
+                        if (!entry.isCurrent) onMoveToWindow?.(entry.label);
+                      }}
+                      data-testid={`tab-context-move-window-${entry.label}`}
+                    >
+                      <AppWindow size={14} /> {entry.name}
+                      {entry.isCurrent && (
+                        <span className="context-menu__sub-label">current</span>
+                      )}
+                    </ContextMenu.Item>
+                  ))}
+                </ContextMenu.SubContent>
+              </ContextMenu.Portal>
+            </ContextMenu.Sub>
+          )}
           <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item
             className="context-menu__item"
