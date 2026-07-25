@@ -948,8 +948,13 @@ pub fn run() {
             commands::window::claim_session,
             commands::window::release_session,
             commands::window::get_session_owner,
+            commands::window::list_session_owners,
+            commands::window::focus_window,
             commands::window::list_windows,
             commands::window::report_window_tab_count,
+            commands::window::report_window_layout,
+            commands::window::collect_window_layouts,
+            commands::window::take_pending_window_restore,
             commands::window::take_pending_handoffs,
             commands::window::send_handoff_to_window,
             commands::window::replay_session_scrollback,
@@ -1125,6 +1130,11 @@ pub fn run() {
                     // "Move to Window ▸" picker never lists a stale count for a
                     // window that no longer exists.
                     wm.forget_tab_count(label);
+                    // Drop the window's reported layout slice (#1925) so an
+                    // assembled last-session / workspace document never carries a
+                    // window that no longer exists. A surviving window's next
+                    // layout change re-persists without it.
+                    wm.forget_layout(label);
                 }
 
                 // App-wide teardown (tunnels, embedded/X servers, transfers, SFTP)

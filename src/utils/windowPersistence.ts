@@ -22,6 +22,14 @@
 import { MAIN_WINDOW_LABEL } from "@/types/window";
 import type { WorkspaceTabGroupDef, WorkspaceWindowDef } from "@/types/workspace";
 
+/** One native window's captured layout slice, for assembly on save (#1925). */
+export interface CapturedWindowLayout {
+  /** Runtime window label (`MAIN_WINDOW_LABEL` for the primary window). */
+  windowId: string;
+  /** The tab groups captured from that window, in order. */
+  tabGroups: WorkspaceTabGroupDef[];
+}
+
 /** One native window's slice of a restored layout. */
 export interface WindowRestorePlanEntry {
   /** Logical window id (`MAIN_WINDOW_LABEL` for the primary window). */
@@ -116,6 +124,39 @@ export function hasWindowDimension(
 ): boolean {
   if (windows && windows.some((w) => w.id !== MAIN_WINDOW_LABEL)) return true;
   return groups.some((g) => g.windowId != null && g.windowId !== MAIN_WINDOW_LABEL);
+}
+
+/**
+ * Assemble every open window's captured layout slice into the single windowed
+ * document persisted to a workspace / last session (#1925).
+ *
+ * Each slice's groups are stamped with its window's logical id (the main
+ * window's id is omitted, keeping a single-window save byte-identical to the
+ * legacy schema), then concatenated in the given order — which the backend
+ * authority returns main-window-first. A window that reports **no** groups is
+ * still recorded in `windows[]` (an empty secondary window, #1902), so the
+ * empty-window state round-trips. When only the main window is present with no
+ * secondary windows, `windows` is `undefined` (the legacy shape).
+ */
+export function assembleWindowedGroups(layouts: CapturedWindowLayout[]): {
+  tabGroups: WorkspaceTabGroupDef[];
+  windows: WorkspaceWindowDef[] | undefined;
+} {
+  const stampedGroups: WorkspaceTabGroupDef[] = [];
+  const emptyWindowIds: string[] = [];
+  for (const layout of layouts) {
+    const stamped = stampWindowId(layout.tabGroups, layout.windowId);
+    stampedGroups.push(...stamped);
+    // A secondary window that owns no groups would otherwise vanish (no group
+    // carries its id), so record it as an explicit empty window.
+    if (stamped.length === 0 && layout.windowId !== MAIN_WINDOW_LABEL) {
+      emptyWindowIds.push(layout.windowId);
+    }
+  }
+  return {
+    tabGroups: stampedGroups,
+    windows: buildWindowsMeta(stampedGroups, emptyWindowIds),
+  };
 }
 
 /**

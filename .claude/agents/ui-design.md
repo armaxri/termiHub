@@ -19,7 +19,7 @@ reactive, modern** — and to keep it that way.
 ## Source of truth
 
 The design system is defined in
-`docs/concepts/partial/ui-modernization.html`. **When the concept and the
+`docs/concepts/implemented/ui-modernization.html`. **When the concept and the
 code disagree, the concept is authoritative — fix the code by default.** Only when
 a real platform/library/performance constraint makes the design wrong do you change
 the concept instead (and say so explicitly). Read that concept before substantial

@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, Webvi
 
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
-use crate::window::{HandoffRecord, WindowManager};
+use crate::window::{HandoffRecord, WindowLayoutReport, WindowManager, MAIN_WINDOW_LABEL};
 
 /// A window known to the app, as reported to the frontend window picker.
 ///
@@ -41,10 +41,16 @@ pub fn open_window(
     app: AppHandle,
     window_manager: State<'_, WindowManager>,
     handoff: Option<HandoffRecord>,
+    restore: Option<serde_json::Value>,
 ) -> Result<String, String> {
     let label = window_manager.next_label();
     if let Some(record) = handoff {
         window_manager.queue_handoff(&label, record);
+    }
+    // A restore-spawned window carries the tab groups it should hydrate on boot
+    // (#1925), drained via `take_pending_window_restore`.
+    if let Some(groups) = restore {
+        window_manager.queue_restore(&label, groups);
     }
 
     let app_for_build = app.clone();
@@ -108,6 +114,35 @@ pub fn get_session_owner(
     window_manager.owner_of(&session_id)
 }
 
+/// A snapshot of the full `session_id → owning_window_label` map (#1926).
+///
+/// The Open Connections panel reads this once when it opens to stamp each
+/// session row with an owning-window badge (and a "focus owning window"
+/// affordance). Only claimed sessions appear — an unclaimed session has no
+/// entry, so its row shows no window badge.
+#[tauri::command]
+pub fn list_session_owners(
+    window_manager: State<'_, WindowManager>,
+) -> std::collections::HashMap<String, String> {
+    window_manager.all_owners()
+}
+
+/// Bring the window addressed by `label` to the foreground (#1926).
+///
+/// The "focus owning window" affordance in the Open Connections panel calls this
+/// to surface the window that owns a session. Unminimizes first so a minimized
+/// window is restored, then shows and focuses it. A `label` with no live window
+/// (it was closed between the panel opening and the click) is a no-op.
+#[tauri::command]
+pub fn focus_window(app: AppHandle, label: String) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window(&label) {
+        window.unminimize().map_err(|e| e.to_string())?;
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// List all currently open windows, each with its last-reported tab count.
 ///
 /// The tab count is whatever the owning window last pushed via
@@ -153,6 +188,53 @@ pub fn take_pending_handoffs(
     window_manager: State<'_, WindowManager>,
 ) -> Vec<HandoffRecord> {
     window_manager.take_handoffs(window.label())
+}
+
+/// Report the **calling** window's captured layout slice for multi-window
+/// persistence aggregation (#1925).
+///
+/// Each window's tab groups live in its own JS context, so the main window
+/// cannot see another window's layout. Every window reports its own slice here;
+/// the main window assembles the full last-session / workspace document from
+/// [`collect_window_layouts`]. A report from a **secondary** window whose layout
+/// actually changed nudges every window with `window-layout-changed` so the main
+/// window re-persists. The main window's own reports never nudge — it persists
+/// from its own layout subscription — which prevents a self-triggering save loop.
+#[tauri::command]
+pub fn report_window_layout(
+    app: AppHandle,
+    window: WebviewWindow,
+    tab_groups: serde_json::Value,
+    active_group_index: usize,
+    window_manager: State<'_, WindowManager>,
+) -> Result<(), String> {
+    let changed = window_manager.report_layout(window.label(), tab_groups, active_group_index);
+    if changed && window.label() != MAIN_WINDOW_LABEL {
+        app.emit("window-layout-changed", ())
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Every open window's reported layout slice, main-window-first, for the main
+/// window to assemble the full multi-window persisted document (#1925).
+#[tauri::command]
+pub fn collect_window_layouts(window_manager: State<'_, WindowManager>) -> Vec<WindowLayoutReport> {
+    window_manager.collect_layouts()
+}
+
+/// Take (and clear) the tab groups the **calling** window should hydrate on boot
+/// when it was spawned by a multi-window restore (#1925).
+///
+/// Mirrors [`take_pending_handoffs`] but carries whole tab groups seeded by the
+/// restore rather than a single moved tab. Returns `None` for a window that was
+/// not restore-spawned (e.g. the empty-window or move-to-window paths).
+#[tauri::command]
+pub fn take_pending_window_restore(
+    window: WebviewWindow,
+    window_manager: State<'_, WindowManager>,
+) -> Option<serde_json::Value> {
+    window_manager.take_restore(window.label())
 }
 
 /// Queue a hand-off record for an already-open window and nudge every window to

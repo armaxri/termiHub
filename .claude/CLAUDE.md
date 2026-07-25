@@ -216,7 +216,7 @@ Bundle/dep-size concerns belong in the "secondary" bucket — raise them in PR d
 
 ### UI / Design System
 
-termiHub has a shared design system (concept — the source of truth: [`docs/concepts/partial/ui-modernization.html`](../docs/concepts/partial/ui-modernization.html)). **For any non-trivial UI work — building or restyling components/dialogs/forms, adding user-facing feedback, reviewing a UI diff, or making a visual/interaction decision — delegate to the `ui-design` subagent** (`.claude/agents/ui-design.md`), which owns the full system. The concept is authoritative: when it and the code disagree, fix the code by default.
+termiHub has a shared design system (concept — the source of truth: [`docs/concepts/implemented/ui-modernization.html`](../docs/concepts/implemented/ui-modernization.html)). **For any non-trivial UI work — building or restyling components/dialogs/forms, adding user-facing feedback, reviewing a UI diff, or making a visual/interaction decision — delegate to the `ui-design` subagent** (`.claude/agents/ui-design.md`), which owns the full system. The concept is authoritative: when it and the code disagree, fix the code by default.
 
 These rules hold in every session (the `ui-design` agent enforces them in depth):
 

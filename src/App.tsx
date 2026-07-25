@@ -151,33 +151,52 @@ function App() {
 
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
+    let unlistenLayoutChanged: (() => void) | null = null;
 
-    // Auto-save the open tabs/layout whenever the panel tree changes, so the
-    // session can be restored after a reload or restart. Attached only after the
-    // initial restore so restoring does not immediately re-save.
+    type StoreState = ReturnType<typeof useAppStore.getState>;
+    const layoutChanged = (state: StoreState, prevState: StoreState): boolean =>
+      state.tabGroups !== prevState.tabGroups ||
+      state.rootPanel !== prevState.rootPanel ||
+      state.activePanelId !== prevState.activePanelId ||
+      state.activeTabGroupId !== prevState.activeTabGroupId;
+
+    // Main window: auto-save the open tabs/layout whenever the panel tree
+    // changes, so the session can be restored after a reload or restart.
+    // Attached only after the initial restore so restoring does not immediately
+    // re-save. The save aggregates every open window's slice (#1925).
     const enableAutoSave = () => {
       unsubscribe = useAppStore.subscribe((state, prevState) => {
-        if (
-          state.tabGroups !== prevState.tabGroups ||
-          state.rootPanel !== prevState.rootPanel ||
-          state.activePanelId !== prevState.activePanelId ||
-          state.activeTabGroupId !== prevState.activeTabGroupId
-        ) {
-          state.scheduleLastSessionSave();
-        }
+        if (layoutChanged(state, prevState)) state.scheduleLastSessionSave();
+      });
+    };
+
+    // Secondary window: report this window's captured layout slice to the
+    // backend aggregation authority on every layout change (#1925), so the main
+    // window's save spans every window it cannot see across the JS boundary.
+    const enableSecondaryLayoutReport = () => {
+      unsubscribe = useAppStore.subscribe((state, prevState) => {
+        if (layoutChanged(state, prevState)) state.scheduleWindowLayoutReport();
       });
     };
 
     (async () => {
       await loadFromBackend();
 
-      // Secondary windows (#1900) boot empty: they never restore the main
-      // window's last session and never auto-save (window-dimension persistence
-      // is #1905). Instead they drain any tabs handed off to them. Live moves to
-      // an already-open window arrive via the `window-handoff` listener below.
+      // Secondary windows (#1900) never restore the main window's last session.
+      // A restore-spawned window (#1925) first hydrates the tab groups it was
+      // seeded with, then drains any live hand-offs; it reports its layout slice
+      // so the main window's save includes it. Live moves to an already-open
+      // window arrive via the `window-handoff` listener below.
       const isMainWindow = getCurrentWindow().label === MAIN_WINDOW_LABEL;
       if (!isMainWindow) {
+        await useAppStore.getState().receivePendingWindowRestore();
         await useAppStore.getState().receivePendingHandoffs();
+        enableSecondaryLayoutReport();
+        // Report the current slice once now (#1925): the subscription above only
+        // fires on a *later* change, so without this the window's initial layout —
+        // a restored/handed-off tree, or the empty-window state — would be missing
+        // from the aggregation authority and dropped from the main window's save.
+        void useAppStore.getState().reportOwnWindowLayout();
         return;
       }
 
@@ -216,10 +235,18 @@ function App() {
       // Always observe layout changes; saveLastSession itself honors the current
       // setting, so toggling it at runtime takes effect without a restart.
       enableAutoSave();
+
+      // Multi-window (#1925): a secondary window reporting a layout change nudges
+      // the main window here so the aggregated session is re-persisted with that
+      // window's latest slice.
+      unlistenLayoutChanged = await listen<void>("window-layout-changed", () => {
+        useAppStore.getState().scheduleLastSessionSave();
+      });
     })();
 
     return () => {
       if (unsubscribe) unsubscribe();
+      if (unlistenLayoutChanged) unlistenLayoutChanged();
     };
   }, [loadFromBackend]);
 

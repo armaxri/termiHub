@@ -61,13 +61,13 @@
       <header class="concept-header">
         <h1>ConfirmDialog Primitive</h1>
         <div class="concept-meta">
-          <span class="concept-status">Partial · primitive built, named call-site migration pending</span>
+          <span class="concept-status">Implemented</span>
           <span
             >GitHub Issue:
             <a href="https://github.com/armaxri/termiHub/issues/1391">#1391</a> (follow-up to
             <a href="https://github.com/armaxri/termiHub/issues/1348">#1348</a>)</span
           >
-          <span><code>docs/concepts/partial/confirm-dialog-primitive.html</code></span>
+          <span><code>docs/concepts/implemented/confirm-dialog-primitive.html</code></span>
         </div>
       </header>
 
@@ -550,15 +550,17 @@ sequenceDiagram
         <h3>Proposed prop interface</h3>
         <div class="table-wrap">
           <pre style="white-space: pre; overflow-x: auto">
-<code>export type ConfirmVariant = "default" | "warn" | "danger";
+<code>// As shipped in src/components/ui/ConfirmDialog.tsx.
 
-export interface DontWarnAgain {
-  /** Checkbox label. Defaults to "Don't warn me again". */
+export interface ConfirmDontAskAgain {
+  /** Current checked state. */
+  checked: boolean;
+  /** Called with the next value when the user ticks the checkbox. */
+  onChange: (checked: boolean) =&gt; void;
+  /** Checkbox label. Defaults to "Don't ask again". */
   label?: string;
-  /** Controlled checked state (optional — uncontrolled if omitted). */
-  checked?: boolean;
-  /** Fires when the checkbox toggles. */
-  onChange?: (checked: boolean) =&gt; void;
+  /** Test hook forwarded to the checkbox. */
+  "data-testid"?: string;
 }
 
 export interface ConfirmDialogProps {
@@ -566,18 +568,19 @@ export interface ConfirmDialogProps {
   open: boolean;
   /** Heading text. */
   title: React.ReactNode;
-  /** Plain body text (the common case). Ignored if `children` is given. */
+  /** Optional description for screen readers (visually hidden). */
+  description?: string;
+  /** Plain body text (the common case). May be combined with `children`. */
   message?: React.ReactNode;
-  /** Body slot for richer content (forms, lists). Overrides `message`. */
+  /** Body slot for richer content (forms, lists) — what lets the WoL save
+      modal compose the primitive instead of a hand-rolled Modal. */
   children?: React.ReactNode;
   /** Confirm button label. Defaults to "Confirm". */
   confirmLabel?: string;
   /** Cancel button label. Defaults to "Cancel". */
   cancelLabel?: string;
-  /** Accent + confirm-button variant. Defaults to "default". */
-  variant?: ConfirmVariant;
-  /** Optional leading title icon (defaults per-variant: warn/danger → alert). */
-  icon?: React.ReactNode;
+  /** Confirm-button variant. Defaults to "danger" for destructive actions. */
+  confirmVariant?: ButtonVariant;
   /** Confirm handler. Returning a Promise drives the Button async lifecycle. */
   onConfirm: () =&gt; void | Promise&lt;void&gt;;
   /** Called for every non-confirm exit (Cancel / ESC / scrim / X). */
@@ -586,9 +589,12 @@ export interface ConfirmDialogProps {
   confirmDisabled?: boolean;
   /** Forwarded to the confirm Button's `errorToast`. Defaults to true. */
   confirmErrorToast?: boolean;
-  /** Opt-in "don't warn again" checkbox (warn dialogs). */
-  dontWarnAgain?: DontWarnAgain;
-  /** Base test id; derives `${base}-cancel` and `${base}-confirm`. */
+  /** Opt-in "don't ask again" checkbox. */
+  dontAskAgain?: ConfirmDontAskAgain;
+  /** Base for the action-button test ids (defaults to "confirm-dialog"),
+      deriving `${testIdBase}-cancel` / `-confirm` / `-dont-ask-again`. */
+  testIdBase?: string;
+  /** Test hook forwarded to the modal content. */
   "data-testid"?: string;
 }</code>
           </pre>
@@ -741,18 +747,26 @@ export interface ConfirmDialogProps {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-24 (status reconciliation) ·
-          <strong>Status:</strong> diverged (partial — the <code>ConfirmDialog</code> primitive
-          shipped with the <code>ConfirmDontAskAgain</code> Checkbox opt-out and is used by several
-          dialogs, but the three call sites this concept names still compose the raw
-          <code>Modal</code> + <code>Button</code> primitives rather than <code>ConfirmDialog</code>,
-          and the Port Scanner large-scan suppression is unbuilt). The remaining work is now
-          tracked: <a href="https://github.com/armaxri/termiHub/issues/1875">#1875</a> (body slot +
-          WoL migration), <a href="https://github.com/armaxri/termiHub/issues/1876">#1876</a>
-          (ConfirmDeleteDialog + Port Scanner migration),
-          <a href="https://github.com/armaxri/termiHub/issues/1877">#1877</a> (Port Scanner
-          "don't warn again" suppression). Note: the closed design issue #1391 does not track this
-          migration. Concept moved <code>backlog/</code> → <code>partial/</code>.
+          <strong>Last synced:</strong> 2026-07-25 (status reconciliation) ·
+          <strong>Status:</strong> implemented. The <code>ConfirmDialog</code> primitive shipped in
+          <code>src/components/ui/ConfirmDialog.tsx</code> (Modal + Button + optional
+          <code>Checkbox</code> opt-out with the <code>ConfirmDontAskAgain</code> descriptor, plus a
+          <code>children</code> body slot), and <strong>all three named call sites are migrated onto
+          it</strong>: <code>Sidebar/ConfirmDeleteDialog.tsx</code> (<code>confirmVariant="danger"</code>),
+          the Port Scanner large-scan warning (with the <code>dontAskAgain</code> suppression) and the
+          WoL save modal (form fields in the <code>children</code> slot). The follow-up issues that
+          tracked the migration — <a href="https://github.com/armaxri/termiHub/issues/1875">#1875</a>
+          (body slot), <a href="https://github.com/armaxri/termiHub/issues/1876">#1876</a>
+          (ConfirmDeleteDialog + Port Scanner migration) and
+          <a href="https://github.com/armaxri/termiHub/issues/1877">#1877</a> (Port Scanner "don't ask
+          again") — are all closed. The API renamed slightly from this concept's original proposal:
+          the confirm variant is <code>confirmVariant</code> (a <code>ButtonVariant</code>), the opt-out
+          is <code>dontAskAgain</code>, and the test-id base is <code>testIdBase</code> (all reconciled
+          in the prop interface above). The <strong>one remaining follow-up</strong> is the
+          variant-driven tinted title accent icon shown in the mockups, which the shipped primitive
+          does not render — tracked as
+          <a href="https://github.com/armaxri/termiHub/issues/1928">#1928</a>. Concept moved
+          <code>partial/</code> → <code>implemented/</code>.
         </p>
         <div class="table-wrap">
           <table>
@@ -771,9 +785,10 @@ export interface ConfirmDialogProps {
                 <td><code>ConfirmDialog</code> primitive in <code>src/components/ui/</code></td>
                 <td>
                   <strong>Resolved</strong> — <code>src/components/ui/ConfirmDialog.tsx</code> exists
-                  (Modal + Button + optional <code>Checkbox</code>) with a
-                  <code>ConfirmDontAskAgain</code> opt-out prop, and is used by several dialogs
-                  (ConfirmSessionCloseDialog, TabBar, UnlockDialog, OpenConnectionsModal, …).
+                  (Modal + Button + optional <code>Checkbox</code>) with the
+                  <code>ConfirmDontAskAgain</code> opt-out and a <code>children</code> body slot, and is
+                  used across the app (ConfirmSessionCloseDialog, TabBar, UnlockDialog,
+                  OpenConnectionsModal, …).
                 </td>
                 <td>Resolved</td>
                 <td>—</td>
@@ -782,49 +797,49 @@ export interface ConfirmDialogProps {
                 <td>2</td>
                 <td>Three named call sites migrated onto <code>ConfirmDialog</code></td>
                 <td>
-                  Still open — <code>Sidebar/ConfirmDeleteDialog.tsx</code>, the Port Scanner
-                  large-scan modal and the WoL save modal compose the raw <code>Modal</code> +
-                  <code>Button</code> primitives, not <code>ConfirmDialog</code>. The WoL modal
-                  carries a form body, which the shipped primitive cannot host yet (row 4).
+                  <strong>Resolved</strong> — <code>Sidebar/ConfirmDeleteDialog.tsx</code>, the Port
+                  Scanner large-scan warning and the WoL save modal all compose
+                  <code>ConfirmDialog</code> (the WoL form fields ride the <code>children</code> slot).
                 </td>
-                <td>Missing</td>
+                <td>Resolved</td>
                 <td>
-                  Tracked: <a href="https://github.com/armaxri/termiHub/issues/1876">#1876</a>
-                  (ConfirmDeleteDialog + Port Scanner);
-                  <a href="https://github.com/armaxri/termiHub/issues/1875">#1875</a> (WoL, after
-                  the body slot). Migrating changes the hard-coded test ids (row 5).
+                  Landed via <a href="https://github.com/armaxri/termiHub/issues/1875">#1875</a> (body
+                  slot) + <a href="https://github.com/armaxri/termiHub/issues/1876">#1876</a>
+                  (migration) — both closed.
                 </td>
               </tr>
               <tr>
                 <td>3</td>
                 <td>"Don't warn again" affordance on the large-scan warning</td>
                 <td>
-                  Still open — the primitive supports it via <code>ConfirmDontAskAgain</code>, but
-                  <code>PortScannerPanel.tsx</code>'s warning is a raw <code>Modal</code> with only
-                  Cancel / Start and no suppression option.
+                  <strong>Resolved</strong> — <code>PortScannerPanel.tsx</code> passes
+                  <code>dontAskAgain</code> so the large-scan warning offers a persisted suppression
+                  opt-out.
                 </td>
-                <td>Missing</td>
-                <td>Tracked: <a href="https://github.com/armaxri/termiHub/issues/1877">#1877</a></td>
+                <td>Resolved</td>
+                <td>
+                  Landed via <a href="https://github.com/armaxri/termiHub/issues/1877">#1877</a> —
+                  closed.
+                </td>
               </tr>
               <tr>
                 <td>4</td>
                 <td>
                   Concept proposes a richer API: <code>variant</code>-driven title icon,
-                  <code>children</code> body slot, async <code>onConfirm</code> with pending/error
-                  Button lifecycle, and a <code>dontWarnAgain</code> opt-out
+                  <code>children</code> body slot, async <code>onConfirm</code>, and a
+                  <code>dontWarnAgain</code> opt-out
                 </td>
                 <td>
-                  Shipped primitive is simpler: <code>confirmVariant</code> only (no accent icon),
-                  <code>message</code> only (no <code>children</code>), synchronous
-                  <code>onConfirm</code>, and the opt-out is named <code>dontAskAgain</code> /
-                  <code>ConfirmDontAskAgain</code>.
+                  Shipped, with renamed props: <code>confirmVariant</code> (a <code>ButtonVariant</code>),
+                  <code>children</code> body slot, async <code>onConfirm</code> (pending/success/error
+                  Button lifecycle) and the <code>dontAskAgain</code> /
+                  <code>ConfirmDontAskAgain</code> opt-out. The one unbuilt piece is the
+                  <em>variant-driven tinted title accent icon</em> from the mockups.
                 </td>
-                <td>Missing</td>
+                <td>Divergence (naming) + Missing (icon)</td>
                 <td>
-                  Add a body/content slot to enable form confirmations
-                  (<a href="https://github.com/armaxri/termiHub/issues/1875">#1875</a>); the
-                  variant-icon / async-lifecycle extensions are deferred until a call site needs
-                  them.
+                  Prop interface reconciled to the shipped names (above). Title accent icon tracked:
+                  <a href="https://github.com/armaxri/termiHub/issues/1928">#1928</a>.
                 </td>
               </tr>
               <tr>
@@ -834,15 +849,12 @@ export interface ConfirmDialogProps {
                   <code>${base}-cancel</code>/<code>${base}-confirm</code> from a base id
                 </td>
                 <td>
-                  Shipped primitive hard-codes <code>confirm-dialog-cancel</code> /
-                  <code>confirm-dialog-confirm</code> and does not derive from a base id, so
-                  migrating the named sites changes their existing test ids.
+                  <strong>Resolved</strong> — the primitive derives ids from a <code>testIdBase</code>
+                  prop (default <code>confirm-dialog</code>), so migrated sites keep their historical
+                  ids (e.g. <code>confirm-delete-*</code>).
                 </td>
-                <td>Code divergence</td>
-                <td>
-                  Update tests/testids during migration, or add id derivation to the primitive
-                  (folded into <a href="https://github.com/armaxri/termiHub/issues/1876">#1876</a>).
-                </td>
+                <td>Resolved</td>
+                <td>—</td>
               </tr>
             </tbody>
           </table>

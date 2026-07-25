@@ -12,9 +12,9 @@
       <header class="concept-header">
         <h1>Light Color Theme &amp; User Themes</h1>
         <div class="concept-meta">
-          <span class="concept-status">Partial</span>
+          <span class="concept-status">Implemented</span>
           <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/193">#193</a></span>
-          <span><code>docs/concepts/partial/light-color-theme.html</code></span>
+          <span><code>docs/concepts/implemented/light-color-theme.html</code></span>
         </div>
       </header>
       <nav class="concept-toc">
@@ -88,7 +88,7 @@
 </code></pre>
 <p>This gives users a quick sense of the theme without committing to it.</p>
 <h3 id="theme-editor">Theme Editor</h3>
-<p>The theme editor opens as a new tab (similar to the connection editor pattern). It presents all editable theme colors grouped by section:</p>
+<p><em>As shipped, the theme editor opens as a <strong>modal dialog</strong> (<code>ThemeEditor.tsx</code>) launched from the Appearance settings, not as a workspace tab — the concept's original "new tab" framing below was reconciled to a modal during implementation.</em> It presents all editable theme colors grouped by section:</p>
 <pre><code>┌─────────────────────────────────────────────────────────────┐
 │  Theme Editor: My Custom Theme                              │
 │  Based on: Dark                                       [×]   │
@@ -442,8 +442,8 @@ flowchart TD
 <pre><code class="language-typescript">interface ThemeDefinition {
   id: string; // unique identifier
   name: string; // display name
-  type: &quot;builtin&quot; | &quot;custom&quot;; // cannot delete built-in themes
-  baseTheme?: string; // custom themes inherit from a base
+  colorScheme: &quot;dark&quot; | &quot;light&quot;; // light/dark family (drives xterm + os-preference resolution)
+  baseTheme?: string; // custom themes inherit from a base (built-in id)
   colors: {
     // Backgrounds
     bgPrimary: string;
@@ -1018,50 +1018,57 @@ flowchart TD
 <p>PRs 4 and 5 can be developed in parallel after PR 3 is merged.</p>
 <hr>
 <h2 id="implementation-status">Implementation Status</h2>
-<p><strong>Status: Partial — built-in theme engine shipped; custom themes not built.</strong> The
-concept issue #193 (Concept) is closed. PRs 1–5 (equivalent) are done; the custom-theme surface
-(PR 6) is unbuilt.</p>
+<p><strong>Status: Implemented — built-in theme engine, custom themes, editor, and import/export
+all shipped.</strong> The concept issue #193 (Concept) is closed, and the custom-theme follow-ups
+<a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a> (editor +
+<code>customThemes</code>) and <a href="https://github.com/armaxri/termiHub/issues/1880">#1880</a>
+(import/export) are both closed. All of the concept's PRs 1–6 (or their equivalents) are done.</p>
 <h3 id="what-is-implemented">What is implemented</h3>
 <ul>
 <li><strong>Theme engine</strong> — <code>src/themes/engine.ts</code> (<code>resolveTheme</code>, <code>setCssVariables</code> via
   <code>COLOR_TO_CSS_VAR</code>, <code>applyTheme</code>, <code>getXtermTheme</code>, <code>onThemeChange</code>) with an OS
   <code>matchMedia("(prefers-color-scheme: dark)")</code> listener for <code>"system"</code> mode.</li>
 <li><strong>Theme definitions</strong> — <code>src/themes/types.ts</code>, <code>dark.ts</code>, <code>light.ts</code>, plus two
-  extra shipped themes beyond the concept's scope: <code>solarized-dark.ts</code> / <code>solarized-light.ts</code>
-  (added by #578).</li>
+  <strong>bonus</strong> themes beyond the concept's original two: <code>solarized-dark.ts</code> /
+  <code>solarized-light.ts</code> (added by #578). <code>ThemeDefinition</code> carries
+  <code>colorScheme</code> + optional <code>baseTheme</code> (custom themes inherit from a base id);
+  the concept's original <code>type: "builtin" | "custom"</code> field was not adopted.</li>
+<li><strong>Custom themes</strong> — <code>src/themes/customThemes.ts</code> (create / merge-with-base /
+  persist the <code>customThemes</code> list) and the <code>ThemeEditor.tsx</code> <strong>modal</strong>
+  (grouped color swatches with per-color reset, live preview) launched from
+  <code>AppearanceSettings.tsx</code>. Tests in <code>customThemes.test.ts</code> /
+  <code>ThemeEditor.test.tsx</code>.</li>
+<li><strong>Import / export</strong> — <code>src/themes/themeIO.ts</code> (JSON serialise + validate,
+  name-conflict suffixing) wired into the Appearance settings; tests in <code>themeIO.test.ts</code>.</li>
 <li><strong>Settings dropdown</strong> — <code>src/components/Settings/AppearanceSettings.tsx</code> (Dark, Light,
-  Solarized Dark, Solarized Light, System); persisted via <code>AppSettings.theme</code>
-  (<code>src/types/connection.ts</code>).</li>
+  Solarized Dark, Solarized Light, System, plus any custom themes); persisted via
+  <code>AppSettings.theme</code> + <code>customThemes</code> (<code>src/types/connection.ts</code>).</li>
 <li><strong>Live xterm re-theming</strong> — <code>Terminal.tsx</code> applies <code>getXtermTheme()</code> on init and on
   change; <code>FileEditor.tsx</code>/<code>appStore.ts</code> subscribe via <code>onThemeChange</code>.</li>
 <li><strong>Hardcoded-color refactor</strong> — state-dot / status colors moved to CSS variables
   (<code>--state-connected</code>, <code>--color-success</code>, …); no hardcoded <code>#fff</code> in component CSS.</li>
 </ul>
-<h3 id="what-is-missing">What is missing (the custom-theme half)</h3>
+<h3 id="what-is-missing">Residual</h3>
 <ul>
-<li><strong>Custom theme editor + <code>customThemes</code> field</strong> — no <code>ThemeEditor</code> component, no
-  <code>customThemes</code> in <code>AppSettings</code>, no <code>custom:&lt;id&gt;</code> theme variant, and
-  <code>ThemeDefinition</code> lacks the <code>type</code>/<code>baseTheme</code> fields custom themes need to inherit
-  from a base. Tracked: <a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a>.</li>
-<li><strong>Theme import/export</strong> — no <code>importTheme</code>/<code>exportTheme</code>, no JSON validation. Tracked:
-  <a href="https://github.com/armaxri/termiHub/issues/1880">#1880</a>.</li>
-<li><strong>Theme preview tooltip on dropdown hover</strong> — not implemented (folds into the editor work,
-  <a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a>).</li>
+<li><strong>Theme preview tooltip on dropdown hover</strong> — the <code>ThemePreviewTooltip</code> that
+  shows a theme's primary colours while hovering an entry in the dropdown is not built. Tracked:
+  <a href="https://github.com/armaxri/termiHub/issues/1929">#1929</a>.</li>
 </ul>
 <hr>
 <h2 id="sync">Sync Ledger</h2>
 <blockquote>
 <p>Maintained by <code>/sync-concept light-color-theme</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
 </blockquote>
-<p><strong>Last synced:</strong> 2026-07-24 at commit <code>fb7befbb</code> · <strong>Status:</strong> diverged (partial). Built-in engine shipped; custom themes tracked in #1879/#1880.</p>
+<p><strong>Last synced:</strong> 2026-07-25 (status reconciliation) · <strong>Status:</strong> implemented. Built-in engine, custom themes, editor (modal), and import/export all shipped; #1879/#1880 closed. One residual (hover preview tooltip) tracked as #1929. Concept moved <code>partial/</code> → <code>implemented/</code>.</p>
 <h3 id="sync-open">Open divergences</h3>
 <div class="table-wrap">
 <table>
 <thead><tr><th>#</th><th>Artifact claim</th><th>Code reality</th><th>Type</th><th>Recommendation</th></tr></thead>
 <tbody>
-<tr><td>1</td><td>Two built-in themes: Dark and Light</td><td>Also ships Solarized Dark + Solarized Light (#578)</td><td>Undocumented</td><td>Add the solarized themes to the concept's theme list</td></tr>
-<tr><td>2</td><td><code>ThemeDefinition</code> has <code>type</code> and <code>baseTheme</code>; <code>AppSettings.theme</code> union includes <code>custom:${string}</code></td><td>Interface omits both and adds <code>colorScheme</code>; union has the two solarized variants, no <code>custom:</code> form</td><td>Missing</td><td>Add <code>type</code>/<code>baseTheme</code> + <code>customThemes</code> (<a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a>)</td></tr>
-<tr><td>3</td><td>Custom theme editor, live preview tooltip, import/export</td><td>None exist</td><td>Missing</td><td><a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a>, <a href="https://github.com/armaxri/termiHub/issues/1880">#1880</a></td></tr>
+<tr><td>1</td><td>Two built-in themes: Dark and Light</td><td><strong>Resolved</strong> — also ships Solarized Dark + Solarized Light (#578), noted in the theme list</td><td>Resolved</td><td>—</td></tr>
+<tr><td>2</td><td><code>ThemeDefinition</code> has a <code>type: "builtin"|"custom"</code> field; <code>AppSettings.theme</code> union includes <code>custom:${string}</code></td><td><strong>Resolved (renamed)</strong> — the interface uses <code>colorScheme</code> + optional <code>baseTheme</code> instead of <code>type</code>; custom themes persist in the <code>customThemes</code> list</td><td>Divergence (naming)</td><td>Concept interface reconciled: <code>type</code> dropped in favour of <code>baseTheme</code>/<code>colorScheme</code></td></tr>
+<tr><td>3</td><td>Custom theme editor + import/export</td><td><strong>Resolved</strong> — <code>customThemes.ts</code>, <code>ThemeEditor.tsx</code> (modal), <code>themeIO.ts</code></td><td>Resolved</td><td>Landed via <a href="https://github.com/armaxri/termiHub/issues/1879">#1879</a> / <a href="https://github.com/armaxri/termiHub/issues/1880">#1880</a> — both closed</td></tr>
+<tr><td>4</td><td>Theme editor opens as a workspace tab; dropdown hover shows a preview tooltip</td><td>Editor ships as a <strong>modal</strong> (not a tab); the hover preview tooltip is not built</td><td>Divergence + Missing</td><td>Prose reconciled to the modal; hover tooltip tracked <a href="https://github.com/armaxri/termiHub/issues/1929">#1929</a></td></tr>
 </tbody>
 </table>
 </div>

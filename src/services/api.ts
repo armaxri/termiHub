@@ -16,7 +16,13 @@ import type { RemoteClipboardFile, RemoteDesktopInput } from "@/types/remoteDesk
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
-import type { TabHandoffRecord, WindowInfo } from "@/types/window";
+import type {
+  TabHandoffRecord,
+  WindowInfo,
+  WindowLayoutReport,
+  WindowRestorePayload,
+} from "@/types/window";
+import type { WorkspaceTabGroupDef } from "@/types/workspace";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -282,11 +288,19 @@ export async function takePendingSpawn(): Promise<SpawnRequestPayload | null> {
 
 /**
  * Open a new native window loading the same frontend bundle. When a hand-off
- * record is supplied, it is queued for the new window to drain on boot. Returns
- * the new window's unique label.
+ * record is supplied, it is queued for the new window to drain on boot; when a
+ * restore payload is supplied, its tab groups are queued for the new window to
+ * hydrate on boot (multi-window restore, #1925). Returns the new window's unique
+ * label.
  */
-export async function openWindow(handoff?: TabHandoffRecord): Promise<string> {
-  return await invoke<string>("open_window", { handoff: handoff ?? null });
+export async function openWindow(
+  handoff?: TabHandoffRecord,
+  restore?: WindowRestorePayload
+): Promise<string> {
+  return await invoke<string>("open_window", {
+    handoff: handoff ?? null,
+    restore: restore ?? null,
+  });
 }
 
 /**
@@ -305,6 +319,26 @@ export async function releaseSession(sessionId: string): Promise<boolean> {
 /** The window label currently rendering a session, if any. */
 export async function getSessionOwner(sessionId: string): Promise<string | null> {
   return await invoke<string | null>("get_session_owner", { sessionId });
+}
+
+/**
+ * A snapshot of the full `session_id → owning_window_label` map (#1926).
+ *
+ * The Open Connections panel reads this when it opens to stamp each session row
+ * with an owning-window badge. Only claimed sessions (e.g. moved between windows)
+ * appear; an unclaimed session has no entry.
+ */
+export async function listSessionOwners(): Promise<Record<string, string>> {
+  return await invoke<Record<string, string>>("list_session_owners");
+}
+
+/**
+ * Bring the window addressed by `label` to the foreground (#1926) — the "focus
+ * owning window" affordance in the Open Connections panel. A label whose window
+ * has since closed is a no-op.
+ */
+export async function focusWindow(label: string): Promise<void> {
+  await invoke("focus_window", { label });
 }
 
 /** List all currently open windows, each with its last-reported tab count. */
@@ -338,6 +372,36 @@ export async function sendHandoffToWindow(
   handoff: TabHandoffRecord
 ): Promise<void> {
   await invoke("send_handoff_to_window", { targetLabel, handoff });
+}
+
+/**
+ * Report this window's captured layout slice to the multi-window aggregation
+ * authority (#1925) so the main window can assemble the full persisted document
+ * it cannot see across the JS-context boundary.
+ */
+export async function reportWindowLayout(
+  tabGroups: WorkspaceTabGroupDef[],
+  activeGroupIndex: number
+): Promise<void> {
+  await invoke("report_window_layout", { tabGroups, activeGroupIndex });
+}
+
+/**
+ * Every open window's reported layout slice, main-window-first — the main window
+ * assembles the full multi-window last-session / workspace document from these
+ * (#1925).
+ */
+export async function collectWindowLayouts(): Promise<WindowLayoutReport[]> {
+  return await invoke<WindowLayoutReport[]>("collect_window_layouts");
+}
+
+/**
+ * Take (and clear) the tab groups this window should hydrate on boot when it was
+ * spawned by a multi-window restore (#1925). `null` for a window that was not
+ * restore-spawned.
+ */
+export async function takePendingWindowRestore(): Promise<WindowRestorePayload | null> {
+  return await invoke<WindowRestorePayload | null>("take_pending_window_restore");
 }
 
 /**

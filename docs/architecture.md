@@ -338,7 +338,7 @@ The frontend is built on a shared **design system** (`src/components/ui/`) that 
 - **Feedback** — a `Toast` hub (`src/components/ui/Toast/`, over `sonner`) plus an async `Button` lifecycle (idle → pending → success/error). Every mutating/async action gives immediate feedback; nothing resolves silently.
 - **Tokens** — all visual values come from `src/styles/variables.css` (colors, spacing, radii, shadows, control heights, z-index, transitions). No raw hex, per-component overlays, or ad-hoc scrollbars.
 
-The system is authoritative: its concept lives at [`docs/concepts/partial/ui-modernization.html`](concepts/partial/ui-modernization.html), the rules are in `.claude/CLAUDE.md` (UI / Design System), and the `ui-design` subagent (`.claude/agents/ui-design.md`) enforces them. New UI must compose from the primitives and use tokens only.
+The system is authoritative: its concept lives at [`docs/concepts/implemented/ui-modernization.html`](concepts/implemented/ui-modernization.html), the rules are in `.claude/CLAUDE.md` (UI / Design System), and the `ui-design` subagent (`.claude/agents/ui-design.md`) enforces them. New UI must compose from the primitives and use tokens only.
 
 ### Level 2: Backend Modules
 

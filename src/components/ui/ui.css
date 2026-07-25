@@ -3,7 +3,7 @@
  *
  * Every value references a token from src/styles/variables.css — no raw hex,
  * no rgba() overlays, no pixel radii. Class names mirror the concept's proposed
- * `.ui-*` naming (docs/concepts/partial/ui-modernization.html) so later phases
+ * `.ui-*` naming (docs/concepts/implemented/ui-modernization.html) so later phases
  * can migrate mechanically.
  *
  * Scrollbars are styled globally (global.css); nothing here re-styles them.

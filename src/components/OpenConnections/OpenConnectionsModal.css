@@ -105,6 +105,17 @@
   flex-shrink: 0;
 }
 
+/* Owning-window "focus this window" chip (issue 1926): a compact ghost button
+   shown per row only when more than one window is open. */
+.oc-row__window {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  padding: 1px var(--spacing-xs);
+  height: auto;
+  gap: var(--spacing-xs);
+}
+
 /* Trailing action cluster for rows that expose more than one intent
    (e.g. an agent's Disconnect vs Shutdown). */
 .oc-row__actions {
