@@ -56,9 +56,7 @@ export function CloseWindowDecisionDialog() {
 
   const count = request.sessions.length;
   const moveLabel =
-    others.length === 1 && selected
-      ? `Move tabs to ${windowDisplayName(selected)}`
-      : "Move tabs";
+    others.length === 1 && selected ? `Move tabs to ${windowDisplayName(selected)}` : "Move tabs";
 
   return (
     <Modal
@@ -97,9 +95,7 @@ export function CloseWindowDecisionDialog() {
 
       {others.length > 1 && (
         <div className="close-window-decision__target">
-          <label className="close-window-decision__target-label" htmlFor="close-window-move-target">
-            Move to
-          </label>
+          <span className="close-window-decision__target-label">Move to</span>
           <Select
             value={selected}
             onChange={setTargetLabel}
