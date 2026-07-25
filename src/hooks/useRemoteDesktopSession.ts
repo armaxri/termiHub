@@ -10,6 +10,7 @@ import {
   remoteDesktopRemoteClipboardFiles,
   remoteDesktopBindClipboardFiles,
   remoteDesktopCertDecision,
+  remoteDesktopRequestFullFrame,
 } from "@/services/api";
 import {
   onRemoteDesktopState,
@@ -64,6 +65,14 @@ export interface RemoteDesktopSession {
   bindClipboardFiles: () => Promise<number>;
   /** Manually reconnect after a failure or the auto-retry cap. */
   reconnect: () => void;
+  /**
+   * True while a session adopted from another window (a cross-window tab move,
+   * #1904) is waiting for its first repaint. The tab shows the "reconnecting
+   * view…" placeholder over the still-blank destination canvas until then.
+   */
+  awaitingFirstFrame: boolean;
+  /** Clear {@link awaitingFirstFrame} once the destination canvas paints a frame. */
+  noteFirstFrame: () => void;
 }
 
 /**
@@ -86,9 +95,18 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const [remoteClipboard, setRemoteClipboard] = useState<string | null>(null);
   const [certPrompt, setCertPrompt] = useState<RemoteDesktopCertPromptPayload | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
+  // Set when this tab adopts a live session handed off from another window
+  // (#1904); cleared when the destination canvas paints its first frame.
+  const [awaitingFirstFrame, setAwaitingFirstFrame] = useState(false);
 
   const sessionIdRef = useRef<string | null>(null);
   const pendingCloseRef = useRef<number | null>(null);
+  // Session id to adopt from a cross-window move, resolved once at first render
+  // (#1904). A tab hydrated by `moveTabToWindow` carries `pendingScrollbackReplay`
+  // + a live `sessionId`; the destination re-attaches to that session instead of
+  // opening a fresh connection. `undefined` = not yet resolved; `null` = a
+  // normal fresh connect. Held in a ref so it survives StrictMode re-mounts.
+  const adoptSessionIdRef = useRef<string | null | undefined>(undefined);
 
   const setTabSessionId = useAppStore((s) => s.setTabSessionId);
 
@@ -105,6 +123,14 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const settings = (tabConfig?.config ?? {}) as Record<string, unknown>;
   const viewOnly = settings.viewOnly === true;
   const scaleMode = (settings.scaleMode as ScaleMode | undefined) ?? "fit";
+
+  // Resolve the adopt-on-move decision exactly once (#1904). A tab hydrated by
+  // `moveTabToWindow` carries a live `sessionId` and the `pendingScrollbackReplay`
+  // marker; a freshly-opened tab has neither and connects normally.
+  if (adoptSessionIdRef.current === undefined) {
+    const t = readTab();
+    adoptSessionIdRef.current = t?.pendingScrollbackReplay && t?.sessionId ? t.sessionId : null;
+  }
 
   // Connect (and reconnect on retryNonce bump).
   useEffect(() => {
@@ -141,12 +167,42 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       }
     };
 
-    void connect();
+    // Cross-window adoption (#1904): on the initial mount of a moved-in tab,
+    // re-attach to the still-running session rather than opening a fresh one,
+    // and ask the backend for a full frame so the blank destination canvas
+    // repaints promptly. A later manual reconnect (retryNonce bump) connects
+    // normally. The adopt is idempotent, so a StrictMode re-mount is harmless.
+    const adoptId = retryNonce === 0 ? adoptSessionIdRef.current : null;
+    if (adoptId) {
+      sessionIdRef.current = adoptId;
+      setSessionId(adoptId);
+      setTabSessionId(tabId, adoptId);
+      setState("active");
+      setReconnectAttempt(0);
+      setMessage(null);
+      setAwaitingFirstFrame(true);
+      frontendLog("remote_desktop", `adopting moved session ${adoptId} for tab ${tabId}`);
+      void remoteDesktopRequestFullFrame(adoptId).catch((err) =>
+        frontendLog("remote_desktop", `request_full_frame failed: ${err}`)
+      );
+      // Consume the one-shot move marker so nothing else acts on it.
+      useAppStore.getState().clearPendingScrollbackReplay(tabId);
+    } else {
+      void connect();
+    }
 
     return () => {
       canceled = true;
       const id = sessionIdRef.current;
       if (id) {
+        // Cross-window move (#1904): the destination window adopts this still-
+        // running session, so the source must NOT disconnect the backend.
+        // Consume the moving flag once and leave the session alive.
+        if (useAppStore.getState().isSessionMoving(id)) {
+          sessionIdRef.current = null;
+          useAppStore.getState().clearMovingSession(id);
+          return;
+        }
         sessionIdRef.current = null;
         pendingCloseRef.current = window.setTimeout(() => {
           pendingCloseRef.current = null;
@@ -242,14 +298,22 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   }, []);
 
   const reconnect = useCallback(() => {
-    // Tear down any existing session, then re-run the connect effect.
+    // Tear down any existing session, then re-run the connect effect. A manual
+    // reconnect always connects fresh, never re-adopts (#1904).
     const id = sessionIdRef.current;
     if (id) {
       sessionIdRef.current = null;
       void remoteDesktopDisconnect(id).catch(() => {});
     }
     setSessionId(null);
+    setAwaitingFirstFrame(false);
     setRetryNonce((n) => n + 1);
+  }, []);
+
+  const noteFirstFrame = useCallback(() => {
+    // The destination canvas painted a frame after a cross-window adoption
+    // (#1904): drop the "reconnecting view…" placeholder.
+    setAwaitingFirstFrame(false);
   }, []);
 
   return {
@@ -268,5 +332,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     remoteClipboardFiles,
     bindClipboardFiles,
     reconnect,
+    awaitingFirstFrame,
+    noteFirstFrame,
   };
 }

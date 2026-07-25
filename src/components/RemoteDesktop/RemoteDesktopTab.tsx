@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileDown, X } from "lucide-react";
+import { FileDown, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
@@ -153,7 +153,18 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
               setRemoteDesktopResolution(session.sessionId, width, height);
             }
           }}
+          onFirstFrame={session.noteFirstFrame}
         />
+      )}
+
+      {session.awaitingFirstFrame && (
+        <div className="rd-overlay" data-testid="remote-desktop-reconnecting-view">
+          <Loader2 size={30} className="rd-overlay__icon rd-overlay__spin" />
+          <div className="rd-overlay__title">Reconnecting view…</div>
+          <div className="rd-overlay__sub">
+            The remote desktop is still connected — repainting the framebuffer in this window.
+          </div>
+        </div>
       )}
 
       {(session.state === "active" || session.state === "resizing") && (
