@@ -83,11 +83,12 @@
       <header class="concept-header">
         <h1>Broadcast Input (Multi-Execution)</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span
-            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/516">#516</a></span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/516">#516</a> · epic
+            <a href="https://github.com/armaxri/termiHub/issues/1954">#1954</a></span
           >
-          <span><code>docs/concepts/backlog/broadcast-input.html</code></span>
+          <span><code>docs/concepts/implemented/broadcast-input.html</code></span>
         </div>
       </header>
 
@@ -216,9 +217,19 @@
 
         <h3>Keyboard shortcut</h3>
         <p>
-          <code>Ctrl+Shift+B</code> (Windows/Linux) / <code>Cmd+Shift+B</code> (macOS) toggles
+          <code>Alt+Shift+B</code> (Windows/Linux) / <code>Cmd+Shift+B</code> (macOS) toggles
           broadcast using the <strong>last used scope</strong> (defaulting to "All terminals" on
-          first use), skipping the dropdown.
+          first use), skipping the dropdown. A remembered "Custom" scope degrades to "All terminals"
+          — the explicit selection lives only in the picker and cannot be rebuilt from the shortcut.
+        </p>
+        <p>
+          <em>Binding note (#1958):</em> the concept originally suggested
+          <code>Ctrl+Shift+B</code> on Windows/Linux, but that combo is already the default for
+          <strong>Toggle Sidebar</strong> there (relocated off <code>Ctrl+B</code> to avoid tmux's
+          prefix key). Broadcast therefore uses <code>Alt+Shift+B</code>, matching the
+          <code>Alt+Shift+…</code> convention shared with split/focus. macOS keeps
+          <code>Cmd+Shift+B</code> (free, since sidebar uses <code>Cmd+B</code>). The binding is
+          rebindable in Keyboard Settings.
         </p>
 
         <h3>Per-terminal exclude &amp; ending</h3>
@@ -562,7 +573,7 @@
                 broadcast targets.
               </li>
               <li>
-                The keyboard shortcut (<code>Ctrl/Cmd+Shift+B</code>) skips Step 1 and reuses the
+                The keyboard shortcut (<code>Alt/Cmd+Shift+B</code>) skips Step 1 and reuses the
                 last scope.
               </li>
             </ul>
@@ -608,7 +619,7 @@
           <span class="diagram__caption">Activation Workflow</span>
           <pre class="mermaid">
 flowchart TD
-    A[User clicks Broadcast button<br/>or presses Ctrl+Shift+B] --> B{First activation<br/>or shortcut?}
+    A[User clicks Broadcast button<br/>or presses Alt/Cmd+Shift+B] --> B{First activation<br/>or shortcut?}
     B -->|Toolbar click| C[Show target scope dropdown]
     B -->|Keyboard shortcut| D{Has previous scope?}
     D -->|Yes| E[Use last scope]
@@ -711,7 +722,7 @@ sequenceDiagram
     alt User clicks broadcast button on source
         User->>Source: Click broadcast button
     else User presses shortcut
-        User->>Source: Ctrl+Shift+B
+        User->>Source: Alt/Cmd+Shift+B
     else Source tab closed
         Source->>Store: Tab close event
     end
@@ -1002,21 +1013,34 @@ interface BroadcastActions {
         <h3>Implementation Order</h3>
         <ol>
           <li>
-            Core broadcast state + input mirroring (store, <code>Terminal.tsx</code>, registry
-            <code>getAllSessions</code>).
+            <strong>Done (#1955):</strong> Core broadcast state + input mirroring (store,
+            <code>Terminal.tsx</code>, connected-only target resolution).
           </li>
-          <li>Toolbar button + scope dropdown (all / panel / custom).</li>
-          <li>Visual indicators (panel rings, tab badges, <code>BroadcastStatus</code>).</li>
-          <li>Keyboard shortcut + last-scope memory.</li>
-          <li>Polish &amp; edge cases (new/closed terminals, session filtering, custom picker).</li>
+          <li>
+            <strong>Done (#1956):</strong> Toolbar button + scope dropdown (all / panel / custom)
+            and dynamic membership.
+          </li>
+          <li>
+            <strong>Done (#1957):</strong> Visual indicators (panel rings, tab badges,
+            <code>BroadcastStatus</code>).
+          </li>
+          <li><strong>Done (#1958):</strong> Keyboard shortcut + last-scope memory.</li>
+          <li>
+            <strong>Done:</strong> Polish &amp; edge cases (new/closed terminals, session filtering,
+            custom picker) — folded into the children above.
+          </li>
         </ol>
 
         <h3>Implementation Status</h3>
         <p>
-          Not started — this is a <code>backlog/</code> concept. It is the first concept migrated to
-          the folder form as the worked example for the AI-driven concept workflow. Once
-          implementation begins, run <code>/sync-concept broadcast-input</code> after each change to
-          keep the sync ledger current.
+          <strong>Implemented</strong> — all four children of epic
+          <a href="https://github.com/armaxri/termiHub/issues/1954">#1954</a> have merged:
+          foundation (#1955), target selection (#1956), visual indicators (#1957), and the keyboard
+          shortcut + concept promotion (#1958). One deliberate deviation: the Windows/Linux shortcut
+          is <code>Alt+Shift+B</code> rather than the concept's original <code>Ctrl+Shift+B</code>,
+          because that combo was already taken by Toggle Sidebar (see the Keyboard shortcut
+          section). Run <code>/sync-concept broadcast-input</code> after any later change to keep
+          the ledger current.
         </p>
       </section>
 
@@ -1031,8 +1055,9 @@ interface BroadcastActions {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (concept not yet implemented) ·
-          <strong>Status:</strong> diverged (entirely missing — backlog feature)
+          <strong>Last synced:</strong> 2026-07-25 at commit <code>f61d6eaf</code> ·
+          <strong>Status:</strong> in sync — feature fully implemented (epic #1954, children
+          #1955–#1958). One deliberate concept↔code deviation, resolved in the concept below.
         </p>
 
         <h3>Open divergences</h3>
@@ -1049,11 +1074,11 @@ interface BroadcastActions {
             </thead>
             <tbody>
               <tr>
-                <td>1</td>
-                <td>Entire broadcast feature (per concept)</td>
-                <td>Not implemented — backlog feature</td>
-                <td>Missing</td>
-                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+                <td>—</td>
+                <td>None</td>
+                <td>Concept and code are in sync</td>
+                <td>—</td>
+                <td>—</td>
               </tr>
             </tbody>
           </table>
@@ -1071,9 +1096,38 @@ interface BroadcastActions {
             </thead>
             <tbody>
               <tr>
-                <td>—</td>
-                <td>—</td>
-                <td>—</td>
+                <td>2026-07-25</td>
+                <td>#1955</td>
+                <td>
+                  Broadcast store slice + <code>Terminal.tsx</code> input fan-out (connected-only
+                  targets, source-close teardown) landed.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-25</td>
+                <td>#1956</td>
+                <td>
+                  Toolbar toggle + <code>BroadcastScopeDialog</code> (all / panel / custom) and
+                  dynamic scope membership landed.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-25</td>
+                <td>#1957</td>
+                <td>
+                  Visual indicators — panel rings, tab badges, and the status-bar
+                  <code>BroadcastStatus</code> pill — landed.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-25</td>
+                <td>#1958</td>
+                <td>
+                  <code>toggle-broadcast</code> keyboard shortcut with last-scope memory landed;
+                  concept promoted to <code>implemented/</code>. Deviation: Windows/Linux binding is
+                  <code>Alt+Shift+B</code> (not <code>Ctrl+Shift+B</code>, which Toggle Sidebar
+                  already owns there); concept text updated to match.
+                </td>
               </tr>
             </tbody>
           </table>

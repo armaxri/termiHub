@@ -23,87 +23,143 @@
           <li><a href="#ui-interface">UI Interface</a></li>
           <li><a href="#general-handling">General Handling</a></li>
           <li><a href="#states-sequences">States &amp; Sequences</a></li>
-          <li><a href="#preliminary-implementation-details">Preliminary Implementation Details</a></li>
+          <li>
+            <a href="#preliminary-implementation-details">Preliminary Implementation Details</a>
+          </li>
           <li><a href="#implementation-status">Implementation Status</a></li>
         </ol>
       </nav>
 
-<h2 id="overview">Overview</h2>
-<p>termiHub already documents every feature as a concept in <code>docs/concepts/</code>, sorted by
-implementation status (<code>implemented/</code>, <code>partial/</code>, <code>backlog/</code>, <code>future/</code>). Each concept is a
-single Markdown file with prose plus Mermaid diagrams. This works well as <em>documentation</em>, but
-it is a weak medium for <strong>designing forward</strong> and for <strong>briefing Claude Code</strong> on the exact
-intended result before a line of code is written.</p>
-<p>This concept evolves the existing system into a <strong>design-first, AI-driven development loop</strong>.
-Each feature gains a small set of co-located artifacts — a prose concept, behavior diagrams, and
-<strong>hand-written HTML mockups</strong> — that act as the shared, unambiguous picture of the feature. The
-artifacts are the medium for human discussion <em>and</em> the primary input Claude Code uses to
-generate and verify code. A deliberate, human-triggered <strong>sync step</strong> closes the loop by
-comparing the artifacts against the real code and surfacing divergence.</p>
-<h3 id="motivation">Motivation</h3>
-<ul>
-<li><strong>Prose is ambiguous for UI.</strong> "Put the editor tab next to the file tree" can mean several
-  layouts. A renderable HTML mockup settles it instantly — for both the human reviewer and Claude.</li>
-<li><strong>Claude lacks visual grounding.</strong> Today Claude infers intended layout from prose and from
-  reading existing components. A mockup gives an explicit visual target before implementation.</li>
-<li><strong>Discussion happens too late.</strong> Disagreements about behavior and layout currently surface
-  during or after implementation. Concrete artifacts move that discussion <em>before</em> code exists,
-  when changes are cheap.</li>
-<li><strong>Docs drift silently.</strong> There is no defined moment where concept and code are reconciled.
-  A formal sync step makes reconciliation an explicit, reviewable action.</li>
-</ul>
-<h3 id="core-decisions">Core Decisions</h3>
-<p>These three decisions define the system and are deliberately fixed:</p>
-<ol>
-<li><strong>Concept drives code (source of truth).</strong> When the concept artifacts and the code disagree,
-   the <strong>concept is authoritative</strong> — code is generated from and checked against it. Realities
-   discovered at the code level (performance limits, platform quirks, library constraints) are
-   <em>not</em> silently absorbed into the code; they flow <strong>back into the concept as edits</strong>, so the
-   concept stays the true picture.</li>
-<li><strong>Hand-written, layout-altitude mockups.</strong> Mockups are standalone HTML showing <strong>structure
-   and states</strong>, not pixel-perfect reproductions of the live app. They are authored by hand so
-   they can describe features that do <strong>not yet exist</strong>. They are explicitly allowed to be
-   "directionally right, not current" between syncs.</li>
-<li><strong>Sync requires a Claude Code invocation.</strong> Synchronization is never automatic. It happens
-   only when a developer runs the sync step (a <code>/sync-concept</code> skill), which keeps a human in
-   the loop and prevents silent rewrites of either side.</li>
-</ol>
-<h3 id="goals">Goals</h3>
-<ul>
-<li>Define a <strong>per-concept folder structure</strong> that co-locates prose, diagrams, and mockups.</li>
-<li>Establish <strong>hand-written HTML mockup conventions</strong> at layout altitude.</li>
-<li>Define a <strong><code>/sync-concept</code> skill</strong> that compares concept artifacts to code and produces a
-  divergence report plus proposed edits (to code, since the concept is authoritative).</li>
-<li>Make the whole thing an <strong>incremental, opt-in</strong> layer over the existing concept system — no
-  retrofit of already-implemented concepts is required.</li>
-</ul>
-<h3 id="non-goals">Non-Goals</h3>
-<ul>
-<li><strong>Not</strong> a pixel-perfect design system, component library, or Storybook replacement.</li>
-<li><strong>Not</strong> automatic two-way sync — reconciliation is always human-triggered.</li>
-<li><strong>Not</strong> a mandate to convert all ~40 existing concepts; this targets <strong>new</strong> features and
-  <strong>active redesigns</strong>.</li>
-<li><strong>Not</strong> a code generator that bypasses review — generated code goes through the normal
-  branch + PR + test workflow.</li>
-</ul>
-<hr>
-<h2 id="ui-interface">UI Interface</h2>
-<p>This is a <strong>developer-facing</strong> system. Its "interface" is the on-disk artifact layout, the
-rendered mockups viewed in a browser, and the Claude Code interaction during authoring and sync.</p>
-<h3 id="per-concept-layout">Per-Concept Layout</h3>
-<blockquote>
-<p>Superseded: the layout below is the <strong>original folder form</strong>, kept for context. The <strong>current
-form is one self-contained HTML file</strong> — see the banner at the top of this document.</p>
-</blockquote>
-<p><strong>Current (single-file HTML):</strong> a concept with a visual surface is one file that co-locates
-everything:</p>
-<pre><code>docs/concepts/&lt;status&gt;/&lt;concept-name&gt;.html   # prose + Mermaid + mockups + sync ledger
+      <h2 id="overview">Overview</h2>
+      <p>
+        termiHub already documents every feature as a concept in <code>docs/concepts/</code>, sorted
+        by implementation status (<code>implemented/</code>, <code>partial/</code>,
+        <code>backlog/</code>, <code>future/</code>). Each concept is a single Markdown file with
+        prose plus Mermaid diagrams. This works well as <em>documentation</em>, but it is a weak
+        medium for <strong>designing forward</strong> and for
+        <strong>briefing Claude Code</strong> on the exact intended result before a line of code is
+        written.
+      </p>
+      <p>
+        This concept evolves the existing system into a
+        <strong>design-first, AI-driven development loop</strong>. Each feature gains a small set of
+        co-located artifacts — a prose concept, behavior diagrams, and
+        <strong>hand-written HTML mockups</strong> — that act as the shared, unambiguous picture of
+        the feature. The artifacts are the medium for human discussion <em>and</em> the primary
+        input Claude Code uses to generate and verify code. A deliberate, human-triggered
+        <strong>sync step</strong> closes the loop by comparing the artifacts against the real code
+        and surfacing divergence.
+      </p>
+      <h3 id="motivation">Motivation</h3>
+      <ul>
+        <li>
+          <strong>Prose is ambiguous for UI.</strong> "Put the editor tab next to the file tree" can
+          mean several layouts. A renderable HTML mockup settles it instantly — for both the human
+          reviewer and Claude.
+        </li>
+        <li>
+          <strong>Claude lacks visual grounding.</strong> Today Claude infers intended layout from
+          prose and from reading existing components. A mockup gives an explicit visual target
+          before implementation.
+        </li>
+        <li>
+          <strong>Discussion happens too late.</strong> Disagreements about behavior and layout
+          currently surface during or after implementation. Concrete artifacts move that discussion
+          <em>before</em> code exists, when changes are cheap.
+        </li>
+        <li>
+          <strong>Docs drift silently.</strong> There is no defined moment where concept and code
+          are reconciled. A formal sync step makes reconciliation an explicit, reviewable action.
+        </li>
+      </ul>
+      <h3 id="core-decisions">Core Decisions</h3>
+      <p>These three decisions define the system and are deliberately fixed:</p>
+      <ol>
+        <li>
+          <strong>Concept drives code (source of truth).</strong> When the concept artifacts and the
+          code disagree, the <strong>concept is authoritative</strong> — code is generated from and
+          checked against it. Realities discovered at the code level (performance limits, platform
+          quirks, library constraints) are <em>not</em> silently absorbed into the code; they flow
+          <strong>back into the concept as edits</strong>, so the concept stays the true picture.
+        </li>
+        <li>
+          <strong>Hand-written, layout-altitude mockups.</strong> Mockups are standalone HTML
+          showing <strong>structure and states</strong>, not pixel-perfect reproductions of the live
+          app. They are authored by hand so they can describe features that do
+          <strong>not yet exist</strong>. They are explicitly allowed to be "directionally right,
+          not current" between syncs.
+        </li>
+        <li>
+          <strong>Sync requires a Claude Code invocation.</strong> Synchronization is never
+          automatic. It happens only when a developer runs the sync step (a
+          <code>/sync-concept</code> skill), which keeps a human in the loop and prevents silent
+          rewrites of either side.
+        </li>
+      </ol>
+      <h3 id="goals">Goals</h3>
+      <ul>
+        <li>
+          Define a <strong>per-concept folder structure</strong> that co-locates prose, diagrams,
+          and mockups.
+        </li>
+        <li>Establish <strong>hand-written HTML mockup conventions</strong> at layout altitude.</li>
+        <li>
+          Define a <strong><code>/sync-concept</code> skill</strong> that compares concept artifacts
+          to code and produces a divergence report plus proposed edits (to code, since the concept
+          is authoritative).
+        </li>
+        <li>
+          Make the whole thing an <strong>incremental, opt-in</strong> layer over the existing
+          concept system — no retrofit of already-implemented concepts is required.
+        </li>
+      </ul>
+      <h3 id="non-goals">Non-Goals</h3>
+      <ul>
+        <li>
+          <strong>Not</strong> a pixel-perfect design system, component library, or Storybook
+          replacement.
+        </li>
+        <li>
+          <strong>Not</strong> automatic two-way sync — reconciliation is always human-triggered.
+        </li>
+        <li>
+          <strong>Not</strong> a mandate to convert all ~40 existing concepts; this targets
+          <strong>new</strong> features and <strong>active redesigns</strong>.
+        </li>
+        <li>
+          <strong>Not</strong> a code generator that bypasses review — generated code goes through
+          the normal branch + PR + test workflow.
+        </li>
+      </ul>
+      <hr />
+      <h2 id="ui-interface">UI Interface</h2>
+      <p>
+        This is a <strong>developer-facing</strong> system. Its "interface" is the on-disk artifact
+        layout, the rendered mockups viewed in a browser, and the Claude Code interaction during
+        authoring and sync.
+      </p>
+      <h3 id="per-concept-layout">Per-Concept Layout</h3>
+      <blockquote>
+        <p>
+          Superseded: the layout below is the <strong>original folder form</strong>, kept for
+          context. The <strong>current form is one self-contained HTML file</strong> — see the
+          banner at the top of this document.
+        </p>
+      </blockquote>
+      <p>
+        <strong>Current (single-file HTML):</strong> a concept with a visual surface is one file
+        that co-locates everything:
+      </p>
+      <pre><code>docs/concepts/&lt;status&gt;/&lt;concept-name&gt;.html   # prose + Mermaid + mockups + sync ledger
 docs/concepts/_assets/                        # shared, linked by every concept
   concept-template.html   # copy-me scaffold      concept.css   # document styling
   mockup.css              # app-chrome kit         mermaid.min.js # vendored, offline diagrams
 </code></pre>
-<p><strong>Original (folder form, retired):</strong> a concept graduated from a single <code>.md</code> to a folder:</p>
-<pre><code>docs/concepts/&lt;status&gt;/&lt;concept-name&gt;/
+      <p>
+        <strong>Original (folder form, retired):</strong> a concept graduated from a single
+        <code>.md</code> to a folder:
+      </p>
+      <pre><code>docs/concepts/&lt;status&gt;/&lt;concept-name&gt;/
   concept.md          # Overview, UI Interface, General Handling, Impl Details (existing format)
   behavior.md         # Mermaid state machines + sequence diagrams
   mockups/
@@ -112,95 +168,138 @@ docs/concepts/_assets/                        # shared, linked by every concept
     ...
   sync.md             # Sync ledger: last-synced commit, open divergences
 </code></pre>
-<p>Single-file <code>.md</code> concepts remain valid for features with <strong>no</strong> visual surface; features <strong>with</strong>
-a visual surface become a single-file HTML concept. Both live in the same status directories.</p>
-<h3 id="the-mockup-viewer">The Mockup Viewer</h3>
-<p>Mockups are plain <code>.html</code> files openable directly in any browser — no build step. A small index
-page (<code>docs/concepts/mockups-index.html</code>, generated by a script) lists every mockup across all
-concepts so they can be browsed in one place during a design discussion. Each mockup:</p>
-<ul>
-<li>Uses a shared lightweight stylesheet that approximates termiHub's VS Code-inspired dark theme
-  (activity bar, sidebar, panel chrome) at <strong>structural</strong> fidelity only.</li>
-<li>Annotates non-obvious regions with callout labels (e.g. <code>[A] file tree</code>, <code>[B] editor tab</code>).</li>
-<li>May embed multiple states side by side (empty / loading / populated / error) so a reviewer
-  sees the state space at a glance.</li>
-</ul>
-<pre><code>┌─ mockups-index.html ─────────────────────────────────────────────┐
+      <p>
+        Single-file <code>.md</code> concepts remain valid for features with
+        <strong>no</strong> visual surface; features <strong>with</strong> a visual surface become a
+        single-file HTML concept. Both live in the same status directories.
+      </p>
+      <h3 id="the-mockup-viewer">The Mockup Viewer</h3>
+      <p>
+        Mockups are plain <code>.html</code> files openable directly in any browser — no build step.
+        A small index page (<code>docs/concepts/mockups-index.html</code>, generated by a script)
+        lists every mockup across all concepts so they can be browsed in one place during a design
+        discussion. Each mockup:
+      </p>
+      <ul>
+        <li>
+          Uses a shared lightweight stylesheet that approximates termiHub's VS Code-inspired dark
+          theme (activity bar, sidebar, panel chrome) at <strong>structural</strong> fidelity only.
+        </li>
+        <li>
+          Annotates non-obvious regions with callout labels (e.g. <code>[A] file tree</code>,
+          <code>[B] editor tab</code>).
+        </li>
+        <li>
+          May embed multiple states side by side (empty / loading / populated / error) so a reviewer
+          sees the state space at a glance.
+        </li>
+      </ul>
+      <pre><code>┌─ mockups-index.html ─────────────────────────────────────────────┐
 │  termiHub Concept Mockups                          [ filter… ]    │
 ├───────────────────────────────────────────────────────────────────┤
 │  backlog/ai-driven-concept-workflow                               │
 │    • main-view.html                                               │
-│  backlog/broadcast-input                                          │
+│  implemented/broadcast-input                                      │
 │    • toolbar.html   • target-picker.html                         │
 │  …                                                                │
 └───────────────────────────────────────────────────────────────────┘
 </code></pre>
-<h3 id="claude-code-interaction-surface">Claude Code Interaction Surface</h3>
-<p>Two interaction points, both explicit developer actions:</p>
-<div class="table-wrap">
-<table>
-<thead>
-<tr>
-<th>Action</th>
-<th>Trigger</th>
-<th>Result</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Author</strong></td>
-<td>"Draft a concept for X"</td>
-<td>Claude scaffolds the folder, writes <code>concept.md</code> + <code>behavior.md</code> + first mockup(s) for discussion</td>
-</tr>
-<tr>
-<td><strong>Sync</strong></td>
-<td><code>/sync-concept &lt;name&gt;</code></td>
-<td>Claude reads artifacts + relevant code, writes a divergence report into <code>sync.md</code>, and proposes code edits (concept is authoritative)</td>
-</tr>
-</tbody>
-</table>
-</div>
-<hr>
-<h2 id="general-handling">General Handling</h2>
-<h3 id="the-improvement-loop">The Improvement Loop</h3>
-<p>The lifecycle of a feature under this system:</p>
-<ol>
-<li><strong>Scaffold</strong> — Claude creates the concept folder from a short brief: <code>concept.md</code>,
-   <code>behavior.md</code> with at least one state diagram and one sequence diagram, and one or more
-   layout-altitude mockups.</li>
-<li><strong>Discuss &amp; refine</strong> — The developer reviews the rendered mockups and diagrams, edits prose,
-   and iterates <em>on the artifacts only</em>. No code yet. Cheap changes.</li>
-<li><strong>Implement</strong> — Once the artifacts stabilize, Claude generates code on a feature branch,
-   using the mockups as the layout target and <code>behavior.md</code> as the behavior spec. Normal
-   branch + test + PR workflow applies.</li>
-<li><strong>Sync</strong> — After implementation (and after any later code change that touches the feature),
-   the developer runs <code>/sync-concept &lt;name&gt;</code>. Claude compares artifacts to code and writes a
-   divergence report.</li>
-<li><strong>Reconcile</strong> — For each divergence, the developer decides:
-   - <strong>Concept was right, code is wrong</strong> → fix the code (the default, since concept is truth).
-   - <strong>A real constraint changed the design</strong> → edit the concept artifacts to match reality, so
-     the concept stays authoritative going forward.</li>
-<li><strong>Repeat</strong> — The feature re-enters the loop for the next change.</li>
-</ol>
-<h3 id="edge-cases-rules">Edge Cases &amp; Rules</h3>
-<ul>
-<li><strong>Stale mockups are expected, not a failure.</strong> Between syncs, mockups may lag the code. The
-  <code>sync.md</code> ledger records the last-synced commit so staleness is visible, never silent.</li>
-<li><strong>Source-of-truth conflicts always resolve toward the concept.</strong> Code that diverges from the
-  concept without a corresponding concept edit is treated as a bug to fix, not a new fact to
-  document. The only way the code "wins" is by the developer deliberately editing the concept.</li>
-<li><strong>Not every concept needs mockups.</strong> Backend-only or protocol concepts (e.g. <code>shared-rust-core</code>,
-  <code>agent</code>) stay single-file with diagrams; they have no visual surface to mock.</li>
-<li><strong>No retrofit.</strong> Implemented concepts are upgraded to the folder form only if they enter an
-  active redesign. Otherwise they keep their current single-file form.</li>
-<li><strong>Mockups never import app code.</strong> They are self-contained HTML so they can describe
-  not-yet-built features and never break when components are refactored.</li>
-</ul>
-<hr>
-<h2 id="states-sequences">States &amp; Sequences</h2>
-<h3 id="concept-lifecycle-state-machine">Concept Lifecycle State Machine</h3>
-<div class="diagram">
-  <pre class="mermaid">
+      <h3 id="claude-code-interaction-surface">Claude Code Interaction Surface</h3>
+      <p>Two interaction points, both explicit developer actions:</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>Trigger</th>
+              <th>Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Author</strong></td>
+              <td>"Draft a concept for X"</td>
+              <td>
+                Claude scaffolds the folder, writes <code>concept.md</code> +
+                <code>behavior.md</code> + first mockup(s) for discussion
+              </td>
+            </tr>
+            <tr>
+              <td><strong>Sync</strong></td>
+              <td><code>/sync-concept &lt;name&gt;</code></td>
+              <td>
+                Claude reads artifacts + relevant code, writes a divergence report into
+                <code>sync.md</code>, and proposes code edits (concept is authoritative)
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <hr />
+      <h2 id="general-handling">General Handling</h2>
+      <h3 id="the-improvement-loop">The Improvement Loop</h3>
+      <p>The lifecycle of a feature under this system:</p>
+      <ol>
+        <li>
+          <strong>Scaffold</strong> — Claude creates the concept folder from a short brief:
+          <code>concept.md</code>, <code>behavior.md</code> with at least one state diagram and one
+          sequence diagram, and one or more layout-altitude mockups.
+        </li>
+        <li>
+          <strong>Discuss &amp; refine</strong> — The developer reviews the rendered mockups and
+          diagrams, edits prose, and iterates <em>on the artifacts only</em>. No code yet. Cheap
+          changes.
+        </li>
+        <li>
+          <strong>Implement</strong> — Once the artifacts stabilize, Claude generates code on a
+          feature branch, using the mockups as the layout target and <code>behavior.md</code> as the
+          behavior spec. Normal branch + test + PR workflow applies.
+        </li>
+        <li>
+          <strong>Sync</strong> — After implementation (and after any later code change that touches
+          the feature), the developer runs <code>/sync-concept &lt;name&gt;</code>. Claude compares
+          artifacts to code and writes a divergence report.
+        </li>
+        <li>
+          <strong>Reconcile</strong> — For each divergence, the developer decides: -
+          <strong>Concept was right, code is wrong</strong> → fix the code (the default, since
+          concept is truth). - <strong>A real constraint changed the design</strong> → edit the
+          concept artifacts to match reality, so the concept stays authoritative going forward.
+        </li>
+        <li><strong>Repeat</strong> — The feature re-enters the loop for the next change.</li>
+      </ol>
+      <h3 id="edge-cases-rules">Edge Cases &amp; Rules</h3>
+      <ul>
+        <li>
+          <strong>Stale mockups are expected, not a failure.</strong> Between syncs, mockups may lag
+          the code. The <code>sync.md</code> ledger records the last-synced commit so staleness is
+          visible, never silent.
+        </li>
+        <li>
+          <strong>Source-of-truth conflicts always resolve toward the concept.</strong> Code that
+          diverges from the concept without a corresponding concept edit is treated as a bug to fix,
+          not a new fact to document. The only way the code "wins" is by the developer deliberately
+          editing the concept.
+        </li>
+        <li>
+          <strong>Not every concept needs mockups.</strong> Backend-only or protocol concepts (e.g.
+          <code>shared-rust-core</code>, <code>agent</code>) stay single-file with diagrams; they
+          have no visual surface to mock.
+        </li>
+        <li>
+          <strong>No retrofit.</strong> Implemented concepts are upgraded to the folder form only if
+          they enter an active redesign. Otherwise they keep their current single-file form.
+        </li>
+        <li>
+          <strong>Mockups never import app code.</strong> They are self-contained HTML so they can
+          describe not-yet-built features and never break when components are refactored.
+        </li>
+      </ul>
+      <hr />
+      <h2 id="states-sequences">States &amp; Sequences</h2>
+      <h3 id="concept-lifecycle-state-machine">Concept Lifecycle State Machine</h3>
+      <div class="diagram">
+        <pre class="mermaid">
 stateDiagram-v2
     [*] --&gt; Scaffolded: "Draft a concept for X"
     Scaffolded --&gt; InDiscussion: developer reviews artifacts
@@ -214,11 +313,12 @@ stateDiagram-v2
     FixCode --&gt; Synced: re-run /sync-concept
     EditConcept --&gt; Synced: re-run /sync-concept
     Synced --&gt; [*]: feature stable
-</pre>
-</div>
-<h3 id="sync-sequence">Sync Sequence</h3>
-<div class="diagram">
-  <pre class="mermaid">
+</pre
+        >
+      </div>
+      <h3 id="sync-sequence">Sync Sequence</h3>
+      <div class="diagram">
+        <pre class="mermaid">
 sequenceDiagram
     actor Dev as Developer
     participant CC as Claude Code
@@ -240,11 +340,12 @@ sequenceDiagram
         CC-&gt;&gt;Ledger: record clean sync + commit hash
     end
     CC-&gt;&gt;Dev: summary
-</pre>
-</div>
-<h3 id="authoring-implementation-flow">Authoring &amp; Implementation Flow</h3>
-<div class="diagram">
-  <pre class="mermaid">
+</pre
+        >
+      </div>
+      <h3 id="authoring-implementation-flow">Authoring &amp; Implementation Flow</h3>
+      <div class="diagram">
+        <pre class="mermaid">
 flowchart TD
     A[Short brief from developer] --&gt; B[Claude scaffolds concept folder]
     B --&gt; C[concept.md + behavior.md + mockups/]
@@ -255,100 +356,177 @@ flowchart TD
     F --&gt; G[Tests + PR per normal workflow]
     G --&gt; H[/sync-concept after merge/]
     H --&gt; D
-</pre>
-</div>
-<hr>
-<h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
-<p>Based on the current project architecture (concept system in <code>docs/concepts/</code>, skills in
-<code>.claude/</code>, helper scripts in <code>scripts/</code>).</p>
-<h3 id="1-folder-structure-migration">1. Folder structure &amp; migration</h3>
-<ul>
-<li>Introduce the per-concept folder form alongside existing single-file concepts. No mass
-  migration. Update <code>docs/concepts/README.md</code> to document both forms and when to use a folder.</li>
-<li>A concept is a folder <strong>iff</strong> it has mockups; otherwise it stays a single <code>.md</code>.</li>
-</ul>
-<h3 id="2-mockup-conventions">2. Mockup conventions</h3>
-<ul>
-<li><code>docs/concepts/_assets/mockup.css</code> — one shared stylesheet that <strong>mirrors the app's real
-  component class names and theme values</strong> (sourced from <code>src/styles/variables.css</code> and the
-  component CSS): <code>.activity-bar__item</code>, <code>.tab</code>, <code>.terminal-view__toolbar</code>, <code>.status-bar</code>, etc.
-  Using the real class names keeps the mockup DOM close to the real DOM, so it doubles as a precise
-  implementation target. Still layout altitude — structure, dimensions, and theme, not every pixel.</li>
-<li><strong>Icons are real lucide geometry.</strong> Mockups inline a lucide <code>&lt;symbol&gt;</code> sprite (copied from
-  <code>mockup-template.html</code>) and reference it with <code>&lt;svg class="li"&gt;&lt;use href="#i-name" /&gt;&lt;/svg&gt;</code> —
-  no unicode glyphs, since glyphs were the main reason early drafts didn't read as termiHub.</li>
-<li>Each mockup is a single self-contained <code>.html</code> file (inline markup, shared CSS link, no JS
-  build, no app imports). Light inline <code>&lt;script&gt;</code> is allowed only to toggle between mock states.</li>
-<li>Naming: one file per distinct screen/region (<code>main-view.html</code>, <code>editor.html</code>,
-  <code>target-picker.html</code>).</li>
-<li><strong>Visual verification</strong>: <code>scripts/internal/screenshot-mockup.sh &lt;file&gt;</code> (or <code>--all</code>) renders a
-  mockup to PNG via headless Chrome (into a gitignored <code>.preview/</code>), so fidelity can be checked
-  against the real app rather than asserted.</li>
-</ul>
-<h3 id="3-sync-concept-skill">3. <code>/sync-concept</code> skill</h3>
-<ul>
-<li>New skill under <code>.claude/skills/</code> (project skill). Input: a concept name. Steps:
-  1. Resolve the concept folder; read <code>concept.md</code>, <code>behavior.md</code>, all <code>mockups/*.html</code>.
-  2. Identify the relevant code surface (components named in the concept, related backend
-     modules). Read them.
-  3. Diff <strong>intended vs. actual</strong> at behavior + layout altitude. Treat the concept as truth.
-  4. Write/refresh <code>sync.md</code>: last-synced commit (<code>git rev-parse HEAD</code>), a dated divergence
-     list, and a per-item recommendation (default = fix code).
-  5. Surface the report to the developer and apply the chosen resolutions.</li>
-<li>The skill is the formal embodiment of decision #3 — sync only ever happens via this invocation.</li>
-</ul>
-<h3 id="4-mockup-index-generator">4. Mockup index generator</h3>
-<ul>
-<li><code>scripts/internal/build-mockups-index.{sh,cmd}</code> — scans <code>docs/concepts/**/mockups/*.html</code> and
-  regenerates <code>docs/concepts/mockups-index.html</code> with grouped links and a filter box. Pure static
-  output; no server. Optionally wired into a <code>scripts/</code> entry for discoverability.</li>
-</ul>
-<h3 id="5-integration-with-existing-workflow">5. Integration with existing workflow</h3>
-<ul>
-<li>The existing <strong>Concept issue</strong> flow (CLAUDE.md → <code>Concept</code> label → <code>docs/concepts/&lt;name&gt;.md</code>)
-  is extended: a concept that has a visual surface scaffolds the folder form instead of a single
-  file, including at least one mockup.</li>
-<li>Implementation still follows the standard <strong>branch → tests → PR → merge</strong> rules. This system
-  changes <em>what Claude reads before coding</em>, not how code lands.</li>
-<li>The <code>sync.md</code> ledger gives reviewers a concrete record of when concept and code were last
-  reconciled — useful in PR review.</li>
-</ul>
-<h3 id="6-open-questions-for-iteration">6. Open questions for iteration</h3>
-<ul>
-<li>Should <code>sync.md</code> divergences be cross-referenced to GitHub issues automatically?</li>
-<li>Do we want a CI check that warns when a folder-form concept's code surface changed but
-  <code>sync.md</code>'s last-synced commit is stale? (Advisory only — sync stays human-triggered.)</li>
-<li>Should the shared <code>mockup.css</code> be generated from real theme variables periodically, or kept
-  deliberately approximate to avoid implying pixel fidelity?</li>
-</ul>
-<hr>
-<h2 id="implementation-status">Implementation Status</h2>
-<p><strong>Infrastructure built; awaiting first implementation-time use.</strong></p>
-<p>What exists:</p>
-<ul>
-<li><strong>Folder form</strong> defined and documented (<code>docs/concepts/README.md</code>, <code>.claude/CLAUDE.md</code>).</li>
-<li><strong>Shared mockup kit</strong> — <code>docs/concepts/_assets/mockup.css</code> mirroring the app's <strong>real component
-  class names and theme values</strong> plus an inline <strong>lucide icon sprite</strong> in <code>mockup-template.html</code>,
-  and <code>_assets/README.md</code> with conventions.</li>
-<li><strong><code>/sync-concept</code> skill</strong> — <code>.claude/skills/sync-concept/SKILL.md</code>, encoding the
-  concept-is-source-of-truth reconciliation procedure and the <code>sync.md</code> ledger format.</li>
-<li><strong>Index generator</strong> — <code>scripts/internal/build-mockups-index.{sh,cmd}</code> producing
-  <code>docs/concepts/mockups-index.html</code>.</li>
-<li><strong>Screenshot helper</strong> — <code>scripts/internal/screenshot-mockup.sh</code> rendering mockups to PNG via
-  headless Chrome for fidelity checks.</li>
-<li><strong>First worked example</strong> — <code>backlog/broadcast-input/</code> migrated to the folder form with two
-  mockups (verified to visually match the real shell), <code>behavior.md</code>, and a seeded <code>sync.md</code>.</li>
-</ul>
-<p>What is missing:</p>
-<ul>
-<li>A <strong>real implementation-time run of <code>/sync-concept</code></strong> against actual code (broadcast-input is
-  not yet built, so the loop's reconciliation half is untested in practice).</li>
-<li>The optional <strong>CI staleness check</strong> (open question #2) and any <strong>issue cross-referencing</strong>
-  (open question #1).</li>
-</ul>
-<p>This document keeps its diagrams inline rather than splitting into <code>behavior.md</code>, and has no
-<code>mockups/</code> of its own, because the workflow is a developer process with no app-level visual
-surface — consistent with the rule that a concept becomes a folder only when it has mockups.</p>
+</pre
+        >
+      </div>
+      <hr />
+      <h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+      <p>
+        Based on the current project architecture (concept system in <code>docs/concepts/</code>,
+        skills in <code>.claude/</code>, helper scripts in <code>scripts/</code>).
+      </p>
+      <h3 id="1-folder-structure-migration">1. Folder structure &amp; migration</h3>
+      <ul>
+        <li>
+          Introduce the per-concept folder form alongside existing single-file concepts. No mass
+          migration. Update <code>docs/concepts/README.md</code> to document both forms and when to
+          use a folder.
+        </li>
+        <li>
+          A concept is a folder <strong>iff</strong> it has mockups; otherwise it stays a single
+          <code>.md</code>.
+        </li>
+      </ul>
+      <h3 id="2-mockup-conventions">2. Mockup conventions</h3>
+      <ul>
+        <li>
+          <code>docs/concepts/_assets/mockup.css</code> — one shared stylesheet that
+          <strong>mirrors the app's real component class names and theme values</strong> (sourced
+          from <code>src/styles/variables.css</code> and the component CSS):
+          <code>.activity-bar__item</code>, <code>.tab</code>, <code>.terminal-view__toolbar</code>,
+          <code>.status-bar</code>, etc. Using the real class names keeps the mockup DOM close to
+          the real DOM, so it doubles as a precise implementation target. Still layout altitude —
+          structure, dimensions, and theme, not every pixel.
+        </li>
+        <li>
+          <strong>Icons are real lucide geometry.</strong> Mockups inline a lucide
+          <code>&lt;symbol&gt;</code> sprite (copied from <code>mockup-template.html</code>) and
+          reference it with
+          <code>&lt;svg class="li"&gt;&lt;use href="#i-name" /&gt;&lt;/svg&gt;</code> — no unicode
+          glyphs, since glyphs were the main reason early drafts didn't read as termiHub.
+        </li>
+        <li>
+          Each mockup is a single self-contained <code>.html</code> file (inline markup, shared CSS
+          link, no JS build, no app imports). Light inline <code>&lt;script&gt;</code> is allowed
+          only to toggle between mock states.
+        </li>
+        <li>
+          Naming: one file per distinct screen/region (<code>main-view.html</code>,
+          <code>editor.html</code>, <code>target-picker.html</code>).
+        </li>
+        <li>
+          <strong>Visual verification</strong>:
+          <code>scripts/internal/screenshot-mockup.sh &lt;file&gt;</code> (or <code>--all</code>)
+          renders a mockup to PNG via headless Chrome (into a gitignored <code>.preview/</code>), so
+          fidelity can be checked against the real app rather than asserted.
+        </li>
+      </ul>
+      <h3 id="3-sync-concept-skill">3. <code>/sync-concept</code> skill</h3>
+      <ul>
+        <li>
+          New skill under <code>.claude/skills/</code> (project skill). Input: a concept name.
+          Steps: 1. Resolve the concept folder; read <code>concept.md</code>,
+          <code>behavior.md</code>, all <code>mockups/*.html</code>. 2. Identify the relevant code
+          surface (components named in the concept, related backend modules). Read them. 3. Diff
+          <strong>intended vs. actual</strong> at behavior + layout altitude. Treat the concept as
+          truth. 4. Write/refresh <code>sync.md</code>: last-synced commit (<code
+            >git rev-parse HEAD</code
+          >), a dated divergence list, and a per-item recommendation (default = fix code). 5.
+          Surface the report to the developer and apply the chosen resolutions.
+        </li>
+        <li>
+          The skill is the formal embodiment of decision #3 — sync only ever happens via this
+          invocation.
+        </li>
+      </ul>
+      <h3 id="4-mockup-index-generator">4. Mockup index generator</h3>
+      <ul>
+        <li>
+          <code>scripts/internal/build-mockups-index.{sh,cmd}</code> — scans
+          <code>docs/concepts/**/mockups/*.html</code> and regenerates
+          <code>docs/concepts/mockups-index.html</code> with grouped links and a filter box. Pure
+          static output; no server. Optionally wired into a <code>scripts/</code> entry for
+          discoverability.
+        </li>
+      </ul>
+      <h3 id="5-integration-with-existing-workflow">5. Integration with existing workflow</h3>
+      <ul>
+        <li>
+          The existing <strong>Concept issue</strong> flow (CLAUDE.md → <code>Concept</code> label →
+          <code>docs/concepts/&lt;name&gt;.md</code>) is extended: a concept that has a visual
+          surface scaffolds the folder form instead of a single file, including at least one mockup.
+        </li>
+        <li>
+          Implementation still follows the standard
+          <strong>branch → tests → PR → merge</strong> rules. This system changes
+          <em>what Claude reads before coding</em>, not how code lands.
+        </li>
+        <li>
+          The <code>sync.md</code> ledger gives reviewers a concrete record of when concept and code
+          were last reconciled — useful in PR review.
+        </li>
+      </ul>
+      <h3 id="6-open-questions-for-iteration">6. Open questions for iteration</h3>
+      <ul>
+        <li>
+          Should <code>sync.md</code> divergences be cross-referenced to GitHub issues
+          automatically?
+        </li>
+        <li>
+          Do we want a CI check that warns when a folder-form concept's code surface changed but
+          <code>sync.md</code>'s last-synced commit is stale? (Advisory only — sync stays
+          human-triggered.)
+        </li>
+        <li>
+          Should the shared <code>mockup.css</code> be generated from real theme variables
+          periodically, or kept deliberately approximate to avoid implying pixel fidelity?
+        </li>
+      </ul>
+      <hr />
+      <h2 id="implementation-status">Implementation Status</h2>
+      <p><strong>Infrastructure built; awaiting first implementation-time use.</strong></p>
+      <p>What exists:</p>
+      <ul>
+        <li>
+          <strong>Folder form</strong> defined and documented (<code>docs/concepts/README.md</code>,
+          <code>.claude/CLAUDE.md</code>).
+        </li>
+        <li>
+          <strong>Shared mockup kit</strong> —
+          <code>docs/concepts/_assets/mockup.css</code> mirroring the app's
+          <strong>real component class names and theme values</strong> plus an inline
+          <strong>lucide icon sprite</strong> in <code>mockup-template.html</code>, and
+          <code>_assets/README.md</code> with conventions.
+        </li>
+        <li>
+          <strong><code>/sync-concept</code> skill</strong> —
+          <code>.claude/skills/sync-concept/SKILL.md</code>, encoding the concept-is-source-of-truth
+          reconciliation procedure and the <code>sync.md</code> ledger format.
+        </li>
+        <li>
+          <strong>Index generator</strong> —
+          <code>scripts/internal/build-mockups-index.{sh,cmd}</code> producing
+          <code>docs/concepts/mockups-index.html</code>.
+        </li>
+        <li>
+          <strong>Screenshot helper</strong> —
+          <code>scripts/internal/screenshot-mockup.sh</code> rendering mockups to PNG via headless
+          Chrome for fidelity checks.
+        </li>
+        <li>
+          <strong>First worked example</strong> — <code>broadcast-input</code> (since built and
+          promoted to <code>implemented/</code>) was the first concept authored in this form, with
+          mockups verified to visually match the real shell and a seeded sync ledger.
+        </li>
+      </ul>
+      <p>What is missing:</p>
+      <ul>
+        <li>
+          A <strong>real implementation-time run of <code>/sync-concept</code></strong> against
+          actual code (broadcast-input is not yet built, so the loop's reconciliation half is
+          untested in practice).
+        </li>
+        <li>
+          The optional <strong>CI staleness check</strong> (open question #2) and any
+          <strong>issue cross-referencing</strong> (open question #1).
+        </li>
+      </ul>
+      <p>
+        This document keeps its diagrams inline rather than splitting into <code>behavior.md</code>,
+        and has no <code>mockups/</code> of its own, because the workflow is a developer process
+        with no app-level visual surface — consistent with the rule that a concept becomes a folder
+        only when it has mockups.
+      </p>
     </div>
 
     <script src="../_assets/mermaid.min.js"></script>
