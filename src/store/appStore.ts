@@ -114,6 +114,7 @@ import {
   detachPersistentTab as apiDetachPersistentTab,
   saveShellIntegrationSettings,
   localReadFile,
+  listSerialPorts,
   openWindow,
   sendHandoffToWindow,
   claimSession,
@@ -196,7 +197,14 @@ import {
   captureAllTabGroups,
   getWorkspaceLeaves,
 } from "@/utils/workspaceLayout";
-import { resolveRestoreMode, summarizeLastSession, type RestorePrompt } from "@/utils/restoreMode";
+import {
+  filterSessionBySelection,
+  resolveRestoreMode,
+  summarizeLastSession,
+  type RestorePrompt,
+} from "@/utils/restoreMode";
+import { probeRestoreTargets } from "@/utils/restoreReachability";
+import { probeTargetReachable } from "@/services/networkApi";
 import { Macro, MacroStep } from "@/types/macro";
 import {
   listMacros as apiListMacros,
@@ -1518,8 +1526,13 @@ interface AppState {
   saveLastSession: () => Promise<void>;
   /** Debounced wrapper around {@link saveLastSession} for high-frequency layout changes. */
   scheduleLastSessionSave: () => void;
-  /** Restore the persisted last session into the live layout. Returns true if a session was restored. */
-  restoreLastSession: () => Promise<boolean>;
+  /**
+   * Restore the persisted last session into the live layout. Returns true if a
+   * session was restored. When `selectedIndices` is given, only the tabs at
+   * those flat indices (as produced by `summarizeLastSession`) are restored —
+   * the partial-restore path from the restore dialog (#1931).
+   */
+  restoreLastSession: (selectedIndices?: readonly number[]) => Promise<boolean>;
   /** Clear the persisted last session (e.g. when restore-on-startup is disabled). */
   clearLastSession: () => Promise<void>;
   /**
@@ -1537,9 +1550,13 @@ interface AppState {
   /**
    * Resolve the restore prompt with "Restore": optionally persist
    * `restoreLastSessionMode: "always"` (when `remember`), then restore the
-   * stored session.
+   * stored session. `selectedIndices` restricts the restore to the checked tabs
+   * (#1931); omitting it restores every stored tab.
    */
-  confirmRestorePrompt: (remember: boolean) => Promise<void>;
+  confirmRestorePrompt: (
+    remember: boolean,
+    selectedIndices?: readonly number[]
+  ) => Promise<void>;
   /**
    * Resolve the restore prompt with "Start Fresh": optionally persist
    * `restoreLastSessionMode: "never"` (when `remember`), then clear the stored
@@ -1857,6 +1874,42 @@ function beginRestoreGuard(setState: (partial: Partial<AppState>) => void): void
     setState({ restoreInProgress: false });
     frontendLog("workspace", "restore settle window elapsed; auto-save re-enabled");
   }, RESTORE_SETTLE_MS);
+}
+
+/**
+ * Probe reachability for a pending restore prompt and patch its tabs with the
+ * results (#1931). Runs in the background after the dialog opens so the prompt
+ * shows immediately; when the probe resolves, the prompt is updated in place so
+ * the dialog can flag unreachable targets. Stale results (the prompt changed or
+ * was dismissed meanwhile) are dropped by identity check.
+ */
+async function probeRestorePromptReachability(
+  prompt: RestorePrompt,
+  getState: () => AppState,
+  setState: (partial: Partial<AppState>) => void
+): Promise<void> {
+  const targets = prompt.tabs.map((t) => t.target ?? { kind: "local" as const });
+  try {
+    const results = await probeRestoreTargets(targets, {
+      listSerialPorts,
+      probeHost: (host, port) => probeTargetReachable(host, port),
+    });
+    // Only apply if this exact prompt is still the active one.
+    if (getState().restorePrompt !== prompt) return;
+    setState({
+      restorePrompt: {
+        ...prompt,
+        tabs: prompt.tabs.map((tab, i) => ({
+          ...tab,
+          reachability: results[i]?.reachability ?? "unknown",
+          unreachableReason: results[i]?.reason,
+        })),
+      },
+    });
+  } catch (err) {
+    // A probe failure leaves reachability unknown — never blocks restore.
+    frontendLog("workspace", `restore reachability probe failed: ${String(err)}`);
+  }
 }
 
 /**
@@ -7510,10 +7563,16 @@ export const useAppStore = create<AppState>((set, get) => {
       }, LAST_SESSION_SAVE_DEBOUNCE_MS);
     },
 
-    restoreLastSession: async () => {
+    restoreLastSession: async (selectedIndices) => {
       try {
-        const session = await apiLoadLastSession();
-        if (!session || session.tabGroups.length === 0) return false;
+        const loaded = await apiLoadLastSession();
+        if (!loaded || loaded.tabGroups.length === 0) return false;
+        // Partial restore (#1931): prune the stored session to the tabs the user
+        // checked before building anything. An empty selection restores nothing.
+        const session = selectedIndices
+          ? filterSessionBySelection(loaded, new Set(selectedIndices))
+          : loaded;
+        if (session.tabGroups.length === 0) return false;
         const state = get();
         // Agents are all disconnected at startup, so agentRef tabs resolve to
         // agent-error tabs rather than silently disappearing.
@@ -7609,10 +7668,16 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         const session = await apiLoadLastSession();
         if (!session || session.tabGroups.length === 0) return;
-        const summary = summarizeLastSession(session);
+        // Pass loaded connections so `connectionRef` tabs resolve a host/serial
+        // target for the reachability probe (connections are loaded before this
+        // runs at startup).
+        const summary = summarizeLastSession(session, get().connections);
         // Nothing launchable → treat as "no session" and stay silent.
         if (summary.tabCount === 0) return;
         set({ restorePrompt: summary });
+        // Probe each target's reachability in the background and patch the
+        // prompt so the dialog can flag unavailable tabs (#1931).
+        void probeRestorePromptReachability(summary, get, set);
       } catch (err) {
         // A corrupt/failed load must not wedge startup — surface it like a
         // failed restore and start fresh.
@@ -7621,7 +7686,7 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    confirmRestorePrompt: async (remember) => {
+    confirmRestorePrompt: async (remember, selectedIndices) => {
       const state = get();
       if (remember) {
         await state.updateSettings({
@@ -7630,7 +7695,7 @@ export const useAppStore = create<AppState>((set, get) => {
         });
       }
       set({ restorePrompt: null });
-      await get().restoreLastSession();
+      await get().restoreLastSession(selectedIndices);
     },
 
     dismissRestorePrompt: async (remember) => {

@@ -52,6 +52,23 @@ export async function networkPortScanCancel(taskId: string): Promise<void> {
   await invoke("network_port_scan_cancel", { taskId });
 }
 
+/**
+ * One-shot TCP reachability probe (issue #1931). Resolves `true` only when a TCP
+ * connection to `host:port` is accepted within `timeoutMs` (default 1500 ms on
+ * the backend). Used by the session-restore dialog to flag unreachable targets.
+ */
+export async function probeTargetReachable(
+  host: string,
+  port: number,
+  timeoutMs?: number
+): Promise<boolean> {
+  return await invoke<boolean>("probe_target_reachable", {
+    host,
+    port,
+    timeoutMs: timeoutMs ?? null,
+  });
+}
+
 // ── Ping ─────────────────────────────────────────────────────────────────────
 
 /**
