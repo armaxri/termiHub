@@ -349,7 +349,11 @@ mod tests {
         wm.set_tab_count("win-1", 2);
         wm.set_tab_count("main", 0);
         assert_eq!(wm.tab_count_of("win-1"), Some(2));
-        assert_eq!(wm.tab_count_of("main"), Some(0), "zero is 'empty', not absent");
+        assert_eq!(
+            wm.tab_count_of("main"),
+            Some(0),
+            "zero is 'empty', not absent"
+        );
 
         // A re-report overwrites the previous value.
         wm.set_tab_count("win-1", 5);

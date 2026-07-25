@@ -114,10 +114,7 @@ pub fn get_session_owner(
 /// [`report_window_tab_count`] (#1910); a window that has not reported yet
 /// carries `None`, which the picker renders as no hint until its first report.
 #[tauri::command]
-pub fn list_windows(
-    app: AppHandle,
-    window_manager: State<'_, WindowManager>,
-) -> Vec<WindowInfo> {
+pub fn list_windows(app: AppHandle, window_manager: State<'_, WindowManager>) -> Vec<WindowInfo> {
     app.webview_windows()
         .into_keys()
         .map(|label| {
