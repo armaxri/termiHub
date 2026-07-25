@@ -42,25 +42,36 @@ export interface SelectProps {
   "data-testid"?: string;
 }
 
-/**
- * A token-styled Radix Select item. Exposed so callers using the `children`
- * escape hatch can render options that match the primitive's styling.
- */
-export function SelectItem({
-  value,
-  disabled,
-  children,
-}: {
+/** Props for the exported {@link SelectItem}. */
+export interface SelectItemProps extends Omit<
+  React.ComponentPropsWithoutRef<typeof RadixSelect.Item>,
+  "value"
+> {
   value: string;
   disabled?: boolean;
   children: React.ReactNode;
-}): React.ReactElement {
+}
+
+/**
+ * A token-styled Radix Select item. Exposed so callers using the `children`
+ * escape hatch can render options that match the primitive's styling.
+ *
+ * Forwards its ref and any extra props to the underlying item so it can be used
+ * as the `asChild` trigger of another primitive — e.g. wrapping it in a
+ * {@link Tooltip} to show a hover preview for the option.
+ */
+export const SelectItem = React.forwardRef<
+  React.ElementRef<typeof RadixSelect.Item>,
+  SelectItemProps
+>(function SelectItem({ value, disabled, children, ...rest }, ref) {
   return (
     <RadixSelect.Item
+      ref={ref}
       className="ui-select__item"
       value={value}
       disabled={disabled}
       data-value={value}
+      {...rest}
     >
       <RadixSelect.ItemText>{children}</RadixSelect.ItemText>
       <RadixSelect.ItemIndicator className="ui-select__item-indicator">
@@ -68,7 +79,7 @@ export function SelectItem({
       </RadixSelect.ItemIndicator>
     </RadixSelect.Item>
   );
-}
+});
 
 /**
  * The single shared select primitive. Compose from this instead of a native
