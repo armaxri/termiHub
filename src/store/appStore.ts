@@ -1484,6 +1484,20 @@ interface AppState {
    * is done by the terminal registry at the dispatch seam.
    */
   getBroadcastTargetTabIds: () => string[];
+  /**
+   * Recompute the broadcast target set for the active {@link broadcastScope} so
+   * membership tracks tabs opening during an active broadcast (#1956). No-op
+   * when inactive.
+   *
+   * - `"all"` / `"panel"` — re-derive members from the scope, so a terminal
+   *   opened in range is auto-added and one no longer in range drops out.
+   * - `"custom"` — never auto-adds; the explicit selection is authoritative
+   *   (closed tabs are pruned at the tab-close seam). No-op here.
+   *
+   * Closing a target is handled at the tab-close seam for every scope, so this
+   * only needs to run on tab open.
+   */
+  refreshBroadcastMembership: () => void;
 
   // Workflows (#1852) — the foundation of the Workflow Automation epic (#1851).
   /** All stored workflows. */
@@ -2101,6 +2115,39 @@ function collectLiveTabs(state: {
     g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
   );
   return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+}
+
+/**
+ * Resolve the terminal tab ids that belong to a broadcast {@link BroadcastScope}
+ * given the tab that owns input (the source). Only *terminal* tabs are eligible
+ * — non-terminal tabs (editors, SFTP/file browsers, ...) are never broadcast
+ * targets, matching the concept's "Non-terminal tabs never appear" rule.
+ *
+ * - `"all"` — every terminal tab in the active tab group.
+ * - `"panel"` — every terminal tab in the same split panel as the source.
+ * - `"custom"` — `[]`; membership comes from the user's picker, not the scope.
+ *
+ * Exported for the scope dropdown's live counts and the dynamic-membership tests
+ * (#1956). Operates on the active group's `rootPanel`, matching the foundation's
+ * (#1955) all-terminals fan-out.
+ */
+export function resolveBroadcastTargetTabIds(
+  state: { rootPanel: PanelNode },
+  scope: BroadcastScope,
+  sourceTabId: string
+): string[] {
+  if (scope === "custom") return [];
+  const isTerminal = (t: TerminalTab): boolean => t.contentType === "terminal";
+  if (scope === "panel") {
+    const leaf = findLeafByTab(state.rootPanel, sourceTabId);
+    if (!leaf) return [];
+    return leaf.tabs.filter(isTerminal).map((t) => t.id);
+  }
+  // "all"
+  return getAllLeaves(state.rootPanel)
+    .flatMap((leaf) => leaf.tabs)
+    .filter(isTerminal)
+    .map((t) => t.id);
 }
 
 /**
@@ -3596,6 +3643,9 @@ export const useAppStore = create<AppState>((set, get) => {
       if ((contentType ?? "terminal") === "terminal" && config) {
         void get().recordSession(connectionType, config);
       }
+      // Dynamic membership (#1956): a terminal opened during an active broadcast
+      // is auto-added under the "all"/"panel" scopes (never under "custom").
+      get().refreshBroadcastMembership();
       return createdTabId;
     },
 
@@ -7141,6 +7191,22 @@ export const useAppStore = create<AppState>((set, get) => {
         result.push(tabId);
       }
       return result;
+    },
+
+    refreshBroadcastMembership: () => {
+      const state = get();
+      if (!state.broadcastActive) return;
+      const source = state.broadcastSourceTabId;
+      if (!source) return;
+      // Custom selection is frozen at pick time — never auto-add. Removal of
+      // closed targets is handled at the tab-close seam.
+      if (state.broadcastScope === "custom") return;
+      const resolved = resolveBroadcastTargetTabIds(state, state.broadcastScope, source);
+      const next = new Set<string>([source, ...resolved]);
+      const prev = state.broadcastTargetTabIds;
+      // Skip the update (and its re-render) when membership is unchanged.
+      if (next.size === prev.size && [...next].every((id) => prev.has(id))) return;
+      set({ broadcastTargetTabIds: next });
     },
 
     // Workflows (#1852)
