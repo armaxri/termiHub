@@ -50,6 +50,26 @@ pub async fn dns_lookup(
     Ok(DnsResult { records, query_ms })
 }
 
+/// Best-effort reverse-DNS (PTR) lookup for an IP address.
+///
+/// Returns the first resolved hostname (with the trailing root dot trimmed), or
+/// `None` if the address has no PTR record or the system resolver is
+/// unavailable. Never errors — reverse resolution is advisory (e.g. the NAME
+/// column of the ping sweep), so a failure simply means "no name".
+pub async fn reverse_lookup(ip: std::net::IpAddr) -> Option<String> {
+    use hickory_resolver::proto::rr::RData;
+    let resolver = build_resolver(None).ok()?;
+    let lookup = resolver.reverse_lookup(ip).await.ok()?;
+    lookup.answers().iter().find_map(|record| {
+        if let RData::PTR(name) = &record.data {
+            let s = name.to_utf8();
+            Some(s.strip_suffix('.').unwrap_or(&s).to_string())
+        } else {
+            None
+        }
+    })
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn build_resolver(server: Option<&str>) -> Result<TokioResolver, NetworkError> {

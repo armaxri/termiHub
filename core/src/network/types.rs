@@ -72,6 +72,36 @@ pub struct PingStats {
     pub jitter_ms: f64,
 }
 
+// ── Ping Sweep ─────────────────────────────────────────────────────────────────
+
+/// A host that responded during a ping sweep.
+///
+/// Only responding (up) hosts are streamed as results; non-responders are
+/// tallied into [`PingSweepSummary::down`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PingSweepResult {
+    /// The probed address (an IP string, or the original hostname token).
+    pub host: String,
+    /// Round-trip time in milliseconds for the reply.
+    pub latency_ms: Option<u64>,
+    /// Best-effort reverse-DNS hostname for the address, if resolvable.
+    pub hostname: Option<String>,
+}
+
+/// Summary emitted when a ping sweep completes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PingSweepSummary {
+    /// Total number of hosts probed.
+    pub total: u32,
+    /// Hosts that responded.
+    pub up: u32,
+    /// Hosts that did not respond within the timeout.
+    pub down: u32,
+    pub elapsed_ms: u64,
+}
+
 // ── DNS Lookup ───────────────────────────────────────────────────────────────
 
 /// DNS record types supported by the lookup tool.

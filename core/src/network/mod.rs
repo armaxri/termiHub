@@ -11,6 +11,7 @@
 //! |---|---|
 //! | [`port_scan`] | TCP connect scanner |
 //! | [`ping`] | ICMP ping (with TCP fallback) |
+//! | [`ping_sweep`] | Subnet / IP-range ping sweep |
 //! | [`dns`] | DNS record lookup |
 //! | [`traceroute`] | Hop-by-hop traceroute |
 //! | [`wol`] | Wake-on-LAN magic packet |
@@ -20,6 +21,7 @@ pub mod dns;
 pub mod error;
 pub mod open_ports;
 pub mod ping;
+pub mod ping_sweep;
 pub mod port_scan;
 pub mod traceroute;
 pub mod types;
@@ -28,6 +30,7 @@ pub mod wol;
 pub use error::NetworkError;
 pub use port_scan::{parse_port_spec, parse_target_spec, MAX_EXPANDED_TARGETS};
 pub use types::{
-    DnsRecord, DnsRecordType, DnsResult, OpenPort, PingResult, PingStats, PortScanResult,
-    PortScanSummary, PortState, Protocol, TracerouteHop, WolDevice,
+    DnsRecord, DnsRecordType, DnsResult, OpenPort, PingResult, PingStats, PingSweepResult,
+    PingSweepSummary, PortScanResult, PortScanSummary, PortState, Protocol, TracerouteHop,
+    WolDevice,
 };
