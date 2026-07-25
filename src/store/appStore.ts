@@ -118,6 +118,7 @@ import {
   openWindow,
   sendHandoffToWindow,
   claimSession,
+  releaseSession,
   takePendingHandoffs,
   reportWindowLayout,
   collectWindowLayouts,
@@ -1940,6 +1941,22 @@ function collectWindowTabs(state: {
   return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
 }
 
+/**
+ * Fire a multi-window ownership call (claim/release, #1939) as a best-effort
+ * signal: a rejected IPC promise is swallowed, and a synchronous throw — which
+ * only happens when a unit test stubs `@/services/api` without the command — is
+ * caught. Ownership is advisory (it feeds the #1926 owning-window badge and
+ * resize gating), so it must never disrupt the session assignment that triggered
+ * it.
+ */
+function bestEffortOwnership(op: () => Promise<unknown>): void {
+  try {
+    void op().catch(() => {});
+  } catch {
+    // api layer unavailable (unit tests stub @/services/api).
+  }
+}
+
 function teardownAllSessions(state: {
   tabGroups: TabGroup[];
   activeTabGroupId: string;
@@ -1949,13 +1966,19 @@ function teardownAllSessions(state: {
   let closed = 0;
   for (const tab of tabs) {
     if (!tab.sessionId) continue;
+    const sessionId = tab.sessionId;
     closed++;
     if (tab.persistentConnectionId) {
       // Persistent session — detach so the background process keeps running.
-      apiDetachPersistentTab(tab.sessionId, tab.id).catch(() => {});
+      apiDetachPersistentTab(sessionId, tab.id).catch(() => {});
     } else {
-      apiCloseTerminal(tab.sessionId).catch(() => {});
+      apiCloseTerminal(sessionId).catch(() => {});
     }
+    // This window stops rendering the session, so relinquish its ownership
+    // (#1939) — the window is not being destroyed here (a restore/launch is
+    // replacing its tabs in place), so the backend's window-destroy
+    // `release_all_for_window` will not fire.
+    bestEffortOwnership(() => releaseSession(sessionId));
   }
   if (closed > 0) {
     frontendLog("workspace", `tore down ${closed} live session(s) before restore/launch`);
@@ -3259,17 +3282,20 @@ export const useAppStore = create<AppState>((set, get) => {
       }),
 
     setTabSessionId: (tabId, sessionId) => {
+      // The tab as it stands *before* this update — used both to skip work for an
+      // unknown tab and to capture the session id this tab is superseding, so a
+      // replaced/cleared session releases its ownership as the new one is claimed.
+      const existingTab = getAllLeaves(get().rootPanel)
+        .flatMap((l) => l.tabs)
+        .find((t) => t.id === tabId);
+      const prevSessionId = existingTab?.sessionId ?? null;
+
       // For remote-session tabs gaining a session ID, fetch capabilities so
       // monitoring knows whether this session supports stats collection.
-      if (sessionId) {
-        const tab = getAllLeaves(get().rootPanel)
-          .flatMap((l) => l.tabs)
-          .find((t) => t.id === tabId);
-        if (tab?.connectionType === "remote-session") {
-          sessionGetCapabilities(sessionId)
-            .then((caps) => get().setSessionCapabilities(sessionId, caps))
-            .catch(() => {});
-        }
+      if (sessionId && existingTab?.connectionType === "remote-session") {
+        sessionGetCapabilities(sessionId)
+          .then((caps) => get().setSessionCapabilities(sessionId, caps))
+          .catch(() => {});
       }
       set((state) => {
         const leaf = findLeafByTab(state.rootPanel, tabId);
@@ -3281,6 +3307,25 @@ export const useAppStore = create<AppState>((set, get) => {
           })),
         };
       });
+
+      // Multi-window ownership (#1939): the window that renders a session owns it
+      // in the backend `session → window` map (#1900). Claiming here — the single
+      // choke point every rendered session flows through (terminal, file browser,
+      // remote desktop, restore reconnect) — makes the Open Connections
+      // owning-window badge (#1926) appear for *every* session, not only ones
+      // moved between windows. Releasing a superseded/cleared session keeps the
+      // map from leaking dead entries. A session mid-move is skipped so the
+      // claim/release handshake with the destination window is not disturbed: the
+      // destination grants first, so the source must never release the moved
+      // session out from under it. Best-effort (see `bestEffortOwnership`).
+      if (existingTab) {
+        if (prevSessionId && prevSessionId !== sessionId && !get().isSessionMoving(prevSessionId)) {
+          bestEffortOwnership(() => releaseSession(prevSessionId));
+        }
+        if (sessionId) {
+          bestEffortOwnership(() => claimSession(sessionId));
+        }
+      }
       // A non-null session id means this tab has connected — settle it in any
       // in-flight restore/launch cohort so the aggregate summary can fire (#1146).
       if (sessionId) {
@@ -3728,6 +3773,19 @@ export const useAppStore = create<AppState>((set, get) => {
     setPendingAttachedTabCloseConfirm: (req) => set({ pendingAttachedTabCloseConfirm: req }),
 
     closeTab: (tabId, panelId) => {
+      // Relinquish backend ownership of this tab's live session (#1939). A closed
+      // tab's session is torn down here (or already exited), so its
+      // `session → window` entry (#1900) must be dropped or it leaks a stale
+      // owning-window badge (#1926). Skipped for a session mid-move — that tab is
+      // removed via the move path, not closed, and the destination window now
+      // owns it. Best-effort (see `bestEffortOwnership`).
+      const closingSessionId = getAllLeaves(useAppStore.getState().rootPanel)
+        .flatMap((l) => l.tabs)
+        .find((t) => t.id === tabId)?.sessionId;
+      if (closingSessionId && !get().isSessionMoving(closingSessionId)) {
+        bestEffortOwnership(() => releaseSession(closingSessionId));
+      }
+
       // Close every SFTP session owned by this tab and drop it from the map —
       // the L1 leak fix (#1241). Fire the async closes here (fire-and-forget)
       // so the state updater below stays pure; the entries are removed regardless.

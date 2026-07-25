@@ -216,9 +216,11 @@ impl WindowManager {
     /// A snapshot of the full `session_id → owning_window_label` map.
     ///
     /// The Open Connections panel reads this once when it opens to stamp each
-    /// session row with the window that owns it (#1926). Only sessions that have
-    /// been claimed (e.g. moved between windows) appear; an unclaimed session has
-    /// no entry and the panel renders no window badge for it.
+    /// session row with the window that owns it (#1926). Since #1939 every window
+    /// claims the sessions it renders (on open/attach/restore, not only on a
+    /// hand-off), so this normally covers every live session; a session still
+    /// carries no entry only in the brief window before its rendering tab has
+    /// claimed it, and the panel renders no window badge for it until then.
     pub fn all_owners(&self) -> HashMap<String, String> {
         recover(self.ownership.lock()).clone()
     }
@@ -468,6 +470,47 @@ mod tests {
         wm.claim("s1", "win-1");
         assert!(wm.may_resize("s1", "win-1"));
         assert!(!wm.may_resize("s1", "main"));
+    }
+
+    #[test]
+    fn broadened_claim_keeps_single_window_resize_and_single_owner_on_move() {
+        // #1939: every window now claims the sessions it renders, so a session in
+        // a lone window is *claimed* (by "main") rather than left unclaimed. This
+        // must not change single-window resize gating: the owning window still
+        // resizes it.
+        let wm = WindowManager::new();
+        assert_eq!(
+            wm.claim("s1", "main"),
+            None,
+            "first render claims the session"
+        );
+        assert!(
+            wm.may_resize("s1", "main"),
+            "the sole window that rendered (and claimed) the session still resizes it"
+        );
+
+        // A move re-parents the session: the destination grants first, so there is
+        // never a moment with two owners, and the source's later release is a
+        // no-op that cannot orphan the moved session.
+        assert_eq!(
+            wm.claim("s1", "win-1"),
+            Some("main".to_string()),
+            "destination supersedes the previous owner atomically"
+        );
+        assert_eq!(wm.owner_of("s1"), Some("win-1".to_string()));
+        assert!(!wm.release("s1", "main"), "stale source release is a no-op");
+        assert_eq!(
+            wm.owner_of("s1"),
+            Some("win-1".to_string()),
+            "single-owner invariant holds across the move"
+        );
+        // Resize gating followed ownership to the destination.
+        assert!(wm.may_resize("s1", "win-1"));
+        assert!(!wm.may_resize("s1", "main"));
+
+        // Closing the tab in the owning window relinquishes ownership.
+        assert!(wm.release("s1", "win-1"), "owner release clears the entry");
+        assert_eq!(wm.owner_of("s1"), None);
     }
 
     #[test]

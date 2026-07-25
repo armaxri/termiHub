@@ -131,6 +131,22 @@ describe("OpenConnectionsModal — owning-window affordance (#1926)", () => {
     expect(focusWindow).toHaveBeenCalledWith("win-2");
   });
 
+  it("shows the badge for a normally-opened (non-handoff) session (#1939)", async () => {
+    // #1939 broadened claiming so a window owns every session it renders — not
+    // only ones moved between windows. The panel reads the same ownership map,
+    // so a session owned because its own window claimed it on open renders a
+    // badge exactly like a moved one. Here BOTH sessions are owned (each claimed
+    // by the window that opened it), so both rows show their window badge.
+    listSessionOwners.mockResolvedValue({ "sess-owned": "win-2", "sess-unclaimed": "main" });
+    windowInfo = { label: "main", name: "Main Window", count: 2 };
+    await renderModal();
+
+    expect(windowChip("Owned Shell")?.textContent).toContain("Window 2");
+    // The second, normally-opened session now also carries a badge (its owner is
+    // the main window).
+    expect(windowChip("Unclaimed Shell")).not.toBeNull();
+  });
+
   it("shows no chip for an unclaimed session even with >1 window", async () => {
     windowInfo = { label: "main", name: "Main Window", count: 2 };
     await renderModal();
