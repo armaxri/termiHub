@@ -122,6 +122,7 @@ import {
   sendHandoffToWindow,
   claimSession,
   releaseSession,
+  listSessionOwners,
   takePendingHandoffs,
   reportWindowLayout,
   collectWindowLayouts,
@@ -740,6 +741,37 @@ interface AppState {
    * seeded for it ({@link seedTransferQueue}).
    */
   releasedTransferSessions: string[];
+  /**
+   * This window's runtime label (`main`, `win-1`, …), captured once at store
+   * creation. Used to scope transfer folds to the owning window (#1964): a
+   * broadcast `transfer-progress` event is folded only when this window owns the
+   * transfer's session. Falls back to {@link MAIN_WINDOW_LABEL} outside Tauri.
+   */
+  windowLabel: string;
+  /**
+   * Local mirror of the backend `session_id → owning_window` map (#1900),
+   * refreshed while transfers are active (#1964). Gates the transfer folds
+   * ({@link applyTransferProgress}, {@link applyTransferProgressToQueue}) so a
+   * transfer is shown only in the window that owns its session — even without a
+   * tab move (which #1951 already handled via {@link releasedTransferSessions}).
+   * A session absent from the map is unclaimed (background/spawned, or not yet
+   * claimed) and folds everywhere as a safe fallback.
+   */
+  sessionOwners: Record<string, string>;
+  /**
+   * Replace {@link sessionOwners} with a fresh snapshot and drop any transient
+   * {@link transfers} / persistent {@link transferQueue} rows for sessions now
+   * owned by a *different* window (#1964). Rows for sessions this window renders
+   * locally are always kept, so a stale snapshot can never evict a live row.
+   */
+  setSessionOwners: (owners: Record<string, string>) => void;
+  /**
+   * Refetch the backend ownership map into {@link sessionOwners} (#1964).
+   * Best-effort (a failed refetch keeps the previous map). Callers that fire it
+   * on high-frequency events (e.g. `transfer-progress`) should coalesce — see
+   * {@link useTransferEvents}.
+   */
+  refreshSessionOwners: () => Promise<void>;
   /** Whether a session is mid-move (read by the source Terminal's unmount cleanup). */
   isSessionMoving: (sessionId: string) => boolean;
   /** Clear a session's moving flag once the source has released its view. */
@@ -2552,6 +2584,89 @@ function removeTransferSessionsFromWindow(
   return { transferQueue, transfers, releasedTransferSessions };
 }
 
+/** State slice needed to decide whether this window renders/owns a session. */
+type OwnershipView = {
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  rootPanel: PanelNode;
+  sftpSessions: Record<string, SftpSessionEntry>;
+  sessionOwners: Record<string, string>;
+  windowLabel: string;
+};
+
+/**
+ * Whether this window renders `sessionId` locally (#1964): a live tab in any of
+ * this window's tab groups is bound to it, or it is an SFTP sidebar session in
+ * this window's store. This is authoritative for *this* window regardless of how
+ * fresh {@link AppState.sessionOwners} is, so the owning window never suppresses
+ * (nor prunes) a row for a session it is actually showing.
+ */
+function windowRendersSession(
+  state: {
+    tabGroups: TabGroup[];
+    activeTabGroupId: string;
+    rootPanel: PanelNode;
+    sftpSessions: Record<string, SftpSessionEntry>;
+  },
+  sessionId: string
+): boolean {
+  if (sessionId in state.sftpSessions) return true;
+  return collectLiveTabs(state).some((t) => t.sessionId === sessionId);
+}
+
+/**
+ * Whether this window should fold a `transfer-progress` event for `sessionId`
+ * into its transfer UI (#1964), scoping a transfer to the window that owns its
+ * session even without a tab move:
+ *
+ *  - a session this window renders is owned here (see {@link windowRendersSession});
+ *  - otherwise the backend `session → window` map (#1900) decides — a session
+ *    owned by another window is suppressed here;
+ *  - a session absent from the map is unclaimed (background/spawned, or not yet
+ *    claimed) and folds everywhere as a safe fallback, preserving single-window
+ *    behavior (the main window owns everything) and background transfers whose
+ *    session may not correspond to a visible tab.
+ */
+function windowOwnsTransferSession(state: OwnershipView, sessionId: string): boolean {
+  if (windowRendersSession(state, sessionId)) return true;
+  const owner = state.sessionOwners?.[sessionId];
+  if (owner === undefined) return true;
+  return owner === state.windowLabel;
+}
+
+/**
+ * Drop transient {@link AppState.transfers} and persistent
+ * {@link AppState.transferQueue} rows for sessions a fresh ownership snapshot
+ * shows are owned by a *different* window (#1964) — the belt-and-suspenders that
+ * clears a row this window may have folded before it learned another window owns
+ * the session. Rows this window renders locally are always kept, so a stale
+ * snapshot can never evict a live row.
+ */
+function pruneForeignTransfers(
+  state: OwnershipView & {
+    transfers: Record<string, TransferState>;
+    transferQueue: Record<string, TransferEntry>;
+  },
+  owners: Record<string, string>
+): Partial<Pick<AppState, "transfers" | "transferQueue">> {
+  const view: OwnershipView = { ...state, sessionOwners: owners };
+  const isForeign = (sessionId: string) => !windowOwnsTransferSession(view, sessionId);
+  const transfers = Object.fromEntries(
+    Object.entries(state.transfers).filter(([, t]) => !isForeign(t.sessionId))
+  );
+  const transferQueue = Object.fromEntries(
+    Object.entries(state.transferQueue).filter(([, t]) => !isForeign(t.sessionId))
+  );
+  const result: Partial<Pick<AppState, "transfers" | "transferQueue">> = {};
+  if (Object.keys(transfers).length !== Object.keys(state.transfers).length) {
+    result.transfers = transfers;
+  }
+  if (Object.keys(transferQueue).length !== Object.keys(state.transferQueue).length) {
+    result.transferQueue = transferQueue;
+  }
+  return result;
+}
+
 /**
  * Remove a tab from a leaf panel, choosing a new active tab if needed.
  * Returns the updated leaf (may have empty tabs).
@@ -2978,6 +3093,23 @@ export const useAppStore = create<AppState>((set, get) => {
     // ── Multi-window foundation (#1900) ──
     movingSessionIds: [],
     releasedTransferSessions: [],
+    windowLabel: currentWindowLabel(),
+    sessionOwners: {},
+    setSessionOwners: (owners) =>
+      set((state) => ({ sessionOwners: owners, ...pruneForeignTransfers(state, owners) })),
+    refreshSessionOwners: async () => {
+      try {
+        const owners = await listSessionOwners();
+        // Coerce a missing/non-object result (e.g. an unmocked IPC bridge in
+        // tests returning `undefined`) to an empty map so the fold gate never
+        // reads through `undefined`.
+        get().setSessionOwners(owners ?? {});
+      } catch {
+        // Ownership is advisory (see `bestEffortOwnership`): a failed refetch (IPC
+        // unavailable / unit test stub) must never disrupt the transfer UI. The
+        // stale map simply keeps the previous scoping.
+      }
+    },
     isSessionMoving: (sessionId) => get().movingSessionIds.includes(sessionId),
     clearMovingSession: (sessionId) =>
       set((state) => ({
@@ -4225,6 +4357,9 @@ export const useAppStore = create<AppState>((set, get) => {
         .map(([sessionId]) => sessionId);
       ownedSftp.forEach((sessionId) => {
         sftpClose(sessionId).catch(() => {});
+        // Relinquish each SFTP session's window ownership (#1964), mirroring the
+        // tab-session release above. Best-effort.
+        bestEffortOwnership(() => releaseSession(sessionId));
       });
 
       set((state) => {
@@ -5269,6 +5404,10 @@ export const useAppStore = create<AppState>((set, get) => {
           } catch {
             // Ignore close errors — the entry is dropped regardless.
           }
+          // Relinquish this SFTP session's window ownership (#1964) so its
+          // transfers stop being attributed to this window (mirrors #1939 for
+          // tab sessions). Best-effort.
+          bestEffortOwnership(() => releaseSession(prevId));
           set((state) => ({ sftpSessions: omitKey(state.sftpSessions, prevId) }));
         }
       }
@@ -5306,6 +5445,7 @@ export const useAppStore = create<AppState>((set, get) => {
           : [];
         staleForTab.forEach((sid) => {
           sftpClose(sid).catch(() => {});
+          bestEffortOwnership(() => releaseSession(sid));
         });
         set((state) => {
           let sessions = state.sftpSessions;
@@ -5322,6 +5462,14 @@ export const useAppStore = create<AppState>((set, get) => {
             sftpSessions: sessions,
           };
         });
+        // Claim window ownership of the tracked SFTP session (#1964) so its
+        // broadcast `transfer-progress` events fold only in this window, even
+        // without a tab move. Only sessions bound to an owning tab are tracked in
+        // the map (and thus attributable); an untracked ad-hoc session stays
+        // unclaimed and folds everywhere as before. Best-effort (see #1939).
+        if (owningTabId) {
+          bestEffortOwnership(() => claimSession(sessionId));
+        }
       } catch (err) {
         set({
           sftpStatus: "error",
@@ -5338,6 +5486,8 @@ export const useAppStore = create<AppState>((set, get) => {
         } catch {
           // Ignore close errors
         }
+        // Relinquish this SFTP session's window ownership (#1964). Best-effort.
+        bestEffortOwnership(() => releaseSession(sessionId));
       }
       set((state) => ({
         sftpSessionId: null,
@@ -5384,6 +5534,8 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch {
         // Ignore close errors — the entry is dropped regardless.
       }
+      // Relinquish this SFTP session's window ownership (#1964). Best-effort.
+      bestEffortOwnership(() => releaseSession(sessionId));
       set((state) => {
         const isActive = state.sftpSessionId === sessionId;
         return {
@@ -5410,6 +5562,10 @@ export const useAppStore = create<AppState>((set, get) => {
         // is no longer ours: ignore its broadcast progress so a moved-away row is
         // not re-created here.
         if (state.releasedTransferSessions.includes(progress.sessionId)) return {};
+        // Scope the fold to the owning window even without a move (#1964): a
+        // `transfer-progress` event is broadcast to every window, but only the
+        // window that owns the session should show it.
+        if (!windowOwnsTransferSession(state, progress.sessionId)) return {};
         // A terminal phase clears the row (D1 already removed any partial local
         // file on cancel/error). done/error toasts are the D2 follow-up.
         if (progress.phase !== "transferring") {
@@ -5467,6 +5623,8 @@ export const useAppStore = create<AppState>((set, get) => {
         // Ignore transfers whose session was handed to another window (#1951) so
         // a moved-away queue row is not re-adopted from a broadcast event.
         if (state.releasedTransferSessions.includes(progress.sessionId)) return {};
+        // Scope the fold to the owning window even without a move (#1964).
+        if (!windowOwnsTransferSession(state, progress.sessionId)) return {};
         const prev = state.transferQueue[progress.transferId];
         const entry = transferEntryFromProgress(progress, prev, Date.now());
         return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
@@ -5552,6 +5710,8 @@ export const useAppStore = create<AppState>((set, get) => {
         const sessionDead = isSftpSessionDeadError(message);
         if (sessionDead) {
           frontendLog("sftp", `navigateSftp: session appears dead — clearing session (${message})`);
+          // Relinquish the dead SFTP session's window ownership (#1964).
+          bestEffortOwnership(() => releaseSession(sessionId));
         }
         set((state) => ({
           sftpStatus: "error",
@@ -5586,6 +5746,8 @@ export const useAppStore = create<AppState>((set, get) => {
         const sessionDead = isSftpSessionDeadError(message);
         if (sessionDead) {
           frontendLog("sftp", `refreshSftp: session appears dead — clearing session (${message})`);
+          // Relinquish the dead SFTP session's window ownership (#1964).
+          bestEffortOwnership(() => releaseSession(sftpSessionId));
         }
         set((state) => ({
           sftpStatus: "error",
