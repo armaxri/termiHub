@@ -254,9 +254,7 @@ export function Tab({
                       data-testid={`tab-context-move-window-${entry.label}`}
                     >
                       <AppWindow size={14} /> {entry.name}
-                      {entry.isCurrent && (
-                        <span className="context-menu__sub-label">current</span>
-                      )}
+                      {entry.isCurrent && <span className="context-menu__sub-label">current</span>}
                     </ContextMenu.Item>
                   ))}
                 </ContextMenu.SubContent>

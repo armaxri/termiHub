@@ -70,7 +70,10 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   };
 
   // Move a tab to a new or existing window through the #1900 handoff seam.
-  const handleMoveTabToWindow = (tabId: string, target: { kind: "new" } | { kind: "existing"; label: string }) => {
+  const handleMoveTabToWindow = (
+    tabId: string,
+    target: { kind: "new" } | { kind: "existing"; label: string }
+  ) => {
     void moveTabToWindow(tabId, panelId, target);
   };
   // Tab awaiting confirmation in the shared unsaved-changes dialog (fallback for
@@ -168,9 +171,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               currentWindowLabel={currentWindowLabel}
               onContextMenuOpenChange={refreshWindowsOnOpen}
               onMoveToNewWindow={() => handleMoveTabToWindow(tab.id, { kind: "new" })}
-              onMoveToWindow={(label) =>
-                handleMoveTabToWindow(tab.id, { kind: "existing", label })
-              }
+              onMoveToWindow={(label) => handleMoveTabToWindow(tab.id, { kind: "existing", label })}
               displayTitle={getEditorTabDisplayTitle(tab, allTabs)}
               status={
                 tab.contentType === "terminal"

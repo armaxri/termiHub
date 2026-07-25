@@ -5,11 +5,7 @@
  * named, current-flagged entries the tab context menu renders.
  */
 import { describe, it, expect } from "vitest";
-import {
-  windowDisplayName,
-  buildWindowPickerEntries,
-  hasOtherWindows,
-} from "./windowPicker";
+import { windowDisplayName, buildWindowPickerEntries, hasOtherWindows } from "./windowPicker";
 import type { WindowInfo } from "@/types/window";
 
 const w = (label: string): WindowInfo => ({ label });
@@ -39,7 +35,10 @@ describe("buildWindowPickerEntries", () => {
   });
 
   it("orders main first, then win-N ascending regardless of input order", () => {
-    const entries = buildWindowPickerEntries([w("win-2"), w("win-10"), w("win-1"), w("main")], "win-2");
+    const entries = buildWindowPickerEntries(
+      [w("win-2"), w("win-10"), w("win-1"), w("main")],
+      "win-2"
+    );
     expect(entries.map((e) => e.label)).toEqual(["main", "win-1", "win-2", "win-10"]);
   });
 
