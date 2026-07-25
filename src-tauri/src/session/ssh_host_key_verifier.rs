@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde::Serialize;
-use termihub_core::backends::ssh::host_key::{HostKeyInfo, HostKeyVerifier};
+use termihub_core::backends::ssh::host_key::{HostKeyInfo, HostKeyVerifier, KnownHostsStatus};
 use tokio::sync::oneshot;
 use tracing::warn;
 
@@ -157,11 +157,22 @@ impl SshHostKeyVerifier {
 #[async_trait]
 impl HostKeyVerifier for SshHostKeyVerifier {
     async fn verify(&self, info: &HostKeyInfo) -> bool {
+        // Honour the user's own `~/.ssh/known_hosts` first: a key already
+        // recorded there is trusted silently, exactly as `ssh` would, without a
+        // prompt (#1969 — previously done in the core SSH handler).
+        if info.known_hosts == KnownHostsStatus::Match {
+            return true;
+        }
+
         let host_port = info.host_port();
         let changed = match self.trust_store.lookup(&host_port, &info.fingerprint) {
             // Already trusted → accept without prompting.
             TrustLookup::Trusted => return true,
-            TrustLookup::Unknown => false,
+            // Unknown to termiHub's own store, but if the key is *changed*
+            // relative to the user's `~/.ssh/known_hosts` this is the possible-
+            // MITM case, so warn as a changed key rather than first contact
+            // (#1969 — this previously showed a first-contact prompt).
+            TrustLookup::Unknown => info.known_hosts == KnownHostsStatus::Changed,
             TrustLookup::Changed => true,
         };
 
@@ -197,11 +208,16 @@ mod tests {
     }
 
     fn info(host: &str, port: u16, fp: &str) -> HostKeyInfo {
+        info_kh(host, port, fp, KnownHostsStatus::Unknown)
+    }
+
+    fn info_kh(host: &str, port: u16, fp: &str, known_hosts: KnownHostsStatus) -> HostKeyInfo {
         HostKeyInfo {
             host: host.to_string(),
             port,
             key_type: "ssh-ed25519".to_string(),
             fingerprint: fp.to_string(),
+            known_hosts,
         }
     }
 
@@ -311,6 +327,50 @@ mod tests {
             store.lookup("h:22", "SHA256:CC"),
             TrustLookup::Unknown,
             "accept-once must not remember the key"
+        );
+    }
+
+    /// A key already present in the user's `~/.ssh/known_hosts` is accepted
+    /// silently, with no store lookup and no prompt (#1969).
+    #[tokio::test]
+    async fn system_known_hosts_match_is_trusted_without_prompt() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        assert!(
+            verifier
+                .verify(&info_kh("h", 22, "SHA256:AA", KnownHostsStatus::Match))
+                .await
+        );
+        assert_eq!(
+            sink.count.load(Ordering::SeqCst),
+            0,
+            "a key in ~/.ssh/known_hosts needs no prompt"
+        );
+    }
+
+    /// A key unknown to termiHub's own store but *changed* in the user's
+    /// `~/.ssh/known_hosts` prompts with the changed-key MITM warning, not a
+    /// first-contact prompt (#1969).
+    #[tokio::test]
+    async fn changed_in_system_known_hosts_warns_as_changed() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store.clone(), sink.clone()));
+
+        let v = verifier.clone();
+        let handle = tokio::spawn(async move {
+            v.verify(&info_kh("h", 22, "SHA256:NEW", KnownHostsStatus::Changed))
+                .await
+        });
+        resolve_when_ready(&verifier, &sink, false, false).await;
+
+        assert!(!handle.await.unwrap(), "rejecting the changed key aborts");
+        let prompt = sink.prompts.lock().unwrap()[0].clone();
+        assert!(
+            prompt.changed,
+            "a key changed in ~/.ssh/known_hosts must flag the MITM warning"
         );
     }
 
