@@ -1891,6 +1891,22 @@ function collectWindowTabs(state: {
   return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
 }
 
+/**
+ * Fire a multi-window ownership call (claim/release, #1939) as a best-effort
+ * signal: a rejected IPC promise is swallowed, and a synchronous throw — which
+ * only happens when a unit test stubs `@/services/api` without the command — is
+ * caught. Ownership is advisory (it feeds the #1926 owning-window badge and
+ * resize gating), so it must never disrupt the session assignment that triggered
+ * it.
+ */
+function bestEffortOwnership(op: () => Promise<unknown>): void {
+  try {
+    void op().catch(() => {});
+  } catch {
+    // api layer unavailable (unit tests stub @/services/api).
+  }
+}
+
 function teardownAllSessions(state: {
   tabGroups: TabGroup[];
   activeTabGroupId: string;
@@ -1900,23 +1916,19 @@ function teardownAllSessions(state: {
   let closed = 0;
   for (const tab of tabs) {
     if (!tab.sessionId) continue;
+    const sessionId = tab.sessionId;
     closed++;
     if (tab.persistentConnectionId) {
       // Persistent session — detach so the background process keeps running.
-      apiDetachPersistentTab(tab.sessionId, tab.id).catch(() => {});
+      apiDetachPersistentTab(sessionId, tab.id).catch(() => {});
     } else {
-      apiCloseTerminal(tab.sessionId).catch(() => {});
+      apiCloseTerminal(sessionId).catch(() => {});
     }
     // This window stops rendering the session, so relinquish its ownership
     // (#1939) — the window is not being destroyed here (a restore/launch is
     // replacing its tabs in place), so the backend's window-destroy
-    // `release_all_for_window` will not fire. Best-effort, like the other
-    // ownership calls.
-    try {
-      void releaseSession(tab.sessionId).catch(() => {});
-    } catch {
-      // api layer unavailable under unit tests — see setTabSessionId.
-    }
+    // `release_all_for_window` will not fire.
+    bestEffortOwnership(() => releaseSession(sessionId));
   }
   if (closed > 0) {
     frontendLog("workspace", `tore down ${closed} live session(s) before restore/launch`);
@@ -3255,23 +3267,13 @@ export const useAppStore = create<AppState>((set, get) => {
       // map from leaking dead entries. A session mid-move is skipped so the
       // claim/release handshake with the destination window is not disturbed: the
       // destination grants first, so the source must never release the moved
-      // session out from under it. Best-effort and wrapped so a stubbed api layer
-      // (unit tests) or a transient IPC error can never break session assignment.
+      // session out from under it. Best-effort (see `bestEffortOwnership`).
       if (existingTab) {
-        try {
-          if (
-            prevSessionId &&
-            prevSessionId !== sessionId &&
-            !get().isSessionMoving(prevSessionId)
-          ) {
-            void releaseSession(prevSessionId).catch(() => {});
-          }
-          if (sessionId) {
-            void claimSession(sessionId).catch(() => {});
-          }
-        } catch {
-          // api layer unavailable (unit tests stub @/services/api) — ownership is
-          // a best-effort signal and must never disrupt session assignment.
+        if (prevSessionId && prevSessionId !== sessionId && !get().isSessionMoving(prevSessionId)) {
+          bestEffortOwnership(() => releaseSession(prevSessionId));
+        }
+        if (sessionId) {
+          bestEffortOwnership(() => claimSession(sessionId));
         }
       }
       // A non-null session id means this tab has connected — settle it in any
@@ -3726,16 +3728,12 @@ export const useAppStore = create<AppState>((set, get) => {
       // `session → window` entry (#1900) must be dropped or it leaks a stale
       // owning-window badge (#1926). Skipped for a session mid-move — that tab is
       // removed via the move path, not closed, and the destination window now
-      // owns it. Best-effort: an ownership call must never block a tab close.
+      // owns it. Best-effort (see `bestEffortOwnership`).
       const closingSessionId = getAllLeaves(useAppStore.getState().rootPanel)
         .flatMap((l) => l.tabs)
         .find((t) => t.id === tabId)?.sessionId;
       if (closingSessionId && !get().isSessionMoving(closingSessionId)) {
-        try {
-          void releaseSession(closingSessionId).catch(() => {});
-        } catch {
-          // api layer unavailable under unit tests — see setTabSessionId.
-        }
+        bestEffortOwnership(() => releaseSession(closingSessionId));
       }
 
       // Close every SFTP session owned by this tab and drop it from the map —
