@@ -55,6 +55,7 @@ vi.mock("@/services/api", () => ({
 import { useAppStore } from "./appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { DEFAULT_BACKOFF } from "@/utils/reconnectBackoff";
+import { registerTerminalInputInjector } from "@/services/macroPlayback";
 
 function findTab(tabId: string) {
   const state = useAppStore.getState();
@@ -65,7 +66,11 @@ function findTab(tabId: string) {
 }
 
 /** Create a plain-SSH terminal tab; `resilient` toggles the per-connection opt-in. */
-function makeSshTab(resilient: boolean, sessionId: string | null = "sess-1"): string {
+function makeSshTab(
+  resilient: boolean,
+  sessionId: string | null = "sess-1",
+  onReconnectCommand?: string
+): string {
   return useAppStore.getState().addTab(
     "web01",
     "ssh",
@@ -75,6 +80,7 @@ function makeSshTab(resilient: boolean, sessionId: string | null = "sess-1"): st
         host: "web01.example.com",
         username: "deploy",
         resilientReconnect: resilient,
+        ...(onReconnectCommand !== undefined ? { onReconnectCommand } : {}),
       },
     },
     { contentType: "terminal", sessionId }
@@ -244,5 +250,94 @@ describe("appStore — agentless auto-reconnect (#1962)", () => {
     // No timer should fire against the gone tab.
     expect(() => vi.advanceTimersByTime(60_000)).not.toThrow();
     expect(findTab(tabId)).toBeUndefined();
+  });
+});
+
+describe("appStore — on-reconnect command (#1978)", () => {
+  let injected: Array<{ tabId: string; data: string }>;
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.useFakeTimers();
+    injected = [];
+    registerTerminalInputInjector((tabId, data) => {
+      injected.push({ tabId, data });
+      return Promise.resolve(true);
+    });
+  });
+
+  afterEach(() => {
+    registerTerminalInputInjector(null);
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  /** Drive a tab through drop → attempt → successful reconnect. */
+  function reconnectSuccessfully(tabId: string): void {
+    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    vi.advanceTimersByTime(auto(tabId).delayMs);
+    expect(auto(tabId).phase).toBe("connecting");
+    useAppStore.getState().setTabSessionId(tabId, "sess-2");
+    expect(auto(tabId)).toBeUndefined();
+  }
+
+  it("runs the configured command once after a successful auto-reconnect", () => {
+    const tabId = makeSshTab(true, "sess-1", "tmux attach");
+
+    reconnectSuccessfully(tabId);
+
+    expect(injected).toEqual([{ tabId, data: "tmux attach\n" }]);
+  });
+
+  it("trims the command and appends a single newline", () => {
+    const tabId = makeSshTab(true, "sess-1", "  screen -r  ");
+    reconnectSuccessfully(tabId);
+    expect(injected).toEqual([{ tabId, data: "screen -r\n" }]);
+  });
+
+  it("does not run anything when no command is configured", () => {
+    const tabId = makeSshTab(true, "sess-1");
+    reconnectSuccessfully(tabId);
+    expect(injected).toEqual([]);
+  });
+
+  it("treats a whitespace-only command as no command", () => {
+    const tabId = makeSshTab(true, "sess-1", "   ");
+    reconnectSuccessfully(tabId);
+    expect(injected).toEqual([]);
+  });
+
+  it("does not run the command on the initial connect (no active loop)", () => {
+    const tabId = makeSshTab(true, null, "tmux attach");
+    // A first-ever session id landing with no loop in flight must not fire it.
+    useAppStore.getState().setTabSessionId(tabId, "sess-1");
+    expect(injected).toEqual([]);
+  });
+
+  it("does not run the command when the loop is cancelled before success", () => {
+    const tabId = makeSshTab(true, "sess-1", "tmux attach");
+    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    expect(auto(tabId).phase).toBe("waiting");
+    useAppStore.getState().cancelAutoReconnect(tabId);
+    expect(injected).toEqual([]);
+  });
+
+  it("runs the command again on each subsequent successful reconnect", () => {
+    const tabId = makeSshTab(true, "sess-1", "tmux attach");
+    reconnectSuccessfully(tabId);
+    // A fresh drop and reconnect fires the command a second time.
+    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    vi.advanceTimersByTime(auto(tabId).delayMs);
+    useAppStore.getState().setTabSessionId(tabId, "sess-3");
+    expect(injected).toEqual([
+      { tabId, data: "tmux attach\n" },
+      { tabId, data: "tmux attach\n" },
+    ]);
+  });
+
+  it("exposes the command in the loop display state for the overlay", () => {
+    const tabId = makeSshTab(true, "sess-1", "tmux attach");
+    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    expect(auto(tabId).onReconnectCommand).toBe("tmux attach");
   });
 });
