@@ -86,10 +86,7 @@ export function SaveAsConnectionDialog({
   const [savePassword, setSavePassword] = useState(false);
   const [password, setPassword] = useState("");
 
-  const inner = useMemo(
-    () => (entry?.config.config ?? {}) as Record<string, unknown>,
-    [entry]
-  );
+  const inner = useMemo(() => (entry?.config.config ?? {}) as Record<string, unknown>, [entry]);
   const connectionType = entry?.connectionType ?? "";
   const hostKey = hostKeyFor(inner);
   const showPort = "port" in inner || connectionType === "ssh" || connectionType === "telnet";
@@ -220,10 +217,7 @@ export function SaveAsConnectionDialog({
         </div>
       </Field>
 
-      <fieldset
-        className="recent-sessions__save-fields"
-        data-testid="save-as-connection-details"
-      >
+      <fieldset className="recent-sessions__save-fields" data-testid="save-as-connection-details">
         <legend className="recent-sessions__save-fields-legend">
           Connection details · {sessionTypeBadge(connectionType)}
         </legend>

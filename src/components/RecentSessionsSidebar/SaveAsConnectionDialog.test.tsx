@@ -21,8 +21,9 @@ const { credStatus } = vi.hoisted(() => ({
   credStatus: { value: null as CredentialStoreStatusInfo | null },
 }));
 vi.mock("@/store/appStore", () => ({
-  useAppStore: (selector: (s: { credentialStoreStatus: CredentialStoreStatusInfo | null }) => unknown) =>
-    selector({ credentialStoreStatus: credStatus.value }),
+  useAppStore: (
+    selector: (s: { credentialStoreStatus: CredentialStoreStatusInfo | null }) => unknown
+  ) => selector({ credentialStoreStatus: credStatus.value }),
 }));
 
 let container: HTMLDivElement;
@@ -34,10 +35,7 @@ function query(testId: string): HTMLElement | null {
 
 /** Set a controlled input's value the way the DOM would on user typing. */
 function typeInto(el: HTMLInputElement, value: string): void {
-  const setter = Object.getOwnPropertyDescriptor(
-    window.HTMLInputElement.prototype,
-    "value"
-  )!.set!;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
   act(() => {
     setter.call(el, value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
