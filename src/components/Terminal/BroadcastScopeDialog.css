@@ -1,0 +1,58 @@
+.broadcast-scope-dialog__custom {
+  margin-top: var(--spacing-md);
+}
+
+.broadcast-scope-dialog__custom-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-bottom: var(--spacing-sm);
+}
+
+.broadcast-scope-dialog__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+}
+
+.broadcast-scope-dialog__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.broadcast-scope-dialog__row + .broadcast-scope-dialog__row {
+  border-top: 1px solid var(--border-primary);
+}
+
+.broadcast-scope-dialog__row-label {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+  min-width: 0;
+}
+
+.broadcast-scope-dialog__row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.broadcast-scope-dialog__row-type {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.broadcast-scope-dialog__empty {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}

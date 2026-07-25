@@ -15,6 +15,7 @@ import { applyAgentReconnecting } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
 import { MacroRecordSaveDialog } from "./MacroRecordSaveDialog";
 import { MacroPlaybackDialog } from "./MacroPlaybackDialog";
+import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
 import { SplitView } from "@/components/SplitView";
 import { terminalDispatcher } from "@/services/events";
 import { listAgentSessions } from "@/services/api";
@@ -255,13 +256,14 @@ export function TerminalView() {
   const saveRecordedMacro = useAppStore((s) => s.saveRecordedMacro);
   const discardRecordedMacro = useAppStore((s) => s.discardRecordedMacro);
   const broadcastActive = useAppStore((s) => s.broadcastActive);
-  const startBroadcast = useAppStore((s) => s.startBroadcast);
   const stopBroadcast = useAppStore((s) => s.stopBroadcast);
   const macros = useAppStore((s) => s.macros);
   const macroPlayback = useAppStore((s) => s.macroPlayback);
   const playMacro = useAppStore((s) => s.playMacro);
   const cancelMacroPlayback = useAppStore((s) => s.cancelMacroPlayback);
   const [macroPlaybackDialogOpen, setMacroPlaybackDialogOpen] = useState(false);
+  const [broadcastDialogOpen, setBroadcastDialogOpen] = useState(false);
+  const [broadcastSourceTabId, setBroadcastSourceTabId] = useState<string | null>(null);
   const isMac = navigator.platform.toUpperCase().includes("MAC");
   const sidebarToggleTitle = `Toggle Sidebar (${isMac ? "Cmd" : "Ctrl"}+B)`;
 
@@ -271,27 +273,21 @@ export function TerminalView() {
     addTab("Terminal", "local");
   };
 
-  // Minimal broadcast toggle (#1955): activates the "all terminals" scope
-  // directly (no scope dropdown yet — that is the #1956 follow-up) and toggles
-  // off on the second click. The source is the active terminal tab; every
-  // terminal tab in the current group is a target (the source included, so the
-  // fan-out loop stays uniform). Connected-only filtering happens at the seam.
+  // Broadcast toggle (#1956): clicking opens the scope-selection dialog (All /
+  // Current panel / Custom) rather than starting broadcast directly; a second
+  // click while active stops it. The source is the active terminal tab.
   const handleToggleBroadcast = () => {
     if (broadcastActive) {
       stopBroadcast();
       return;
     }
-    const state = useAppStore.getState();
-    const source = getActiveTab(state);
+    const source = getActiveTab(useAppStore.getState());
     if (!source || source.contentType !== "terminal") {
       toast.info("Focus a terminal to start broadcasting input");
       return;
     }
-    const terminalTabIds = getAllLeaves(state.rootPanel)
-      .flatMap((leaf) => leaf.tabs)
-      .filter((tab) => tab.contentType === "terminal")
-      .map((tab) => tab.id);
-    startBroadcast("all", source.id, terminalTabIds);
+    setBroadcastSourceTabId(source.id);
+    setBroadcastDialogOpen(true);
   };
 
   const handleSplitHorizontal = () => {
@@ -461,6 +457,11 @@ export function TerminalView() {
         macros={macros}
         onOpenChange={setMacroPlaybackDialogOpen}
         onPlay={(macroId, timingMode) => void playMacro(macroId, { timingMode })}
+      />
+      <BroadcastScopeDialog
+        open={broadcastDialogOpen}
+        onOpenChange={setBroadcastDialogOpen}
+        sourceTabId={broadcastSourceTabId}
       />
     </TerminalPortalProvider>
   );
