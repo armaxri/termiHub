@@ -116,7 +116,11 @@ export function FleetOnboardDialog({
       data-testid="fleet-onboard-dialog"
       footer={
         <>
-          <Button variant="ghost" onClick={() => onOpenChange(false)} data-testid="fleet-onboard-cancel">
+          <Button
+            variant="ghost"
+            onClick={() => onOpenChange(false)}
+            data-testid="fleet-onboard-cancel"
+          >
             Cancel
           </Button>
           <Button
@@ -192,7 +196,10 @@ export function FleetOnboardDialog({
               const overrides = overrideSummary(row);
               return (
                 <li key={`${row.host}-${i}`}>
-                  <div className="fleet-onboard__row" data-testid={`fleet-onboard-host-${row.host}`}>
+                  <div
+                    className="fleet-onboard__row"
+                    data-testid={`fleet-onboard-host-${row.host}`}
+                  >
                     <span className="ssh-config-import__row-text">
                       <span className="ssh-config-import__row-name">{row.label}</span>
                       <span className="ssh-config-import__row-chain">

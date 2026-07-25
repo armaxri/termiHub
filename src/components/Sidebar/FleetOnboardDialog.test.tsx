@@ -94,7 +94,10 @@ describe("FleetOnboardDialog", () => {
     renderWith(
       [
         sshConnection("prod-template"),
-        { ...sshConnection("existing"), config: { type: "ssh", config: { host: "web1.internal" } } },
+        {
+          ...sshConnection("existing"),
+          config: { type: "ssh", config: { host: "web1.internal" } },
+        },
       ],
       [
         { host: "web1.internal", label: "Web 1" },
