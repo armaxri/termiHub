@@ -17,6 +17,7 @@ use crate::session::line_ending::LineEnding;
 use crate::session::manager::{PersistentSessionSummary, SessionInfo, SessionManager};
 use crate::utils::errors::TerminalError;
 use crate::utils::shell_detect;
+use crate::window::WindowManager;
 
 /// Create a new connection session.
 ///
@@ -112,13 +113,29 @@ pub async fn set_session_line_ending(
 }
 
 /// Resize a session's terminal.
+///
+/// Multi-window resize ownership (#1900): a PTY has exactly one size, so only the
+/// window currently displaying a session may drive its resize. An **unclaimed**
+/// session (the single-window case, or before any move) resizes from any window;
+/// once a session is owned, a resize from a non-owning window is ignored so two
+/// windows never race the backend size.
 #[tauri::command]
 pub async fn resize_terminal(
     session_id: String,
     cols: u16,
     rows: u16,
+    window: tauri::WebviewWindow,
     manager: State<'_, SessionManager>,
+    window_manager: State<'_, WindowManager>,
 ) -> Result<(), TerminalError> {
+    if !window_manager.may_resize(&session_id, window.label()) {
+        debug!(
+            session_id,
+            window = window.label(),
+            "Ignoring resize from non-owning window (#1900)"
+        );
+        return Ok(());
+    }
     debug!(session_id, cols, rows, "Resizing terminal");
     manager.resize(&session_id, cols, rows).await
 }

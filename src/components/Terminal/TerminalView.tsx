@@ -465,6 +465,7 @@ function TerminalHost() {
           initialCommand={tab.initialCommand}
           persistentConnectionId={tab.persistentConnectionId}
           spawned={tab.spawned}
+          replayScrollbackOnAttach={tab.pendingScrollbackReplay}
         />
       ))}
     </>

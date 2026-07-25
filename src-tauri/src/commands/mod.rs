@@ -18,6 +18,7 @@ pub mod ssh_config_import;
 pub mod transfer;
 pub mod tunnel;
 pub mod update;
+pub mod window;
 pub mod workflows;
 pub mod workspace;
 pub mod xserver;

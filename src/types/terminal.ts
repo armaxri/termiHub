@@ -316,6 +316,13 @@ export interface TerminalTab {
    * Open Connections panel.
    */
   spawned?: boolean;
+  /**
+   * Set on a tab hydrated into a destination window by a "move to window"
+   * re-parent (#1900). Signals the {@link Terminal} to fetch and replay the
+   * session's ring-buffered scrollback once, so the fresh xterm repaints
+   * history. Cleared after the first (re)attach.
+   */
+  pendingScrollbackReplay?: boolean;
 }
 
 /**

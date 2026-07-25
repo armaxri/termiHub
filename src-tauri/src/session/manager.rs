@@ -14,6 +14,7 @@ use tokio_util::sync::CancellationToken;
 
 use serde::Serialize;
 use tauri::Emitter;
+use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};
 use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
@@ -188,6 +189,13 @@ async fn recv_optional(rx: &mut Option<MonitorStatusReceiver>) -> Option<Monitor
     }
 }
 
+/// Per-session scrollback capture buffers, keyed by `session_id` (#1900).
+///
+/// The outer lock guards the map (held only at create/replay/cleanup); each
+/// inner lock guards one session's [`RingBuffer`], written on the hot output
+/// path and read on replay.
+type OutputBuffers = Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>>;
+
 /// Manages all active connection sessions.
 ///
 /// Holds a [`ConnectionTypeRegistry`] for creating local connections and
@@ -206,6 +214,17 @@ pub struct SessionManager {
     /// by the caller-supplied `connect_id`. Lets a Stop/close while connecting
     /// abort the handshake promptly instead of waiting out the timeout (#952).
     connecting: Arc<StdMutex<HashMap<String, CancellationToken>>>,
+    /// Per-session 1 MiB scrollback capture (#1900), keyed by `session_id`.
+    ///
+    /// Every session's emitted output is mirrored into a [`RingBuffer`] so that a
+    /// re-parented view in another window can repaint history via
+    /// [`SessionManager::replay_scrollback`]. Plain local shells have no backend
+    /// replay buffer of their own (unlike serial/agent sessions), so this is the
+    /// general substrate that makes *any* session type re-parentable with
+    /// scrollback — the multi-window foundation's "detach a view and re-attach it
+    /// later with replay" primitive. The outer lock is held only briefly at
+    /// create/replay/cleanup; the hot output path writes through the inner lock.
+    output_buffers: OutputBuffers,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -234,6 +253,44 @@ impl SessionManager {
             monitoring_tasks: Arc::new(Mutex::new(HashMap::new())),
             persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
             connecting: Arc::new(StdMutex::new(HashMap::new())),
+            output_buffers: Arc::new(StdMutex::new(HashMap::new())),
+        }
+    }
+
+    /// Get-or-create the scrollback capture buffer for `session_id` (#1900).
+    ///
+    /// Returns a handle the output reader writes through and
+    /// [`Self::replay_scrollback`] reads from.
+    fn ensure_output_buffer(&self, session_id: &str) -> Arc<StdMutex<RingBuffer>> {
+        let mut map = self
+            .output_buffers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        map.entry(session_id.to_string())
+            .or_insert_with(|| Arc::new(StdMutex::new(RingBuffer::new(DEFAULT_BUFFER_CAPACITY))))
+            .clone()
+    }
+
+    /// Replay a session's captured scrollback (#1900).
+    ///
+    /// Returns the ring-buffered bytes so a freshly-created xterm in a
+    /// destination window can repaint history after a re-parent. Empty when the
+    /// session is unknown or nothing has been captured yet. The backend session
+    /// is never touched — this is a pure read of the capture buffer.
+    pub async fn replay_scrollback(&self, session_id: &str) -> Vec<u8> {
+        let buffer = {
+            let map = self
+                .output_buffers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            map.get(session_id).cloned()
+        };
+        match buffer {
+            Some(buffer) => buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .read_all(),
+            None => Vec::new(),
         }
     }
 
@@ -373,10 +430,20 @@ impl SessionManager {
 
         // Spawn output streaming task.
         let sessions_clone = self.sessions.clone();
+        let capture = self.ensure_output_buffer(&session_id);
+        let output_buffers = self.output_buffers.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
-            Self::run_output_reader(sid, output_rx, emitter, sessions_clone, has_initial_command)
-                .await;
+            Self::run_output_reader(
+                sid,
+                output_rx,
+                emitter,
+                sessions_clone,
+                has_initial_command,
+                capture,
+                output_buffers,
+            )
+            .await;
         });
 
         // Send initial command after a short delay.
@@ -1091,6 +1158,8 @@ impl SessionManager {
                     // Spawn output reader for the re-created session.
                     let sessions_clone = self.sessions.clone();
                     let emitter_clone = emitter.clone();
+                    let capture = self.ensure_output_buffer(&session_id);
+                    let output_buffers = self.output_buffers.clone();
                     let sid = session_id.clone();
                     tokio::spawn(async move {
                         Self::run_output_reader(
@@ -1099,6 +1168,8 @@ impl SessionManager {
                             emitter_clone,
                             sessions_clone,
                             false,
+                            capture,
+                            output_buffers,
                         )
                         .await;
                     });
@@ -1334,12 +1405,15 @@ impl SessionManager {
     ///
     /// Coalesces pending output chunks into a single event (up to
     /// `MAX_COALESCE_BYTES`) to reduce IPC overhead.
+    #[allow(clippy::too_many_arguments)]
     async fn run_output_reader<E: EventEmitter>(
         session_id: String,
         mut output_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
         emitter: E,
         sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
         wait_for_clear: bool,
+        capture: Arc<StdMutex<RingBuffer>>,
+        output_buffers: OutputBuffers,
     ) {
         // Phase 1: optionally buffer until the screen-clear sequence.
         if wait_for_clear {
@@ -1363,7 +1437,15 @@ impl SessionManager {
                     }
                     Ok(None) => {
                         // Channel closed during startup.
-                        Self::emit_and_cleanup(&session_id, buffer, &emitter, &sessions).await;
+                        Self::capture_bytes(&capture, &buffer);
+                        Self::emit_and_cleanup(
+                            &session_id,
+                            buffer,
+                            &emitter,
+                            &sessions,
+                            &output_buffers,
+                        )
+                        .await;
                         return;
                     }
                     Err(_) => break, // Timeout
@@ -1372,6 +1454,7 @@ impl SessionManager {
 
             // Flush the buffered output as a single event.
             if !buffer.is_empty() {
+                Self::capture_bytes(&capture, &buffer);
                 let event = TerminalOutputEvent {
                     session_id: session_id.clone(),
                     data: buffer,
@@ -1398,6 +1481,7 @@ impl SessionManager {
             }
 
             if let Some(data) = coalescer.flush() {
+                Self::capture_bytes(&capture, &data);
                 let event = TerminalOutputEvent {
                     session_id: session_id.clone(),
                     data,
@@ -1409,7 +1493,26 @@ impl SessionManager {
             }
         }
 
-        Self::emit_and_cleanup(&session_id, Vec::new(), &emitter, &sessions).await;
+        Self::emit_and_cleanup(
+            &session_id,
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &output_buffers,
+        )
+        .await;
+    }
+
+    /// Mirror emitted output into a session's scrollback capture buffer (#1900).
+    ///
+    /// The write is bounded by the [`RingBuffer`]'s 1 MiB capacity, so long
+    /// histories are truncated to the most recent bytes — matching the concept's
+    /// stated scrollback-fidelity limit.
+    fn capture_bytes(capture: &StdMutex<RingBuffer>, data: &[u8]) {
+        capture
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .write(data);
     }
 
     /// Emit remaining data (if any), send the exit event, and remove the session.
@@ -1423,6 +1526,7 @@ impl SessionManager {
         data: Vec<u8>,
         emitter: &E,
         sessions: &Arc<Mutex<HashMap<String, SessionEntry>>>,
+        output_buffers: &OutputBuffers,
     ) {
         if !data.is_empty() {
             let event = TerminalOutputEvent {
@@ -1442,6 +1546,13 @@ impl SessionManager {
             let mut sessions = sessions.lock().await;
             sessions.remove(session_id);
         }
+
+        // Drop the session's scrollback capture buffer (#1900) so a dead
+        // session's 1 MiB ring does not linger.
+        output_buffers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
 
         info!("Session ended: {session_id}");
     }
@@ -1528,6 +1639,16 @@ mod tests {
     }
 
     /// Helper to create a sessions map and insert a mock session.
+    /// A fresh, empty scrollback capture buffer for `run_output_reader` tests (#1900).
+    fn new_capture() -> Arc<StdMutex<RingBuffer>> {
+        Arc::new(StdMutex::new(RingBuffer::new(DEFAULT_BUFFER_CAPACITY)))
+    }
+
+    /// A fresh, empty `output_buffers` map for the cleanup path (#1900).
+    fn new_output_buffers() -> OutputBuffers {
+        Arc::new(StdMutex::new(HashMap::new()))
+    }
+
     async fn sessions_with_mock(session_id: &str) -> Arc<Mutex<HashMap<String, SessionEntry>>> {
         let sessions = Arc::new(Mutex::new(HashMap::new()));
         let mut map = sessions.lock().await;
@@ -1668,6 +1789,38 @@ mod tests {
         assert_eq!(writes.lock().unwrap().as_slice(), b"a\nb\n");
     }
 
+    /// Multi-window (#1900): re-parenting a tab is a pure view operation. The
+    /// destination window repaints history from the session's captured
+    /// scrollback while the backend session stays untouched in the `sessions`
+    /// map. This proves the replay substrate that makes any session type
+    /// re-parentable with scrollback.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn replay_scrollback_returns_captured_history_without_touching_session() {
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session("sess-move", Box::new(MockConnection::default()))
+            .await;
+
+        // Simulate output having streamed through the reader into the capture.
+        manager
+            .ensure_output_buffer("sess-move")
+            .lock()
+            .unwrap()
+            .write(b"line-1\r\nline-2\r\n");
+
+        // A move: the destination replays the history verbatim...
+        let replayed = manager.replay_scrollback("sess-move").await;
+        assert_eq!(replayed, b"line-1\r\nline-2\r\n");
+        // ...and the backend session survives the move entirely.
+        assert!(manager.sessions.lock().await.contains_key("sess-move"));
+
+        // An unknown session replays empty rather than erroring.
+        assert!(manager
+            .replay_scrollback("no-such-session")
+            .await
+            .is_empty());
+    }
+
     /// Regression test for #792: the settings-driven initial command must honor
     /// the session's configured line ending instead of a hardcoded `\n`. A CRLF
     /// session must receive the command terminated with `\r\n` so it executes on
@@ -1761,7 +1914,15 @@ mod tests {
         let emitter = MockEventEmitter::new();
         let sessions = sessions_with_mock("sess-exit").await;
 
-        SessionManager::emit_and_cleanup("sess-exit", Vec::new(), &emitter, &sessions).await;
+        let output_buffers = new_output_buffers();
+        SessionManager::emit_and_cleanup(
+            "sess-exit",
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &output_buffers,
+        )
+        .await;
 
         {
             let exits = emitter.exits.lock().unwrap();
@@ -1777,8 +1938,15 @@ mod tests {
         let emitter = MockEventEmitter::new();
         let sessions = sessions_with_mock("sess-data").await;
 
-        SessionManager::emit_and_cleanup("sess-data", b"final bytes".to_vec(), &emitter, &sessions)
-            .await;
+        let output_buffers = new_output_buffers();
+        SessionManager::emit_and_cleanup(
+            "sess-data",
+            b"final bytes".to_vec(),
+            &emitter,
+            &sessions,
+            &output_buffers,
+        )
+        .await;
 
         {
             let outputs = emitter.outputs.lock().unwrap();
@@ -1797,14 +1965,30 @@ mod tests {
         tx.send(b"world".to_vec()).await.unwrap();
         drop(tx); // signal EOF
 
+        let capture = new_capture();
+        let output_buffers = new_output_buffers();
         SessionManager::run_output_reader(
             "sess-stream".to_string(),
             rx,
             emitter.clone(),
             sessions.clone(),
             false,
+            capture.clone(),
+            output_buffers,
         )
         .await;
+
+        // The scrollback capture buffer (#1900) mirrors the streamed output.
+        {
+            let captured = capture
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .read_all();
+            assert!(
+                captured.windows(5).any(|w| w == b"hello"),
+                "expected streamed output to be captured for replay"
+            );
+        }
 
         {
             let outputs = emitter.outputs.lock().unwrap();
@@ -1838,6 +2022,8 @@ mod tests {
             emitter.clone(),
             sessions,
             false,
+            new_capture(),
+            new_output_buffers(),
         )
         .await;
 
@@ -1870,7 +2056,14 @@ mod tests {
             );
         }
 
-        SessionManager::emit_and_cleanup("sess-ps", Vec::new(), &emitter, &sessions).await;
+        SessionManager::emit_and_cleanup(
+            "sess-ps",
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &new_output_buffers(),
+        )
+        .await;
 
         // The persistent record must still be present — the daemon is alive.
         assert!(
