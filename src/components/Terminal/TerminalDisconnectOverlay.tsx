@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { WifiOff, RefreshCw, X, AlertTriangle, Loader2, CheckCircle2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, Tooltip } from "@/components/ui";
@@ -58,12 +58,80 @@ function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
  *
  * The scrollback buffer is always preserved below the overlay.
  */
+/**
+ * Auto-reconnect countdown variant (#1962): shown while the agentless resilient-
+ * reconnect loop is waiting to make its next attempt. Renders a live countdown,
+ * the attempt progress, an honest note that server-side state is not preserved
+ * without an agent, and a Cancel affordance that stops the loop.
+ */
+function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
+  const auto = useAppStore((s) => s.terminalAutoReconnect[tabId]);
+  const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
+  // Tick once a second so the countdown stays live.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(id);
+  }, []);
+
+  const handleCancel = useCallback(() => {
+    cancelAutoReconnect(tabId);
+  }, [tabId, cancelAutoReconnect]);
+
+  // Guard: the loop may have advanced out of "waiting" between the parent's
+  // render and ours.
+  if (!auto) return null;
+
+  const secondsLeft = Math.max(0, Math.ceil((auto.nextAttemptAt - now) / 1000));
+  const attemptLabel =
+    auto.maxAttempts > 0
+      ? `Attempt ${auto.attempt + 1} of ${auto.maxAttempts}`
+      : `Attempt ${auto.attempt + 1}`;
+
+  return (
+    <div
+      className="terminal-disconnect-overlay terminal-disconnect-overlay--reconnecting"
+      data-testid="terminal-disconnect-overlay"
+    >
+      <div className="terminal-disconnect-overlay__body">
+        <WifiOff size={32} className="terminal-disconnect-overlay__icon" />
+        <p className="terminal-disconnect-overlay__heading">Connection lost — reconnecting…</p>
+        <p
+          className="terminal-disconnect-overlay__subheading"
+          data-testid="terminal-auto-reconnect-countdown"
+        >
+          {secondsLeft > 0
+            ? `Retrying in ${secondsLeft}s · ${attemptLabel}`
+            : `Reconnecting… · ${attemptLabel}`}
+        </p>
+        <p className="terminal-disconnect-overlay__subheading terminal-disconnect-overlay__note">
+          Local scrollback is preserved. Without an agent, the remote shell state
+          (running commands, working directory) is not restored — a fresh shell opens.
+        </p>
+        <div className="terminal-disconnect-overlay__actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleCancel}
+            data-testid="terminal-auto-reconnect-cancel-btn"
+          >
+            Cancel
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
   const setTerminalExited = useAppStore((s) => s.setTerminalExited);
   const disconnectError = useAppStore((s) => s.terminalDisconnectErrors[tabId]);
   const isReconnecting = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
+  const autoReconnectWaiting = useAppStore(
+    (s) => s.terminalAutoReconnect[tabId]?.phase === "waiting"
+  );
   const reconnectTriggerError = useAppStore((s) => s.terminalReconnectTriggerErrors[tabId]);
   const exitInfo = useAppStore((s) => s.terminalExitInfo[tabId]);
 
@@ -78,6 +146,13 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   const handleStop = useCallback(() => {
     setTerminalExited(tabId);
   }, [tabId, setTerminalExited]);
+
+  // Agentless resilient reconnect (#1962) takes precedence: while the backoff
+  // loop is counting down, show the countdown/Cancel variant instead of the
+  // manual disconnect prompt.
+  if (autoReconnectWaiting) {
+    return <AutoReconnectingOverlay tabId={tabId} />;
+  }
 
   if (isReconnecting) {
     return (
