@@ -85,6 +85,7 @@ All features in this folder are live in the codebase.
 | [light-color-theme.html](implemented/light-color-theme.html)                                       | Dark/Light/System + Solarized theme engine, CSS variables, live xterm.js re-theming, custom-theme editor (modal) + import/export (#193/#578/#1879/#1880); hover preview tooltip follow-up (#1929)                  |
 | [persistent-connection-ux.html](implemented/persistent-connection-ux.html)                         | Full Start/Attach/Stop persistent-session lifecycle — state store, IPC + events, both sidebar scopes, status-bar count and daemon persistence (#672/#1881/#1882); count-badge + detach-tooltip follow-up (#1930)   |
 | [confirm-dialog-primitive.html](implemented/confirm-dialog-primitive.html)                         | `ConfirmDialog` primitive (Modal + Button + `ConfirmDontAskAgain` opt-out + `children` body slot) with all three named call sites migrated (#1875/#1876/#1877); variant-driven title accent icon follow-up (#1928) |
+| [session-auto-save.html](implemented/session-auto-save.html)                                       | Auto-saved session history + Recent Sessions / quick-connect (#1883), last-session persistence + restore-on-startup (#586), ask/never/always restore dialog (#1884); restore per-tab selection + offline warnings (#1931), full Save-as-Connection editor (#1932), "Connect in New Panel" menu item (#1933)   |
 
 ---
 
@@ -93,9 +94,7 @@ All features in this folder are live in the codebase.
 These features have something built, but there are meaningful gaps. See the
 **## Implementation Status** section at the bottom of each document for details.
 
-| Document                                                 | What exists                                                                                                                                                                   | What is missing                                                                                                                                                  |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [session-auto-save.html](partial/session-auto-save.html) | Last-session persistence + restore-on-startup (#586), session history / Recent Sessions / quick-connect (#1883), and ask/never/always restore-mode dialog (#1884) all shipped | Three mockup refinements: restore per-tab selection + offline warnings (#1931), full Save-as-Connection editor (#1932), "Connect in New Panel" menu item (#1933) |
+_No concepts are currently partially implemented._
 
 ---
 
