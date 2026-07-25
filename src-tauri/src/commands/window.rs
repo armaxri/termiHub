@@ -14,14 +14,18 @@ use crate::window::{HandoffRecord, WindowManager};
 
 /// A window known to the app, as reported to the frontend window picker.
 ///
-/// Kept intentionally minimal for the foundation — tab counts and display
-/// names are frontend concerns layered on by the "Move to Window" UI (#1901)
-/// and the status-bar affordance (#1902).
+/// The display name is derived from the label by the frontend; the tab count is
+/// the value the window last reported via [`report_window_tab_count`] (#1910),
+/// so the "Move to Window ▸" picker can show a live "N tabs" / "empty" hint
+/// sourced from real per-window state rather than a placeholder.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowInfo {
     /// The window's runtime label (`main`, `win-1`, …).
     pub label: String,
+    /// The window's live tab count, or `None` if it has not reported one yet
+    /// (a window that just booted and has not drawn its tabs).
+    pub tab_count: Option<usize>,
 }
 
 /// Open a new native window loading the same frontend bundle.
@@ -104,13 +108,39 @@ pub fn get_session_owner(
     window_manager.owner_of(&session_id)
 }
 
-/// List all currently open windows (label only).
+/// List all currently open windows, each with its last-reported tab count.
+///
+/// The tab count is whatever the owning window last pushed via
+/// [`report_window_tab_count`] (#1910); a window that has not reported yet
+/// carries `None`, which the picker renders as no hint until its first report.
 #[tauri::command]
-pub fn list_windows(app: AppHandle) -> Vec<WindowInfo> {
+pub fn list_windows(app: AppHandle, window_manager: State<'_, WindowManager>) -> Vec<WindowInfo> {
     app.webview_windows()
         .into_keys()
-        .map(|label| WindowInfo { label })
+        .map(|label| {
+            let tab_count = window_manager.tab_count_of(&label);
+            WindowInfo { label, tab_count }
+        })
         .collect()
+}
+
+/// Record the **calling** window's current tab count so other windows'
+/// "Move to Window ▸" pickers can show a live "N tabs" hint (#1910).
+///
+/// The window calls this whenever its tab set changes. Every open window is then
+/// nudged with `windows-changed` so an open picker / the status-bar affordance
+/// (#1902) refreshes; a window reads the fresh counts back through
+/// [`list_windows`].
+#[tauri::command]
+pub fn report_window_tab_count(
+    app: AppHandle,
+    window: WebviewWindow,
+    count: usize,
+    window_manager: State<'_, WindowManager>,
+) -> Result<(), String> {
+    window_manager.set_tab_count(window.label(), count);
+    app.emit("windows-changed", ()).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Take (and clear) the hand-off records queued for the **calling** window.

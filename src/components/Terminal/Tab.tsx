@@ -26,7 +26,7 @@ import { TabStatus } from "@/utils/tabStatus";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Tooltip } from "@/components/ui";
 import type { WindowInfo } from "@/types/window";
-import { buildWindowPickerEntries, hasOtherWindows } from "@/utils/windowPicker";
+import { buildWindowPickerEntries, hasOtherWindows, tabCountHint } from "@/utils/windowPicker";
 
 /** Human-readable label for each connection status, used as the dot's tooltip. */
 const STATUS_LABELS: Record<TabStatus, string> = {
@@ -254,7 +254,15 @@ export function Tab({
                       data-testid={`tab-context-move-window-${entry.label}`}
                     >
                       <AppWindow size={14} /> {entry.name}
-                      {entry.isCurrent && <span className="context-menu__sub-label">current</span>}
+                      {entry.isCurrent ? (
+                        <span className="context-menu__sub-label">current</span>
+                      ) : (
+                        tabCountHint(entry.tabCount) && (
+                          <span className="context-menu__sub-label">
+                            {tabCountHint(entry.tabCount)}
+                          </span>
+                        )
+                      )}
                     </ContextMenu.Item>
                   ))}
                 </ContextMenu.SubContent>

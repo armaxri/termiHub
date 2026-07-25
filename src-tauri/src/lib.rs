@@ -949,6 +949,7 @@ pub fn run() {
             commands::window::release_session,
             commands::window::get_session_owner,
             commands::window::list_windows,
+            commands::window::report_window_tab_count,
             commands::window::take_pending_handoffs,
             commands::window::send_handoff_to_window,
             commands::window::replay_session_scrollback,
@@ -1118,6 +1119,10 @@ pub fn run() {
                             "Released session ownership for destroyed window (#1900)"
                         );
                     }
+                    // Drop the window's reported tab count (#1910) so the
+                    // "Move to Window ▸" picker never lists a stale count for a
+                    // window that no longer exists.
+                    wm.forget_tab_count(label);
                 }
 
                 // App-wide teardown (tunnels, embedded/X servers, transfers, SFTP)
