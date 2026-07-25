@@ -60,7 +60,7 @@ describe("TerminalView — macro record button (#1674)", () => {
     const btn = recordButton();
     expect(btn).toBeTruthy();
     expect(btn.getAttribute("aria-pressed")).toBe("false");
-    expect(btn.className).not.toContain("terminal-view__toolbar-btn--recording");
+    expect(btn.className).not.toContain("terminal-view__toolbar-action--recording");
   });
 
   it("clicking starts recording and reflects the active state", () => {
@@ -69,7 +69,7 @@ describe("TerminalView — macro record button (#1674)", () => {
     expect(useAppStore.getState().macroRecording).toBe(true);
     const btn = recordButton();
     expect(btn.getAttribute("aria-pressed")).toBe("true");
-    expect(btn.className).toContain("terminal-view__toolbar-btn--recording");
+    expect(btn.className).toContain("terminal-view__toolbar-action--recording");
   });
 
   it("clicking again stops recording (opening the save dialog after capture)", () => {

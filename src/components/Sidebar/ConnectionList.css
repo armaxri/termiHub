@@ -94,24 +94,6 @@
   flex-shrink: 0;
 }
 
-.connection-list__add-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  transition:
-    color var(--transition-fast),
-    background-color var(--transition-fast);
-}
-
-.connection-list__add-btn:hover {
-  color: var(--text-primary);
-  background-color: var(--bg-hover);
-}
-
 .connection-list__tree {
   flex: 1;
   overflow-y: auto;

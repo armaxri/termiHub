@@ -39,7 +39,7 @@ import { SavedConnection, ConnectionFolder } from "@/types/connection";
 import { type AgentDefinitionInfo } from "@/services/api";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
-import { Tooltip, Input, ConfirmDialog } from "@/components/ui";
+import { Button, Tooltip, Input, ConfirmDialog } from "@/components/ui";
 import { shouldShowInsecureFtpWarning } from "@/utils/ftpSecurity";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useSectionResize } from "@/hooks/useSectionResize";
@@ -1218,37 +1218,40 @@ export function ConnectionList() {
             </button>
             <div className="connection-list__group-actions">
               <Tooltip content="New Folder" side="top">
-                <button
-                  className="connection-list__add-btn"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  icon={<FolderPlus size={16} />}
                   onClick={() => {
                     setLocalCollapsed(false);
                     setCreatingFolder(true);
                   }}
                   aria-label="New Folder"
                   data-testid="connection-list-new-folder"
-                >
-                  <FolderPlus size={16} />
-                </button>
+                />
               </Tooltip>
               <Tooltip content="New Connection" side="top">
-                <button
-                  className="connection-list__add-btn"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  icon={<Plus size={16} />}
                   onClick={handleNewConnection}
                   aria-label="New Connection"
                   data-testid="connection-list-new-connection"
-                >
-                  <Plus size={16} />
-                </button>
+                />
               </Tooltip>
               <Tooltip content="Import from ~/.ssh/config" side="top">
-                <button
-                  className="connection-list__add-btn"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  icon={<FileDown size={16} />}
                   onClick={() => setBulkImportOpen(true)}
                   aria-label="Import from ~/.ssh/config"
                   data-testid="connection-list-import-ssh-config"
-                >
-                  <FileDown size={16} />
-                </button>
+                />
               </Tooltip>
             </div>
           </div>
@@ -1343,14 +1346,15 @@ export function ConnectionList() {
                 </button>
                 <div className="connection-list__group-actions">
                   <Tooltip content="New Remote Agent" side="top">
-                    <button
-                      className="connection-list__add-btn"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      icon={<Plus size={16} />}
                       onClick={handleNewAgent}
                       aria-label="New Remote Agent"
                       data-testid="connection-list-new-agent"
-                    >
-                      <Plus size={16} />
-                    </button>
+                    />
                   </Tooltip>
                 </div>
               </div>

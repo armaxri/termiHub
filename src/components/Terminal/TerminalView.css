@@ -25,32 +25,17 @@
   flex-shrink: 0;
 }
 
-.terminal-view__toolbar-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  transition:
-    color var(--transition-fast),
-    background-color var(--transition-fast);
-}
-
-.terminal-view__toolbar-btn:hover {
-  color: var(--text-primary);
-  background-color: var(--bg-hover);
-}
-
-.terminal-view__toolbar-btn--active {
+/* Toolbar toggle affordances compose the ghost icon Button primitive; only the
+   toggled-on states are bespoke. Compound `.ui-btn` selectors keep these above
+   the primitive's own ghost color. */
+.ui-btn.terminal-view__toolbar-action--active {
   color: var(--text-primary);
 }
 
 /* Active-recording indicator: the record button turns the error/red accent and
    gently pulses so the user always knows input is being captured (#1674). */
-.terminal-view__toolbar-btn--recording,
-.terminal-view__toolbar-btn--recording:hover {
+.ui-btn.terminal-view__toolbar-action--recording,
+.ui-btn.terminal-view__toolbar-action--recording:hover {
   color: var(--color-error);
   animation: terminal-view-record-pulse 1.6s ease-in-out infinite;
 }
@@ -66,7 +51,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .terminal-view__toolbar-btn--recording {
+  .ui-btn.terminal-view__toolbar-action--recording {
     animation: none;
   }
 }
