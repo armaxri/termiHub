@@ -1,11 +1,12 @@
 //! Plugin package format and manifest contract.
 //!
 //! This module is the *foundation* of termiHub's plugin system (see
-//! `docs/concepts/future/plugin-system.html`, impl §1–2): it defines the
-//! on-disk package format, the `manifest.json` data model, and the validator
-//! every other part of the plugin system builds on. It performs **no**
-//! installation, dynamic-library loading, or UI — only the format contract and
-//! its validation.
+//! `docs/concepts/future/plugin-system.html`): it defines the on-disk package
+//! format, the `manifest.json` data model and validator (§1–2), and the
+//! [`PluginManager`] management layer (§4/§12) that installs, scans, and tracks
+//! installed plugins. It performs **no** dynamic-library loading or JS/theme
+//! registration and has no UI — code loading is delegated to later issues
+//! through the [`PluginLifecycleHook`] seam.
 //!
 //! # The `.termihub-plugin` package format
 //!
@@ -40,9 +41,14 @@
 //! own distinct outcome so callers can prompt the user to update rather than
 //! treating it as a malformed package.
 
+mod manager;
 mod manifest;
 mod package;
 
+pub use manager::{
+    InstalledPlugin, NoopLifecycleHook, PluginLifecycleHook, PluginManager, PluginManagerError,
+    PluginState,
+};
 pub use manifest::{
     check_api_compatibility, parse_manifest, ApiCompatibility, ManifestParseError,
     ManifestValidationError, Platform, PluginExtensions, PluginManifest, PluginPermission,
