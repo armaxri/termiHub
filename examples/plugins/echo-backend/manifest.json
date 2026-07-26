@@ -1,0 +1,27 @@
+{
+  "id": "echo-backend",
+  "name": "Echo Backend",
+  "version": "1.0.0",
+  "author": "termiHub examples",
+  "description": "An example native terminal-backend plugin that echoes input back as output. Demonstrates the stable-ABI entry points from termihub-plugin-api.",
+  "license": "MIT",
+  "apiVersion": "1.0",
+  "platforms": ["windows", "linux", "macos"],
+  "permissions": ["terminal"],
+  "extensions": {
+    "terminalBackend": {
+      "connectionType": "echo",
+      "displayName": "Echo (example)",
+      "configSchema": {
+        "type": "object",
+        "properties": {
+          "echoPrefix": {
+            "type": "string",
+            "default": "",
+            "description": "Text prepended to every echoed chunk."
+          }
+        }
+      }
+    }
+  }
+}

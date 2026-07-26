@@ -1,0 +1,75 @@
+{
+  "$schema": "termihub-theme-v1",
+  "name": "Solarized Night",
+  "baseTheme": "dark",
+  "colorScheme": "dark",
+  "colors": {
+    "bgPrimary": "#002b36",
+    "bgSecondary": "#073642",
+    "bgTertiary": "#05313b",
+    "bgHover": "#0a4453",
+    "bgActive": "#0e4c5c",
+    "bgInput": "#04333d",
+    "bgDropdown": "#073642",
+
+    "activityBarBg": "#00212b",
+    "activityBarActive": "#93a1a1",
+    "activityBarInactive": "#586e75",
+    "activityBarIndicator": "#268bd2",
+
+    "sidebarBg": "#012b36",
+    "sidebarHeaderBg": "#073642",
+
+    "tabBg": "#012b36",
+    "tabActiveBg": "#073642",
+    "tabBorder": "#00212b",
+
+    "textPrimary": "#93a1a1",
+    "textSecondary": "#839496",
+    "textMuted": "#657b83",
+    "textDisabled": "#586e75",
+    "textAccent": "#268bd2",
+    "textLink": "#2aa198",
+
+    "borderPrimary": "#073642",
+    "borderSecondary": "#0a4453",
+
+    "accentColor": "#268bd2",
+    "accentHover": "#2076b5",
+    "focusBorder": "#268bd2",
+
+    "colorSuccess": "#859900",
+    "colorWarning": "#b58900",
+    "colorError": "#dc322f",
+    "colorInfo": "#268bd2",
+
+    "stateConnected": "#859900",
+    "stateConnecting": "#b58900",
+    "stateDisconnected": "#dc322f",
+
+    "terminalBg": "#002b36",
+    "terminalFg": "#839496",
+    "terminalCursor": "#93a1a1",
+    "terminalSelection": "#0e4c5c",
+
+    "ansiBlack": "#073642",
+    "ansiRed": "#dc322f",
+    "ansiGreen": "#859900",
+    "ansiYellow": "#b58900",
+    "ansiBlue": "#268bd2",
+    "ansiMagenta": "#d33682",
+    "ansiCyan": "#2aa198",
+    "ansiWhite": "#eee8d5",
+    "ansiBrightBlack": "#586e75",
+    "ansiBrightRed": "#cb4b16",
+    "ansiBrightGreen": "#93a1a1",
+    "ansiBrightYellow": "#657b83",
+    "ansiBrightBlue": "#839496",
+    "ansiBrightMagenta": "#6c71c4",
+    "ansiBrightCyan": "#93a1a1",
+    "ansiBrightWhite": "#fdf6e3",
+
+    "scrollbarThumb": "#0a4453",
+    "scrollbarThumbHover": "#0e4c5c"
+  }
+}

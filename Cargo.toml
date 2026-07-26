@@ -1,5 +1,14 @@
 [workspace]
-members = ["core", "src-tauri", "agent", "plugin-api", "vendor/vnc-rs"]
+members = [
+    "core",
+    "src-tauri",
+    "agent",
+    "plugin-api",
+    "vendor/vnc-rs",
+    # Example plugins (#1994): kept as workspace members so `cargo build`/`clippy`
+    # guarantee they keep compiling against the plugin-api ABI on every platform.
+    "examples/plugins/echo-backend",
+]
 # The RDP sidecar (#1747) is a standalone build unit with its OWN Cargo.lock:
 # IronRDP's CredSSP crypto and russh pin incompatible RustCrypto pre-releases,
 # and Cargo allows one version per crate per lockfile (#1725). A workspace

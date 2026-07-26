@@ -1,0 +1,22 @@
+{
+  "id": "solarized-night",
+  "name": "Solarized Night",
+  "version": "1.0.0",
+  "author": "termiHub examples",
+  "description": "An example JSON-only theme plugin bundling a single dark color theme. Exercises install -> enable -> theme registration with no native code.",
+  "license": "MIT",
+  "apiVersion": "1.0",
+  "platforms": ["windows", "linux", "macos"],
+  "permissions": [],
+  "extensions": {
+    "theme": {
+      "themes": [
+        {
+          "id": "solarized-night",
+          "name": "Solarized Night",
+          "file": "solarized-night.json"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,23 @@
+[package]
+name = "echo-backend"
+version = "1.0.0"
+description = "Example termiHub native terminal-backend plugin (echoes input back as output)"
+edition = "2021"
+publish = false
+
+[lib]
+# `cdylib` is what the host loads as `backend/libecho_backend.{so,dylib}` /
+# `echo_backend.dll`; `rlib` additionally lets this crate carry its own unit
+# tests (a cdylib alone has no test harness). Name pinned so the packaging
+# script can predict the artifact filename.
+name = "echo_backend"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# The stable ABI contract, compiled into BOTH the host and this plugin. A plugin
+# MUST be built against the same major ABI version the target host ships (see the
+# ABI caveat in docs/plugin-authoring.md); the host refuses to load a mismatch.
+termihub-plugin-api = { path = "../../../plugin-api" }
+# Parse the session `configSchema` JSON the host hands to create_backend.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
