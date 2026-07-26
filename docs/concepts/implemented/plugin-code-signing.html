@@ -1004,13 +1004,16 @@ stateDiagram-v2
           banner + Trusted Publishers settings.
         </p>
         <p>
-          <strong>One deliberate v1 deviation:</strong> the bundled first-party key seed
+          <strong>One intentional deferral:</strong> the bundled first-party key seed
           (<code>trust_store.rs::BUNDLED_PUBLISHERS</code>) ships <em>empty</em>. The mechanism is
           fully wired — a non-empty list makes those publishers verify as <code>Verified</code> out
-          of the box — but no key is embedded yet, because doing so honestly needs a real key
-          ceremony (the private half must never be committed) and signing of the bundled example
-          plugins. Until then trust is established entirely through TOFU pinning, which is fully
-          functional. Tracked as a follow-up.
+          of the box — but no key is embedded, by deliberate maintainer decision
+          (<a href="https://github.com/armaxri/termiHub/issues/2041">#2041</a>, now labelled
+          <code>future</code>): a first-party trust anchor buys nothing until an actual plugin
+          ecosystem exists, while minting and holding a root publisher key now adds secret-custody
+          burden. This is a deferral with no active plan, not a gap awaiting a fix. Enabling it
+          later is a key ceremony plus embedding the public key — no architecture change — and TOFU
+          pinning fully covers real installs meanwhile.
         </p>
         <div class="table-wrap">
           <table>
@@ -1034,7 +1037,7 @@ stateDiagram-v2
                 <td>
                   <strong>Implemented</strong> — <code>trust_store.rs</code>,
                   <code>termihub-plugin-keygen</code>, <code>termihub-plugin-sign</code>. Bundled-key
-                  seed wired but empty in v1 (follow-up).
+                  seed wired but intentionally empty (<code>future</code>, #2041).
                 </td>
               </tr>
               <tr>
@@ -1060,9 +1063,12 @@ stateDiagram-v2
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-26 at commit <code>2903600a</code> ·
+          <strong>Last synced:</strong> 2026-07-26 at commit <code>9dde9963</code> ·
           <strong>Status:</strong> in-sync — implemented in
-          <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a> per this design.
+          <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a> per this design; the
+          empty bundled key seed is an intentional deferral
+          (<a href="https://github.com/armaxri/termiHub/issues/2041">#2041</a>, <code>future</code>),
+          not an open divergence.
         </p>
         <p>
           This concept designed the substrate the
@@ -1072,7 +1078,12 @@ stateDiagram-v2
           built; the rows below are reconciled against the code.
         </p>
 
-        <h3>Open divergences</h3>
+        <h3>Intentional deferrals (no active plan)</h3>
+        <p>
+          No open divergences: the substrate matches the concept. The one item below is a design
+          element the maintainers chose <em>not</em> to activate — a deliberate deferral, not a gap
+          the code still needs to close.
+        </p>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1081,7 +1092,7 @@ stateDiagram-v2
                 <th>Artifact claim</th>
                 <th>Code reality</th>
                 <th>Type</th>
-                <th>Recommendation</th>
+                <th>Disposition</th>
               </tr>
             </thead>
             <tbody>
@@ -1092,13 +1103,18 @@ stateDiagram-v2
                   <code>Verified</code> out of the box (Trust Anchoring).
                 </td>
                 <td>
-                  <code>trust_store.rs::BUNDLED_PUBLISHERS</code> is wired but <strong>empty</strong>;
-                  no first-party key is embedded yet. TOFU pinning is fully functional.
+                  <code>trust_store.rs::BUNDLED_PUBLISHERS</code> is wired but intentionally
+                  <strong>empty</strong>; no first-party key is embedded. TOFU pinning is fully
+                  functional.
                 </td>
-                <td>Missing (deferred)</td>
+                <td>Intentionally deferred</td>
                 <td>
-                  Keep concept as the target. Follow-up: run a key ceremony, embed the public key,
-                  and sign the bundled example plugins.
+                  Maintainer decision (<a href="https://github.com/armaxri/termiHub/issues/2041">#2041</a>,
+                  now <code>future</code>): first-party <code>Verified</code> trust waits for an
+                  actual plugin ecosystem — minting and holding a root key now buys nothing and adds
+                  secret-custody burden. Enabling it later is a key ceremony plus embedding the
+                  public key (no architecture change); TOFU pinning covers real installs meanwhile.
+                  No active plan.
                 </td>
               </tr>
             </tbody>
@@ -1155,7 +1171,7 @@ stateDiagram-v2
                 <td>
                   <code>trust_store.rs</code> with <code>is_trusted</code>/<code>pin</code>/<code>revoke</code>,
                   portable-aware, surfaced in Settings → Plugins → Trusted Publishers. (Bundled seed
-                  is empty — see Open divergences.)
+                  is intentionally empty — see Intentional deferrals.)
                 </td>
                 <td>Match</td>
                 <td>Implemented.</td>
