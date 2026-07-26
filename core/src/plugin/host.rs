@@ -335,7 +335,10 @@ pub struct PluginHost {
 impl PluginHost {
     /// Create a host rooted at `plugins_root` that registers loaded plugin
     /// connection types into `registry`.
-    pub fn new(plugins_root: impl Into<PathBuf>, registry: Arc<Mutex<ConnectionTypeRegistry>>) -> Self {
+    pub fn new(
+        plugins_root: impl Into<PathBuf>,
+        registry: Arc<Mutex<ConnectionTypeRegistry>>,
+    ) -> Self {
         Self {
             root: plugins_root.into(),
             registry,
@@ -404,13 +407,16 @@ impl PluginHost {
             );
         }
 
-        self.loaded.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            id,
-            HostEntry {
-                connection_type,
-                library,
-            },
-        );
+        self.loaded
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(
+                id,
+                HostEntry {
+                    connection_type,
+                    library,
+                },
+            );
         Ok(())
     }
 

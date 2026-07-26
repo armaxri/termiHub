@@ -62,11 +62,7 @@ pub struct PluginConnectionType {
 impl PluginConnectionType {
     /// Build a fresh, unconnected connection of the given plugin type.
     #[must_use]
-    pub fn new(
-        library: Arc<LoadedLibrary>,
-        connection_type: String,
-        display_name: String,
-    ) -> Self {
+    pub fn new(library: Arc<LoadedLibrary>, connection_type: String, display_name: String) -> Self {
         Self {
             library,
             connection_type,

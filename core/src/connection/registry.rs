@@ -288,6 +288,31 @@ mod tests {
     }
 
     #[test]
+    fn unregister_removes_type_and_order() {
+        let mut registry = ConnectionTypeRegistry::new();
+        registry.register("a", "A", "a", mock_factory("a"));
+        registry.register("b", "B", "b", mock_factory("b"));
+        registry.register("c", "C", "c", mock_factory("c"));
+
+        // Removing a known type reports success and drops it from listing.
+        assert!(registry.unregister("b"));
+        assert!(!registry.has_type("b"));
+        let ids: Vec<String> = registry
+            .available_types()
+            .into_iter()
+            .map(|t| t.type_id)
+            .collect();
+        assert_eq!(ids, vec!["a".to_string(), "c".to_string()]);
+
+        // Removing an unknown type is a no-op that reports false.
+        assert!(!registry.unregister("nope"));
+
+        // A removed type can be registered again.
+        registry.register("b", "B", "b", mock_factory("b"));
+        assert!(registry.has_type("b"));
+    }
+
+    #[test]
     fn has_type_returns_correct_results() {
         let mut registry = ConnectionTypeRegistry::new();
         registry.register("ssh", "SSH", "ssh", mock_factory("ssh"));
