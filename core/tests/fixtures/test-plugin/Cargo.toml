@@ -1,0 +1,25 @@
+# Test fixture only — a minimal native plugin `cdylib` used by the host-loader
+# round-trip test (`core/tests/plugin_host_roundtrip.rs`, #1995). It is NOT a
+# workspace member: the empty `[workspace]` table below makes it its own
+# workspace root so the parent workspace ignores it, and the round-trip test
+# builds it on demand with `cargo build`.
+[package]
+name = "termihub-test-plugin"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+termihub-plugin-api = { path = "../../../../plugin-api" }
+
+[features]
+# The default build exports every ABI symbol. Building with
+# `--no-default-features` omits `termihub_plugin_init`, which the test uses to
+# exercise the loader's missing-symbol handling.
+default = ["export-init"]
+export-init = []

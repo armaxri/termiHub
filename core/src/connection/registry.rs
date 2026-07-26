@@ -130,6 +130,20 @@ impl ConnectionTypeRegistry {
     pub fn has_type(&self, type_id: &str) -> bool {
         self.factories.contains_key(type_id)
     }
+
+    /// Remove a previously-registered connection type.
+    ///
+    /// Used by the plugin host to unregister a dynamically-loaded connection type
+    /// when its plugin is disabled or uninstalled. Returns `true` if a type was
+    /// removed, `false` if no type with that id was registered.
+    pub fn unregister(&mut self, type_id: &str) -> bool {
+        if self.factories.remove(type_id).is_some() {
+            self.order.retain(|id| id != type_id);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Default for ConnectionTypeRegistry {
@@ -271,6 +285,31 @@ mod tests {
         let types = registry.available_types();
         let ids: Vec<&str> = types.iter().map(|t| t.type_id.as_str()).collect();
         assert_eq!(ids, vec!["c", "a", "b"]);
+    }
+
+    #[test]
+    fn unregister_removes_type_and_order() {
+        let mut registry = ConnectionTypeRegistry::new();
+        registry.register("a", "A", "a", mock_factory("a"));
+        registry.register("b", "B", "b", mock_factory("b"));
+        registry.register("c", "C", "c", mock_factory("c"));
+
+        // Removing a known type reports success and drops it from listing.
+        assert!(registry.unregister("b"));
+        assert!(!registry.has_type("b"));
+        let ids: Vec<String> = registry
+            .available_types()
+            .into_iter()
+            .map(|t| t.type_id)
+            .collect();
+        assert_eq!(ids, vec!["a".to_string(), "c".to_string()]);
+
+        // Removing an unknown type is a no-op that reports false.
+        assert!(!registry.unregister("nope"));
+
+        // A removed type can be registered again.
+        registry.register("b", "B", "b", mock_factory("b"));
+        assert!(registry.has_type("b"));
     }
 
     #[test]

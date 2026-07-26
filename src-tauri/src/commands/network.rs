@@ -328,17 +328,37 @@ mod tests {
 
     #[tokio::test]
     async fn probe_reports_closed_port_unreachable() {
-        // Bind then drop to claim a port that nothing is listening on.
-        let port = {
-            let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
-            listener.local_addr().unwrap().port()
-        };
+        // Claiming a "closed" port by binding on port 0 and dropping the listener is
+        // racy: under the full parallel suite the just-freed ephemeral port can be
+        // reassigned to another concurrent test's live listener before the probe
+        // fires, so the probe correctly reports it *open* and the assertion fails
+        // (#2008). Retry with a fresh port whenever a probe comes back reachable —
+        // that only happens when the port lost the reuse race, so retrying keeps the
+        // assertion meaningful (a genuinely closed port must read unreachable) while
+        // removing the timing dependence. Losing the race on every one of many
+        // independent ports is astronomically unlikely.
+        const ATTEMPTS: usize = 20;
+        for attempt in 1..=ATTEMPTS {
+            let port = {
+                let listener =
+                    std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+                listener.local_addr().unwrap().port()
+            };
 
-        let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(500))
-            .await
-            .expect("probe should not error");
+            let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(500))
+                .await
+                .expect("probe should not error");
 
-        assert!(!reachable, "a closed port should be reported unreachable");
+            if !reachable {
+                return; // A closed port was reported unreachable, as expected.
+            }
+
+            assert!(
+                attempt < ATTEMPTS,
+                "closed port {port} still reported reachable after {ATTEMPTS} attempts \
+                 (all lost the ephemeral-port-reuse race)",
+            );
+        }
     }
 }
 

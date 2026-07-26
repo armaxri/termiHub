@@ -4,9 +4,18 @@
 //! `docs/concepts/future/plugin-system.html`): it defines the on-disk package
 //! format, the `manifest.json` data model and validator (§1–2), and the
 //! [`PluginManager`] management layer (§4/§12) that installs, scans, and tracks
-//! installed plugins. It performs **no** dynamic-library loading or JS/theme
-//! registration and has no UI — code loading is delegated to later issues
-//! through the [`PluginLifecycleHook`] seam.
+//! installed plugins.
+//!
+//! It also provides the **native host loader** (#1995): [`PluginHost`] opens a
+//! plugin's backend dynamic library over the stable ABI
+//! ([`termihub_plugin_api`]), validates its version, and registers the resulting
+//! [`PluginConnectionType`] into a [`ConnectionTypeRegistry`]. The management
+//! layer stays decoupled from loading through the [`PluginLifecycleHook`] seam:
+//! [`HostLifecycleHook`] wires a [`PluginHost`] into that seam so enabling or
+//! disabling a plugin loads or unloads its backend. JS/theme registration and
+//! connection-editor/session wiring remain later issues.
+//!
+//! [`ConnectionTypeRegistry`]: crate::connection::ConnectionTypeRegistry
 //!
 //! # The `.termihub-plugin` package format
 //!
@@ -50,11 +59,18 @@
 //! helpers build a backend crate's dynamic library and drive this function via
 //! the `termihub-plugin-pack` binary.
 
+mod connection;
+mod host;
 mod manager;
 mod manifest;
 mod pack;
 mod package;
 
+pub use connection::PluginConnectionType;
+pub use host::{
+    find_backend_library, load_backend_library, HostError, HostLifecycleHook, LoadedLibrary,
+    LoadedPluginInfo, PluginHost,
+};
 pub use manager::{
     InstalledPlugin, NoopLifecycleHook, PluginLifecycleHook, PluginManager, PluginManagerError,
     PluginState,
