@@ -23,7 +23,9 @@ use std::process::Command;
 use std::time::Duration;
 
 use termihub_core::connection::{ConnectionType, SettingsSchema};
-use termihub_core::plugin::{load_backend_library, LoadedLibrary, PermissionSet, PluginPermission};
+use termihub_core::plugin::{
+    load_backend_library, ConnectionPolicy, LoadedLibrary, PermissionSet, PluginPermission,
+};
 
 /// Path to the fixture plugin's `Cargo.toml` (the shared echo `cdylib`).
 fn fixture_manifest() -> PathBuf {
@@ -64,13 +66,26 @@ async fn probe_outcome(
     permissions: PermissionSet,
     settings: serde_json::Value,
 ) -> Vec<u8> {
+    probe_outcome_with_policy(lib, permissions, ConnectionPolicy::default(), settings).await
+}
+
+/// Like [`probe_outcome`], but with an explicit host-side [`ConnectionPolicy`] so
+/// a test can exercise the per-session connection ceiling / timeout (#2028) across
+/// the real ABI boundary.
+async fn probe_outcome_with_policy(
+    lib: &std::sync::Arc<LoadedLibrary>,
+    permissions: PermissionSet,
+    policy: ConnectionPolicy,
+    settings: serde_json::Value,
+) -> Vec<u8> {
     let mut conn = termihub_core::plugin::PluginConnectionType::new(
         std::sync::Arc::clone(lib),
         "probe".to_string(),
         "Probe".to_string(),
         SettingsSchema { groups: vec![] },
         permissions,
-    );
+    )
+    .with_connection_policy(policy);
     let mut rx = conn.subscribe_output();
     conn.connect(settings)
         .await
@@ -124,6 +139,57 @@ async fn network_capability_is_enforced_through_the_bridge() {
     )
     .await;
     assert_eq!(denied, b"NETWORK_DENIED", "network must be denied");
+
+    let _ = server.join();
+}
+
+#[tokio::test]
+async fn connection_limit_is_enforced_through_the_bridge() {
+    // Across the real dlopen boundary: a session whose policy caps concurrent
+    // mediated connections at 2 can open only 2 of 3 attempted at once; the third
+    // is refused by the host (#2028).
+    let tmp = tempfile::TempDir::new().unwrap();
+    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")))
+        .expect("fixture should load");
+
+    // Accept (and hold) every connection the host actually opens, so the ceiling —
+    // not a refused socket — is what bounds the probe.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let mut held = Vec::new();
+        listener
+            .set_nonblocking(false)
+            .expect("blocking accept for the held connections");
+        // Only the connections under the ceiling (2) are ever opened host-side.
+        for _ in 0..2 {
+            if let Ok((sock, _)) = listener.accept() {
+                held.push(sock);
+            }
+        }
+        held
+    });
+
+    let settings = serde_json::json!({
+        "probe": "connlimit",
+        "probeHost": "127.0.0.1",
+        "probePort": port,
+        "probeCount": 3,
+    });
+
+    let out = probe_outcome_with_policy(
+        &lib,
+        PermissionSet::from_parts([PluginPermission::Network], &[]),
+        ConnectionPolicy::new(2, Duration::from_secs(30)),
+        settings,
+    )
+    .await;
+
+    // 2 allowed (under the ceiling), 1 denied (would exceed it).
+    assert_eq!(
+        out, b"CONNLIMIT:2:1",
+        "host must cap concurrent mediated connections at the policy ceiling"
+    );
 
     let _ = server.join();
 }
