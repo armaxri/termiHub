@@ -285,6 +285,59 @@ subtrees if present. Crate scaffolding (`Cargo.toml`, `src/`, `target/`) and
 editor dotfiles are ignored, so you can package a backend crate directory
 directly without staging a clean tree by hand.
 
+## Signing your plugin
+
+Signing is **optional but recommended**. A signed package lets the host verify,
+offline, that it was built by the holder of a specific key and has not been
+altered since — covering the *entire* payload, not just the manifest. Unsigned
+packages still install (behind the existing untrusted-source acknowledgement), so
+signing is additive and backward-compatible.
+
+A signed package carries one extra root entry, `signature.json`: a per-entry
+SHA-256 digest map of every other file plus a single Ed25519 signature over a
+canonical form of that map. The signature survives the packer's deterministic
+re-zip because it signs *content*, not byte offsets.
+
+**1. Generate a keypair once** (guard the private key — it *is* your publisher
+identity, and it cannot be recovered if lost):
+
+```bash
+cargo run -p termihub-core --features plugin --bin termihub-plugin-keygen -- \
+    --out acme.key --label "ACME Terminals"
+# prints the public key and its fingerprint, e.g. sha256:ab12…9f0e
+```
+
+Publish the printed **fingerprint** next to your plugin (release page, repo,
+website) so users can compare it on first install.
+
+**2. Sign at package time** with `--sign`, or sign an already-built package:
+
+```bash
+# Package and sign in one step:
+./scripts/package-plugin.sh examples/plugins/echo-backend --out dist --sign acme.key
+
+# Or sign a package you already built:
+cargo run -p termihub-core --features plugin --bin termihub-plugin-sign -- \
+    --key acme.key dist/echo-backend-1.0.0.termihub-plugin
+```
+
+On Windows use `scripts\package-plugin.cmd … --sign acme.key`.
+
+**How the host treats it at install** (concept
+`docs/concepts/backlog/plugin-code-signing.html`):
+
+| Package state                                   | Install gate                                              |
+| ----------------------------------------------- | --------------------------------------------------------- |
+| Signed by a **trusted** key (bundled or pinned) | **Verified** — no untrusted-source warning.               |
+| Signed by an **unknown** key                    | Shows the fingerprint; user can **trust it** (pin) once.  |
+| **Unsigned**                                    | The existing untrusted-source acknowledgement (unchanged).|
+| **Signature invalid** (tampered)                | **Blocked**, no override.                                 |
+
+Trust-on-first-use pinning is managed in **Settings → Plugins → Trusted
+Publishers**. Re-signing a package with a different key than a user pinned
+re-prompts them (a key rotation they must re-confirm), rather than trusting a
+silent swap.
+
 ## Testing your plugin
 
 - **Manifest / packaging:** `package-plugin` fails loudly if the manifest is

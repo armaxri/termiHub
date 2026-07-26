@@ -7,12 +7,13 @@ REM This wrapper adds the backend-crate build: if the source has a Cargo.toml, i
 REM builds the cdylib in --release, stages the DLL into a temp backend\ directory
 REM next to the manifest, and packages that staged tree.
 REM
-REM Usage: scripts\package-plugin.cmd <plugin-source-dir> [--out <dir>] [--no-build]
+REM Usage: scripts\package-plugin.cmd <plugin-source-dir> [--out <dir>] [--no-build] [--sign <key>]
 REM   <plugin-source-dir>   Directory containing manifest.json (required).
 REM   --out <dir>           Output directory for the package (default: dist).
 REM   --no-build            Do not build a backend crate; package the tree as-is.
+REM   --sign <key-file>     After packaging, sign with a termihub-plugin-keygen key.
 REM
-REM See docs\plugin-authoring.md for the manifest schema and the ABI caveat.
+REM See docs\plugin-authoring.md for the manifest schema, signing, and the ABI caveat.
 setlocal enabledelayedexpansion
 cd /d "%~dp0\.."
 set "ROOT=%CD%"
@@ -20,6 +21,7 @@ set "ROOT=%CD%"
 set "SOURCE="
 set "OUT_DIR=dist"
 set "BUILD=1"
+set "SIGN_KEY="
 
 :parse
 if "%~1"=="" goto after_parse
@@ -31,6 +33,12 @@ if "%~1"=="--out" (
 )
 if "%~1"=="--no-build" (
     set "BUILD=0"
+    shift
+    goto parse
+)
+if "%~1"=="--sign" (
+    set "SIGN_KEY=%~2"
+    shift
     shift
     goto parse
 )
@@ -97,12 +105,30 @@ if "%BUILD%"=="1" if exist "%SOURCE%\Cargo.toml" (
 )
 
 echo === Packaging ===
-cargo run --quiet -p termihub-core --features plugin --bin termihub-plugin-pack -- --source "!STAGE!" --out "%OUT_DIR%"
+set "PKG_PATH="
+REM Capture the packer's "Created <path>" line so we can sign the exact artifact.
+for /f "tokens=1,* delims= " %%a in ('cargo run --quiet -p termihub-core --features plugin --bin termihub-plugin-pack -- --source "!STAGE!" --out "%OUT_DIR%"') do (
+    echo %%a %%b
+    if "%%a"=="Created" set "PKG_PATH=%%b"
+)
 set "RC=!errorlevel!"
 
+if not "%RC%"=="0" goto done
+if defined SIGN_KEY (
+    if not defined PKG_PATH (
+        echo ERROR: could not determine produced package path for signing 1>&2
+        set "RC=1"
+        goto done
+    )
+    echo === Signing (%SIGN_KEY%) ===
+    cargo run --quiet -p termihub-core --features plugin --bin termihub-plugin-sign -- --key "%SIGN_KEY%" "!PKG_PATH!"
+    set "RC=!errorlevel!"
+)
+
+:done
 if defined TMPSTAGE rmdir /s /q "!TMPSTAGE!"
 endlocal & exit /b %RC%
 
 :usage
-echo Usage: scripts\package-plugin.cmd ^<plugin-source-dir^> [--out ^<dir^>] [--no-build] 1>&2
+echo Usage: scripts\package-plugin.cmd ^<plugin-source-dir^> [--out ^<dir^>] [--no-build] [--sign ^<key^>] 1>&2
 exit /b 2
