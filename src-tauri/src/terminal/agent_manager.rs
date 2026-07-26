@@ -24,6 +24,7 @@ use termihub_core::monitoring::{MonitoringSender, SystemStats};
 
 use crate::connection::config::AgentSettings;
 use crate::terminal::agent_deploy::ConnectedHost;
+use crate::terminal::agent_forward::DesktopAgentForward;
 use crate::terminal::backend::{OutputSender, RemoteAgentConfig, RemoteStateChangeEvent};
 use crate::terminal::jsonrpc;
 use crate::utils::errors::TerminalError;
@@ -154,7 +155,7 @@ fn parse_agent_folder(v: &Value) -> Option<AgentFolderInfo> {
 }
 
 /// Commands sent to the agent I/O task.
-enum AgentIoCommand {
+pub(crate) enum AgentIoCommand {
     /// Send JSON-RPC request and get a response via a oneshot channel.
     Request {
         method: String,
@@ -183,6 +184,12 @@ enum AgentIoCommand {
     },
     /// Unregister a session's monitoring sender.
     UnregisterMonitoring { session_id: String },
+    /// Send the operator's ssh-agent reply bytes for a forwarded stream to the
+    /// agent (`agent.forward.data`, desktop→agent leg of the relay, #1727).
+    AgentForwardData { stream_id: String, data: Vec<u8> },
+    /// Tell the agent a forwarded ssh-agent stream has closed
+    /// (`agent.forward.close`, #1727).
+    AgentForwardClose { stream_id: String },
     /// Disconnect the agent.
     Disconnect,
 }
@@ -756,11 +763,16 @@ impl AgentConnectionManager {
             let settings_task = settings_clone.clone();
             let agents_weak_task = agents_weak.clone();
 
+            // A clone for the task itself: the agent-forward relay's pump tasks
+            // send reply chunks back through it (#1727). Teardown is driven by an
+            // explicit `Disconnect`, so a task-held clone does not mask it.
+            let command_tx_task = command_tx.clone();
             tokio::spawn(async move {
                 agent_io_task(
                     session,
                     channel,
                     command_rx,
+                    command_tx_task,
                     alive_clone,
                     app_handle_task,
                     agent_id_task,
@@ -1658,6 +1670,7 @@ async fn agent_io_task(
     session: SshSession,
     mut channel: russh::Channel<russh::client::Msg>,
     mut command_rx: UnboundedReceiver<AgentIoCommand>,
+    command_tx: UnboundedSender<AgentIoCommand>,
     alive: Arc<AtomicBool>,
     app_handle: AppHandle,
     agent_id: String,
@@ -1673,6 +1686,9 @@ async fn agent_io_task(
     let mut monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
     let mut pending_responses: HashMap<u64, oneshot::Sender<Result<Value, String>>> =
         HashMap::new();
+    // Desktop end of the ssh-agent relay (#1727): bridges forwarded ssh-agent
+    // streams the agent opens to the operator's own local agent.
+    let agent_forward = DesktopAgentForward::new();
     let mut connection_error: Option<String> = None;
 
     // Replay notifications that arrived during the `initialize` handshake before
@@ -1757,6 +1773,30 @@ async fn agent_io_task(
                                 let _ = channel.data(line.as_bytes()).await;
                             }
                         }
+                        AgentIoCommand::AgentForwardData { stream_id, data } => {
+                            request_id += 1;
+                            let encoded = b64.encode(&data);
+                            if let Ok(line) = serialize_request(
+                                request_id,
+                                "agent.forward.data",
+                                serde_json::json!({
+                                    "stream_id": stream_id,
+                                    "data": encoded,
+                                }),
+                            ) {
+                                let _ = channel.data(line.as_bytes()).await;
+                            }
+                        }
+                        AgentIoCommand::AgentForwardClose { stream_id } => {
+                            request_id += 1;
+                            if let Ok(line) = serialize_request(
+                                request_id,
+                                "agent.forward.close",
+                                serde_json::json!({ "stream_id": stream_id }),
+                            ) {
+                                let _ = channel.data(line.as_bytes()).await;
+                            }
+                        }
                         AgentIoCommand::RegisterSession { session_id, output_tx } => {
                             session_outputs.insert(session_id, output_tx);
                         }
@@ -1807,15 +1847,26 @@ async fn agent_io_task(
                                         }
                                     }
                                     Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
-                                        dispatch_agent_notification(
-                                            &app_handle,
-                                            &agent_id,
+                                        // The ssh-agent relay's streams (#1727)
+                                        // route to the desktop's local agent, not
+                                        // to a session output channel.
+                                        if !handle_agent_forward_notification(
+                                            &agent_forward,
+                                            &command_tx,
                                             &method,
                                             &params,
-                                            &session_outputs,
-                                            &monitoring_outputs,
                                             &b64,
-                                        );
+                                        ) {
+                                            dispatch_agent_notification(
+                                                &app_handle,
+                                                &agent_id,
+                                                &method,
+                                                &params,
+                                                &session_outputs,
+                                                &monitoring_outputs,
+                                                &b64,
+                                            );
+                                        }
                                     }
                                     Err(e) => {
                                         warn!("Agent {}: failed to parse message: {}", agent_id, e);
@@ -2020,6 +2071,43 @@ fn dispatch_agent_notification(
         emit_remote_agent_update_pending(app_handle, agent_id, params);
     }
     handle_notification(method, params, session_outputs, monitoring_outputs, b64);
+}
+
+/// Route an `agent.forward.*` ssh-agent relay notification (#1727) to the
+/// desktop relay handler, returning `true` if it was one (so the caller skips
+/// the normal session/monitoring dispatch).
+fn handle_agent_forward_notification(
+    agent_forward: &DesktopAgentForward,
+    command_tx: &UnboundedSender<AgentIoCommand>,
+    method: &str,
+    params: &Value,
+    b64: &base64::engine::GeneralPurpose,
+) -> bool {
+    match method {
+        "agent.forward.open" => {
+            if let Some(stream_id) = params["stream_id"].as_str() {
+                agent_forward.on_open(stream_id.to_string(), command_tx.clone());
+            }
+            true
+        }
+        "agent.forward.data" => {
+            if let (Some(stream_id), Some(data_b64)) =
+                (params["stream_id"].as_str(), params["data"].as_str())
+            {
+                if let Ok(data) = b64.decode(data_b64) {
+                    agent_forward.on_data(stream_id, data);
+                }
+            }
+            true
+        }
+        "agent.forward.close" => {
+            if let Some(stream_id) = params["stream_id"].as_str() {
+                agent_forward.on_close(stream_id);
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Handle a notification from the agent.
