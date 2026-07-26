@@ -204,7 +204,10 @@ function PluginSettingsGroup({
       {values ? (
         <ConnectionSettingsForm schema={schema} settings={values} onChange={onChange} />
       ) : (
-        <div className="settings-panel__empty" data-testid={`plugin-settings-loading-${manifest.id}`}>
+        <div
+          className="settings-panel__empty"
+          data-testid={`plugin-settings-loading-${manifest.id}`}
+        >
           Loading…
         </div>
       )}

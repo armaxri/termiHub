@@ -138,6 +138,21 @@ describe("PluginDetailPanel (#1997)", () => {
     expect(container.querySelector('[data-testid="plugin-action-settings"]')).not.toBeNull();
   });
 
+  it("deep-links the Settings… action into the Plugins settings category for this plugin", () => {
+    const openSettingsTab = vi.fn();
+    useAppStore.setState({
+      plugins: [
+        plugin("active", { settings: { ns: { type: "string", default: "", description: "" } } }),
+      ],
+      openSettingsTab,
+    });
+    render();
+
+    const btn = container.querySelector('[data-testid="plugin-action-settings"]');
+    act(() => btn!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(openSettingsTab).toHaveBeenCalledWith({ category: "plugins", pluginId: "k8s" });
+  });
+
   it("renders a placeholder when the plugin is no longer installed", () => {
     useAppStore.setState({ plugins: [] });
     render("gone");

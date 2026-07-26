@@ -1540,10 +1540,7 @@ interface AppState {
    * on failure; resolves silently on success (the settings section shows its own
    * inline "Saved" acknowledgment).
    */
-  updatePluginSettings: (
-    pluginId: string,
-    settings: Record<string, JsonValue>
-  ) => Promise<void>;
+  updatePluginSettings: (pluginId: string, settings: Record<string, JsonValue>) => Promise<void>;
   /**
    * The manifest id of the plugin currently selected in the Plugins sidebar
    * (#1997), or `null` when none is selected. Drives the sidebar row highlight.
@@ -7663,8 +7660,7 @@ export const useAppStore = create<AppState>((set, get) => {
     },
 
     updatePluginSettings: async (pluginId, settings) => {
-      const name =
-        get().plugins.find((p) => p.manifest.id === pluginId)?.manifest.name ?? pluginId;
+      const name = get().plugins.find((p) => p.manifest.id === pluginId)?.manifest.name ?? pluginId;
       try {
         await apiUpdatePluginSettings(pluginId, settings);
       } catch (err) {
