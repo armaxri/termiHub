@@ -99,7 +99,10 @@ pub type PluginShutdownFn = unsafe extern "C" fn();
 #[allow(dead_code)]
 mod ffi_safety_check {
     use super::*;
-    use crate::ffi::FfiByteSlice;
+    use crate::capabilities::{
+        PluginFileMetadata, PluginListDirFn, PluginStatPathFn, PluginWriteFileFn, PluginWriteMode,
+    };
+    use crate::ffi::{FfiByteSlice, FfiOwnedBytes, FfiStr};
 
     // Exported entry points, exactly matching the type aliases above.
     unsafe extern "C" fn _abi_version() -> u32 {
@@ -129,6 +132,30 @@ mod ffi_safety_check {
         true
     }
 
+    // Capability-bridge callback shapes (#2018, #2024).
+    unsafe extern "C" fn _write_file(
+        _c: *mut core::ffi::c_void,
+        _p: FfiStr,
+        _d: FfiByteSlice,
+        _m: PluginWriteMode,
+    ) -> PluginStatus {
+        PluginStatus::Ok
+    }
+    unsafe extern "C" fn _stat_path(
+        _c: *mut core::ffi::c_void,
+        _p: FfiStr,
+        _o: *mut PluginFileMetadata,
+    ) -> PluginStatus {
+        PluginStatus::Ok
+    }
+    unsafe extern "C" fn _list_dir(
+        _c: *mut core::ffi::c_void,
+        _p: FfiStr,
+        _o: *mut FfiOwnedBytes,
+    ) -> PluginStatus {
+        PluginStatus::Ok
+    }
+
     // Assert the aliases accept the definitions (another layer of the same check).
     const _: PluginAbiVersionFn = _abi_version;
     const _: PluginInitFn = _init;
@@ -137,4 +164,7 @@ mod ffi_safety_check {
     const _: unsafe extern "C" fn(*mut core::ffi::c_void, FfiByteSlice) -> PluginStatus =
         _write_input;
     const _: unsafe extern "C" fn(*mut core::ffi::c_void) -> bool = _is_alive;
+    const _: PluginWriteFileFn = _write_file;
+    const _: PluginStatPathFn = _stat_path;
+    const _: PluginListDirFn = _list_dir;
 }
