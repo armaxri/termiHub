@@ -374,11 +374,28 @@ pub fn run() {
                 .expect("Failed to resolve app config directory");
             std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
 
-            // Plugin management layer (#1992): owns <app-data>/plugins/. Created
-            // lazily — the directory is materialised on first install.
-            app.manage(termihub_core::plugin::PluginManager::new(
-                config_dir.join("plugins"),
+            // Plugin management layer (#1992) + native host loader (#1995): owns
+            // <app-data>/plugins/, created lazily. The host loads a plugin's
+            // backend dynamic library on enable and registers its connection type
+            // into a shared registry; disabling/uninstalling unloads it. Bridging
+            // this registry into the session-creation flow and connection editor
+            // is left to #1999 — for now the load/register path is exercised
+            // end-to-end through the manager's lifecycle seam.
+            let plugins_root = config_dir.join("plugins");
+            let plugin_registry = std::sync::Arc::new(std::sync::Mutex::new(
+                termihub_core::connection::ConnectionTypeRegistry::new(),
             ));
+            let plugin_host = std::sync::Arc::new(termihub_core::plugin::PluginHost::new(
+                plugins_root.clone(),
+                plugin_registry,
+            ));
+            app.manage(termihub_core::plugin::PluginManager::with_hook(
+                plugins_root,
+                std::sync::Arc::new(termihub_core::plugin::HostLifecycleHook::new(
+                    std::sync::Arc::clone(&plugin_host),
+                )),
+            ));
+            app.manage(plugin_host);
 
             // Capture path for the connections file watcher before config_dir is moved.
             let connections_file = config_dir.join("connections.json");
