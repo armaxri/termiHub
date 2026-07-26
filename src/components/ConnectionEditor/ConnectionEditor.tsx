@@ -1,5 +1,14 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { PlugZap, TerminalSquare, Palette, Settings, KeyRound, FileDown } from "lucide-react";
+import * as RadixSelect from "@radix-ui/react-select";
+import {
+  PlugZap,
+  TerminalSquare,
+  Palette,
+  Settings,
+  KeyRound,
+  FileDown,
+  Puzzle,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
@@ -30,7 +39,7 @@ import {
   SshConfigImportConnection,
 } from "@/types/connection";
 import { SettingsNav } from "@/components/Settings";
-import { Button, Input, Select, Toggle, toast } from "@/components/ui";
+import { Button, Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
 import {
   buildDefaults,
@@ -56,6 +65,7 @@ import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { buildGatedTypeOptions } from "@/utils/experimentalTypes";
+import { partitionConnectionTypes } from "@/utils/pluginConnectionTypes";
 import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
 
@@ -537,16 +547,21 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const [isCompact, setIsCompact] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Build type options from the effective registry, gating experimental
+  // Build the connection-type picker from the effective registry, split into
+  // built-in and plugin-provided types (#2002). Built-ins gate experimental
   // (graphical remote-desktop) types behind `experimentalFeaturesEnabled`
-  // (#1705). The currently-selected type is always kept so editing an existing
-  // experimental connection never loses its selection.
-  const typeOptions = useMemo(() => {
-    if (isAgentDefinitionMode) {
-      // Definition mode: show only agent-reported types (no "Remote Agent" entry)
-      return buildGatedTypeOptions(agentConnectionTypes, experimental, selectedType);
-    }
-    return buildGatedTypeOptions(connectionTypes, experimental, selectedType);
+  // (#1705); the currently-selected type is always kept so editing an existing
+  // experimental connection never loses its selection. Plugin-provided types
+  // (registered by active plugins via #1999) render below the built-ins under a
+  // puzzle-badged "Plugins" separator, carrying the registry's already
+  // disambiguated display names.
+  const { builtinTypeOptions, pluginTypes } = useMemo(() => {
+    const registry = isAgentDefinitionMode ? agentConnectionTypes : connectionTypes;
+    const { builtins, plugins } = partitionConnectionTypes(registry);
+    return {
+      builtinTypeOptions: buildGatedTypeOptions(builtins, experimental, selectedType),
+      pluginTypes: plugins,
+    };
   }, [isAgentDefinitionMode, agentConnectionTypes, connectionTypes, experimental, selectedType]);
 
   // Get the current schema from the effective registry
@@ -1163,11 +1178,39 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
             <Select
               value={selectedType}
               onChange={handleTypeChange}
-              options={typeOptions}
               disabled={isAgentDefinitionMode ? !!existingAgentDef : false}
               aria-label="Type"
               data-testid="connection-editor-type-select"
-            />
+            >
+              {builtinTypeOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+              {pluginTypes.length > 0 && (
+                <RadixSelect.Group data-testid="connection-type-plugins-group">
+                  <RadixSelect.Separator className="ui-select__separator" />
+                  <RadixSelect.Label className="ui-select__group-label">Plugins</RadixSelect.Label>
+                  {pluginTypes.map((type) => (
+                    <SelectItem
+                      key={type.typeId}
+                      value={type.typeId}
+                      data-testid={`connection-type-plugin-${type.typeId}`}
+                    >
+                      <span className="connection-editor__plugin-type">
+                        <Puzzle
+                          className="connection-editor__plugin-badge"
+                          width={13}
+                          height={13}
+                          aria-hidden="true"
+                        />
+                        {type.displayName}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </RadixSelect.Group>
+              )}
+            </Select>
           </label>
         )}
         {!isAgentTransportMode && (

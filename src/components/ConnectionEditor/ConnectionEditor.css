@@ -531,3 +531,16 @@
 .field-help-dialog__body p + p {
   margin-top: var(--spacing-sm);
 }
+
+/* A plugin-provided connection type in the type selector (#2002): its name
+   preceded by a puzzle-piece badge, distinguishing it from the built-ins. */
+.connection-editor__plugin-type {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.connection-editor__plugin-badge {
+  flex-shrink: 0;
+  color: var(--text-accent);
+}
