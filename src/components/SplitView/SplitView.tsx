@@ -28,6 +28,7 @@ import {
   Check,
   Palette,
   Stethoscope,
+  Puzzle,
   WifiOff,
   X,
 } from "lucide-react";
@@ -51,6 +52,7 @@ import { LogViewer } from "@/components/LogViewer";
 import { TunnelEditor } from "@/components/TunnelEditor";
 import { WorkspaceEditor } from "@/components/WorkspaceEditor";
 import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnosticPanel";
+import { PluginDetailPanel } from "@/components/Plugins";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
 import { FileBrowserTab } from "@/components/Terminal/FileBrowserTab";
@@ -306,6 +308,8 @@ export function SplitView() {
                     <LayoutGrid size={14} className="zoom-overlay__icon" />
                   ) : zoomedTab.contentType === "network-diagnostic" ? (
                     <Stethoscope size={14} className="zoom-overlay__icon" />
+                  ) : zoomedTab.contentType === "plugin-detail" ? (
+                    <Puzzle size={14} className="zoom-overlay__icon" />
                   ) : zoomedTab.contentType === "agent-error" ? (
                     <WifiOff size={14} className="zoom-overlay__icon" />
                   ) : (
@@ -460,6 +464,12 @@ export function SplitView() {
                 <NetworkDiagnosticPanel
                   key={`zoom-${zoomedTabId}`}
                   meta={zoomedTab.networkDiagnosticMeta}
+                  isVisible={true}
+                />
+              ) : zoomedTab.contentType === "plugin-detail" && zoomedTab.pluginDetailMeta ? (
+                <PluginDetailPanel
+                  key={`zoom-${zoomedTabId}`}
+                  meta={zoomedTab.pluginDetailMeta}
                   isVisible={true}
                 />
               ) : zoomedTab.contentType === "agent-error" && zoomedTab.agentErrorMeta ? (
@@ -712,6 +722,12 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
             <NetworkDiagnosticPanel
               key={tab.id}
               meta={tab.networkDiagnosticMeta}
+              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+            />
+          ) : tab.contentType === "plugin-detail" && tab.pluginDetailMeta ? (
+            <PluginDetailPanel
+              key={tab.id}
+              meta={tab.pluginDetailMeta}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : tab.contentType === "agent-error" && tab.agentErrorMeta ? (

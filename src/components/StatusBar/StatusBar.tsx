@@ -17,6 +17,7 @@ import {
   Highlighter,
   AppWindow,
   Infinity as InfinityIcon,
+  Puzzle,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
@@ -116,6 +117,7 @@ export function StatusBar() {
         <MonitoringStatus />
         <PersistentSessionsIndicator />
         <ServicesIndicator />
+        <PluginsIndicator />
         <AgentUpdatesIndicator />
         <TransferQueueIndicator />
         <CredentialStoreIndicator />
@@ -383,6 +385,38 @@ function ServicesIndicator() {
       >
         <Server size={12} />
         {runningCount}
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * Installed-plugin count in the status bar (#1997).
+ *
+ * Shows "N plugins · M enabled", reflecting the store's installed-plugin list
+ * (enabled = state `active`). Clicking opens the Plugins sidebar view. Renders
+ * nothing when no plugins are installed, keeping the bar uncluttered.
+ */
+function PluginsIndicator() {
+  const plugins = useAppStore((s) => s.plugins);
+  const setSidebarView = useAppStore((s) => s.setSidebarView);
+
+  const total = plugins.length;
+  if (total === 0) return null;
+
+  const enabled = plugins.filter((p) => p.state === "active").length;
+  const label = `${total} plugin${total !== 1 ? "s" : ""} · ${enabled} enabled — click to open Plugins`;
+
+  return (
+    <Tooltip content={label} side="top">
+      <button
+        className="status-bar__item status-bar__item--interactive"
+        aria-label={label}
+        data-testid="plugins-indicator"
+        onClick={() => setSidebarView("plugins")}
+      >
+        <Puzzle size={12} />
+        {total} · {enabled}
       </button>
     </Tooltip>
   );

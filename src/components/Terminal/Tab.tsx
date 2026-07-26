@@ -8,6 +8,7 @@ import {
   SquarePen,
   ScrollText,
   ArrowLeftRight,
+  Puzzle,
   Eraser,
   FileDown,
   ClipboardCopy,
@@ -129,7 +130,9 @@ export function Tab({
             ? SquarePen
             : tab.contentType === "tunnel-editor"
               ? ArrowLeftRight
-              : null;
+              : tab.contentType === "plugin-detail"
+                ? Puzzle
+                : null;
   const isTerminalTab = tab.contentType === "terminal";
 
   const tabElement = (

@@ -8,6 +8,7 @@ import { RecentSessionsSidebar } from "@/components/RecentSessionsSidebar";
 import { WorkflowSidebar } from "@/components/WorkflowSidebar";
 import { NetworkToolsSidebar } from "@/components/NetworkTools/NetworkToolsSidebar";
 import { EmbeddedServerSidebar } from "@/components/EmbeddedServerSidebar";
+import { PluginManagerView } from "@/components/Plugins";
 import "./Sidebar.css";
 
 const VIEW_TITLES: Record<string, string> = {
@@ -20,6 +21,7 @@ const VIEW_TITLES: Record<string, string> = {
   workflows: "Workflows",
   "network-tools": "Network Tools",
   "recent-sessions": "Recent Sessions",
+  plugins: "Plugins",
 };
 
 interface SidebarProps {
@@ -47,6 +49,7 @@ export function Sidebar({ width }: SidebarProps) {
         {sidebarView === "recent-sessions" && <RecentSessionsSidebar />}
         {sidebarView === "workflows" && <WorkflowSidebar />}
         {sidebarView === "network-tools" && <NetworkToolsSidebar />}
+        {sidebarView === "plugins" && <PluginManagerView />}
       </div>
     </div>
   );

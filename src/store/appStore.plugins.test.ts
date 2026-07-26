@@ -224,4 +224,37 @@ describe("appStore — plugins (#1993)", () => {
     expect(toastLoading).toHaveBeenCalledWith("Enabling unknown-id…");
     expect(toastSuccess).toHaveBeenCalledWith("Enabled unknown-id", { id: "toast-id" });
   });
+
+  describe("selectPlugin (#1997)", () => {
+    it("opens a single plugin-detail tab titled after the plugin and records the selection", () => {
+      useAppStore.setState({ plugins: [makePlugin("k8s", "active")] });
+
+      useAppStore.getState().selectPlugin("k8s");
+
+      const state = useAppStore.getState();
+      expect(state.selectedPluginId).toBe("k8s");
+      const tabs = state.rootPanel && "tabs" in state.rootPanel ? state.rootPanel.tabs : [];
+      const detailTabs = tabs.filter((t) => t.contentType === "plugin-detail");
+      expect(detailTabs).toHaveLength(1);
+      expect(detailTabs[0].pluginDetailMeta).toEqual({ pluginId: "k8s" });
+      expect(detailTabs[0].title).toBe("Plugin k8s");
+      expect(detailTabs[0].isActive).toBe(true);
+    });
+
+    it("reuses the same detail tab when a different plugin is selected", () => {
+      useAppStore.setState({
+        plugins: [makePlugin("a", "active"), makePlugin("b", "disabled")],
+      });
+
+      useAppStore.getState().selectPlugin("a");
+      useAppStore.getState().selectPlugin("b");
+
+      const state = useAppStore.getState();
+      const tabs = state.rootPanel && "tabs" in state.rootPanel ? state.rootPanel.tabs : [];
+      const detailTabs = tabs.filter((t) => t.contentType === "plugin-detail");
+      expect(detailTabs).toHaveLength(1);
+      expect(detailTabs[0].pluginDetailMeta).toEqual({ pluginId: "b" });
+      expect(state.selectedPluginId).toBe("b");
+    });
+  });
 });

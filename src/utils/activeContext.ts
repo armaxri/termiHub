@@ -21,6 +21,9 @@ const CONTEXT_BY_CONTENT_TYPE: Record<TabContentType, ActiveContext> = {
   "workspace-editor": "form",
   settings: "form",
   "network-diagnostic": "form",
+  // The plugin detail panel is a read-only info surface with action buttons, not
+  // a text-editing surface — editor-delegated shortcuts may still fire over it.
+  "plugin-detail": "other",
   "log-viewer": "other",
   "agent-error": "other",
   "file-browser": "other",

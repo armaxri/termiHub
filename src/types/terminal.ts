@@ -34,6 +34,12 @@ export type TabContentType =
   | "workspace-editor"
   | "network-diagnostic"
   /**
+   * The plugin detail panel — identity, extension points, permissions, and
+   * state-appropriate actions for a single installed plugin (#1997). Opened from
+   * the Plugins sidebar view; the tab carries a {@link PluginDetailMeta}.
+   */
+  | "plugin-detail"
+  /**
    * A terminal-less connection (e.g. FTP, `Capabilities.terminal === false`).
    * The tab owns a live session so the sidebar file browser can route to it,
    * but renders a non-terminal placeholder body instead of an xterm terminal
@@ -158,6 +164,17 @@ export interface NetworkDiagnosticMeta {
   prefillHost?: string;
   /** Connection ID that triggered this diagnostic (for context). */
   connectionId?: string;
+}
+
+/**
+ * Metadata for a plugin-detail tab (#1997). Carries only the plugin id; the
+ * detail panel looks the live plugin record up from the store by id, so the tab
+ * always reflects the plugin's current state (enabling/disabling/uninstalling it
+ * elsewhere is reflected without stale meta).
+ */
+export interface PluginDetailMeta {
+  /** The manifest id of the plugin whose detail this tab shows. */
+  pluginId: string;
 }
 
 /** Metadata for an agent-error tab shown when a workspace agent connection fails. */
@@ -377,6 +394,7 @@ export interface TerminalTab {
   tunnelEditorMeta?: TunnelEditorMeta;
   workspaceEditorMeta?: WorkspaceEditorMeta;
   networkDiagnosticMeta?: NetworkDiagnosticMeta;
+  pluginDetailMeta?: PluginDetailMeta;
   agentErrorMeta?: AgentErrorMeta;
   /** Set when this tab was launched from a workspace agentRef — enables proper workspace capture. */
   workspaceAgentRef?: { agentId: string; definitionId: string };
