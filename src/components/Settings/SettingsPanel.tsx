@@ -10,6 +10,7 @@ import {
   FileJson,
   FileCode2,
   HardDrive,
+  Puzzle,
   Check,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -34,6 +35,7 @@ import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { SerialPortSettings } from "./SerialPortSettings";
 import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
+import { PluginSettingsSection } from "./PluginSettingsSection";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import "./SettingsPanel.css";
 
@@ -46,6 +48,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   security: Shield,
   "external-files": FileJson,
   editor: FileCode2,
+  plugins: Puzzle,
   portable: HardDrive,
 };
 
@@ -67,8 +70,11 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const closeTab = useAppStore((s) => s.closeTab);
+  const pendingSettingsCategory = useAppStore((s) => s.pendingSettingsCategory);
+  const pendingSettingsPluginId = useAppStore((s) => s.pendingSettingsPluginId);
 
   const [activeCategory, setActiveCategory] = useState<SettingsCategory>("general");
+  const [focusPluginId, setFocusPluginId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [isCompact, setIsCompact] = useState(false);
   const appInfo = useAppInfo();
@@ -125,6 +131,20 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const handleCategoryChange = useCallback((category: SettingsCategory) => {
     setActiveCategory(category);
   }, []);
+
+  // Consume a one-shot deep-link target set by openSettingsTab (#2000): switch to
+  // the requested category and, for Plugins, remember which plugin to focus.
+  // Clearing the store fields prevents re-applying on the next unrelated open.
+  useEffect(() => {
+    if (!pendingSettingsCategory && !pendingSettingsPluginId) return;
+    if (pendingSettingsCategory) {
+      setActiveCategory(pendingSettingsCategory as SettingsCategory);
+    }
+    if (pendingSettingsPluginId) {
+      setFocusPluginId(pendingSettingsPluginId);
+    }
+    useAppStore.setState({ pendingSettingsCategory: null, pendingSettingsPluginId: null });
+  }, [pendingSettingsCategory, pendingSettingsPluginId]);
 
   // Debounced save for General/Appearance/Terminal settings
   const handleSettingsChange = useCallback(
@@ -267,6 +287,9 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           <CustomGrammarsSettings key="custom-grammars" visibleFields={visibleFields} />
         );
       }
+      if (highlightedCategories?.has("plugins")) {
+        sections.push(<PluginSettingsSection key="plugins" focusPluginId={focusPluginId} />);
+      }
       if (highlightedCategories?.has("portable")) {
         sections.push(<PortableModeSettings key="portable" />);
       }
@@ -310,6 +333,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             <CustomGrammarsSettings />
           </>
         );
+      case "plugins":
+        return <PluginSettingsSection focusPluginId={focusPluginId} />;
       case "portable":
         return <PortableModeSettings />;
     }

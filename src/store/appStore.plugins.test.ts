@@ -68,6 +68,8 @@ vi.mock("@/services/api", () => ({
   uninstallPlugin: vi.fn(() => Promise.resolve()),
   enablePlugin: vi.fn(() => Promise.resolve()),
   disablePlugin: vi.fn(() => Promise.resolve()),
+  getPluginSettings: vi.fn(() => Promise.resolve({})),
+  updatePluginSettings: vi.fn(() => Promise.resolve()),
   readPluginFile: vi.fn(() => Promise.resolve(new Uint8Array())),
 }));
 
@@ -78,6 +80,8 @@ import {
   uninstallPlugin as apiUninstallPlugin,
   enablePlugin as apiEnablePlugin,
   disablePlugin as apiDisablePlugin,
+  getPluginSettings as apiGetPluginSettings,
+  updatePluginSettings as apiUpdatePluginSettings,
   readPluginFile,
 } from "@/services/api";
 import { loadPluginThemes, setRegisteredPluginThemes } from "@/themes";
@@ -256,6 +260,34 @@ describe("appStore — plugins (#1993)", () => {
     await useAppStore.getState().enablePlugin("unknown-id");
     expect(toastLoading).toHaveBeenCalledWith("Enabling unknown-id…");
     expect(toastSuccess).toHaveBeenCalledWith("Enabled unknown-id", { id: "toast-id" });
+  });
+
+  describe("plugin settings (#2000)", () => {
+    it("getPluginSettings returns the stored settings object", async () => {
+      vi.mocked(apiGetPluginSettings).mockResolvedValueOnce({ namespace: "prod" });
+      const result = await useAppStore.getState().getPluginSettings("k8s");
+      expect(apiGetPluginSettings).toHaveBeenCalledWith("k8s");
+      expect(result).toEqual({ namespace: "prod" });
+    });
+
+    it("getPluginSettings rethrows on failure so the caller can fall back", async () => {
+      vi.mocked(apiGetPluginSettings).mockRejectedValueOnce(new Error("read failed"));
+      await expect(useAppStore.getState().getPluginSettings("k8s")).rejects.toThrow("read failed");
+    });
+
+    it("updatePluginSettings persists the values", async () => {
+      await useAppStore.getState().updatePluginSettings("k8s", { namespace: "prod" });
+      expect(apiUpdatePluginSettings).toHaveBeenCalledWith("k8s", { namespace: "prod" });
+    });
+
+    it("updatePluginSettings toasts a named error and rethrows on failure", async () => {
+      useAppStore.setState({ plugins: [makePlugin("k8s", "active")] });
+      vi.mocked(apiUpdatePluginSettings).mockRejectedValueOnce(new Error("disk full"));
+      await expect(
+        useAppStore.getState().updatePluginSettings("k8s", { namespace: "prod" })
+      ).rejects.toThrow("disk full");
+      expect(toastError).toHaveBeenCalledWith("Failed to save Plugin k8s settings: disk full");
+    });
   });
 
   describe("selectPlugin (#1997)", () => {

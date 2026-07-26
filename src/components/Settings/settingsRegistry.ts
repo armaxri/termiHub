@@ -7,6 +7,7 @@ export type SettingsCategory =
   | "security"
   | "external-files"
   | "editor"
+  | "plugins"
   | "portable";
 
 export interface CategoryDefinition {
@@ -31,6 +32,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "security", label: "Security" },
   { id: "external-files", label: "External Files" },
   { id: "editor", label: "Editor" },
+  { id: "plugins", label: "Plugins" },
   { id: "portable", label: "Portable Mode" },
 ];
 
@@ -508,6 +510,23 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Shut down the auto-provided X server when no connection uses it",
     category: "general",
     keywords: ["x server", "x11", "idle", "stop", "shutdown", "display"],
+  },
+  {
+    id: "pluginSettings",
+    label: "Plugin Settings",
+    description: "Configure settings for installed plugins that declare them",
+    category: "plugins",
+    keywords: [
+      "plugin",
+      "plugins",
+      "extension",
+      "addon",
+      "add-on",
+      "settings",
+      "configure",
+      "manifest",
+      "schema",
+    ],
   },
   {
     id: "portableMode",

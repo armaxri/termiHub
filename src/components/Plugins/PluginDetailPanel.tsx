@@ -49,7 +49,7 @@ function useActiveSessionCount(plugin: InstalledPlugin | undefined): number {
  * The plugin detail panel shown in the main area (#1997). Renders a plugin's
  * identity, extension points, requested permissions, and state-appropriate
  * actions: Enable/Disable, Retry (on error), Settings… (when the plugin declares
- * settings — the settings pane lands in a separate issue), and Uninstall.
+ * settings — deep-links into the Plugins settings category, #2000), and Uninstall.
  * Uninstall warns first when the plugin has live sessions.
  *
  * The plugin is looked up live from the store by {@link PluginDetailMeta.pluginId},
@@ -195,7 +195,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
           <Button
             variant="secondary"
             icon={<SlidersHorizontal size={14} />}
-            onClick={openSettingsTab}
+            onClick={() => openSettingsTab({ category: "plugins", pluginId: manifest.id })}
             data-testid="plugin-action-settings"
           >
             Settings…

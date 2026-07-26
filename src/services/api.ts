@@ -23,7 +23,7 @@ import type {
   WindowRestorePayload,
 } from "@/types/window";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
-import type { InstalledPlugin, PluginManifest } from "@/types/plugin";
+import type { InstalledPlugin, JsonValue, PluginManifest } from "@/types/plugin";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -2398,6 +2398,23 @@ export async function enablePlugin(pluginId: string): Promise<void> {
 /** Disable the plugin with the given id. */
 export async function disablePlugin(pluginId: string): Promise<void> {
   await invoke("disable_plugin", { pluginId });
+}
+
+/**
+ * Read a plugin's stored settings as a flat key→value object (empty when the
+ * user has never configured it). Keys are the plugin's declared `settings` keys;
+ * values are the raw JSON the host persisted in `plugin-settings.json`.
+ */
+export async function getPluginSettings(pluginId: string): Promise<Record<string, JsonValue>> {
+  return await invoke<Record<string, JsonValue>>("get_plugin_settings", { id: pluginId });
+}
+
+/** Replace a plugin's stored settings with `settings` (a flat key→value object). */
+export async function updatePluginSettings(
+  pluginId: string,
+  settings: Record<string, JsonValue>
+): Promise<void> {
+  await invoke("update_plugin_settings", { id: pluginId, settings });
 }
 
 /**

@@ -285,13 +285,15 @@ import {
 } from "@/utils/reconnectBackoff";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
-import type { InstalledPlugin, PluginBackendType } from "@/types/plugin";
+import type { InstalledPlugin, JsonValue, PluginBackendType } from "@/types/plugin";
 import {
   listPlugins as apiListPlugins,
   installPlugin as apiInstallPlugin,
   uninstallPlugin as apiUninstallPlugin,
   enablePlugin as apiEnablePlugin,
   disablePlugin as apiDisablePlugin,
+  getPluginSettings as apiGetPluginSettings,
+  updatePluginSettings as apiUpdatePluginSettings,
   readPluginFile,
 } from "@/services/api";
 import { reconcileFrontendPlugins } from "@/plugins/frontendPlugins";
@@ -642,7 +644,26 @@ interface AppState {
     agentSessionId: string,
     panelId?: string
   ) => Promise<void>;
-  openSettingsTab: () => void;
+  /**
+   * Open (or focus the existing) Settings tab. An optional `target` deep-links
+   * into a specific category — and, for the Plugins category, an optional plugin
+   * to scroll to and highlight (#2000). The target is consumed once by the
+   * settings panel via {@link pendingSettingsCategory}/{@link
+   * pendingSettingsPluginId}; passing none leaves the current category alone.
+   */
+  openSettingsTab: (target?: { category?: string; pluginId?: string }) => void;
+  /**
+   * Category the Settings panel should switch to when it next reads this, or
+   * `null` for no pending navigation. Set by {@link openSettingsTab} and cleared
+   * by the panel after it applies (#2000).
+   */
+  pendingSettingsCategory: string | null;
+  /**
+   * Plugin the Plugins settings section should scroll to and highlight when it
+   * next reads this, or `null`. Set by {@link openSettingsTab} and cleared by the
+   * panel after it applies (#2000).
+   */
+  pendingSettingsPluginId: string | null;
   openLogViewerTab: () => void;
   openNetworkDiagnosticTab: (
     tool: NetworkTool,
@@ -1508,6 +1529,18 @@ interface AppState {
   enablePlugin: (pluginId: string) => Promise<void>;
   /** Disable a plugin by id, then refresh the list. Toasts feedback; rejects on failure. */
   disablePlugin: (pluginId: string) => Promise<void>;
+  /**
+   * Read a plugin's stored settings (#2000). Resolves to the persisted key→value
+   * object (empty when unset); rejects (logging) on failure so the caller can
+   * fall back to schema defaults.
+   */
+  getPluginSettings: (pluginId: string) => Promise<Record<string, JsonValue>>;
+  /**
+   * Persist a plugin's settings (#2000). Toasts a recoverable error and rejects
+   * on failure; resolves silently on success (the settings section shows its own
+   * inline "Saved" acknowledgment).
+   */
+  updatePluginSettings: (pluginId: string, settings: Record<string, JsonValue>) => Promise<void>;
   /**
    * The manifest id of the plugin currently selected in the Plugins sidebar
    * (#1997), or `null` when none is selected. Drives the sidebar row highlight.
@@ -4207,8 +4240,17 @@ export const useAppStore = create<AppState>((set, get) => {
     showSpawnPicker: (request) => set({ spawnPickerVisible: true, spawnPickerRequest: request }),
     hideSpawnPicker: () => set({ spawnPickerVisible: false, spawnPickerRequest: undefined }),
 
-    openSettingsTab: () =>
+    pendingSettingsCategory: null,
+    pendingSettingsPluginId: null,
+
+    openSettingsTab: (target) =>
       set((state) => {
+        // Deep-link target (#2000): a null category leaves the panel's current
+        // category alone, so a plain open never resets it to General.
+        const nav = {
+          pendingSettingsCategory: target?.category ?? null,
+          pendingSettingsPluginId: target?.pluginId ?? null,
+        };
         const allLeaves = getAllLeaves(state.rootPanel);
 
         // Look for an existing settings tab
@@ -4221,13 +4263,13 @@ export const useAppStore = create<AppState>((set, get) => {
               tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
               activeTabId: existing.id,
             }));
-            return { rootPanel, activePanelId: leaf.id };
+            return { ...nav, rootPanel, activePanelId: leaf.id };
           }
         }
 
         // No existing settings tab — create one in the active panel
         const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
-        if (!targetPanelId) return state;
+        if (!targetPanelId) return { ...nav };
 
         const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
         const newTab = createTab("Settings", "local", dummyConfig, targetPanelId, "settings");
@@ -4236,7 +4278,7 @@ export const useAppStore = create<AppState>((set, get) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        return { ...nav, rootPanel, activePanelId: targetPanelId };
       }),
 
     openLogViewerTab: () =>
@@ -7601,6 +7643,29 @@ export const useAppStore = create<AppState>((set, get) => {
         toast.error(
           `Failed to disable ${name}: ${err instanceof Error ? err.message : String(err)}`,
           { id: toastId }
+        );
+        throw err;
+      }
+    },
+
+    getPluginSettings: async (pluginId) => {
+      try {
+        return await apiGetPluginSettings(pluginId);
+      } catch (err) {
+        // Read-only fetch: log rather than toast; the caller falls back to
+        // schema defaults so the form still renders.
+        console.error(`Failed to load settings for plugin ${pluginId}:`, err);
+        throw err;
+      }
+    },
+
+    updatePluginSettings: async (pluginId, settings) => {
+      const name = get().plugins.find((p) => p.manifest.id === pluginId)?.manifest.name ?? pluginId;
+      try {
+        await apiUpdatePluginSettings(pluginId, settings);
+      } catch (err) {
+        toast.error(
+          `Failed to save ${name} settings: ${err instanceof Error ? err.message : String(err)}`
         );
         throw err;
       }
