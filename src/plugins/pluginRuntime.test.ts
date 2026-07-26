@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   ensureTermiHubApi,
-  setLoadingPlugin,
+  makePluginApi,
   applyParsers,
   transformOutput,
   hasProtocolParsers,
@@ -23,18 +23,14 @@ import {
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
-/** Register `parser` as though it came from `pluginId`'s entry point. */
+/** Register `parser` through `pluginId`'s own API instance, as its wrapper does. */
 function registerParserAs(pluginId: string, parser: ProtocolParser): void {
-  setLoadingPlugin(pluginId);
-  window.termihub.registerProtocolParser(parser);
-  setLoadingPlugin(null);
+  makePluginApi(pluginId).registerProtocolParser(parser);
 }
 
-/** Register `widget` as though it came from `pluginId`'s entry point. */
+/** Register `widget` through `pluginId`'s own API instance, as its wrapper does. */
 function registerWidgetAs(pluginId: string, widget: StatusBarWidget): void {
-  setLoadingPlugin(pluginId);
-  window.termihub.registerStatusBarWidget(widget);
-  setLoadingPlugin(null);
+  makePluginApi(pluginId).registerStatusBarWidget(widget);
 }
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
@@ -54,10 +50,67 @@ describe("window.termihub API", () => {
   });
 
   it("rejects an invalid parser without registering it", () => {
-    setLoadingPlugin("p");
     // Missing transform.
-    window.termihub.registerProtocolParser({ id: "x", name: "x" } as unknown as ProtocolParser);
-    setLoadingPlugin(null);
+    makePluginApi("p").registerProtocolParser({ id: "x", name: "x" } as unknown as ProtocolParser);
+    expect(hasProtocolParsers()).toBe(false);
+  });
+});
+
+describe("per-plugin API instance", () => {
+  const widget = (id: string): StatusBarWidget => ({
+    id,
+    position: "left",
+    render: () => document.createElement("span"),
+    dispose: () => {},
+  });
+
+  it("attributes each instance's registrations to its own plugin id", () => {
+    // Two plugins reuse the same parser id; the per-(plugin,id) keying keeps both.
+    makePluginApi("plugin-a").registerProtocolParser({
+      id: "shared",
+      name: "a",
+      transform: (d) => d + "-a",
+    });
+    makePluginApi("plugin-b").registerProtocolParser({
+      id: "shared",
+      name: "b",
+      transform: (d) => d + "-b",
+    });
+    expect(applyParsers("x", "s1")).toEqual({ text: "x-a-b", changed: true });
+
+    // Unregistering one leaves the other intact.
+    unregisterPlugin("plugin-a");
+    expect(applyParsers("x", "s1")).toEqual({ text: "x-b", changed: true });
+  });
+
+  it("attributes an async (setTimeout) registration to the right plugin and unregisters it", async () => {
+    const api = makePluginApi("async-plugin");
+    // The plugin captures its API and registers later, after any load bracket
+    // would have cleared — the failure mode the per-plugin instance fixes (#2020).
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        api.registerProtocolParser({ id: "late", name: "late", transform: (d) => d + "!" });
+        api.registerStatusBarWidget(widget("late-widget"));
+        resolve();
+      }, 0);
+    });
+
+    expect(applyParsers("hi", "s1")).toEqual({ text: "hi!", changed: true });
+    expect(getStatusBarWidgets("left").map((e) => e.key)).toEqual(["async-plugin:late-widget"]);
+
+    // The real id — not "unknown" — cleanly removes the async registrations.
+    unregisterPlugin("async-plugin");
+    expect(hasProtocolParsers()).toBe(false);
+    expect(getStatusBarWidgets("left")).toHaveLength(0);
+  });
+
+  it("attributes an async (promise callback) registration to the right plugin", async () => {
+    const api = makePluginApi("promise-plugin");
+    await Promise.resolve().then(() => {
+      api.registerProtocolParser({ id: "p", name: "p", transform: (d) => d.toUpperCase() });
+    });
+    expect(applyParsers("hi", "s1")).toEqual({ text: "HI", changed: true });
+    unregisterPlugin("promise-plugin");
     expect(hasProtocolParsers()).toBe(false);
   });
 });
@@ -220,14 +273,12 @@ describe("status-bar widget registry", () => {
   });
 
   it("rejects an invalid widget (bad position)", () => {
-    setLoadingPlugin("p");
-    window.termihub.registerStatusBarWidget({
+    makePluginApi("p").registerStatusBarWidget({
       id: "x",
       position: "middle",
       render: () => document.createElement("span"),
       dispose: () => {},
     } as unknown as StatusBarWidget);
-    setLoadingPlugin(null);
     expect(getStatusBarWidgets("left")).toHaveLength(0);
     expect(getStatusBarWidgets("right")).toHaveLength(0);
   });

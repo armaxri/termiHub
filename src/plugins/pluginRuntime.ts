@@ -5,8 +5,10 @@
  * A frontend plugin is a plain JavaScript file the plugin author ships at
  * `frontend/index.js` (the `entryPoint` its `protocolParser` / `statusBarWidget`
  * extension declares). On activation the loader in {@link ./frontendPlugins}
- * injects that script into the WebView; the script calls the API exposed here on
- * `window.termihub` to register two kinds of extension:
+ * injects that script into the WebView wrapped so the plugin receives its **own**
+ * {@link TermiHubPluginAPI} instance (bound to that plugin's id via
+ * {@link makePluginApi}); the script calls that API to register two kinds of
+ * extension:
  *
  * - **Protocol parsers** — `transform(data, sessionId)` runs over each chunk of
  *   terminal output before it reaches xterm; returning `null` passes the chunk
@@ -67,7 +69,14 @@ export interface StatusBarWidget {
   dispose(): void;
 }
 
-/** The API surface exposed to frontend plugins on `window.termihub`. */
+/**
+ * The API surface exposed to frontend plugins (concept §8). Each plugin receives
+ * its **own** instance, whose register calls are permanently attributed to that
+ * plugin's id — so a registration made from a timer/promise/event callback lands
+ * under the right plugin regardless of when it fires, and is cleanly removed on
+ * unload. See {@link makePluginApi}. The concept-mandated `window.termihub` is a
+ * shared fallback instance ({@link ensureTermiHubApi}).
+ */
 export interface TermiHubPluginAPI {
   /** Register a protocol parser (concept §8). */
   registerProtocolParser(parser: ProtocolParser): void;
@@ -77,8 +86,21 @@ export interface TermiHubPluginAPI {
 
 declare global {
   interface Window {
-    /** The frontend-plugin registration API (#1998). Present once a plugin has loaded. */
+    /**
+     * The frontend-plugin registration API (#1998), typed per the concept.
+     * Present once any plugin has loaded — a shared fallback instance (its
+     * registrations attribute to {@link FALLBACK_PLUGIN_ID}). Each injected
+     * plugin instead runs against its **own** instance passed in as `termihub`,
+     * which shadows this global inside the plugin's scope.
+     */
     termihub: TermiHubPluginAPI;
+    /**
+     * Internal bridge (#2020): builds a per-plugin {@link TermiHubPluginAPI}
+     * bound to a plugin id. Installed by {@link ensureTermiHubApi} so the loader's
+     * injected wrapper can hand each plugin its own instance. Not part of the
+     * concept surface — plugin authors use the `termihub` they are passed.
+     */
+    __termihubMakePluginApi?: (pluginId: string) => TermiHubPluginAPI;
   }
 }
 
@@ -109,15 +131,13 @@ let parsers: RegisteredParser[] = [];
 let widgets: RegisteredWidget[] = [];
 
 /**
- * The plugin id currently being loaded, set by the loader around the synchronous
- * `<script>` injection so register calls made while a plugin's entry point runs
- * are attributed to it. `null` outside a load (a stray register call then lands
- * under `"unknown"`). This attributes the synchronous, top-level registration
- * the concept documents; a plugin that registers asynchronously (from a timer or
- * promise) lands under `"unknown"` and is not cleanly unregisterable — hardening
- * that is a follow-up (per-plugin API instance).
+ * Plugin id used when a registration cannot be attributed to a specific plugin —
+ * i.e. a call made through the shared `window.termihub` fallback rather than the
+ * per-plugin instance a plugin is handed. Injected plugins always register
+ * through their own {@link makePluginApi} instance, so this only catches code
+ * that reaches for the global directly.
  */
-let loadingPluginId: string | null = null;
+const FALLBACK_PLUGIN_ID = "unknown";
 
 /** Cached per-position widget snapshots for {@link getStatusBarWidgets} (stable refs for `useSyncExternalStore`). */
 let widgetSnapshot: Record<WidgetPosition, StatusBarWidgetEntry[]> = { left: [], right: [] };
@@ -133,16 +153,7 @@ function logPluginError(pluginId: string, extId: string, phase: string, err: unk
   );
 }
 
-/**
- * Set (or clear) the plugin id that subsequent register calls are attributed to.
- * Called by the loader immediately around the synchronous script injection.
- */
-export function setLoadingPlugin(pluginId: string | null): void {
-  loadingPluginId = pluginId;
-}
-
-function registerProtocolParser(parser: ProtocolParser): void {
-  const pluginId = loadingPluginId ?? "unknown";
+function registerProtocolParserFor(pluginId: string, parser: ProtocolParser): void {
   if (
     !parser ||
     typeof parser.id !== "string" ||
@@ -157,8 +168,7 @@ function registerProtocolParser(parser: ProtocolParser): void {
   parsers.push({ pluginId, parser });
 }
 
-function registerStatusBarWidget(widget: StatusBarWidget): void {
-  const pluginId = loadingPluginId ?? "unknown";
+function registerStatusBarWidgetFor(pluginId: string, widget: StatusBarWidget): void {
   if (
     !widget ||
     typeof widget.id !== "string" ||
@@ -176,20 +186,43 @@ function registerStatusBarWidget(widget: StatusBarWidget): void {
 }
 
 /**
- * Install the `window.termihub` API on the given target (defaults to the global
- * `window`). Idempotent: the same API object is reused across calls so a
- * previously-loaded plugin's captured reference stays valid.
+ * Build a {@link TermiHubPluginAPI} instance bound to `pluginId`. Every register
+ * call the returned API makes — synchronous top-level, or from a later
+ * timer/promise/event callback — is attributed to `pluginId`, so the plugin's
+ * registrations are always found and cleanly removed by
+ * {@link unregisterPlugin} on disable/uninstall. This replaces the old
+ * load-timing attribution, which mis-filed async registrations under the
+ * fallback id (#2020).
+ */
+export function makePluginApi(pluginId: string): TermiHubPluginAPI {
+  return {
+    registerProtocolParser: (parser) => registerProtocolParserFor(pluginId, parser),
+    registerStatusBarWidget: (widget) => registerStatusBarWidgetFor(pluginId, widget),
+  };
+}
+
+/** The window properties this module installs (extracted for testability). */
+type TermiHubGlobals = {
+  termihub?: TermiHubPluginAPI;
+  __termihubMakePluginApi?: (pluginId: string) => TermiHubPluginAPI;
+};
+
+/**
+ * Install the frontend-plugin globals on the given target (defaults to the global
+ * `window`): the concept-mandated `window.termihub` (a shared fallback instance)
+ * and the internal `__termihubMakePluginApi` bridge the loader uses to hand each
+ * plugin its own instance. Idempotent: the same objects are reused across calls
+ * so a previously-captured reference stays valid. Returns the shared
+ * `window.termihub` instance.
  */
 export function ensureTermiHubApi(
-  target: { termihub?: TermiHubPluginAPI } = window as unknown as {
-    termihub?: TermiHubPluginAPI;
-  }
+  target: TermiHubGlobals = window as unknown as TermiHubGlobals
 ): TermiHubPluginAPI {
   if (!target.termihub) {
-    target.termihub = {
-      registerProtocolParser,
-      registerStatusBarWidget,
-    };
+    target.termihub = makePluginApi(FALLBACK_PLUGIN_ID);
+  }
+  if (!target.__termihubMakePluginApi) {
+    target.__termihubMakePluginApi = makePluginApi;
   }
   return target.termihub;
 }
@@ -311,6 +344,5 @@ export function unregisterPlugin(pluginId: string): void {
 export function clearRegistry(): void {
   parsers = [];
   widgets = [];
-  loadingPluginId = null;
   refreshWidgetSnapshot();
 }

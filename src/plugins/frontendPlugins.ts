@@ -5,11 +5,12 @@
  * On plugin activation this reads the plugin's declared JS entry point via the
  * injected file reader (the `read_plugin_file` command in the app), injects it
  * as an inline `<script>` into the WebView, and lets it register extensions
- * through the `window.termihub` API in {@link ./pluginRuntime}. Registrations
- * made while the script runs are attributed to the plugin via
- * {@link setLoadingPlugin} (inline scripts execute synchronously on append, so
- * the attribution window is exactly the append). On deactivation the script is
- * removed and the plugin's registrations are torn down.
+ * through the {@link ./pluginRuntime} API. Each script is wrapped so the plugin
+ * runs against its **own** {@link makePluginApi} instance (bound to the plugin
+ * id) passed in as `termihub` — so every register call it makes, synchronous or
+ * from a later timer/promise/event callback, is attributed to that plugin and
+ * cleanly removed on unload (#2020). On deactivation the script is removed and
+ * the plugin's registrations are torn down.
  *
  * This mirrors the theme loader's "enumerate active plugins → read declared
  * files → register into a runtime registry" shape (`src/store/appStore.ts` →
@@ -22,10 +23,32 @@
  */
 
 import type { InstalledPlugin, PluginFileReader } from "@/types/plugin";
-import { ensureTermiHubApi, setLoadingPlugin, unregisterPlugin } from "./pluginRuntime";
+import { ensureTermiHubApi, unregisterPlugin } from "./pluginRuntime";
 
 /** Attribute stamped on injected plugin scripts so they can be found and removed. */
 const PLUGIN_SCRIPT_ATTR = "data-termihub-plugin";
+
+/**
+ * Wrap a plugin's entry-point source so it runs against its own per-plugin API
+ * instance. The plugin body executes inside a function whose `termihub`
+ * parameter is the instance {@link makePluginApi} builds for `pluginId` (via the
+ * `__termihubMakePluginApi` bridge {@link ensureTermiHubApi} installs on the
+ * page). That local `termihub` shadows the shared `window.termihub`, so every
+ * register call — synchronous or from a later timer/promise/event callback — is
+ * attributed to this plugin regardless of load timing (#2020). The plugin id is
+ * JSON-encoded, so it is safely quoted into the wrapper.
+ *
+ * The bridge lookup falls back to the shared `window.termihub` if the bridge is
+ * somehow absent, so evaluating the wrapper can never throw before the plugin
+ * body runs (`ensureTermiHubApi` always installs it first in production; the
+ * fallback also keeps the isolated jsdom script context used in tests inert).
+ */
+function wrapPluginSource(pluginId: string, code: string): string {
+  const api = `(window.__termihubMakePluginApi ? window.__termihubMakePluginApi(${JSON.stringify(
+    pluginId
+  )}) : window.termihub)`;
+  return `(function (termihub) {\n${code}\n})(${api});`;
+}
 
 /** A frontend entry point that failed to load, for surfacing/logging. */
 export interface FrontendPluginLoadError {
@@ -81,15 +104,10 @@ export async function loadFrontendPlugin(
       const script = doc.createElement("script");
       script.type = "text/javascript";
       script.setAttribute(PLUGIN_SCRIPT_ATTR, pluginId);
-      script.textContent = code;
-      // Inline scripts execute synchronously on append, so bracketing the append
-      // with the loading id attributes the plugin's register calls to it.
-      setLoadingPlugin(pluginId);
-      try {
-        (doc.head ?? doc.documentElement).appendChild(script);
-      } finally {
-        setLoadingPlugin(null);
-      }
+      // Wrap so the plugin registers against its own per-plugin API instance,
+      // making attribution independent of when register is called (#2020).
+      script.textContent = wrapPluginSource(pluginId, code);
+      (doc.head ?? doc.documentElement).appendChild(script);
       scripts.push(script);
     } catch (err) {
       errors.push({
