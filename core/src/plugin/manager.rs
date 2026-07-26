@@ -46,6 +46,7 @@ use thiserror::Error;
 
 use super::manifest::{parse_manifest, ApiCompatibility, PluginManifest};
 use super::package::{validate_package, PluginPackageError, MANIFEST_FILE_NAME};
+use super::security::{assess_trust, TrustAssessment};
 
 /// File holding per-plugin enabled/disabled state and install timestamps.
 const STATE_FILE_NAME: &str = "plugin-state.json";
@@ -156,6 +157,12 @@ pub enum PluginManagerError {
     /// A state or settings file could not be (de)serialized.
     #[error("plugin state store error: {0}")]
     Store(String),
+
+    /// The package is from an unverified (unsigned) source and the caller did not
+    /// explicitly accept the risk, so installation was refused before extraction
+    /// (concept security gate). See [`PluginManager::assess_trust`].
+    #[error("plugin is from an untrusted source and the risk was not accepted")]
+    UntrustedSourceNotAccepted,
 }
 
 /// Per-plugin record persisted in `plugin-state.json`.
@@ -265,13 +272,43 @@ impl PluginManager {
         Ok(self.installed_plugin_from(manifest, &state, &dir))
     }
 
+    /// Assess how much a `.termihub-plugin` package can be trusted before
+    /// installing it.
+    ///
+    /// termiHub has no plugin-signing substrate, so this always reports the
+    /// package as **untrusted** with a user-facing warning; the install gate
+    /// shows the warning and the user must accept the risk (pass
+    /// `accept_untrusted = true` to [`install`](Self::install)) before extraction.
+    /// Cryptographic signature verification is future work, not implemented.
+    #[must_use]
+    pub fn assess_trust(&self, package_path: &Path) -> TrustAssessment {
+        assess_trust(package_path)
+    }
+
     /// Install a plugin from a `.termihub-plugin` package.
     ///
     /// Validates the package (format + API compatibility), extracts it into
     /// `plugins/<id>/` (replacing any prior install of the same id), records it
     /// as enabled, and runs the enable hook. Serialized against other
     /// install/uninstall operations.
-    pub fn install(&self, package_path: &Path) -> Result<InstalledPlugin, PluginManagerError> {
+    ///
+    /// Every package is from an unverified source (see [`assess_trust`](Self::assess_trust)),
+    /// so `accept_untrusted` must be `true` — the caller's record that the user
+    /// saw the untrusted-source warning and accepted the risk. A `false` value
+    /// refuses the install with [`PluginManagerError::UntrustedSourceNotAccepted`]
+    /// **before** anything is extracted.
+    pub fn install(
+        &self,
+        package_path: &Path,
+        accept_untrusted: bool,
+    ) -> Result<InstalledPlugin, PluginManagerError> {
+        // Untrusted-source gate: refuse before touching the package unless the
+        // user accepted the risk (concept security flowchart: "Warn user →
+        // accepts risk? → extract").
+        if self.assess_trust(package_path).requires_acceptance() && !accept_untrusted {
+            return Err(PluginManagerError::UntrustedSourceNotAccepted);
+        }
+
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
 
         let manifest = validate_package(package_path)?;
@@ -354,6 +391,50 @@ impl PluginManager {
     /// Disable a plugin, persisting the flag and running the disable hook.
     pub fn disable(&self, id: &str) -> Result<InstalledPlugin, PluginManagerError> {
         self.set_enabled(id, false)
+    }
+
+    /// Auto-disable every installed plugin that has become **incompatible** with
+    /// the current host plugin-API version while it was still enabled, and return
+    /// the ids that were disabled so the caller can notify the user.
+    ///
+    /// This is the concept's "App update changes the plugin API version →
+    /// incompatible plugins are auto-disabled with a notification" behavior: run
+    /// it at startup after a host upgrade. An incompatible plugin is never loaded
+    /// regardless (its derived state is [`PluginState::Incompatible`]); this also
+    /// flips the *persisted* enabled flag off so the plugin does not silently
+    /// re-activate if a later host once again supports its API version. Idempotent:
+    /// a second run finds nothing to disable.
+    pub fn reconcile_compatibility(&self) -> Result<Vec<String>, PluginManagerError> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+
+        if !self.root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut state = self.read_state_store()?;
+        let mut disabled = Vec::new();
+        for entry in std::fs::read_dir(&self.root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let Some(manifest) = read_manifest(&entry.path()) else {
+                continue;
+            };
+            if manifest.api_compatibility() != ApiCompatibility::Incompatible {
+                continue;
+            }
+            if let Some(record) = state.plugins.get_mut(&manifest.id) {
+                if record.enabled {
+                    record.enabled = false;
+                    disabled.push(manifest.id.clone());
+                }
+            }
+        }
+        if !disabled.is_empty() {
+            self.write_state_store(&state)?;
+        }
+        disabled.sort();
+        Ok(disabled)
     }
 
     fn set_enabled(&self, id: &str, enabled: bool) -> Result<InstalledPlugin, PluginManagerError> {
@@ -689,7 +770,7 @@ mod tests {
             &[("themes/dark.json", b"{\"bg\":\"#000\"}")],
         );
 
-        let installed = mgr.install(&pkg).unwrap();
+        let installed = mgr.install(&pkg, true).unwrap();
         assert_eq!(installed.manifest.id, "my-theme");
         assert_eq!(installed.state, PluginState::Installed);
         assert!(installed.installed_at > 0);
@@ -715,7 +796,7 @@ mod tests {
             &manifest_json("dup", "1.0"),
             &[("old.txt", b"old")],
         );
-        mgr.install(&pkg1).unwrap();
+        mgr.install(&pkg1, true).unwrap();
         assert!(mgr.root().join("dup/old.txt").exists());
 
         // Reinstall with different contents; the old file must be gone.
@@ -725,7 +806,7 @@ mod tests {
             &manifest_json("dup", "1.0"),
             &[("new.txt", b"new")],
         );
-        mgr.install(&pkg2).unwrap();
+        mgr.install(&pkg2, true).unwrap();
         assert!(mgr.root().join("dup/new.txt").exists());
         assert!(!mgr.root().join("dup/old.txt").exists());
         assert_eq!(mgr.list().unwrap().len(), 1);
@@ -735,7 +816,7 @@ mod tests {
     fn uninstall_removes_dir_state_and_settings() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("gone", "1.0"), &[]);
-        mgr.install(&pkg).unwrap();
+        mgr.install(&pkg, true).unwrap();
 
         let mut s = Map::new();
         s.insert("k".into(), Value::from("v"));
@@ -766,7 +847,7 @@ mod tests {
     fn disable_then_enable_persists() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("toggle", "1.0"), &[]);
-        mgr.install(&pkg).unwrap();
+        mgr.install(&pkg, true).unwrap();
 
         let disabled = mgr.disable("toggle").unwrap();
         assert_eq!(disabled.state, PluginState::Disabled);
@@ -792,7 +873,7 @@ mod tests {
     fn settings_round_trip() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("cfg", "1.0"), &[]);
-        mgr.install(&pkg).unwrap();
+        mgr.install(&pkg, true).unwrap();
 
         // Empty by default.
         assert!(mgr.get_settings("cfg").unwrap().is_empty());
@@ -830,7 +911,7 @@ mod tests {
         // that was installed while still compatible.
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("legacy", "1.0"), &[]);
-        mgr.install(&pkg).unwrap();
+        mgr.install(&pkg, true).unwrap();
 
         let manifest_path = mgr.root().join("legacy").join(MANIFEST_FILE_NAME);
         let bumped = manifest_json("legacy", "2.0");
@@ -845,7 +926,7 @@ mod tests {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("future", "2.0"), &[]);
         assert!(matches!(
-            mgr.install(&pkg),
+            mgr.install(&pkg, true),
             Err(PluginManagerError::Package(
                 PluginPackageError::IncompatibleApiVersion { .. }
             ))
@@ -862,7 +943,7 @@ mod tests {
             &manifest_json("assets", "1.0"),
             &[("themes/dark.json", b"{\"bg\":\"#111\"}")],
         );
-        mgr.install(&pkg).unwrap();
+        mgr.install(&pkg, true).unwrap();
 
         let bytes = mgr.read_file("assets", "themes/dark.json").unwrap();
         assert_eq!(bytes, b"{\"bg\":\"#111\"}");
@@ -897,7 +978,7 @@ mod tests {
         zip.finish().unwrap();
 
         let (mgr, _t) = manager();
-        let result = mgr.install(&path);
+        let result = mgr.install(&path, true);
         assert!(
             matches!(result, Err(PluginManagerError::UnsafePath(_))),
             "got: {result:?}"
@@ -910,7 +991,7 @@ mod tests {
     fn scan_skips_dirs_without_valid_manifest() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("real", "1.0"), &[]);
-        mgr.install(&pkg).unwrap();
+        mgr.install(&pkg, true).unwrap();
 
         // A stray directory with no manifest, and one with garbage.
         std::fs::create_dir_all(mgr.root().join("stray")).unwrap();
@@ -937,12 +1018,67 @@ mod tests {
         let pkg = make_package(tmp.path(), &manifest_json("hooked", "1.0"), &[]);
 
         // Install runs on_enable, which fails: state is Error with the message.
-        let installed = mgr.install(&pkg).unwrap();
+        let installed = mgr.install(&pkg, true).unwrap();
         assert_eq!(installed.state, PluginState::Error);
         assert_eq!(installed.error_message.as_deref(), Some("boom"));
 
         // But the plugin is on disk and enabled; a plain scan (no hook) reports
         // it as installed.
         assert!(mgr.root().join("hooked").exists());
+    }
+
+    #[test]
+    fn install_refuses_untrusted_source_without_acceptance() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("untrusted", "1.0"), &[]);
+
+        // Every package is unsigned → untrusted; installing without accepting
+        // the risk is refused before anything is extracted.
+        assert!(matches!(
+            mgr.install(&pkg, false),
+            Err(PluginManagerError::UntrustedSourceNotAccepted)
+        ));
+        assert!(!mgr.root().join("untrusted").exists());
+
+        // The trust assessment surfaces the warning the UI shows.
+        let trust = mgr.assess_trust(&pkg);
+        assert!(trust.requires_acceptance());
+        assert!(!trust.warning.is_empty());
+
+        // Accepting the risk installs it.
+        let installed = mgr.install(&pkg, true).unwrap();
+        assert_eq!(installed.manifest.id, "untrusted");
+        assert!(mgr.root().join("untrusted").exists());
+    }
+
+    #[test]
+    fn reconcile_disables_incompatible_after_api_bump() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("legacy", "1.0"), &[]);
+        mgr.install(&pkg, true).unwrap();
+
+        // Simulate a host upgrade under the plugin: its manifest now targets an
+        // incompatible API version.
+        let manifest_path = mgr.root().join("legacy").join(MANIFEST_FILE_NAME);
+        std::fs::write(&manifest_path, manifest_json("legacy", "2.0")).unwrap();
+
+        // Reconcile auto-disables it and reports it for notification.
+        let disabled = mgr.reconcile_compatibility().unwrap();
+        assert_eq!(disabled, vec!["legacy".to_string()]);
+        // The persisted enabled flag is now off.
+        assert!(!mgr.read_state_store().unwrap().plugins["legacy"].enabled);
+        // Idempotent: a second run finds nothing (already disabled).
+        assert!(mgr.reconcile_compatibility().unwrap().is_empty());
+    }
+
+    #[test]
+    fn reconcile_leaves_compatible_plugins_enabled() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("fine", "1.0"), &[]);
+        mgr.install(&pkg, true).unwrap();
+
+        assert!(mgr.reconcile_compatibility().unwrap().is_empty());
+        assert!(mgr.read_state_store().unwrap().plugins["fine"].enabled);
+        assert_eq!(mgr.get("fine").unwrap().state, PluginState::Installed);
     }
 }
