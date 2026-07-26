@@ -413,6 +413,29 @@ pub fn run() {
                     Ok(_) => {}
                     Err(e) => warn!("plugin compatibility reconciliation failed: {e}"),
                 }
+
+                // Load plugins that were already enabled in a previous session.
+                // The manager's scan restores each plugin's persisted enabled
+                // flag but does no loading, so without this an already-enabled
+                // plugin's connection type is never registered until the user
+                // toggles it off/on — a persisted connection of that type would
+                // fail to resolve after a restart (#2010). This drives the same
+                // host load path a fresh enable uses; a plugin that fails to load
+                // surfaces as `Error` and is skipped, never aborting startup.
+                match plugin_mgr.load_enabled_plugins() {
+                    Ok(loaded) => {
+                        let failed: Vec<_> = loaded
+                            .iter()
+                            .filter(|p| p.state == termihub_core::plugin::PluginState::Error)
+                            .map(|p| p.manifest.id.clone())
+                            .collect();
+                        if !failed.is_empty() {
+                            warn!("plugins that failed to load at startup: {failed:?}");
+                            let _ = app.emit(commands::plugin::EVENT_PLUGINS_CHANGED, ());
+                        }
+                    }
+                    Err(e) => warn!("loading already-enabled plugins at startup failed: {e}"),
+                }
             }
 
             // Capture path for the connections file watcher before config_dir is moved.
