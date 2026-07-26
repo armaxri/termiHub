@@ -294,6 +294,7 @@ import {
   disablePlugin as apiDisablePlugin,
   readPluginFile,
 } from "@/services/api";
+import { reconcileFrontendPlugins } from "@/plugins/frontendPlugins";
 import {
   createLeafPanel,
   findLeaf,
@@ -7521,6 +7522,16 @@ export const useAppStore = create<AppState>((set, get) => {
         const pluginThemes = await loadActivePluginThemes(plugins);
         setRegisteredPluginThemes(pluginThemes);
         set({ plugins, pluginBackendTypes: derivePluginBackendTypes(plugins), pluginThemes });
+        // Load/unload frontend JS plugins — protocol parsers + status-bar
+        // widgets (#1998). Reconciles the injected scripts against the active
+        // set; individual load failures are logged and skipped.
+        const frontendErrors = await reconcileFrontendPlugins(plugins, readPluginFile);
+        for (const err of frontendErrors) {
+          frontendLog(
+            "app_store",
+            `Skipped frontend plugin ${err.pluginId} (${err.entryPoint}): ${err.message}`
+          );
+        }
         // Re-apply the active theme: a just-registered plugin theme now takes
         // effect, and a theme whose plugin was disabled/uninstalled falls back
         // to the default (concept edge case).

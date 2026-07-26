@@ -52,6 +52,17 @@
   color: var(--text-primary);
 }
 
+/* Host slot for a frontend-plugin status-bar widget (#1998). Provides layout
+   only; the widget owns its own DOM. Empty (nothing rendered yet) hosts collapse. */
+.status-bar__plugin-widget {
+  display: inline-flex;
+  align-items: center;
+}
+
+.status-bar__plugin-widget:empty {
+  display: none;
+}
+
 /* Update-available count next to the connected-agents indicator (issue 1347). */
 .status-bar__agent-updates {
   display: inline-flex;
