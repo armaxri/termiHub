@@ -83,3 +83,6 @@ tests/system/test-inventory.json
 # RDP sidecar binaries staged for Tauri `externalBin` bundling (#1754). Built by
 # scripts/build-rdp-sidecar.sh --tauri-externalbin; never checked in.
 /src-tauri/binaries/
+
+# Generated when the host-loader round-trip test builds its cdylib fixture (#1995)
+core/tests/fixtures/test-plugin/Cargo.lock
