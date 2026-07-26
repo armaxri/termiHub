@@ -41,8 +41,10 @@ export function PluginInstallDialog({ filePath, manifest, onClose }: PluginInsta
   const handleInstall = async () => {
     // installPlugin / enablePlugin own their own pending → success/error toasts
     // and re-throw on failure, so the async Button keeps the dialog open (and
-    // shows the error) when either step fails.
-    await installPlugin(filePath);
+    // shows the error) when either step fails. Clicking "Install & Enable" is the
+    // user accepting the untrusted-source risk shown below, so `acceptUntrusted`
+    // is passed as `true` (no plugin is signature-verified today).
+    await installPlugin(filePath, true);
     await enablePlugin(manifest.id);
     selectPlugin(manifest.id);
     onClose();
@@ -73,6 +75,15 @@ export function PluginInstallDialog({ filePath, manifest, onClose }: PluginInsta
         </>
       }
     >
+      <div className="plugin-install__warning" data-testid="plugin-install-untrusted-warning">
+        <ShieldAlert className="plugin-install__warning-icon" aria-hidden="true" />
+        <div>
+          <span className="plugin-install__warning-title">Untrusted source.</span> termiHub cannot
+          verify who built this plugin — it is not signature-checked, and a native plugin runs with
+          the same access as the app. Only install plugins you trust.
+        </div>
+      </div>
+
       <div className="plugin-install__meta">
         <div className="plugin-install__row">
           <span className="plugin-install__label">File</span>

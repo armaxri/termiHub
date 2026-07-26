@@ -397,6 +397,21 @@ pub fn run() {
             ));
             app.manage(plugin_host);
 
+            // Security: if a host upgrade made any installed plugin's API version
+            // incompatible, auto-disable it so it never loads, and notify the UI
+            // (concept §13, "App update changes the plugin API version →
+            // incompatible plugins are auto-disabled with a notification").
+            if let Some(plugin_mgr) = app.try_state::<termihub_core::plugin::PluginManager>() {
+                match plugin_mgr.reconcile_compatibility() {
+                    Ok(disabled) if !disabled.is_empty() => {
+                        warn!("auto-disabled now-incompatible plugins: {disabled:?}");
+                        let _ = app.emit(commands::plugin::EVENT_PLUGINS_CHANGED, ());
+                    }
+                    Ok(_) => {}
+                    Err(e) => warn!("plugin compatibility reconciliation failed: {e}"),
+                }
+            }
+
             // Capture path for the connections file watcher before config_dir is moved.
             let connections_file = config_dir.join("connections.json");
 
