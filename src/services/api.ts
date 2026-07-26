@@ -2380,7 +2380,7 @@ export async function validatePlugin(filePath: string): Promise<PluginManifest> 
  */
 export async function installPlugin(
   filePath: string,
-  acceptUntrusted: boolean,
+  acceptUntrusted: boolean
 ): Promise<InstalledPlugin> {
   return await invoke<InstalledPlugin>("install_plugin", { filePath, acceptUntrusted });
 }

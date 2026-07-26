@@ -78,9 +78,9 @@ export function PluginInstallDialog({ filePath, manifest, onClose }: PluginInsta
       <div className="plugin-install__warning" data-testid="plugin-install-untrusted-warning">
         <ShieldAlert className="plugin-install__warning-icon" aria-hidden="true" />
         <div>
-          <span className="plugin-install__warning-title">Untrusted source.</span>{" "}
-          termiHub cannot verify who built this plugin — it is not signature-checked, and a native
-          plugin runs with the same access as the app. Only install plugins you trust.
+          <span className="plugin-install__warning-title">Untrusted source.</span> termiHub cannot
+          verify who built this plugin — it is not signature-checked, and a native plugin runs with
+          the same access as the app. Only install plugins you trust.
         </div>
       </div>
 
