@@ -1,7 +1,10 @@
 import { useState } from "react";
+import * as RadixSelect from "@radix-ui/react-select";
+import { Puzzle } from "lucide-react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { AppSettings } from "@/types/connection";
+import { useAppStore } from "@/store/appStore";
 import {
   Button,
   NumberInput,
@@ -57,6 +60,9 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
 
   /** The theme currently open in the editor (new or a copy of an existing one). */
   const [editing, setEditing] = useState<ThemeDefinition | null>(null);
+
+  /** Themes contributed by active theme plugins (#1996), shown under a separator. */
+  const pluginThemes = useAppStore((s) => s.pluginThemes);
 
   const customThemes = settings.customThemes ?? [];
   const themeOptions: SelectOption[] = [
@@ -198,6 +204,34 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
                     <SelectItem value={opt.value}>{opt.label}</SelectItem>
                   </Tooltip>
                 ))}
+                {pluginThemes.length > 0 && (
+                  <RadixSelect.Group data-testid="appearance-theme-plugins-group">
+                    <RadixSelect.Separator className="ui-select__separator" />
+                    <RadixSelect.Label className="ui-select__group-label">
+                      Plugins
+                    </RadixSelect.Label>
+                    {pluginThemes.map((theme) => (
+                      <Tooltip
+                        key={theme.id}
+                        side="right"
+                        content={<ThemePreview theme={theme} />}
+                        data-testid={`appearance-theme-preview-${theme.id}`}
+                      >
+                        <SelectItem value={theme.id}>
+                          <span className="appearance-settings__plugin-theme">
+                            <Puzzle
+                              className="appearance-settings__plugin-badge"
+                              width={13}
+                              height={13}
+                              aria-hidden="true"
+                            />
+                            {theme.name}
+                          </span>
+                        </SelectItem>
+                      </Tooltip>
+                    ))}
+                  </RadixSelect.Group>
+                )}
               </Select>
             </TooltipProvider>
           </SettingsField>

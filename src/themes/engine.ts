@@ -9,6 +9,7 @@ import {
   isCustomThemeSetting,
   resolveCustomTheme,
 } from "./customThemes";
+import { findRegisteredPluginTheme, isPluginThemeSetting } from "./pluginThemes";
 
 /**
  * Maps camelCase ThemeColors keys to their corresponding CSS custom
@@ -93,9 +94,11 @@ const changeCallbacks = new Set<ThemeChangeCallback>();
 
 /**
  * Resolve a theme setting string (`"dark"`, `"light"`, `"system"`,
- * `"custom:<id>"`, …) to a fully-resolved {@link ThemeDefinition}. Custom themes
- * are run through {@link resolveCustomTheme} so every color falls back to its
- * base; a missing/deleted custom theme and any unknown setting fall back to
+ * `"custom:<id>"`, `"plugin:<pluginId>:<themeId>"`, …) to a fully-resolved
+ * {@link ThemeDefinition}. Custom themes are run through
+ * {@link resolveCustomTheme} so every color falls back to its base; plugin
+ * themes are looked up in the runtime registry (see `pluginThemes.ts`). A
+ * missing/deleted custom or plugin theme and any unknown setting fall back to
  * dark. `"system"` reads `prefers-color-scheme`, treating a missing `matchMedia`
  * (e.g. under jsdom) as light.
  */
@@ -112,6 +115,12 @@ export function resolveTheme(
       typeof window.matchMedia === "function" &&
       window.matchMedia("(prefers-color-scheme: dark)").matches;
     return prefersDark ? darkTheme : lightTheme;
+  }
+  if (isPluginThemeSetting(setting)) {
+    // Plugin themes carry a complete, pre-validated palette, so no base
+    // fallback is needed. A theme whose plugin is disabled/uninstalled is no
+    // longer registered and falls back to dark (concept edge case).
+    return findRegisteredPluginTheme(setting) ?? darkTheme;
   }
   if (isCustomThemeSetting(setting)) {
     const id = customThemeId(setting);

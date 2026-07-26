@@ -378,6 +378,22 @@
   margin-left: auto;
 }
 
+/* Group separator + heading, e.g. a "Plugins" divider in a themed select. */
+.ui-select__separator {
+  height: 1px;
+  margin: var(--spacing-xs) calc(-1 * var(--spacing-xs));
+  background: var(--border-secondary);
+}
+
+.ui-select__group-label {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
 /* ── Toggle (Radix Switch skin) ─────────────────────────────────────── */
 .ui-toggle {
   width: 34px;

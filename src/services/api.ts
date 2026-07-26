@@ -2388,3 +2388,13 @@ export async function enablePlugin(pluginId: string): Promise<void> {
 export async function disablePlugin(pluginId: string): Promise<void> {
   await invoke("disable_plugin", { pluginId });
 }
+
+/**
+ * Read a file from inside an installed plugin's directory (theme JSON, JS entry
+ * point, …). `path` is relative to `plugins/<id>/`; the backend refuses
+ * traversal. Returns the raw bytes; text consumers decode as UTF-8.
+ */
+export async function readPluginFile(pluginId: string, path: string): Promise<Uint8Array> {
+  const bytes = await invoke<number[]>("read_plugin_file", { id: pluginId, path });
+  return new Uint8Array(bytes);
+}
