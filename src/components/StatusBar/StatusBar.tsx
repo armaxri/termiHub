@@ -40,6 +40,7 @@ import { Tooltip, toast } from "@/components/ui";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
+import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -121,6 +122,7 @@ export function StatusBar() {
         <AgentUpdatesIndicator />
         <TransferQueueIndicator />
         <CredentialStoreIndicator />
+        <PluginStatusBarWidgets position="left" />
       </div>
       <div className="status-bar__section status-bar__section--center">
         {chordPending && (
@@ -130,6 +132,7 @@ export function StatusBar() {
         )}
       </div>
       <div className="status-bar__section status-bar__section--right">
+        <PluginStatusBarWidgets position="right" />
         <HighlightingIndicator />
         <UpdateIndicator />
         {editorStatus && (

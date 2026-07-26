@@ -30,6 +30,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
+import { transformOutput, notifySessionStart, notifySessionEnd } from "@/plugins/pluginRuntime";
 import { resolveLineEnding } from "@/utils/lineEndings";
 import { getAllLeaves } from "@/utils/panelTree";
 import { toast } from "@/components/ui";
@@ -745,9 +746,17 @@ export function Terminal({
           terminalDispatcher.clearPendingOutput(sessionId);
         }
 
+        // Notify frontend-plugin protocol parsers that this session started
+        // (#1998), so a parser can reset any per-session state before output
+        // begins flowing.
+        notifySessionStart(sessionId);
+
         // Subscribe to output events via singleton dispatcher (O(1) routing)
         const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
-          outputBuffer.push(data);
+          // Run active frontend-plugin protocol parsers over the chunk (#1998).
+          // A no-op fast path when none are registered, and byte-exact when none
+          // transform, so the common no-plugin case is untouched.
+          outputBuffer.push(transformOutput(data, sessionId));
           if (rafId === null) {
             rafId = requestAnimationFrame(flushOutput);
           }
@@ -771,6 +780,8 @@ export function Terminal({
           const exitLabel =
             exitCode === null ? "[Process exited]" : `[Process exited with code ${exitCode}]`;
           xterm.writeln(`\r\n\x1b[90m${exitLabel}\x1b[0m`);
+          // Notify frontend-plugin protocol parsers the session ended (#1998).
+          notifySessionEnd(sessionId);
           sessionIdRef.current = null;
           unregisterSession(tabId);
           store.setTerminalExited(tabId, { code: exitCode, reason });
@@ -864,6 +875,9 @@ export function Terminal({
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
           if (sessionIdRef.current) {
+            // Session torn down while still live (tab closed/reconnecting) —
+            // the exit handler never fired, so notify parsers here (#1998).
+            notifySessionEnd(sessionId);
             // Defer the close so that React StrictMode's rapid unmount→remount
             // can cancel it before the backend session is destroyed.
             const sid = sessionIdRef.current;
