@@ -159,4 +159,16 @@ fn status_error_mapping_is_consistent() {
         Err(PluginError::ChannelClosed),
     ));
     assert!(PluginStatus::Ok.into_result().is_ok());
+
+    // The resource-limit status (#2030) round-trips to its own error variant,
+    // distinct from a permission denial, so a plugin can tell the two apart.
+    assert_eq!(
+        PluginStatus::from_error(&PluginError::ResourceLimit),
+        PluginStatus::ResourceLimit,
+    );
+    assert!(matches!(
+        PluginStatus::ResourceLimit.into_result(),
+        Err(PluginError::ResourceLimit),
+    ));
+    assert_ne!(PluginStatus::ResourceLimit, PluginStatus::PermissionDenied);
 }

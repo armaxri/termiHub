@@ -185,10 +185,13 @@ async fn connection_limit_is_enforced_through_the_bridge() {
     )
     .await;
 
-    // 2 allowed (under the ceiling), 1 denied (would exceed it).
+    // 2 allowed (under the ceiling), 1 refused (would exceed it). The probe only
+    // counts a `ResourceLimit` refusal as denied, so this split also proves the
+    // host reports the dedicated connection-limit status over the real ABI, not a
+    // `PermissionDenied` (#2030).
     assert_eq!(
         out, b"CONNLIMIT:2:1",
-        "host must cap concurrent mediated connections at the policy ceiling"
+        "host must cap concurrent mediated connections and report ResourceLimit"
     );
 
     let _ = server.join();

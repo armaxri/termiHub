@@ -270,11 +270,12 @@ unsafe fn context<'a>(ctx: *mut core::ffi::c_void) -> &'a BridgeContext {
 /// `open_connection` callback: enforce the `network` permission and the session's
 /// concurrent-connection ceiling, then connect within the policy's timeout.
 ///
-/// A refusal — missing `network`, or the session already at its connection
-/// ceiling — is reported as [`PluginStatus::PermissionDenied`]: the mediated
-/// capability was denied. Reusing the existing status keeps the ABI stable (no
-/// new [`PluginStatus`] variant, so no version bump); the two cases are
-/// distinguished by the host, not the plugin.
+/// The two refusals now carry **distinct** statuses so a plugin can tell them
+/// apart (#2030): a missing `network` permission is
+/// [`PluginStatus::PermissionDenied`], while hitting the session's
+/// concurrent-connection ceiling is [`PluginStatus::ResourceLimit`] — a
+/// well-behaved plugin can back off and retry the latter rather than treat it as
+/// a hard permission failure.
 ///
 /// # Safety
 ///
@@ -295,11 +296,13 @@ unsafe extern "C" fn bridge_open_connection(
             return PluginStatus::PermissionDenied;
         }
         // Resource enforcement: refuse if this session is already holding its
-        // maximum number of concurrent mediated connections. The reservation is
-        // released when the returned stream is dropped (or below, on connect
-        // failure).
+        // maximum number of concurrent mediated connections. Reported as
+        // `ResourceLimit`, distinct from the `PermissionDenied` above, so the
+        // plugin can tell a ceiling refusal apart from a missing permission and
+        // back off/retry (#2030). The reservation is released when the returned
+        // stream is dropped (or below, on connect failure).
         let Some(guard) = cx.try_reserve_connection() else {
-            return PluginStatus::PermissionDenied;
+            return PluginStatus::ResourceLimit;
         };
         // SAFETY: `host` is a valid borrowed `&str` for the call.
         let host_str = unsafe { host.as_str() };
@@ -582,11 +585,12 @@ mod tests {
             .open_connection("127.0.0.1", port)
             .expect("second fits");
 
-        // The third, still holding the first two, is refused as PermissionDenied.
+        // The third, still holding the first two, is refused as ResourceLimit —
+        // a ceiling refusal, distinct from a permission denial (#2030).
         let err = bridge.open_connection("127.0.0.1", port).unwrap_err();
         assert!(
-            matches!(err, termihub_plugin_api::PluginError::PermissionDenied),
-            "over-ceiling connection should be denied, got {err:?}"
+            matches!(err, termihub_plugin_api::PluginError::ResourceLimit),
+            "over-ceiling connection should hit the resource limit, got {err:?}"
         );
 
         // Dropping one frees its slot, so the next dial-out succeeds again.
