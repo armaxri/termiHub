@@ -356,9 +356,11 @@ mod tests {
     #[test]
     fn empty_or_shapeless_schema_yields_no_groups() {
         // No `properties` at all.
-        assert!(config_schema_to_settings_schema(&serde_json::json!({ "type": "object" }))
-            .groups
-            .is_empty());
+        assert!(
+            config_schema_to_settings_schema(&serde_json::json!({ "type": "object" }))
+                .groups
+                .is_empty()
+        );
         // `properties` present but empty.
         assert!(config_schema_to_settings_schema(
             &serde_json::json!({ "type": "object", "properties": {} })
@@ -366,9 +368,11 @@ mod tests {
         .groups
         .is_empty());
         // Not an object at all.
-        assert!(config_schema_to_settings_schema(&serde_json::json!("nonsense"))
-            .groups
-            .is_empty());
+        assert!(
+            config_schema_to_settings_schema(&serde_json::json!("nonsense"))
+                .groups
+                .is_empty()
+        );
     }
 
     #[test]

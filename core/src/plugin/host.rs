@@ -418,9 +418,8 @@ impl PluginHost {
         // Translate the plugin's declared `configSchema` into the form schema the
         // dynamic connection editor renders (#1999). Derived once here and cloned
         // into every instance the factory produces.
-        let settings_schema = super::connection::config_schema_to_settings_schema(
-            &backend.config_schema,
-        );
+        let settings_schema =
+            super::connection::config_schema_to_settings_schema(&backend.config_schema);
 
         // Two plugins may declare the same `connectionType`, and a plugin may even
         // collide with a built-in. Disambiguate against whatever is already
@@ -529,9 +528,7 @@ impl super::manager::PluginLifecycleHook for HostLifecycleHook {
 mod tests {
     use super::*;
 
-    use crate::connection::{
-        Capabilities, ConnectionType, OutputReceiver, SettingsSchema,
-    };
+    use crate::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
     use crate::errors::SessionError;
     use crate::files::FileBrowser;
     use crate::monitoring::MonitoringProvider;
@@ -589,13 +586,21 @@ mod tests {
     }
 
     fn register_stub(registry: &mut ConnectionTypeRegistry, type_id: &str) {
-        registry.register(type_id, type_id, "puzzle", Box::new(|| Box::new(StubConnection)));
+        registry.register(
+            type_id,
+            type_id,
+            "puzzle",
+            Box::new(|| Box::new(StubConnection)),
+        );
     }
 
     #[test]
     fn disambiguate_leaves_a_free_id_unchanged() {
         let registry = ConnectionTypeRegistry::new();
-        assert_eq!(disambiguate_type_id("echo", "echo-backend", &registry), "echo");
+        assert_eq!(
+            disambiguate_type_id("echo", "echo-backend", &registry),
+            "echo"
+        );
     }
 
     #[test]

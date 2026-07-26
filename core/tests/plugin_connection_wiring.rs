@@ -25,9 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, FieldType};
-use termihub_core::plugin::{
-    parse_manifest, InstalledPlugin, PluginHost, PluginState,
-};
+use termihub_core::plugin::{parse_manifest, InstalledPlugin, PluginHost, PluginState};
 
 /// Path to the fixture plugin's `Cargo.toml` (the same echo `cdylib` the
 /// round-trip test uses).
@@ -98,7 +96,13 @@ fn manifest_json(id: &str, name: &str, connection_type: &str) -> String {
 /// Install a plugin `id` into `root/<id>/` by writing its manifest and copying
 /// the built `lib` into `backend/`, then return the [`InstalledPlugin`] the host
 /// consumes.
-fn install(root: &Path, lib: &Path, id: &str, name: &str, connection_type: &str) -> InstalledPlugin {
+fn install(
+    root: &Path,
+    lib: &Path,
+    id: &str,
+    name: &str,
+    connection_type: &str,
+) -> InstalledPlugin {
     let dir = root.join(id);
     let backend = dir.join("backend");
     std::fs::create_dir_all(&backend).expect("create plugin backend dir");
@@ -106,7 +110,9 @@ fn install(root: &Path, lib: &Path, id: &str, name: &str, connection_type: &str)
 
     let manifest = parse_manifest(&manifest_json(id, name, connection_type))
         .expect("fixture manifest should parse");
-    manifest.validate().expect("fixture manifest should validate");
+    manifest
+        .validate()
+        .expect("fixture manifest should validate");
     InstalledPlugin {
         manifest,
         state: PluginState::Installed,
@@ -161,7 +167,11 @@ async fn plugin_type_is_creatable_and_listed_through_the_registry() {
 
     // --- 2. The manifest configSchema surfaced as the type's settings schema. ---
     let echo = types.iter().find(|t| t.type_id == "echo").unwrap();
-    assert_eq!(echo.schema.groups.len(), 1, "configSchema should yield one group");
+    assert_eq!(
+        echo.schema.groups.len(),
+        1,
+        "configSchema should yield one group"
+    );
     let field = &echo.schema.groups[0].fields[0];
     assert_eq!(field.key, "echoPrefix");
     assert_eq!(field.label, "Echo Prefix"); // humanized from the key
@@ -219,10 +229,15 @@ async fn sessions_are_independent_so_closing_one_leaves_the_other_running() {
     // Closing the first session must not disturb the second.
     first.disconnect().await.unwrap();
     assert!(!first.is_connected());
-    assert!(second.is_connected(), "closing one session killed the other");
+    assert!(
+        second.is_connected(),
+        "closing one session killed the other"
+    );
 
     // The surviving session still does full I/O.
-    second.write(b"still alive").expect("second session still writable");
+    second
+        .write(b"still alive")
+        .expect("second session still writable");
     let out = tokio::time::timeout(Duration::from_secs(5), second_rx.recv())
         .await
         .expect("second session should still echo")

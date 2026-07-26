@@ -280,11 +280,13 @@ impl Drop for ConnectingGuard {
 }
 
 impl SessionManager {
-    /// Create a new session manager that owns its registry exclusively.
+    /// Test-only convenience constructor that owns its registry exclusively.
     ///
-    /// Convenience for callers (and tests) that do not share the registry with a
-    /// plugin host; it simply wraps `registry` in a fresh [`Arc<StdMutex<_>>`] and
-    /// delegates to [`with_shared_registry`](Self::with_shared_registry).
+    /// Production wiring shares the registry with the plugin host via
+    /// [`with_shared_registry`](Self::with_shared_registry); tests that do not care
+    /// about plugins use this, which wraps `registry` in a fresh
+    /// [`Arc<StdMutex<_>>`] and delegates.
+    #[cfg(test)]
     pub fn new(registry: ConnectionTypeRegistry, agent_manager: Arc<dyn AgentRpcClient>) -> Self {
         Self::with_shared_registry(Arc::new(StdMutex::new(registry)), agent_manager)
     }
