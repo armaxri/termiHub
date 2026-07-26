@@ -177,7 +177,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
                 >
                   <DropdownMenu.Item
                     className="settings-menu__item"
-                    onSelect={openSettingsTab}
+                    onSelect={() => openSettingsTab()}
                     data-testid="settings-menu-open"
                   >
                     <Settings size={14} />

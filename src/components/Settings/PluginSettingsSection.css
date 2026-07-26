@@ -1,0 +1,53 @@
+/* Plugins settings section (#2000): one card per plugin that declares settings. */
+
+.plugin-settings__group {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  transition: border-color var(--transition-fast);
+}
+
+.plugin-settings__group--highlighted {
+  border-color: var(--accent-color);
+  background-color: color-mix(in srgb, var(--accent-color) 8%, transparent);
+}
+
+.plugin-settings__header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
+}
+
+.plugin-settings__icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+/* The per-plugin DynamicForm renders one group with an empty label; suppress
+   its heading so only the card's own name header shows. */
+.plugin-settings__group .settings-panel__category-title:empty {
+  display: none;
+}
+
+.plugin-settings__saved {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--accent-color);
+  opacity: 0;
+  transition: opacity var(--transition-normal);
+}
+
+.plugin-settings__saved--visible {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plugin-settings__group,
+  .plugin-settings__saved {
+    transition: none;
+  }
+}
