@@ -88,19 +88,19 @@ silently ignored.
 
 ### Fields
 
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `id` | string | yes | Stable, filesystem-safe identifier; becomes the install directory name. Must be a slug of lowercase letters, digits and single interior hyphens, 1–64 chars (e.g. `k8s-exec`). |
-| `name` | string | yes | Human-readable display name. |
-| `version` | string | yes | Plugin version (informational; the host does not interpret it). |
-| `author` | string | yes | Plugin author. |
-| `description` | string | yes | Short description. |
-| `license` | string | yes | SPDX-style license identifier. |
-| `apiVersion` | string | yes | Plugin-API version as `"major"` or `"major.minor"` (e.g. `"1.0"`). |
-| `platforms` | string[] | yes | Supported desktop platforms: `windows`, `linux`, `macos`. |
-| `permissions` | string[] | yes | Requested capabilities (see below). May be empty. |
-| `extensions` | object | yes | Extension points provided; **at least one** required. |
-| `settings` | object | no | User-configurable settings, keyed by setting name. |
+| Field         | Type     | Required | Notes                                                                                                                                                                          |
+| ------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `id`          | string   | yes      | Stable, filesystem-safe identifier; becomes the install directory name. Must be a slug of lowercase letters, digits and single interior hyphens, 1–64 chars (e.g. `k8s-exec`). |
+| `name`        | string   | yes      | Human-readable display name.                                                                                                                                                   |
+| `version`     | string   | yes      | Plugin version (informational; the host does not interpret it).                                                                                                                |
+| `author`      | string   | yes      | Plugin author.                                                                                                                                                                 |
+| `description` | string   | yes      | Short description.                                                                                                                                                             |
+| `license`     | string   | yes      | SPDX-style license identifier.                                                                                                                                                 |
+| `apiVersion`  | string   | yes      | Plugin-API version as `"major"` or `"major.minor"` (e.g. `"1.0"`).                                                                                                             |
+| `platforms`   | string[] | yes      | Supported desktop platforms: `windows`, `linux`, `macos`.                                                                                                                      |
+| `permissions` | string[] | yes      | Requested capabilities (see below). May be empty.                                                                                                                              |
+| `extensions`  | object   | yes      | Extension points provided; **at least one** required.                                                                                                                          |
+| `settings`    | object   | no       | User-configurable settings, keyed by setting name.                                                                                                                             |
 
 ### Permissions
 
@@ -109,24 +109,24 @@ permission string fails validation, which is what lets the install-time consent
 prompt be exhaustive. Request the minimum a plugin actually needs — a theme
 plugin, for instance, needs **none**.
 
-| Permission | Grants |
-| --- | --- |
-| `terminal` | Creating and managing terminal sessions. |
-| `network` | Making outbound network connections. |
+| Permission   | Grants                                                |
+| ------------ | ----------------------------------------------------- |
+| `terminal`   | Creating and managing terminal sessions.              |
+| `network`    | Making outbound network connections.                  |
 | `filesystem` | Reading and writing files (scoped to declared paths). |
-| `ui` | Rendering UI components in designated slots. |
-| `settings` | Storing and reading plugin-specific configuration. |
+| `ui`         | Rendering UI components in designated slots.          |
+| `settings`   | Storing and reading plugin-specific configuration.    |
 
 ### Settings
 
 Each entry under `settings` describes one user-configurable value:
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `type` | `string` \| `number` \| `boolean` | The setting's primitive type. |
-| `default` | any | Default applied when the user has not set one. |
-| `description` | string | Shown in the settings UI. |
-| `enum` | string[] | Optional closed set of allowed string values. |
+| Field         | Type                              | Notes                                          |
+| ------------- | --------------------------------- | ---------------------------------------------- |
+| `type`        | `string` \| `number` \| `boolean` | The setting's primitive type.                  |
+| `default`     | any                               | Default applied when the user has not set one. |
+| `description` | string                            | Shown in the settings UI.                      |
+| `enum`        | string[]                          | Optional closed set of allowed string values.  |
 
 ### API-version compatibility
 
@@ -153,11 +153,11 @@ flowchart TD
 Registers a new connection type backed by a native dynamic library (see
 [Native backends](#native-backends-and-the-abi)).
 
-| Field | Notes |
-| --- | --- |
-| `connectionType` | The connection type this backend registers. |
-| `displayName` | Name shown in the connection-type selector. |
-| `configSchema` | JSON Schema describing the backend's connection config. The host renders a form from it and hands the resulting JSON to the backend at session creation. |
+| Field            | Notes                                                                                                                                                    |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connectionType` | The connection type this backend registers.                                                                                                              |
+| `displayName`    | Name shown in the connection-type selector.                                                                                                              |
+| `configSchema`   | JSON Schema describing the backend's connection config. The host renders a form from it and hands the resulting JSON to the backend at session creation. |
 
 ### `theme`
 
@@ -194,12 +194,12 @@ compiled into both the host and every plugin. Implement the
 `PluginTerminalBackend` trait for your session type and export four
 `extern "C"` symbols:
 
-| Symbol | Purpose |
-| --- | --- |
-| `termihub_plugin_abi_version` | ABI version the plugin was built against. |
-| `termihub_plugin_init` | Fills in the plugin's `PluginInfo` metadata. |
-| `termihub_plugin_create_backend` | Builds a session backend from JSON config. |
-| `termihub_plugin_shutdown` | Process-wide cleanup before unload. |
+| Symbol                           | Purpose                                      |
+| -------------------------------- | -------------------------------------------- |
+| `termihub_plugin_abi_version`    | ABI version the plugin was built against.    |
+| `termihub_plugin_init`           | Fills in the plugin's `PluginInfo` metadata. |
+| `termihub_plugin_create_backend` | Builds a session backend from JSON config.   |
+| `termihub_plugin_shutdown`       | Process-wide cleanup before unload.          |
 
 ```mermaid
 sequenceDiagram
