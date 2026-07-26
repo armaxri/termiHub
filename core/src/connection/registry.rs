@@ -130,6 +130,20 @@ impl ConnectionTypeRegistry {
     pub fn has_type(&self, type_id: &str) -> bool {
         self.factories.contains_key(type_id)
     }
+
+    /// Remove a previously-registered connection type.
+    ///
+    /// Used by the plugin host to unregister a dynamically-loaded connection type
+    /// when its plugin is disabled or uninstalled. Returns `true` if a type was
+    /// removed, `false` if no type with that id was registered.
+    pub fn unregister(&mut self, type_id: &str) -> bool {
+        if self.factories.remove(type_id).is_some() {
+            self.order.retain(|id| id != type_id);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Default for ConnectionTypeRegistry {

@@ -89,6 +89,15 @@ vte = "0.13"
 # Behind the optional `plugin` feature so it is only compiled when the plugin
 # system is built.
 zip = { version = "2", optional = true }
+# Native plugin host loader (#1995): opens a plugin's backend dynamic library
+# (`.dll`/`.so`/`.dylib`) and resolves its stable-ABI entry symbols. The de-facto
+# cross-platform `dlopen`/`LoadLibrary` wrapper — library-first over hand-rolled
+# FFI. Behind the optional `plugin` feature.
+libloading = { version = "0.8", optional = true }
+# The stable ABI contract shared by the host and every plugin (#1990). The host
+# loader resolves the plugin's exported symbols to the type aliases this crate
+# defines and drives the backend through its safe wrappers. Behind `plugin`.
+termihub-plugin-api = { path = "../plugin-api", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Used to build a per-user DACL for a security-hardened local-IPC listener
@@ -121,10 +130,11 @@ serial_test = "3"
 
 [features]
 default = []
-# Plugin package format + manifest schema/validation (#1989). Pulls the `zip`
-# crate to read `.termihub-plugin` archives. Foundation only — no plugin
-# loading/UI yet.
-plugin = ["dep:zip"]
+# Plugin package format + manifest schema/validation (#1989), plus the native
+# host loader (#1995). Pulls `zip` to read `.termihub-plugin` archives,
+# `libloading` to open a plugin's backend dynamic library, and
+# `termihub-plugin-api` for the stable ABI contract.
+plugin = ["dep:zip", "dep:libloading", "dep:termihub-plugin-api"]
 serial = ["dep:serial2", "dep:serial2-tokio", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing"]
 telnet = ["dep:tracing"]
