@@ -9,6 +9,7 @@ pub mod local_process;
 pub mod logs;
 pub mod macros;
 pub mod network;
+pub mod plugin;
 pub mod portable;
 pub mod remote_desktop;
 pub mod session;

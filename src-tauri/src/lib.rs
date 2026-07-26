@@ -374,6 +374,12 @@ pub fn run() {
                 .expect("Failed to resolve app config directory");
             std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
 
+            // Plugin management layer (#1992): owns <app-data>/plugins/. Created
+            // lazily — the directory is materialised on first install.
+            app.manage(termihub_core::plugin::PluginManager::new(
+                config_dir.join("plugins"),
+            ));
+
             // Capture path for the connections file watcher before config_dir is moved.
             let connections_file = config_dir.join("connections.json");
 
@@ -806,6 +812,16 @@ pub fn run() {
             commands::ssh_host_key::ssh_host_key_decision,
             commands::ssh_host_key::ssh_trust_list,
             commands::ssh_host_key::ssh_trust_forget,
+            // Plugin management layer (#1992)
+            commands::plugin::list_plugins,
+            commands::plugin::validate_plugin,
+            commands::plugin::install_plugin,
+            commands::plugin::uninstall_plugin,
+            commands::plugin::enable_plugin,
+            commands::plugin::disable_plugin,
+            commands::plugin::get_plugin_settings,
+            commands::plugin::update_plugin_settings,
+            commands::plugin::read_plugin_file,
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::cancel_connecting,
