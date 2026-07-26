@@ -419,4 +419,158 @@ mod tests {
             "session's streams dropped on teardown"
         );
     }
+
+    /// End-to-end proof of the relay's data path against a **real** ssh-agent:
+    /// a real `ssh-add -l` client connects to the relay socket, a stand-in
+    /// desktop bridges the tunnelled stream to a live `ssh-agent`, and the client
+    /// sees the agent's actual key — i.e. the target's `$SSH_AUTH_SOCK` (the
+    /// relay socket) exposes the operator's keys, which is the whole point of
+    /// #1727. Skips where `ssh-agent`/`ssh-add`/`ssh-keygen` are unavailable.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn relay_socket_exposes_a_real_ssh_agent_key_end_to_end() {
+        use std::collections::HashMap as Map;
+        use std::process::Command;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        fn have(bin: &str) -> bool {
+            Command::new("sh")
+                .arg("-c")
+                .arg(format!("command -v {bin}"))
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+        if !(have("ssh-agent") && have("ssh-add") && have("ssh-keygen")) {
+            eprintln!("skipping: ssh-agent/ssh-add/ssh-keygen not available");
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!("thub-1727-e2e-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let agent_sock = dir.join("agent.sock");
+        let key = dir.join("id_ed25519");
+
+        // A live ssh-agent bound to a known socket, holding one generated key.
+        let out = Command::new("ssh-agent")
+            .arg("-a")
+            .arg(&agent_sock)
+            .output()
+            .expect("spawn ssh-agent");
+        assert!(out.status.success(), "ssh-agent failed to start");
+        let agent_pid = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("SSH_AGENT_PID="))
+            .and_then(|s| s.split(';').next())
+            .map(|s| s.to_string());
+
+        let cleanup = |pid: Option<String>, dir: std::path::PathBuf| {
+            if let Some(pid) = pid {
+                let _ = Command::new("kill").arg(&pid).status();
+            }
+            let _ = std::fs::remove_dir_all(&dir);
+        };
+
+        let keygen = Command::new("ssh-keygen")
+            .args(["-t", "ed25519", "-N", "", "-C", "thub-1727-e2e"])
+            .arg("-f")
+            .arg(&key)
+            .output()
+            .expect("ssh-keygen");
+        assert!(keygen.status.success(), "ssh-keygen failed");
+
+        let add = Command::new("ssh-add")
+            .arg(&key)
+            .env("SSH_AUTH_SOCK", &agent_sock)
+            .output()
+            .expect("ssh-add");
+        assert!(add.status.success(), "ssh-add failed: {add:?}");
+
+        // The relay under test, plus a stand-in desktop that bridges each
+        // tunnelled stream to the live agent (the src-tauri DesktopAgentForward
+        // in miniature).
+        let (relay, mut rx) = test_relay();
+        let session_id = format!("afr-e2e-{}", std::process::id());
+        let relay_path = relay.start_listener(&session_id).await.expect("listener");
+
+        let desktop_relay = Arc::clone(&relay);
+        let real_sock = agent_sock.clone();
+        let desktop = tokio::spawn(async move {
+            let mut streams: Map<String, tokio::sync::mpsc::UnboundedSender<Vec<u8>>> = Map::new();
+            let b64 = base64::engine::general_purpose::STANDARD;
+            while let Some(n) = rx.recv().await {
+                let sid = n.params["stream_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                match n.method.as_str() {
+                    m if m == AGENT_FORWARD_OPEN => {
+                        let conn = tokio::net::UnixStream::connect(&real_sock).await.unwrap();
+                        let (mut ar, mut aw) = tokio::io::split(conn);
+                        let (tx, mut inbound) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
+                        streams.insert(sid.clone(), tx);
+                        tokio::spawn(async move {
+                            while let Some(b) = inbound.recv().await {
+                                if aw.write_all(&b).await.is_err() {
+                                    break;
+                                }
+                                let _ = aw.flush().await;
+                            }
+                            let _ = aw.shutdown().await;
+                        });
+                        let relay = Arc::clone(&desktop_relay);
+                        let sid2 = sid.clone();
+                        tokio::spawn(async move {
+                            let mut buf = vec![0u8; 4096];
+                            loop {
+                                match ar.read(&mut buf).await {
+                                    Ok(0) | Err(_) => break,
+                                    Ok(k) => relay.write(&sid2, buf[..k].to_vec()).await,
+                                }
+                            }
+                            relay.close_stream(&sid2).await;
+                        });
+                    }
+                    m if m == AGENT_FORWARD_DATA => {
+                        if let Some(tx) = streams.get(&sid) {
+                            if let Ok(d) = b64.decode(n.params["data"].as_str().unwrap_or_default())
+                            {
+                                let _ = tx.send(d);
+                            }
+                        }
+                    }
+                    m if m == AGENT_FORWARD_CLOSE => {
+                        streams.remove(&sid);
+                    }
+                    _ => {}
+                }
+            }
+        });
+
+        // The real client: `ssh-add -l` against the relay socket must list the
+        // key the live agent holds — proving the keys travelled the tunnel.
+        let listed = tokio::task::spawn_blocking({
+            let relay_path = relay_path.clone();
+            move || {
+                Command::new("ssh-add")
+                    .arg("-l")
+                    .env("SSH_AUTH_SOCK", &relay_path)
+                    .output()
+            }
+        })
+        .await
+        .unwrap()
+        .expect("ssh-add -l");
+
+        desktop.abort();
+        relay.stop_listener(&session_id).await;
+        let stdout = String::from_utf8_lossy(&listed.stdout).to_string();
+        cleanup(agent_pid, dir);
+
+        assert!(
+            listed.status.success() && stdout.contains("thub-1727-e2e"),
+            "relay socket must expose the live agent's key; got status={:?} stdout={stdout:?}",
+            listed.status
+        );
+    }
 }
