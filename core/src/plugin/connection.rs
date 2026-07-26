@@ -42,6 +42,7 @@ use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
+use super::capabilities::ConnectionPolicy;
 use super::host::LoadedLibrary;
 use super::security::{PermissionError, PermissionSet};
 use super::PluginPermission;
@@ -64,6 +65,11 @@ pub struct PluginConnectionType {
     /// capabilities (filesystem path resolution, network, …) can enforce them
     /// per session (concept §13).
     permissions: PermissionSet,
+    /// The host-side connection policy (concurrent-connection ceiling + connect
+    /// timeout) applied to the capability bridge this session hands the plugin
+    /// (#2028). Defaults to [`ConnectionPolicy::default`]; the host derives it
+    /// from the plugin's manifest via [`with_connection_policy`](Self::with_connection_policy).
+    connection_policy: ConnectionPolicy,
     /// The active session backend, `None` until [`connect`](ConnectionType::connect).
     backend: Option<LoadedBackend>,
     /// Current output sink; swapped by
@@ -93,9 +99,23 @@ impl PluginConnectionType {
             display_name,
             settings_schema,
             permissions,
+            connection_policy: ConnectionPolicy::default(),
             backend: None,
             output_tx: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Set the host-side [`ConnectionPolicy`] for sessions of this type (#2028).
+    ///
+    /// The host derives the policy from the plugin's manifest `connectionPolicy`
+    /// once at load time and applies it to every session the factory makes, so a
+    /// plugin's declared concurrency ceiling and connect timeout are enforced on
+    /// the capability bridge. Without this call the [`ConnectionPolicy::default`]
+    /// remains in force.
+    #[must_use]
+    pub fn with_connection_policy(mut self, policy: ConnectionPolicy) -> Self {
+        self.connection_policy = policy;
+        self
     }
 
     /// The permission set this plugin session was granted.
@@ -301,9 +321,14 @@ impl ConnectionType for PluginConnectionType {
         let output = PluginOutputSender::from_sender(std_tx);
 
         // Hand the plugin a host capability bridge scoped to this session's granted
-        // permissions, so any network/filesystem access it performs through the
-        // bridge is enforced by the host at runtime (concept §13, #2018).
-        let bridge = super::capabilities::build_host_bridge(self.permissions.clone());
+        // permissions and connection policy, so any network/filesystem access it
+        // performs through the bridge is enforced by the host at runtime — including
+        // the per-session connection ceiling and connect timeout (concept §13,
+        // #2018, #2028).
+        let bridge = super::capabilities::build_host_bridge_with_policy(
+            self.permissions.clone(),
+            self.connection_policy,
+        );
 
         let backend = self
             .library

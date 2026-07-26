@@ -91,14 +91,16 @@ pub unsafe extern "C" fn termihub_plugin_init(out_info: *mut PluginInfo) -> Plug
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct ProbeConfig {
-    /// One of `"network"`, `"readfile"`, `"writefile"`, `"appendfile"`,
-    /// `"createfile"`, `"statpath"`, `"listdir"`; empty means "no probe, just
-    /// echo".
+    /// One of `"network"`, `"connlimit"`, `"readfile"`, `"writefile"`,
+    /// `"appendfile"`, `"createfile"`, `"statpath"`, `"listdir"`; empty means "no
+    /// probe, just echo".
     probe: String,
     /// Target host for the `network` probe.
     probe_host: String,
-    /// Target port for the `network` probe.
+    /// Target port for the `network`/`connlimit` probe.
     probe_port: u16,
+    /// Number of connections the `connlimit` probe opens and holds concurrently.
+    probe_count: u16,
     /// Target path for the filesystem probes.
     probe_path: String,
     /// Bytes to write for the `writefile`/`appendfile`/`createfile` probes.
@@ -121,6 +123,27 @@ fn run_probe(cfg: &ProbeConfig, bridge: &PluginHostBridge, output: &PluginOutput
                 Err(_) => b"NETWORK_ERR".to_vec(),
             };
             let _ = output.send(&line);
+        }
+        "connlimit" => {
+            // Open `probe_count` connections and hold them all open at once, so
+            // the host's per-session concurrency ceiling (#2028) governs how many
+            // succeed. Report the allowed/denied split as a single line.
+            let mut held = Vec::new();
+            let mut ok = 0u16;
+            let mut denied = 0u16;
+            for _ in 0..cfg.probe_count {
+                match bridge.open_connection(&cfg.probe_host, cfg.probe_port) {
+                    Ok(stream) => {
+                        ok += 1;
+                        held.push(stream);
+                    }
+                    Err(PluginError::PermissionDenied) => denied += 1,
+                    Err(_) => {}
+                }
+            }
+            let _ = output.send(format!("CONNLIMIT:{ok}:{denied}").as_bytes());
+            // Hold the streams until after the line is sent, then drop them.
+            drop(held);
         }
         "readfile" => {
             let line = match bridge.read_file(&cfg.probe_path) {

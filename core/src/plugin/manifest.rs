@@ -62,6 +62,28 @@ pub enum Platform {
     Macos,
 }
 
+/// The optional `connectionPolicy` object: host-side limits on the connections a
+/// plugin session may open through the capability bridge (#2028).
+///
+/// Both fields are optional; an absent field (or an absent `connectionPolicy`
+/// object entirely) leaves the host's built-in default in force
+/// ([`ConnectionPolicy`](super::ConnectionPolicy)). Declaring these lets a plugin
+/// author raise or lower the ceiling for a session — for example a plugin that
+/// legitimately fans out to many endpoints, or one deliberately restricted to a
+/// single slow dial-out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConnectionPolicyManifest {
+    /// Maximum number of concurrent mediated connections a session may hold open.
+    /// `None` keeps the host default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_connections: Option<usize>,
+    /// Connect timeout, in milliseconds, applied to each mediated dial-out.
+    /// `None` keeps the host default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_timeout_ms: Option<u64>,
+}
+
 /// The `extensions` object: which extension points a plugin provides.
 ///
 /// A plugin declares one or more of these. The individual extension bodies are
@@ -223,6 +245,11 @@ pub struct PluginManifest {
     pub filesystem_paths: Vec<String>,
     /// The extension points the plugin provides.
     pub extensions: PluginExtensions,
+    /// Optional host-side connection policy: per-session concurrent-connection
+    /// ceiling and connect timeout for the capability bridge (#2028). Absent
+    /// leaves the host defaults in force.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_policy: Option<ConnectionPolicyManifest>,
     /// Optional user-configurable settings, keyed by setting name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<BTreeMap<String, PluginSettingSchema>>,
@@ -436,6 +463,42 @@ mod tests {
         let json = serde_json::to_string(&manifest).unwrap();
         let reparsed = parse_manifest(&json).unwrap();
         assert_eq!(manifest, reparsed);
+    }
+
+    #[test]
+    fn connection_policy_is_optional_and_parses_when_present() {
+        // Absent by default.
+        let manifest = parse_manifest(valid_manifest_json()).unwrap();
+        assert!(manifest.connection_policy.is_none());
+
+        // Present, with both fields, round-trips and deserializes as declared.
+        let json = valid_manifest_json().replace(
+            "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],",
+            "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],\n            \
+             \"connectionPolicy\": { \"maxConnections\": 4, \"connectTimeoutMs\": 5000 },",
+        );
+        let manifest = parse_manifest(&json).expect("should parse with connectionPolicy");
+        let policy = manifest
+            .connection_policy
+            .as_ref()
+            .expect("connectionPolicy present");
+        assert_eq!(policy.max_connections, Some(4));
+        assert_eq!(policy.connect_timeout_ms, Some(5000));
+        manifest.validate().expect("should validate");
+
+        let reparsed = parse_manifest(&serde_json::to_string(&manifest).unwrap()).unwrap();
+        assert_eq!(manifest, reparsed);
+    }
+
+    #[test]
+    fn connection_policy_rejects_unknown_field() {
+        let json = valid_manifest_json().replace(
+            "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],",
+            "\"permissions\": [\"terminal\", \"network\", \"filesystem\"],\n            \
+             \"connectionPolicy\": { \"maxConns\": 4 },",
+        );
+        let err = parse_manifest(&json).unwrap_err();
+        assert!(err.to_string().contains("maxConns"), "got: {err}");
     }
 
     #[test]

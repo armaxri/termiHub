@@ -390,12 +390,58 @@ impl PluginTcpStream {
     /// `destroy`).
     #[must_use]
     pub fn from_std(stream: std::net::TcpStream) -> Self {
-        let boxed = Box::new(stream);
+        Self::from_mediated(MediatedTcpStream {
+            stream,
+            _guard: None,
+        })
+    }
+
+    /// Wrap a host-owned [`std::net::TcpStream`] together with a host-side drop
+    /// `guard` that runs when the plugin drops the stream.
+    ///
+    /// The guard lets the host release a per-session resource the connection
+    /// reserved — a concurrent-connection slot in the session's connection policy
+    /// (#2028), say — the moment the mediated stream is closed. Like the stream
+    /// itself, the guard is opaque host state behind the handle's `state` pointer:
+    /// it never crosses the FFI boundary.
+    #[must_use]
+    pub fn from_std_guarded(stream: std::net::TcpStream, guard: StreamDropGuard) -> Self {
+        Self::from_mediated(MediatedTcpStream {
+            stream,
+            _guard: Some(guard),
+        })
+    }
+
+    /// Box the host-owned [`MediatedTcpStream`] state behind the shared vtable.
+    fn from_mediated(state: MediatedTcpStream) -> Self {
         Self {
-            state: Box::into_raw(boxed).cast::<c_void>(),
+            state: Box::into_raw(Box::new(state)).cast::<c_void>(),
             vtable: &TCP_STREAM_VTABLE,
         }
     }
+}
+
+/// A host-side drop guard carried by a mediated [`PluginTcpStream`].
+///
+/// It runs (host-side) when the plugin drops the stream, so the host can release
+/// whatever per-session resource the connection reserved — for example a
+/// concurrent-connection slot in the session's connection policy (#2028). It is
+/// **opaque host state**: it lives behind the stream's `state` pointer and is
+/// never handed across the FFI boundary, so `dyn Send` here does not weaken the
+/// ABI's "no trait objects cross the boundary" guarantee.
+pub type StreamDropGuard = Box<dyn Send>;
+
+/// Host-owned state behind a mediated [`PluginTcpStream`]: the real socket plus an
+/// optional [`StreamDropGuard`].
+///
+/// Declaration order matters: `stream` is dropped **before** `_guard`, so the
+/// socket is closed before the guard releases the session resource it accounts
+/// for.
+struct MediatedTcpStream {
+    /// The host-owned socket the plugin drives through the vtable.
+    stream: std::net::TcpStream,
+    /// Optional guard dropped after `stream`; `None` for unguarded streams.
+    _guard: Option<StreamDropGuard>,
 }
 
 unsafe extern "C" fn tcp_vt_read(
@@ -405,9 +451,10 @@ unsafe extern "C" fn tcp_vt_read(
     out_read: *mut usize,
 ) -> PluginStatus {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: `state` is a live `*mut TcpStream` produced by `from_std`; `buf`/
-        // `len` describe a writable region the plugin owns for the call.
-        let stream = unsafe { &mut *state.cast::<std::net::TcpStream>() };
+        // SAFETY: `state` is a live `*mut MediatedTcpStream` produced by
+        // `from_mediated`; `buf`/`len` describe a writable region the plugin owns
+        // for the call.
+        let stream = unsafe { &mut (*state.cast::<MediatedTcpStream>()).stream };
         let slice = if len == 0 {
             &mut [][..]
         } else {
@@ -432,9 +479,9 @@ unsafe extern "C" fn tcp_vt_write(
     out_written: *mut usize,
 ) -> PluginStatus {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: `state` is a live `*mut TcpStream`; `data` is a valid borrowed
-        // slice for the duration of the call.
-        let stream = unsafe { &mut *state.cast::<std::net::TcpStream>() };
+        // SAFETY: `state` is a live `*mut MediatedTcpStream`; `data` is a valid
+        // borrowed slice for the duration of the call.
+        let stream = unsafe { &mut (*state.cast::<MediatedTcpStream>()).stream };
         let bytes = unsafe { data.as_slice() };
         stream.write(bytes)
     }));
@@ -453,8 +500,9 @@ unsafe extern "C" fn tcp_vt_destroy(state: *mut c_void) {
     if state.is_null() {
         return;
     }
-    // SAFETY: reclaims the box leaked in `from_std`, exactly once.
-    let boxed = unsafe { Box::from_raw(state.cast::<std::net::TcpStream>()) };
+    // SAFETY: reclaims the box leaked in `from_mediated`, exactly once. Dropping
+    // it closes the socket, then runs any [`StreamDropGuard`] the stream carried.
+    let boxed = unsafe { Box::from_raw(state.cast::<MediatedTcpStream>()) };
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || drop(boxed)));
 }
 

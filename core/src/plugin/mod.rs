@@ -68,7 +68,10 @@ mod pack;
 mod package;
 mod security;
 
-pub use capabilities::build_host_bridge;
+pub use capabilities::{
+    build_host_bridge, build_host_bridge_with_policy, ConnectionPolicy, DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_MAX_CONNECTIONS,
+};
 pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
 pub use host::{
     find_backend_library, load_backend_library, HostError, HostLifecycleHook, LoadedLibrary,
@@ -79,10 +82,10 @@ pub use manager::{
     PluginState,
 };
 pub use manifest::{
-    check_api_compatibility, parse_manifest, ApiCompatibility, ManifestParseError,
-    ManifestValidationError, Platform, PluginExtensions, PluginManifest, PluginPermission,
-    PluginSettingSchema, ProtocolParserExtension, SettingType, StatusBarWidgetExtension,
-    TerminalBackendExtension, ThemeEntry, ThemeExtension, WidgetPosition,
+    check_api_compatibility, parse_manifest, ApiCompatibility, ConnectionPolicyManifest,
+    ManifestParseError, ManifestValidationError, Platform, PluginExtensions, PluginManifest,
+    PluginPermission, PluginSettingSchema, ProtocolParserExtension, SettingType,
+    StatusBarWidgetExtension, TerminalBackendExtension, ThemeEntry, ThemeExtension, WidgetPosition,
     CURRENT_PLUGIN_API_VERSION,
 };
 pub use pack::{pack_plugin, PluginPackError};
