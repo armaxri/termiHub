@@ -14,8 +14,11 @@
 //! # The relay
 //!
 //! When a session opts into `forwardAgent`, the agent worker binds a per-session
-//! Unix socket and exports it to the session daemon as `SSH_AUTH_SOCK` (see
-//! [`crate::session::manager`]). The daemon's core SSH bridge
+//! relay endpoint — a Unix socket on unix, a named pipe on Windows (#2038) — and
+//! exports it to the session daemon (as `SSH_AUTH_SOCK` on unix, via the
+//! dedicated
+//! [`AGENT_PIPE_ENV`](termihub_core::backends::ssh::agent_forward::AGENT_PIPE_ENV)
+//! on Windows). The daemon's core SSH bridge
 //! ([`termihub_core::backends::ssh::agent_forward`]) then connects to *that*
 //! socket exactly as it would a normal agent — "the target sees a normal
 //! `$SSH_AUTH_SOCK`". Each connection the daemon opens is tunnelled, byte for
@@ -35,12 +38,13 @@
 //! - either side **`agent.forward.close`** `{stream_id}` — the stream ended.
 //!
 //! No desktop agent is a graceful no-op: the desktop answers `open` with an
-//! immediate `close`, the relay socket closes, and the daemon's bridge drops the
-//! forwarded channel — matching #1719's no-agent behaviour.
+//! immediate `close`, the relay endpoint closes, and the daemon's bridge drops
+//! the forwarded channel — matching #1719's no-agent behaviour.
 //!
-//! Relaying is **unix-only** for now: the desktop bridge target on Windows is a
-//! fixed OpenSSH named pipe rather than a `SSH_AUTH_SOCK` we can override, so a
-//! Windows agent host keeps #1719's host-local model. [`should_relay`] gates it.
+//! Both unix and Windows agent hosts relay (#1727 shipped unix; #2038 added the
+//! Windows named-pipe path). Only truly exotic targets with neither a Unix socket
+//! nor a named pipe fall back to #1719's host-local model; [`should_relay`] gates
+//! it.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,10 +71,16 @@ const CHUNK_SIZE: usize = 65536;
 /// Sender that feeds desktop→socket bytes to one accepted relay connection.
 type StreamSink = tokio::sync::mpsc::UnboundedSender<Vec<u8>>;
 
-/// Per-session listener bookkeeping so a closed session tears its socket down.
-#[cfg(unix)]
+/// Per-session listener bookkeeping so a closed session tears its endpoint down.
+///
+/// Aborting `handle` stops the accept loop; on unix the bound socket file must
+/// also be unlinked, whereas a Windows named pipe vanishes once its last server
+/// handle drops (the pending instance the accept task holds), so it carries no
+/// `path`.
+#[cfg(any(unix, windows))]
 struct ListenerGuard {
     handle: tokio::task::JoinHandle<()>,
+    #[cfg(unix)]
     path: String,
 }
 
@@ -85,9 +95,9 @@ pub struct AgentForwardRelay {
     /// `stream_id` → sink writing bytes into that connection (desktop → socket).
     streams: Mutex<HashMap<String, StreamSink>>,
     /// `session_id` → its listener, so [`stop_listener`](Self::stop_listener)
-    /// can drop the socket when the session ends. Unix-only (the only relaying
-    /// platform).
-    #[cfg(unix)]
+    /// can drop the endpoint when the session ends. Present on every relaying
+    /// platform (unix socket / Windows pipe).
+    #[cfg(any(unix, windows))]
     listeners: Mutex<HashMap<String, ListenerGuard>>,
 }
 
@@ -97,16 +107,17 @@ impl AgentForwardRelay {
         Arc::new(Self {
             notification_tx,
             streams: Mutex::new(HashMap::new()),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             listeners: Mutex::new(HashMap::new()),
         })
     }
 
     /// Whether a session should get a desktop-agent relay: only an SSH session
-    /// that opted into `forwardAgent`, and only on unix (see the module docs on
-    /// the Windows limitation).
+    /// that opted into `forwardAgent`, and only on a platform whose bridge target
+    /// can be overridden per session (unix socket / Windows pipe — see the module
+    /// docs). Exotic targets with neither fall back to #1719's host-local model.
     pub fn should_relay(type_id: &str, settings: &serde_json::Value) -> bool {
-        cfg!(unix)
+        (cfg!(unix) || cfg!(windows))
             && type_id == "ssh"
             && settings
                 .get("forwardAgent")
@@ -165,13 +176,48 @@ impl AgentForwardRelay {
         Ok(path)
     }
 
-    /// Tear a session's relay down: stop accepting, remove the socket file, and
-    /// drop any of its still-open streams. Idempotent; a no-op on non-unix.
+    /// Start a per-session ssh-agent relay named pipe and return its name to
+    /// inject into the daemon via
+    /// [`AGENT_PIPE_ENV`](termihub_core::backends::ssh::agent_forward::AGENT_PIPE_ENV)
+    /// (#2038) — the Windows analog of the unix relay socket.
+    ///
+    /// The first server instance is bound up front so a name collision surfaces
+    /// synchronously, before the daemon is told to use it; the accept loop keeps a
+    /// fresh instance armed for each subsequent connection.
+    #[cfg(windows)]
+    pub async fn start_listener(self: &Arc<Self>, session_id: &str) -> std::io::Result<String> {
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let pipe = crate::daemon::transport::agent_forward_endpoint(session_id);
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe)?;
+
+        let relay = Arc::clone(self);
+        let name = pipe.clone();
+        let sid = session_id.to_string();
+        let handle = tokio::spawn(async move { relay.accept_loop(server, name, sid).await });
+
+        self.listeners
+            .lock()
+            .await
+            .insert(session_id.to_string(), ListenerGuard { handle });
+        debug!(session_id, %pipe, "started ssh-agent relay pipe");
+        Ok(pipe)
+    }
+
+    /// Tear a session's relay down: stop accepting, remove the socket file (unix),
+    /// and drop any of its still-open streams. Idempotent; a no-op on a platform
+    /// that never relays.
     pub async fn stop_listener(&self, session_id: &str) {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             if let Some(guard) = self.listeners.lock().await.remove(session_id) {
+                // Aborting the accept task drops its pending pipe instance on
+                // Windows, which closes the pipe; on unix the socket file must be
+                // unlinked explicitly.
                 guard.handle.abort();
+                #[cfg(unix)]
                 let _ = std::fs::remove_file(&guard.path);
             }
         }
@@ -203,10 +249,58 @@ impl AgentForwardRelay {
         }
     }
 
+    /// Accept forwarded ssh-agent connections on the session's named pipe until
+    /// the session ends (the task is aborted by
+    /// [`stop_listener`](Self::stop_listener)).
+    ///
+    /// A Windows named-pipe server serves one client per instance, so after a
+    /// client connects the next instance is armed immediately — before the
+    /// accepted connection is handed off — so a client arriving right behind it is
+    /// not refused (the core connector also retries briefly on a busy pipe).
+    #[cfg(windows)]
+    async fn accept_loop(
+        self: Arc<Self>,
+        first: tokio::net::windows::named_pipe::NamedPipeServer,
+        pipe: String,
+        session_id: String,
+    ) {
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let mut server = first;
+        let mut counter: u64 = 0;
+        loop {
+            if let Err(e) = server.connect().await {
+                debug!(session_id, "ssh-agent relay pipe connect ended: {e}");
+                break;
+            }
+            let connected = server;
+
+            // Arm the next instance before serving this one.
+            let next = ServerOptions::new().create(&pipe);
+            counter += 1;
+            let stream_id = format!("{}{}", stream_prefix(&session_id), counter);
+            Arc::clone(&self).spawn_stream(connected, stream_id).await;
+
+            server = match next {
+                Ok(s) => s,
+                Err(e) => {
+                    debug!(session_id, "ssh-agent relay pipe re-arm failed: {e}");
+                    break;
+                }
+            };
+        }
+    }
+
     /// Wire one accepted connection to the desktop: register a write sink,
-    /// announce it, then pump bytes socket→desktop for the life of the stream.
-    #[cfg(unix)]
-    async fn spawn_stream(self: Arc<Self>, conn: tokio::net::UnixStream, stream_id: String) {
+    /// announce it, then pump bytes endpoint→desktop for the life of the stream.
+    ///
+    /// Generic over the connection type so the unix socket and Windows pipe accept
+    /// loops share one body.
+    #[cfg(any(unix, windows))]
+    async fn spawn_stream<S>(self: Arc<Self>, conn: S, stream_id: String)
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static,
+    {
         let (read_half, write_half) = tokio::io::split(conn);
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Vec<u8>>();
@@ -219,14 +313,13 @@ impl AgentForwardRelay {
         tokio::spawn(async move { relay.read_socket(read_half, stream_id).await });
     }
 
-    /// Pump socket → desktop: forward each read as a data notification, and on
+    /// Pump endpoint → desktop: forward each read as a data notification, and on
     /// EOF/error deregister the stream and tell the desktop it closed.
-    #[cfg(unix)]
-    async fn read_socket(
-        self: Arc<Self>,
-        mut read_half: tokio::io::ReadHalf<tokio::net::UnixStream>,
-        stream_id: String,
-    ) {
+    #[cfg(any(unix, windows))]
+    async fn read_socket<R>(self: Arc<Self>, mut read_half: R, stream_id: String)
+    where
+        R: tokio::io::AsyncRead + Unpin + Send + 'static,
+    {
         use tokio::io::AsyncReadExt;
         let b64 = base64::engine::general_purpose::STANDARD;
         let mut buf = vec![0u8; CHUNK_SIZE];
@@ -256,14 +349,15 @@ fn stream_prefix(session_id: &str) -> String {
     format!("{session_id}#")
 }
 
-/// Pump desktop → socket: write each queued reply chunk to the connection until
+/// Pump desktop → endpoint: write each queued reply chunk to the connection until
 /// the desktop closes the stream (sink dropped), then shut the write side so the
-/// daemon's bridge sees EOF.
-#[cfg(unix)]
-async fn write_socket(
-    mut write_half: tokio::io::WriteHalf<tokio::net::UnixStream>,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>,
-) {
+/// daemon's bridge sees EOF. Generic over the connection's write half so the unix
+/// socket and Windows pipe share one body.
+#[cfg(any(unix, windows))]
+async fn write_socket<W>(mut write_half: W, mut rx: tokio::sync::mpsc::UnboundedReceiver<Vec<u8>>)
+where
+    W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
     use tokio::io::AsyncWriteExt;
     while let Some(bytes) = rx.recv().await {
         if write_half.write_all(&bytes).await.is_err() {
@@ -286,8 +380,9 @@ mod tests {
         (AgentForwardRelay::new(tx), rx)
     }
 
-    /// Relaying is gated to SSH sessions that asked for `forwardAgent` — and,
-    /// because the desktop bridge target is only overridable on unix, to unix.
+    /// Relaying is gated to SSH sessions that asked for `forwardAgent`, on any
+    /// platform whose bridge target is overridable per session (unix socket /
+    /// Windows pipe).
     #[test]
     fn should_relay_only_for_ssh_forward_agent() {
         let on = json!({ "forwardAgent": true });
@@ -296,8 +391,8 @@ mod tests {
 
         assert_eq!(
             AgentForwardRelay::should_relay("ssh", &on),
-            cfg!(unix),
-            "ssh + forwardAgent relays on unix only"
+            cfg!(unix) || cfg!(windows),
+            "ssh + forwardAgent relays on unix and windows"
         );
         assert!(!AgentForwardRelay::should_relay("ssh", &off));
         assert!(!AgentForwardRelay::should_relay("ssh", &absent));
@@ -571,6 +666,109 @@ mod tests {
             listed.status.success() && stdout.contains("thub-1727-e2e"),
             "relay socket must expose the live agent's key; got status={:?} stdout={stdout:?}",
             listed.status
+        );
+    }
+
+    /// Windows analog of `accepted_connection_streams_open_data_close`: a client
+    /// connecting to the per-session **named pipe** is announced with `open`, its
+    /// bytes tunnel as base64 `data`, and disconnecting yields `close`. Exercises
+    /// the whole pipe→desktop pump on the platform #2038 added.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn accepted_pipe_connection_streams_open_data_close() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::windows::named_pipe::ClientOptions;
+
+        let (relay, mut rx) = test_relay();
+        let session_id = format!("afr-win-{}", std::process::id());
+        let pipe = relay
+            .start_listener(&session_id)
+            .await
+            .expect("start listener");
+
+        let mut client = ClientOptions::new()
+            .open(&pipe)
+            .expect("connect relay pipe");
+        client.write_all(b"hello-agent").await.expect("write");
+        client.flush().await.expect("flush");
+
+        let open = rx.recv().await.expect("open notification");
+        assert_eq!(open.method, AGENT_FORWARD_OPEN);
+        let stream_id = open.params["stream_id"].as_str().unwrap().to_string();
+        assert!(stream_id.starts_with(&stream_prefix(&session_id)));
+
+        let data = rx.recv().await.expect("data notification");
+        assert_eq!(data.method, AGENT_FORWARD_DATA);
+        assert_eq!(data.params["stream_id"], stream_id);
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(data.params["data"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(decoded, b"hello-agent");
+
+        drop(client);
+        let close = rx.recv().await.expect("close notification");
+        assert_eq!(close.method, AGENT_FORWARD_CLOSE);
+        assert_eq!(close.params["stream_id"], stream_id);
+
+        relay.stop_listener(&session_id).await;
+    }
+
+    /// Windows analog of `desktop_reply_bytes_reach_the_client`: bytes the desktop
+    /// supplies via `write` reach the client connected to the relay pipe.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn desktop_reply_bytes_reach_the_pipe_client() {
+        use tokio::io::AsyncReadExt;
+        use tokio::net::windows::named_pipe::ClientOptions;
+
+        let (relay, mut rx) = test_relay();
+        let session_id = format!("afr-win-reply-{}", std::process::id());
+        let pipe = relay
+            .start_listener(&session_id)
+            .await
+            .expect("start listener");
+
+        let mut client = ClientOptions::new()
+            .open(&pipe)
+            .expect("connect relay pipe");
+
+        // The server accepts on connect, so `open` fires without the client
+        // writing anything.
+        let open = rx.recv().await.expect("open notification");
+        let stream_id = open.params["stream_id"].as_str().unwrap().to_string();
+
+        relay.write(&stream_id, b"agent-reply".to_vec()).await;
+
+        let mut buf = vec![0u8; 11];
+        client.read_exact(&mut buf).await.expect("read reply");
+        assert_eq!(&buf, b"agent-reply");
+
+        relay.stop_listener(&session_id).await;
+    }
+
+    /// Windows analog of `stop_listener_removes_socket_and_streams`: tearing a
+    /// session down drops its still-open streams (the pipe closes when the accept
+    /// task's pending instance is aborted).
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn stop_listener_clears_streams_on_windows() {
+        use tokio::net::windows::named_pipe::ClientOptions;
+
+        let (relay, _rx) = test_relay();
+        let session_id = format!("afr-win-stop-{}", std::process::id());
+        let pipe = relay
+            .start_listener(&session_id)
+            .await
+            .expect("start listener");
+
+        let _client = ClientOptions::new().open(&pipe).expect("connect");
+        // Let the accept loop register the stream.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        relay.stop_listener(&session_id).await;
+        assert!(
+            relay.streams.lock().await.is_empty(),
+            "session's streams dropped on teardown"
         );
     }
 }
