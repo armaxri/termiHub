@@ -200,3 +200,55 @@ export interface PluginBackendType {
  * Tauri/IPC import and unit-testable.
  */
 export type PluginFileReader = (pluginId: string, path: string) => Promise<Uint8Array>;
+
+/**
+ * A package's trust level, mirroring the backend `TrustLevel` / the
+ * `PluginTrustInfo.level` string (concept "States & Sequences"):
+ * - `untrusted` — no signature; requires the risk acknowledgement.
+ * - `signed` — valid signature from a key not in the trust store (offer TOFU).
+ * - `verified` — valid signature from a trusted (bundled or pinned) key.
+ * - `tampered` — signature present but invalid; installation is blocked.
+ */
+export type PluginTrustLevel = "untrusted" | "signed" | "verified" | "tampered";
+
+/**
+ * The provenance/trust assessment of a `.termihub-plugin` package, mirroring the
+ * Rust `PluginTrustInfo` returned by `assess_plugin_trust`. Drives the install
+ * dialog's four-state provenance banner.
+ */
+export interface PluginTrustInfo {
+  /** The assessed trust level. */
+  level: PluginTrustLevel;
+  /** User-facing warning (empty for a verified publisher). */
+  warning: string;
+  /** The signing key's `sha256:` fingerprint (signed/verified), else null. */
+  keyId: string | null;
+  /** The trusted publisher's label (verified only), else null. */
+  publisher: string | null;
+  /** Base64 of the signing public key (signed/verified), else null. */
+  publicKey: string | null;
+  /** Whether a trust affordance must be surfaced (risk ack / TOFU). */
+  requiresAcceptance: boolean;
+  /** Whether installation is hard-blocked (tampered), with no override. */
+  isBlocked: boolean;
+}
+
+/** How a trusted publisher key came to be trusted. Mirrors Rust `TrustSource`. */
+export type TrustSource = "bundled" | "user-pinned";
+
+/**
+ * A trusted publisher key in the trust store, mirroring Rust `TrustedPublisher`.
+ * Listed in Settings → Plugins → Trusted Publishers.
+ */
+export interface TrustedPublisher {
+  /** `sha256:` fingerprint — the store's primary key. */
+  keyId: string;
+  /** Base64 of the 32-byte Ed25519 public key. */
+  publicKey: string;
+  /** Human-readable label (publisher name / author). */
+  label: string;
+  /** Whether the key is bundled (immutable) or user-pinned (revocable). */
+  source: TrustSource;
+  /** RFC 3339 timestamp the key was added. */
+  addedAt: string;
+}

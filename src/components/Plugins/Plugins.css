@@ -309,29 +309,60 @@
   text-align: center;
 }
 
-/* ── Install dialog ───────────────────────────────────────────────────── */
-.plugin-install__warning {
+/* ── Install dialog — provenance banner (four trust states) ───────────── */
+.plugin-install__banner {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   padding: 10px 12px;
   margin-bottom: 12px;
-  border: 1px solid var(--color-warning);
+  border: 1px solid var(--banner-tone);
+  border-left-width: 3px;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  background: color-mix(in srgb, var(--banner-tone) 12%, transparent);
   font-size: 12.5px;
   line-height: 1.4;
 }
 
-.plugin-install__warning-icon {
+/* Tone drives icon colour, border and background via one custom property. */
+.plugin-install__banner--verified {
+  --banner-tone: var(--color-success);
+}
+.plugin-install__banner--warning {
+  --banner-tone: var(--color-warning);
+}
+.plugin-install__banner--danger {
+  --banner-tone: var(--color-error);
+}
+
+.plugin-install__banner-icon {
   width: 16px;
   height: 16px;
-  color: var(--color-warning);
+  color: var(--banner-tone);
   flex: 0 0 auto;
   margin-top: 1px;
 }
 
-.plugin-install__warning-title {
+.plugin-install__banner-title {
+  font-weight: 600;
+  color: var(--banner-tone);
+}
+
+.plugin-install__banner-desc {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* "Trust this publisher" checkbox row inside the signed banner. */
+.plugin-install__trust-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  cursor: pointer;
+}
+
+.plugin-install__trust-check-name {
   font-weight: 600;
 }
 

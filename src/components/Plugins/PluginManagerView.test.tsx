@@ -16,9 +16,13 @@ import { PluginManagerView } from "./PluginManagerView";
 
 const openMock = vi.fn();
 const validateMock = vi.fn();
+const assessTrustMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...a: unknown[]) => openMock(...a) }));
-vi.mock("@/services/api", () => ({ validatePlugin: (...a: unknown[]) => validateMock(...a) }));
+vi.mock("@/services/api", () => ({
+  validatePlugin: (...a: unknown[]) => validateMock(...a),
+  assessPluginTrust: (...a: unknown[]) => assessTrustMock(...a),
+}));
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
 function plugin(id: string, name: string, version: string, state: PluginState): InstalledPlugin {
@@ -64,6 +68,17 @@ describe("PluginManagerView (#1997)", () => {
     useAppStore.setState(useAppStore.getInitialState());
     openMock.mockReset();
     validateMock.mockReset();
+    assessTrustMock.mockReset();
+    // Default: an unsigned (untrusted) package, so the dialog opens normally.
+    assessTrustMock.mockResolvedValue({
+      level: "untrusted",
+      warning: "Untrusted source.",
+      keyId: null,
+      publisher: null,
+      publicKey: null,
+      requiresAcceptance: true,
+      isBlocked: false,
+    });
   });
 
   afterEach(() => {

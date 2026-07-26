@@ -36,6 +36,7 @@ import { SerialPortSettings } from "./SerialPortSettings";
 import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { PluginSettingsSection } from "./PluginSettingsSection";
+import { TrustedPublishersSettings } from "./TrustedPublishersSettings";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import "./SettingsPanel.css";
 
@@ -289,6 +290,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       }
       if (highlightedCategories?.has("plugins")) {
         sections.push(<PluginSettingsSection key="plugins" focusPluginId={focusPluginId} />);
+        sections.push(<TrustedPublishersSettings key="trusted-publishers" />);
       }
       if (highlightedCategories?.has("portable")) {
         sections.push(<PortableModeSettings key="portable" />);
@@ -334,7 +336,12 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           </>
         );
       case "plugins":
-        return <PluginSettingsSection focusPluginId={focusPluginId} />;
+        return (
+          <>
+            <PluginSettingsSection focusPluginId={focusPluginId} />
+            <TrustedPublishersSettings />
+          </>
+        );
       case "portable":
         return <PortableModeSettings />;
     }

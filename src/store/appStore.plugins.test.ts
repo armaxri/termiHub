@@ -186,9 +186,9 @@ describe("appStore — plugins (#1993)", () => {
     vi.mocked(apiInstallPlugin).mockResolvedValueOnce(installed);
     vi.mocked(apiListPlugins).mockResolvedValueOnce([installed]);
 
-    await useAppStore.getState().installPlugin("/tmp/new-plugin.termihub-plugin", true);
+    await useAppStore.getState().installPlugin("/tmp/new-plugin.termihub-plugin", true, false);
 
-    expect(apiInstallPlugin).toHaveBeenCalledWith("/tmp/new-plugin.termihub-plugin", true);
+    expect(apiInstallPlugin).toHaveBeenCalledWith("/tmp/new-plugin.termihub-plugin", true, false);
     expect(toastLoading).toHaveBeenCalledTimes(1);
     expect(toastSuccess).toHaveBeenCalledWith("Installed Plugin new-plugin", { id: "toast-id" });
     expect(useAppStore.getState().plugins).toHaveLength(1);
@@ -198,7 +198,7 @@ describe("appStore — plugins (#1993)", () => {
     vi.mocked(apiInstallPlugin).mockRejectedValueOnce(new Error("bad package"));
 
     await expect(
-      useAppStore.getState().installPlugin("/tmp/bad.termihub-plugin", true)
+      useAppStore.getState().installPlugin("/tmp/bad.termihub-plugin", true, false)
     ).rejects.toThrow("bad package");
 
     expect(toastError).toHaveBeenCalledWith("Failed to install plugin: bad package", {
