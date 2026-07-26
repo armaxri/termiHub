@@ -46,6 +46,14 @@ pub enum PluginError {
     #[error("plugin panicked across the FFI boundary")]
     Panicked,
 
+    /// A host-mediated capability (network / filesystem, see
+    /// [`crate::capabilities`]) was refused because the plugin does not hold the
+    /// required permission or the path lies outside its declared scope. This is
+    /// the runtime side of the permission model: the host enforces the plugin's
+    /// declared permissions on every operation it mediates.
+    #[error("host denied a plugin capability (missing permission or out-of-scope path)")]
+    PermissionDenied,
+
     /// Any other failure the plugin wishes to report.
     #[error("plugin error: {0}")]
     Other(String),
@@ -75,8 +83,12 @@ pub enum PluginStatus {
     /// Maps to [`PluginError::Panicked`]; also returned when a plugin function
     /// unwinds and the wrapper contains the panic.
     Panic = 6,
+    /// Maps to [`PluginError::PermissionDenied`]: the host refused a mediated
+    /// capability because the plugin lacks the permission or the path is
+    /// out-of-scope.
+    PermissionDenied = 7,
     /// Maps to [`PluginError::Other`].
-    Other = 7,
+    Other = 8,
 }
 
 impl PluginStatus {
@@ -100,6 +112,7 @@ impl PluginStatus {
             PluginError::Io(_) => Self::Io,
             PluginError::VersionMismatch { .. } => Self::VersionMismatch,
             PluginError::Panicked => Self::Panic,
+            PluginError::PermissionDenied => Self::PermissionDenied,
             PluginError::Other(_) => Self::Other,
         }
     }
@@ -126,6 +139,7 @@ impl PluginStatus {
                 found: 0,
             }),
             Self::Panic => Err(PluginError::Panicked),
+            Self::PermissionDenied => Err(PluginError::PermissionDenied),
             Self::Other => Err(PluginError::Other("reported by plugin".to_owned())),
         }
     }

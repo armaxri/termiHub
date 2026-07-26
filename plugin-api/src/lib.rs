@@ -94,6 +94,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 pub mod backend;
+pub mod capabilities;
 pub mod error;
 pub mod ffi;
 pub mod info;
@@ -101,8 +102,9 @@ pub mod output;
 pub mod symbols;
 
 pub use backend::{LoadedBackend, PluginBackend, PluginBackendVTable, PluginTerminalBackend};
+pub use capabilities::{HostTcpStream, PluginHostBridge, PluginTcpStream, PluginTcpStreamVTable};
 pub use error::{PluginError, PluginStatus};
-pub use ffi::{FfiByteSlice, FfiStr, FfiString};
+pub use ffi::{FfiByteSlice, FfiOwnedBytes, FfiStr, FfiString};
 pub use info::{PluginInfo, PluginSessionConfig};
 pub use output::PluginOutputSender;
 
@@ -113,4 +115,8 @@ pub use output::PluginOutputSender;
 /// to load a plugin whose value is incompatible with its own. Bump this whenever
 /// the ABI changes in a way that breaks previously-built plugins — it is the
 /// machine-readable half of this crate's compatibility promise.
-pub const CURRENT_PLUGIN_API_VERSION: u32 = 1;
+///
+/// Bumped to `2` in #2018: `plugin_create_backend` gained a
+/// [`PluginHostBridge`](capabilities::PluginHostBridge) parameter through which
+/// the host mediates and permission-checks network/filesystem access at runtime.
+pub const CURRENT_PLUGIN_API_VERSION: u32 = 2;

@@ -300,9 +300,14 @@ impl ConnectionType for PluginConnectionType {
         let (std_tx, std_rx) = std::sync::mpsc::channel::<Vec<u8>>();
         let output = PluginOutputSender::from_sender(std_tx);
 
+        // Hand the plugin a host capability bridge scoped to this session's granted
+        // permissions, so any network/filesystem access it performs through the
+        // bridge is enforced by the host at runtime (concept §13, #2018).
+        let bridge = super::capabilities::build_host_bridge(self.permissions.clone());
+
         let backend = self
             .library
-            .create_backend(&config_json, output)
+            .create_backend(&config_json, output, bridge)
             .map_err(map_plugin_error)?;
 
         let output_tx = Arc::clone(&self.output_tx);
