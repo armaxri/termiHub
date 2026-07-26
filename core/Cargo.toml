@@ -127,6 +127,7 @@ path = "src/bin/plugin_pack.rs"
 required-features = ["plugin"]
 
 [dev-dependencies]
+async-trait = { workspace = true }
 tempfile = "3"
 temp-env = "0.3"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync", "net"] }

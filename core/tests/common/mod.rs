@@ -39,6 +39,13 @@ pub fn is_port_reachable(host: &str, port: u16) -> bool {
 /// existing skip convention (runtime check instead of `#[ignore]`).
 macro_rules! require_docker {
     ($port:expr) => {
+        // Trust the local Docker fixtures' SSH host keys before a test touches
+        // them. Under the strict default host-key policy (#1969) an unrecorded
+        // fixture key is refused with "Unknown server key", which made the SSH
+        // integration tests fail non-deterministically (#2032). Registering a
+        // test-only verifier that trusts the loopback fixtures makes every SSH
+        // handshake deterministic. This is a no-op when the `ssh` feature is off.
+        common::trust_fixture_host_keys();
         if !common::is_port_reachable("127.0.0.1", $port) {
             eprintln!(
                 "SKIPPED: Docker container not reachable on port {} \
@@ -50,6 +57,49 @@ macro_rules! require_docker {
     };
 }
 pub(crate) use require_docker;
+
+/// Register a process-wide host-key verifier that trusts the local Docker
+/// fixture containers, so the SSH integration tests connect deterministically
+/// under the strict default host-key policy (#1969, #2032).
+///
+/// The integration suite runs headless — there is no interactive host-key
+/// prompt — so with no verifier registered the strict default (added in #1969)
+/// trusts **only** a key already recorded in the runner's `~/.ssh/known_hosts`
+/// and refuses everything else. CI runners never have the freshly-generated
+/// fixture keys recorded, so the SSH handshake fails with "Unknown server key".
+/// `monitoring.rs` sorts first among the SSH-handshake integration binaries and
+/// `cargo test` is fail-fast at the binary level, so the whole SSH suite went
+/// red there while only the four `mon_*` tests were ever seen (#2032).
+///
+/// These tests connect only to local Docker fixtures on the loopback interface,
+/// where there is no man-in-the-middle to guard against, so a test-only verifier
+/// that trusts every fixture key is safe and deterministic. Registration is
+/// set-once and idempotent (first call wins), so calling it from every
+/// `require_docker!` site is harmless.
+#[cfg(feature = "ssh")]
+pub fn trust_fixture_host_keys() {
+    use std::sync::Arc;
+    use termihub_core::backends::ssh::host_key::{
+        set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+    };
+
+    struct TrustLocalFixtures;
+
+    #[async_trait::async_trait]
+    impl HostKeyVerifier for TrustLocalFixtures {
+        async fn verify(&self, _info: &HostKeyInfo) -> bool {
+            true
+        }
+    }
+
+    // First registration wins; any later call is a harmless no-op.
+    let _ = set_host_key_verifier(Arc::new(TrustLocalFixtures));
+}
+
+/// No-op when the `ssh` feature is disabled (e.g. the FTP-only test build), so
+/// `require_docker!` still compiles for feature-scoped integration binaries.
+#[cfg(not(feature = "ssh"))]
+pub fn trust_fixture_host_keys() {}
 
 /// Path to the `tests/fixtures/ssh-keys/` directory.
 pub fn ssh_keys_dir() -> PathBuf {
