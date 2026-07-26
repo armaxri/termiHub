@@ -2643,8 +2643,11 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
           plugin system is fully built end-to-end: packaging, the stable native ABI, the host
           loader, the Plugin Manager UI, all four extension points, connection wiring, per-plugin
           settings, and the security-hardening layer. Cryptographic <em>code-signing</em> is the one
-          deferred sub-feature (no substrate exists yet — tracked as <code>Concept</code> issue
-          <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>), exactly the pattern
+          deferred sub-feature — its dedicated design now lives in
+          <a href="../backlog/plugin-code-signing.html"><code>backlog/plugin-code-signing.html</code></a>
+          (concept issue <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>) with
+          implementation tracked as
+          <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>, exactly the pattern
           other <code>implemented/</code> concepts use for a deferred future enhancement.
         </p>
 
@@ -2670,10 +2673,10 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
                 <td>Native plugin ABI</td>
                 <td>
                   <code>termihub-plugin-api</code> crate — stable <code>#[repr(C)]</code> ABI (<code
-                    >CURRENT_PLUGIN_API_VERSION = 3</code
+                    >CURRENT_PLUGIN_API_VERSION = 4</code
                   >)
                 </td>
-                <td>#1990, #2024</td>
+                <td>#1990, #2024, #2030</td>
               </tr>
               <tr>
                 <td>Plugin manager (backend)</td>
@@ -2738,6 +2741,17 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
                 <td>#2018, #2024, #2028</td>
               </tr>
               <tr>
+                <td>Dedicated connection-limit status</td>
+                <td>
+                  A per-session concurrent-connection refusal is reported as its own
+                  <code>PluginStatus::ResourceLimit</code> (distinct from
+                  <code>PermissionDenied</code>); ABI bumped 3&nbsp;→&nbsp;4.
+                  <code>bridge_open_connection</code> returns it once the session's ceiling is
+                  reached (<code>core/src/plugin/capabilities.rs</code>).
+                </td>
+                <td>#2030</td>
+              </tr>
+              <tr>
                 <td>Packaging tooling</td>
                 <td>Packaging tool, example plugin, and plugin author docs</td>
                 <td>#1994</td>
@@ -2760,25 +2774,18 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
               <tr>
                 <td>Cryptographic code-signing</td>
                 <td>
-                  Deferred — no signing substrate exists (keys, signature format, verification
+                  Deferred — no signing substrate exists yet (keys, signature format, verification
                   chain). <code>assess_trust</code> reports every package as untrusted today, so
-                  install always requires explicit acceptance. Awaiting a maintainer decision.
+                  install always requires explicit acceptance. The dedicated design now lives in
+                  <a href="../backlog/plugin-code-signing.html"><code>backlog/plugin-code-signing.html</code></a>;
+                  implementation is tracked separately.
                 </td>
                 <td>
+                  <a href="../backlog/plugin-code-signing.html">concept</a> /
                   <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>
-                  (<code>Concept</code>)
-                </td>
-              </tr>
-              <tr>
-                <td>Dedicated connection-limit status</td>
-                <td>
-                  Minor gap — a per-session connection-limit refusal is currently reported as
-                  <code>PluginStatus::PermissionDenied</code> rather than a dedicated status. Needs
-                  an ABI bump.
-                </td>
-                <td>
-                  <a href="https://github.com/armaxri/termiHub/issues/2030">#2030</a>
-                  (<code>Ready2Implement</code>)
+                  (<code>Concept</code>) ·
+                  <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>
+                  (impl)
                 </td>
               </tr>
               <tr>
@@ -2808,8 +2815,8 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-26 at commit <code>b21b5eeb</code> ·
-          <strong>Status:</strong> in-sync (implemented; three deferred items tracked below)
+          <strong>Last synced:</strong> 2026-07-26 at commit <code>4997a8fc</code> ·
+          <strong>Status:</strong> in-sync (implemented; two deferred items tracked below)
         </p>
         <p>
           The feature was built <em>to</em> this concept across the epic of issue #28 (~18 merged
@@ -2818,9 +2825,12 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
           <code>src-tauri/src/commands/plugin.rs</code>, <code>src/components/Plugins/*</code>,
           <code>src/plugins/*</code>, <code>src/themes/pluginThemes.ts</code>). The UI surfaces, the
           four extension points, the lifecycle/state machine, the install-permission gate, and the
-          error-recovery machine all match the built implementation. The one <em>design-reality</em>
-          correction (§5) has been folded into the concept; the remaining open items are deferred
-          sub-features, not concept↔code contradictions.
+          error-recovery machine all match the built implementation. Since the previous sync, the
+          dedicated connection-limit status landed (<code>PluginStatus::ResourceLimit</code>, ABI
+          v4 — <a href="https://github.com/armaxri/termiHub/issues/2030">#2030</a>), so that item
+          moved from deferred to Resolved; code-signing gained a dedicated backlog design concept.
+          The one <em>design-reality</em> correction (§5) has been folded into the concept; the two
+          remaining open items are deferred sub-features, not concept↔code contradictions.
         </p>
 
         <h3>Open divergences</h3>
@@ -2849,9 +2859,11 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
                 </td>
                 <td>Missing (deferred)</td>
                 <td>
-                  Keep concept as the target; deferred pending a maintainer decision —
-                  <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>
-                  (<code>Concept</code>). Do not implement without that decision.
+                  Keep concept as the target; the dedicated design now lives in
+                  <a href="../backlog/plugin-code-signing.html"><code>backlog/plugin-code-signing.html</code></a>
+                  (<a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>,
+                  <code>Concept</code>) with implementation tracked as
+                  <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>.
                 </td>
               </tr>
               <tr>
@@ -2872,23 +2884,6 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
                   honestly. Closing it needs OS-level isolation — out of scope.
                 </td>
               </tr>
-              <tr>
-                <td>3</td>
-                <td>
-                  Error/refusal states carry a meaningful status (<code>PluginStatus</code> in the
-                  ABI)
-                </td>
-                <td>
-                  A connection-limit refusal reuses <code>PluginStatus::PermissionDenied</code>;
-                  there is no dedicated status for it.
-                </td>
-                <td>Missing (minor)</td>
-                <td>
-                  Add a dedicated status via a future ABI bump —
-                  <a href="https://github.com/armaxri/termiHub/issues/2030">#2030</a>
-                  (<code>Ready2Implement</code>).
-                </td>
-              </tr>
             </tbody>
           </table>
         </div>
@@ -2904,6 +2899,20 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
               </tr>
             </thead>
             <tbody>
+              <tr>
+                <td>2026-07-26</td>
+                <td>#2030</td>
+                <td>
+                  <strong>Code caught up — dedicated status added.</strong> A per-session
+                  connection-limit refusal previously reused
+                  <code>PluginStatus::PermissionDenied</code>. #2030 (PR #2033) added a dedicated
+                  <code>PluginStatus::ResourceLimit</code> (ABI bumped 3&nbsp;→&nbsp;4);
+                  <code>bridge_open_connection</code> in
+                  <code>core/src/plugin/capabilities.rs</code> now returns it once the session's
+                  concurrent-connection ceiling is reached. Moved from the Deferred table to
+                  Implemented.
+                </td>
+              </tr>
               <tr>
                 <td>2026-07-26</td>
                 <td>§5</td>
