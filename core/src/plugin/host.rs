@@ -53,6 +53,7 @@ use crate::connection::ConnectionTypeRegistry;
 
 use super::connection::PluginConnectionType;
 use super::manager::InstalledPlugin;
+use super::security::{PermissionError, PermissionSet, RecoveryAction, RestartTracker};
 
 /// Everything that can go wrong while loading a plugin's backend library.
 #[derive(Debug, thiserror::Error)]
@@ -88,6 +89,18 @@ pub enum HostError {
     /// The plugin's `plugin_init` entry point reported a failure.
     #[error("plugin initialization failed: {0}")]
     Init(String),
+
+    /// The plugin's declared permissions are inconsistent with what it provides
+    /// (e.g. a terminal backend without the `terminal` permission), so it is
+    /// refused rather than loaded with a capability it never requested.
+    #[error("plugin permission check failed: {0}")]
+    Permission(#[from] PermissionError),
+
+    /// A plugin entry point unwound (panicked) across the FFI boundary. The host
+    /// contains the unwind and refuses the plugin rather than letting it abort
+    /// the process.
+    #[error("plugin panicked during `{0}`")]
+    Panicked(&'static str),
 }
 
 impl HostError {
@@ -178,8 +191,15 @@ impl LoadedLibrary {
         };
         // SAFETY: `config` outlives the call; `output` ownership is transferred to
         // the plugin; `&mut backend` is a valid out-parameter. The plugin writes a
-        // valid `PluginBackend` on `Ok`.
-        let status = unsafe { (self.create_backend)(&config, output, &mut backend) };
+        // valid `PluginBackend` on `Ok`. The call is wrapped in `catch_unwind` so a
+        // panic inside the plugin's entry point is contained rather than unwinding
+        // across the FFI boundary (undefined behavior) — a misbehaving plugin must
+        // not crash the host (concept "Error recovery").
+        let create_backend = self.create_backend;
+        let status = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            create_backend(&config, output, &mut backend)
+        }))
+        .map_err(|_| PluginError::Panicked)?;
         status.into_result()?;
         // SAFETY: on `Ok` the plugin has written a live backend produced by the
         // same library, whose ownership now transfers to the wrapper.
@@ -247,9 +267,14 @@ pub fn load_backend_library(library_path: &Path) -> Result<Arc<LoadedLibrary>, H
                 .get(SYMBOL_PLUGIN_ABI_VERSION)
                 .map_err(|_| HostError::MissingSymbol(symbol_name(SYMBOL_PLUGIN_ABI_VERSION)))?
         };
+        // Copy out the plain `extern "C"` fn pointer (`Copy`, `UnwindSafe`) so the
+        // `catch_unwind` closure does not capture the `Symbol` borrow.
+        let abi_version_fn = *abi_version;
         // SAFETY: the plugin's abi-version entry point takes no arguments and
-        // returns a plain `u32`.
-        unsafe { abi_version() }
+        // returns a plain `u32`. Contained in `catch_unwind` so a panicking plugin
+        // cannot unwind across FFI and abort the host.
+        std::panic::catch_unwind(|| unsafe { abi_version_fn() })
+            .map_err(|_| HostError::Panicked("plugin_abi_version"))?
     };
     if found != CURRENT_PLUGIN_API_VERSION {
         return Err(HostError::IncompatibleAbi {
@@ -266,10 +291,15 @@ pub fn load_backend_library(library_path: &Path) -> Result<Arc<LoadedLibrary>, H
                 .get(SYMBOL_PLUGIN_INIT)
                 .map_err(|_| HostError::MissingSymbol(symbol_name(SYMBOL_PLUGIN_INIT)))?
         };
+        let init_fn = *init;
         let mut info = PluginInfo::empty();
         // SAFETY: `&mut info` is a valid out-parameter the plugin fills in; on a
-        // non-`Ok` status it leaves the empty placeholder untouched.
-        let status = unsafe { init(&mut info) };
+        // non-`Ok` status it leaves the empty placeholder untouched. Contained in
+        // `catch_unwind` so a panic in `plugin_init` cannot unwind across FFI.
+        let status = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+            init_fn(&mut info)
+        }))
+        .map_err(|_| HostError::Panicked("plugin_init"))?;
         status
             .into_result()
             .map_err(|e| HostError::Init(e.to_string()))?;
@@ -349,6 +379,21 @@ struct HostEntry {
     library: Arc<LoadedLibrary>,
 }
 
+/// The result of driving [`PluginHost::note_failure`]: what the host decided to
+/// do with a plugin after a runtime failure, following the concept's recovery
+/// policy (auto-restart up to [`MAX_RESTART_ATTEMPTS`], then auto-disable).
+///
+/// [`MAX_RESTART_ATTEMPTS`]: super::security::MAX_RESTART_ATTEMPTS
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecoveryOutcome {
+    /// The plugin should be reloaded; the restart budget is not yet exhausted.
+    /// The caller re-enables the plugin (or the host reloads it) to retry.
+    Restart,
+    /// The restart budget is exhausted; the host has unloaded the plugin and it
+    /// should be persisted as disabled and surfaced to the user.
+    Disabled,
+}
+
 /// The runtime plugin host: loads backend libraries and registers the resulting
 /// connection types into a shared [`ConnectionTypeRegistry`].
 ///
@@ -360,6 +405,9 @@ pub struct PluginHost {
     root: PathBuf,
     registry: Arc<Mutex<ConnectionTypeRegistry>>,
     loaded: Mutex<HashMap<String, HostEntry>>,
+    /// Per-plugin error-recovery counters (concept "Error recovery state
+    /// machine"). Keyed by plugin id; created lazily on first failure.
+    recovery: Mutex<HashMap<String, RestartTracker>>,
 }
 
 impl PluginHost {
@@ -373,6 +421,7 @@ impl PluginHost {
             root: plugins_root.into(),
             registry,
             loaded: Mutex::new(HashMap::new()),
+            recovery: Mutex::new(HashMap::new()),
         }
     }
 
@@ -403,6 +452,14 @@ impl PluginHost {
     /// [`HostError::is_incompatible`] failure is a version problem, everything
     /// else is a load error.
     pub fn load(&self, plugin: &InstalledPlugin) -> Result<(), HostError> {
+        // Enforce the permission model before any library is opened: a plugin
+        // whose declared extensions need a capability it did not request (e.g. a
+        // terminal backend without the `terminal` permission, or `filesystem`
+        // without declared paths) is refused. This surfaces as
+        // `PluginState::Error` — graceful degradation, not a crash.
+        let permissions = PermissionSet::from_manifest(&plugin.manifest);
+        permissions.check_consistency(&plugin.manifest.extensions)?;
+
         let Some(backend) = plugin.manifest.extensions.terminal_backend.as_ref() else {
             return Ok(());
         };
@@ -439,6 +496,10 @@ impl PluginHost {
         let ct_for_factory = connection_type.clone();
         let dn_for_factory = display_name.clone();
         let schema_for_factory = settings_schema;
+        // Each session created for this plugin carries its own permission scope,
+        // so a host-mediated capability (filesystem path resolution, network, …)
+        // can enforce it per session.
+        let perms_for_factory = permissions.clone();
 
         {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
@@ -452,6 +513,7 @@ impl PluginHost {
                         ct_for_factory.clone(),
                         dn_for_factory.clone(),
                         schema_for_factory.clone(),
+                        perms_for_factory.clone(),
                     ))
                 }),
             );
@@ -467,6 +529,9 @@ impl PluginHost {
                     library,
                 },
             );
+        // A clean (re)load means the plugin is healthy again: reset any prior
+        // recovery counter so a future, unrelated failure gets a full budget.
+        self.clear_recovery(&plugin.manifest.id);
         Ok(())
     }
 
@@ -487,6 +552,44 @@ impl PluginHost {
             // `entry.library` (Arc) drops here; the OS unloads the library once
             // the last outstanding session Arc also drops.
         }
+    }
+
+    /// Record a runtime failure of a loaded plugin and apply the recovery policy
+    /// (concept "Error recovery state machine").
+    ///
+    /// The plugin's restart counter is advanced. While the restart budget
+    /// ([`MAX_RESTART_ATTEMPTS`]) is not exhausted this returns
+    /// [`RecoveryOutcome::Restart`] — the caller reloads the plugin (e.g. via the
+    /// manager's enable path) to retry. Once the budget is exhausted the host
+    /// **unloads** the plugin and returns [`RecoveryOutcome::Disabled`], so the
+    /// caller persists it as disabled and notifies the user. A failing plugin can
+    /// therefore never spin forever.
+    ///
+    /// [`MAX_RESTART_ATTEMPTS`]: super::security::MAX_RESTART_ATTEMPTS
+    pub fn note_failure(&self, id: &str) -> RecoveryOutcome {
+        let action = {
+            let mut recovery = self.recovery.lock().unwrap_or_else(|e| e.into_inner());
+            recovery.entry(id.to_string()).or_default().record_failure()
+        };
+        match action {
+            RecoveryAction::Restart => RecoveryOutcome::Restart,
+            RecoveryAction::Disable => {
+                // Budget exhausted: stop the plugin. It stays installed but is not
+                // loaded until the user re-enables it (which also clears the
+                // counter via `clear_recovery`).
+                self.unload(id);
+                RecoveryOutcome::Disabled
+            }
+        }
+    }
+
+    /// Clear a plugin's recovery counter — called when it is (re-)enabled or
+    /// loads cleanly, so a later, unrelated failure starts from a full budget.
+    pub fn clear_recovery(&self, id: &str) {
+        self.recovery
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
     }
 }
 
@@ -527,6 +630,102 @@ impl super::manager::PluginLifecycleHook for HostLifecycleHook {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::PluginState;
+
+    /// A host wired to a fresh, empty registry over a temp plugins root.
+    fn test_host() -> (PluginHost, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
+        (PluginHost::new(tmp.path().to_path_buf(), registry), tmp)
+    }
+
+    /// Build an [`InstalledPlugin`] from a manifest JSON string (Installed state).
+    fn installed(manifest_json: &str) -> InstalledPlugin {
+        let manifest = super::super::manifest::parse_manifest(manifest_json).expect("parses");
+        InstalledPlugin {
+            manifest,
+            state: PluginState::Installed,
+            error_message: None,
+            installed_at: 0,
+        }
+    }
+
+    fn manifest_json(permissions: &str, fs_paths: &str) -> String {
+        let fs_line = if fs_paths.is_empty() {
+            String::new()
+        } else {
+            format!("\"filesystemPaths\": {fs_paths},")
+        };
+        format!(
+            r#"{{
+                "id": "host-sec",
+                "name": "Host Sec",
+                "version": "1.0.0",
+                "author": "tester",
+                "description": "host security test",
+                "license": "MIT",
+                "apiVersion": "1.0",
+                "platforms": ["linux", "macos", "windows"],
+                "permissions": {permissions},
+                {fs_line}
+                "extensions": {{
+                    "terminalBackend": {{
+                        "connectionType": "host-sec",
+                        "displayName": "Host Sec",
+                        "configSchema": {{}}
+                    }}
+                }}
+            }}"#
+        )
+    }
+
+    #[test]
+    fn load_refuses_terminal_backend_without_terminal_permission() {
+        let (host, _t) = test_host();
+        // Terminal backend but only the `network` permission → refused before any
+        // library is opened. Graceful: the manager maps this to Error state.
+        let plugin = installed(&manifest_json(r#"["network"]"#, ""));
+        let err = host.load(&plugin).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                HostError::Permission(PermissionError::TerminalWithoutPermission)
+            ),
+            "got {err:?}"
+        );
+        assert!(!host.is_loaded("host-sec"));
+    }
+
+    #[test]
+    fn load_refuses_filesystem_permission_without_paths() {
+        let (host, _t) = test_host();
+        let plugin = installed(&manifest_json(r#"["terminal", "filesystem"]"#, ""));
+        let err = host.load(&plugin).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                HostError::Permission(PermissionError::FilesystemWithoutPaths)
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn note_failure_restarts_up_to_budget_then_disables() {
+        let (host, _t) = test_host();
+        // Nothing is loaded, so `unload` on disable is a harmless no-op; we are
+        // exercising the recovery counter the host keeps per plugin.
+        for _ in 0..super::super::security::MAX_RESTART_ATTEMPTS {
+            assert_eq!(host.note_failure("crashy"), RecoveryOutcome::Restart);
+        }
+        assert_eq!(host.note_failure("crashy"), RecoveryOutcome::Disabled);
+        // Latches disabled.
+        assert_eq!(host.note_failure("crashy"), RecoveryOutcome::Disabled);
+
+        // Clearing (as a re-enable would) restores the full budget.
+        host.clear_recovery("crashy");
+        assert_eq!(host.note_failure("crashy"), RecoveryOutcome::Restart);
+    }
 
     use crate::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
     use crate::errors::SessionError;

@@ -5,3 +5,15 @@
   margin-top: calc(-1 * var(--spacing-xs));
   margin-bottom: var(--spacing-sm);
 }
+
+/* A plugin-provided theme option: its name preceded by a puzzle-piece badge. */
+.appearance-settings__plugin-theme {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.appearance-settings__plugin-badge {
+  flex-shrink: 0;
+  color: var(--text-accent);
+}

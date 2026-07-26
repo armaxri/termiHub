@@ -88,6 +88,10 @@ async fn plugin_host_round_trip() {
         "test-echo".to_string(),
         "Test Echo".to_string(),
         termihub_core::connection::SettingsSchema { groups: vec![] },
+        termihub_core::plugin::PermissionSet::from_parts(
+            [termihub_core::plugin::PluginPermission::Terminal],
+            &[],
+        ),
     );
     let mut rx = conn.subscribe_output();
     conn.connect(serde_json::json!({ "foo": "bar" }))

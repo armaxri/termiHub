@@ -2369,9 +2369,20 @@ export async function validatePlugin(filePath: string): Promise<PluginManifest> 
   return await invoke<PluginManifest>("validate_plugin", { filePath });
 }
 
-/** Install a `.termihub-plugin` package from `filePath`, returning the installed record. */
-export async function installPlugin(filePath: string): Promise<InstalledPlugin> {
-  return await invoke<InstalledPlugin>("install_plugin", { filePath });
+/**
+ * Install a `.termihub-plugin` package from `filePath`, returning the installed
+ * record.
+ *
+ * Every package is from an unverified source (termiHub has no plugin-signing
+ * infrastructure), so `acceptUntrusted` records that the user saw the
+ * untrusted-source warning and accepted the risk. The backend refuses the
+ * install if it is not `true`.
+ */
+export async function installPlugin(
+  filePath: string,
+  acceptUntrusted: boolean
+): Promise<InstalledPlugin> {
+  return await invoke<InstalledPlugin>("install_plugin", { filePath, acceptUntrusted });
 }
 
 /** Uninstall the plugin with the given id. */
@@ -2387,4 +2398,14 @@ export async function enablePlugin(pluginId: string): Promise<void> {
 /** Disable the plugin with the given id. */
 export async function disablePlugin(pluginId: string): Promise<void> {
   await invoke("disable_plugin", { pluginId });
+}
+
+/**
+ * Read a file from inside an installed plugin's directory (theme JSON, JS entry
+ * point, …). `path` is relative to `plugins/<id>/`; the backend refuses
+ * traversal. Returns the raw bytes; text consumers decode as UTF-8.
+ */
+export async function readPluginFile(pluginId: string, path: string): Promise<Uint8Array> {
+  const bytes = await invoke<number[]>("read_plugin_file", { id: pluginId, path });
+  return new Uint8Array(bytes);
 }

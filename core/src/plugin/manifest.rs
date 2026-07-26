@@ -214,6 +214,13 @@ pub struct PluginManifest {
     pub platforms: Vec<Platform>,
     /// Coarse-grained permissions the plugin requests.
     pub permissions: Vec<PluginPermission>,
+    /// Filesystem paths the plugin is scoped to. Only meaningful together with
+    /// the [`Filesystem`](PluginPermission::Filesystem) permission: the host
+    /// confines the plugin's filesystem access to these roots (concept §13, "must
+    /// declare which paths they need"). Absent/empty for plugins that request no
+    /// filesystem access.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub filesystem_paths: Vec<String>,
     /// The extension points the plugin provides.
     pub extensions: PluginExtensions,
     /// Optional user-configurable settings, keyed by setting name.

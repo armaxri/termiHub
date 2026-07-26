@@ -65,6 +65,7 @@ mod manager;
 mod manifest;
 mod pack;
 mod package;
+mod security;
 
 pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
 pub use host::{
@@ -85,4 +86,8 @@ pub use manifest::{
 pub use pack::{pack_plugin, PluginPackError};
 pub use package::{
     validate_package, PluginPackageError, MANIFEST_FILE_NAME, MAX_PACKAGE_SIZE_BYTES,
+};
+pub use security::{
+    assess_trust, FilesystemScope, PermissionError, PermissionSet, RecoveryAction, RecoveryState,
+    RestartTracker, TrustAssessment, TrustLevel, MAX_RESTART_ATTEMPTS,
 };

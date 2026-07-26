@@ -51,6 +51,8 @@ vi.mock("@/services/storage", () => ({
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
+  loadPluginThemes: vi.fn(() => Promise.resolve({ themes: [], errors: [] })),
+  setRegisteredPluginThemes: vi.fn(),
 }));
 
 vi.mock("@/services/api", () => ({
@@ -66,6 +68,7 @@ vi.mock("@/services/api", () => ({
   uninstallPlugin: vi.fn(() => Promise.resolve()),
   enablePlugin: vi.fn(() => Promise.resolve()),
   disablePlugin: vi.fn(() => Promise.resolve()),
+  readPluginFile: vi.fn(() => Promise.resolve(new Uint8Array())),
 }));
 
 import { useAppStore } from "./appStore";
@@ -75,7 +78,11 @@ import {
   uninstallPlugin as apiUninstallPlugin,
   enablePlugin as apiEnablePlugin,
   disablePlugin as apiDisablePlugin,
+  readPluginFile,
 } from "@/services/api";
+import { loadPluginThemes, setRegisteredPluginThemes } from "@/themes";
+import { darkTheme } from "@/themes/dark";
+import type { ThemeDefinition } from "@/themes";
 import type { InstalledPlugin, PluginState } from "@/types/plugin";
 
 function makePlugin(
@@ -138,6 +145,32 @@ describe("appStore — plugins (#1993)", () => {
     ]);
   });
 
+  it("loadPlugins loads plugin themes and registers them into the theme engine (#1996)", async () => {
+    const themePlugin = makePlugin("themer", "active", { withBackend: false });
+    vi.mocked(apiListPlugins).mockResolvedValueOnce([themePlugin]);
+    const registered: ThemeDefinition = {
+      id: "plugin:themer:t",
+      name: "T",
+      colorScheme: "dark",
+      colors: darkTheme.colors,
+    };
+    vi.mocked(loadPluginThemes).mockResolvedValueOnce({ themes: [registered], errors: [] });
+
+    await useAppStore.getState().loadPlugins();
+
+    // The active theme plugin's declared themes are passed to the loader…
+    expect(loadPluginThemes).toHaveBeenCalledWith(
+      "themer",
+      [{ id: "t", name: "T", file: "t.json" }],
+      readPluginFile,
+      { pluginName: "Plugin themer" }
+    );
+    // …mirrored into store state for the selector…
+    expect(useAppStore.getState().pluginThemes).toEqual([registered]);
+    // …and pushed into the engine registry so `plugin:` settings resolve.
+    expect(setRegisteredPluginThemes).toHaveBeenCalledWith([registered]);
+  });
+
   it("loadPlugins swallows errors and leaves state untouched", async () => {
     vi.mocked(apiListPlugins).mockRejectedValueOnce(new Error("backend down"));
     await expect(useAppStore.getState().loadPlugins()).resolves.toBeUndefined();
@@ -149,9 +182,9 @@ describe("appStore — plugins (#1993)", () => {
     vi.mocked(apiInstallPlugin).mockResolvedValueOnce(installed);
     vi.mocked(apiListPlugins).mockResolvedValueOnce([installed]);
 
-    await useAppStore.getState().installPlugin("/tmp/new-plugin.termihub-plugin");
+    await useAppStore.getState().installPlugin("/tmp/new-plugin.termihub-plugin", true);
 
-    expect(apiInstallPlugin).toHaveBeenCalledWith("/tmp/new-plugin.termihub-plugin");
+    expect(apiInstallPlugin).toHaveBeenCalledWith("/tmp/new-plugin.termihub-plugin", true);
     expect(toastLoading).toHaveBeenCalledTimes(1);
     expect(toastSuccess).toHaveBeenCalledWith("Installed Plugin new-plugin", { id: "toast-id" });
     expect(useAppStore.getState().plugins).toHaveLength(1);
@@ -160,9 +193,9 @@ describe("appStore — plugins (#1993)", () => {
   it("installPlugin toasts an error and rethrows on failure", async () => {
     vi.mocked(apiInstallPlugin).mockRejectedValueOnce(new Error("bad package"));
 
-    await expect(useAppStore.getState().installPlugin("/tmp/bad.termihub-plugin")).rejects.toThrow(
-      "bad package"
-    );
+    await expect(
+      useAppStore.getState().installPlugin("/tmp/bad.termihub-plugin", true)
+    ).rejects.toThrow("bad package");
 
     expect(toastError).toHaveBeenCalledWith("Failed to install plugin: bad package", {
       id: "toast-id",

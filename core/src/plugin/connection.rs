@@ -29,6 +29,7 @@
 //! plugin verbatim at connect time.
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use termihub_plugin_api::{LoadedBackend, PluginError, PluginOutputSender};
@@ -42,6 +43,8 @@ use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
 use super::host::LoadedLibrary;
+use super::security::{PermissionError, PermissionSet};
+use super::PluginPermission;
 
 /// Channel capacity for output forwarded from the plugin to the terminal.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
@@ -57,6 +60,10 @@ pub struct PluginConnectionType {
     /// The form schema the frontend renders for this type, derived from the
     /// plugin's declared `configSchema` at load time.
     settings_schema: SettingsSchema,
+    /// The permissions this plugin was granted, carried so host-mediated
+    /// capabilities (filesystem path resolution, network, …) can enforce them
+    /// per session (concept §13).
+    permissions: PermissionSet,
     /// The active session backend, `None` until [`connect`](ConnectionType::connect).
     backend: Option<LoadedBackend>,
     /// Current output sink; swapped by
@@ -66,7 +73,8 @@ pub struct PluginConnectionType {
 }
 
 impl PluginConnectionType {
-    /// Build a fresh, unconnected connection of the given plugin type.
+    /// Build a fresh, unconnected connection of the given plugin type, scoped to
+    /// the plugin's granted `permissions`.
     ///
     /// `settings_schema` is the form schema derived from the plugin's manifest
     /// `configSchema` (see [`config_schema_to_settings_schema`]); the host derives
@@ -77,15 +85,37 @@ impl PluginConnectionType {
         connection_type: String,
         display_name: String,
         settings_schema: SettingsSchema,
+        permissions: PermissionSet,
     ) -> Self {
         Self {
             library,
             connection_type,
             display_name,
             settings_schema,
+            permissions,
             backend: None,
             output_tx: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The permission set this plugin session was granted.
+    #[must_use]
+    pub fn permissions(&self) -> &PermissionSet {
+        &self.permissions
+    }
+
+    /// Require that this plugin holds `permission` before a host-mediated
+    /// capability acts on its behalf. Returns [`PermissionError::Denied`]
+    /// otherwise (e.g. a backend without `network` cannot open connections).
+    pub fn require_permission(&self, permission: PluginPermission) -> Result<(), PermissionError> {
+        self.permissions.require(permission)
+    }
+
+    /// Resolve and authorize a plugin-supplied filesystem path against this
+    /// plugin's declared scope, rejecting paths outside it (concept §13). This is
+    /// the guard a host-mediated filesystem bridge routes plugin paths through.
+    pub fn resolve_scoped_path(&self, requested: &Path) -> Result<PathBuf, PermissionError> {
+        self.permissions.check_path(requested)
     }
 }
 
