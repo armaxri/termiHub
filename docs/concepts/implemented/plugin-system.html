@@ -547,9 +547,9 @@
       <header class="concept-header">
         <h1>Plugin System</h1>
         <div class="concept-meta">
-          <span class="concept-status">Future · post-v1</span>
+          <span class="concept-status">Implemented · signing deferred</span>
           <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/28">#28</a></span>
-          <span><code>docs/concepts/future/plugin-system.html</code></span>
+          <span><code>docs/concepts/implemented/plugin-system.html</code></span>
         </div>
       </header>
 
@@ -2262,35 +2262,50 @@ impl PluginRegistry {
     }
 }</code></pre>
 
-        <h3>5. Extending ConnectionConfig for Plugins</h3>
+        <h3>5. Plugin connection types via the registry (as built — #1999)</h3>
+        <blockquote>
+          <p>
+            <strong>Reconciled 2026-07-26:</strong> the concept originally proposed a hard-coded
+            <code>ConnectionConfig::Plugin</code> enum variant. In implementation this was
+            <strong>replaced by the existing registry / <code>ConnectionType</code> model</strong> —
+            a design-reality correction recorded in the <a href="#sync">Sync Ledger</a>. termiHub's
+            connection types are already schema-driven and registry-registered (there is no fixed
+            <code>ConnectionConfig</code> enum to extend), so a plugin backend is just another
+            registered <code>ConnectionType</code> keyed by its <code>type_id</code>. This keeps
+            plugin and built-in connections on one code path and lets the existing
+            <code>DynamicForm</code> render the plugin's config with no bespoke UI.
+          </p>
+        </blockquote>
         <p>
-          The <code>ConnectionConfig</code> enum currently has a fixed set of variants. To support
-          plugin backends, add a generic plugin variant:
+          Each plugin terminal backend is wrapped in a <code>PluginConnectionType</code>
+          (<code>core/src/plugin/connection.rs</code>) that implements the core
+          <code>ConnectionType</code> trait. The plugin's manifest <code>configSchema</code> is
+          converted to the app's
+          <code>SettingsSchema</code> (<code>config_schema_to_settings_schema</code>) so
+          <code>DynamicForm</code> renders the form; the raw settings JSON is forwarded verbatim to
+          the plugin over the stable ABI at connect time. The <code>PluginManager</code> registers
+          one such <code>ConnectionType</code> per enabled backend plugin, so a persisted connection
+          keeps working across restarts once its plugin is enabled again.
         </p>
-        <pre><code>#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ConnectionConfig {
-    // ... existing variants ...
-
-    /// Plugin-provided terminal backend.
-    #[serde(rename = "plugin")]
-    Plugin(PluginConnectionConfig),
+        <pre><code>// core/src/plugin/connection.rs (as built)
+pub struct PluginConnectionType {
+    type_id: String,               // the plugin backend's connection type id
+    display_name: String,
+    settings_schema: SettingsSchema, // derived from the manifest configSchema
+    // ... handle to the loaded plugin backend over the stable ABI ...
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PluginConnectionConfig {
-    /// ID of the plugin providing this backend.
-    pub plugin_id: String,
-    /// Plugin-specific configuration as JSON.
-    pub config: serde_json::Value,
-}</code></pre>
-        <p>
-          The <code>create_session</code> match in <code>TerminalManager</code> gains a new arm:
-        </p>
-        <pre><code>ConnectionConfig::Plugin(cfg) => {
-    self.plugin_registry
-        .create_backend(&amp;cfg.plugin_id, &amp;cfg.config.to_string(), sender)
-        .context("Failed to create plugin backend")?
+impl ConnectionType for PluginConnectionType {
+    fn type_id(&amp;self) -> &amp;str { &amp;self.type_id }
+    fn settings_schema(&amp;self) -> SettingsSchema { self.settings_schema.clone() }
+
+    async fn connect(&amp;mut self, settings: serde_json::Value)
+        -> Result&lt;(), SessionError&gt;
+    {
+        // settings JSON is serialized and forwarded verbatim to the plugin.
+        let config_json = serde_json::to_string(&amp;settings)?;
+        // ... hand off to the plugin backend over the ABI ...
+    }
 }</code></pre>
 
         <h3>6. Frontend Plugin Types</h3>
@@ -2624,10 +2639,162 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
       <section>
         <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
         <p>
-          Not started — this is a <code>future/</code> concept, migrated to the single-file form.
-          Once implementation begins, run <code>/sync-concept plugin-system</code> after each change
-          to keep the <a href="#sync">Sync Ledger</a> current.
+          <strong>Implemented and live</strong> across the epic of issue #28 (~18 merged PRs). The
+          plugin system is fully built end-to-end: packaging, the stable native ABI, the host
+          loader, the Plugin Manager UI, all four extension points, connection wiring, per-plugin
+          settings, and the security-hardening layer. Cryptographic <em>code-signing</em> is the one
+          deferred sub-feature (no substrate exists yet — tracked as <code>Concept</code> issue
+          <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>), exactly the pattern
+          other <code>implemented/</code> concepts use for a deferred future enhancement.
         </p>
+
+        <h3>Implemented</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Capability area</th>
+                <th>What shipped</th>
+                <th>Issues</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Package format &amp; manifest</td>
+                <td>
+                  <code>.termihub-plugin</code> package format, manifest JSON schema + validation
+                </td>
+                <td>#1989</td>
+              </tr>
+              <tr>
+                <td>Native plugin ABI</td>
+                <td>
+                  <code>termihub-plugin-api</code> crate — stable <code>#[repr(C)]</code> ABI (<code
+                    >CURRENT_PLUGIN_API_VERSION = 3</code
+                  >)
+                </td>
+                <td>#1990, #2024</td>
+              </tr>
+              <tr>
+                <td>Plugin manager (backend)</td>
+                <td>
+                  <code>PluginManager</code> + Tauri commands; loads enabled plugins at startup
+                </td>
+                <td>#1992, #2010</td>
+              </tr>
+              <tr>
+                <td>Native host loader</td>
+                <td><code>libloading</code>-based host + registry; unwind-safe load/refusal</td>
+                <td>#1995</td>
+              </tr>
+              <tr>
+                <td>Frontend types &amp; store</td>
+                <td>TypeScript plugin types, Zustand store section</td>
+                <td>#1993</td>
+              </tr>
+              <tr>
+                <td>Plugin Manager UI</td>
+                <td>Activity Bar view, detail panel, install dialog, enable/disable/uninstall</td>
+                <td>#1997</td>
+              </tr>
+              <tr>
+                <td>Theme plugins</td>
+                <td>Theme plugin loading into the theme engine, badged theme selector</td>
+                <td>#1996</td>
+              </tr>
+              <tr>
+                <td>Frontend JS plugins</td>
+                <td>Protocol parsers + status-bar widgets; per-plugin JS API instance</td>
+                <td>#1998, #2020</td>
+              </tr>
+              <tr>
+                <td>Connection wiring</td>
+                <td>
+                  Plugin connection types via the registry / <code>ConnectionType</code> model (see
+                  §5); connection-config UI + badged selector
+                </td>
+                <td>#1999, #2002</td>
+              </tr>
+              <tr>
+                <td>Plugin settings</td>
+                <td>Schema-driven Plugins category in Settings</td>
+                <td>#2000</td>
+              </tr>
+              <tr>
+                <td>Security hardening</td>
+                <td>
+                  Permission enforcement + consistency check, filesystem path-scoping,
+                  untrusted-source install gate, bounded error-recovery / auto-restart
+                </td>
+                <td>#2001</td>
+              </tr>
+              <tr>
+                <td>Host-mediated capabilities</td>
+                <td>
+                  Capability bridge for network/filesystem so the host mediates access; mediated FS
+                  writes/stat/list + connect timeout; per-session connection limits + configurable
+                  timeout
+                </td>
+                <td>#2018, #2024, #2028</td>
+              </tr>
+              <tr>
+                <td>Packaging tooling</td>
+                <td>Packaging tool, example plugin, and plugin author docs</td>
+                <td>#1994</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Deferred / not implemented</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Status</th>
+                <th>Tracking</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Cryptographic code-signing</td>
+                <td>
+                  Deferred — no signing substrate exists (keys, signature format, verification
+                  chain). <code>assess_trust</code> reports every package as untrusted today, so
+                  install always requires explicit acceptance. Awaiting a maintainer decision.
+                </td>
+                <td>
+                  <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>
+                  (<code>Concept</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>Dedicated connection-limit status</td>
+                <td>
+                  Minor gap — a per-session connection-limit refusal is currently reported as
+                  <code>PluginStatus::PermissionDenied</code> rather than a dedicated status. Needs
+                  an ABI bump.
+                </td>
+                <td>
+                  <a href="https://github.com/armaxri/termiHub/issues/2030">#2030</a>
+                  (<code>Ready2Implement</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>Direct-syscall isolation</td>
+                <td>
+                  Known limitation — a native plugin is a dynamic library loaded
+                  <strong>in-process</strong>, so its own <code>std::fs</code>/<code>std::net</code>
+                  syscalls cannot be intercepted by the host. The permission model governs only
+                  host-mediated access; closing this bypass needs OS-level isolation. Documented in
+                  <code>core/src/plugin/security.rs</code>.
+                </td>
+                <td>Documented limitation</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
 
       <!-- ── Sync ledger ────────────────────────────────────────────── -->
@@ -2641,8 +2808,19 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (concept not yet implemented) ·
-          <strong>Status:</strong> diverged (entirely missing — future feature)
+          <strong>Last synced:</strong> 2026-07-26 at commit <code>b21b5eeb</code> ·
+          <strong>Status:</strong> in-sync (implemented; three deferred items tracked below)
+        </p>
+        <p>
+          The feature was built <em>to</em> this concept across the epic of issue #28 (~18 merged
+          PRs). This reconciliation walked the concept's behaviors and layout claims against the
+          real code (<code>core/src/plugin/*</code>, <code>plugin-api/src/*</code>,
+          <code>src-tauri/src/commands/plugin.rs</code>, <code>src/components/Plugins/*</code>,
+          <code>src/plugins/*</code>, <code>src/themes/pluginThemes.ts</code>). The UI surfaces, the
+          four extension points, the lifecycle/state machine, the install-permission gate, and the
+          error-recovery machine all match the built implementation. The one <em>design-reality</em>
+          correction (§5) has been folded into the concept; the remaining open items are deferred
+          sub-features, not concept↔code contradictions.
         </p>
 
         <h3>Open divergences</h3>
@@ -2660,10 +2838,56 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
             <tbody>
               <tr>
                 <td>1</td>
-                <td>Entire feature (per concept)</td>
-                <td>Not implemented — future</td>
-                <td>Missing</td>
-                <td>Implement per <code>concept.md</code> order, then re-sync</td>
+                <td>
+                  Security gate validates a package <strong>signature</strong> before extraction
+                  (Security diagram; §13 "code signing validation")
+                </td>
+                <td>
+                  No signing substrate exists; <code>assess_trust</code> always reports "untrusted"
+                  and install requires explicit user acceptance. Signature verification is out of
+                  scope in <code>security.rs</code>.
+                </td>
+                <td>Missing (deferred)</td>
+                <td>
+                  Keep concept as the target; deferred pending a maintainer decision —
+                  <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>
+                  (<code>Concept</code>). Do not implement without that decision.
+                </td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>
+                  Sandboxed execution — "plugins should not access resources beyond their declared
+                  permissions" (Overview goal; §13)
+                </td>
+                <td>
+                  Enforced only for <strong>host-mediated</strong> access. A native plugin runs
+                  in-process, so its own <code>std::fs</code>/<code>std::net</code> syscalls are not
+                  interceptable — the direct-syscall bypass is open. Documented in
+                  <code>security.rs</code>.
+                </td>
+                <td>Design reality</td>
+                <td>
+                  Concept edited (Implementation Status "Deferred") to state the limitation
+                  honestly. Closing it needs OS-level isolation — out of scope.
+                </td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>
+                  Error/refusal states carry a meaningful status (<code>PluginStatus</code> in the
+                  ABI)
+                </td>
+                <td>
+                  A connection-limit refusal reuses <code>PluginStatus::PermissionDenied</code>;
+                  there is no dedicated status for it.
+                </td>
+                <td>Missing (minor)</td>
+                <td>
+                  Add a dedicated status via a future ABI bump —
+                  <a href="https://github.com/armaxri/termiHub/issues/2030">#2030</a>
+                  (<code>Ready2Implement</code>).
+                </td>
               </tr>
             </tbody>
           </table>
@@ -2681,9 +2905,26 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
             </thead>
             <tbody>
               <tr>
+                <td>2026-07-26</td>
+                <td>§5</td>
+                <td>
+                  <strong>Design reality — concept edited.</strong> The concept proposed a
+                  hard-coded <code>ConnectionConfig::Plugin</code> enum variant. termiHub has no
+                  such fixed enum to extend — connection types are registry-registered and
+                  schema-driven — so #1999 built plugin backends as registered
+                  <code>ConnectionType</code>s (<code>PluginConnectionType</code>, keyed by
+                  <code>type_id</code>, settings forwarded verbatim). §5 rewritten to match the
+                  built registry model.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-26</td>
                 <td>—</td>
-                <td>—</td>
-                <td>—</td>
+                <td>
+                  Concept promoted <code>future/</code> → <code>implemented/</code>; Implementation
+                  Status rewritten from "not started" to a built-vs-deferred summary of the
+                  issue-#28 epic (~18 PRs).
+                </td>
               </tr>
             </tbody>
           </table>
