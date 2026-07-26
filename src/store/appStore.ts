@@ -268,7 +268,8 @@ import {
   onSessionMonitoringStatus,
   onPersistentSessionStateChanged,
 } from "@/services/events";
-import { applyTheme, onThemeChange } from "@/themes";
+import { applyTheme, loadPluginThemes, onThemeChange, setRegisteredPluginThemes } from "@/themes";
+import type { ThemeDefinition } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
   registerAdditionalLanguagePackages,
@@ -291,6 +292,7 @@ import {
   uninstallPlugin as apiUninstallPlugin,
   enablePlugin as apiEnablePlugin,
   disablePlugin as apiDisablePlugin,
+  readPluginFile,
 } from "@/services/api";
 import {
   createLeafPanel,
@@ -1485,6 +1487,13 @@ interface AppState {
    * {@link loadPlugins}; not set directly.
    */
   pluginBackendTypes: PluginBackendType[];
+  /**
+   * Color themes contributed by active theme plugins (#1996), for the theme
+   * selector's "Plugins" group. Loaded and validated by {@link loadPlugins} and
+   * mirrored into the theme engine's registry so `plugin:` settings resolve; not
+   * set directly.
+   */
+  pluginThemes: ThemeDefinition[];
   /** Load the installed-plugin list from the backend and refresh derived state. */
   loadPlugins: () => Promise<void>;
   /**
@@ -1835,6 +1844,37 @@ function derivePluginBackendTypes(plugins: InstalledPlugin[]): PluginBackendType
     }
   }
   return result;
+}
+
+/**
+ * Read, validate, and collect the color themes contributed by every *active*
+ * theme plugin (#1996). Each plugin's declared `themes/*.json` files are loaded
+ * via {@link readPluginFile} and validated against the theme engine's schema;
+ * an individual bad theme is logged and skipped rather than blocking the rest.
+ * Disabled/error/incompatible plugins contribute nothing. The result is both
+ * mirrored into store state (for the selector) and pushed into the theme
+ * engine's registry so `plugin:` settings resolve.
+ */
+async function loadActivePluginThemes(plugins: InstalledPlugin[]): Promise<ThemeDefinition[]> {
+  const all: ThemeDefinition[] = [];
+  for (const plugin of plugins) {
+    const theme = plugin.manifest.extensions.theme;
+    if (plugin.state !== "active" || !theme || theme.themes.length === 0) continue;
+    const { themes, errors } = await loadPluginThemes(
+      plugin.manifest.id,
+      theme.themes,
+      readPluginFile,
+      { pluginName: plugin.manifest.name }
+    );
+    for (const err of errors) {
+      frontendLog(
+        "app_store",
+        `Skipped plugin theme ${err.pluginId}:${err.themeId} (${err.file}): ${err.message}`
+      );
+    }
+    all.push(...themes);
+  }
+  return all;
 }
 
 /** UI-facing metadata describing an in-flight workflow run (#1852). */
@@ -7470,11 +7510,22 @@ export const useAppStore = create<AppState>((set, get) => {
     // Plugins (#1993)
     plugins: [],
     pluginBackendTypes: [],
+    pluginThemes: [],
 
     loadPlugins: async () => {
       try {
         const plugins = await apiListPlugins();
-        set({ plugins, pluginBackendTypes: derivePluginBackendTypes(plugins) });
+        // Load plugin-provided themes (#1996) and register them into the theme
+        // engine before publishing state, so a `plugin:` theme selection can
+        // resolve as soon as the selector renders it.
+        const pluginThemes = await loadActivePluginThemes(plugins);
+        setRegisteredPluginThemes(pluginThemes);
+        set({ plugins, pluginBackendTypes: derivePluginBackendTypes(plugins), pluginThemes });
+        // Re-apply the active theme: a just-registered plugin theme now takes
+        // effect, and a theme whose plugin was disabled/uninstalled falls back
+        // to the default (concept edge case).
+        const { theme, customThemes } = get().settings;
+        applyTheme(theme, customThemes);
       } catch (err) {
         // Read-only refresh: log rather than toast, matching loadMacros.
         console.error("Failed to load plugins:", err);
