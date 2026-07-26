@@ -23,7 +23,22 @@
 //!                                        │ yes
 //!                                        ▼
 //!                                  std::fs::read ─▶ owned bytes
+//!
+//!   bridge.write_file(p,d,mode) ─▶ FilesystemScope::check(p)?    ─ no ─▶ PermissionDenied
+//!                                        │ yes
+//!                                        ▼
+//!                                  OpenOptions(mode) + write_all
+//!
+//!   bridge.stat(path)           ─▶ FilesystemScope::check(path)? ─ no ─▶ PermissionDenied
+//!   bridge.list_dir(path)       ─▶ FilesystemScope::check(path)? ─ no ─▶ PermissionDenied
 //! ```
+//!
+//! Every filesystem operation — read, write, append, create, stat, list —
+//! resolves its path through the same [`FilesystemScope::check`] guard, so a
+//! plugin can only touch paths inside its declared roots (out-of-scope and `..`
+//! traversal are rejected before the host performs any I/O).
+//!
+//! [`FilesystemScope::check`]: https://docs.rs/termihub-core
 //!
 //! # What this does and does not enforce
 //!
@@ -72,6 +87,79 @@ pub type PluginReadFileFn = unsafe extern "C" fn(
     out_bytes: *mut FfiOwnedBytes,
 ) -> PluginStatus;
 
+/// How a mediated filesystem write should open its target file.
+///
+/// A `#[repr(i32)]` field-less enum so it is FFI-safe and stable across the ABI.
+/// Every variant is confined to the plugin's declared scope by the host before
+/// any file is opened.
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginWriteMode {
+    /// Create the file if absent, **truncate** it if present, then write.
+    Truncate = 0,
+    /// Create the file if absent, **append** to it if present.
+    Append = 1,
+    /// **Create a new** file, failing with an I/O error if it already exists.
+    CreateNew = 2,
+}
+
+/// Signature of the host callback that writes a file on the plugin's behalf. The
+/// host resolves and authorizes `path` against the plugin's declared filesystem
+/// scope, then opens it per `mode` and writes `data`.
+pub type PluginWriteFileFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    path: FfiStr,
+    data: FfiByteSlice,
+    mode: PluginWriteMode,
+) -> PluginStatus;
+
+/// FFI-safe filesystem metadata returned by a mediated [`stat`](PluginHostBridge::stat).
+///
+/// `#[repr(C)]` with only FFI-safe scalar fields. When `exists` is `false` the
+/// other fields are meaningless (`is_dir == false`, `len == 0`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PluginFileMetadata {
+    /// Whether anything exists at the (in-scope) path.
+    pub exists: bool,
+    /// Whether the path is a directory. Only meaningful when `exists`.
+    pub is_dir: bool,
+    /// File size in bytes. `0` for directories and non-existent paths.
+    pub len: u64,
+}
+
+impl PluginFileMetadata {
+    /// The "nothing here" metadata for an in-scope path that does not exist.
+    #[must_use]
+    pub fn absent() -> Self {
+        Self {
+            exists: false,
+            is_dir: false,
+            len: 0,
+        }
+    }
+}
+
+/// Signature of the host callback that stats a path on the plugin's behalf. The
+/// host authorizes `path` against the plugin's declared scope, then writes the
+/// resolved [`PluginFileMetadata`] into `out_meta`. An in-scope but non-existent
+/// path is **not** an error: it yields [`PluginFileMetadata::absent`].
+pub type PluginStatPathFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    path: FfiStr,
+    out_meta: *mut PluginFileMetadata,
+) -> PluginStatus;
+
+/// Signature of the host callback that lists a directory on the plugin's behalf.
+/// The host authorizes `path` against the plugin's declared scope, then writes
+/// the directory's entry names — one per line, `\n`-separated, UTF-8
+/// (lossily-encoded) — into `out_entries` as owned bytes.
+pub type PluginListDirFn = unsafe extern "C" fn(
+    ctx: *mut c_void,
+    path: FfiStr,
+    out_entries: *mut FfiOwnedBytes,
+) -> PluginStatus;
+
 /// Signature of the destructor for the host-provided bridge context.
 pub type PluginBridgeDestroyFn = unsafe extern "C" fn(ctx: *mut c_void);
 
@@ -88,6 +176,9 @@ pub struct PluginHostBridge {
     ctx: *mut c_void,
     open_connection: PluginOpenConnectionFn,
     read_file: PluginReadFileFn,
+    write_file: PluginWriteFileFn,
+    stat_path: PluginStatPathFn,
+    list_dir: PluginListDirFn,
     destroy: Option<PluginBridgeDestroyFn>,
 }
 
@@ -107,21 +198,28 @@ impl PluginHostBridge {
     ///
     /// # Safety
     ///
-    /// * `open_connection`, `read_file` and `destroy` (if any) must be safe to
-    ///   call with `ctx`.
+    /// * `open_connection`, `read_file`, `write_file`, `stat_path`, `list_dir`
+    ///   and `destroy` (if any) must be safe to call with `ctx`.
     /// * `ctx` must remain valid until `destroy` is invoked; ownership of it is
     ///   transferred to the returned bridge.
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub unsafe fn from_raw(
         ctx: *mut c_void,
         open_connection: PluginOpenConnectionFn,
         read_file: PluginReadFileFn,
+        write_file: PluginWriteFileFn,
+        stat_path: PluginStatPathFn,
+        list_dir: PluginListDirFn,
         destroy: Option<PluginBridgeDestroyFn>,
     ) -> Self {
         Self {
             ctx,
             open_connection,
             read_file,
+            write_file,
+            stat_path,
+            list_dir,
             destroy,
         }
     }
@@ -156,6 +254,78 @@ impl PluginHostBridge {
         let status = unsafe { (self.read_file)(self.ctx, FfiStr::new(path), &mut bytes) };
         status.into_result()?;
         Ok(bytes.into_vec())
+    }
+
+    /// Ask the host to write `data` to the file at `path`, opening it per `mode`.
+    ///
+    /// The host refuses with [`PluginError::PermissionDenied`] unless the plugin
+    /// holds the `filesystem` permission *and* `path` resolves inside its declared
+    /// scope. Prefer the [`write_new`](Self::write_new), [`overwrite`](Self::overwrite)
+    /// and [`append`](Self::append) convenience wrappers.
+    pub fn write_file(
+        &self,
+        path: &str,
+        data: &[u8],
+        mode: PluginWriteMode,
+    ) -> Result<(), PluginError> {
+        // SAFETY: `ctx`/`write_file` were validated at construction; `path` and
+        // `data` outlive the call.
+        let status = unsafe {
+            (self.write_file)(
+                self.ctx,
+                FfiStr::new(path),
+                FfiByteSlice::from_slice(data),
+                mode,
+            )
+        };
+        status.into_result()
+    }
+
+    /// Create-or-truncate the file at `path` and write `data`
+    /// ([`PluginWriteMode::Truncate`]).
+    pub fn overwrite(&self, path: &str, data: &[u8]) -> Result<(), PluginError> {
+        self.write_file(path, data, PluginWriteMode::Truncate)
+    }
+
+    /// Append `data` to the file at `path`, creating it if absent
+    /// ([`PluginWriteMode::Append`]).
+    pub fn append(&self, path: &str, data: &[u8]) -> Result<(), PluginError> {
+        self.write_file(path, data, PluginWriteMode::Append)
+    }
+
+    /// Create a **new** file at `path` and write `data`, failing if it already
+    /// exists ([`PluginWriteMode::CreateNew`]).
+    pub fn write_new(&self, path: &str, data: &[u8]) -> Result<(), PluginError> {
+        self.write_file(path, data, PluginWriteMode::CreateNew)
+    }
+
+    /// Ask the host for filesystem metadata about `path`.
+    ///
+    /// The host refuses with [`PluginError::PermissionDenied`] unless `path`
+    /// resolves inside the plugin's declared scope. An in-scope path that does
+    /// not exist is reported as [`PluginFileMetadata::absent`], not an error.
+    pub fn stat(&self, path: &str) -> Result<PluginFileMetadata, PluginError> {
+        let mut meta = PluginFileMetadata::absent();
+        // SAFETY: `ctx`/`stat_path` were validated at construction; `path` outlives
+        // the call; `&mut meta` is a valid out-parameter the host fills in on `Ok`.
+        let status = unsafe { (self.stat_path)(self.ctx, FfiStr::new(path), &mut meta) };
+        status.into_result()?;
+        Ok(meta)
+    }
+
+    /// Ask the host to list the directory at `path`, returning its entry names.
+    ///
+    /// The host refuses with [`PluginError::PermissionDenied`] unless `path`
+    /// resolves inside the plugin's declared scope. Entry names are the final
+    /// path component only, in the host's directory order.
+    pub fn list_dir(&self, path: &str) -> Result<Vec<String>, PluginError> {
+        let mut entries = FfiOwnedBytes::empty();
+        // SAFETY: `ctx`/`list_dir` were validated at construction; `path` outlives
+        // the call; `&mut entries` is a valid out-parameter the host fills in on `Ok`.
+        let status = unsafe { (self.list_dir)(self.ctx, FfiStr::new(path), &mut entries) };
+        status.into_result()?;
+        let joined = String::from_utf8_lossy(&entries.into_vec()).into_owned();
+        Ok(joined.lines().map(str::to_owned).collect())
     }
 }
 

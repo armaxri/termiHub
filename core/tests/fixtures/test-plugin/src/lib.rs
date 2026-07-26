@@ -23,7 +23,7 @@ use serde::Deserialize;
 use termihub_plugin_api::PluginInfo;
 use termihub_plugin_api::{
     PluginBackend, PluginError, PluginHostBridge, PluginOutputSender, PluginSessionConfig,
-    PluginStatus, PluginTerminalBackend, CURRENT_PLUGIN_API_VERSION,
+    PluginStatus, PluginTerminalBackend, PluginWriteMode, CURRENT_PLUGIN_API_VERSION,
 };
 
 /// A backend that echoes written input straight back to the host output sink.
@@ -91,14 +91,18 @@ pub unsafe extern "C" fn termihub_plugin_init(out_info: *mut PluginInfo) -> Plug
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct ProbeConfig {
-    /// `"network"` or `"readfile"`; empty means "no probe, just echo".
+    /// One of `"network"`, `"readfile"`, `"writefile"`, `"appendfile"`,
+    /// `"createfile"`, `"statpath"`, `"listdir"`; empty means "no probe, just
+    /// echo".
     probe: String,
     /// Target host for the `network` probe.
     probe_host: String,
     /// Target port for the `network` probe.
     probe_port: u16,
-    /// Target path for the `readfile` probe.
+    /// Target path for the filesystem probes.
     probe_path: String,
+    /// Bytes to write for the `writefile`/`appendfile`/`createfile` probes.
+    probe_data: String,
 }
 
 /// Run the requested capability probe through the host `bridge` and report the
@@ -127,6 +131,40 @@ fn run_probe(cfg: &ProbeConfig, bridge: &PluginHostBridge, output: &PluginOutput
                 }
                 Err(PluginError::PermissionDenied) => b"READ_DENIED".to_vec(),
                 Err(_) => b"READ_ERR".to_vec(),
+            };
+            let _ = output.send(&line);
+        }
+        "writefile" | "appendfile" | "createfile" => {
+            let mode = match cfg.probe.as_str() {
+                "appendfile" => PluginWriteMode::Append,
+                "createfile" => PluginWriteMode::CreateNew,
+                _ => PluginWriteMode::Truncate,
+            };
+            let line = match bridge.write_file(&cfg.probe_path, cfg.probe_data.as_bytes(), mode) {
+                Ok(()) => b"WRITE_OK".to_vec(),
+                Err(PluginError::PermissionDenied) => b"WRITE_DENIED".to_vec(),
+                Err(_) => b"WRITE_ERR".to_vec(),
+            };
+            let _ = output.send(&line);
+        }
+        "statpath" => {
+            let line = match bridge.stat(&cfg.probe_path) {
+                Ok(meta) if meta.exists && meta.is_dir => b"STAT_DIR".to_vec(),
+                Ok(meta) if meta.exists => format!("STAT_FILE:{}", meta.len).into_bytes(),
+                Ok(_) => b"STAT_ABSENT".to_vec(),
+                Err(PluginError::PermissionDenied) => b"STAT_DENIED".to_vec(),
+                Err(_) => b"STAT_ERR".to_vec(),
+            };
+            let _ = output.send(&line);
+        }
+        "listdir" => {
+            let line = match bridge.list_dir(&cfg.probe_path) {
+                Ok(mut entries) => {
+                    entries.sort();
+                    format!("LIST_OK:{}", entries.join(",")).into_bytes()
+                }
+                Err(PluginError::PermissionDenied) => b"LIST_DENIED".to_vec(),
+                Err(_) => b"LIST_ERR".to_vec(),
             };
             let _ = output.send(&line);
         }

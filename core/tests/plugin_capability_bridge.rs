@@ -1,4 +1,4 @@
-//! End-to-end test of the host-mediated capability bridge (#2018).
+//! End-to-end test of the host-mediated capability bridge (#2018, #2024).
 //!
 //! Where `plugin_host_roundtrip.rs` proves a plugin *loads* and echoes, this test
 //! proves the host actually **enforces the plugin's declared permissions at
@@ -6,11 +6,14 @@
 //! real `dlopen` boundary, not just in-process.
 //!
 //! The fixture `cdylib` (`tests/fixtures/test-plugin`) grows an optional probe:
-//! given a `{"probe": "network"|"readfile", …}` session config it calls the host
-//! bridge and reports the outcome (`NETWORK_OK`/`NETWORK_DENIED`,
-//! `READ_OK:<bytes>`/`READ_DENIED`) as its first output line. Here we build the
+//! given a `{"probe": "network"|"readfile"|"writefile"|"appendfile"|
+//! "createfile"|"statpath"|"listdir", …}` session config it calls the host bridge
+//! and reports the outcome (`NETWORK_OK`/`NETWORK_DENIED`, `READ_OK:<bytes>`/
+//! `READ_DENIED`, `WRITE_OK`/`WRITE_DENIED`, `STAT_FILE:<len>`/`STAT_DENIED`,
+//! `LIST_OK:<names>`/`LIST_DENIED`) as its first output line. Here we build the
 //! fixture, drive a [`PluginConnectionType`] with a chosen [`PermissionSet`], and
-//! assert the bridge grants or denies exactly as the permissions dictate.
+//! assert the bridge grants or denies exactly as the permissions dictate — for
+//! the read/connect surface of #2018 and the write/stat/list surface of #2024.
 #![cfg(feature = "plugin")]
 
 use std::io::Read;
@@ -172,4 +175,145 @@ async fn filesystem_capability_is_enforced_through_the_bridge() {
     )
     .await;
     assert_eq!(no_perm, b"READ_DENIED", "no filesystem permission → denied");
+}
+
+#[tokio::test]
+async fn filesystem_write_is_enforced_through_the_bridge() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")))
+        .expect("fixture should load");
+
+    let root = tmp.path().join("scoped");
+    std::fs::create_dir_all(&root).unwrap();
+    let outside = tmp.path().join("escape.txt");
+
+    let scoped = || {
+        PermissionSet::from_parts(
+            [PluginPermission::Filesystem],
+            &[root.to_str().unwrap().to_owned()],
+        )
+    };
+
+    // In-scope create-or-truncate write is mediated and lands on disk.
+    let inside = root.join("out.txt");
+    let ok = probe_outcome(
+        &lib,
+        scoped(),
+        serde_json::json!({
+            "probe": "writefile",
+            "probePath": inside.to_str().unwrap(),
+            "probeData": "hello",
+        }),
+    )
+    .await;
+    assert_eq!(ok, b"WRITE_OK");
+    assert_eq!(std::fs::read(&inside).unwrap(), b"hello");
+
+    // In-scope append extends the same file.
+    let appended = probe_outcome(
+        &lib,
+        scoped(),
+        serde_json::json!({
+            "probe": "appendfile",
+            "probePath": inside.to_str().unwrap(),
+            "probeData": "-more",
+        }),
+    )
+    .await;
+    assert_eq!(appended, b"WRITE_OK");
+    assert_eq!(std::fs::read(&inside).unwrap(), b"hello-more");
+
+    // Out-of-scope write is rejected end-to-end — the host never creates the file.
+    let denied = probe_outcome(
+        &lib,
+        scoped(),
+        serde_json::json!({
+            "probe": "writefile",
+            "probePath": outside.to_str().unwrap(),
+            "probeData": "x",
+        }),
+    )
+    .await;
+    assert_eq!(denied, b"WRITE_DENIED", "out-of-scope write must be denied");
+    assert!(!outside.exists(), "denied write must not create the file");
+
+    // No `filesystem` permission → every write is refused.
+    let no_perm = probe_outcome(
+        &lib,
+        PermissionSet::from_parts([PluginPermission::Terminal], &[]),
+        serde_json::json!({
+            "probe": "writefile",
+            "probePath": inside.to_str().unwrap(),
+            "probeData": "x",
+        }),
+    )
+    .await;
+    assert_eq!(
+        no_perm, b"WRITE_DENIED",
+        "no filesystem permission → denied"
+    );
+}
+
+#[tokio::test]
+async fn filesystem_stat_and_list_are_enforced_through_the_bridge() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")))
+        .expect("fixture should load");
+
+    let root = tmp.path().join("scoped");
+    std::fs::create_dir_all(&root).unwrap();
+    let file = root.join("data.txt");
+    std::fs::write(&file, b"12345").unwrap();
+    std::fs::write(root.join("other.txt"), b"y").unwrap();
+    let outside = tmp.path().join("secret.txt");
+    std::fs::write(&outside, b"top secret").unwrap();
+
+    let scoped = || {
+        PermissionSet::from_parts(
+            [PluginPermission::Filesystem],
+            &[root.to_str().unwrap().to_owned()],
+        )
+    };
+
+    // In-scope stat of a file reports its length.
+    let stat = probe_outcome(
+        &lib,
+        scoped(),
+        serde_json::json!({ "probe": "statpath", "probePath": file.to_str().unwrap() }),
+    )
+    .await;
+    assert_eq!(stat, b"STAT_FILE:5");
+
+    // Out-of-scope stat is refused.
+    let stat_denied = probe_outcome(
+        &lib,
+        scoped(),
+        serde_json::json!({ "probe": "statpath", "probePath": outside.to_str().unwrap() }),
+    )
+    .await;
+    assert_eq!(
+        stat_denied, b"STAT_DENIED",
+        "out-of-scope stat must be denied"
+    );
+
+    // In-scope directory listing returns the entry names.
+    let list = probe_outcome(
+        &lib,
+        scoped(),
+        serde_json::json!({ "probe": "listdir", "probePath": root.to_str().unwrap() }),
+    )
+    .await;
+    assert_eq!(list, b"LIST_OK:data.txt,other.txt");
+
+    // Out-of-scope listing is refused.
+    let list_denied = probe_outcome(
+        &lib,
+        scoped(),
+        serde_json::json!({ "probe": "listdir", "probePath": tmp.path().to_str().unwrap() }),
+    )
+    .await;
+    assert_eq!(
+        list_denied, b"LIST_DENIED",
+        "out-of-scope list must be denied"
+    );
 }
