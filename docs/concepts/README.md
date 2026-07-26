@@ -109,6 +109,7 @@ Not started yet — realistic and planned for the near to medium term.
 | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | [app-icons.html](backlog/app-icons.html)                                                                   | Custom application icon design — a custom icon already ships, but not the concept's design; app-icon direction is an open maintainer call (UI-icon family still unbuilt) |
 | [macos-code-signing-notarization.html](backlog/macos-code-signing-notarization.html)                       | Developer-ID signing + notarization for the macOS build (only ad-hoc signing today)                                                                                      |
+| [plugin-code-signing.html](backlog/plugin-code-signing.html)                                               | Cryptographic signing for `.termihub-plugin` packages — Ed25519 signature over a content digest, publisher trust store (TOFU), Verified/Tampered install levels (#2017)  |
 | [release-planning-and-dependency-management.html](backlog/release-planning-and-dependency-management.html) | Structured release cadence, Dependabot, hotfix branching                                                                                                                 |
 
 ---
