@@ -23,13 +23,6 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
 
-/// Host-side connect timeout applied to every mediated `open_connection` (#2024).
-///
-/// A bare `TcpStream::connect` blocks indefinitely on a black-holed host; this
-/// per-connect ceiling is the host-side connection policy that keeps a plugin's
-/// dial-out from hanging a session forever.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
-
 use termihub_plugin_api::capabilities::{
     PluginBridgeDestroyFn, PluginFileMetadata, PluginListDirFn, PluginOpenConnectionFn,
     PluginReadFileFn, PluginStatPathFn, PluginWriteFileFn, PluginWriteMode,
@@ -40,6 +33,13 @@ use termihub_plugin_api::{
 
 use super::security::{PermissionError, PermissionSet};
 use super::PluginPermission;
+
+/// Host-side connect timeout applied to every mediated `open_connection` (#2024).
+///
+/// A bare `TcpStream::connect` blocks indefinitely on a black-holed host; this
+/// per-connect ceiling is the host-side connection policy that keeps a plugin's
+/// dial-out from hanging a session forever.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Build the host capability bridge for a session granted `permissions`.
 ///
@@ -445,12 +445,18 @@ mod tests {
 
         // Create-or-truncate writes the file within scope.
         let target = root.join("out.txt");
-        bridge.overwrite(target.to_str().unwrap(), b"first").unwrap();
+        bridge
+            .overwrite(target.to_str().unwrap(), b"first")
+            .unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"first");
 
         // Truncate again replaces the contents.
         bridge
-            .write_file(target.to_str().unwrap(), b"second", PluginWriteMode::Truncate)
+            .write_file(
+                target.to_str().unwrap(),
+                b"second",
+                PluginWriteMode::Truncate,
+            )
             .unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"second");
 
@@ -473,7 +479,9 @@ mod tests {
         bridge.write_new(target.to_str().unwrap(), b"a").unwrap();
         // A second create-new on the same path is an I/O error (already exists),
         // not a permission denial.
-        let err = bridge.write_new(target.to_str().unwrap(), b"b").unwrap_err();
+        let err = bridge
+            .write_new(target.to_str().unwrap(), b"b")
+            .unwrap_err();
         assert!(
             matches!(err, termihub_plugin_api::PluginError::Io(_)),
             "got {err:?}"
@@ -493,7 +501,9 @@ mod tests {
 
         // A write outside the declared scope is refused and never creates a file.
         let outside = dir.path().join("escape.txt");
-        let err = bridge.overwrite(outside.to_str().unwrap(), b"x").unwrap_err();
+        let err = bridge
+            .overwrite(outside.to_str().unwrap(), b"x")
+            .unwrap_err();
         assert!(matches!(
             err,
             termihub_plugin_api::PluginError::PermissionDenied
@@ -502,7 +512,9 @@ mod tests {
 
         // A traversal escape from an in-scope prefix is rejected too.
         let escape = root.join("../escape2.txt");
-        let err = bridge.overwrite(escape.to_str().unwrap(), b"x").unwrap_err();
+        let err = bridge
+            .overwrite(escape.to_str().unwrap(), b"x")
+            .unwrap_err();
         assert!(matches!(
             err,
             termihub_plugin_api::PluginError::PermissionDenied
@@ -515,7 +527,9 @@ mod tests {
         // No `filesystem` permission → writes are refused before any file opens.
         let bridge = build_host_bridge(perms(&[PluginPermission::Terminal], &[]));
         let target = dir.path().join("nope.txt");
-        let err = bridge.overwrite(target.to_str().unwrap(), b"x").unwrap_err();
+        let err = bridge
+            .overwrite(target.to_str().unwrap(), b"x")
+            .unwrap_err();
         assert!(matches!(
             err,
             termihub_plugin_api::PluginError::PermissionDenied
@@ -545,7 +559,9 @@ mod tests {
         assert!(meta.exists && meta.is_dir);
 
         // In-scope but absent path: reported as absent, not an error.
-        let meta = bridge.stat(root.join("missing.txt").to_str().unwrap()).unwrap();
+        let meta = bridge
+            .stat(root.join("missing.txt").to_str().unwrap())
+            .unwrap();
         assert!(!meta.exists);
 
         // Out-of-scope stat is refused.
