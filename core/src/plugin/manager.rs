@@ -259,7 +259,8 @@ impl PluginManager {
     /// Look up a single installed plugin by id.
     pub fn get(&self, id: &str) -> Result<InstalledPlugin, PluginManagerError> {
         let dir = self.plugin_dir(id);
-        let manifest = read_manifest(&dir).ok_or_else(|| PluginManagerError::NotFound(id.into()))?;
+        let manifest =
+            read_manifest(&dir).ok_or_else(|| PluginManagerError::NotFound(id.into()))?;
         let state = self.read_state_store()?;
         Ok(self.installed_plugin_from(manifest, &state, &dir))
     }
@@ -359,7 +360,8 @@ impl PluginManager {
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
 
         let dir = self.plugin_dir(id);
-        let manifest = read_manifest(&dir).ok_or_else(|| PluginManagerError::NotFound(id.into()))?;
+        let manifest =
+            read_manifest(&dir).ok_or_else(|| PluginManagerError::NotFound(id.into()))?;
 
         let mut state = self.read_state_store()?;
         let record = state
@@ -608,8 +610,8 @@ fn write_json_atomic<T: Serialize>(
     value: &T,
 ) -> Result<(), PluginManagerError> {
     std::fs::create_dir_all(root)?;
-    let json =
-        serde_json::to_string_pretty(value).map_err(|e| PluginManagerError::Store(e.to_string()))?;
+    let json = serde_json::to_string_pretty(value)
+        .map_err(|e| PluginManagerError::Store(e.to_string()))?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, json)?;
     std::fs::rename(&tmp, path)?;
@@ -743,7 +745,11 @@ mod tests {
         assert!(!mgr.root().join("gone").exists());
         assert!(mgr.list().unwrap().is_empty());
         // Settings and state records are dropped.
-        assert!(!mgr.read_settings_store().unwrap().plugins.contains_key("gone"));
+        assert!(!mgr
+            .read_settings_store()
+            .unwrap()
+            .plugins
+            .contains_key("gone"));
         assert!(!mgr.read_state_store().unwrap().plugins.contains_key("gone"));
     }
 
