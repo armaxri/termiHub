@@ -127,7 +127,11 @@ fn run_probe(cfg: &ProbeConfig, bridge: &PluginHostBridge, output: &PluginOutput
         "connlimit" => {
             // Open `probe_count` connections and hold them all open at once, so
             // the host's per-session concurrency ceiling (#2028) governs how many
-            // succeed. Report the allowed/denied split as a single line.
+            // succeed. A ceiling refusal now surfaces as the dedicated
+            // `ResourceLimit` status (#2030), distinct from a permission denial —
+            // only that status counts as `denied` here, so the assertion proves
+            // the host reports the new status on the ceiling path. Report the
+            // allowed/denied split as a single line.
             let mut held = Vec::new();
             let mut ok = 0u16;
             let mut denied = 0u16;
@@ -137,7 +141,7 @@ fn run_probe(cfg: &ProbeConfig, bridge: &PluginHostBridge, output: &PluginOutput
                         ok += 1;
                         held.push(stream);
                     }
-                    Err(PluginError::PermissionDenied) => denied += 1,
+                    Err(PluginError::ResourceLimit) => denied += 1,
                     Err(_) => {}
                 }
             }

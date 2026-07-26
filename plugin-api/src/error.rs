@@ -54,6 +54,16 @@ pub enum PluginError {
     #[error("host denied a plugin capability (missing permission or out-of-scope path)")]
     PermissionDenied,
 
+    /// A host-mediated capability was refused because the session hit a resource
+    /// ceiling — not because the plugin lacks a permission. Currently raised when
+    /// a mediated `open_connection` would exceed the session's concurrent-connection
+    /// limit ([`crate::capabilities`], #2028/#2030). Distinct from
+    /// [`PermissionDenied`](Self::PermissionDenied) so a well-behaved plugin can
+    /// back off and retry rather than treat the refusal as a hard permission
+    /// failure.
+    #[error("host denied a plugin capability (resource limit reached)")]
+    ResourceLimit,
+
     /// Any other failure the plugin wishes to report.
     #[error("plugin error: {0}")]
     Other(String),
@@ -89,6 +99,13 @@ pub enum PluginStatus {
     PermissionDenied = 7,
     /// Maps to [`PluginError::Other`].
     Other = 8,
+    /// Maps to [`PluginError::ResourceLimit`]: the host refused a mediated
+    /// capability because a resource ceiling (e.g. the session's
+    /// concurrent-connection limit) was reached, not because a permission is
+    /// missing. Added in #2030; its host-returnable value is what forced the ABI
+    /// bump to version 4 (the exact-match gate rejects older plugins that could
+    /// not decode this discriminant).
+    ResourceLimit = 9,
 }
 
 impl PluginStatus {
@@ -113,6 +130,7 @@ impl PluginStatus {
             PluginError::VersionMismatch { .. } => Self::VersionMismatch,
             PluginError::Panicked => Self::Panic,
             PluginError::PermissionDenied => Self::PermissionDenied,
+            PluginError::ResourceLimit => Self::ResourceLimit,
             PluginError::Other(_) => Self::Other,
         }
     }
@@ -140,6 +158,7 @@ impl PluginStatus {
             }),
             Self::Panic => Err(PluginError::Panicked),
             Self::PermissionDenied => Err(PluginError::PermissionDenied),
+            Self::ResourceLimit => Err(PluginError::ResourceLimit),
             Self::Other => Err(PluginError::Other("reported by plugin".to_owned())),
         }
     }

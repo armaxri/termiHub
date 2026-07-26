@@ -134,4 +134,11 @@ pub use output::PluginOutputSender;
 /// ([`StreamDropGuard`](capabilities::StreamDropGuard)), but it lives behind the
 /// stream's opaque `state` pointer, so no vtable or `#[repr(C)]` layout changed
 /// and version-`3` plugins stay compatible.
-pub const CURRENT_PLUGIN_API_VERSION: u32 = 3;
+///
+/// Bumped to `4` in #2030: [`PluginStatus`] gained a host-returnable
+/// [`ResourceLimit`](error::PluginStatus::ResourceLimit) variant so a plugin can
+/// tell a connection-ceiling refusal apart from a genuine permission denial.
+/// Because the host can now hand back a status discriminant a version-`3` plugin
+/// cannot decode, and the load-time gate matches the ABI version exactly, older
+/// plugins are rejected rather than fed an unknown value.
+pub const CURRENT_PLUGIN_API_VERSION: u32 = 4;

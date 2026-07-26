@@ -227,8 +227,11 @@ impl PluginHostBridge {
     /// Ask the host to open a TCP connection to `host:port`.
     ///
     /// The host refuses with [`PluginError::PermissionDenied`] unless the plugin
-    /// holds the `network` permission; otherwise it connects and returns a
-    /// mediated [`HostTcpStream`] the plugin can read from and write to.
+    /// holds the `network` permission, and with
+    /// [`PluginError::ResourceLimit`] when the session is already at its
+    /// concurrent-connection ceiling (#2030) — distinct so the plugin can back off
+    /// and retry the latter. Otherwise it connects and returns a mediated
+    /// [`HostTcpStream`] the plugin can read from and write to.
     pub fn open_connection(&self, host: &str, port: u16) -> Result<HostTcpStream, PluginError> {
         let mut stream = PluginTcpStream::null();
         // SAFETY: `ctx`/`open_connection` were validated at construction; `host`
