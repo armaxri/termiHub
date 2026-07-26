@@ -183,9 +183,11 @@ impl fmt::Display for DeferredUpdateError {
 pub trait DaemonLauncher: Send + Sync + 'static {
     /// Spawn a daemon for the given session and return the connected backend.
     ///
-    /// `ssh_auth_sock`, when set, is exported to the daemon as `SSH_AUTH_SOCK`
-    /// so its core SSH agent-forwarding bridge reaches the desktop's agent via
-    /// the relay socket instead of the agent host's own agent (#1727).
+    /// `ssh_auth_sock`, when set, is the per-session relay endpoint exported to
+    /// the daemon so its core SSH agent-forwarding bridge reaches the desktop's
+    /// agent instead of the agent host's own agent — as `SSH_AUTH_SOCK` for the
+    /// unix relay socket (#1727) or the dedicated pipe-name variable for the
+    /// Windows relay pipe (#2038).
     async fn launch(
         &self,
         session_id: &str,
@@ -243,12 +245,22 @@ impl DaemonLauncher for SystemDaemonLauncher {
             .env("TERMIHUB_BUFFER_SIZE", buffer_size_bytes.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null());
-        // Point the daemon's core SSH agent-forwarding bridge at the relay
-        // socket, so it reaches the desktop's agent rather than the agent host's
-        // own `$SSH_AUTH_SOCK` (#1727). Overriding the inherited value is the
-        // intent: over the TCP transport there is nothing useful to inherit.
-        if let Some(sock) = ssh_auth_sock {
-            command.env("SSH_AUTH_SOCK", sock);
+        // Point the daemon's core SSH agent-forwarding bridge at the per-session
+        // relay endpoint, so it reaches the desktop's agent rather than the agent
+        // host's own local agent. Overriding the inherited value is the intent:
+        // over the TCP transport there is nothing useful to inherit. The channel
+        // differs by platform — `SSH_AUTH_SOCK` for the unix relay socket (#1727),
+        // the dedicated pipe-name variable for the Windows relay pipe (#2038,
+        // kept clear of `SSH_AUTH_SOCK` so a real local OpenSSH agent is not
+        // shadowed).
+        if let Some(endpoint) = ssh_auth_sock {
+            #[cfg(windows)]
+            command.env(
+                termihub_core::backends::ssh::agent_forward::AGENT_PIPE_ENV,
+                endpoint,
+            );
+            #[cfg(not(windows))]
+            command.env("SSH_AUTH_SOCK", endpoint);
         }
         crate::daemon::spawn::configure_detached_stderr(&mut command, daemon_log(session_id));
         crate::daemon::spawn::configure_detachment(&mut command);
@@ -533,9 +545,9 @@ impl SessionManager {
 
         // For an SSH session that opted into `forwardAgent`, stand up a
         // per-session ssh-agent relay to the desktop and hand the daemon its
-        // socket as `SSH_AUTH_SOCK` (#1727). Best-effort: if the relay can't
-        // bind we still launch, and forwarding just falls back to whatever the
-        // daemon inherits (the #1719 host-local behaviour).
+        // endpoint (unix socket / Windows pipe, #1727/#2038). Best-effort: if the
+        // relay can't bind we still launch, and forwarding just falls back to
+        // whatever the daemon inherits (the #1719 host-local behaviour).
         let ssh_auth_sock = self
             .start_agent_forward(session_id, type_id, settings)
             .await;
@@ -561,7 +573,8 @@ impl SessionManager {
     }
 
     /// Start the desktop ssh-agent relay for a session when it applies, returning
-    /// the socket path to export to the daemon as `SSH_AUTH_SOCK` (#1727).
+    /// the relay endpoint (unix socket / Windows pipe) to export to the daemon
+    /// (#1727/#2038).
     async fn start_agent_forward(
         &self,
         session_id: &str,
@@ -571,17 +584,17 @@ impl SessionManager {
         if !AgentForwardRelay::should_relay(type_id, settings) {
             return None;
         }
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         {
             match self.agent_forward.start_listener(session_id).await {
-                Ok(path) => Some(path),
+                Ok(endpoint) => Some(endpoint),
                 Err(e) => {
                     warn!("failed to start ssh-agent relay for {session_id}: {e}");
                     None
                 }
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = session_id;
             None

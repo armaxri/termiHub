@@ -2425,16 +2425,18 @@ Closes the #1719 gap above: when the desktop reaches a deployed agent over the
 agent forwarding on. termiHub now relays the **desktop's** own ssh-agent to the
 session daemon over the desktop↔agent JSON-RPC transport (`agent.forward.*`
 messages), so the operator's keys reach the final target with no ssh-agent on the
-agent host at all. The relay socket is handed to the daemon as `$SSH_AUTH_SOCK`,
-so the daemon's core bridge and the target see a normal agent.
+agent host at all. The relay endpoint is handed to the daemon as `$SSH_AUTH_SOCK`
+(unix) or via the dedicated `TERMIHUB_SSH_AGENT_PIPE` named-pipe variable
+(Windows, #2038), so the daemon's core bridge and the target see a normal agent.
 
 The relay's stream plumbing (open/data/close, the local-agent bridge, the
 no-agent no-op) is covered by **Rust unit tests**
 (`agent/src/session/agent_forward.rs`, `agent/src/handler/dispatch.rs`,
-`src-tauri/src/terminal/agent_forward.rs`). End-to-end forwarding needs a live
-agent + real SSH server reached over TCP (integration lane only, not per-PR CI),
-so verify manually — this path is **unix-only** (a Windows agent host keeps the
-host-local model from #1719):
+`src-tauri/src/terminal/agent_forward.rs`) — including Windows named-pipe listener
+tests that run on the Windows CI leg. End-to-end forwarding needs a live agent +
+real SSH server reached over TCP (integration lane only, not per-PR CI), so verify
+manually. The relay now works on **both unix and Windows** agent hosts (#1727
+shipped unix; #2038 added the Windows named-pipe path):
 
 1. Ensure a local agent has a key: `ssh-add -l` lists at least one identity.
 2. Deploy the agent to an intermediate host and reach it over the **TCP
@@ -2448,6 +2450,21 @@ host-local model from #1719):
 4. **No agent:** stop the desktop's agent (unset `SSH_AUTH_SOCK`) and reconnect
    with the toggle still on — the connection must **succeed** with forwarding
    silently skipped; `ssh-add -l` on the target reports no agent.
+
+**Windows agent host (#2038).** Repeat steps 1–4 with the deployed agent running
+on a **Windows** host reached over the TCP transport:
+
+- The daemon's core SSH bridge connects to the per-session relay **named pipe**
+  (`\\.\pipe\termihub-agent-forward-<session>`), injected via
+  `TERMIHUB_SSH_AGENT_PIPE` — it does **not** touch the host's real
+  `\\.\pipe\openssh-ssh-agent`, so a real local OpenSSH agent on the Windows host
+  is neither required nor shadowed. Confirm the target's `ssh-add -l` lists **your
+  desktop's** identities.
+- The desktop bridging can be exercised from either a unix or Windows desktop
+  (`connect_local_agent_boxed` reaches the desktop's own agent — `$SSH_AUTH_SOCK`
+  socket on unix, `\\.\pipe\openssh-ssh-agent` on a Windows desktop).
+- **No agent:** with no desktop agent reachable, connect with the toggle on — the
+  connection must **succeed** with forwarding silently skipped.
 
 ### X11 / GUI forwarding
 

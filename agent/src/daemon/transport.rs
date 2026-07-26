@@ -137,7 +137,10 @@ pub use unix_impl::{
 };
 #[cfg(windows)]
 #[allow(unused_imports)]
-pub use windows_impl::{endpoint_alive, registry_endpoint, session_endpoint};
+pub use windows_impl::{
+    agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, registry_endpoint,
+    session_endpoint,
+};
 
 // ── Unix session-path helpers ───────────────────────────────────────
 
@@ -255,6 +258,27 @@ mod windows_impl {
     /// Pipe names live in the `\\.\pipe\` namespace and are unique per session.
     pub fn session_endpoint(session_id: &str) -> String {
         format!(r"\\.\pipe\termihub-session-{session_id}")
+    }
+
+    /// Compute the ssh-agent relay pipe name for a session (#2038).
+    ///
+    /// A per-session sibling of the daemon's own pipe, uniquely named so it never
+    /// collides with the agent host's *real* `\\.\pipe\openssh-ssh-agent`.
+    /// Injected into the session daemon via
+    /// [`AGENT_PIPE_ENV`](termihub_core::backends::ssh::agent_forward::AGENT_PIPE_ENV),
+    /// it lets the daemon's core SSH bridge reach the desktop's agent over the
+    /// JSON-RPC transport as if it were a normal local agent — the Windows analog
+    /// of the unix `SSH_AUTH_SOCK` relay socket (#1727).
+    pub fn agent_forward_endpoint(session_id: &str) -> String {
+        format!(r"\\.\pipe\termihub-agent-forward-{session_id}")
+    }
+
+    /// No directory to pre-create for a named-pipe relay on Windows: the pipe
+    /// lives in the machine-global `\\.\pipe\` namespace, so binding it needs no
+    /// filesystem setup. The unix analog makes the `0o700` socket dir the relay
+    /// socket binds into; here it is a no-op that keeps the call site uniform.
+    pub fn ensure_agent_forward_dir() -> std::io::Result<()> {
+        Ok(())
     }
 
     /// Compute the pipe name for the host-wide registry daemon (ADR-11).

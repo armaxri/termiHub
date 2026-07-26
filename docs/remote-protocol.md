@@ -1747,7 +1747,7 @@ A session-level error that does not necessarily terminate the session.
 
 ### `agent.forward.open`
 
-SSH agent forwarding, deployed-agent + TCP transport (#1727). When a session routed through a deployed agent opts into `forwardAgent` and the desktop reaches that agent over the **TCP transport**, there is no SSH leg to piggyback forwarding on (unlike the #1719 host-local model). Instead the agent binds a per-session ssh-agent socket, hands it to the session daemon as `$SSH_AUTH_SOCK`, and tunnels every connection the daemon makes to it back to the desktop over these `agent.forward.*` messages. The desktop bridges each stream to the operator's **own** local ssh-agent, so the operator's keys reach the final target regardless of transport.
+SSH agent forwarding, deployed-agent + TCP transport (#1727, extended to Windows in #2038). When a session routed through a deployed agent opts into `forwardAgent` and the desktop reaches that agent over the **TCP transport**, there is no SSH leg to piggyback forwarding on (unlike the #1719 host-local model). Instead the agent binds a per-session ssh-agent relay endpoint — a Unix socket handed to the session daemon as `$SSH_AUTH_SOCK`, or (on Windows) a uniquely-named named pipe injected via the dedicated `TERMIHUB_SSH_AGENT_PIPE` variable — and tunnels every connection the daemon makes to it back to the desktop over these `agent.forward.*` messages. The desktop bridges each stream to the operator's **own** local ssh-agent, so the operator's keys reach the final target regardless of transport or platform.
 
 `agent.forward.open` announces a new forwarded stream (a program on the target contacted its `$SSH_AUTH_SOCK`). The desktop connects its local agent and prepares to pump bytes.
 
@@ -1763,7 +1763,7 @@ SSH agent forwarding, deployed-agent + TCP transport (#1727). When a session rou
 | ----------- | -------- | ------------------------------------------------------- |
 | `stream_id` | `string` | Unique id for this forwarded stream (embeds session id) |
 
-If the desktop has no reachable local agent, it answers with an immediate [`agent.forward.close`](#agentforwardclose) — the forwarded channel is then dropped as a graceful no-op, matching the SSH-reached no-agent behaviour (#1699/#1719). **Relaying is unix-only**: on a Windows agent host the daemon's bridge target is a fixed OpenSSH pipe rather than an overridable `$SSH_AUTH_SOCK`, so a Windows agent keeps the #1719 host-local model.
+If the desktop has no reachable local agent, it answers with an immediate [`agent.forward.close`](#agentforwardclose) — the forwarded channel is then dropped as a graceful no-op, matching the SSH-reached no-agent behaviour (#1699/#1719). **Relaying works on both unix and Windows agent hosts** (#1727 shipped unix; #2038 added the Windows named-pipe path — the daemon's core SSH bridge honors `TERMIHUB_SSH_AGENT_PIPE`, keeping the relay pipe clear of a real local OpenSSH agent). Only an exotic target with neither a Unix socket nor a named pipe falls back to the #1719 host-local model.
 
 ### `agent.forward.data` (notification)
 
