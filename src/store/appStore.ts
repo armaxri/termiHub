@@ -16,6 +16,7 @@ import {
   EditorStatus,
   EditorActions,
   NetworkDiagnosticMeta,
+  PluginDetailMeta,
   NetworkTool,
   TabGroup,
   TerminalExitInfo,
@@ -313,7 +314,8 @@ export type SidebarView =
   | "macros"
   | "workflows"
   | "network-tools"
-  | "recent-sessions";
+  | "recent-sessions"
+  | "plugins";
 
 /** Clipboard state for file browser copy/cut operations. */
 export interface FileClipboard {
@@ -1496,6 +1498,16 @@ interface AppState {
   enablePlugin: (pluginId: string) => Promise<void>;
   /** Disable a plugin by id, then refresh the list. Toasts feedback; rejects on failure. */
   disablePlugin: (pluginId: string) => Promise<void>;
+  /**
+   * The manifest id of the plugin currently selected in the Plugins sidebar
+   * (#1997), or `null` when none is selected. Drives the sidebar row highlight.
+   */
+  selectedPluginId: string | null;
+  /**
+   * Select a plugin in the Plugins sidebar: records {@link selectedPluginId} and
+   * opens (or updates, and focuses) the single plugin-detail tab in the main area.
+   */
+  selectPlugin: (pluginId: string) => void;
 
   // Macro recording (#1674)
   /** Whether terminal input is currently being captured into a macro. */
@@ -5067,6 +5079,8 @@ export const useAppStore = create<AppState>((set, get) => {
       get().loadMacros();
       // Load workflows
       get().loadWorkflows();
+      // Load installed plugins (#1997)
+      get().loadPlugins();
       // Load app mode (portable vs. installed) for status bar and settings display
       await get().loadAppMode();
       // Load credential store status (dialog opens on-demand when credentials are needed)
@@ -7529,6 +7543,49 @@ export const useAppStore = create<AppState>((set, get) => {
         throw err;
       }
     },
+
+    selectedPluginId: null,
+
+    selectPlugin: (pluginId) =>
+      set((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+        const plugin = state.plugins.find((p) => p.manifest.id === pluginId);
+        const title = plugin ? plugin.manifest.name : "Plugin";
+
+        // Reuse the single existing plugin-detail tab: re-point its meta/title at
+        // the newly-selected plugin and activate it, rather than opening one tab
+        // per plugin (matches Settings/Log-Viewer single-tab behaviour).
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find((t) => t.contentType === "plugin-detail");
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) =>
+                t.id === existing.id
+                  ? { ...t, title, isActive: true, pluginDetailMeta: { pluginId } }
+                  : { ...t, isActive: false }
+              ),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id, selectedPluginId: pluginId };
+          }
+        }
+
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return { selectedPluginId: pluginId };
+
+        const dummyConfig: ConnectionConfig = { type: "local", config: {} };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "plugin-detail");
+        (newTab as TerminalTab & { pluginDetailMeta: PluginDetailMeta }).pluginDetailMeta = {
+          pluginId,
+        };
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return { rootPanel, activePanelId: targetPanelId, selectedPluginId: pluginId };
+      }),
 
     // Macro recording (#1674)
     macroRecording: false,
