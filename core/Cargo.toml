@@ -84,6 +84,11 @@ rmp-serde = { version = "1", optional = true }
 ringbuf = "0.5.0"
 shellexpand = "3.1"
 vte = "0.13"
+# ZIP reader for the `.termihub-plugin` package format (#1989). Used instead of
+# hand-rolled archive parsing to open a package and read its `manifest.json`.
+# Behind the optional `plugin` feature so it is only compiled when the plugin
+# system is built.
+zip = { version = "2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Used to build a per-user DACL for a security-hardened local-IPC listener
@@ -116,6 +121,10 @@ serial_test = "3"
 
 [features]
 default = []
+# Plugin package format + manifest schema/validation (#1989). Pulls the `zip`
+# crate to read `.termihub-plugin` archives. Foundation only — no plugin
+# loading/UI yet.
+plugin = ["dep:zip"]
 serial = ["dep:serial2", "dep:serial2-tokio", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing"]
 telnet = ["dep:tracing"]

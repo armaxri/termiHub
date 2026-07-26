@@ -21,5 +21,7 @@ pub mod monitoring;
 pub mod net;
 pub mod network;
 pub mod output;
+#[cfg(feature = "plugin")]
+pub mod plugin;
 pub mod protocol;
 pub mod session;
