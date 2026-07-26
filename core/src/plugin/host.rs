@@ -311,6 +311,36 @@ fn symbol_name(sym: &[u8]) -> String {
     String::from_utf8_lossy(sym.strip_suffix(b"\0").unwrap_or(sym)).into_owned()
 }
 
+/// Pick a registry key for a plugin's declared connection type that does not
+/// collide with anything already registered.
+///
+/// If `desired` is free it is used unchanged (the first registrant of a name
+/// wins). Otherwise it is suffixed with the plugin `id` — and, in the vanishingly
+/// unlikely event that is *also* taken, with a numeric counter — so a second
+/// plugin declaring the same `connectionType`, or one colliding with a built-in,
+/// still registers under a distinct, stable id (concept "Edge Cases").
+fn disambiguate_type_id(
+    desired: &str,
+    plugin_id: &str,
+    registry: &ConnectionTypeRegistry,
+) -> String {
+    if !registry.has_type(desired) {
+        return desired.to_string();
+    }
+    let suffixed = format!("{desired}-{plugin_id}");
+    if !registry.has_type(&suffixed) {
+        return suffixed;
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{suffixed}-{n}");
+        if !registry.has_type(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
 /// A record of one loaded plugin: the connection type it registered and the
 /// library backing it.
 struct HostEntry {
@@ -385,11 +415,31 @@ impl PluginHost {
         let lib_path = find_backend_library(&plugin_dir)?;
         let library = load_backend_library(&lib_path)?;
 
-        let connection_type = backend.connection_type.clone();
-        let display_name = backend.display_name.clone();
+        // Translate the plugin's declared `configSchema` into the form schema the
+        // dynamic connection editor renders (#1999). Derived once here and cloned
+        // into every instance the factory produces.
+        let settings_schema = super::connection::config_schema_to_settings_schema(
+            &backend.config_schema,
+        );
+
+        // Two plugins may declare the same `connectionType`, and a plugin may even
+        // collide with a built-in. Disambiguate against whatever is already
+        // registered by suffixing this one with the plugin id (concept "Edge
+        // Cases"); the first registrant keeps the plain id.
+        let connection_type = {
+            let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+            disambiguate_type_id(&backend.connection_type, &id, &registry)
+        };
+        let display_name = if connection_type == backend.connection_type {
+            backend.display_name.clone()
+        } else {
+            format!("{} ({})", backend.display_name, plugin.manifest.name)
+        };
+
         let lib_for_factory = Arc::clone(&library);
         let ct_for_factory = connection_type.clone();
         let dn_for_factory = display_name.clone();
+        let schema_for_factory = settings_schema;
 
         {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
@@ -402,6 +452,7 @@ impl PluginHost {
                         Arc::clone(&lib_for_factory),
                         ct_for_factory.clone(),
                         dn_for_factory.clone(),
+                        schema_for_factory.clone(),
                     ))
                 }),
             );
@@ -477,6 +528,93 @@ impl super::manager::PluginLifecycleHook for HostLifecycleHook {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::connection::{
+        Capabilities, ConnectionType, OutputReceiver, SettingsSchema,
+    };
+    use crate::errors::SessionError;
+    use crate::files::FileBrowser;
+    use crate::monitoring::MonitoringProvider;
+
+    /// A do-nothing connection type, just enough for the registry to register it
+    /// so [`disambiguate_type_id`] sees an occupied key.
+    struct StubConnection;
+
+    #[async_trait::async_trait]
+    impl ConnectionType for StubConnection {
+        fn type_id(&self) -> &str {
+            "stub"
+        }
+        fn display_name(&self) -> &str {
+            "Stub"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                monitoring: false,
+                file_browser: false,
+                graphical: false,
+                resize: true,
+                persistent: false,
+                terminal: true,
+            }
+        }
+        async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+            Ok(())
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            false
+        }
+        fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            None
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            None
+        }
+    }
+
+    fn register_stub(registry: &mut ConnectionTypeRegistry, type_id: &str) {
+        registry.register(type_id, type_id, "puzzle", Box::new(|| Box::new(StubConnection)));
+    }
+
+    #[test]
+    fn disambiguate_leaves_a_free_id_unchanged() {
+        let registry = ConnectionTypeRegistry::new();
+        assert_eq!(disambiguate_type_id("echo", "echo-backend", &registry), "echo");
+    }
+
+    #[test]
+    fn disambiguate_suffixes_a_taken_id_with_the_plugin_id() {
+        let mut registry = ConnectionTypeRegistry::new();
+        register_stub(&mut registry, "echo");
+        assert_eq!(
+            disambiguate_type_id("echo", "second-plugin", &registry),
+            "echo-second-plugin"
+        );
+    }
+
+    #[test]
+    fn disambiguate_appends_a_counter_when_even_the_suffix_is_taken() {
+        let mut registry = ConnectionTypeRegistry::new();
+        register_stub(&mut registry, "echo");
+        register_stub(&mut registry, "echo-p");
+        assert_eq!(disambiguate_type_id("echo", "p", &registry), "echo-p-2");
+    }
 
     #[test]
     fn symbol_name_strips_trailing_nul() {

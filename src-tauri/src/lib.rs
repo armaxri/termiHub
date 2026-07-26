@@ -377,17 +377,20 @@ pub fn run() {
             // Plugin management layer (#1992) + native host loader (#1995): owns
             // <app-data>/plugins/, created lazily. The host loads a plugin's
             // backend dynamic library on enable and registers its connection type
-            // into a shared registry; disabling/uninstalling unloads it. Bridging
-            // this registry into the session-creation flow and connection editor
-            // is left to #1999 — for now the load/register path is exercised
-            // end-to-end through the manager's lifecycle seam.
+            // into a shared registry; disabling/uninstalling unloads it.
+            //
+            // That registry is the SAME one the desktop SessionManager creates
+            // sessions from (#1999): it is seeded with the built-in backends here
+            // and shared (by `Arc`) with the host below, so an enabled plugin's
+            // connection type is immediately creatable and appears in the
+            // connection-type list the UI offers — no separate wiring per plugin.
             let plugins_root = config_dir.join("plugins");
-            let plugin_registry = std::sync::Arc::new(std::sync::Mutex::new(
-                termihub_core::connection::ConnectionTypeRegistry::new(),
+            let connection_registry = std::sync::Arc::new(std::sync::Mutex::new(
+                build_desktop_registry(),
             ));
             let plugin_host = std::sync::Arc::new(termihub_core::plugin::PluginHost::new(
                 plugins_root.clone(),
-                plugin_registry,
+                std::sync::Arc::clone(&connection_registry),
             ));
             app.manage(termihub_core::plugin::PluginManager::with_hook(
                 plugins_root,
@@ -496,9 +499,13 @@ pub fn run() {
             let agent_manager: Arc<dyn AgentRpcClient> =
                 Arc::new(AgentConnectionManager::new(app.handle().clone()));
 
-            // Build the desktop ConnectionType registry and create the SessionManager.
-            let registry = build_desktop_registry();
-            let session_manager = SessionManager::new(registry, agent_manager.clone());
+            // Create the SessionManager over the registry shared with the plugin
+            // host (built above, seeded with the built-in backends), so plugin
+            // connection types are creatable and listed here (#1999).
+            let session_manager = SessionManager::with_shared_registry(
+                std::sync::Arc::clone(&connection_registry),
+                agent_manager.clone(),
+            );
             app.manage(session_manager);
             app.manage(agent_manager);
 

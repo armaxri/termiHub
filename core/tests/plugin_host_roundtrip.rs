@@ -87,6 +87,7 @@ async fn plugin_host_round_trip() {
         std::sync::Arc::clone(&lib),
         "test-echo".to_string(),
         "Test Echo".to_string(),
+        termihub_core::connection::SettingsSchema { groups: vec![] },
     );
     let mut rx = conn.subscribe_output();
     conn.connect(serde_json::json!({ "foo": "bar" }))

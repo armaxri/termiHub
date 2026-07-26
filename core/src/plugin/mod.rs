@@ -66,7 +66,7 @@ mod manifest;
 mod pack;
 mod package;
 
-pub use connection::PluginConnectionType;
+pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
 pub use host::{
     find_backend_library, load_backend_library, HostError, HostLifecycleHook, LoadedLibrary,
     LoadedPluginInfo, PluginHost,
