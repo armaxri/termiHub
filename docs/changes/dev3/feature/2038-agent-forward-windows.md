@@ -3,7 +3,7 @@
 - SSH **agent forwarding over the TCP (`--listen`) transport now works through a
   Windows agent host too** (#2038, follow-up to #1727). #1727 relayed the
   desktop's ssh-agent to a deployed agent over the JSON-RPC transport but only on
-  unix, because the daemon's core SSH bridge on Windows opened a *fixed* OpenSSH
+  unix, because the daemon's core SSH bridge on Windows opened a _fixed_ OpenSSH
   named pipe and ignored any per-session override. The bridge now honors a
   dedicated `TERMIHUB_SSH_AGENT_PIPE` variable, so the agent worker can bind a
   per-session relay **named pipe** (`\\.\pipe\termihub-agent-forward-<session>`)
