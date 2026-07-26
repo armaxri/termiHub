@@ -98,6 +98,14 @@ libloading = { version = "0.8", optional = true }
 # loader resolves the plugin's exported symbols to the type aliases this crate
 # defines and drives the backend through its safe wrappers. Behind `plugin`.
 termihub-plugin-api = { path = "../plugin-api", optional = true }
+# Ed25519 plugin package signing / verification (#2036). Mature, misuse-resistant
+# Ed25519 implementation (library-first over hand-rolled curve code). The
+# `rand_core` feature enables `SigningKey::generate` for the keygen tool; the
+# CSPRNG itself is `rand`'s `OsRng` (already a core dependency). Behind `plugin`.
+ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
+# Base64 codec for the 32-byte public key and 64-byte signature carried in
+# `signature.json` (#2036). Behind `plugin`.
+base64 = { version = "0.22", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Used to build a per-user DACL for a security-hardened local-IPC listener
@@ -126,6 +134,19 @@ name = "termihub-plugin-pack"
 path = "src/bin/plugin_pack.rs"
 required-features = ["plugin"]
 
+# Plugin code-signing tools (#2036), gated behind `plugin` like the packer:
+# `plugin-keygen` mints an Ed25519 publisher keypair; `plugin-sign` writes a
+# `signature.json` into a built package. Driven from `scripts/package-plugin.*`.
+[[bin]]
+name = "termihub-plugin-keygen"
+path = "src/bin/plugin_keygen.rs"
+required-features = ["plugin"]
+
+[[bin]]
+name = "termihub-plugin-sign"
+path = "src/bin/plugin_sign.rs"
+required-features = ["plugin"]
+
 [dev-dependencies]
 async-trait = { workspace = true }
 tempfile = "3"
@@ -144,7 +165,18 @@ default = []
 # host loader (#1995). Pulls `zip` to read `.termihub-plugin` archives,
 # `libloading` to open a plugin's backend dynamic library, and
 # `termihub-plugin-api` for the stable ABI contract.
-plugin = ["dep:zip", "dep:libloading", "dep:termihub-plugin-api"]
+plugin = [
+    "dep:zip",
+    "dep:libloading",
+    "dep:termihub-plugin-api",
+    # Package code-signing substrate (#2036): Ed25519 signatures over a per-entry
+    # SHA-256 digest map, base64-encoded in `signature.json`, hex for the key
+    # fingerprint / digest rendering.
+    "dep:ed25519-dalek",
+    "dep:base64",
+    "dep:sha2",
+    "dep:hex",
+]
 serial = ["dep:serial2", "dep:serial2-tokio", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing"]
 telnet = ["dep:tracing"]

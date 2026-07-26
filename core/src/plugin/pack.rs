@@ -28,6 +28,10 @@ use super::manifest::{
     parse_manifest, ManifestParseError, ManifestValidationError, PluginManifest,
 };
 use super::package::{validate_package, PluginPackageError, MANIFEST_FILE_NAME};
+use super::signature::{
+    now_rfc3339, sign_digests, signing_key_from_base64, verify_reader, PackageVerification,
+    SignatureError, SigningKeyFile, SIGNATURE_FILE_NAME,
+};
 
 /// Subtrees copied verbatim from the source directory into the package, matching
 /// the concept §1 layout. Everything else in the source directory is ignored.
@@ -68,6 +72,15 @@ pub enum PluginPackError {
     /// an artifact the host would reject.
     #[error("the produced package did not pass validation: {0}")]
     ProducedPackageInvalid(#[from] PluginPackageError),
+
+    /// The supplied signing key file could not be decoded to a usable key.
+    #[error("invalid signing key: {0}")]
+    InvalidSigningKey(#[from] SignatureError),
+
+    /// The freshly-signed package did not verify as signed — a bug in the signing
+    /// path, surfaced loudly rather than shipping a broken signature.
+    #[error("the signed package did not verify: {0:?}")]
+    SigningRoundTripFailed(PackageVerification),
 }
 
 impl From<zip::result::ZipError> for PluginPackError {
@@ -111,6 +124,85 @@ pub fn pack_plugin(source_dir: &Path, output_dir: &Path) -> Result<PathBuf, Plug
     // Round-trip: the artifact we just produced must pass the real validator.
     validate_package(&out_path)?;
     Ok(out_path)
+}
+
+/// Package the plugin source tree at `source_dir` and, when `signing_key` is
+/// supplied, sign the produced archive in place (concept "signing is a distinct
+/// step from packing" — `termihub-plugin-pack --sign`). With `None` this is
+/// exactly [`pack_plugin`]; with a key it additionally writes `signature.json`
+/// after the unsigned round-trip validate.
+pub fn pack_plugin_signed(
+    source_dir: &Path,
+    output_dir: &Path,
+    signing_key: Option<&SigningKeyFile>,
+) -> Result<PathBuf, PluginPackError> {
+    let out_path = pack_plugin(source_dir, output_dir)?;
+    if let Some(key) = signing_key {
+        sign_package(&out_path, key)?;
+    }
+    Ok(out_path)
+}
+
+/// Sign an already-built `.termihub-plugin` in place: compute the per-entry
+/// SHA-256 digest map, build the [`super::signature::PackageSignature`], and
+/// rewrite the archive with an added (or replaced) `signature.json` entry.
+///
+/// Re-signing is idempotent in structure: any existing `signature.json` is
+/// dropped before the new one is written, so the digest map never covers a stale
+/// signature entry. After writing, the package is re-validated *and* re-verified
+/// as signed, so a broken signing pass fails loudly rather than shipping.
+pub fn sign_package(package_path: &Path, key: &SigningKeyFile) -> Result<(), PluginPackError> {
+    let signing_key = signing_key_from_base64(&key.private_key)?;
+
+    // Read every entry (except any prior signature) into memory, preserving order.
+    let file = File::open(package_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        if entry.is_dir() || entry.name() == SIGNATURE_FILE_NAME {
+            continue;
+        }
+        let name = entry.name().to_owned();
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf)?;
+        entries.push((name, buf));
+    }
+    drop(archive);
+
+    // Digest map over exactly the entries we will re-emit.
+    let digests = entries
+        .iter()
+        .map(|(name, bytes)| (name.clone(), super::signature::sha256_digest(bytes)))
+        .collect();
+    let signature = sign_digests(&signing_key, digests, now_rfc3339());
+    let sig_json = serde_json::to_vec_pretty(&signature)
+        .map_err(|e| PluginPackError::Zip(format!("serialize signature.json: {e}")))?;
+
+    // Rewrite the archive to a temp file, then swap it into place.
+    let tmp = package_path.with_extension("termihub-plugin.signing.tmp");
+    {
+        let out = File::create(&tmp)?;
+        let mut zip = ZipWriter::new(out);
+        let opts = SimpleFileOptions::default();
+        for (name, bytes) in &entries {
+            zip.start_file(name, opts)?;
+            zip.write_all(bytes)?;
+        }
+        zip.start_file(SIGNATURE_FILE_NAME, opts)?;
+        zip.write_all(&sig_json)?;
+        zip.finish()?;
+    }
+    fs::rename(&tmp, package_path)?;
+
+    // Round-trip: the manifest must still validate and the signature must verify.
+    validate_package(package_path)?;
+    let verification = verify_reader(File::open(package_path)?)
+        .map_err(|e| PluginPackError::Zip(format!("re-open signed package: {e}")))?;
+    if !matches!(verification, PackageVerification::Signed(_)) {
+        return Err(PluginPackError::SigningRoundTripFailed(verification));
+    }
+    Ok(())
 }
 
 /// The `<id>-<version>.termihub-plugin` file name for a validated manifest.
@@ -364,5 +456,60 @@ mod tests {
         assert_eq!(sanitize_version("1.2.0"), "1.2.0");
         assert_eq!(sanitize_version("1.0-beta+build"), "1.0-beta-build");
         assert_eq!(sanitize_version("a/b\\c"), "a-b-c");
+    }
+
+    #[test]
+    fn signed_package_verifies_and_stays_valid() {
+        use super::super::signature::{generate_keypair, verify_reader, PackageVerification};
+
+        let src = source_tree(&theme_manifest());
+        let out = TempDir::new().unwrap();
+        let key = generate_keypair("Test Publisher");
+
+        let pkg = pack_plugin_signed(src.path(), out.path(), Some(&key)).unwrap();
+
+        // The signed archive carries signature.json alongside the content.
+        let names = entry_names(&pkg);
+        assert!(names.contains("signature.json"));
+        assert!(names.contains("manifest.json"));
+
+        // It still validates as a package, and verifies as signed by our key.
+        assert!(validate_package(&pkg).is_ok());
+        match verify_reader(File::open(&pkg).unwrap()).unwrap() {
+            PackageVerification::Signed(id) => assert_eq!(id.key_id, key.key_id),
+            other => panic!("expected Signed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unsigned_pack_has_no_signature_entry() {
+        let src = source_tree(&theme_manifest());
+        let out = TempDir::new().unwrap();
+        let pkg = pack_plugin_signed(src.path(), out.path(), None).unwrap();
+        assert!(!entry_names(&pkg).contains("signature.json"));
+    }
+
+    #[test]
+    fn re_signing_replaces_the_prior_signature() {
+        use super::super::signature::generate_keypair;
+
+        let src = source_tree(&theme_manifest());
+        let out = TempDir::new().unwrap();
+        let key1 = generate_keypair("First");
+        let key2 = generate_keypair("Second");
+
+        let pkg = pack_plugin_signed(src.path(), out.path(), Some(&key1)).unwrap();
+        // Re-sign with a different key; the archive must end up with exactly one
+        // signature.json and verify under the new key.
+        sign_package(&pkg, &key2).unwrap();
+
+        let names = entry_names(&pkg);
+        assert_eq!(names.iter().filter(|n| *n == "signature.json").count(), 1);
+        match super::super::signature::verify_reader(File::open(&pkg).unwrap()).unwrap() {
+            super::super::signature::PackageVerification::Signed(id) => {
+                assert_eq!(id.key_id, key2.key_id)
+            }
+            other => panic!("expected Signed by key2, got {other:?}"),
+        }
     }
 }

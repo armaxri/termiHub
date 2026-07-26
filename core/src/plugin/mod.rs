@@ -67,6 +67,8 @@ mod manifest;
 mod pack;
 mod package;
 mod security;
+mod signature;
+mod trust_store;
 
 pub use capabilities::{
     build_host_bridge, build_host_bridge_with_policy, ConnectionPolicy, DEFAULT_CONNECT_TIMEOUT,
@@ -88,7 +90,7 @@ pub use manifest::{
     StatusBarWidgetExtension, TerminalBackendExtension, ThemeEntry, ThemeExtension, WidgetPosition,
     CURRENT_PLUGIN_API_VERSION,
 };
-pub use pack::{pack_plugin, PluginPackError};
+pub use pack::{pack_plugin, pack_plugin_signed, sign_package, PluginPackError};
 pub use package::{
     validate_package, PluginPackageError, MANIFEST_FILE_NAME, MAX_PACKAGE_SIZE_BYTES,
 };
@@ -96,3 +98,10 @@ pub use security::{
     assess_trust, FilesystemScope, PermissionError, PermissionSet, RecoveryAction, RecoveryState,
     RestartTracker, TrustAssessment, TrustLevel, MAX_RESTART_ATTEMPTS,
 };
+pub use signature::{
+    generate_keypair, key_id_from_public_key, sha256_digest, sign_digests, signing_key_from_base64,
+    signing_payload, verify as verify_signature, verify_reader, PackageSignature,
+    PackageVerification, SignatureError, SigningKeyFile, VerifiedIdentity, DIGEST_ALGORITHM,
+    SIGNATURE_ALGORITHM, SIGNATURE_FILE_NAME, SIGNATURE_FORMAT_VERSION,
+};
+pub use trust_store::{TrustSource, TrustStore, TrustStoreError, TrustedPublisher};
