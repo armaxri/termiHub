@@ -18,7 +18,30 @@
 
 use russh::client::Msg;
 use russh::Channel;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::debug;
+
+/// A raw, bidirectional connection to the local SSH agent, type-erased so callers
+/// in other crates can pump bytes without naming the platform stream type.
+///
+/// Implemented by whatever [`connect_local_agent`] yields on each platform
+/// (Unix domain socket, Windows named pipe). The desktop reuses this to bridge
+/// its own local agent to a session forwarded over the JSON-RPC agent transport
+/// (#1727), so that path connects to the operator's agent through the exact same
+/// logic the russh bridge uses here.
+pub trait LocalAgentStream: AsyncRead + AsyncWrite + Unpin + Send {}
+impl<T: AsyncRead + AsyncWrite + Unpin + Send> LocalAgentStream for T {}
+
+/// Open a boxed raw stream to the local SSH agent, or an error when none is
+/// reachable (`SSH_AUTH_SOCK` unset / the Windows OpenSSH agent stopped).
+///
+/// The type-erased sibling of [`connect_local_agent`] for cross-crate callers
+/// (the desktop's agent-forward relay endpoint, #1727). Absence of an agent is
+/// the caller's cue for a graceful no-op, exactly as [`local_agent_available`]
+/// gates the russh path.
+pub async fn connect_local_agent_boxed() -> std::io::Result<Box<dyn LocalAgentStream>> {
+    Ok(Box::new(connect_local_agent().await?))
+}
 
 /// Connect a raw byte stream to the local SSH agent (Unix `$SSH_AUTH_SOCK`).
 #[cfg(unix)]
