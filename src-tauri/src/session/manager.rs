@@ -225,7 +225,16 @@ pub struct SessionLogStatus {
 #[derive(Clone)]
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
-    registry: Arc<ConnectionTypeRegistry>,
+    /// Shared registry of connection-type factories.
+    ///
+    /// Wrapped in a [`StdMutex`] and held behind an [`Arc`] so the plugin host
+    /// ([`termihub_core::plugin::PluginHost`]) can register and unregister
+    /// plugin-provided connection types into the *same* registry at runtime —
+    /// enabling a plugin makes its type immediately creatable here and visible in
+    /// [`available_types`](Self::available_types) (#1999). The lock is held only
+    /// briefly to look up a factory or snapshot the type list; it is never held
+    /// across an `await`.
+    registry: Arc<StdMutex<ConnectionTypeRegistry>>,
     agent_manager: Arc<dyn AgentRpcClient>,
     /// Abort handles for active session-monitoring push tasks, keyed by session ID.
     monitoring_tasks: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
@@ -271,11 +280,30 @@ impl Drop for ConnectingGuard {
 }
 
 impl SessionManager {
-    /// Create a new session manager with the given registry and agent manager.
+    /// Test-only convenience constructor that owns its registry exclusively.
+    ///
+    /// Production wiring shares the registry with the plugin host via
+    /// [`with_shared_registry`](Self::with_shared_registry); tests that do not care
+    /// about plugins use this, which wraps `registry` in a fresh
+    /// [`Arc<StdMutex<_>>`] and delegates.
+    #[cfg(test)]
     pub fn new(registry: ConnectionTypeRegistry, agent_manager: Arc<dyn AgentRpcClient>) -> Self {
+        Self::with_shared_registry(Arc::new(StdMutex::new(registry)), agent_manager)
+    }
+
+    /// Create a session manager over a registry shared with the plugin host.
+    ///
+    /// Passing the same `Arc<StdMutex<ConnectionTypeRegistry>>` here and into
+    /// [`PluginHost::new`](termihub_core::plugin::PluginHost::new) is what lets an
+    /// enabled plugin's connection type be created and listed by this manager
+    /// (#1999).
+    pub fn with_shared_registry(
+        registry: Arc<StdMutex<ConnectionTypeRegistry>>,
+        agent_manager: Arc<dyn AgentRpcClient>,
+    ) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            registry: Arc::new(registry),
+            registry,
             agent_manager,
             monitoring_tasks: Arc::new(Mutex::new(HashMap::new())),
             persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -529,11 +557,15 @@ impl SessionManager {
                 let remote_sid = proxy.remote_session_id();
                 (Box::new(proxy), remote_sid)
             } else {
-                // Local: instantiate from registry.
-                let mut conn = self
-                    .registry
-                    .create(type_id)
-                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                // Local: instantiate from registry. Lock only long enough to run
+                // the factory (no `await` under the lock); this resolves built-in
+                // *and* plugin-registered types (#1999).
+                let mut conn = {
+                    let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+                    registry
+                        .create(type_id)
+                        .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?
+                };
                 conn.connect_cancellable(settings.clone(), cancel_token.clone())
                     .await
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
@@ -889,7 +921,10 @@ impl SessionManager {
 
     /// Get the list of available connection types from the registry.
     pub fn available_types(&self) -> Vec<ConnectionTypeInfo> {
-        self.registry.available_types()
+        self.registry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .available_types()
     }
 
     /// Return the capabilities of an active session.
