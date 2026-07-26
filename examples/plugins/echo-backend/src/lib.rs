@@ -79,7 +79,10 @@ impl PluginTerminalBackend for EchoBackend {
 ///
 /// Factored out of the `extern "C"` shim so it can be unit-tested with the safe
 /// wrapper (see the tests below), with no dynamic library involved.
-fn build_backend(config: &EchoConfig, output: PluginOutputSender) -> Box<dyn PluginTerminalBackend> {
+fn build_backend(
+    config: &EchoConfig,
+    output: PluginOutputSender,
+) -> Box<dyn PluginTerminalBackend> {
     Box::new(EchoBackend {
         output,
         prefix: config.echo_prefix.clone().into_bytes(),

@@ -99,6 +99,20 @@ jobs:
       - name: Check for security vulnerabilities
         run: cargo audit
 
+      # Validate the plugin packaging tooling (#1994) against the example
+      # plugins. The JSON-only theme plugin is packaged with --no-build (no
+      # native code, safe on any platform); the native echo-backend is built and
+      # packaged here on Linux — its cdylib compiles cross-platform via the
+      # workspace build above, but packaging carries only this OS's library, so
+      # it is validated on a single platform rather than the full matrix. The
+      # packer round-trip-validates each archive; a broken package fails the job.
+      - name: Package example plugins (guards #1994)
+        run: |
+          ./scripts/package-plugin.sh examples/plugins/solarized-night-theme --out target/plugin-dist --no-build
+          ./scripts/package-plugin.sh examples/plugins/echo-backend --out target/plugin-dist
+          test -f target/plugin-dist/solarized-night-1.0.0.termihub-plugin
+          test -f target/plugin-dist/echo-backend-1.0.0.termihub-plugin
+
   # Frontend Quality Checks
   frontend-quality:
     name: Frontend Code Quality

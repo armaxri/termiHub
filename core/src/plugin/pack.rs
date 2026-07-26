@@ -24,7 +24,9 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use zip::write::{SimpleFileOptions, ZipWriter};
 
-use super::manifest::{parse_manifest, ManifestParseError, ManifestValidationError, PluginManifest};
+use super::manifest::{
+    parse_manifest, ManifestParseError, ManifestValidationError, PluginManifest,
+};
 use super::package::{validate_package, PluginPackageError, MANIFEST_FILE_NAME};
 
 /// Subtrees copied verbatim from the source directory into the package, matching
