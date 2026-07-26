@@ -30,11 +30,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
-import {
-  transformOutput,
-  notifySessionStart,
-  notifySessionEnd,
-} from "@/plugins/pluginRuntime";
+import { transformOutput, notifySessionStart, notifySessionEnd } from "@/plugins/pluginRuntime";
 import { resolveLineEnding } from "@/utils/lineEndings";
 import { getAllLeaves } from "@/utils/panelTree";
 import { toast } from "@/components/ui";
