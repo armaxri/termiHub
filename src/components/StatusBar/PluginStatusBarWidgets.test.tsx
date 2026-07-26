@@ -10,7 +10,7 @@ import { createRoot, Root } from "react-dom/client";
 import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
 import {
   ensureTermiHubApi,
-  setLoadingPlugin,
+  makePluginApi,
   unregisterPlugin,
   clearRegistry,
   type StatusBarWidget,
@@ -22,9 +22,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 function registerWidgetAs(pluginId: string, widget: StatusBarWidget): void {
-  setLoadingPlugin(pluginId);
-  window.termihub.registerStatusBarWidget(widget);
-  setLoadingPlugin(null);
+  makePluginApi(pluginId).registerStatusBarWidget(widget);
 }
 
 beforeEach(() => {

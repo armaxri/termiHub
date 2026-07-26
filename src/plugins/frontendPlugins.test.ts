@@ -26,7 +26,7 @@ import {
 import {
   clearRegistry,
   ensureTermiHubApi,
-  setLoadingPlugin,
+  makePluginApi,
   getStatusBarWidgets,
   type StatusBarWidget,
 } from "./pluginRuntime";
@@ -70,9 +70,7 @@ const reader = () => vi.fn(async () => new TextEncoder().encode(SRC));
 
 /** Register a widget attributed to `pluginId`, as its injected script would. */
 function registerWidgetAs(pluginId: string, widget: StatusBarWidget): void {
-  setLoadingPlugin(pluginId);
-  window.termihub.registerStatusBarWidget(widget);
-  setLoadingPlugin(null);
+  makePluginApi(pluginId).registerStatusBarWidget(widget);
 }
 
 beforeEach(() => {
@@ -118,7 +116,11 @@ describe("loadFrontendPlugin", () => {
       'script[data-termihub-plugin="p"]'
     );
     expect(script).not.toBeNull();
-    expect(script?.textContent).toBe(SRC);
+    // The source is wrapped so the plugin runs against its own per-plugin API
+    // instance, bound to its id (#2020) — the original source is preserved inside.
+    expect(script?.textContent).toContain(SRC);
+    expect(script?.textContent).toContain('window.__termihubMakePluginApi("p")');
+    expect(script?.textContent).toMatch(/^\(function \(termihub\) \{/);
     expect(loadedFrontendPluginIds()).toEqual(["p"]);
   });
 
