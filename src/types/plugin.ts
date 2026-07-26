@@ -185,3 +185,12 @@ export interface PluginBackendType {
   /** Human-readable name shown in the selector. */
   displayName: string;
 }
+
+/**
+ * Injected reader of a file inside an installed plugin's directory (`path`
+ * relative to `plugins/<id>/`), returning the raw bytes. This is the shape of
+ * the `readPluginFile` service wrapper; the theme and frontend-plugin loaders
+ * take it as a dependency so their parse/register logic stays free of any
+ * Tauri/IPC import and unit-testable.
+ */
+export type PluginFileReader = (pluginId: string, path: string) => Promise<Uint8Array>;

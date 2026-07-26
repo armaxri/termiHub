@@ -21,11 +21,8 @@
  * enforcement is tracked separately (#2001).
  */
 
-import type { InstalledPlugin } from "@/types/plugin";
+import type { InstalledPlugin, PluginFileReader } from "@/types/plugin";
 import { ensureTermiHubApi, setLoadingPlugin, unregisterPlugin } from "./pluginRuntime";
-
-/** Injected reader of a plugin file (bytes), relative to `plugins/<id>/`. */
-export type PluginFileReader = (pluginId: string, path: string) => Promise<Uint8Array>;
 
 /** Attribute stamped on injected plugin scripts so they can be found and removed. */
 const PLUGIN_SCRIPT_ATTR = "data-termihub-plugin";
@@ -109,18 +106,15 @@ export async function loadFrontendPlugin(
 /**
  * Unload a plugin's frontend extensions: unregister its parsers/widgets (the
  * widget snapshot change disposes their status-bar hosts) and remove its
- * injected `<script>` elements.
+ * injected `<script>` elements. The tracked script list is authoritative — it
+ * holds exactly the elements this loader appended — so detaching each is enough.
  */
-export function unloadFrontendPlugin(pluginId: string, doc: Document = document): void {
+export function unloadFrontendPlugin(pluginId: string): void {
   unregisterPlugin(pluginId);
   const scripts = loadedScripts.get(pluginId);
   if (scripts) {
     for (const script of scripts) script.parentNode?.removeChild(script);
   }
-  // Belt-and-braces: also drop any lingering scripts tagged for this plugin.
-  doc
-    .querySelectorAll(`script[${PLUGIN_SCRIPT_ATTR}="${pluginId.replace(/"/g, '\\"')}"]`)
-    .forEach((el) => el.parentNode?.removeChild(el));
   loadedScripts.delete(pluginId);
 }
 
@@ -142,7 +136,7 @@ export async function reconcileFrontendPlugins(
   );
 
   for (const pluginId of [...loadedScripts.keys()]) {
-    if (!activeIds.has(pluginId)) unloadFrontendPlugin(pluginId, doc);
+    if (!activeIds.has(pluginId)) unloadFrontendPlugin(pluginId);
   }
 
   const errors: FrontendPluginLoadError[] = [];

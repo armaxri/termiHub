@@ -112,7 +112,10 @@ let widgets: RegisteredWidget[] = [];
  * The plugin id currently being loaded, set by the loader around the synchronous
  * `<script>` injection so register calls made while a plugin's entry point runs
  * are attributed to it. `null` outside a load (a stray register call then lands
- * under `"unknown"`).
+ * under `"unknown"`). This attributes the synchronous, top-level registration
+ * the concept documents; a plugin that registers asynchronously (from a timer or
+ * promise) lands under `"unknown"` and is not cleanly unregisterable — hardening
+ * that is a follow-up (per-plugin API instance).
  */
 let loadingPluginId: string | null = null;
 
@@ -238,28 +241,27 @@ export function transformOutput(data: Uint8Array, sessionId: string): Uint8Array
   return changed ? encoder.encode(text) : data;
 }
 
-/** Notify every parser's optional `onSessionStart` hook (errors isolated). */
-export function notifySessionStart(sessionId: string): void {
+/** Fire one optional session-lifecycle hook across every parser (errors isolated). */
+function notifySession(phase: "onSessionStart" | "onSessionEnd", sessionId: string): void {
   for (const { pluginId, parser } of parsers) {
-    if (!parser.onSessionStart) continue;
+    const hook = parser[phase];
+    if (!hook) continue;
     try {
-      parser.onSessionStart(sessionId);
+      hook.call(parser, sessionId);
     } catch (err) {
-      logPluginError(pluginId, parser.id, "onSessionStart", err);
+      logPluginError(pluginId, parser.id, phase, err);
     }
   }
 }
 
+/** Notify every parser's optional `onSessionStart` hook (errors isolated). */
+export function notifySessionStart(sessionId: string): void {
+  notifySession("onSessionStart", sessionId);
+}
+
 /** Notify every parser's optional `onSessionEnd` hook (errors isolated). */
 export function notifySessionEnd(sessionId: string): void {
-  for (const { pluginId, parser } of parsers) {
-    if (!parser.onSessionEnd) continue;
-    try {
-      parser.onSessionEnd(sessionId);
-    } catch (err) {
-      logPluginError(pluginId, parser.id, "onSessionEnd", err);
-    }
-  }
+  notifySession("onSessionEnd", sessionId);
 }
 
 // ─── Status-bar widget registry ──────────────────────────────────────────────

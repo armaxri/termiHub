@@ -16,7 +16,7 @@
  */
 
 import type { ThemeColors, ThemeDefinition } from "./types";
-import type { ThemeEntry } from "@/types/plugin";
+import type { ThemeEntry, PluginFileReader } from "@/types/plugin";
 import { COLOR_TOKEN_KEYS } from "./colorTokens";
 import { THEME_FILE_SCHEMA } from "./themeIO";
 import { BASE_THEME_ORDER } from "./customThemes";
@@ -127,8 +127,7 @@ export interface PluginThemeLoadResult {
   errors: PluginThemeLoadError[];
 }
 
-/** Injected reader of a plugin file (bytes), relative to `plugins/<id>/`. */
-export type PluginFileReader = (pluginId: string, path: string) => Promise<Uint8Array>;
+export type { PluginFileReader } from "@/types/plugin";
 
 /** Options for {@link loadPluginThemes}. */
 export interface LoadPluginThemesOptions {
