@@ -283,6 +283,14 @@ import {
 } from "@/utils/reconnectBackoff";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
+import type { InstalledPlugin, PluginBackendType } from "@/types/plugin";
+import {
+  listPlugins as apiListPlugins,
+  installPlugin as apiInstallPlugin,
+  uninstallPlugin as apiUninstallPlugin,
+  enablePlugin as apiEnablePlugin,
+  disablePlugin as apiDisablePlugin,
+} from "@/services/api";
 import {
   createLeafPanel,
   findLeaf,
@@ -1466,6 +1474,29 @@ interface AppState {
    */
   importMacros: (json: string) => Promise<number>;
 
+  // Plugins (#1993 — frontend foundation for the plugin system)
+  /** Installed plugins with their current install/runtime state. */
+  plugins: InstalledPlugin[];
+  /**
+   * Terminal-backend connection types contributed by active plugins, projected
+   * from {@link plugins} for the connection-type selector. Derived by
+   * {@link loadPlugins}; not set directly.
+   */
+  pluginBackendTypes: PluginBackendType[];
+  /** Load the installed-plugin list from the backend and refresh derived state. */
+  loadPlugins: () => Promise<void>;
+  /**
+   * Install a `.termihub-plugin` package from `filePath`, then refresh the list.
+   * Surfaces a pending → success/error toast; rejects on failure.
+   */
+  installPlugin: (filePath: string) => Promise<void>;
+  /** Uninstall a plugin by id, then refresh the list. Toasts feedback; rejects on failure. */
+  uninstallPlugin: (pluginId: string) => Promise<void>;
+  /** Enable (activate) a plugin by id, then refresh the list. Toasts feedback; rejects on failure. */
+  enablePlugin: (pluginId: string) => Promise<void>;
+  /** Disable a plugin by id, then refresh the list. Toasts feedback; rejects on failure. */
+  disablePlugin: (pluginId: string) => Promise<void>;
+
   // Macro recording (#1674)
   /** Whether terminal input is currently being captured into a macro. */
   macroRecording: boolean;
@@ -1771,6 +1802,27 @@ function generateMacroId(): string {
     return `macro-${c.randomUUID()}`;
   }
   return `macro-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Project the connection-type selector's plugin-backend entries from the
+ * installed-plugin list (#1993): every *active* plugin that declares a
+ * `terminalBackend` extension contributes one entry. Disabled/error/incompatible
+ * plugins register no backend.
+ */
+function derivePluginBackendTypes(plugins: InstalledPlugin[]): PluginBackendType[] {
+  const result: PluginBackendType[] = [];
+  for (const plugin of plugins) {
+    const backend = plugin.manifest.extensions.terminalBackend;
+    if (plugin.state === "active" && backend) {
+      result.push({
+        pluginId: plugin.manifest.id,
+        connectionType: backend.connectionType,
+        displayName: backend.displayName,
+      });
+    }
+  }
+  return result;
 }
 
 /** UI-facing metadata describing an in-flight workflow run (#1852). */
@@ -7399,6 +7451,83 @@ export const useAppStore = create<AppState>((set, get) => {
       // Refresh once, after all saves, rather than per-macro.
       await get().loadMacros();
       return prepared.length;
+    },
+
+    // Plugins (#1993)
+    plugins: [],
+    pluginBackendTypes: [],
+
+    loadPlugins: async () => {
+      try {
+        const plugins = await apiListPlugins();
+        set({ plugins, pluginBackendTypes: derivePluginBackendTypes(plugins) });
+      } catch (err) {
+        // Read-only refresh: log rather than toast, matching loadMacros.
+        console.error("Failed to load plugins:", err);
+      }
+    },
+
+    installPlugin: async (filePath) => {
+      const toastId = toast.loading("Installing plugin…");
+      try {
+        const installed = await apiInstallPlugin(filePath);
+        await get().loadPlugins();
+        toast.success(`Installed ${installed.manifest.name}`, { id: toastId });
+      } catch (err) {
+        toast.error(
+          `Failed to install plugin: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
+        throw err;
+      }
+    },
+
+    uninstallPlugin: async (pluginId) => {
+      const name = get().plugins.find((p) => p.manifest.id === pluginId)?.manifest.name ?? pluginId;
+      const toastId = toast.loading(`Uninstalling ${name}…`);
+      try {
+        await apiUninstallPlugin(pluginId);
+        await get().loadPlugins();
+        toast.success(`Uninstalled ${name}`, { id: toastId });
+      } catch (err) {
+        toast.error(
+          `Failed to uninstall ${name}: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
+        throw err;
+      }
+    },
+
+    enablePlugin: async (pluginId) => {
+      const name = get().plugins.find((p) => p.manifest.id === pluginId)?.manifest.name ?? pluginId;
+      const toastId = toast.loading(`Enabling ${name}…`);
+      try {
+        await apiEnablePlugin(pluginId);
+        await get().loadPlugins();
+        toast.success(`Enabled ${name}`, { id: toastId });
+      } catch (err) {
+        toast.error(
+          `Failed to enable ${name}: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
+        throw err;
+      }
+    },
+
+    disablePlugin: async (pluginId) => {
+      const name = get().plugins.find((p) => p.manifest.id === pluginId)?.manifest.name ?? pluginId;
+      const toastId = toast.loading(`Disabling ${name}…`);
+      try {
+        await apiDisablePlugin(pluginId);
+        await get().loadPlugins();
+        toast.success(`Disabled ${name}`, { id: toastId });
+      } catch (err) {
+        toast.error(
+          `Failed to disable ${name}: ${err instanceof Error ? err.message : String(err)}`,
+          { id: toastId }
+        );
+        throw err;
+      }
     },
 
     // Macro recording (#1674)
