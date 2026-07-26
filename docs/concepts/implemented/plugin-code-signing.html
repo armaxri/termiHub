@@ -86,12 +86,15 @@
       <header class="concept-header">
         <h1>Plugin Code Signing</h1>
         <div class="concept-meta">
-          <span class="concept-status">Backlog · not implemented</span>
+          <span class="concept-status">Implemented</span>
           <span
             >GitHub Issue:
-            <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a></span
+            <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>
+            (concept) ·
+            <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>
+            (implementation)</span
           >
-          <span><code>docs/concepts/backlog/plugin-code-signing.html</code></span>
+          <span><code>docs/concepts/implemented/plugin-code-signing.html</code></span>
         </div>
       </header>
 
@@ -118,7 +121,7 @@
         <p>
           The plugin system ships a fully working install/permission gate, but its very first
           decision node is a promise the code cannot yet keep. The security flowchart in
-          <a href="../implemented/plugin-system.html#behavior">plugin-system.html</a> opens with
+          <a href="plugin-system.html#behavior">plugin-system.html</a> opens with
           <em>“Signature valid?”</em>, then falls through the <strong>“No / Unsigned”</strong> arm
           for every package because termiHub has <strong>no signing substrate</strong> — no keys, no
           package signature format, no verification chain.
@@ -182,7 +185,7 @@
           <li>
             <strong>Reusing the OS code-signing chains</strong> (Authenticode / Apple Developer ID).
             Those sign the <em>app</em> (see
-            <a href="macos-code-signing-notarization.html">macos-code-signing-notarization.html</a>);
+            <a href="../backlog/macos-code-signing-notarization.html">macos-code-signing-notarization.html</a>);
             plugins are cross-platform data files installed after the app ships, so they need their
             own portable, in-package scheme.
           </li>
@@ -282,7 +285,7 @@
           </li>
           <li>
             <strong>Per-entry digest: SHA-256.</strong> Already the integrity primitive used by the
-            agent-update path (<a href="../implemented/remote-agent-update-strategy.html">remote-agent-update-strategy.html</a>),
+            agent-update path (<a href="remote-agent-update-strategy.html">remote-agent-update-strategy.html</a>),
             so it keeps one hash family across the project.
           </li>
           <li>
@@ -418,7 +421,7 @@
                 <td>
                   <strong>Recommended for v1.</strong> No infrastructure, works offline, and matches
                   a pattern already in the codebase — the
-                  <a href="../implemented/remote-desktop-sessions.html">remote-desktop</a> host-key
+                  <a href="remote-desktop-sessions.html">remote-desktop</a> host-key
                   trust store and SSH host-key acceptance both work this way.
                 </td>
               </tr>
@@ -470,7 +473,7 @@
         <p>
           Signing does not add a new screen; it re-skins the existing <strong>Install Plugin</strong>
           overlay (the <code>menu menu--wide</code> from
-          <a href="../implemented/plugin-system.html#ui">plugin-system.html</a>) with a
+          <a href="plugin-system.html#ui">plugin-system.html</a>) with a
           <strong>provenance banner</strong> above the permission prompt, and adds one
           <strong>Trusted Publishers</strong> group to the Plugins settings. The banner has four
           states, one per trust level.
@@ -993,13 +996,21 @@ stateDiagram-v2
       <section>
         <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
         <p>
-          <strong>Not started.</strong> This is a design document. Nothing in this concept is built:
-          there is no signing key, no <code>signature.json</code> format, no verification code, and no
-          trust store. The one piece that exists is the <em>absence</em> it is designed to fill —
-          <code>core/src/plugin/security.rs::assess_trust</code> returns
-          <code>TrustLevel::Untrusted</code> for every package, and <code>TrustLevel</code> has only
-          that single variant, by explicit intent (see the module's “What is enforceable today” doc
-          comment).
+          <strong>Implemented</strong> (<a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>).
+          The signing substrate is built end-to-end and matches this design: Ed25519 package
+          signatures over a per-entry SHA-256 digest map, a publisher trust store with
+          trust-on-first-use pinning, an <code>assess_trust</code> that opens and verifies the
+          package, a four-state install gate, keygen/sign tooling, and the frontend provenance
+          banner + Trusted Publishers settings.
+        </p>
+        <p>
+          <strong>One deliberate v1 deviation:</strong> the bundled first-party key seed
+          (<code>trust_store.rs::BUNDLED_PUBLISHERS</code>) ships <em>empty</em>. The mechanism is
+          fully wired — a non-empty list makes those publishers verify as <code>Verified</code> out
+          of the box — but no key is embedded yet, because doing so honestly needs a real key
+          ceremony (the private half must never be committed) and signing of the bundled example
+          plugins. Until then trust is established entirely through TOFU pinning, which is fully
+          functional. Tracked as a follow-up.
         </p>
         <div class="table-wrap">
           <table>
@@ -1012,21 +1023,25 @@ stateDiagram-v2
             <tbody>
               <tr>
                 <td>Signature scheme &amp; on-disk format</td>
-                <td>Designed here; not implemented.</td>
+                <td><strong>Implemented</strong> — <code>core/src/plugin/signature.rs</code>.</td>
               </tr>
               <tr>
                 <td>Verification chain (<code>assess_trust</code> → <code>Verified</code>/<code>Tampered</code>)</td>
-                <td>Designed here; <code>assess_trust</code> is a stub that always returns <code>Untrusted</code>.</td>
+                <td><strong>Implemented</strong> — <code>security.rs::assess_trust</code> opens, verifies, and consults the trust store.</td>
               </tr>
               <tr>
                 <td>Trust store + keygen/sign tools</td>
-                <td>Designed here; no code exists.</td>
+                <td>
+                  <strong>Implemented</strong> — <code>trust_store.rs</code>,
+                  <code>termihub-plugin-keygen</code>, <code>termihub-plugin-sign</code>. Bundled-key
+                  seed wired but empty in v1 (follow-up).
+                </td>
               </tr>
               <tr>
-                <td>Untrusted-source install gate</td>
+                <td>Install gate (four states) + UI</td>
                 <td>
-                  <strong>Built</strong> (<a href="https://github.com/armaxri/termiHub/pull/2016">#2016</a>) —
-                  the <code>Untrusted</code> branch this concept extends is live.
+                  <strong>Implemented</strong> — <code>manager.rs</code> gating, the install-dialog
+                  provenance banner, and the Trusted Publishers settings group.
                 </td>
               </tr>
             </tbody>
@@ -1045,16 +1060,52 @@ stateDiagram-v2
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged —
-          design authored, awaiting build.
+          <strong>Last synced:</strong> 2026-07-26 at commit <code>2903600a</code> ·
+          <strong>Status:</strong> in-sync — implemented in
+          <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a> per this design.
         </p>
         <p>
-          This concept designs the substrate the
-          <a href="../implemented/plugin-system.html">plugin-system</a> concept's security flowchart
-          assumes (its “Signature valid?” branch) and that its sync ledger (row 1) deferred to
-          <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>. Every claim below is a
-          <em>target</em>, not a reconciliation of existing code.
+          This concept designed the substrate the
+          <a href="plugin-system.html">plugin-system</a> concept's security flowchart assumes (its
+          “Signature valid?” branch) and that its sync ledger (row 1) deferred to
+          <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>. That substrate is now
+          built; the rows below are reconciled against the code.
         </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>
+                  Bundled first-party keys ship pre-trusted so official/example plugins verify as
+                  <code>Verified</code> out of the box (Trust Anchoring).
+                </td>
+                <td>
+                  <code>trust_store.rs::BUNDLED_PUBLISHERS</code> is wired but <strong>empty</strong>;
+                  no first-party key is embedded yet. TOFU pinning is fully functional.
+                </td>
+                <td>Missing (deferred)</td>
+                <td>
+                  Keep concept as the target. Follow-up: run a key ceremony, embed the public key,
+                  and sign the bundled example plugins.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Resolved</h3>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1074,11 +1125,12 @@ stateDiagram-v2
                   is written by a signing tool and verified at install.
                 </td>
                 <td>
-                  No signing tool, no <code>signature.json</code>, no verification. Packages are
-                  produced unsigned by <code>pack.rs</code>.
+                  <code>signature.rs</code> implements the model, canonical payload, sign/verify, and
+                  <code>verify_reader</code>; <code>pack.rs</code> writes it via <code>--sign</code> /
+                  <code>termihub-plugin-sign</code>.
                 </td>
-                <td>Missing</td>
-                <td>Implement, then re-sync.</td>
+                <td>Match</td>
+                <td>Implemented.</td>
               </tr>
               <tr>
                 <td>2</td>
@@ -1088,21 +1140,25 @@ stateDiagram-v2
                   <code>assess_trust</code> opens the package and consults a trust store.
                 </td>
                 <td>
-                  <code>TrustLevel</code> has only <code>Untrusted</code>; <code>assess_trust</code>
-                  does not open the package and always returns it.
+                  Implemented in <code>security.rs</code> exactly as specified, plus
+                  <code>is_blocked()</code> and a refined <code>requires_acceptance()</code>.
                 </td>
-                <td>Missing</td>
-                <td>Implement, then re-sync.</td>
+                <td>Match</td>
+                <td>Implemented.</td>
               </tr>
               <tr>
                 <td>3</td>
                 <td>
-                  A publisher trust store (TOFU + pinning + bundled first-party keys) at
+                  A publisher trust store (TOFU + pinning) at
                   <code>&lt;app-data&gt;/plugins/trust-store.json</code>, managed in Settings.
                 </td>
-                <td>No trust store exists.</td>
-                <td>Missing</td>
-                <td>Implement, then re-sync.</td>
+                <td>
+                  <code>trust_store.rs</code> with <code>is_trusted</code>/<code>pin</code>/<code>revoke</code>,
+                  portable-aware, surfaced in Settings → Plugins → Trusted Publishers. (Bundled seed
+                  is empty — see Open divergences.)
+                </td>
+                <td>Match</td>
+                <td>Implemented.</td>
               </tr>
               <tr>
                 <td>4</td>
@@ -1112,11 +1168,12 @@ stateDiagram-v2
                   <code>Tampered</code> hard-blocks.
                 </td>
                 <td>
-                  Only the <code>Untrusted</code> path exists (<code>accept_untrusted</code> flag,
-                  #2016).
+                  <code>manager.rs::install</code> gates on all four states (new
+                  <code>trust_publisher</code> arg pins on TOFU); the install dialog renders the
+                  four-state provenance banner.
                 </td>
-                <td>Partial (foundation only)</td>
-                <td>Extend the gate, then re-sync.</td>
+                <td>Match</td>
+                <td>Implemented.</td>
               </tr>
             </tbody>
           </table>

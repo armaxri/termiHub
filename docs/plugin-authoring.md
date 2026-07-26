@@ -324,7 +324,7 @@ cargo run -p termihub-core --features plugin --bin termihub-plugin-sign -- \
 On Windows use `scripts\package-plugin.cmd … --sign acme.key`.
 
 **How the host treats it at install** (concept
-`docs/concepts/backlog/plugin-code-signing.html`):
+`docs/concepts/implemented/plugin-code-signing.html`):
 
 | Package state                                   | Install gate                                               |
 | ----------------------------------------------- | ---------------------------------------------------------- |
