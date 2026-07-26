@@ -602,8 +602,9 @@
             ends broadcast entirely.
           </li>
           <li>
-            <strong>Paste</strong> goes through the same <code>onData</code> path and is therefore
-            broadcast like typed input.
+            <strong>Paste</strong> is broadcast like typed input. Context-menu / native paste flows
+            through the same <code>onData</code> path; keyboard-shortcut paste is intercepted and
+            fanned out via <code>pasteToTerminal</code> (#1981) so it reaches every target too.
           </li>
           <li>
             Chord-shortcut keystrokes are consumed by the shortcut system and are not broadcast.
@@ -1055,9 +1056,11 @@ interface BroadcastActions {
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> 2026-07-25 at commit <code>f61d6eaf</code> ·
+          <strong>Last synced:</strong> 2026-07-26 at commit <code>ec257604</code> ·
           <strong>Status:</strong> in sync — feature fully implemented (epic #1954, children
-          #1955–#1958). One deliberate concept↔code deviation, resolved in the concept below.
+          #1955–#1958) and verified against code. Two follow-up fixes (#1980, #1981) landed since
+          the previous sync and were reconciled here; no open divergences. One deliberate
+          concept↔code deviation (the Windows/Linux binding) remains resolved in the concept below.
         </p>
 
         <h3>Open divergences</h3>
@@ -1127,6 +1130,26 @@ interface BroadcastActions {
                   concept promoted to <code>implemented/</code>. Deviation: Windows/Linux binding is
                   <code>Alt+Shift+B</code> (not <code>Ctrl+Shift+B</code>, which Toggle Sidebar
                   already owns there); concept text updated to match.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-26</td>
+                <td>#1980</td>
+                <td>
+                  <code>resolveBroadcastTargetTabIds</code> now resolves "all" / "panel" membership
+                  within the <em>source's own</em> tab group instead of the active group, so a
+                  source in a non-active group no longer mirrors into an invisible group. Consistent
+                  with the concept's "tracked by tab ID, not panel position" edge case.
+                </td>
+              </tr>
+              <tr>
+                <td>2026-07-26</td>
+                <td>#1981</td>
+                <td>
+                  Keyboard-shortcut paste is now fanned out to every target via
+                  <code>pasteToTerminal</code> (context-menu paste already broadcast via
+                  <code>onData</code>). Preserves the concept's "paste is broadcast like typed
+                  input" rule; the General Handling paste note was refined to describe both paths.
                 </td>
               </tr>
             </tbody>
