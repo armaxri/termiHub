@@ -7692,6 +7692,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "termihub-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "termios"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

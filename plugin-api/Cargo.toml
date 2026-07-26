@@ -1,0 +1,15 @@
+[package]
+name = "termihub-plugin-api"
+# Independently versioned from the rest of the workspace: this crate is the
+# ABI contract compiled into BOTH the host and every third-party plugin, so its
+# semver is the plugin-compatibility promise. Bump it (and
+# `CURRENT_PLUGIN_API_VERSION`) deliberately — see the crate docs.
+version = "0.1.0"
+description = "Stable ABI contract for termiHub native (dynamically-loaded) terminal-backend plugins"
+edition = "2021"
+
+[dependencies]
+# Only dependency: ergonomic Rust-side error type. Kept intentionally minimal —
+# this crate is linked into every plugin, so its dependency surface is part of
+# the compatibility contract.
+thiserror = { workspace = true }
