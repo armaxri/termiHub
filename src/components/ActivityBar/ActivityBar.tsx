@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Info,
   Keyboard,
+  Puzzle,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as ContextMenu from "@radix-ui/react-context-menu";
@@ -68,6 +69,7 @@ const OPTIONAL_ITEMS: ActivityBarItemDef[] = [
   { view: "services", icon: Server, label: "Services", experimental: true },
   { view: "network-tools", icon: Stethoscope, label: "Network Tools", experimental: true },
   { view: "workflows", icon: Workflow, label: "Workflows", experimental: true },
+  { view: "plugins", icon: Puzzle, label: "Plugins" },
 ];
 
 const EMPTY_HIDDEN_VIEWS: string[] = [];
