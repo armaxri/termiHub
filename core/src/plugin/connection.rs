@@ -134,18 +134,12 @@ impl ConnectionType for PluginConnectionType {
         std::thread::spawn(move || {
             while let Ok(chunk) = std_rx.recv() {
                 let guard = output_tx.lock().unwrap_or_else(|e| e.into_inner());
-                match guard.as_ref() {
-                    Some(sender) => {
-                        if sender.blocking_send(chunk).is_err() {
-                            // Receiver dropped; keep draining so the plugin's
-                            // sender does not block, but stop trying to deliver.
-                        }
-                    }
-                    None => {
-                        // No active subscriber yet; drop the chunk. Terminal
-                        // output before the first `subscribe_output` is not
-                        // retained (matching the other backends).
-                    }
+                // Deliver to the current subscriber if any; a dropped receiver or
+                // no active subscription (output before the first
+                // `subscribe_output`) simply drops the chunk, matching the other
+                // backends. Keep draining so the plugin's sender never blocks.
+                if let Some(sender) = guard.as_ref() {
+                    let _ = sender.blocking_send(chunk);
                 }
             }
         });
