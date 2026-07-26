@@ -30,9 +30,12 @@
 //! pub unsafe extern "C" fn termihub_plugin_create_backend(
 //!     config: *const PluginSessionConfig,
 //!     output: PluginOutputSender,
+//!     bridge: PluginHostBridge,
 //!     out_backend: *mut PluginBackend,
 //! ) -> PluginStatus {
-//!     // parse `(*config).config_json`, spawn the session, then:
+//!     // parse `(*config).config_json`, spawn the session — routing any network or
+//!     // filesystem access through `bridge` so the host enforces this plugin's
+//!     // declared permissions — then:
 //!     let backend = PluginBackend::from_boxed(Box::new(my_backend));
 //!     unsafe { out_backend.write(backend); }
 //!     PluginStatus::Ok
@@ -43,6 +46,7 @@
 //! ```
 
 use crate::backend::PluginBackend;
+use crate::capabilities::PluginHostBridge;
 use crate::error::PluginStatus;
 use crate::info::{PluginInfo, PluginSessionConfig};
 use crate::output::PluginOutputSender;
@@ -67,11 +71,17 @@ pub type PluginAbiVersionFn = unsafe extern "C" fn() -> u32;
 pub type PluginInitFn = unsafe extern "C" fn(out_info: *mut PluginInfo) -> PluginStatus;
 
 /// Type of [`SYMBOL_PLUGIN_CREATE_BACKEND`]: creates a session backend from the
-/// borrowed `config`, taking ownership of `output`, and writes the resulting
-/// [`PluginBackend`] into `out_backend`.
+/// borrowed `config`, taking ownership of `output` and the host capability
+/// `bridge`, and writes the resulting [`PluginBackend`] into `out_backend`.
+///
+/// The `bridge` ([`PluginHostBridge`]) is the plugin's only sanctioned route to
+/// network/filesystem access: operations run through it are permission-checked by
+/// the host at runtime (#2018). Ownership of `bridge` transfers to the plugin,
+/// which stores it in its backend and drops it with the session.
 pub type PluginCreateBackendFn = unsafe extern "C" fn(
     config: *const PluginSessionConfig,
     output: PluginOutputSender,
+    bridge: PluginHostBridge,
     out_backend: *mut PluginBackend,
 ) -> PluginStatus;
 
@@ -101,6 +111,7 @@ mod ffi_safety_check {
     unsafe extern "C" fn _create(
         _config: *const PluginSessionConfig,
         _output: PluginOutputSender,
+        _bridge: PluginHostBridge,
         _out: *mut PluginBackend,
     ) -> PluginStatus {
         PluginStatus::Ok

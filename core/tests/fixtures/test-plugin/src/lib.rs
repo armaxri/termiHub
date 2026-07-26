@@ -15,13 +15,15 @@
 //!   default), so a `--no-default-features` build omits it and exercises the
 //!   loader's missing-symbol path.
 
+use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use serde::Deserialize;
 #[cfg(feature = "export-init")]
 use termihub_plugin_api::PluginInfo;
 use termihub_plugin_api::{
-    PluginBackend, PluginError, PluginOutputSender, PluginSessionConfig, PluginStatus,
-    PluginTerminalBackend, CURRENT_PLUGIN_API_VERSION,
+    PluginBackend, PluginError, PluginHostBridge, PluginOutputSender, PluginSessionConfig,
+    PluginStatus, PluginTerminalBackend, CURRENT_PLUGIN_API_VERSION,
 };
 
 /// A backend that echoes written input straight back to the host output sink.
@@ -83,20 +85,90 @@ pub unsafe extern "C" fn termihub_plugin_init(out_info: *mut PluginInfo) -> Plug
     PluginStatus::Ok
 }
 
+/// Optional capability-bridge probe driven by the session config, so the
+/// host-loader tests can exercise the runtime permission enforcement (#2018)
+/// across the real dlopen boundary. Absent for the plain echo scenarios.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct ProbeConfig {
+    /// `"network"` or `"readfile"`; empty means "no probe, just echo".
+    probe: String,
+    /// Target host for the `network` probe.
+    probe_host: String,
+    /// Target port for the `network` probe.
+    probe_port: u16,
+    /// Target path for the `readfile` probe.
+    probe_path: String,
+}
+
+/// Run the requested capability probe through the host `bridge` and report the
+/// outcome as a single line on the `output` sink. The test asserts on this line
+/// to prove the host actually enforces (or grants) the capability end-to-end.
+fn run_probe(cfg: &ProbeConfig, bridge: &PluginHostBridge, output: &PluginOutputSender) {
+    match cfg.probe.as_str() {
+        "network" => {
+            let line = match bridge.open_connection(&cfg.probe_host, cfg.probe_port) {
+                Ok(mut stream) => {
+                    // Prove the mediated stream is usable, best-effort.
+                    let _ = stream.write_all(b"ping");
+                    b"NETWORK_OK".to_vec()
+                }
+                Err(PluginError::PermissionDenied) => b"NETWORK_DENIED".to_vec(),
+                Err(_) => b"NETWORK_ERR".to_vec(),
+            };
+            let _ = output.send(&line);
+        }
+        "readfile" => {
+            let line = match bridge.read_file(&cfg.probe_path) {
+                Ok(bytes) => {
+                    let mut line = b"READ_OK:".to_vec();
+                    line.extend_from_slice(&bytes);
+                    line
+                }
+                Err(PluginError::PermissionDenied) => b"READ_DENIED".to_vec(),
+                Err(_) => b"READ_ERR".to_vec(),
+            };
+            let _ = output.send(&line);
+        }
+        _ => {}
+    }
+}
+
 /// Create an [`EchoBackend`] session.
+///
+/// If the config declares a `probe`, first exercise the host capability `bridge`
+/// and report the outcome on `output` (the #2018 runtime-enforcement path);
+/// otherwise the `bridge` is simply dropped and the backend is a plain echo.
 ///
 /// # Safety
 ///
 /// `out_backend` must be a valid, writable `*mut PluginBackend`.
 #[no_mangle]
 pub unsafe extern "C" fn termihub_plugin_create_backend(
-    _config: *const PluginSessionConfig,
+    config: *const PluginSessionConfig,
     output: PluginOutputSender,
+    bridge: PluginHostBridge,
     out_backend: *mut PluginBackend,
 ) -> PluginStatus {
     if out_backend.is_null() {
         return PluginStatus::Other;
     }
+
+    // Parse the optional probe config (absent/empty => plain echo).
+    let cfg = if config.is_null() {
+        ProbeConfig::default()
+    } else {
+        // SAFETY: caller guarantees `config` is valid for the call; `config_json`
+        // borrows host-owned memory that outlives this function.
+        let json = unsafe { (*config).config_json.as_str() };
+        serde_json::from_str::<ProbeConfig>(json).unwrap_or_default()
+    };
+    if !cfg.probe.is_empty() {
+        run_probe(&cfg, &bridge, &output);
+    }
+    // The echo backend keeps no network/filesystem state, so the bridge is done.
+    drop(bridge);
+
     let backend = PluginBackend::from_boxed(Box::new(EchoBackend {
         output,
         alive: AtomicBool::new(true),

@@ -25,8 +25,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Deserialize;
 use termihub_plugin_api::{
-    PluginBackend, PluginError, PluginInfo, PluginOutputSender, PluginSessionConfig, PluginStatus,
-    PluginTerminalBackend, CURRENT_PLUGIN_API_VERSION,
+    PluginBackend, PluginError, PluginHostBridge, PluginInfo, PluginOutputSender,
+    PluginSessionConfig, PluginStatus, PluginTerminalBackend, CURRENT_PLUGIN_API_VERSION,
 };
 
 /// Session configuration this backend accepts, matching the `configSchema`
@@ -121,18 +121,27 @@ pub unsafe extern "C" fn termihub_plugin_init(out_info: *mut PluginInfo) -> Plug
 }
 
 /// Create a session backend from the borrowed `config`, taking ownership of
-/// `output`, and write the resulting [`PluginBackend`] into `out_backend`.
+/// `output` and the host capability `bridge`, and write the resulting
+/// [`PluginBackend`] into `out_backend`.
+///
+/// A pure echo needs neither network nor filesystem access, so it simply drops
+/// `bridge` (releasing the host's context). A real backend would store it and
+/// route its network/filesystem operations through it so the host can enforce the
+/// plugin's declared permissions.
 ///
 /// # Safety
 ///
 /// `config` (if non-null) and `out_backend` must be valid pointers for the
-/// duration of the call; `output` is consumed.
+/// duration of the call; `output` and `bridge` are consumed.
 #[no_mangle]
 pub unsafe extern "C" fn termihub_plugin_create_backend(
     config: *const PluginSessionConfig,
     output: PluginOutputSender,
+    bridge: PluginHostBridge,
     out_backend: *mut PluginBackend,
 ) -> PluginStatus {
+    // This echo backend performs no host-mediated I/O; drop the bridge explicitly.
+    drop(bridge);
     if out_backend.is_null() {
         return PluginStatus::Other;
     }

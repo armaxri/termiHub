@@ -45,8 +45,8 @@ use termihub_plugin_api::symbols::{
     SYMBOL_PLUGIN_SHUTDOWN,
 };
 use termihub_plugin_api::{
-    LoadedBackend, PluginBackend, PluginError, PluginInfo, PluginOutputSender, PluginSessionConfig,
-    CURRENT_PLUGIN_API_VERSION,
+    LoadedBackend, PluginBackend, PluginError, PluginHostBridge, PluginInfo, PluginOutputSender,
+    PluginSessionConfig, CURRENT_PLUGIN_API_VERSION,
 };
 
 use crate::connection::ConnectionTypeRegistry;
@@ -174,30 +174,34 @@ impl LoadedLibrary {
     /// Create a new backend session from this plugin.
     ///
     /// Calls the plugin's `create_backend` entry point with the borrowed
-    /// `config_json` and the host-owned `output` sink, returning a safe
-    /// [`LoadedBackend`] wrapper on success. The returned backend borrows nothing
-    /// from `config_json` (the plugin copies what it needs before the call
-    /// returns), but it *does* depend on this library staying loaded — callers
-    /// must keep an `Arc<LoadedLibrary>` alive for the backend's lifetime.
+    /// `config_json`, the host-owned `output` sink, and the host capability
+    /// `bridge`, returning a safe [`LoadedBackend`] wrapper on success. The
+    /// `bridge` is the plugin's permission-checked route to network/filesystem
+    /// access (#2018); ownership of it transfers to the plugin. The returned
+    /// backend borrows nothing from `config_json` (the plugin copies what it needs
+    /// before the call returns), but it *does* depend on this library staying
+    /// loaded — callers must keep an `Arc<LoadedLibrary>` alive for the backend's
+    /// lifetime.
     pub fn create_backend(
         &self,
         config_json: &str,
         output: PluginOutputSender,
+        bridge: PluginHostBridge,
     ) -> Result<LoadedBackend, PluginError> {
         let config = PluginSessionConfig::new(config_json);
         let mut backend = PluginBackend {
             state: std::ptr::null_mut(),
             vtable: std::ptr::null(),
         };
-        // SAFETY: `config` outlives the call; `output` ownership is transferred to
-        // the plugin; `&mut backend` is a valid out-parameter. The plugin writes a
-        // valid `PluginBackend` on `Ok`. The call is wrapped in `catch_unwind` so a
-        // panic inside the plugin's entry point is contained rather than unwinding
-        // across the FFI boundary (undefined behavior) — a misbehaving plugin must
-        // not crash the host (concept "Error recovery").
+        // SAFETY: `config` outlives the call; `output` and `bridge` ownership are
+        // transferred to the plugin; `&mut backend` is a valid out-parameter. The
+        // plugin writes a valid `PluginBackend` on `Ok`. The call is wrapped in
+        // `catch_unwind` so a panic inside the plugin's entry point is contained
+        // rather than unwinding across the FFI boundary (undefined behavior) — a
+        // misbehaving plugin must not crash the host (concept "Error recovery").
         let create_backend = self.create_backend;
         let status = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
-            create_backend(&config, output, &mut backend)
+            create_backend(&config, output, bridge, &mut backend)
         }))
         .map_err(|_| PluginError::Panicked)?;
         status.into_result()?;

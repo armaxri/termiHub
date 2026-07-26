@@ -228,3 +228,83 @@ impl From<&str> for FfiString {
         Self::from_string(s.to_owned())
     }
 }
+
+/// An **owned**, FFI-safe byte buffer that carries its own destructor.
+///
+/// The byte counterpart of [`FfiString`] — used where the host hands *arbitrary
+/// bytes* back to a plugin (e.g. the contents a host-mediated filesystem read
+/// returns, see [`crate::capabilities`]), which may not be valid UTF-8. Like
+/// [`FfiString`] it embeds the [`FfiStringFree`] function pointer that allocated
+/// it, so whoever ends up holding the value frees it inside the module that owns
+/// the allocation — the host never frees a plugin's buffer with its own allocator
+/// and vice-versa.
+#[repr(C)]
+pub struct FfiOwnedBytes {
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+    /// `None` for the empty buffer, which owns no allocation.
+    free: Option<FfiStringFree>,
+}
+
+// SAFETY: `FfiOwnedBytes` uniquely owns its heap buffer (move-only, no interior
+// mutability), so it is sound to send it and share `&FfiOwnedBytes` across threads.
+unsafe impl Send for FfiOwnedBytes {}
+unsafe impl Sync for FfiOwnedBytes {}
+
+impl FfiOwnedBytes {
+    /// Take ownership of a `Vec<u8>`, producing an FFI-safe owned buffer.
+    #[must_use]
+    pub fn from_vec(bytes: Vec<u8>) -> Self {
+        if bytes.is_empty() {
+            return Self::empty();
+        }
+        let mut bytes = bytes;
+        let (ptr, len, cap) = (bytes.as_mut_ptr(), bytes.len(), bytes.capacity());
+        std::mem::forget(bytes);
+        Self {
+            ptr,
+            len,
+            cap,
+            free: Some(ffi_string_free),
+        }
+    }
+
+    /// An empty owned buffer that holds no allocation.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            ptr: NonNull::dangling().as_ptr(),
+            len: 0,
+            cap: 0,
+            free: None,
+        }
+    }
+
+    /// Borrow the contents as bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        if self.len == 0 {
+            &[]
+        } else {
+            // SAFETY: `ptr`/`len` describe the live, owned buffer.
+            unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
+        }
+    }
+
+    /// Consume the buffer, copying its contents into an owned `Vec<u8>`.
+    #[must_use]
+    pub fn into_vec(self) -> Vec<u8> {
+        self.as_bytes().to_vec()
+    }
+}
+
+impl Drop for FfiOwnedBytes {
+    fn drop(&mut self) {
+        if let Some(free) = self.free.take() {
+            // SAFETY: called exactly once (guarded by taking `free`), with the raw
+            // parts this value has owned since construction.
+            unsafe { free(self.ptr, self.len, self.cap) };
+        }
+    }
+}

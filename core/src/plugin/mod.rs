@@ -59,6 +59,7 @@
 //! helpers build a backend crate's dynamic library and drive this function via
 //! the `termihub-plugin-pack` binary.
 
+mod capabilities;
 mod connection;
 mod host;
 mod manager;
@@ -67,6 +68,7 @@ mod pack;
 mod package;
 mod security;
 
+pub use capabilities::build_host_bridge;
 pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
 pub use host::{
     find_backend_library, load_backend_library, HostError, HostLifecycleHook, LoadedLibrary,
