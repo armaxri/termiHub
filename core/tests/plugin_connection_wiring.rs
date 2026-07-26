@@ -25,7 +25,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, FieldType};
-use termihub_core::plugin::{parse_manifest, InstalledPlugin, PluginHost, PluginState};
+use termihub_core::plugin::{
+    parse_manifest, HostLifecycleHook, InstalledPlugin, PluginHost, PluginManager, PluginState,
+};
 
 /// Path to the fixture plugin's `Cargo.toml` (the same echo `cdylib` the
 /// round-trip test uses).
@@ -108,8 +110,13 @@ fn install(
     std::fs::create_dir_all(&backend).expect("create plugin backend dir");
     std::fs::copy(lib, backend.join(artifact_name())).expect("copy backend library");
 
-    let manifest = parse_manifest(&manifest_json(id, name, connection_type))
-        .expect("fixture manifest should parse");
+    // Write the manifest to disk too, so a `PluginManager` scanning the root sees
+    // an installed plugin (the direct `host.load` callers use the return value and
+    // don't need it, but the startup-load test scans from disk).
+    let manifest_src = manifest_json(id, name, connection_type);
+    std::fs::write(dir.join("manifest.json"), &manifest_src).expect("write manifest");
+
+    let manifest = parse_manifest(&manifest_src).expect("fixture manifest should parse");
     manifest
         .validate()
         .expect("fixture manifest should validate");
@@ -119,6 +126,20 @@ fn install(
         error_message: None,
         installed_at: 0,
     }
+}
+
+/// Lay down a plugin `id` on disk with a valid manifest that declares a terminal
+/// backend but **no** backend library, so loading it fails with
+/// `LibraryNotFound` — used to prove a broken enabled plugin surfaces as `Error`
+/// at startup without aborting the rest of the load.
+fn write_manifest_only(root: &Path, id: &str, name: &str, connection_type: &str) {
+    let dir = root.join(id);
+    std::fs::create_dir_all(&dir).expect("create plugin dir");
+    std::fs::write(
+        dir.join("manifest.json"),
+        manifest_json(id, name, connection_type),
+    )
+    .expect("write manifest");
 }
 
 /// Drive a full terminal round trip through a connection created from the
@@ -203,6 +224,74 @@ async fn plugin_type_is_creatable_and_listed_through_the_registry() {
         .collect();
     assert!(after.contains(&"echo".to_string()));
     assert!(!after.contains(&"echo-echo-b".to_string()));
+}
+
+#[tokio::test]
+async fn already_enabled_plugin_is_loaded_at_startup_without_a_toggle() {
+    // The gap #2010 closes: the manager's scan restores a plugin's persisted
+    // enabled flag but does no loading, so an already-enabled plugin's connection
+    // type is never registered until the user toggles it off/on. Here we lay a
+    // plugin down on disk exactly as a previous session left it, then wire up a
+    // fresh manager+host over a shared registry (as `lib.rs` does at startup) and
+    // confirm `load_enabled_plugins` registers and makes the type creatable with
+    // no enable() call in sight.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let lib = build_fixture(&tmp.path().join("target"));
+    let root = tmp.path().join("plugins");
+    std::fs::create_dir_all(&root).unwrap();
+
+    // A broken enabled plugin alongside the healthy one: it declares a terminal
+    // backend but ships no backend library, so its load must fail. It must
+    // surface as `Error` and must NOT prevent the healthy plugin from loading or
+    // abort startup.
+    let _ = install(&root, &lib, "echo", "Echo", "echo");
+    write_manifest_only(&root, "broken", "Broken", "broken");
+
+    // Fresh "startup": manager wired to a real host over a shared registry.
+    // Nothing toggles either plugin — this is a cold start with both persisted as
+    // enabled (no state file → enabled by default).
+    let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
+    let host = Arc::new(PluginHost::new(root.clone(), Arc::clone(&registry)));
+    let manager = PluginManager::with_hook(
+        root.clone(),
+        Arc::new(HostLifecycleHook::new(Arc::clone(&host))),
+    );
+
+    // Before the startup load, the type is not registered.
+    assert!(
+        !registry.lock().unwrap().has_type("echo"),
+        "type must not be registered before the startup load"
+    );
+
+    // Drive the startup load path.
+    let loaded = manager
+        .load_enabled_plugins()
+        .expect("startup load should not error");
+
+    // The healthy plugin's type is now registered and creatable — no toggle.
+    assert!(
+        registry.lock().unwrap().has_type("echo"),
+        "already-enabled plugin should be loaded at startup"
+    );
+    let mut conn = registry
+        .lock()
+        .unwrap()
+        .create("echo")
+        .expect("plugin type should be creatable straight after startup load");
+    round_trip(&mut conn, b"loaded at startup").await;
+    conn.disconnect().await.unwrap();
+
+    // The broken plugin surfaced as Error, but startup carried on and the healthy
+    // one still loaded.
+    let broken = loaded
+        .iter()
+        .find(|p| p.manifest.id == "broken")
+        .expect("broken plugin should be among those attempted");
+    assert_eq!(broken.state, PluginState::Error);
+    assert!(broken.error_message.is_some());
+    let echo = loaded.iter().find(|p| p.manifest.id == "echo").unwrap();
+    assert_eq!(echo.state, PluginState::Installed);
+    assert!(echo.error_message.is_none());
 }
 
 #[tokio::test]

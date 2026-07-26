@@ -437,6 +437,51 @@ impl PluginManager {
         Ok(disabled)
     }
 
+    /// Load every installed plugin whose persisted state is **enabled and
+    /// compatible**, through the same lifecycle-hook `on_enable` path a fresh
+    /// enable uses. Call this once at startup, after the host is wired in.
+    ///
+    /// The management layer restores each plugin's persisted enabled flag during
+    /// its scan but does **no** loading, so without this an already-enabled
+    /// plugin sits un-loaded until the user toggles it off/on — its
+    /// connection type never gets registered, and a persisted connection of that
+    /// type cannot resolve after a restart. This drives the host's load path for
+    /// each enabled plugin so its `ConnectionType` is registered automatically.
+    ///
+    /// Only plugins the scan resolves to [`PluginState::Installed`] (enabled *and*
+    /// compatible) are loaded: disabled plugins are skipped, and an incompatible
+    /// plugin is never loaded regardless of its flag (run
+    /// [`reconcile_compatibility`](Self::reconcile_compatibility) first to
+    /// auto-disable ones that became incompatible). A plugin whose load **fails**
+    /// surfaces as [`PluginState::Error`] in the returned vector rather than
+    /// aborting startup — it stays installed and enabled, and is retried on the
+    /// next launch or an explicit re-enable.
+    ///
+    /// Returns every plugin it attempted to load, each with its state reflecting
+    /// the outcome ([`PluginState::Installed`] on success,
+    /// [`PluginState::Error`] on failure), so the caller can notify the user of
+    /// any that failed.
+    pub fn load_enabled_plugins(&self) -> Result<Vec<InstalledPlugin>, PluginManagerError> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut attempted = Vec::new();
+        for mut plugin in self.list()? {
+            // `list()` resolves an enabled+compatible plugin to `Installed`, a
+            // disabled one to `Disabled`, and an incompatible one to
+            // `Incompatible`. Only the first should be loaded — this naturally
+            // honors both the persisted flag and API compatibility.
+            if plugin.state != PluginState::Installed {
+                continue;
+            }
+            if let Err(msg) = self.hook.on_enable(&plugin) {
+                plugin.state = PluginState::Error;
+                plugin.error_message = Some(msg);
+            }
+            attempted.push(plugin);
+        }
+        Ok(attempted)
+    }
+
     fn set_enabled(&self, id: &str, enabled: bool) -> Result<InstalledPlugin, PluginManagerError> {
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
 
@@ -1069,6 +1114,98 @@ mod tests {
         assert!(!mgr.read_state_store().unwrap().plugins["legacy"].enabled);
         // Idempotent: a second run finds nothing (already disabled).
         assert!(mgr.reconcile_compatibility().unwrap().is_empty());
+    }
+
+    #[test]
+    fn load_enabled_plugins_loads_enabled_and_skips_disabled_and_incompatible() {
+        // A hook that records the ids it is asked to load, so we can assert the
+        // startup path fires `on_enable` for exactly the enabled+compatible ones.
+        #[derive(Default)]
+        struct RecordingHook {
+            enabled: Mutex<Vec<String>>,
+        }
+        impl PluginLifecycleHook for RecordingHook {
+            fn on_enable(&self, plugin: &InstalledPlugin) -> Result<(), String> {
+                self.enabled
+                    .lock()
+                    .unwrap()
+                    .push(plugin.manifest.id.clone());
+                Ok(())
+            }
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("plugins");
+
+        // Session 1: install three plugins with a plain (no-op) manager, then
+        // disable one and bump another to an incompatible API version — the state
+        // a previous session would persist.
+        {
+            let mgr = PluginManager::new(&root);
+            for id in ["keep-on", "turn-off", "too-new"] {
+                let pkg_dir = TempDir::new().unwrap();
+                let pkg = make_package(pkg_dir.path(), &manifest_json(id, "1.0"), &[]);
+                mgr.install(&pkg, true).unwrap();
+            }
+            mgr.disable("turn-off").unwrap();
+            // Make "too-new" incompatible by rewriting its manifest.
+            let manifest_path = root.join("too-new").join(MANIFEST_FILE_NAME);
+            std::fs::write(&manifest_path, manifest_json("too-new", "2.0")).unwrap();
+        }
+
+        // Session 2 (simulated restart): a manager with the recording hook. The
+        // startup load must fire on_enable for the enabled+compatible plugin only.
+        let hook = Arc::new(RecordingHook::default());
+        let mgr2 = PluginManager::with_hook(&root, hook.clone());
+        let loaded = mgr2.load_enabled_plugins().unwrap();
+
+        assert_eq!(
+            hook.enabled.lock().unwrap().as_slice(),
+            &["keep-on".to_string()],
+            "only the enabled, compatible plugin should be loaded"
+        );
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].manifest.id, "keep-on");
+        assert_eq!(loaded[0].state, PluginState::Installed);
+        assert!(loaded[0].error_message.is_none());
+    }
+
+    #[test]
+    fn load_enabled_plugins_surfaces_a_failure_as_error_without_aborting() {
+        // Fails to load one specific plugin; every other load succeeds.
+        struct FailFor(&'static str);
+        impl PluginLifecycleHook for FailFor {
+            fn on_enable(&self, plugin: &InstalledPlugin) -> Result<(), String> {
+                if plugin.manifest.id == self.0 {
+                    Err("boom".into())
+                } else {
+                    Ok(())
+                }
+            }
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("plugins");
+        {
+            let mgr = PluginManager::new(&root);
+            for id in ["broken", "healthy"] {
+                let pkg_dir = TempDir::new().unwrap();
+                let pkg = make_package(pkg_dir.path(), &manifest_json(id, "1.0"), &[]);
+                mgr.install(&pkg, true).unwrap();
+            }
+        }
+
+        let mgr2 = PluginManager::with_hook(&root, Arc::new(FailFor("broken")));
+        let loaded = mgr2.load_enabled_plugins().unwrap();
+
+        // Both enabled+compatible plugins were attempted; the failing one surfaces
+        // as Error with its message, the other loads cleanly — startup carried on.
+        let broken = loaded.iter().find(|p| p.manifest.id == "broken").unwrap();
+        assert_eq!(broken.state, PluginState::Error);
+        assert_eq!(broken.error_message.as_deref(), Some("boom"));
+        let healthy = loaded.iter().find(|p| p.manifest.id == "healthy").unwrap();
+        assert_eq!(healthy.state, PluginState::Installed);
+        assert!(healthy.error_message.is_none());
     }
 
     #[test]
