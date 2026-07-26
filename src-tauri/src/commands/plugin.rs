@@ -47,14 +47,20 @@ pub fn validate_plugin(
 
 /// Install a plugin from the `.termihub-plugin` package at `path`. Emits
 /// [`EVENT_PLUGINS_CHANGED`] on success.
+///
+/// Every package is from an unverified source (termiHub has no plugin-signing
+/// substrate), so the install dialog shows an untrusted-source warning and the
+/// user's confirmation is passed as `accept_untrusted`. Without it the manager
+/// refuses the install before extracting anything.
 #[tauri::command]
 pub fn install_plugin(
     path: String,
+    accept_untrusted: bool,
     app: AppHandle,
     manager: State<'_, PluginManager>,
 ) -> Result<InstalledPlugin, String> {
     let installed = manager
-        .install(std::path::Path::new(&path))
+        .install(std::path::Path::new(&path), accept_untrusted)
         .map_err(|e| e.to_string())?;
     emit_changed(&app);
     Ok(installed)

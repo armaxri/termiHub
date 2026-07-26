@@ -143,6 +143,12 @@ export interface PluginManifest {
   platforms: PluginPlatform[];
   /** Coarse-grained permissions the plugin requests. */
   permissions: PluginPermission[];
+  /**
+   * Filesystem paths the plugin is scoped to. Only meaningful with the
+   * `filesystem` permission — the host confines the plugin's filesystem access
+   * to these roots. Absent/empty when the plugin requests no filesystem access.
+   */
+  filesystemPaths?: string[];
   /** The extension points the plugin provides. */
   extensions: PluginExtensions;
   /** Optional user-configurable settings, keyed by setting name. */

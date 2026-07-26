@@ -1491,7 +1491,7 @@ interface AppState {
    * Install a `.termihub-plugin` package from `filePath`, then refresh the list.
    * Surfaces a pending → success/error toast; rejects on failure.
    */
-  installPlugin: (filePath: string) => Promise<void>;
+  installPlugin: (filePath: string, acceptUntrusted: boolean) => Promise<void>;
   /** Uninstall a plugin by id, then refresh the list. Toasts feedback; rejects on failure. */
   uninstallPlugin: (pluginId: string) => Promise<void>;
   /** Enable (activate) a plugin by id, then refresh the list. Toasts feedback; rejects on failure. */
@@ -7481,10 +7481,10 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    installPlugin: async (filePath) => {
+    installPlugin: async (filePath, acceptUntrusted) => {
       const toastId = toast.loading("Installing plugin…");
       try {
-        const installed = await apiInstallPlugin(filePath);
+        const installed = await apiInstallPlugin(filePath, acceptUntrusted);
         await get().loadPlugins();
         toast.success(`Installed ${installed.manifest.name}`, { id: toastId });
       } catch (err) {

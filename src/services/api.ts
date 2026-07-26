@@ -2369,9 +2369,20 @@ export async function validatePlugin(filePath: string): Promise<PluginManifest> 
   return await invoke<PluginManifest>("validate_plugin", { filePath });
 }
 
-/** Install a `.termihub-plugin` package from `filePath`, returning the installed record. */
-export async function installPlugin(filePath: string): Promise<InstalledPlugin> {
-  return await invoke<InstalledPlugin>("install_plugin", { filePath });
+/**
+ * Install a `.termihub-plugin` package from `filePath`, returning the installed
+ * record.
+ *
+ * Every package is from an unverified source (termiHub has no plugin-signing
+ * infrastructure), so `acceptUntrusted` records that the user saw the
+ * untrusted-source warning and accepted the risk. The backend refuses the
+ * install if it is not `true`.
+ */
+export async function installPlugin(
+  filePath: string,
+  acceptUntrusted: boolean,
+): Promise<InstalledPlugin> {
+  return await invoke<InstalledPlugin>("install_plugin", { filePath, acceptUntrusted });
 }
 
 /** Uninstall the plugin with the given id. */

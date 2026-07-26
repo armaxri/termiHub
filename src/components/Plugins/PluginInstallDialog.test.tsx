@@ -79,6 +79,13 @@ describe("PluginInstallDialog (#1997)", () => {
     expect(document.querySelector('[data-testid="plugin-install-no-perms"]')).not.toBeNull();
   });
 
+  it("always warns that the source is untrusted", () => {
+    render(manifest());
+    const warning = document.querySelector('[data-testid="plugin-install-untrusted-warning"]');
+    expect(warning).not.toBeNull();
+    expect(warning!.textContent ?? "").toContain("Untrusted source");
+  });
+
   it("installs then enables on confirm, selects the plugin, and closes", async () => {
     const installPlugin = vi.fn(() => Promise.resolve());
     const enablePlugin = vi.fn(() => Promise.resolve());
@@ -96,7 +103,8 @@ describe("PluginInstallDialog (#1997)", () => {
       await Promise.resolve();
     });
 
-    expect(installPlugin).toHaveBeenCalledWith("/tmp/k8s-exec-1.2.0.termihub-plugin");
+    // Confirming implies accepting the untrusted-source risk shown in the dialog.
+    expect(installPlugin).toHaveBeenCalledWith("/tmp/k8s-exec-1.2.0.termihub-plugin", true);
     expect(enablePlugin).toHaveBeenCalledWith("k8s");
     expect(selectPlugin).toHaveBeenCalledWith("k8s");
     expect(onClose).toHaveBeenCalled();
