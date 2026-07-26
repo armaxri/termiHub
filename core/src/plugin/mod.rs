@@ -40,9 +40,19 @@
 //! descriptive [`PluginPackageError`]. API incompatibility is surfaced as its
 //! own distinct outcome so callers can prompt the user to update rather than
 //! treating it as a malformed package.
+//!
+//! # Packaging
+//!
+//! [`pack_plugin`] is the write side of the format: it turns a plugin *source
+//! directory* into a `<id>-<version>.termihub-plugin` archive and then runs
+//! [`validate_package`] over its own output, so the packaging tool can never emit
+//! an artifact the host would reject. The `scripts/package-plugin.{sh,cmd}`
+//! helpers build a backend crate's dynamic library and drive this function via
+//! the `termihub-plugin-pack` binary.
 
 mod manager;
 mod manifest;
+mod pack;
 mod package;
 
 pub use manager::{
@@ -56,6 +66,7 @@ pub use manifest::{
     TerminalBackendExtension, ThemeEntry, ThemeExtension, WidgetPosition,
     CURRENT_PLUGIN_API_VERSION,
 };
+pub use pack::{pack_plugin, PluginPackError};
 pub use package::{
     validate_package, PluginPackageError, MANIFEST_FILE_NAME, MAX_PACKAGE_SIZE_BYTES,
 };

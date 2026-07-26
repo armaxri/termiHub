@@ -108,6 +108,15 @@ winreg = "0.55"
 # sibling `bin\bash.exe` — see `session::shell::git_bash_candidates`.
 which = "7"
 
+# CLI for the plugin packaging tooling (#1994). Gated behind `plugin` so it (and
+# its use of `termihub_core::plugin`) is only built when that feature is on;
+# without the gate, a default-feature `cargo build` would try to compile it and
+# fail. Driven by `scripts/package-plugin.{sh,cmd}`.
+[[bin]]
+name = "termihub-plugin-pack"
+path = "src/bin/plugin_pack.rs"
+required-features = ["plugin"]
+
 [dev-dependencies]
 tempfile = "3"
 temp-env = "0.3"

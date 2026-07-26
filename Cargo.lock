@@ -1910,6 +1910,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "echo-backend"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "termihub-plugin-api",
+]
+
+[[package]]
 name = "ed25519"
 version = "3.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
