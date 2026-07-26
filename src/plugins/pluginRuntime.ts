@@ -207,10 +207,7 @@ export function hasProtocolParsers(): boolean {
  * leaves the running text unchanged. A parser that throws is caught, logged, and
  * skipped. Returns the final text and whether any parser changed it.
  */
-export function applyParsers(
-  data: string,
-  sessionId: string
-): { text: string; changed: boolean } {
+export function applyParsers(data: string, sessionId: string): { text: string; changed: boolean } {
   let text = data;
   let changed = false;
   for (const { pluginId, parser } of parsers) {
