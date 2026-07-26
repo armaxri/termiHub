@@ -289,16 +289,16 @@ directly without staging a clean tree by hand.
 
 Signing is **optional but recommended**. A signed package lets the host verify,
 offline, that it was built by the holder of a specific key and has not been
-altered since — covering the *entire* payload, not just the manifest. Unsigned
+altered since — covering the _entire_ payload, not just the manifest. Unsigned
 packages still install (behind the existing untrusted-source acknowledgement), so
 signing is additive and backward-compatible.
 
 A signed package carries one extra root entry, `signature.json`: a per-entry
 SHA-256 digest map of every other file plus a single Ed25519 signature over a
 canonical form of that map. The signature survives the packer's deterministic
-re-zip because it signs *content*, not byte offsets.
+re-zip because it signs _content_, not byte offsets.
 
-**1. Generate a keypair once** (guard the private key — it *is* your publisher
+**1. Generate a keypair once** (guard the private key — it _is_ your publisher
 identity, and it cannot be recovered if lost):
 
 ```bash
@@ -326,12 +326,12 @@ On Windows use `scripts\package-plugin.cmd … --sign acme.key`.
 **How the host treats it at install** (concept
 `docs/concepts/backlog/plugin-code-signing.html`):
 
-| Package state                                   | Install gate                                              |
-| ----------------------------------------------- | --------------------------------------------------------- |
-| Signed by a **trusted** key (bundled or pinned) | **Verified** — no untrusted-source warning.               |
-| Signed by an **unknown** key                    | Shows the fingerprint; user can **trust it** (pin) once.  |
-| **Unsigned**                                    | The existing untrusted-source acknowledgement (unchanged).|
-| **Signature invalid** (tampered)                | **Blocked**, no override.                                 |
+| Package state                                   | Install gate                                               |
+| ----------------------------------------------- | ---------------------------------------------------------- |
+| Signed by a **trusted** key (bundled or pinned) | **Verified** — no untrusted-source warning.                |
+| Signed by an **unknown** key                    | Shows the fingerprint; user can **trust it** (pin) once.   |
+| **Unsigned**                                    | The existing untrusted-source acknowledgement (unchanged). |
+| **Signature invalid** (tampered)                | **Blocked**, no override.                                  |
 
 Trust-on-first-use pinning is managed in **Settings → Plugins → Trusted
 Publishers**. Re-signing a package with a different key than a user pinned

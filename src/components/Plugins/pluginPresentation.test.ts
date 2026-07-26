@@ -143,7 +143,12 @@ describe("trustBanner", () => {
 
   it("maps verified to a success banner naming the publisher and fingerprint", () => {
     const b = trustBanner(
-      trust({ level: "verified", warning: "", publisher: "ACME", keyId: "sha256:ab12cd34ef56ab129f0e" })
+      trust({
+        level: "verified",
+        warning: "",
+        publisher: "ACME",
+        keyId: "sha256:ab12cd34ef56ab129f0e",
+      })
     );
     expect(b.tone).toBe("verified");
     expect(b.title).toBe("Verified publisher");
@@ -152,7 +157,9 @@ describe("trustBanner", () => {
   });
 
   it("maps signed to a warning banner with the fingerprint", () => {
-    const b = trustBanner(trust({ level: "signed", warning: "", keyId: "sha256:77de11aa22bb1a3c" }));
+    const b = trustBanner(
+      trust({ level: "signed", warning: "", keyId: "sha256:77de11aa22bb1a3c" })
+    );
     expect(b.tone).toBe("warning");
     expect(b.title).toBe("Signed — new publisher");
   });
