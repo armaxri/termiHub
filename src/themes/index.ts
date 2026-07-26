@@ -30,3 +30,22 @@ export {
 } from "./customThemes";
 export { THEME_FILE_SCHEMA, serializeTheme, parseThemeFile, themeFileName } from "./themeIO";
 export type { ThemeFile, ThemeImportResult } from "./themeIO";
+export {
+  PLUGIN_THEME_PREFIX,
+  CORE_THEME_NAMES,
+  PluginThemeError,
+  pluginThemeId,
+  isPluginThemeSetting,
+  parsePluginTheme,
+  loadPluginThemes,
+  setRegisteredPluginThemes,
+  getRegisteredPluginThemes,
+  findRegisteredPluginTheme,
+  clearRegisteredPluginThemes,
+} from "./pluginThemes";
+export type {
+  PluginFileReader,
+  PluginThemeLoadError,
+  PluginThemeLoadResult,
+  LoadPluginThemesOptions,
+} from "./pluginThemes";
