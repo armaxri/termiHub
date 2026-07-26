@@ -25,13 +25,14 @@ use crate::monitoring::MonitoringManagerApi;
 use crate::network;
 use crate::protocol::errors;
 use crate::protocol::methods::{
-    AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
-    AgentRequestUpdateResult, AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams,
-    AgentShutdownResult, Capabilities, ConnectionCreateParams, ConnectionDeleteParams,
-    ConnectionInfo, ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams,
-    FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams,
-    FilesReadResult, FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams,
-    FolderDeleteParams, FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
+    AgentForwardCloseParams, AgentForwardDataParams, AgentRequestDeferredUpdateParams,
+    AgentRequestDeferredUpdateResult, AgentRequestUpdateParams, AgentRequestUpdateResult,
+    AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
+    Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
+    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
+    FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult,
+    FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams,
+    FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
     MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
     NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
     SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
@@ -54,7 +55,9 @@ use crate::update::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 /// `client_id` field in the `initialize` result (#1349).
 /// Bumped to 0.4.0 for the additive `agent.request_update` RPC and the
 /// `agent.update_pending` notification (#1351).
-const AGENT_PROTOCOL_VERSION: &str = "0.4.0";
+/// Bumped to 0.5.0 for the additive `agent.forward.*` ssh-agent relay methods
+/// and notifications (#1727).
+const AGENT_PROTOCOL_VERSION: &str = "0.5.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -339,6 +342,8 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_connection_detach(module)?;
     register_connection_write(module)?;
     register_connection_resize(module)?;
+    register_agent_forward_data(module)?;
+    register_agent_forward_close(module)?;
     register_connection_types(module)?;
     register_session_get_buffer(module)?;
     register_connections_list(module)?;
@@ -663,6 +668,48 @@ fn register_connection_resize(module: &mut RpcModule<Mutex<HandlerState>>) -> an
                     json!({"session_id": p.session_id}),
                 )
             })?;
+
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
+
+/// `agent.forward.data`: the desktop's ssh-agent reply bytes for a forwarded
+/// stream (#1727). Routed to the matching relay connection; unknown streams are
+/// a benign no-op (the stream may have already closed).
+fn register_agent_forward_data(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("agent.forward.data", |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
+
+        let p: AgentForwardDataParams = params
+            .parse()
+            .map_err(|e| invalid_params("agent.forward.data", e))?;
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let data = b64
+            .decode(&p.data)
+            .map_err(|e| rpc_err(errors::INVALID_PARAMS, format!("Invalid base64 data: {e}")))?;
+
+        session_manager
+            .agent_forward_write(&p.stream_id, data)
+            .await;
+
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
+    Ok(())
+}
+
+/// `agent.forward.close`: the desktop closed a forwarded ssh-agent stream
+/// (#1727). Drops the relay connection so the daemon's bridge sees EOF.
+fn register_agent_forward_close(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("agent.forward.close", |params, ctx, _ext| async move {
+        let session_manager = get_session_manager(&ctx).await?;
+
+        let p: AgentForwardCloseParams = params
+            .parse()
+            .map_err(|e| invalid_params("agent.forward.close", e))?;
+
+        session_manager.agent_forward_close(&p.stream_id).await;
 
         Ok::<_, ErrorObjectOwned>(json!({}))
     })?;
@@ -1985,10 +2032,68 @@ mod tests {
     }
 
     /// The RPC must be advertised, and the bump is what tells an older desktop
-    /// that `agent.update_pending` may now arrive.
+    /// which additive capabilities (`agent.update_pending`, the `agent.forward.*`
+    /// ssh-agent relay) may now arrive.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.4.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.5.0");
+    }
+
+    // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
+
+    /// A well-formed `agent.forward.data` for an unknown stream is accepted and
+    /// succeeds (the relay silently drops it) — a stray frame for a closed
+    /// stream must never surface an error to the desktop.
+    #[tokio::test]
+    async fn agent_forward_data_routes_and_succeeds() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let result = dispatch(
+            &handler,
+            "agent.forward.data",
+            json!({ "stream_id": "sess#1", "data": b64.encode(b"agent-bytes") }),
+            2,
+        )
+        .await;
+
+        assert!(result.get("result").is_some(), "{result}");
+    }
+
+    /// Malformed base64 in `agent.forward.data` is rejected as invalid params
+    /// rather than silently mishandled.
+    #[tokio::test]
+    async fn agent_forward_data_rejects_bad_base64() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "agent.forward.data",
+            json!({ "stream_id": "sess#1", "data": "not*base64" }),
+            2,
+        )
+        .await;
+
+        assert_eq!(result["error"]["code"], errors::INVALID_PARAMS, "{result}");
+    }
+
+    /// `agent.forward.close` for an unknown stream is a benign success.
+    #[tokio::test]
+    async fn agent_forward_close_succeeds() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "agent.forward.close",
+            json!({ "stream_id": "sess#1" }),
+            2,
+        )
+        .await;
+
+        assert!(result.get("result").is_some(), "{result}");
     }
 
     // ── agent.list_connections ─────────────────────────────────────
@@ -3507,6 +3612,10 @@ mod tests {
         }
 
         async fn set_persistent_buffer_size_bytes(&self, _bytes: usize) {}
+
+        async fn agent_forward_write(&self, _stream_id: &str, _data: Vec<u8>) {}
+
+        async fn agent_forward_close(&self, _stream_id: &str) {}
     }
 
     fn make_mock_handler() -> AgentHandler {
