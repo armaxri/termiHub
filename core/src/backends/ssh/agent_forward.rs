@@ -57,11 +57,56 @@ async fn connect_local_agent() -> std::io::Result<tokio::net::UnixStream> {
     tokio::net::UnixStream::connect(sock).await
 }
 
+/// Env var that overrides the Windows agent-bridge target named pipe (#2038).
+///
+/// The unix relay hands the session daemon a per-session `$SSH_AUTH_SOCK`; the
+/// Windows bridge has no such convention baked in (it opens a *fixed* OpenSSH
+/// pipe and ignores `SSH_AUTH_SOCK`), so the per-session relay pipe is injected
+/// through this dedicated variable instead — keeping it clear of a real local
+/// OpenSSH agent. Only the session daemon ever has it set, so the desktop's own
+/// [`connect_local_agent_boxed`] still reaches the operator's real agent pipe.
+#[cfg(windows)]
+pub const AGENT_PIPE_ENV: &str = "TERMIHUB_SSH_AGENT_PIPE";
+
+/// The fixed OpenSSH agent pipe used when no per-session override is injected.
+#[cfg(windows)]
+const OPENSSH_AGENT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
+
 /// Connect a raw byte stream to the local SSH agent (Windows OpenSSH named pipe).
+///
+/// Honors [`AGENT_PIPE_ENV`] when set — the per-session relay pipe injected into
+/// the session daemon (#2038) — and otherwise the fixed OpenSSH agent pipe. When
+/// the target pipe reports every instance momentarily busy (`ERROR_PIPE_BUSY`,
+/// which the relay causes for a tiny window while it re-arms its next server
+/// instance), it retries briefly rather than failing; a genuinely absent pipe
+/// returns `NotFound` immediately, preserving the graceful no-op.
 #[cfg(windows)]
 async fn connect_local_agent() -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeClient>
 {
-    tokio::net::windows::named_pipe::ClientOptions::new().open(r"\\.\pipe\openssh-ssh-agent")
+    use tokio::net::windows::named_pipe::ClientOptions;
+    use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+
+    let pipe = std::env::var_os(AGENT_PIPE_ENV)
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| OPENSSH_AGENT_PIPE.into());
+
+    // A handful of quick retries covers the re-arm race without hanging: at
+    // 25 ms each this is well under a second, and only ERROR_PIPE_BUSY loops —
+    // every other error (including a missing pipe) returns at once.
+    const MAX_ATTEMPTS: u32 = 20;
+    for attempt in 0..MAX_ATTEMPTS {
+        match ClientOptions::new().open(&pipe) {
+            Ok(client) => return Ok(client),
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY as i32) => {
+                if attempt + 1 == MAX_ATTEMPTS {
+                    return Err(e);
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!("loop returns on the final attempt")
 }
 
 /// Neither Unix domain sockets nor the Windows agent pipe exist on other targets;
