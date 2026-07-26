@@ -104,7 +104,7 @@ pub mod symbols;
 pub use backend::{LoadedBackend, PluginBackend, PluginBackendVTable, PluginTerminalBackend};
 pub use capabilities::{
     HostTcpStream, PluginFileMetadata, PluginHostBridge, PluginTcpStream, PluginTcpStreamVTable,
-    PluginWriteMode,
+    PluginWriteMode, StreamDropGuard,
 };
 pub use error::{PluginError, PluginStatus};
 pub use ffi::{FfiByteSlice, FfiOwnedBytes, FfiStr, FfiString};
@@ -127,4 +127,11 @@ pub use output::PluginOutputSender;
 /// vtable grew mediated filesystem `write_file` (create / truncate / append),
 /// `stat_path`, and `list_dir` callbacks — a layout change that breaks plugins
 /// built against version `2`.
+///
+/// **Not** bumped for #2028 (per-session connection limits and a configurable
+/// connect timeout): that policy is enforced entirely host-side. The mediated
+/// stream gained an optional host-side drop guard
+/// ([`StreamDropGuard`](capabilities::StreamDropGuard)), but it lives behind the
+/// stream's opaque `state` pointer, so no vtable or `#[repr(C)]` layout changed
+/// and version-`3` plugins stay compatible.
 pub const CURRENT_PLUGIN_API_VERSION: u32 = 3;

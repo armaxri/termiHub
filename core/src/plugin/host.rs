@@ -51,6 +51,7 @@ use termihub_plugin_api::{
 
 use crate::connection::ConnectionTypeRegistry;
 
+use super::capabilities::ConnectionPolicy;
 use super::connection::PluginConnectionType;
 use super::manager::InstalledPlugin;
 use super::security::{PermissionError, PermissionSet, RecoveryAction, RestartTracker};
@@ -504,6 +505,11 @@ impl PluginHost {
         // so a host-mediated capability (filesystem path resolution, network, …)
         // can enforce it per session.
         let perms_for_factory = permissions.clone();
+        // Resolve the session connection policy (concurrency ceiling + connect
+        // timeout) from the manifest once at load time; every session gets it
+        // (#2028).
+        let policy_for_factory =
+            ConnectionPolicy::from_manifest(plugin.manifest.connection_policy.as_ref());
 
         {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
@@ -512,13 +518,16 @@ impl PluginHost {
                 &display_name,
                 "puzzle",
                 Box::new(move || {
-                    Box::new(PluginConnectionType::new(
-                        Arc::clone(&lib_for_factory),
-                        ct_for_factory.clone(),
-                        dn_for_factory.clone(),
-                        schema_for_factory.clone(),
-                        perms_for_factory.clone(),
-                    ))
+                    Box::new(
+                        PluginConnectionType::new(
+                            Arc::clone(&lib_for_factory),
+                            ct_for_factory.clone(),
+                            dn_for_factory.clone(),
+                            schema_for_factory.clone(),
+                            perms_for_factory.clone(),
+                        )
+                        .with_connection_policy(policy_for_factory),
+                    )
                 }),
             );
         }
