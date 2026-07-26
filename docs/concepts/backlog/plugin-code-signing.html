@@ -1,0 +1,1138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plugin Code Signing (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Only the symbols used below. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-puzzle" viewBox="0 0 24 24">
+        <path
+          d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"
+        />
+      </symbol>
+      <symbol id="i-package" viewBox="0 0 24 24">
+        <path
+          d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z"
+        />
+        <path d="M12 22V12" />
+        <polyline points="3.29 7 12 12 20.71 7" />
+        <path d="m7.5 4.27 9 5.15" />
+      </symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+      </symbol>
+      <symbol id="i-shield-check" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-shield-alert" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+        <path d="M12 8v4" />
+        <path d="M12 16h.01" />
+      </symbol>
+      <symbol id="i-shield-x" viewBox="0 0 24 24">
+        <path
+          d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"
+        />
+        <path d="m14.5 9.5-5 5" />
+        <path d="m9.5 9.5 5 5" />
+      </symbol>
+      <symbol id="i-key-round" viewBox="0 0 24 24">
+        <path
+          d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"
+        />
+        <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" />
+      </symbol>
+      <symbol id="i-circle-alert" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" x2="12" y1="8" y2="12" />
+        <line x1="12" x2="12.01" y1="16" y2="16" />
+      </symbol>
+      <symbol id="i-trash-2" viewBox="0 0 24 24">
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M3 6h18" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Plugin Code Signing</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog · not implemented</span>
+          <span
+            >GitHub Issue:
+            <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a></span
+          >
+          <span><code>docs/concepts/backlog/plugin-code-signing.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#scheme">Signing Scheme — Options &amp; Recommendation</a></li>
+          <li><a href="#format">On-Disk Signature Format</a></li>
+          <li><a href="#trust">Key Distribution &amp; Trust Anchoring</a></li>
+          <li><a href="#ui">UI Interface</a></li>
+          <li><a href="#handling">General Handling</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          The plugin system ships a fully working install/permission gate, but its very first
+          decision node is a promise the code cannot yet keep. The security flowchart in
+          <a href="../implemented/plugin-system.html#behavior">plugin-system.html</a> opens with
+          <em>“Signature valid?”</em>, then falls through the <strong>“No / Unsigned”</strong> arm
+          for every package because termiHub has <strong>no signing substrate</strong> — no keys, no
+          package signature format, no verification chain.
+          <a href="https://github.com/armaxri/termiHub/issues/2001">#2001</a> (PR
+          <a href="https://github.com/armaxri/termiHub/pull/2016">#2016</a>) built only the
+          <strong>untrusted-source warning path</strong>:
+          <code>core/src/plugin/security.rs::assess_trust</code> unconditionally returns
+          <code>TrustLevel::Untrusted</code>, and <code>PluginManager::install</code> requires an
+          explicit <code>accept_untrusted</code> flag before extraction. Cryptographic
+          <em>verification</em> was left, by name, to this issue.
+        </p>
+        <p>
+          This matters more for plugins than for most download flows: a native backend plugin is a
+          dynamic library that runs <strong>in the host process with the app's own privileges</strong>
+          (documented in <code>security.rs</code>). There is no OS sandbox around it, so
+          “where did this <code>.termihub-plugin</code> come from, and has it been altered since?” is
+          the only line of defence a user has before that code executes. This concept designs that
+          line: a signing scheme, an on-disk signature format that stays inside the existing
+          single-file package, a trust-anchoring model, and the evolution of
+          <code>assess_trust</code> into a real verified-identity check that changes the install gate.
+        </p>
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            A plugin author can <strong>sign</strong> a <code>.termihub-plugin</code> package with a
+            keypair they control, using a first-party tool.
+          </li>
+          <li>
+            The host can <strong>verify</strong>, offline, that a package (a) was signed by a
+            specific key and (b) has not been altered since — covering the
+            <em>entire</em> payload, not just the manifest.
+          </li>
+          <li>
+            <code>assess_trust</code> reports a real trust level with a verified publisher identity;
+            the install gate stops warning about packages from <strong>trusted</strong> publishers
+            and hard-blocks packages whose signature does not verify (tampered).
+          </li>
+          <li>
+            The user can build and manage a <strong>trust store</strong> of publisher keys — first
+            use establishes trust (with an explicit, fingerprint-visible confirmation), later
+            updates from the same key verify silently.
+          </li>
+          <li>
+            The package stays a <strong>single self-contained file</strong>; nothing about
+            distribution changes for the user beyond a green badge.
+          </li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            <strong>Sandboxing / execution isolation.</strong> Signing proves provenance and
+            integrity; it does not confine a signed plugin's syscalls. The in-process direct-syscall
+            bypass documented in <code>security.rs</code> (and the plugin-system sync ledger, row 2)
+            is out of scope and orthogonal.
+          </li>
+          <li>
+            <strong>A central certificate authority / online revocation.</strong> No termiHub-operated
+            registry that counter-signs publishers, and no OCSP/CRL network calls, in v1. A future
+            registry tier is sketched but deferred (see <a href="#trust">Key Distribution</a>).
+          </li>
+          <li>
+            <strong>Reusing the OS code-signing chains</strong> (Authenticode / Apple Developer ID).
+            Those sign the <em>app</em> (see
+            <a href="macos-code-signing-notarization.html">macos-code-signing-notarization.html</a>);
+            plugins are cross-platform data files installed after the app ships, so they need their
+            own portable, in-package scheme.
+          </li>
+          <li>Signing frontend-JS or theme-only plugins differently from backend plugins — one scheme covers all package kinds.</li>
+        </ul>
+      </section>
+
+      <!-- ── Signing Scheme ─────────────────────────────────────────── -->
+      <section>
+        <h2 id="scheme">
+          Signing Scheme — Options &amp; Recommendation <a class="anchor" href="#scheme">#</a>
+        </h2>
+        <p>
+          The design axis is <em>what gets signed</em> and <em>where the signature lives</em>. Four
+          candidates, evaluated against the two properties the package format already commits to —
+          it is a <strong>single <code>.termihub-plugin</code> file</strong>
+          (<code>core/src/plugin/mod.rs</code>), and it is <strong>re-zipped deterministically</strong>
+          by the packer (<code>pack.rs</code>, which then round-trip-validates its own output).
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Option</th>
+                <th>Mechanism</th>
+                <th>Assessment</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>A.</strong> Detached sibling <code>.sig</code></td>
+                <td>
+                  Ship <code>&lt;pkg&gt;.termihub-plugin.sig</code> next to the package; verify the
+                  file bytes against it.
+                </td>
+                <td>
+                  <strong>Rejected.</strong> Breaks the single-file property. Worse, a
+                  <em>missing</em> sibling is indistinguishable from “never signed”, so the common
+                  case (author forgot to attach it) silently downgrades to unsigned rather than
+                  failing loudly.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>B.</strong> Sign the raw ZIP bytes</td>
+                <td>
+                  Compute a signature over the whole archive's bytes and append it as a trailer
+                  after the ZIP end-of-central-directory record.
+                </td>
+                <td>
+                  <strong>Rejected.</strong> Brittle: the signature covers an exact byte layout, so
+                  any normalization or re-pack (exactly what <code>pack.rs</code> does) invalidates
+                  it, and reading requires bespoke trailer parsing rather than the ZIP reader the
+                  validator already uses.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>C.</strong> Embedded signature over a content digest <em>(recommended)</em></td>
+                <td>
+                  Add a <code>signature.json</code> ZIP entry carrying a per-entry SHA-256 digest map
+                  of <em>every other</em> entry plus one signature over a canonical form of that map.
+                  JAR / Android APK-v1 shape.
+                </td>
+                <td>
+                  <strong>Recommended.</strong> Single self-contained file; robust to deterministic
+                  re-zipping because it signs <em>content</em>, not byte offsets; verifiable through
+                  the exact <code>ZipArchive</code> read path <code>validate_package</code> already
+                  uses; the signature entry naturally excludes itself.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>D.</strong> Sign only <code>manifest.json</code></td>
+                <td>Signature covers a hash of the manifest alone.</td>
+                <td>
+                  <strong>Rejected.</strong> Leaves the executable payload unprotected — an attacker
+                  swaps <code>backend/lib*.so</code> and the manifest still verifies. That is exactly
+                  the artifact that runs in-process with app privileges, so it is the one thing that
+                  <em>must</em> be covered.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Recommendation: Option&nbsp;C</strong>, an embedded
+          <code>signature.json</code> entry whose signature covers a canonical digest of the full
+          package contents. It is the only option that preserves the format's single-file identity,
+          survives the packer's own deterministic re-zip, and protects the whole payload rather than
+          just the metadata.
+        </p>
+        <h3>Algorithm choice</h3>
+        <ul>
+          <li>
+            <strong>Signature: Ed25519.</strong> 32-byte public keys and 64-byte signatures, no
+            curve/parameter selection to get wrong, fast to verify, and well-served by the mature
+            <code>ed25519-dalek</code> crate. A short public key is what makes a human-readable
+            fingerprint and a small trust-store row practical.
+          </li>
+          <li>
+            <strong>Per-entry digest: SHA-256.</strong> Already the integrity primitive used by the
+            agent-update path (<a href="../implemented/remote-agent-update-strategy.html">remote-agent-update-strategy.html</a>),
+            so it keeps one hash family across the project.
+          </li>
+          <li>
+            <strong>Key fingerprint / <code>keyId</code>:</strong>
+            <code>sha256(publicKey-bytes)</code>, rendered as
+            <code>sha256:</code> + lowercase hex, and shown to users truncated
+            (e.g. <code>sha256:ab12&nbsp;cd34&nbsp;…&nbsp;9f0e</code>). This is the identity the
+            trust store keys on.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── On-disk format ─────────────────────────────────────────── -->
+      <section>
+        <h2 id="format">On-Disk Signature Format <a class="anchor" href="#format">#</a></h2>
+        <p>
+          A signed package is an ordinary <code>.termihub-plugin</code> ZIP with one added
+          well-known root entry, <code>signature.json</code> (a new constant
+          <code>SIGNATURE_FILE_NAME</code>, sitting beside the existing
+          <code>MANIFEST_FILE_NAME</code>). An <em>unsigned</em> package simply omits it — so the
+          format is backward-compatible and the presence of the entry is itself the “is this signed?”
+          signal.
+        </p>
+        <pre class="mockup-note" style="white-space: pre; overflow-x: auto"><code>my-plugin.termihub-plugin (ZIP)
+├── manifest.json           # required — unchanged
+├── signature.json          # NEW — present iff the package is signed
+├── backend/…               # covered by the digest map
+├── frontend/…              # covered by the digest map
+├── themes/…                # covered by the digest map
+└── README.md               # covered by the digest map</code></pre>
+        <p>The <code>signature.json</code> body:</p>
+        <pre class="mockup-note" style="white-space: pre; overflow-x: auto"><code>{
+  "formatVersion": 1,
+  "algorithm": "ed25519",
+  "digestAlgorithm": "sha256",
+  "signedAt": "2026-07-26T12:00:00Z",
+  "publicKey": "&lt;base64 of the 32-byte Ed25519 public key&gt;",
+  "keyId": "sha256:ab12cd34…9f0e",
+  "files": {
+    "manifest.json":            "sha256:9f2b…",
+    "backend/libk8s_exec.so":   "sha256:04ac…",
+    "README.md":                "sha256:1188…"
+  },
+  "signature": "&lt;base64 of the Ed25519 signature over the signing payload&gt;"
+}</code></pre>
+        <h3>What the signature actually covers</h3>
+        <p>
+          The signature is <strong>not</strong> taken over the JSON text (whitespace and key order
+          would make that non-deterministic). It is taken over a <strong>canonical signing
+          payload</strong> constructed deterministically from the fields, so the verifier can
+          rebuild the exact bytes regardless of how the JSON was serialized:
+        </p>
+        <pre class="mockup-note" style="white-space: pre; overflow-x: auto"><code>signing_payload =
+    "termihub-plugin-signature/v1\n"        // domain-separation tag
+  + "algorithm:ed25519\n"
+  + "keyId:" + keyId + "\n"
+  + for each (name, digest) in files, sorted by name:
+        name + "\0" + digest + "\n"</code></pre>
+        <ul>
+          <li>
+            The leading <strong>domain-separation tag</strong> ensures a signature made for one
+            purpose can never be replayed as another (a Plugin signature is not a valid anything-else
+            signature).
+          </li>
+          <li>
+            The <code>files</code> map lists <strong>every entry except <code>signature.json</code>
+            itself</strong>. Verification recomputes each entry's SHA-256 and requires an
+            <em>exact set match</em>: a digest mismatch, a listed-but-missing entry, <em>or an
+            unlisted entry present in the archive</em> all fail. The last case is what stops an
+            attacker from appending an extra file the signer never saw.
+          </li>
+          <li>
+            <code>publicKey</code> is embedded so verification is self-contained; it is not
+            <em>trusted</em> by being embedded — <code>keyId</code> must equal
+            <code>sha256(publicKey)</code>, and trust is decided separately against the trust store
+            (<a href="#trust">next section</a>).
+          </li>
+        </ul>
+        <p>
+          <strong>Size guard.</strong> The existing 50&nbsp;MB
+          <code>MAX_PACKAGE_SIZE_BYTES</code> pre-open check is unchanged; <code>signature.json</code>
+          is tiny and adds nothing meaningful. Verification only reads entries that already had to be
+          extracted, so it does not weaken the “reject before decompressing” property.
+        </p>
+      </section>
+
+      <!-- ── Trust anchoring ────────────────────────────────────────── -->
+      <section>
+        <h2 id="trust">
+          Key Distribution &amp; Trust Anchoring <a class="anchor" href="#trust">#</a>
+        </h2>
+        <p>
+          A valid signature only proves “the holder of key <em>K</em> produced this package,
+          unaltered”. It says nothing about whether <em>K</em> should be trusted. That decision is
+          the trust store's job.
+        </p>
+        <h3>Who signs, and how a key is born</h3>
+        <ul>
+          <li>
+            A plugin author generates an <strong>Ed25519 keypair</strong> once, with a new first-party
+            tool <code>termihub-plugin-keygen</code>. The private key stays with the author (a file
+            they guard, or the OS keychain); the public key and a chosen human label
+            (<em>“ACME Terminals”</em>) are what they publish — on the plugin's release page,
+            repository, or website — alongside the fingerprint.
+          </li>
+          <li>
+            Signing is a distinct step from packing: <code>termihub-plugin-pack</code> gains a
+            <code>--sign &lt;private-key&gt;</code> flag (equivalently a standalone
+            <code>termihub-plugin-sign &lt;pkg&gt;</code>) that computes the digest map and writes
+            <code>signature.json</code> into an already-built package.
+          </li>
+        </ul>
+        <h3>How the host learns to trust a key</h3>
+        <p>Three anchoring models were considered:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Decision</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Central registry CA</strong> — termiHub operates a root key that counter-signs vetted publishers; the root ships in-app.</td>
+                <td>
+                  <strong>Deferred.</strong> Strongest trust, but needs operated infrastructure,
+                  vetting policy, and a revocation story. Sketched as a future tier; not v1.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Trust-on-first-use (TOFU) + explicit pinning</strong> — first install of a signed-but-unknown key shows its fingerprint and asks the user to trust it; accepting pins the key.</td>
+                <td>
+                  <strong>Recommended for v1.</strong> No infrastructure, works offline, and matches
+                  a pattern already in the codebase — the
+                  <a href="../implemented/remote-desktop-sessions.html">remote-desktop</a> host-key
+                  trust store and SSH host-key acceptance both work this way.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Bundled first-party keys</strong> — a small set of termiHub-official publisher public keys ships pre-trusted in the app.</td>
+                <td>
+                  <strong>Adopt alongside TOFU.</strong> Lets official/example plugins verify as
+                  <code>Verified</code> out of the box, without the user pinning anything.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Recommendation:</strong> TOFU + manual pinning as the primary anchor, seeded with a
+          bundled set of first-party keys, leaving room for an optional registry-CA tier later. The
+          crucial UX rule: <strong>establishing trust is always an explicit, fingerprint-visible act</strong> —
+          termiHub never silently trusts a key it has not seen.
+        </p>
+        <h3>The trust store</h3>
+        <p>
+          A host-side JSON file, <code>&lt;app-data&gt;/plugins/trust-store.json</code>, is a list of
+          trusted publisher keys. It reuses the app-data + portable-mode redirection every other
+          plugin file already respects.
+        </p>
+        <pre class="mockup-note" style="white-space: pre; overflow-x: auto"><code>{
+  "publishers": [
+    {
+      "keyId":     "sha256:ab12cd34…9f0e",
+      "publicKey": "&lt;base64 32-byte key&gt;",
+      "label":     "ACME Terminals",
+      "source":    "user-pinned",     // or "bundled"
+      "addedAt":   "2026-07-26T12:04:00Z"
+    }
+  ]
+}</code></pre>
+        <p>
+          Managed from <strong>Settings → Plugins → Trusted Publishers</strong>: view pinned keys,
+          revoke (remove) one — after which packages from that key drop back to
+          <code>Signed</code> (unknown) — and see which are bundled first-party keys (not removable).
+          Removing trust does not uninstall already-installed plugins; it only affects future install
+          and update gates.
+        </p>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">UI Interface <a class="anchor" href="#ui">#</a></h2>
+        <p>
+          Signing does not add a new screen; it re-skins the existing <strong>Install Plugin</strong>
+          overlay (the <code>menu menu--wide</code> from
+          <a href="../implemented/plugin-system.html#ui">plugin-system.html</a>) with a
+          <strong>provenance banner</strong> above the permission prompt, and adds one
+          <strong>Trusted Publishers</strong> group to the Plugins settings. The banner has four
+          states, one per trust level.
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — Install gate, provenance banner states</h3>
+          <div class="mockup-note">
+            The banner sits between the parsed-manifest block <span class="callout">A</span> and the
+            <strong>Requested Permissions</strong> list. Its colour, icon and footer action are
+            driven by the <code>TrustLevel</code> from <code>assess_trust</code>.
+          </div>
+
+          <h4>1 · Verified publisher — key already trusted</h4>
+          <div class="menu menu--wide">
+            <div class="menu__title">Install Plugin</div>
+            <div class="install-meta">
+              <div class="install-meta__row">
+                <span class="install-meta__label">File</span>
+                <span class="install-meta__file">
+                  <svg class="li"><use href="#i-package" /></svg> k8s-exec-1.2.0.termihub-plugin
+                </span>
+              </div>
+              <div class="install-meta__row">
+                <span class="install-meta__label">Plugin</span><span>Kubernetes Exec</span>
+              </div>
+              <div class="install-meta__row">
+                <span class="install-meta__label">Author</span><span>k8s-contrib</span>
+              </div>
+            </div>
+            <div class="perm-prompt" style="border-left: 3px solid #4ec9b0">
+              <div class="perm-row">
+                <svg class="li" style="color: #4ec9b0"><use href="#i-shield-check" /></svg>
+                <div>
+                  <span class="perm-row__name" style="color: #4ec9b0">Verified publisher</span>
+                  <span class="perm-row__desc"
+                    >— signed by <strong>ACME Terminals</strong> (trusted).
+                    <code>sha256:ab12…9f0e</code></span
+                  >
+                </div>
+              </div>
+            </div>
+            <div class="perm-prompt">
+              <div class="perm-prompt__title">Requested Permissions</div>
+              <div class="perm-row">
+                <svg class="li"><use href="#i-shield-alert" /></svg>
+                <div>
+                  <span class="perm-row__name">Terminal</span>
+                  <span class="perm-row__desc">— create terminal sessions</span>
+                </div>
+              </div>
+            </div>
+            <div class="menu__footer">
+              <button class="btn">Cancel</button>
+              <button class="btn btn--primary" style="margin-left: auto">Install &amp; Enable</button>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Green shield — the signing key is in the trust store.
+                No untrusted-source warning; the user proceeds straight to the permission prompt.
+              </li>
+            </ul>
+          </div>
+
+          <h4>2 · Signed, unknown publisher — trust-on-first-use</h4>
+          <div class="menu menu--wide">
+            <div class="menu__title">Install Plugin</div>
+            <div class="install-meta">
+              <div class="install-meta__row">
+                <span class="install-meta__label">File</span>
+                <span class="install-meta__file">
+                  <svg class="li"><use href="#i-package" /></svg> aws-cloudshell-0.9.0.termihub-plugin
+                </span>
+              </div>
+              <div class="install-meta__row">
+                <span class="install-meta__label">Author</span><span>cloud-tools</span>
+              </div>
+            </div>
+            <div class="perm-prompt" style="border-left: 3px solid #d7a35c">
+              <div class="perm-row">
+                <svg class="li" style="color: #d7a35c"><use href="#i-key-round" /></svg>
+                <div>
+                  <span class="perm-row__name" style="color: #d7a35c">Signed — new publisher</span>
+                  <span class="perm-row__desc"
+                    >— valid signature from an unrecognised key.
+                    <code>sha256:77de…1a3c</code></span
+                  >
+                </div>
+              </div>
+              <div class="perm-row">
+                <span class="radio"></span>
+                <div>
+                  <span class="perm-row__name">Trust this publisher</span>
+                  <span class="perm-row__desc"
+                    >— pin the key so future updates verify automatically</span
+                  >
+                </div>
+              </div>
+            </div>
+            <div class="menu__footer">
+              <button class="btn">Cancel</button>
+              <button class="btn btn--primary" style="margin-left: auto">Trust &amp; Install</button>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">B</span> Amber key — the signature verifies but the key is not
+                pinned. The fingerprint is shown so the user can compare it against the publisher's
+                site. Ticking <strong>Trust this publisher</strong> writes the key into the trust
+                store on install.
+              </li>
+            </ul>
+          </div>
+
+          <h4>3 · Unsigned — the existing untrusted-source path (unchanged)</h4>
+          <div class="menu menu--wide">
+            <div class="menu__title">Install Plugin</div>
+            <div class="perm-prompt" style="border-left: 3px solid #d7a35c">
+              <div class="perm-row">
+                <svg class="li" style="color: #d7a35c"><use href="#i-shield-alert" /></svg>
+                <div>
+                  <span class="perm-row__name" style="color: #d7a35c">Untrusted source</span>
+                  <span class="perm-row__desc"
+                    >— this package is not signed. termiHub cannot check who built it. A native
+                    plugin runs with the app's privileges.</span
+                  >
+                </div>
+              </div>
+              <div class="perm-row">
+                <span class="radio"></span>
+                <div>
+                  <span class="perm-row__name">I understand the risk</span>
+                  <span class="perm-row__desc">— install this unsigned plugin anyway</span>
+                </div>
+              </div>
+            </div>
+            <div class="menu__footer">
+              <button class="btn">Cancel</button>
+              <button class="btn btn--primary" style="margin-left: auto">Install Anyway</button>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">C</span> Unchanged from
+                <a href="https://github.com/armaxri/termiHub/pull/2016">#2016</a> — no signature, so
+                the <code>accept_untrusted</code> acknowledgement still gates the install.
+              </li>
+            </ul>
+          </div>
+
+          <h4>4 · Tampered — signature present but invalid (blocked)</h4>
+          <div class="menu menu--wide">
+            <div class="menu__title">Install Plugin</div>
+            <div class="perm-prompt" style="border-left: 3px solid #f44747">
+              <div class="perm-row">
+                <svg class="li" style="color: #f44747"><use href="#i-shield-x" /></svg>
+                <div>
+                  <span class="perm-row__name" style="color: #f44747">Signature invalid</span>
+                  <span class="perm-row__desc"
+                    >— this package carries a signature that does not match its contents. It may have
+                    been altered after signing. Installation is blocked.</span
+                  >
+                </div>
+              </div>
+            </div>
+            <div class="menu__footer">
+              <button class="btn btn--primary" style="margin-left: auto">Close</button>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">D</span> Red shield-x — a digest mismatch or bad signature.
+                Unlike the unsigned case there is <strong>no override</strong>: a broken signature is
+                treated as evidence of tampering, not as “unsigned”.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — Settings → Plugins → Trusted Publishers</h3>
+          <div class="mockup-note">
+            A new group in the existing Plugins settings category lists pinned keys, their source and
+            fingerprint, and offers <strong>Revoke</strong> on user-pinned keys.
+          </div>
+          <div class="app">
+            <div class="app__body">
+              <div class="settings">
+                <div class="settings__nav">
+                  <div class="settings__nav-item">
+                    <svg class="li"><use href="#i-settings" /></svg> General
+                  </div>
+                  <div class="settings__nav-item settings__nav-item--active">
+                    <svg class="li"><use href="#i-puzzle" /></svg> Plugins
+                  </div>
+                </div>
+                <div class="settings__body">
+                  <div class="settings__group">
+                    <div class="settings__group-head">
+                      <svg class="li"><use href="#i-shield-check" /></svg> Trusted Publishers
+                      <span class="settings__badge"
+                        ><svg class="li"><use href="#i-key-round" /></svg> keys</span
+                      >
+                    </div>
+                    <div class="field">
+                      <span class="field__label">ACME Terminals</span>
+                      <span class="perm-row__desc"><code>sha256:ab12…9f0e</code> · bundled</span>
+                    </div>
+                    <div class="field">
+                      <span class="field__label">cloud-tools</span>
+                      <span class="perm-row__desc"><code>sha256:77de…1a3c</code> · user-pinned</span>
+                      <button class="btn" style="margin-left: auto">
+                        <svg class="li"><use href="#i-trash-2" /></svg> Revoke
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">Settings · Plugins</span>
+              </div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">2 trusted keys</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">E</span> Bundled first-party keys are marked and cannot be
+                revoked; user-pinned keys carry a <strong>Revoke</strong> action.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">General Handling <a class="anchor" href="#handling">#</a></h2>
+        <h3>Author journey — signing a package</h3>
+        <ol>
+          <li>Once: <code>termihub-plugin-keygen --out acme.key --label "ACME Terminals"</code> → prints the public key + fingerprint to publish.</li>
+          <li>Build &amp; pack as today (<code>scripts/package-plugin.*</code> → <code>termihub-plugin-pack</code>).</li>
+          <li>Sign: <code>termihub-plugin-pack --sign acme.key …</code> (or <code>termihub-plugin-sign acme.key my-plugin-1.0.0.termihub-plugin</code>) writes <code>signature.json</code> into the package.</li>
+          <li>Distribute the single signed file; publish the fingerprint next to it.</li>
+        </ol>
+        <h3>User journey — installing</h3>
+        <ul>
+          <li>
+            <strong>Trusted key</strong> → green “Verified publisher” banner, no risk gate; straight
+            to the permission prompt.
+          </li>
+          <li>
+            <strong>Signed, unknown key</strong> → amber banner with the fingerprint and a
+            <em>Trust this publisher</em> checkbox. The user compares the shown fingerprint against
+            the publisher's site; accepting pins the key for next time.
+          </li>
+          <li><strong>Unsigned</strong> → the existing untrusted-source acknowledgement (unchanged).</li>
+          <li>
+            <strong>Invalid signature</strong> → hard block, no override — the difference between
+            “unknown provenance” and “provenance was tampered with”.
+          </li>
+        </ul>
+        <h3>Update handling</h3>
+        <p>
+          When a plugin is re-installed over an existing one (the manager already replaces by
+          <code>id</code>), the signing key is re-checked. If a new version arrives signed by a
+          <strong>different</strong> key than the pinned one, it is treated as
+          <code>Signed</code>-unknown, not <code>Verified</code> — a key rotation the user must
+          re-confirm. This surfaces publisher-key changes rather than trusting a silent swap.
+        </p>
+        <h3>Edge cases</h3>
+        <ul>
+          <li>
+            <strong>Extra unsigned file in the archive</strong> — an entry not present in the
+            <code>files</code> digest map fails verification (set-exact match), so a signed package
+            cannot be “extended” after signing.
+          </li>
+          <li>
+            <strong><code>signature.json</code> present but malformed</strong> (bad base64, wrong
+            <code>formatVersion</code>, <code>keyId</code> ≠ hash of <code>publicKey</code>) → treated
+            as <code>Tampered</code>/blocked, not as unsigned — a broken signature is never
+            downgraded to “no signature”.
+          </li>
+          <li>
+            <strong>Future <code>formatVersion</code></strong> the host does not understand → block
+            with an actionable “update termiHub to verify this package” message rather than silently
+            ignoring the signature.
+          </li>
+          <li>
+            <strong>Bundled first-party key</strong> is always present in the trust store; it cannot
+            be revoked (only user-pinned keys can), so official plugins never regress to a warning.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Signing flow — author side (<code>termihub-plugin-sign</code>)</span
+          >
+          <pre class="mermaid">
+flowchart TD
+    K[Ed25519 private key] --> S
+    P[Built .termihub-plugin ZIP] --> S[Read every entry]
+    S --> D[Compute SHA-256 per entry]
+    D --> M[Build canonical signing payload<br/>tag + algorithm + keyId + sorted digests]
+    M --> Sig[Ed25519-sign the payload]
+    Sig --> W[Write signature.json into the ZIP]
+    W --> V[Re-validate the produced package]
+    V --> O[Signed .termihub-plugin]
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Verification &amp; install gate — host side (<code>assess_trust</code> →
+            install)</span
+          >
+          <pre class="mermaid">
+flowchart TD
+    A[Plugin Package] --> Z{signature.json present?}
+    Z -->|No| U[TrustLevel::Untrusted]
+    Z -->|Yes| PARSE{Parse signature.json<br/>keyId == sha256 publicKey?}
+    PARSE -->|No / malformed| T[TrustLevel::Tampered]
+    PARSE -->|Yes| DIG{Recompute digests<br/>exact set match?}
+    DIG -->|No| T
+    DIG -->|Yes| SV{Ed25519 signature<br/>valid over payload?}
+    SV -->|No| T
+    SV -->|Yes| TS{keyId in trust store?}
+    TS -->|Yes| VR[TrustLevel::Verified publisher]
+    TS -->|No| SG[TrustLevel::Signed - unknown key]
+
+    T --> BLK[Block install - no override]
+    U --> WARN[Untrusted-source warning<br/>require accept_untrusted]
+    SG --> TOFU[Show fingerprint<br/>offer Trust this publisher]
+    VR --> PERM[Permission prompt - no risk gate]
+    WARN --> PERM
+    TOFU -->|Trust and Install| PIN[Pin key to trust store] --> PERM
+    TOFU -->|Install once| PERM
+    PERM --> DONE[Extract and enable]
+
+    style T fill:#2d2d2d,stroke:#f44747,color:#fff
+    style BLK fill:#2d2d2d,stroke:#f44747,color:#fff
+    style VR fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+    style DONE fill:#2d2d2d,stroke:#4ec9b0,color:#fff
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Trust levels a package can hold</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Untrusted: no signature
+    [*] --> Tampered: signature invalid / digest mismatch
+    [*] --> Signed: valid signature, key not pinned
+    [*] --> Verified: valid signature, key pinned
+    Signed --> Verified: user pins the key (TOFU)
+    Verified --> Signed: user revokes the key
+    note right of Tampered
+      Install blocked — no override
+    end note
+    note right of Untrusted
+      Install allowed after
+      explicit accept_untrusted
+    end note
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the plugin code as it stands after
+          <a href="https://github.com/armaxri/termiHub/pull/2016">#2016</a> (commit range of the
+          plugin epic). The signing layer is additive: it extends <code>security.rs</code> and the
+          package read/write paths, and adds a trust-store module and a keygen/sign binary.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>File</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>core/src/plugin/signature.rs</code></td>
+                <td>
+                  <strong>New</strong> — <code>signature.json</code> model
+                  (<code>PackageSignature</code>), the canonical signing-payload builder, per-entry
+                  digest computation, <code>SIGNATURE_FILE_NAME</code>, and the pure
+                  Ed25519 <code>verify()</code> / <code>sign()</code> primitives. Host-agnostic,
+                  fully unit-testable (no I/O beyond a passed-in ZIP reader).
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/trust_store.rs</code></td>
+                <td>
+                  <strong>New</strong> — <code>TrustStore</code> load/save over
+                  <code>&lt;app-data&gt;/plugins/trust-store.json</code>, <code>is_trusted(keyId)</code>,
+                  <code>pin(key, label)</code>, <code>revoke(keyId)</code>, and the bundled
+                  first-party key seed.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/security.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — extend <code>TrustLevel</code> with
+                  <code>Tampered</code>, <code>Signed { key_id }</code>,
+                  <code>Verified { publisher }</code>; make <code>assess_trust</code> actually open the
+                  package, run <code>signature::verify</code>, and consult the trust store; add
+                  <code>TrustAssessment::is_blocked()</code> and refine
+                  <code>requires_acceptance()</code> so only <code>Untrusted</code>/<code>Signed</code>
+                  require the gate and <code>Verified</code> does not.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/package.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — expose a helper to enumerate entry digests over the
+                  already-open <code>ZipArchive</code>, shared by the verifier; keep the size-first
+                  ordering intact.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/pack.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — optional signing pass: after the round-trip validate,
+                  compute the digest map and write <code>signature.json</code> when a signing key is
+                  supplied. Unsigned packing is unchanged.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/plugin/manager.rs</code></td>
+                <td>
+                  <strong>Modify</strong> — <code>install</code> consults the richer
+                  <code>TrustAssessment</code>: block on <code>Tampered</code>, honour a new
+                  <code>trust_publisher</code> argument that pins the key on a <code>Signed</code>
+                  install, keep <code>accept_untrusted</code> for the unsigned path. Thread the
+                  <code>TrustStore</code> in.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>core/src/bin/plugin_keygen.rs</code>,
+                  <code>core/src/bin/plugin_sign.rs</code>
+                </td>
+                <td>
+                  <strong>New</strong> — CLI tools (behind the <code>plugin</code> feature, like
+                  <code>plugin_pack</code>) to generate a keypair and to sign a built package.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/Cargo.toml</code></td>
+                <td>
+                  <strong>Modify</strong> — add <code>ed25519-dalek</code> (and a CSPRNG for keygen)
+                  under the <code>plugin</code> feature; SHA-256 is already available via the existing
+                  hashing dependency.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src-tauri/src/commands/plugin.rs</code>,
+                  <code>src/components/Plugins/*</code>
+                </td>
+                <td>
+                  <strong>Modify</strong> — surface the trust level in the install dialog's
+                  provenance banner (four states), thread the <em>Trust this publisher</em> checkbox
+                  into <code>install</code>, and add the Trusted Publishers settings group
+                  (list / pin / revoke).
+                </td>
+              </tr>
+              <tr>
+                <td><code>docs/plugin-authoring.md</code>, <code>scripts/package-plugin.*</code></td>
+                <td>
+                  <strong>Modify</strong> — document keygen/signing and add an optional signing step
+                  to the packaging helpers.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <h3>Testing notes</h3>
+        <ul>
+          <li>
+            <code>signature.rs</code> unit tests: sign→verify round trip; digest-mismatch,
+            missing-entry, and <em>extra-entry</em> rejection; bad-signature rejection;
+            <code>keyId</code> ≠ hash rejection; unknown <code>formatVersion</code> rejection.
+          </li>
+          <li>
+            <code>security.rs</code>: <code>assess_trust</code> maps each package shape to the right
+            <code>TrustLevel</code>; <code>Verified</code> vs <code>Signed</code> keyed on trust-store
+            membership; <code>Tampered</code> blocks and cannot be overridden.
+          </li>
+          <li>
+            <code>trust_store.rs</code>: pin/revoke persistence, bundled-key immutability, portable-mode redirection.
+          </li>
+          <li>
+            <code>manager.rs</code>: signed-trusted installs without acceptance; signed-unknown pins
+            on trust; tampered refused; unsigned still needs <code>accept_untrusted</code>.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Implementation Status ──────────────────────────────────── -->
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <p>
+          <strong>Not started.</strong> This is a design document. Nothing in this concept is built:
+          there is no signing key, no <code>signature.json</code> format, no verification code, and no
+          trust store. The one piece that exists is the <em>absence</em> it is designed to fill —
+          <code>core/src/plugin/security.rs::assess_trust</code> returns
+          <code>TrustLevel::Untrusted</code> for every package, and <code>TrustLevel</code> has only
+          that single variant, by explicit intent (see the module's “What is enforceable today” doc
+          comment).
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Area</th>
+                <th>State</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Signature scheme &amp; on-disk format</td>
+                <td>Designed here; not implemented.</td>
+              </tr>
+              <tr>
+                <td>Verification chain (<code>assess_trust</code> → <code>Verified</code>/<code>Tampered</code>)</td>
+                <td>Designed here; <code>assess_trust</code> is a stub that always returns <code>Untrusted</code>.</td>
+              </tr>
+              <tr>
+                <td>Trust store + keygen/sign tools</td>
+                <td>Designed here; no code exists.</td>
+              </tr>
+              <tr>
+                <td>Untrusted-source install gate</td>
+                <td>
+                  <strong>Built</strong> (<a href="https://github.com/armaxri/termiHub/pull/2016">#2016</a>) —
+                  the <code>Untrusted</code> branch this concept extends is live.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept plugin-code-signing</code>. Records the last commit at
+            which the concept and code were reconciled, plus open divergences. The concept is the
+            source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not implemented) · <strong>Status:</strong> diverged —
+          design authored, awaiting build.
+        </p>
+        <p>
+          This concept designs the substrate the
+          <a href="../implemented/plugin-system.html">plugin-system</a> concept's security flowchart
+          assumes (its “Signature valid?” branch) and that its sync ledger (row 1) deferred to
+          <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>. Every claim below is a
+          <em>target</em>, not a reconciliation of existing code.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>
+                  Embedded <code>signature.json</code> (Ed25519 over a per-entry SHA-256 digest map)
+                  is written by a signing tool and verified at install.
+                </td>
+                <td>
+                  No signing tool, no <code>signature.json</code>, no verification. Packages are
+                  produced unsigned by <code>pack.rs</code>.
+                </td>
+                <td>Missing</td>
+                <td>Implement, then re-sync.</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>
+                  <code>TrustLevel</code> has <code>Untrusted</code>, <code>Tampered</code>,
+                  <code>Signed { key_id }</code>, <code>Verified { publisher }</code>;
+                  <code>assess_trust</code> opens the package and consults a trust store.
+                </td>
+                <td>
+                  <code>TrustLevel</code> has only <code>Untrusted</code>; <code>assess_trust</code>
+                  does not open the package and always returns it.
+                </td>
+                <td>Missing</td>
+                <td>Implement, then re-sync.</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>
+                  A publisher trust store (TOFU + pinning + bundled first-party keys) at
+                  <code>&lt;app-data&gt;/plugins/trust-store.json</code>, managed in Settings.
+                </td>
+                <td>No trust store exists.</td>
+                <td>Missing</td>
+                <td>Implement, then re-sync.</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>
+                  Install gate: <code>Verified</code> skips the risk warning, <code>Signed</code>
+                  offers TOFU, <code>Untrusted</code> keeps the existing acknowledgement,
+                  <code>Tampered</code> hard-blocks.
+                </td>
+                <td>
+                  Only the <code>Untrusted</code> path exists (<code>accept_untrusted</code> flag,
+                  #2016).
+                </td>
+                <td>Partial (foundation only)</td>
+                <td>Extend the gate, then re-sync.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
