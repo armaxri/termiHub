@@ -8,13 +8,15 @@
 # the `cdylib` in `--release`, stages the compiled library into a temporary
 # `backend/` directory alongside the manifest, and packages that staged tree.
 #
-# Usage: ./scripts/package-plugin.sh <plugin-source-dir> [--out <dir>] [--no-build]
+# Usage: ./scripts/package-plugin.sh <plugin-source-dir> [--out <dir>] [--no-build] [--sign <key>]
 #   <plugin-source-dir>   Directory containing manifest.json (required).
 #   --out <dir>           Output directory for the package (default: ./dist).
 #   --no-build            Do not build a backend crate; package the tree as-is
 #                         (any `backend/` directory is copied verbatim).
+#   --sign <key-file>     After packaging, sign the package with a keypair from
+#                         `termihub-plugin-keygen` (writes signature.json).
 #
-# See docs/plugin-authoring.md for the manifest schema and the ABI caveat.
+# See docs/plugin-authoring.md for the manifest schema, signing, and the ABI caveat.
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
@@ -23,6 +25,7 @@ cd "$ROOT"
 SOURCE=""
 OUT_DIR="dist"
 BUILD=1
+SIGN_KEY=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -34,8 +37,12 @@ while [ $# -gt 0 ]; do
         BUILD=0
         shift
         ;;
+    --sign)
+        SIGN_KEY="${2:?--sign requires a key file}"
+        shift 2
+        ;;
     --help | -h)
-        sed -n '2,18p' "$0"
+        sed -n '2,20p' "$0"
         exit 0
         ;;
     -*)
@@ -120,5 +127,14 @@ if [ "$BUILD" -eq 1 ] && [ -f "$SOURCE/Cargo.toml" ]; then
 fi
 
 echo "=== Packaging ==="
-cargo run --quiet -p termihub-core --features plugin --bin termihub-plugin-pack -- \
-    --source "$STAGE" --out "$OUT_DIR"
+PACK_OUT="$(cargo run --quiet -p termihub-core --features plugin --bin termihub-plugin-pack -- \
+    --source "$STAGE" --out "$OUT_DIR")"
+echo "$PACK_OUT"
+
+if [ -n "$SIGN_KEY" ]; then
+    # The packer prints "Created <path>"; extract the produced package path.
+    PKG_PATH="${PACK_OUT#Created }"
+    echo "=== Signing ($SIGN_KEY) ==="
+    cargo run --quiet -p termihub-core --features plugin --bin termihub-plugin-sign -- \
+        --key "$SIGN_KEY" "$PKG_PATH"
+fi

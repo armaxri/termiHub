@@ -23,7 +23,13 @@ import type {
   WindowRestorePayload,
 } from "@/types/window";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
-import type { InstalledPlugin, JsonValue, PluginManifest } from "@/types/plugin";
+import type {
+  InstalledPlugin,
+  JsonValue,
+  PluginManifest,
+  PluginTrustInfo,
+  TrustedPublisher,
+} from "@/types/plugin";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -2366,23 +2372,48 @@ export async function listPlugins(): Promise<InstalledPlugin[]> {
  * returning its parsed manifest (e.g. to drive the install permission prompt).
  */
 export async function validatePlugin(filePath: string): Promise<PluginManifest> {
-  return await invoke<PluginManifest>("validate_plugin", { filePath });
+  return await invoke<PluginManifest>("validate_plugin", { path: filePath });
+}
+
+/**
+ * Assess the trust of a `.termihub-plugin` package (open it, verify its
+ * signature, consult the trust store) so the install dialog can render the right
+ * provenance banner before the user commits.
+ */
+export async function assessPluginTrust(filePath: string): Promise<PluginTrustInfo> {
+  return await invoke<PluginTrustInfo>("assess_plugin_trust", { path: filePath });
 }
 
 /**
  * Install a `.termihub-plugin` package from `filePath`, returning the installed
  * record.
  *
- * Every package is from an unverified source (termiHub has no plugin-signing
- * infrastructure), so `acceptUntrusted` records that the user saw the
- * untrusted-source warning and accepted the risk. The backend refuses the
- * install if it is not `true`.
+ * The install is gated on the package's assessed trust: an unsigned package
+ * requires `acceptUntrusted` (the user saw the untrusted-source warning); a
+ * signed-but-unknown package pins its key when `trustPublisher` is set
+ * (trust-on-first-use); a tampered package is refused; a verified publisher
+ * installs with no risk gate.
  */
 export async function installPlugin(
   filePath: string,
-  acceptUntrusted: boolean
+  acceptUntrusted: boolean,
+  trustPublisher: boolean
 ): Promise<InstalledPlugin> {
-  return await invoke<InstalledPlugin>("install_plugin", { filePath, acceptUntrusted });
+  return await invoke<InstalledPlugin>("install_plugin", {
+    path: filePath,
+    acceptUntrusted,
+    trustPublisher,
+  });
+}
+
+/** List every trusted publisher key (bundled and user-pinned). */
+export async function listTrustedPublishers(): Promise<TrustedPublisher[]> {
+  return await invoke<TrustedPublisher[]>("list_trusted_publishers");
+}
+
+/** Revoke (remove) a user-pinned publisher key by its `keyId`. */
+export async function revokeTrustedPublisher(keyId: string): Promise<void> {
+  await invoke("revoke_trusted_publisher", { keyId });
 }
 
 /** Uninstall the plugin with the given id. */

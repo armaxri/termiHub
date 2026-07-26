@@ -2,8 +2,8 @@ import { useCallback, useMemo, useState } from "react";
 import { FileUp } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
-import { validatePlugin } from "@/services/api";
-import type { PluginManifest } from "@/types/plugin";
+import { assessPluginTrust, validatePlugin } from "@/services/api";
+import type { PluginManifest, PluginTrustInfo } from "@/types/plugin";
 import { Button, Input, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { pluginDotState, pluginTypeIcon } from "./pluginPresentation";
@@ -14,6 +14,7 @@ import "./Plugins.css";
 interface PendingInstall {
   filePath: string;
   manifest: PluginManifest;
+  trust: PluginTrustInfo;
 }
 
 /**
@@ -59,9 +60,12 @@ export function PluginManagerView() {
 
     const toastId = toast.loading("Validating plugin…");
     try {
-      const manifest = await validatePlugin(filePath);
+      const [manifest, trust] = await Promise.all([
+        validatePlugin(filePath),
+        assessPluginTrust(filePath),
+      ]);
       toast.dismiss(toastId);
-      setPending({ filePath, manifest });
+      setPending({ filePath, manifest, trust });
     } catch (err) {
       toast.error(`Invalid plugin package: ${err instanceof Error ? err.message : String(err)}`, {
         id: toastId,
@@ -137,6 +141,7 @@ export function PluginManagerView() {
         <PluginInstallDialog
           filePath={pending.filePath}
           manifest={pending.manifest}
+          trust={pending.trust}
           onClose={() => setPending(null)}
         />
       )}

@@ -8,12 +8,23 @@
  * of truth for how a plugin's type/permissions/state are surfaced.
  */
 import type { LucideIcon } from "lucide-react";
-import { LayoutDashboard, Network, Palette, Puzzle, SlidersHorizontal } from "lucide-react";
+import {
+  KeyRound,
+  LayoutDashboard,
+  Network,
+  Palette,
+  Puzzle,
+  ShieldAlert,
+  ShieldCheck,
+  ShieldX,
+  SlidersHorizontal,
+} from "lucide-react";
 import type {
   PluginExtensions,
   PluginManifest,
   PluginPermission,
   PluginState,
+  PluginTrustInfo,
 } from "@/types/plugin";
 
 /** Coarse visual state of a plugin's status dot. */
@@ -155,4 +166,69 @@ export const PERMISSION_DESCRIPTIONS: Record<PluginPermission, string> = {
 /** True when the plugin declares at least one user-configurable setting. */
 export function hasSettings(manifest: PluginManifest): boolean {
   return manifest.settings != null && Object.keys(manifest.settings).length > 0;
+}
+
+/**
+ * Render a `sha256:`-prefixed key fingerprint truncated for display
+ * (e.g. `sha256:ab12…9f0e`), so the full 64-hex digest does not dominate a
+ * banner or settings row. Short or missing values are returned unchanged.
+ */
+export function fingerprintShort(keyId: string | null | undefined): string {
+  if (!keyId) return "";
+  const [scheme, hex] = keyId.split(":", 2);
+  if (!hex || hex.length <= 12) return keyId;
+  return `${scheme}:${hex.slice(0, 4)}…${hex.slice(-4)}`;
+}
+
+/** The colour tone of the install dialog's provenance banner. */
+export type TrustBannerTone = "verified" | "warning" | "danger";
+
+/** The presentation of the provenance banner for one trust level. */
+export interface TrustBanner {
+  tone: TrustBannerTone;
+  icon: LucideIcon;
+  /** Bold banner heading. */
+  title: string;
+  /** Supporting sentence (includes the truncated fingerprint where relevant). */
+  description: string;
+}
+
+/**
+ * Map a package's {@link PluginTrustInfo} to its provenance-banner presentation
+ * (concept "Install gate, provenance banner states"): a green shield for a
+ * verified publisher, an amber key for a signed-but-unknown one, an amber shield
+ * for an unsigned package, and a red shield-x for a tampered one.
+ */
+export function trustBanner(trust: PluginTrustInfo): TrustBanner {
+  const fp = fingerprintShort(trust.keyId);
+  switch (trust.level) {
+    case "verified":
+      return {
+        tone: "verified",
+        icon: ShieldCheck,
+        title: "Verified publisher",
+        description: `signed by ${trust.publisher ?? "a trusted publisher"} (trusted). ${fp}`,
+      };
+    case "signed":
+      return {
+        tone: "warning",
+        icon: KeyRound,
+        title: "Signed — new publisher",
+        description: `valid signature from an unrecognised key. ${fp}`,
+      };
+    case "tampered":
+      return {
+        tone: "danger",
+        icon: ShieldX,
+        title: "Signature invalid",
+        description: trust.warning,
+      };
+    case "untrusted":
+      return {
+        tone: "warning",
+        icon: ShieldAlert,
+        title: "Untrusted source",
+        description: trust.warning,
+      };
+  }
 }

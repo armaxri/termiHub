@@ -22,20 +22,26 @@
 //!   declared roots (including `..` traversal).
 //! * **A permission query** ([`PermissionSet::require`]) — the gate a host-mediated
 //!   network/settings/etc. capability checks before acting for a plugin.
-//! * **Untrusted-source assessment** ([`assess_trust`]) — every package is
-//!   unsigned today, so this always reports "untrusted"; install requires explicit
-//!   acceptance.
+//! * **Signature-based trust assessment** ([`assess_trust`]) — opens the package,
+//!   verifies its embedded `signature.json` (if any) through [`super::signature`],
+//!   and consults a [`TrustStore`] to classify it as [`TrustLevel::Verified`],
+//!   [`TrustLevel::Signed`], [`TrustLevel::Untrusted`], or [`TrustLevel::Tampered`].
+//!   The install gate blocks tampered packages, skips the warning for verified
+//!   publishers, offers trust-on-first-use pinning for signed-but-unknown keys,
+//!   and keeps the explicit acceptance for unsigned ones.
 //! * **An error-recovery counter** ([`RestartTracker`]) — bounded auto-restart of
 //!   a crashing plugin, then auto-disable.
 //!
-//! Cryptographic signature *verification* is **out of scope**: termiHub has no
-//! signing substrate (no keys, format, or verification chain). [`TrustLevel`]
-//! documents this as future work rather than claiming plugins are verified.
+//! Signing proves **provenance and integrity**; it does not sandbox a plugin's
+//! syscalls. The in-process direct-syscall surface documented above stays out of
+//! scope (concept "Non-Goals").
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
 use super::manifest::{PluginExtensions, PluginManifest, PluginPermission};
+use super::signature::{self, PackageVerification, SignatureError};
+use super::trust_store::TrustStore;
 
 /// A plugin may auto-restart at most this many times after a crash before it is
 /// auto-disabled (concept "Error recovery": "up to 3 times, then auto-disabled").
@@ -254,52 +260,161 @@ fn normalize_lexical(path: &Path) -> PathBuf {
     out.iter().map(|c| c.as_os_str()).collect()
 }
 
-/// How much a plugin package is trusted at install time.
-///
-/// Only one variant exists today: termiHub has **no** plugin-signing substrate,
-/// so every package is [`Untrusted`](TrustLevel::Untrusted). A future
-/// `Signed`/`Verified` variant would carry a cryptographically-checked identity;
-/// this enum names the axis so callers can branch on it without pretending
-/// verification happens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// How much a plugin package is trusted at install time, keyed on its embedded
+/// signature and the host trust store (concept "States & Sequences").
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrustLevel {
-    /// The package's origin cannot be verified — no signature was checked (and no
-    /// signing infrastructure exists). The user must accept the risk to install.
+    /// No signature present — origin cannot be verified. The user must accept the
+    /// risk to install (the `accept_untrusted` gate).
     Untrusted,
+    /// A signature is present but did not verify (digest mismatch, bad signature,
+    /// malformed/unsupported signature). Treated as evidence of tampering:
+    /// installation is **blocked with no override**.
+    Tampered,
+    /// A valid signature from a key that is **not** in the trust store. Install is
+    /// allowed; the UI shows the fingerprint and offers trust-on-first-use pinning.
+    Signed {
+        /// The signing key's `sha256:` fingerprint.
+        key_id: String,
+    },
+    /// A valid signature from a **trusted** (bundled or pinned) key. No risk gate;
+    /// the install proceeds straight to the permission prompt.
+    Verified {
+        /// The trust-store label for the signing publisher.
+        publisher: String,
+    },
 }
 
 /// The outcome of assessing a package's trust at install time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustAssessment {
-    /// The assessed trust level (always [`TrustLevel::Untrusted`] today).
+    /// The assessed trust level.
     pub level: TrustLevel,
-    /// A user-facing warning to surface before extraction.
+    /// A user-facing warning to surface before extraction (empty for
+    /// [`TrustLevel::Verified`]).
     pub warning: String,
+    /// The signing key's `sha256:` fingerprint for a signed or verified package —
+    /// shown in the provenance banner so the user can compare it. `None` when
+    /// unsigned or tampered.
+    pub key_id: Option<String>,
+    /// Base64 of the signing public key for a signed package — carried so the
+    /// manager can pin it on a trust-on-first-use accept. `None` otherwise.
+    pub public_key: Option<String>,
 }
 
 impl TrustAssessment {
-    /// Whether installing this package requires the user to accept an
-    /// untrusted-source risk.
+    /// Whether the install gate must surface a trust affordance before proceeding:
+    /// the risk acknowledgement for [`TrustLevel::Untrusted`], or the
+    /// trust-on-first-use prompt for [`TrustLevel::Signed`]. A
+    /// [`TrustLevel::Verified`] package needs none, and a [`TrustLevel::Tampered`]
+    /// one is blocked outright ([`is_blocked`](Self::is_blocked)).
     #[must_use]
     pub fn requires_acceptance(&self) -> bool {
-        matches!(self.level, TrustLevel::Untrusted)
+        matches!(
+            self.level,
+            TrustLevel::Untrusted | TrustLevel::Signed { .. }
+        )
+    }
+
+    /// Whether installation is hard-blocked with no override — true only for
+    /// [`TrustLevel::Tampered`]. A broken signature is treated as tampering, never
+    /// downgraded to "unsigned".
+    #[must_use]
+    pub fn is_blocked(&self) -> bool {
+        matches!(self.level, TrustLevel::Tampered)
     }
 }
 
-/// Assess how much a `.termihub-plugin` package can be trusted.
+/// The warning shown for an unsigned (untrusted-source) package.
+fn untrusted_warning() -> String {
+    "This plugin comes from an unverified source. termiHub cannot check who \
+     built it, and a native plugin runs with the same privileges as the app. \
+     Only install plugins you trust."
+        .to_owned()
+}
+
+/// The warning shown for a package whose signature did not verify, tailored to
+/// the specific failure (a future format version gets an actionable "update"
+/// message; everything else reads as tampering).
+fn tampered_warning(err: &SignatureError) -> String {
+    match err {
+        SignatureError::UnsupportedFormatVersion(_) => {
+            "This package was signed with a newer signature format than this \
+             version of termiHub understands. Update termiHub to verify and \
+             install it."
+                .to_owned()
+        }
+        _ => "This package carries a signature that does not match its contents. \
+              It may have been altered after signing. Installation is blocked."
+            .to_owned(),
+    }
+}
+
+/// Assess how much a `.termihub-plugin` package can be trusted at install time.
 ///
-/// Always reports [`TrustLevel::Untrusted`]: no signature is (or can currently
-/// be) verified. The returned warning is what the install gate shows the user
-/// before extraction. Deliberately does not open the package — trust is a
-/// property of provenance, and no provenance is verifiable today.
+/// Opens the package, verifies any embedded `signature.json` through
+/// [`super::signature::verify_reader`], and consults `trust_store` to decide
+/// between [`Verified`](TrustLevel::Verified) and [`Signed`](TrustLevel::Signed):
+///
+/// * no signature → [`Untrusted`](TrustLevel::Untrusted);
+/// * present-but-invalid signature → [`Tampered`](TrustLevel::Tampered) (blocked);
+/// * valid signature, key in the trust store → [`Verified`](TrustLevel::Verified);
+/// * valid signature, key not pinned → [`Signed`](TrustLevel::Signed).
+///
+/// A package that cannot even be opened as an archive is reported
+/// [`Untrusted`](TrustLevel::Untrusted); the subsequent `validate_package` step
+/// surfaces the real structural error.
 #[must_use]
-pub fn assess_trust(_package_path: &Path) -> TrustAssessment {
+pub fn assess_trust(package_path: &Path, trust_store: &TrustStore) -> TrustAssessment {
+    let verification = match std::fs::File::open(package_path) {
+        Ok(file) => signature::verify_reader(file),
+        Err(_) => return untrusted(),
+    };
+
+    match verification {
+        Ok(PackageVerification::Unsigned) | Err(_) => untrusted(),
+        Ok(PackageVerification::Tampered(err)) => TrustAssessment {
+            level: TrustLevel::Tampered,
+            warning: tampered_warning(&err),
+            key_id: None,
+            public_key: None,
+        },
+        Ok(PackageVerification::Signed(identity)) => {
+            if trust_store.is_trusted(&identity.key_id) {
+                let publisher = trust_store
+                    .label_for(&identity.key_id)
+                    .unwrap_or("this publisher")
+                    .to_owned();
+                TrustAssessment {
+                    level: TrustLevel::Verified { publisher },
+                    warning: String::new(),
+                    key_id: Some(identity.key_id),
+                    public_key: Some(identity.public_key),
+                }
+            } else {
+                TrustAssessment {
+                    level: TrustLevel::Signed {
+                        key_id: identity.key_id.clone(),
+                    },
+                    warning: "This plugin is signed by a publisher termiHub does not yet \
+                              recognise. Compare the fingerprint against the publisher's \
+                              site before trusting it."
+                        .to_owned(),
+                    key_id: Some(identity.key_id),
+                    public_key: Some(identity.public_key),
+                }
+            }
+        }
+    }
+}
+
+/// The [`TrustLevel::Untrusted`] assessment (unsigned or unreadable package).
+fn untrusted() -> TrustAssessment {
     TrustAssessment {
         level: TrustLevel::Untrusted,
-        warning: "This plugin comes from an unverified source. termiHub cannot check who \
-                  built it, and a native plugin runs with the same privileges as the app. \
-                  Only install plugins you trust."
-            .to_owned(),
+        warning: untrusted_warning(),
+        key_id: None,
+        public_key: None,
     }
 }
 
@@ -578,12 +693,116 @@ mod tests {
         );
     }
 
+    /// Write a `.termihub-plugin` on disk from `(name, bytes)` entries.
+    fn write_zip(dir: &Path, name: &str, entries: &[(&str, &[u8])]) -> PathBuf {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        let path = dir.join(name);
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        let opts = SimpleFileOptions::default();
+        for (n, b) in entries {
+            zip.start_file(*n, opts).unwrap();
+            zip.write_all(b).unwrap();
+        }
+        zip.finish().unwrap();
+        path
+    }
+
+    /// A signed package on disk plus the key that signed it.
+    fn write_signed(dir: &Path, name: &str) -> (PathBuf, crate::plugin::SigningKeyFile) {
+        use crate::plugin::{
+            generate_keypair, sha256_digest, sign_digests, signing_key_from_base64,
+        };
+        let key = generate_keypair("ACME Terminals");
+        let content: &[(&str, &[u8])] = &[("manifest.json", b"{}")];
+        let digests = content
+            .iter()
+            .map(|(n, b)| ((*n).to_owned(), sha256_digest(b)))
+            .collect();
+        let signing_key = signing_key_from_base64(&key.private_key).unwrap();
+        let sig = sign_digests(&signing_key, digests, "t".into());
+        let sig_json = serde_json::to_vec(&sig).unwrap();
+        let mut entries: Vec<(&str, &[u8])> = content.to_vec();
+        entries.push(("signature.json", &sig_json));
+        (write_zip(dir, name, &entries), key)
+    }
+
     #[test]
-    fn assess_trust_is_always_untrusted() {
-        let a = assess_trust(Path::new("/tmp/whatever.termihub-plugin"));
+    fn assess_trust_unsigned_is_untrusted() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let pkg = write_zip(tmp.path(), "p.termihub-plugin", &[("manifest.json", b"{}")]);
+        let store = TrustStore::load(tmp.path()).unwrap();
+        let a = assess_trust(&pkg, &store);
         assert_eq!(a.level, TrustLevel::Untrusted);
         assert!(a.requires_acceptance());
-        assert!(!a.warning.is_empty());
+        assert!(!a.is_blocked());
+    }
+
+    #[test]
+    fn assess_trust_signed_unknown_key_is_signed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (pkg, key) = write_signed(tmp.path(), "p.termihub-plugin");
+        let store = TrustStore::load(tmp.path()).unwrap();
+        let a = assess_trust(&pkg, &store);
+        assert_eq!(
+            a.level,
+            TrustLevel::Signed {
+                key_id: key.key_id.clone()
+            }
+        );
+        assert_eq!(a.key_id.as_deref(), Some(key.key_id.as_str()));
+        assert_eq!(a.public_key.as_deref(), Some(key.public_key.as_str()));
+        assert!(a.requires_acceptance());
+        assert!(!a.is_blocked());
+    }
+
+    #[test]
+    fn assess_trust_signed_trusted_key_is_verified() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let (pkg, key) = write_signed(tmp.path(), "p.termihub-plugin");
+        let mut store = TrustStore::load(tmp.path()).unwrap();
+        store
+            .pin(&key.key_id, &key.public_key, "ACME Terminals")
+            .unwrap();
+        let a = assess_trust(&pkg, &store);
+        assert_eq!(
+            a.level,
+            TrustLevel::Verified {
+                publisher: "ACME Terminals".into()
+            }
+        );
+        // No risk gate for a verified publisher; the fingerprint is still shown.
+        assert!(!a.requires_acceptance());
+        assert!(!a.is_blocked());
+        assert!(a.warning.is_empty());
+        assert_eq!(a.key_id.as_deref(), Some(key.key_id.as_str()));
+    }
+
+    #[test]
+    fn assess_trust_tampered_is_blocked() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Sign one content, then swap the manifest bytes so the digest no longer
+        // matches — a tampered package.
+        use crate::plugin::{
+            generate_keypair, sha256_digest, sign_digests, signing_key_from_base64,
+        };
+        let key = generate_keypair("ACME");
+        let digests =
+            std::iter::once(("manifest.json".to_owned(), sha256_digest(b"good"))).collect();
+        let signing_key = signing_key_from_base64(&key.private_key).unwrap();
+        let sig = sign_digests(&signing_key, digests, "t".into());
+        let sig_json = serde_json::to_vec(&sig).unwrap();
+        let pkg = write_zip(
+            tmp.path(),
+            "p.termihub-plugin",
+            &[("manifest.json", b"EVIL"), ("signature.json", &sig_json)],
+        );
+
+        let store = TrustStore::load(tmp.path()).unwrap();
+        let a = assess_trust(&pkg, &store);
+        assert_eq!(a.level, TrustLevel::Tampered);
+        assert!(a.is_blocked());
+        assert!(!a.requires_acceptance());
     }
 
     #[test]

@@ -547,7 +547,7 @@
       <header class="concept-header">
         <h1>Plugin System</h1>
         <div class="concept-meta">
-          <span class="concept-status">Implemented · signing deferred</span>
+          <span class="concept-status">Implemented</span>
           <span>GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/28">#28</a></span>
           <span><code>docs/concepts/implemented/plugin-system.html</code></span>
         </div>
@@ -2642,13 +2642,13 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
           <strong>Implemented and live</strong> across the epic of issue #28 (~18 merged PRs). The
           plugin system is fully built end-to-end: packaging, the stable native ABI, the host
           loader, the Plugin Manager UI, all four extension points, connection wiring, per-plugin
-          settings, and the security-hardening layer. Cryptographic <em>code-signing</em> is the one
-          deferred sub-feature — its dedicated design now lives in
-          <a href="../backlog/plugin-code-signing.html"><code>backlog/plugin-code-signing.html</code></a>
-          (concept issue <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>) with
-          implementation tracked as
-          <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>, exactly the pattern
-          other <code>implemented/</code> concepts use for a deferred future enhancement.
+          settings, and the security-hardening layer. Cryptographic <em>code-signing</em> — the last
+          deferred sub-feature — is now implemented (<a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>)
+          per its dedicated design in
+          <a href="plugin-code-signing.html"><code>implemented/plugin-code-signing.html</code></a>
+          (concept issue <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>): Ed25519
+          package signatures, a publisher trust store with trust-on-first-use pinning, and a verified
+          install gate.
         </p>
 
         <h3>Implemented</h3>
@@ -2774,18 +2774,20 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
               <tr>
                 <td>Cryptographic code-signing</td>
                 <td>
-                  Deferred — no signing substrate exists yet (keys, signature format, verification
-                  chain). <code>assess_trust</code> reports every package as untrusted today, so
-                  install always requires explicit acceptance. The dedicated design now lives in
-                  <a href="../backlog/plugin-code-signing.html"><code>backlog/plugin-code-signing.html</code></a>;
-                  implementation is tracked separately.
+                  <strong>Implemented</strong> (#2036). Ed25519 package signatures over a per-entry
+                  SHA-256 digest map (<code>signature.rs</code>), a publisher trust store with TOFU
+                  pinning (<code>trust_store.rs</code>), and an <code>assess_trust</code> that opens
+                  the package, verifies its signature, and gates install on
+                  <code>Verified</code>/<code>Signed</code>/<code>Untrusted</code>/<code>Tampered</code>.
+                  The dedicated design lives in
+                  <a href="plugin-code-signing.html"><code>implemented/plugin-code-signing.html</code></a>.
                 </td>
                 <td>
-                  <a href="../backlog/plugin-code-signing.html">concept</a> /
+                  <a href="plugin-code-signing.html">concept</a> /
                   <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>
                   (<code>Concept</code>) ·
                   <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>
-                  (impl)
+                  (implemented)
                 </td>
               </tr>
               <tr>
@@ -2853,17 +2855,20 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
                   (Security diagram; §13 "code signing validation")
                 </td>
                 <td>
-                  No signing substrate exists; <code>assess_trust</code> always reports "untrusted"
-                  and install requires explicit user acceptance. Signature verification is out of
-                  scope in <code>security.rs</code>.
+                  <strong>Implemented</strong> (#2036). <code>assess_trust</code> opens the package,
+                  verifies its embedded <code>signature.json</code> (Ed25519 over a per-entry SHA-256
+                  digest map) via <code>signature.rs</code>, and consults a <code>trust_store.rs</code>
+                  publisher store; install blocks <code>Tampered</code>, offers TOFU pinning for
+                  <code>Signed</code>, skips the warning for <code>Verified</code>, and keeps the
+                  acceptance gate for <code>Untrusted</code>.
                 </td>
-                <td>Missing (deferred)</td>
+                <td>Resolved</td>
                 <td>
-                  Keep concept as the target; the dedicated design now lives in
-                  <a href="../backlog/plugin-code-signing.html"><code>backlog/plugin-code-signing.html</code></a>
+                  Implemented per the dedicated design in
+                  <a href="plugin-code-signing.html"><code>implemented/plugin-code-signing.html</code></a>
                   (<a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>,
-                  <code>Concept</code>) with implementation tracked as
-                  <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>.
+                  <code>Concept</code>; <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>,
+                  implemented).
                 </td>
               </tr>
               <tr>

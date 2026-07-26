@@ -884,6 +884,10 @@ pub fn run() {
             commands::plugin::get_plugin_settings,
             commands::plugin::update_plugin_settings,
             commands::plugin::read_plugin_file,
+            // Plugin code-signing (#2036)
+            commands::plugin::assess_plugin_trust,
+            commands::plugin::list_trusted_publishers,
+            commands::plugin::revoke_trusted_publisher,
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::cancel_connecting,

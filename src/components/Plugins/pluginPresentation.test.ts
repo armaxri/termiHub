@@ -5,14 +5,17 @@
  */
 import { describe, it, expect } from "vitest";
 import type { PluginExtensions, PluginManifest } from "@/types/plugin";
+import type { PluginTrustInfo } from "@/types/plugin";
 import {
   PERMISSION_DESCRIPTIONS,
   PERMISSION_LABELS,
   extensionPoints,
+  fingerprintShort,
   hasSettings,
   pluginDotState,
   pluginStatusLabel,
   pluginTypeLabel,
+  trustBanner,
 } from "./pluginPresentation";
 
 function manifest(overrides: Partial<PluginManifest> = {}): PluginManifest {
@@ -109,5 +112,62 @@ describe("hasSettings", () => {
     expect(
       hasSettings(manifest({ settings: { ns: { type: "string", default: "", description: "" } } }))
     ).toBe(true);
+  });
+});
+
+describe("fingerprintShort", () => {
+  it("truncates a long sha256 fingerprint to head…tail", () => {
+    expect(fingerprintShort("sha256:ab12cd34ef56ab12cd34ef569f0e9f0e")).toBe("sha256:ab12…9f0e");
+  });
+
+  it("returns short or empty values unchanged", () => {
+    expect(fingerprintShort("sha256:ab12")).toBe("sha256:ab12");
+    expect(fingerprintShort(null)).toBe("");
+    expect(fingerprintShort(undefined)).toBe("");
+  });
+});
+
+describe("trustBanner", () => {
+  function trust(overrides: Partial<PluginTrustInfo> = {}): PluginTrustInfo {
+    return {
+      level: "untrusted",
+      warning: "unsigned warning",
+      keyId: null,
+      publisher: null,
+      publicKey: null,
+      requiresAcceptance: true,
+      isBlocked: false,
+      ...overrides,
+    };
+  }
+
+  it("maps verified to a success banner naming the publisher and fingerprint", () => {
+    const b = trustBanner(
+      trust({
+        level: "verified",
+        warning: "",
+        publisher: "ACME",
+        keyId: "sha256:ab12cd34ef56ab129f0e",
+      })
+    );
+    expect(b.tone).toBe("verified");
+    expect(b.title).toBe("Verified publisher");
+    expect(b.description).toContain("ACME");
+    expect(b.description).toContain("sha256:ab12…");
+  });
+
+  it("maps signed to a warning banner with the fingerprint", () => {
+    const b = trustBanner(
+      trust({ level: "signed", warning: "", keyId: "sha256:77de11aa22bb1a3c" })
+    );
+    expect(b.tone).toBe("warning");
+    expect(b.title).toBe("Signed — new publisher");
+  });
+
+  it("maps untrusted to a warning banner and tampered to a danger banner", () => {
+    expect(trustBanner(trust({ level: "untrusted" })).tone).toBe("warning");
+    const t = trustBanner(trust({ level: "tampered", warning: "blocked", isBlocked: true }));
+    expect(t.tone).toBe("danger");
+    expect(t.title).toBe("Signature invalid");
   });
 });
