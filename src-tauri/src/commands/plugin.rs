@@ -12,8 +12,11 @@
 
 use tauri::{AppHandle, Emitter, State};
 
+use serde::Serialize;
 use serde_json::{Map, Value};
-use termihub_core::plugin::{InstalledPlugin, PluginManager, PluginManifest};
+use termihub_core::plugin::{
+    InstalledPlugin, PluginManager, PluginManifest, TrustAssessment, TrustLevel, TrustedPublisher,
+};
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
 /// The frontend re-fetches [`list_plugins`] on receipt.
@@ -45,25 +48,110 @@ pub fn validate_plugin(
         .map_err(|e| e.to_string())
 }
 
+/// The trust state of a package, flattened for the install dialog's provenance
+/// banner. Built from a core [`TrustAssessment`].
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginTrustInfo {
+    /// `"untrusted"` | `"signed"` | `"verified"` | `"tampered"`.
+    pub level: String,
+    /// User-facing warning (empty for a verified publisher).
+    pub warning: String,
+    /// The signing key's `sha256:` fingerprint for a signed/verified package.
+    pub key_id: Option<String>,
+    /// The trusted publisher's label (verified only).
+    pub publisher: Option<String>,
+    /// Base64 of the signing public key (signed/verified) — carried so the UI can
+    /// round-trip it back on a trust-on-first-use pin without re-reading the file.
+    pub public_key: Option<String>,
+    /// Whether the dialog must surface a trust affordance (risk ack for unsigned,
+    /// trust-on-first-use for signed).
+    pub requires_acceptance: bool,
+    /// Whether installation is hard-blocked (tampered) with no override.
+    pub is_blocked: bool,
+}
+
+impl From<TrustAssessment> for PluginTrustInfo {
+    fn from(a: TrustAssessment) -> Self {
+        let (level, publisher) = match &a.level {
+            TrustLevel::Untrusted => ("untrusted", None),
+            TrustLevel::Tampered => ("tampered", None),
+            TrustLevel::Signed { .. } => ("signed", None),
+            TrustLevel::Verified { publisher } => ("verified", Some(publisher.clone())),
+        };
+        PluginTrustInfo {
+            level: level.to_owned(),
+            warning: a.warning.clone(),
+            key_id: a.key_id.clone(),
+            publisher,
+            public_key: a.public_key.clone(),
+            requires_acceptance: a.requires_acceptance(),
+            is_blocked: a.is_blocked(),
+        }
+    }
+}
+
+/// Assess the trust of a `.termihub-plugin` package (open it, verify its
+/// signature, consult the trust store) so the install dialog can render the
+/// right provenance banner before the user commits.
+#[tauri::command]
+pub fn assess_plugin_trust(
+    path: String,
+    manager: State<'_, PluginManager>,
+) -> Result<PluginTrustInfo, String> {
+    Ok(manager.assess_trust(std::path::Path::new(&path)).into())
+}
+
 /// Install a plugin from the `.termihub-plugin` package at `path`. Emits
 /// [`EVENT_PLUGINS_CHANGED`] on success.
 ///
-/// Every package is from an unverified source (termiHub has no plugin-signing
-/// substrate), so the install dialog shows an untrusted-source warning and the
-/// user's confirmation is passed as `accept_untrusted`. Without it the manager
-/// refuses the install before extracting anything.
+/// The install is gated on the package's assessed trust (see
+/// [`assess_plugin_trust`]): a tampered signature is hard-blocked; an unsigned
+/// package requires `accept_untrusted`; a signed-but-unknown package installs and
+/// pins the key when `trust_publisher` is set (trust-on-first-use); a verified
+/// publisher installs with no risk gate.
 #[tauri::command]
 pub fn install_plugin(
     path: String,
     accept_untrusted: bool,
+    trust_publisher: bool,
     app: AppHandle,
     manager: State<'_, PluginManager>,
 ) -> Result<InstalledPlugin, String> {
     let installed = manager
-        .install(std::path::Path::new(&path), accept_untrusted)
+        .install(
+            std::path::Path::new(&path),
+            accept_untrusted,
+            trust_publisher,
+        )
         .map_err(|e| e.to_string())?;
     emit_changed(&app);
     Ok(installed)
+}
+
+/// List every trusted publisher key (bundled and user-pinned) for the Trusted
+/// Publishers settings group.
+#[tauri::command]
+pub fn list_trusted_publishers(
+    manager: State<'_, PluginManager>,
+) -> Result<Vec<TrustedPublisher>, String> {
+    manager.trusted_publishers().map_err(|e| e.to_string())
+}
+
+/// Revoke (remove) a user-pinned publisher key by its `keyId`. Bundled keys
+/// cannot be revoked. Emits [`EVENT_PLUGINS_CHANGED`] so any open provenance
+/// banner re-assesses.
+#[tauri::command]
+pub fn revoke_trusted_publisher(
+    key_id: String,
+    app: AppHandle,
+    manager: State<'_, PluginManager>,
+) -> Result<(), String> {
+    manager
+        .revoke_publisher(&key_id)
+        .map_err(|e| e.to_string())?;
+    emit_changed(&app);
+    Ok(())
 }
 
 /// Uninstall the plugin with the given id. Emits [`EVENT_PLUGINS_CHANGED`].

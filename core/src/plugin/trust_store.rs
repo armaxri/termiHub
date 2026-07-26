@@ -159,6 +159,32 @@ impl TrustStore {
         Ok(Self { path, publishers })
     }
 
+    /// A store with only the bundled first-party keys, without reading any file —
+    /// the safe fallback the manager uses when the on-disk store cannot be read
+    /// (a corrupt file must not make an untrusted key read as trusted).
+    pub(crate) fn bundled_only(plugins_root: &Path) -> Self {
+        let now = now_rfc3339();
+        let publishers = BUNDLED_PUBLISHERS
+            .iter()
+            .map(|key| {
+                (
+                    key.key_id.to_owned(),
+                    TrustedPublisher {
+                        key_id: key.key_id.to_owned(),
+                        public_key: key.public_key.to_owned(),
+                        label: key.label.to_owned(),
+                        source: TrustSource::Bundled,
+                        added_at: now.clone(),
+                    },
+                )
+            })
+            .collect();
+        Self {
+            path: plugins_root.join(TRUST_STORE_FILE_NAME),
+            publishers,
+        }
+    }
+
     /// Whether a key id is trusted (bundled or user-pinned).
     #[must_use]
     pub fn is_trusted(&self, key_id: &str) -> bool {

@@ -46,7 +46,8 @@ use thiserror::Error;
 
 use super::manifest::{parse_manifest, ApiCompatibility, PluginManifest};
 use super::package::{validate_package, PluginPackageError, MANIFEST_FILE_NAME};
-use super::security::{assess_trust, TrustAssessment};
+use super::security::{assess_trust, TrustAssessment, TrustLevel};
+use super::trust_store::{TrustStore, TrustStoreError, TrustedPublisher};
 
 /// File holding per-plugin enabled/disabled state and install timestamps.
 const STATE_FILE_NAME: &str = "plugin-state.json";
@@ -163,6 +164,15 @@ pub enum PluginManagerError {
     /// (concept security gate). See [`PluginManager::assess_trust`].
     #[error("plugin is from an untrusted source and the risk was not accepted")]
     UntrustedSourceNotAccepted,
+
+    /// The package carries a signature that did not verify — treated as tampering.
+    /// Installation is refused with no override (concept: `Tampered` hard-block).
+    #[error("plugin signature is invalid; the package may have been tampered with")]
+    SignatureTampered,
+
+    /// The publisher trust store could not be read or written.
+    #[error("plugin trust store error: {0}")]
+    TrustStore(#[from] TrustStoreError),
 }
 
 /// Per-plugin record persisted in `plugin-state.json`.
@@ -273,16 +283,52 @@ impl PluginManager {
     }
 
     /// Assess how much a `.termihub-plugin` package can be trusted before
-    /// installing it.
+    /// installing it: open it, verify any embedded signature, and consult the
+    /// publisher trust store (concept "States & Sequences").
     ///
-    /// termiHub has no plugin-signing substrate, so this always reports the
-    /// package as **untrusted** with a user-facing warning; the install gate
-    /// shows the warning and the user must accept the risk (pass
-    /// `accept_untrusted = true` to [`install`](Self::install)) before extraction.
-    /// Cryptographic signature verification is future work, not implemented.
+    /// Reports [`TrustLevel::Verified`](super::TrustLevel::Verified) for a signed
+    /// package whose key is trusted, [`TrustLevel::Signed`](super::TrustLevel::Signed)
+    /// for a valid but unknown key (offer trust-on-first-use),
+    /// [`TrustLevel::Untrusted`](super::TrustLevel::Untrusted) for an unsigned one
+    /// (the `accept_untrusted` gate), and
+    /// [`TrustLevel::Tampered`](super::TrustLevel::Tampered) for an invalid
+    /// signature (blocked). A trust store that cannot be read degrades safely to
+    /// bundled-only, so a corrupt file never makes an untrusted key read trusted.
     #[must_use]
     pub fn assess_trust(&self, package_path: &Path) -> TrustAssessment {
-        assess_trust(package_path)
+        let store =
+            TrustStore::load(&self.root).unwrap_or_else(|_| TrustStore::bundled_only(&self.root));
+        assess_trust(package_path, &store)
+    }
+
+    /// Every trusted publisher key (bundled and user-pinned), for the Trusted
+    /// Publishers settings group.
+    pub fn trusted_publishers(&self) -> Result<Vec<TrustedPublisher>, PluginManagerError> {
+        Ok(TrustStore::load(&self.root)?.list())
+    }
+
+    /// Pin a publisher key into the trust store (a manual add from Settings, or a
+    /// direct trust-on-first-use accept outside an install).
+    pub fn pin_publisher(
+        &self,
+        key_id: &str,
+        public_key: &str,
+        label: &str,
+    ) -> Result<(), PluginManagerError> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut store = TrustStore::load(&self.root)?;
+        store.pin(key_id, public_key, label)?;
+        Ok(())
+    }
+
+    /// Revoke (remove) a user-pinned publisher key. Bundled keys cannot be
+    /// revoked; an unknown key id is a no-op. Does not uninstall already-installed
+    /// plugins — it only affects future install/update gates.
+    pub fn revoke_publisher(&self, key_id: &str) -> Result<(), PluginManagerError> {
+        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut store = TrustStore::load(&self.root)?;
+        store.revoke(key_id)?;
+        Ok(())
     }
 
     /// Install a plugin from a `.termihub-plugin` package.
@@ -292,20 +338,32 @@ impl PluginManager {
     /// as enabled, and runs the enable hook. Serialized against other
     /// install/uninstall operations.
     ///
-    /// Every package is from an unverified source (see [`assess_trust`](Self::assess_trust)),
-    /// so `accept_untrusted` must be `true` — the caller's record that the user
-    /// saw the untrusted-source warning and accepted the risk. A `false` value
-    /// refuses the install with [`PluginManagerError::UntrustedSourceNotAccepted`]
-    /// **before** anything is extracted.
+    /// The install is gated on the package's assessed trust (concept security
+    /// flowchart):
+    ///
+    /// * **Tampered** (invalid signature) → refused with
+    ///   [`PluginManagerError::SignatureTampered`], no override;
+    /// * **Untrusted** (unsigned) → requires `accept_untrusted = true`, else
+    ///   [`PluginManagerError::UntrustedSourceNotAccepted`];
+    /// * **Signed** (valid, unknown key) → installed; if `trust_publisher` is
+    ///   `true` the signing key is pinned to the trust store (trust-on-first-use);
+    /// * **Verified** (valid, trusted key) → installed with no risk gate.
+    ///
+    /// All gates are checked **before** anything is extracted.
     pub fn install(
         &self,
         package_path: &Path,
         accept_untrusted: bool,
+        trust_publisher: bool,
     ) -> Result<InstalledPlugin, PluginManagerError> {
-        // Untrusted-source gate: refuse before touching the package unless the
-        // user accepted the risk (concept security flowchart: "Warn user →
-        // accepts risk? → extract").
-        if self.assess_trust(package_path).requires_acceptance() && !accept_untrusted {
+        // Trust gate (concept security flowchart): assessed before touching the
+        // package. A tampered signature is a hard block; an unsigned package needs
+        // the risk accepted; signed/verified proceed.
+        let assessment = self.assess_trust(package_path);
+        if assessment.is_blocked() {
+            return Err(PluginManagerError::SignatureTampered);
+        }
+        if matches!(assessment.level, TrustLevel::Untrusted) && !accept_untrusted {
             return Err(PluginManagerError::UntrustedSourceNotAccepted);
         }
 
@@ -314,6 +372,19 @@ impl PluginManager {
         let manifest = validate_package(package_path)?;
         let id = manifest.id.clone();
         let dest = self.plugin_dir(&id);
+
+        // Trust-on-first-use: pin the signing key when the user opted in on a
+        // signed-but-unknown package, labelling it with the manifest's author
+        // (concept mockup — the pinned key is shown under the plugin's author).
+        // Done before extraction so a pin failure aborts before anything lands.
+        if trust_publisher {
+            if let TrustLevel::Signed { key_id } = &assessment.level {
+                if let Some(public_key) = &assessment.public_key {
+                    let mut store = TrustStore::load(&self.root)?;
+                    store.pin(key_id, public_key, &manifest.author)?;
+                }
+            }
+        }
 
         std::fs::create_dir_all(&self.root)?;
 
@@ -815,7 +886,7 @@ mod tests {
             &[("themes/dark.json", b"{\"bg\":\"#000\"}")],
         );
 
-        let installed = mgr.install(&pkg, true).unwrap();
+        let installed = mgr.install(&pkg, true, false).unwrap();
         assert_eq!(installed.manifest.id, "my-theme");
         assert_eq!(installed.state, PluginState::Installed);
         assert!(installed.installed_at > 0);
@@ -841,7 +912,7 @@ mod tests {
             &manifest_json("dup", "1.0"),
             &[("old.txt", b"old")],
         );
-        mgr.install(&pkg1, true).unwrap();
+        mgr.install(&pkg1, true, false).unwrap();
         assert!(mgr.root().join("dup/old.txt").exists());
 
         // Reinstall with different contents; the old file must be gone.
@@ -851,7 +922,7 @@ mod tests {
             &manifest_json("dup", "1.0"),
             &[("new.txt", b"new")],
         );
-        mgr.install(&pkg2, true).unwrap();
+        mgr.install(&pkg2, true, false).unwrap();
         assert!(mgr.root().join("dup/new.txt").exists());
         assert!(!mgr.root().join("dup/old.txt").exists());
         assert_eq!(mgr.list().unwrap().len(), 1);
@@ -861,7 +932,7 @@ mod tests {
     fn uninstall_removes_dir_state_and_settings() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("gone", "1.0"), &[]);
-        mgr.install(&pkg, true).unwrap();
+        mgr.install(&pkg, true, false).unwrap();
 
         let mut s = Map::new();
         s.insert("k".into(), Value::from("v"));
@@ -892,7 +963,7 @@ mod tests {
     fn disable_then_enable_persists() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("toggle", "1.0"), &[]);
-        mgr.install(&pkg, true).unwrap();
+        mgr.install(&pkg, true, false).unwrap();
 
         let disabled = mgr.disable("toggle").unwrap();
         assert_eq!(disabled.state, PluginState::Disabled);
@@ -918,7 +989,7 @@ mod tests {
     fn settings_round_trip() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("cfg", "1.0"), &[]);
-        mgr.install(&pkg, true).unwrap();
+        mgr.install(&pkg, true, false).unwrap();
 
         // Empty by default.
         assert!(mgr.get_settings("cfg").unwrap().is_empty());
@@ -956,7 +1027,7 @@ mod tests {
         // that was installed while still compatible.
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("legacy", "1.0"), &[]);
-        mgr.install(&pkg, true).unwrap();
+        mgr.install(&pkg, true, false).unwrap();
 
         let manifest_path = mgr.root().join("legacy").join(MANIFEST_FILE_NAME);
         let bumped = manifest_json("legacy", "2.0");
@@ -971,7 +1042,7 @@ mod tests {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("future", "2.0"), &[]);
         assert!(matches!(
-            mgr.install(&pkg, true),
+            mgr.install(&pkg, true, false),
             Err(PluginManagerError::Package(
                 PluginPackageError::IncompatibleApiVersion { .. }
             ))
@@ -988,7 +1059,7 @@ mod tests {
             &manifest_json("assets", "1.0"),
             &[("themes/dark.json", b"{\"bg\":\"#111\"}")],
         );
-        mgr.install(&pkg, true).unwrap();
+        mgr.install(&pkg, true, false).unwrap();
 
         let bytes = mgr.read_file("assets", "themes/dark.json").unwrap();
         assert_eq!(bytes, b"{\"bg\":\"#111\"}");
@@ -1023,7 +1094,7 @@ mod tests {
         zip.finish().unwrap();
 
         let (mgr, _t) = manager();
-        let result = mgr.install(&path, true);
+        let result = mgr.install(&path, true, false);
         assert!(
             matches!(result, Err(PluginManagerError::UnsafePath(_))),
             "got: {result:?}"
@@ -1036,7 +1107,7 @@ mod tests {
     fn scan_skips_dirs_without_valid_manifest() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("real", "1.0"), &[]);
-        mgr.install(&pkg, true).unwrap();
+        mgr.install(&pkg, true, false).unwrap();
 
         // A stray directory with no manifest, and one with garbage.
         std::fs::create_dir_all(mgr.root().join("stray")).unwrap();
@@ -1063,7 +1134,7 @@ mod tests {
         let pkg = make_package(tmp.path(), &manifest_json("hooked", "1.0"), &[]);
 
         // Install runs on_enable, which fails: state is Error with the message.
-        let installed = mgr.install(&pkg, true).unwrap();
+        let installed = mgr.install(&pkg, true, false).unwrap();
         assert_eq!(installed.state, PluginState::Error);
         assert_eq!(installed.error_message.as_deref(), Some("boom"));
 
@@ -1080,7 +1151,7 @@ mod tests {
         // Every package is unsigned → untrusted; installing without accepting
         // the risk is refused before anything is extracted.
         assert!(matches!(
-            mgr.install(&pkg, false),
+            mgr.install(&pkg, false, false),
             Err(PluginManagerError::UntrustedSourceNotAccepted)
         ));
         assert!(!mgr.root().join("untrusted").exists());
@@ -1091,16 +1162,135 @@ mod tests {
         assert!(!trust.warning.is_empty());
 
         // Accepting the risk installs it.
-        let installed = mgr.install(&pkg, true).unwrap();
+        let installed = mgr.install(&pkg, true, false).unwrap();
         assert_eq!(installed.manifest.id, "untrusted");
         assert!(mgr.root().join("untrusted").exists());
+    }
+
+    /// Sign an on-disk package in place, returning the key that signed it.
+    fn sign(pkg: &Path) -> crate::plugin::SigningKeyFile {
+        let key = crate::plugin::generate_keypair("Test Publisher");
+        crate::plugin::sign_package(pkg, &key).unwrap();
+        key
+    }
+
+    #[test]
+    fn install_verified_key_needs_no_acceptance() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("verified", "1.0"), &[]);
+        let key = sign(&pkg);
+        // Pin the key so the package assesses as Verified.
+        mgr.pin_publisher(&key.key_id, &key.public_key, "Test Publisher")
+            .unwrap();
+
+        assert_eq!(
+            mgr.assess_trust(&pkg).level,
+            TrustLevel::Verified {
+                publisher: "Test Publisher".into()
+            }
+        );
+        // Installs with neither accept_untrusted nor trust_publisher.
+        let installed = mgr.install(&pkg, false, false).unwrap();
+        assert_eq!(installed.manifest.id, "verified");
+        assert!(mgr.root().join("verified").exists());
+    }
+
+    #[test]
+    fn install_signed_unknown_pins_key_on_trust() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("signed", "1.0"), &[]);
+        let key = sign(&pkg);
+
+        // Signed-but-unknown: installs without accept_untrusted, and pins the key
+        // when the user opts in — after which it re-assesses as Verified.
+        assert!(matches!(
+            mgr.assess_trust(&pkg).level,
+            TrustLevel::Signed { .. }
+        ));
+        let installed = mgr.install(&pkg, false, true).unwrap();
+        assert_eq!(installed.manifest.id, "signed");
+
+        assert!(mgr
+            .trusted_publishers()
+            .unwrap()
+            .iter()
+            .any(|p| p.key_id == key.key_id));
+        assert!(matches!(
+            mgr.assess_trust(&pkg).level,
+            TrustLevel::Verified { .. }
+        ));
+    }
+
+    #[test]
+    fn install_signed_unknown_without_trust_does_not_pin() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("once", "1.0"), &[]);
+        let key = sign(&pkg);
+
+        // Install once without pinning — allowed, but the key is not trusted.
+        mgr.install(&pkg, false, false).unwrap();
+        assert!(!mgr
+            .trusted_publishers()
+            .unwrap()
+            .iter()
+            .any(|p| p.key_id == key.key_id));
+    }
+
+    #[test]
+    fn install_blocks_tampered_package_with_no_override() {
+        use crate::plugin::{
+            generate_keypair, sha256_digest, sign_digests, signing_key_from_base64,
+        };
+        let (mgr, tmp) = manager();
+
+        // A valid manifest, but a signature.json whose digest is over different
+        // bytes than the actual manifest → digest mismatch → Tampered.
+        let key = generate_keypair("Attacker");
+        let signing_key = signing_key_from_base64(&key.private_key).unwrap();
+        let digests =
+            std::iter::once((MANIFEST_FILE_NAME.to_owned(), sha256_digest(b"different"))).collect();
+        let sig = sign_digests(&signing_key, digests, "t".into());
+        let sig_json = serde_json::to_vec(&sig).unwrap();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json("evil", "1.0"),
+            &[("signature.json", &sig_json)],
+        );
+
+        assert_eq!(mgr.assess_trust(&pkg).level, TrustLevel::Tampered);
+        // Blocked even with both flags set — a tampered signature has no override.
+        assert!(matches!(
+            mgr.install(&pkg, true, true),
+            Err(PluginManagerError::SignatureTampered)
+        ));
+        assert!(!mgr.root().join("evil").exists());
+    }
+
+    #[test]
+    fn revoke_returns_signed_to_unknown() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("rev", "1.0"), &[]);
+        let key = sign(&pkg);
+        mgr.pin_publisher(&key.key_id, &key.public_key, "Pub")
+            .unwrap();
+        assert!(matches!(
+            mgr.assess_trust(&pkg).level,
+            TrustLevel::Verified { .. }
+        ));
+
+        // Revoking drops the package back to Signed (unknown).
+        mgr.revoke_publisher(&key.key_id).unwrap();
+        assert!(matches!(
+            mgr.assess_trust(&pkg).level,
+            TrustLevel::Signed { .. }
+        ));
     }
 
     #[test]
     fn reconcile_disables_incompatible_after_api_bump() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("legacy", "1.0"), &[]);
-        mgr.install(&pkg, true).unwrap();
+        mgr.install(&pkg, true, false).unwrap();
 
         // Simulate a host upgrade under the plugin: its manifest now targets an
         // incompatible API version.
@@ -1145,7 +1335,7 @@ mod tests {
             for id in ["keep-on", "turn-off", "too-new"] {
                 let pkg_dir = TempDir::new().unwrap();
                 let pkg = make_package(pkg_dir.path(), &manifest_json(id, "1.0"), &[]);
-                mgr.install(&pkg, true).unwrap();
+                mgr.install(&pkg, true, false).unwrap();
             }
             mgr.disable("turn-off").unwrap();
             // Make "too-new" incompatible by rewriting its manifest.
@@ -1191,7 +1381,7 @@ mod tests {
             for id in ["broken", "healthy"] {
                 let pkg_dir = TempDir::new().unwrap();
                 let pkg = make_package(pkg_dir.path(), &manifest_json(id, "1.0"), &[]);
-                mgr.install(&pkg, true).unwrap();
+                mgr.install(&pkg, true, false).unwrap();
             }
         }
 
@@ -1212,7 +1402,7 @@ mod tests {
     fn reconcile_leaves_compatible_plugins_enabled() {
         let (mgr, tmp) = manager();
         let pkg = make_package(tmp.path(), &manifest_json("fine", "1.0"), &[]);
-        mgr.install(&pkg, true).unwrap();
+        mgr.install(&pkg, true, false).unwrap();
 
         assert!(mgr.reconcile_compatibility().unwrap().is_empty());
         assert!(mgr.read_state_store().unwrap().plugins["fine"].enabled);
