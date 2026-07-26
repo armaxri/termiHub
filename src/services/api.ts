@@ -23,6 +23,7 @@ import type {
   WindowRestorePayload,
 } from "@/types/window";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
+import type { InstalledPlugin, PluginManifest } from "@/types/plugin";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -2346,4 +2347,44 @@ export async function setUpdateAutoCheck(enabled: boolean): Promise<void> {
 /** Return current update settings (auto-check flag, last check time, skipped version). */
 export async function getUpdateSettings(): Promise<UpdateSettings> {
   return await invoke<UpdateSettings>("get_update_settings");
+}
+
+// ─── Plugin manager ────────────────────────────────────────────────────────
+//
+// Typed wrappers over the `PluginManager` Tauri commands (plugin-system
+// concept §7). The command surface is defined by the backend plugin manager;
+// these wrappers give the store a typed entry point independent of when that
+// backend lands.
+
+/** List all installed plugins with their current install/runtime state. */
+export async function listPlugins(): Promise<InstalledPlugin[]> {
+  return await invoke<InstalledPlugin[]>("list_plugins");
+}
+
+/**
+ * Validate a `.termihub-plugin` package at `filePath` without installing it,
+ * returning its parsed manifest (e.g. to drive the install permission prompt).
+ */
+export async function validatePlugin(filePath: string): Promise<PluginManifest> {
+  return await invoke<PluginManifest>("validate_plugin", { filePath });
+}
+
+/** Install a `.termihub-plugin` package from `filePath`, returning the installed record. */
+export async function installPlugin(filePath: string): Promise<InstalledPlugin> {
+  return await invoke<InstalledPlugin>("install_plugin", { filePath });
+}
+
+/** Uninstall the plugin with the given id. */
+export async function uninstallPlugin(pluginId: string): Promise<void> {
+  await invoke("uninstall_plugin", { pluginId });
+}
+
+/** Enable (activate) the plugin with the given id. */
+export async function enablePlugin(pluginId: string): Promise<void> {
+  await invoke("enable_plugin", { pluginId });
+}
+
+/** Disable the plugin with the given id. */
+export async function disablePlugin(pluginId: string): Promise<void> {
+  await invoke("disable_plugin", { pluginId });
 }
