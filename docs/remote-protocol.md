@@ -2,7 +2,7 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.4.0
+**Version**: 0.5.0
 **Status**: Draft
 **Issue**: #17, #360, #1349
 
@@ -266,6 +266,9 @@ The desktop sends its supported protocol version in the `initialize` request. Th
 
 | Desktop Version | Agent Version | Compatible?                                         |
 | --------------- | ------------- | --------------------------------------------------- |
+| 0.5.0           | 0.5.0         | Yes                                                 |
+| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)   |
+| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)           |
 | 0.4.0           | 0.4.0         | Yes                                                 |
 | 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)     |
 | 0.3.0           | 0.4.0         | Yes (new method / notification ignored)             |
@@ -274,6 +277,8 @@ The desktop sends its supported protocol version in the `initialize` request. Th
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)          |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                 |
+
+**0.5.0 (additive, minor)** — adds the ssh-agent relay: the [`agent.forward.data`](#agentforwarddata) / [`agent.forward.close`](#agentforwardclose) methods and the [`agent.forward.open`](#agentforwardopen) / [`agent.forward.data`](#agentforwarddata-notification) / [`agent.forward.close`](#agentforwardclose-notification) notifications (#1727). Backwards compatible in both directions: a 0.4.0 agent simply never opens a relay stream (SSH agent forwarding then falls back to the #1719 host-local model), and a 0.4.0 desktop ignores the notifications, so the forwarded channel is dropped as a graceful no-op — the same behaviour as no local agent.
 
 **0.4.0 (additive, minor)** — adds the [`agent.request_update`](#agentrequest_update) method and the [`agent.update_pending`](#agentupdate_pending) notification (#1351). Backwards compatible in both directions, but note what "compatible" means for a _coordinated_ update: a 0.3.0 desktop never receives `agent.update_pending`, so it gets the same hard cut it always did when another host updates the agent — it is not broken, it is merely not warned. That is the documented "older desktops remain hard-cut" behaviour, and it is why the agent proceeds on a timeout rather than waiting for an ack that such a desktop could never send.
 
@@ -619,6 +624,50 @@ Send input data to a session (keystrokes, pasted text).
 
 - `-32001` Session not found
 - `-32006` Session not running
+
+---
+
+### `agent.forward.data`
+
+Desktop → agent. Carries a chunk of the operator's local ssh-agent's **reply** bytes for a forwarded ssh-agent stream (#1727), the desktop→agent leg of the [ssh-agent relay](#agentforwardopen). Sent in response to bytes the desktop received via the [`agent.forward.data` notification](#agentforwarddata-notification), after pumping them through its local agent.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.forward.data",
+  "params": {
+    "stream_id": "a1b2c3d4-...#3",
+    "data": "AAAAC3NzaC1lZDI1NTE5..."
+  }
+}
+```
+
+| Param       | Type     | Description                                 |
+| ----------- | -------- | ------------------------------------------- |
+| `stream_id` | `string` | Forwarded ssh-agent stream id (from `open`) |
+| `data`      | `string` | Base64-encoded ssh-agent-protocol bytes     |
+
+**Response**: `{}`. An unknown or already-closed `stream_id` is a benign no-op (not an error).
+
+---
+
+### `agent.forward.close`
+
+Desktop → agent. The desktop closed a forwarded ssh-agent stream — its local agent went away, or the conversation finished (#1727). The agent drops the relay connection so the daemon's forwarded-agent bridge sees EOF.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.forward.close",
+  "params": { "stream_id": "a1b2c3d4-...#3" }
+}
+```
+
+| Param       | Type     | Description                   |
+| ----------- | -------- | ----------------------------- |
+| `stream_id` | `string` | Forwarded ssh-agent stream id |
+
+**Response**: `{}`. Idempotent.
 
 ---
 
@@ -1695,6 +1744,64 @@ A session-level error that does not necessarily terminate the session.
 | ------------ | -------- | -------------------------------- |
 | `session_id` | `string` | Affected session UUID            |
 | `message`    | `string` | Human-readable error description |
+
+### `agent.forward.open`
+
+SSH agent forwarding, deployed-agent + TCP transport (#1727). When a session routed through a deployed agent opts into `forwardAgent` and the desktop reaches that agent over the **TCP transport**, there is no SSH leg to piggyback forwarding on (unlike the #1719 host-local model). Instead the agent binds a per-session ssh-agent socket, hands it to the session daemon as `$SSH_AUTH_SOCK`, and tunnels every connection the daemon makes to it back to the desktop over these `agent.forward.*` messages. The desktop bridges each stream to the operator's **own** local ssh-agent, so the operator's keys reach the final target regardless of transport.
+
+`agent.forward.open` announces a new forwarded stream (a program on the target contacted its `$SSH_AUTH_SOCK`). The desktop connects its local agent and prepares to pump bytes.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.forward.open",
+  "params": { "stream_id": "a1b2c3d4-...#3" }
+}
+```
+
+| Param       | Type     | Description                                             |
+| ----------- | -------- | ------------------------------------------------------- |
+| `stream_id` | `string` | Unique id for this forwarded stream (embeds session id) |
+
+If the desktop has no reachable local agent, it answers with an immediate [`agent.forward.close`](#agentforwardclose) — the forwarded channel is then dropped as a graceful no-op, matching the SSH-reached no-agent behaviour (#1699/#1719). **Relaying is unix-only**: on a Windows agent host the daemon's bridge target is a fixed OpenSSH pipe rather than an overridable `$SSH_AUTH_SOCK`, so a Windows agent keeps the #1719 host-local model.
+
+### `agent.forward.data` (notification)
+
+Agent → desktop. A chunk of the ssh-agent-protocol **request** bytes the target's client wrote, for the desktop to feed to the operator's local agent (#1727). Chunked to ≤ 64 KiB, like `connection.output`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.forward.data",
+  "params": {
+    "stream_id": "a1b2c3d4-...#3",
+    "data": "AAAAAQI="
+  }
+}
+```
+
+| Param       | Type     | Description                             |
+| ----------- | -------- | --------------------------------------- |
+| `stream_id` | `string` | Forwarded ssh-agent stream id           |
+| `data`      | `string` | Base64-encoded ssh-agent-protocol bytes |
+
+The desktop's reply bytes travel back via the [`agent.forward.data` **method**](#agentforwarddata).
+
+### `agent.forward.close` (notification)
+
+Agent → desktop. A forwarded ssh-agent stream ended on the agent host (the target closed its agent connection). The desktop drops its local-agent bridge for the stream (#1727).
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.forward.close",
+  "params": { "stream_id": "a1b2c3d4-...#3" }
+}
+```
+
+| Param       | Type     | Description                   |
+| ----------- | -------- | ----------------------------- |
+| `stream_id` | `string` | Forwarded ssh-agent stream id |
 
 ### `connection.monitoring.data`
 

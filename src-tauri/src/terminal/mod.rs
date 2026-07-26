@@ -1,6 +1,7 @@
 pub mod agent_binary;
 pub mod agent_cancel;
 pub mod agent_deploy;
+pub mod agent_forward;
 pub mod agent_install;
 pub mod agent_manager;
 pub mod agent_setup;

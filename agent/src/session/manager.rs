@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 
 use crate::io::transport::NotificationSender;
+use crate::session::agent_forward::AgentForwardRelay;
 use crate::session::types::{SessionBackend, SessionInfo, SessionSnapshot, SessionStatus};
 use crate::transport::JsonRpcOutputSink;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
@@ -105,6 +106,14 @@ pub trait SessionManagerApi: Send + Sync + 'static {
 
     /// Update the ring-buffer size used for future daemon spawns.
     async fn set_persistent_buffer_size_bytes(&self, bytes: usize);
+
+    /// Route desktop-supplied ssh-agent reply bytes to a forwarded stream (the
+    /// desktop→agent leg of the agent-forward relay, #1727). Unknown streams are
+    /// silently ignored.
+    async fn agent_forward_write(&self, stream_id: &str, data: Vec<u8>);
+
+    /// Close a forwarded ssh-agent stream the desktop reports as ended (#1727).
+    async fn agent_forward_close(&self, stream_id: &str);
 }
 
 /// Errors that can occur during session creation.
@@ -173,6 +182,10 @@ impl fmt::Display for DeferredUpdateError {
 #[async_trait::async_trait]
 pub trait DaemonLauncher: Send + Sync + 'static {
     /// Spawn a daemon for the given session and return the connected backend.
+    ///
+    /// `ssh_auth_sock`, when set, is exported to the daemon as `SSH_AUTH_SOCK`
+    /// so its core SSH agent-forwarding bridge reaches the desktop's agent via
+    /// the relay socket instead of the agent host's own agent (#1727).
     async fn launch(
         &self,
         session_id: &str,
@@ -180,6 +193,7 @@ pub trait DaemonLauncher: Send + Sync + 'static {
         settings: &serde_json::Value,
         notification_tx: NotificationSender,
         buffer_size_bytes: usize,
+        ssh_auth_sock: Option<String>,
     ) -> Result<SessionBackend, anyhow::Error>;
 }
 
@@ -213,6 +227,7 @@ impl DaemonLauncher for SystemDaemonLauncher {
         settings: &serde_json::Value,
         notification_tx: NotificationSender,
         buffer_size_bytes: usize,
+        ssh_auth_sock: Option<String>,
     ) -> Result<SessionBackend, anyhow::Error> {
         let endpoint = session_endpoint(session_id);
         let settings_json = serde_json::to_string(settings)?;
@@ -228,6 +243,13 @@ impl DaemonLauncher for SystemDaemonLauncher {
             .env("TERMIHUB_BUFFER_SIZE", buffer_size_bytes.to_string())
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null());
+        // Point the daemon's core SSH agent-forwarding bridge at the relay
+        // socket, so it reaches the desktop's agent rather than the agent host's
+        // own `$SSH_AUTH_SOCK` (#1727). Overriding the inherited value is the
+        // intent: over the TCP transport there is nothing useful to inherit.
+        if let Some(sock) = ssh_auth_sock {
+            command.env("SSH_AUTH_SOCK", sock);
+        }
         crate::daemon::spawn::configure_detached_stderr(&mut command, daemon_log(session_id));
         crate::daemon::spawn::configure_detachment(&mut command);
 
@@ -321,6 +343,10 @@ pub struct SessionManager {
     update_applier: Arc<dyn UpdateApplier>,
     /// Configurable ring-buffer size for daemon-backed persistent sessions.
     persistent_buffer_size: Arc<AtomicUsize>,
+    /// Relays the desktop's ssh-agent to daemons that opted into `forwardAgent`
+    /// over the JSON-RPC transport (#1727). Shared with the dispatch handlers so
+    /// desktop-supplied reply bytes route back to the right forwarded stream.
+    agent_forward: Arc<AgentForwardRelay>,
 }
 
 impl SessionManager {
@@ -392,6 +418,7 @@ impl SessionManager {
             info!("Cleared an already-applied pending agent update from persisted state");
             state.save_to(&state_path);
         }
+        let agent_forward = AgentForwardRelay::new(notification_tx.clone());
         Self {
             sessions: Mutex::new(HashMap::new()),
             notification_tx,
@@ -401,6 +428,7 @@ impl SessionManager {
             state_path,
             update_applier,
             persistent_buffer_size: Arc::new(AtomicUsize::new(DEFAULT_PERSISTENT_BUFFER_SIZE)),
+            agent_forward,
         }
     }
 
@@ -502,15 +530,62 @@ impl SessionManager {
         settings: &serde_json::Value,
     ) -> Result<SessionBackend, anyhow::Error> {
         let buffer_size = self.persistent_buffer_size.load(Ordering::Relaxed);
-        self.launcher
+
+        // For an SSH session that opted into `forwardAgent`, stand up a
+        // per-session ssh-agent relay to the desktop and hand the daemon its
+        // socket as `SSH_AUTH_SOCK` (#1727). Best-effort: if the relay can't
+        // bind we still launch, and forwarding just falls back to whatever the
+        // daemon inherits (the #1719 host-local behaviour).
+        let ssh_auth_sock = self
+            .start_agent_forward(session_id, type_id, settings)
+            .await;
+
+        let result = self
+            .launcher
             .launch(
                 session_id,
                 type_id,
                 settings,
                 self.notification_tx.clone(),
                 buffer_size,
+                ssh_auth_sock.clone(),
             )
-            .await
+            .await;
+
+        // A daemon that never launched leaves no one to talk to the relay, so
+        // don't leave the socket dangling.
+        if result.is_err() && ssh_auth_sock.is_some() {
+            self.agent_forward.stop_listener(session_id).await;
+        }
+        result
+    }
+
+    /// Start the desktop ssh-agent relay for a session when it applies, returning
+    /// the socket path to export to the daemon as `SSH_AUTH_SOCK` (#1727).
+    async fn start_agent_forward(
+        &self,
+        session_id: &str,
+        type_id: &str,
+        settings: &serde_json::Value,
+    ) -> Option<String> {
+        if !AgentForwardRelay::should_relay(type_id, settings) {
+            return None;
+        }
+        #[cfg(unix)]
+        {
+            match self.agent_forward.start_listener(session_id).await {
+                Ok(path) => Some(path),
+                Err(e) => {
+                    warn!("failed to start ssh-agent relay for {session_id}: {e}");
+                    None
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = session_id;
+            None
+        }
     }
 
     /// Return the current scrollback buffer for a session (daemon-backed only).
@@ -599,6 +674,9 @@ impl SessionManager {
             }
         };
 
+        // Tear down any ssh-agent relay this session held (#1727).
+        self.agent_forward.stop_listener(session_id).await;
+
         {
             let mut state = self.state.lock().await;
             state.sessions.remove(session_id);
@@ -638,7 +716,8 @@ impl SessionManager {
     /// In-process sessions are disconnected normally.
     pub async fn close_all(&self) {
         let mut sessions = self.sessions.lock().await;
-        for (_, mut info) in sessions.drain() {
+        for (id, mut info) in sessions.drain() {
+            self.agent_forward.stop_listener(&id).await;
             shutdown_backend(&mut info.backend).await;
         }
     }
@@ -1107,6 +1186,14 @@ impl SessionManagerApi for SessionManager {
 
     async fn set_persistent_buffer_size_bytes(&self, bytes: usize) {
         SessionManager::set_persistent_buffer_size_bytes(self, bytes);
+    }
+
+    async fn agent_forward_write(&self, stream_id: &str, data: Vec<u8>) {
+        self.agent_forward.write(stream_id, data).await;
+    }
+
+    async fn agent_forward_close(&self, stream_id: &str) {
+        self.agent_forward.close_stream(stream_id).await;
     }
 }
 
@@ -1712,6 +1799,7 @@ mod tests {
                 _settings: &serde_json::Value,
                 _notification_tx: NotificationSender,
                 _buffer_size_bytes: usize,
+                _ssh_auth_sock: Option<String>,
             ) -> Result<SessionBackend, anyhow::Error> {
                 if self.should_fail {
                     return Err(anyhow::anyhow!("mock: daemon spawn failed"));

@@ -215,6 +215,24 @@ pub struct SessionInputParams {
     pub data: String,
 }
 
+// ── agent.forward.* (ssh-agent relay, #1727) ───────────────────────
+
+/// Desktop → agent: reply bytes from the operator's local ssh-agent, tagged
+/// with the forwarded stream they belong to.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentForwardDataParams {
+    pub stream_id: String,
+    /// Base64-encoded ssh-agent-protocol bytes.
+    pub data: String,
+}
+
+/// Desktop → agent: a forwarded ssh-agent stream the desktop closed (its local
+/// agent went away, or the conversation finished).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AgentForwardCloseParams {
+    pub stream_id: String,
+}
+
 // ── session.resize ─────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]

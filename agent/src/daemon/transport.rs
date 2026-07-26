@@ -132,7 +132,8 @@ pub async fn connect(endpoint: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
 #[cfg(unix)]
 #[allow(unused_imports)]
 pub use unix_impl::{
-    endpoint_alive, open_daemon_log, open_registry_log, registry_endpoint, session_endpoint,
+    agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, open_daemon_log,
+    open_registry_log, registry_endpoint, session_endpoint,
 };
 #[cfg(windows)]
 #[allow(unused_imports)]
@@ -150,6 +151,19 @@ mod unix_impl {
     pub fn session_endpoint(session_id: &str) -> String {
         socket_dir()
             .join(format!("session-{session_id}.sock"))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Compute the ssh-agent relay socket path for a session (#1727).
+    ///
+    /// A sibling of the per-session daemon socket in the same per-user `0o700`
+    /// directory. Exported to the session daemon as `SSH_AUTH_SOCK`, it lets the
+    /// daemon's core SSH bridge reach the desktop's agent over the JSON-RPC
+    /// transport as if it were a normal local agent.
+    pub fn agent_forward_endpoint(session_id: &str) -> String {
+        socket_dir()
+            .join(format!("session-{session_id}-agent.sock"))
             .to_string_lossy()
             .into_owned()
     }
@@ -186,6 +200,14 @@ mod unix_impl {
     fn socket_dir() -> PathBuf {
         let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
         PathBuf::from("/tmp/termihub").join(user)
+    }
+
+    /// Ensure the per-user socket directory exists (mode `0700`) so the
+    /// ssh-agent relay can bind its listener there before spawning the daemon
+    /// (#1727). The daemon's own socket dir is created lazily on first log/bind;
+    /// the relay binds first, so it must create it explicitly.
+    pub fn ensure_agent_forward_dir() -> io::Result<()> {
+        ensure_socket_dir(&socket_dir())
     }
 
     /// Ensure the socket directory exists with mode `0700`.

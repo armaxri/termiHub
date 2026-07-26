@@ -2418,11 +2418,36 @@ verify manually:
    toggle still on — the connection must **succeed** with forwarding silently
    skipped (a debug log notes it).
 
-Limitation / future work: when the desktop reaches the agent over the **TCP
-transport** (`--listen`) rather than SSH, there is no SSH leg to piggyback, so the
-operator's agent is only reachable if the agent host runs its own agent. Relaying
-the desktop's agent to the agent host over the desktop↔agent JSON-RPC transport
-would close that gap and is tracked as a follow-up.
+### SSH agent forwarding over the TCP agent transport (#1727)
+
+Closes the #1719 gap above: when the desktop reaches a deployed agent over the
+**TCP transport** (`--listen`) rather than SSH, there is no SSH leg to piggyback
+agent forwarding on. termiHub now relays the **desktop's** own ssh-agent to the
+session daemon over the desktop↔agent JSON-RPC transport (`agent.forward.*`
+messages), so the operator's keys reach the final target with no ssh-agent on the
+agent host at all. The relay socket is handed to the daemon as `$SSH_AUTH_SOCK`,
+so the daemon's core bridge and the target see a normal agent.
+
+The relay's stream plumbing (open/data/close, the local-agent bridge, the
+no-agent no-op) is covered by **Rust unit tests**
+(`agent/src/session/agent_forward.rs`, `agent/src/handler/dispatch.rs`,
+`src-tauri/src/terminal/agent_forward.rs`). End-to-end forwarding needs a live
+agent + real SSH server reached over TCP (integration lane only, not per-PR CI),
+so verify manually — this path is **unix-only** (a Windows agent host keeps the
+host-local model from #1719):
+
+1. Ensure a local agent has a key: `ssh-add -l` lists at least one identity.
+2. Deploy the agent to an intermediate host and reach it over the **TCP
+   transport** (`--listen`) — crucially **without** SSH agent forwarding on the
+   desktop→agent leg, and with **no** ssh-agent running on the agent host itself
+   (so #1719's host-local chaining cannot mask the result).
+3. Add an agent-routed SSH connection to a final target (e.g. a `tests/docker`
+   SSH fixture), enable **Forward SSH agent**, and connect. On the target run
+   `ssh-add -l` — it must list **your desktop's** identities, and an onward `ssh`
+   from the target using an agent key must succeed.
+4. **No agent:** stop the desktop's agent (unset `SSH_AUTH_SOCK`) and reconnect
+   with the toggle still on — the connection must **succeed** with forwarding
+   silently skipped; `ssh-add -l` on the target reports no agent.
 
 ### X11 / GUI forwarding
 

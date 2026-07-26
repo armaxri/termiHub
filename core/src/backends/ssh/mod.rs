@@ -4,7 +4,7 @@
 //! and file browsing (SFTP). This is the canonical SSH implementation,
 //! used by both the desktop and agent crates.
 
-mod agent_forward;
+pub mod agent_forward;
 pub mod auth;
 pub mod connector;
 pub mod exec;
