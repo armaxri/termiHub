@@ -80,7 +80,7 @@ async fn plugin_host_round_trip() {
     assert_eq!(lib.info().id, "test-echo");
     assert_eq!(lib.info().name, "Test Echo");
     assert_eq!(lib.info().version, "0.1.0");
-    assert_eq!(lib.info().api_version, 1);
+    assert_eq!(lib.info().api_version, 2);
 
     // --- 2. Full ConnectionType round trip: written input echoes to output. ---
     let mut conn = PluginConnectionType::new(
@@ -117,7 +117,7 @@ async fn plugin_host_round_trip() {
     std::env::remove_var("TERMIHUB_TEST_PLUGIN_ABI");
     match result {
         Err(HostError::IncompatibleAbi { expected, found }) => {
-            assert_eq!(expected, 1);
+            assert_eq!(expected, 2);
             assert_eq!(found, 99);
         }
         Err(other) => panic!("expected IncompatibleAbi, got {other:?}"),
