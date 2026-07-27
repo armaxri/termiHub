@@ -43,7 +43,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
-use super::manifest::{parse_manifest, ApiCompatibility, PluginManifest};
+use super::manifest::{is_valid_plugin_id, parse_manifest, ApiCompatibility, PluginManifest};
 use super::package::{
     check_package_size, read_entry_bounded, validate_package, PluginPackageError,
     MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES, MAX_DECOMPRESSED_TOTAL_BYTES,
@@ -643,6 +643,14 @@ impl PluginManager {
     /// refused. This is the helper the (later) theme/JS loaders use to pull
     /// asset bytes out of an installed plugin.
     pub fn read_file(&self, id: &str, relative: &str) -> Result<Vec<u8>, PluginManagerError> {
+        // `id` reaches this method from the renderer over IPC (the
+        // `read_plugin_file` command), so it is untrusted. Re-validate it with
+        // the same slug rule enforced at manifest time before it is joined into
+        // a filesystem path — otherwise a traversing id (`..`, separators) would
+        // escape the plugin root and turn this into an arbitrary-file read.
+        if !is_valid_plugin_id(id) {
+            return Err(PluginManagerError::PathTraversal(id.into()));
+        }
         let dir = self.plugin_dir(id);
         if !dir.exists() {
             return Err(PluginManagerError::NotFound(id.into()));
