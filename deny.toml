@@ -1,16 +1,18 @@
 # cargo-deny configuration — supply-chain gate for the Rust workspace.
 # https://embarkstudios.github.io/cargo-deny/
 #
-# CI runs only `cargo deny check advisories bans` (see
-# .github/workflows/code-quality.yml -> "Security Audit"). The primary purpose
-# is the YANKED-crate gate (#2074): if the workspace lockfile ever pins a crate
-# version that has been yanked from crates.io, CI fails loudly instead of the
-# app silently shipping a withdrawn dependency.
-#
-# The `licenses` and `sources` checks are intentionally NOT wired into CI yet —
-# they need a full allowlist for the entire transitive tree, which is a
-# separate, larger piece of work. cargo-audit (also in the Security Audit job)
-# continues to cover RUSTSEC *vulnerability* advisories.
+# CI runs `cargo deny check advisories bans licenses sources` (see
+# .github/workflows/code-quality.yml -> "Security Audit"). Four gates:
+#   - advisories: YANKED-crate gate (#2074) — a lockfile pinning a crate version
+#     that has been yanked from crates.io fails CI instead of the app silently
+#     shipping a withdrawn dependency.
+#   - bans: documented release sign-off for the pre-release RustCrypto stack.
+#   - licenses: license compliance for the distributed binary — every crate in
+#     the transitive tree must resolve to an explicitly allowed license (#2096).
+#   - sources: every crate must come from crates.io — an unexpected registry or
+#     git source fails CI (#2096).
+# cargo-audit (also in the Security Audit job) covers RUSTSEC *vulnerability*
+# advisories.
 
 [advisories]
 # A yanked crate in the lockfile fails CI. This is the headline gate: it is how
@@ -44,6 +46,60 @@ ignore = [
     "RUSTSEC-2026-0195",
 ]
 
+[licenses]
+# License allowlist for the distributed binary. A crate whose license does not
+# resolve to one of these fails CI, so an unknown or restrictive (e.g. GPL)
+# license cannot slip into the tree unnoticed. The set below is the standard
+# permissive family actually present in the current transitive tree
+# (enumerated via `cargo deny list`); it is deliberately NOT a blanket allow.
+#
+# Copyleft note: MPL-2.0 is included. It is a *file-level* weak copyleft — it
+# governs only the individual MPL-licensed source files (cssparser, selectors,
+# slog, ...), imposes no obligation on the rest of the binary, and is standard
+# practice to ship in a permissively-licensed distributed application. Stronger
+# copyleft (GPL/AGPL/LGPL) is intentionally NOT allowed: `r-efi` is
+# `MIT OR Apache-2.0 OR LGPL-2.1-or-later`, so it resolves to MIT/Apache and its
+# LGPL arm is never selected — a crate offering *only* (L)GPL would still fail.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    # LLVM-exception is a permissive linking exception layered on Apache-2.0
+    # (strictly more permissive). Required by winx, which offers no other arm;
+    # rustix/cap-std/wasi/wit-bindgen all also dual-license to plain MIT/Apache.
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+# The workspace's own crates (termihub, termihub-core, termihub-agent,
+# termihub-plugin-api, and the example plugins) carry no `license` field and so
+# read as "Unlicensed". They are first-party, never published to crates.io, and
+# covered by the repository's MIT LICENSE — not a third-party licensing concern.
+# `ignore = true` skips these private (publish = false) workspace members so the
+# gate applies only to external dependencies.
+private = { ignore = true }
+
+[sources]
+# Every crate must come from crates.io. An unexpected registry or a git
+# dependency (a common supply-chain injection vector) fails CI. The workspace
+# currently has no git dependencies; the vendored `vnc-rs` is an in-tree path
+# member (no external source) and is not subject to this check. Add a git URL to
+# `allow-git` here if a vetted git dependency is ever introduced.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
 [bans]
 # Pre-release RustCrypto stack — documented release sign-off (#2074).
 #
@@ -61,6 +117,3 @@ ignore = [
 # not gate CI here.
 multiple-versions = "allow"
 wildcards = "allow"
-
-# `licenses` and `sources` are omitted deliberately — see the header note. When
-# they are added, wire `cargo deny check licenses sources` into CI as well.

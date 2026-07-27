@@ -4,6 +4,10 @@ version = "0.1.0"
 description = "Remote agent for termiHub — manages persistent terminal sessions on Raspberry Pi"
 authors = ["Arne Maximilian Richter <armaxri@gmail.com>"]
 edition = "2021"
+# First-party workspace crate — never published to crates.io (the repo is MIT,
+# see /LICENSE). Marks it private so cargo-deny's `[licenses] private.ignore`
+# skips its missing per-crate license field (#2096).
+publish = false
 
 [[bin]]
 name = "termihub-agent"

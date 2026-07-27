@@ -298,19 +298,24 @@ jobs:
       - name: Cargo Audit
         run: cargo audit
 
-      # cargo-deny yanked/bans gate (#2074): fails CI when the workspace lockfile
-      # pins a YANKED crate (e.g. the crypto-bigint 0.7.x line pulled via russh),
-      # so a silently-yanked transitive dep surfaces loudly instead of shipping.
-      # Config: deny.toml. Only `advisories bans` run here — the `licenses` and
-      # `sources` checks are intentionally not wired (they need a full allowlist;
-      # tracked separately). cargo-audit above still covers vulnerability RUSTSECs.
+      # cargo-deny supply-chain gate. Config: deny.toml. Four checks run:
+      #   - advisories: fails CI when the workspace lockfile pins a YANKED crate
+      #     (e.g. the crypto-bigint 0.7.x line pulled via russh) — a silently
+      #     withdrawn transitive dep surfaces loudly instead of shipping (#2074).
+      #   - bans: documented release sign-off for the pre-release RustCrypto stack.
+      #   - licenses: every crate must resolve to an allowed license, so an
+      #     unknown/restrictive license cannot slip into the distributed binary
+      #     unnoticed (#2096).
+      #   - sources: every crate must come from crates.io — an unexpected registry
+      #     or git source fails CI (#2096).
+      # cargo-audit above still covers vulnerability RUSTSECs.
       - name: Install cargo-deny
         uses: taiki-e/install-action@v2
         with:
           tool: cargo-deny
 
-      - name: Cargo Deny (yanked + bans gate)
-        run: cargo deny check advisories bans
+      - name: Cargo Deny (supply-chain gate)
+        run: cargo deny check advisories bans licenses sources
 
   # Check conventional commits (PR only)
   commit-lint:

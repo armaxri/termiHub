@@ -7,6 +7,12 @@ name = "termihub-plugin-api"
 version = "0.1.0"
 description = "Stable ABI contract for termiHub native (dynamically-loaded) terminal-backend plugins"
 edition = "2021"
+# First-party workspace crate — not currently published to crates.io (the repo
+# is MIT, see /LICENSE). Marks it private so cargo-deny's `[licenses]
+# private.ignore` skips its missing per-crate license field (#2096). If this ABI
+# contract is ever published for third-party plugin authors, drop this and add a
+# real `license` field.
+publish = false
 
 [dependencies]
 # Only dependency: ergonomic Rust-side error type. Kept intentionally minimal —

@@ -3,6 +3,10 @@ name = "termihub-core"
 version = "0.1.0"
 description = "Shared core library for termiHub desktop and agent"
 edition = "2021"
+# First-party workspace crate — never published to crates.io (the repo is MIT,
+# see /LICENSE). Marks it private so cargo-deny's `[licenses] private.ignore`
+# skips its missing per-crate license field (#2096).
+publish = false
 build = "build.rs"
 
 # Hashing the staged `termihub-rdp-helper` externalBin to embed its SHA-256 at
