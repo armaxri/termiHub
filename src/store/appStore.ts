@@ -166,10 +166,7 @@ import {
 } from "@/types/transfer";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { createTunnelSlice, TunnelSlice } from "./slices/tunnelSlice";
-import {
-  createEmbeddedServersSlice,
-  EmbeddedServersSlice,
-} from "./slices/embedded-serversSlice";
+import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embedded-serversSlice";
 import {
   WorkspaceSummary,
   WorkspaceDefinition,
