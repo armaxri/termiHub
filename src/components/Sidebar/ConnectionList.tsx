@@ -34,7 +34,6 @@ import {
   FileSpreadsheet,
   Link,
   Square,
-  Hourglass,
 } from "lucide-react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
@@ -62,7 +61,6 @@ import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { BulkSshImportDialog } from "./BulkSshImportDialog";
 import { FleetOnboardDialog } from "./FleetOnboardDialog";
 import { AgentNode } from "./AgentNode";
-import { PersistentStateDot } from "./PersistentStateDot";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
@@ -356,14 +354,6 @@ function ConnectionItem({
   const hasPersistentError = runState === "error";
   const isPersistentStopped = !runState || runState === "stopped" || hasPersistentError;
 
-  const stateDotClass = isPersistentRunning
-    ? "connection-tree__state-dot--running"
-    : isPersistentTransitioning
-      ? "connection-tree__state-dot--transitioning"
-      : hasPersistentError
-        ? "connection-tree__state-dot--error"
-        : "connection-tree__state-dot--stopped";
-
   const handleStartPersistent = useCallback(() => {
     void startPersistentSession(connection.id);
   }, [startPersistentSession, connection.id]);
@@ -414,14 +404,6 @@ function ConnectionItem({
               onFocus={() => onRowFocus(rowIndex)}
             >
               <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
-              {persistentCapable && (
-                <PersistentStateDot
-                  runState={runState}
-                  stateDotClass={stateDotClass}
-                  connectionId={connection.id}
-                  dotTestId={`persistent-state-dot-${connection.id}`}
-                />
-              )}
               <span className="connection-tree__label">{connection.name}</span>
               {jumpHosts.length > 0 && (
                 <span
@@ -435,20 +417,11 @@ function ConnectionItem({
                   )}
                 </span>
               )}
-              {/* Desktop-local persistence marker (#2086). This session runs
-                  inside the app process and lives only while the app is open,
-                  so it must NOT claim the ∞ (which is reserved for agent-backed
-                  sessions that survive app close + machine restart). It gets a
-                  distinct, lesser Hourglass marker instead. */}
-              {persistentCapable && (
-                <span
-                  className="connection-tree__local-persistent-badge"
-                  title="Runs while the app is open — closing termiHub ends the session. Use a remote agent for persistence across app restarts."
-                  data-testid={`local-persistent-badge-${connection.id}`}
-                >
-                  <Hourglass size={12} />
-                </span>
-              )}
+              {/* Persistence surfacing (#2099): normal desktop-local
+                  connections (ssh/docker/wsl/serial/local) are multi-instance
+                  and die with the window, so they carry NO persistence marker —
+                  no ∞, no hourglass, no state dot. The ∞ lives only on agent
+                  persistent shells (see AgentNode.tsx). */}
               <span className="connection-tree__type">{connection.config.type}</span>
               {persistentCapable && !isPersistentTransitioning && (
                 <span className="connection-tree__persistent-actions">
