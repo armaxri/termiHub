@@ -497,6 +497,15 @@ Or manually verify:
 - [ ] README.md has installation instructions
 - [ ] No blocker bugs open
 - [ ] Release branch is up to date with `origin/main`
+- [ ] **Tunnel forwarding integration lanes green on the exact release commit**
+      (#2044) — confirm **both** the nightly system-integration lane **and** the
+      Docker backend-integration lane ran green against the precise commit being
+      tagged, and that their run covered **≥1 local forward** and **≥1 dynamic
+      (SOCKS) forward** end-to-end. These lanes do **not** run in per-PR CI (the
+      per-PR lane is `-m "not integration"`), and the SSH tunnel data path is
+      only unit-tested at the forwarder level (loopback + mock channel) — so
+      end-to-end tunnel coverage is inherently a release-day confirmation, not
+      something green PR CI can prove. Do not tag until this is checked.
 
 ### 6.2 Merge Release Branch
 
