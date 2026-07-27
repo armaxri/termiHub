@@ -9,6 +9,7 @@ import {
   onCredentialStoreLocked,
   onCredentialStoreUnlocked,
   onCredentialStoreStatusChanged,
+  base64ToBytes,
 } from "./events";
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -16,6 +17,16 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 const mockedListen = vi.mocked(listen);
+
+/**
+ * Encode a byte array as a base64 string — matches the backend wire form for
+ * terminal-output payloads (#2072), so tests can feed realistic payloads.
+ */
+function b64(bytes: number[]): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
 
 describe("events service", () => {
   beforeEach(() => {
@@ -46,12 +57,30 @@ describe("events service", () => {
 
       // Simulate Tauri event
       capturedHandler!({
-        payload: { session_id: "sess-1", data: [72, 101, 108, 108, 111] },
+        payload: { session_id: "sess-1", data: b64([72, 101, 108, 108, 111]) },
       });
 
       expect(callback).toHaveBeenCalledWith("sess-1", expect.any(Uint8Array));
       const data = callback.mock.calls[0][1] as Uint8Array;
       expect(Array.from(data)).toEqual([72, 101, 108, 108, 111]);
+    });
+  });
+
+  describe("base64ToBytes (terminal-output decode, #2072)", () => {
+    it("decodes an empty string to a zero-length array", () => {
+      expect(base64ToBytes("")).toEqual(new Uint8Array(0));
+    });
+
+    it("round-trips every byte value 0x00–0xFF byte-for-byte", () => {
+      const all = Array.from({ length: 256 }, (_, i) => i);
+      expect(Array.from(base64ToBytes(b64(all)))).toEqual(all);
+    });
+
+    it("preserves high bytes and UTF-8 multi-byte sequences", () => {
+      // "é🎉" as UTF-8 bytes, plus raw high/boundary bytes.
+      const utf8 = Array.from(new TextEncoder().encode("é🎉"));
+      const bytes = [0x00, 0x7f, 0x80, 0xfe, 0xff, ...utf8];
+      expect(Array.from(base64ToBytes(b64(bytes)))).toEqual(bytes);
     });
   });
 
@@ -233,7 +262,7 @@ describe("events service", () => {
 
       // Emit event for sess-1
       handlers["terminal-output"]({
-        payload: { session_id: "sess-1", data: [65, 66] },
+        payload: { session_id: "sess-1", data: b64([65, 66]) },
       });
 
       expect(cb1).toHaveBeenCalledTimes(1);
@@ -294,14 +323,14 @@ describe("events service", () => {
 
       // First event should be delivered
       handlers["terminal-output"]({
-        payload: { session_id: "sess-1", data: [1] },
+        payload: { session_id: "sess-1", data: b64([1]) },
       });
       expect(cb).toHaveBeenCalledTimes(1);
 
       // After unsubscribe, no delivery
       unsub();
       handlers["terminal-output"]({
-        payload: { session_id: "sess-1", data: [2] },
+        payload: { session_id: "sess-1", data: b64([2]) },
       });
       expect(cb).toHaveBeenCalledTimes(1);
     });
@@ -317,7 +346,7 @@ describe("events service", () => {
 
       // No callback registered for "sess-unknown" — should not throw
       handlers["terminal-output"]({
-        payload: { session_id: "sess-unknown", data: [1] },
+        payload: { session_id: "sess-unknown", data: b64([1]) },
       });
     });
 
@@ -332,10 +361,10 @@ describe("events service", () => {
 
       // Emit output BEFORE any subscriber registers
       handlers["terminal-output"]({
-        payload: { session_id: "sess-pre", data: [72, 101] },
+        payload: { session_id: "sess-pre", data: b64([72, 101]) },
       });
       handlers["terminal-output"]({
-        payload: { session_id: "sess-pre", data: [108, 108, 111] },
+        payload: { session_id: "sess-pre", data: b64([108, 108, 111]) },
       });
 
       // Now subscribe — should receive the buffered chunks immediately
@@ -358,7 +387,7 @@ describe("events service", () => {
 
       // Buffer one chunk before subscriber
       handlers["terminal-output"]({
-        payload: { session_id: "sess-x", data: [1] },
+        payload: { session_id: "sess-x", data: b64([1]) },
       });
 
       const cb = vi.fn();
@@ -367,7 +396,7 @@ describe("events service", () => {
 
       // New event after subscription — should only deliver once
       handlers["terminal-output"]({
-        payload: { session_id: "sess-x", data: [2] },
+        payload: { session_id: "sess-x", data: b64([2]) },
       });
       expect(cb).toHaveBeenCalledTimes(2);
     });
@@ -489,7 +518,7 @@ describe("events service", () => {
       dispatcher.subscribeOutput("sess-a", cb1);
 
       handlers["terminal-output"]({
-        payload: { session_id: "sess-a", data: [10] },
+        payload: { session_id: "sess-a", data: b64([10]) },
       });
       expect(cb1).toHaveBeenCalledTimes(1);
 
@@ -660,7 +689,7 @@ describe("events service", () => {
       // Fire terminal-output through all ACTIVE handlers only (simulates Tauri
       // delivering events only to registered listeners). Without the fix, two
       // handlers would remain active and the callback would fire twice.
-      const event = { payload: { session_id: "sess-1", data: [65] } };
+      const event = { payload: { session_id: "sess-1", data: b64([65]) } };
       for (const l of outputListeners) {
         if (l.active) l.handler(event);
       }
