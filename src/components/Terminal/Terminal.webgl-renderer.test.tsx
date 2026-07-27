@@ -212,6 +212,9 @@ describe("Terminal WebGL renderer (#2078)", () => {
     expect(
       (webgl as unknown as { onContextLoss: ReturnType<typeof vi.fn> }).onContextLoss,
     ).toHaveBeenCalledTimes(1);
+    // The active renderer is surfaced on the container for diagnostics.
+    const container = document.querySelector('[data-testid="terminal-renderer-tab-1"]');
+    expect(container?.getAttribute("data-terminal-renderer")).toBe("webgl");
   });
 
   it("disposes the WebGL addon on context loss (falls back to DOM renderer)", () => {
@@ -224,6 +227,8 @@ describe("Terminal WebGL renderer (#2078)", () => {
 
     // Disposing the addon makes xterm revert to its DOM renderer automatically.
     expect(webgl.dispose).toHaveBeenCalledTimes(1);
+    const container = document.querySelector('[data-testid="terminal-renderer-tab-1"]');
+    expect(container?.getAttribute("data-terminal-renderer")).toBe("dom");
   });
 
   it("still mounts and renders via the DOM path when WebGL init fails", async () => {
@@ -248,5 +253,7 @@ describe("Terminal WebGL renderer (#2078)", () => {
     act(() => flushRaf());
 
     expect(mockRefresh).toHaveBeenCalledWith(0, 23);
+    const container = document.querySelector('[data-testid="terminal-renderer-tab-1"]');
+    expect(container?.getAttribute("data-terminal-renderer")).toBe("dom");
   });
 });
