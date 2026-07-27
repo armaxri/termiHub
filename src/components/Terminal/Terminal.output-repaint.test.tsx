@@ -59,6 +59,18 @@ vi.mock("@xterm/xterm", () => {
   return { Terminal: MockXTerm };
 });
 
+// This is the DOM-renderer regression (#1849): the forced full-viewport refresh
+// only runs on the DOM path (#2107). Force WebGL to be unavailable so the
+// terminal falls back to the DOM renderer and the refresh is exercised.
+vi.mock("@xterm/addon-webgl", () => {
+  class MockWebglAddon {
+    constructor() {
+      throw new Error("WebGL2 context unavailable");
+    }
+  }
+  return { WebglAddon: MockWebglAddon };
+});
+
 vi.mock("@xterm/addon-fit", () => {
   class MockFitAddon {
     fit = vi.fn();
