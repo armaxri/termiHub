@@ -37,6 +37,24 @@
   overflow-y: auto;
 }
 
+/*
+ * Each agent inside the scroll list keeps its natural content height and never
+ * shrinks (#2116). The earlier design flex-distributed the expanded agents over
+ * the container's fixed height, so the list could never overflow (no top-level
+ * scroll) and every expanded agent was squeezed into a tiny slice with its own
+ * clipped inner scrollbar — unreadable. `flex: 0 0 auto` makes an expanded agent
+ * grow the list's total height instead, so overflow engages and the whole list
+ * scrolls with every agent (collapsed or expanded) fully reachable.
+ */
+.connection-list__agents-scroll > .connection-list__group {
+  flex: 0 0 auto;
+}
+
+/* Subtle divider between stacked agents (previously drawn by the resize handle). */
+.connection-list__agents-scroll > .connection-list__group + .connection-list__group {
+  border-top: 1px solid var(--border-primary);
+}
+
 /* Resize handle between sidebar sections */
 .connection-list__resize-handle {
   height: 1px;
@@ -113,6 +131,20 @@
   overflow-y: auto;
   min-height: 40px;
   padding-bottom: 8px;
+}
+
+/*
+ * An agent's own tree (inside the scrolling agent list) lays out at its natural
+ * content height and does NOT become an independent inner scroll region (#2116).
+ * The single scroll owner is `.connection-list__agents-scroll`; letting the tree
+ * grow to content means an expanded agent adds its full height to that list
+ * (which then scrolls) instead of clipping its rows into a 40px inner box.
+ */
+.connection-list__tree--agent {
+  flex: 0 0 auto;
+  overflow: visible;
+  min-height: 0;
+  padding-bottom: 4px;
 }
 
 .connection-tree__folder,

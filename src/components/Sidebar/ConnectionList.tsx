@@ -1,4 +1,4 @@
-import { useState, useCallback, Fragment, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import {
   DndContext,
@@ -1171,32 +1171,6 @@ export function ConnectionList() {
       : {};
   const isOuterResizable = "onMouseDown" in outerResizeProps;
 
-  const innerSectionsExpanded = useMemo(
-    () => (remoteAgentsCollapsed ? [] : remoteAgents.map((a) => a.isExpanded)),
-    [remoteAgentsCollapsed, remoteAgents]
-  );
-  const { map: innerExpandedIndexMap, count: innerExpandedCount } = useMemo(
-    () => buildExpandedIndexMap(innerSectionsExpanded),
-    [innerSectionsExpanded]
-  );
-  const {
-    flexValues: innerFlexValues,
-    handleProps: innerHandleProps,
-    sectionRefs: innerSectionRefs,
-  } = useSectionResize(innerExpandedCount);
-
-  const getInnerResizeHandleProps = useCallback(
-    (agentIndex: number) => {
-      const eiAbove = innerExpandedIndexMap[agentIndex - 1];
-      const eiBelow = innerExpandedIndexMap[agentIndex];
-      if (eiAbove >= 0 && eiBelow >= 0 && eiBelow === eiAbove + 1) {
-        return innerHandleProps(eiAbove);
-      }
-      return {};
-    },
-    [innerExpandedIndexMap, innerHandleProps]
-  );
-
   return (
     <div className="connection-list">
       <DndContext
@@ -1420,30 +1394,17 @@ export function ConnectionList() {
                     className="connection-list__agents-scroll"
                     data-testid="remote-agents-scroll"
                   >
-                    {remoteAgents.map((agent, i) => {
-                      const innerIdx = innerExpandedIndexMap[i];
-                      const innerResizeProps = i > 0 ? getInnerResizeHandleProps(i) : {};
-                      const isInnerResizable = "onMouseDown" in innerResizeProps;
-                      return (
-                        <Fragment key={agent.id}>
-                          {i > 0 && (
-                            <div
-                              className={`connection-list__resize-handle${isInnerResizable ? " connection-list__resize-handle--resizable" : ""}`}
-                              data-testid={`sidebar-group-separator-${i - 1}`}
-                              {...innerResizeProps}
-                            />
-                          )}
-                          <AgentNode
-                            agent={agent}
-                            filterQuery={agentFilterQuery}
-                            style={innerIdx >= 0 ? { flex: innerFlexValues[innerIdx] } : undefined}
-                            sectionRef={(el) => {
-                              if (innerIdx >= 0) innerSectionRefs.current[innerIdx] = el;
-                            }}
-                          />
-                        </Fragment>
-                      );
-                    })}
+                    {/*
+                      Every agent renders at its natural content height so the
+                      whole list overflows and scrolls in this container — an
+                      expanded agent's tree is not squeezed into a flex slice
+                      (which previously fixed the total height and defeated the
+                      scroll while clipping expanded content), it just makes the
+                      list taller and reachable by scrolling (#2116).
+                    */}
+                    {remoteAgents.map((agent) => (
+                      <AgentNode key={agent.id} agent={agent} filterQuery={agentFilterQuery} />
+                    ))}
                   </div>
                 </SortableContext>
               )}
