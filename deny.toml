@@ -1,0 +1,66 @@
+# cargo-deny configuration — supply-chain gate for the Rust workspace.
+# https://embarkstudios.github.io/cargo-deny/
+#
+# CI runs only `cargo deny check advisories bans` (see
+# .github/workflows/code-quality.yml -> "Security Audit"). The primary purpose
+# is the YANKED-crate gate (#2074): if the workspace lockfile ever pins a crate
+# version that has been yanked from crates.io, CI fails loudly instead of the
+# app silently shipping a withdrawn dependency.
+#
+# The `licenses` and `sources` checks are intentionally NOT wired into CI yet —
+# they need a full allowlist for the entire transitive tree, which is a
+# separate, larger piece of work. cargo-audit (also in the Security Audit job)
+# continues to cover RUSTSEC *vulnerability* advisories.
+
+[advisories]
+# A yanked crate in the lockfile fails CI. This is the headline gate: it is how
+# the crypto-bigint 0.7.x yank surfaced (crypto-bigint reached 0.7.5, a
+# non-yanked release, pulled transitively via russh 0.61 -> RustCrypto).
+yanked = "deny"
+
+# Unmaintained-crate advisories are NOT gated here. The tree carries a large,
+# tauri-bound set of them (gtk3 bindings, async-std, proc-macro-error, unic-*,
+# rustls-pemfile, serial, ...) that no local change can clear — they are tracked
+# for upstream resolution in #1037. cargo-audit (the other tool in the Security
+# Audit job) likewise does not fail on unmaintained advisories, so the two stay
+# in agreement. This keeps cargo-deny focused on yanked crates + real
+# vulnerabilities rather than churn we cannot act on.
+unmaintained = "none"
+
+# RUSTSEC advisories accepted as a conscious release sign-off. These mirror the
+# cargo-audit ignore list (.cargo/audit.toml) so the two tools agree; each has a
+# documented rationale there and is tracked for removal via #1037.
+#
+# - RUSTSEC-2023-0071: Marvin timing sidechannel in `rsa` (transitive via
+#   ssh-key). We only extract raw RSA key components and rebuild via OpenSSL;
+#   we never decrypt through this crate, so the sidechannel does not apply.
+# - RUSTSEC-2026-0194 / RUSTSEC-2026-0195: DoS advisories in `quick-xml` <0.41,
+#   transitive via plist <- tauri-utils <- tauri. `plist` only parses tauri's
+#   own bundle metadata, never external input; blocked until tauri adopts the
+#   patched quick-xml upstream.
+ignore = [
+    "RUSTSEC-2023-0071",
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
+
+[bans]
+# Pre-release RustCrypto stack — documented release sign-off (#2074).
+#
+# The SSH auth path pulls a pre-release RustCrypto stack via russh 0.61.1:
+# rsa 0.10.0-rc.x and ssh-key 0.7.0-rc.x (which in turn pinned the yanked
+# crypto-bigint 0.7.x line, now resolved to the non-yanked 0.7.5). These RC
+# crates are a deliberate, accepted risk for this release: russh has not yet
+# cut a stable release on the final RustCrypto 0.7/0.10 line. Upgrading to a
+# russh release built on stable RustCrypto is tracked in #1037. Until then the
+# yanked gate above guards against the versions silently regressing to a yanked
+# release, which is the concrete failure mode we care about.
+#
+# Multiple versions of a crate are common in a large tree (Cargo allows one
+# version per major) and are not a supply-chain signal on their own, so they do
+# not gate CI here.
+multiple-versions = "allow"
+wildcards = "allow"
+
+# `licenses` and `sources` are omitted deliberately — see the header note. When
+# they are added, wire `cargo deny check licenses sources` into CI as well.
