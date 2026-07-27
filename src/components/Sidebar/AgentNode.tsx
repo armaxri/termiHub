@@ -639,7 +639,7 @@ function AgentRootDropZone({
   return (
     <div
       ref={setNodeRef}
-      className={`connection-list__tree${isAgentConnectionOver ? " connection-tree__root-drop--over" : ""}`}
+      className={`connection-list__tree connection-list__tree--agent${isAgentConnectionOver ? " connection-tree__root-drop--over" : ""}`}
       onClick={onAreaClick}
       onKeyDown={onKeyDown}
       role="tree"
