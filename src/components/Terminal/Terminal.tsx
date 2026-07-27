@@ -971,6 +971,13 @@ export function Terminal({
     el.style.position = "absolute";
     el.style.inset = "0";
     el.style.overflow = "hidden";
+    // Expose which renderer is live for diagnostics (#2078). A renderer
+    // regression shows up as a blank/garbled terminal, so surfacing whether the
+    // GPU (webgl) or DOM path is active — in the DOM, readable in DevTools and by
+    // the system-test bridge — makes "did WebGL init or fall back?" observable in
+    // the field. Set to the final value once the addon is (or isn't) loaded below.
+    el.dataset.terminalRenderer = "dom";
+    el.setAttribute("data-testid", `terminal-renderer-${tabId}`);
     terminalElRef.current = el;
 
     // Inner viewport that hosts xterm. In horizontal-scroll mode this becomes the
@@ -1052,9 +1059,11 @@ export function Terminal({
         frontendLog("terminal", `webgl context lost tab=${tabId}; falling back to DOM renderer`);
         addon.dispose();
         webglAddon = null;
+        el.dataset.terminalRenderer = "dom";
       });
       xterm.loadAddon(addon);
       webglAddon = addon;
+      el.dataset.terminalRenderer = "webgl";
       frontendLog("terminal", `webgl renderer active tab=${tabId}`);
     } catch (err) {
       frontendLog(
@@ -1063,6 +1072,7 @@ export function Terminal({
       );
       webglAddon?.dispose();
       webglAddon = null;
+      el.dataset.terminalRenderer = "dom";
     }
 
     // Instantiate the syntax-highlighting engine for this xterm and apply the
