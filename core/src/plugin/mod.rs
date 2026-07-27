@@ -100,8 +100,9 @@ pub use security::{
 };
 pub use signature::{
     generate_keypair, key_id_from_public_key, sha256_digest, sign_digests, signing_key_from_base64,
-    signing_payload, verify as verify_signature, verify_reader, PackageSignature,
-    PackageVerification, SignatureError, SigningKeyFile, VerifiedIdentity, DIGEST_ALGORITHM,
-    SIGNATURE_ALGORITHM, SIGNATURE_FILE_NAME, SIGNATURE_FORMAT_VERSION,
+    signing_payload, verify as verify_signature, verify_reader, verify_signed_archive,
+    PackageSignature, PackageVerification, SignatureError, SigningKeyFile, VerifiedArchive,
+    VerifiedIdentity, VerifiedSignature, DIGEST_ALGORITHM, SIGNATURE_ALGORITHM,
+    SIGNATURE_FILE_NAME, SIGNATURE_FORMAT_VERSION,
 };
 pub use trust_store::{TrustSource, TrustStore, TrustStoreError, TrustedPublisher};
