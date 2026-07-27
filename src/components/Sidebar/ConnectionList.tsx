@@ -1416,30 +1416,35 @@ export function ConnectionList() {
                   items={remoteAgents.map((a) => a.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  {remoteAgents.map((agent, i) => {
-                    const innerIdx = innerExpandedIndexMap[i];
-                    const innerResizeProps = i > 0 ? getInnerResizeHandleProps(i) : {};
-                    const isInnerResizable = "onMouseDown" in innerResizeProps;
-                    return (
-                      <Fragment key={agent.id}>
-                        {i > 0 && (
-                          <div
-                            className={`connection-list__resize-handle${isInnerResizable ? " connection-list__resize-handle--resizable" : ""}`}
-                            data-testid={`sidebar-group-separator-${i - 1}`}
-                            {...innerResizeProps}
+                  <div
+                    className="connection-list__agents-scroll"
+                    data-testid="remote-agents-scroll"
+                  >
+                    {remoteAgents.map((agent, i) => {
+                      const innerIdx = innerExpandedIndexMap[i];
+                      const innerResizeProps = i > 0 ? getInnerResizeHandleProps(i) : {};
+                      const isInnerResizable = "onMouseDown" in innerResizeProps;
+                      return (
+                        <Fragment key={agent.id}>
+                          {i > 0 && (
+                            <div
+                              className={`connection-list__resize-handle${isInnerResizable ? " connection-list__resize-handle--resizable" : ""}`}
+                              data-testid={`sidebar-group-separator-${i - 1}`}
+                              {...innerResizeProps}
+                            />
+                          )}
+                          <AgentNode
+                            agent={agent}
+                            filterQuery={agentFilterQuery}
+                            style={innerIdx >= 0 ? { flex: innerFlexValues[innerIdx] } : undefined}
+                            sectionRef={(el) => {
+                              if (innerIdx >= 0) innerSectionRefs.current[innerIdx] = el;
+                            }}
                           />
-                        )}
-                        <AgentNode
-                          agent={agent}
-                          filterQuery={agentFilterQuery}
-                          style={innerIdx >= 0 ? { flex: innerFlexValues[innerIdx] } : undefined}
-                          sectionRef={(el) => {
-                            if (innerIdx >= 0) innerSectionRefs.current[innerIdx] = el;
-                          }}
-                        />
-                      </Fragment>
-                    );
-                  })}
+                        </Fragment>
+                      );
+                    })}
+                  </div>
                 </SortableContext>
               )}
             </div>

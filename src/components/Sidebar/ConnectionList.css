@@ -23,6 +23,20 @@
   overflow: hidden;
 }
 
+/*
+ * Scroll container for the agent list. The header + filter above it stay
+ * pinned; only this region scrolls. `min-height: 0` lets it shrink below its
+ * content inside the flex column so it scrolls internally instead of forcing
+ * the whole Remote Agents section to overflow and clip rows (#2106).
+ */
+.connection-list__agents-scroll {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 /* Resize handle between sidebar sections */
 .connection-list__resize-handle {
   height: 1px;
