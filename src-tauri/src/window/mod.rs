@@ -396,7 +396,7 @@ mod tests {
             .filter_map(|w| w.as_str())
             .collect();
         assert!(
-            windows.iter().any(|w| *w == "main"),
+            windows.contains(&"main"),
             "capability must cover the primary `main` window; got {windows:?}"
         );
         assert!(
