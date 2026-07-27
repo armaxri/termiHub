@@ -449,6 +449,70 @@ describe("TerminalConnectionOverlay — failed state", () => {
     expect(container.textContent).toContain("timed out");
   });
 
+  // Regression for #2088: an SSH connect timeout must give SSH-appropriate,
+  // reachability-focused guidance — it must NOT tell the user to check "the
+  // agent binary" (that hint belongs to agent connections, and a timeout means
+  // the transport never connected in the first place).
+  it("gives an SSH-appropriate timeout hint, not the agent-binary one", () => {
+    useAppStore.setState({
+      terminalSpawnErrors: { [TAB_ID]: "Connection timed out after 45s" },
+    });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+          sessionType="ssh"
+        />
+      );
+    });
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("agent binary");
+    expect(text).toContain("SSH");
+    expect(text).toContain("reachable");
+  });
+
+  it("gives a telnet timeout hint free of any agent-binary mention", () => {
+    useAppStore.setState({
+      terminalSpawnErrors: { [TAB_ID]: "TCP connect failed: connection timed out" },
+    });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-telnet"
+          isVisible={true}
+          sessionType="telnet"
+        />
+      );
+    });
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("agent binary");
+    expect(text).toContain("reachable");
+  });
+
+  // #2088: the SSH ssh-agent hint (remedy: start ssh-agent) is SSH-specific and
+  // must not leak onto other backends even if their raw error happens to contain
+  // the "Agent auth failed" marker.
+  it("does not show the SSH-agent hint on a non-SSH backend", () => {
+    useAppStore.setState({ terminalSpawnErrors: { [TAB_ID]: "Agent auth failed" } });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-telnet"
+          isVisible={true}
+          sessionType="telnet"
+        />
+      );
+    });
+    expect(container.textContent).not.toContain("SSH Agent not running");
+  });
+
   it("shows serial not-found hint for serial sessionType", () => {
     useAppStore.setState({
       terminalSpawnErrors: { [TAB_ID]: "Serial port '/dev/ttyUSB0' not found — check connected" },
