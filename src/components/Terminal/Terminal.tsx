@@ -305,6 +305,14 @@ export function Terminal({
   const userScrolledUpRef = useRef(false);
   const lastInputTimeRef = useRef(0);
   const contentDirtyRef = useRef(false);
+  // Whether the WebGL renderer is currently driving this terminal (#2107). The
+  // WebGL addon repaints its whole canvas each frame, so the per-flush full-
+  // viewport refresh (a DOM-renderer paint fix for #1849) is redundant work
+  // under WebGL. Gated on this ref so the refresh is skipped while WebGL is
+  // active but resumes the moment the context is lost and xterm falls back to
+  // the DOM renderer mid-session. Lives at component scope so the output-flush
+  // effect and the terminal-init effect (which owns the addon) share it.
+  const webglRendererActiveRef = useRef(false);
   const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isViewModeRef = useRef(false);
   // Capture existingSessionId at mount time only. After the Terminal creates a
@@ -709,12 +717,20 @@ export function Terminal({
           // rows a scroll already repaints), so it stays cheap on high-
           // throughput output. Runs regardless of scroll position so stale rows
           // are corrected even when the user has scrolled up.
+          //
+          // Skip it while the WebGL renderer is active (#2107): WebGL repaints
+          // its whole canvas each frame and never exhibits the #1849 stale-row
+          // bug, so the forced refresh is pure overhead there. The ref flips
+          // back to false on WebGL context loss, so the refresh resumes for the
+          // DOM fallback path.
           const afterWrite = () => {
             requestAnimationFrame(() => {
               if (!userScrolledUpRef.current) {
                 xterm.scrollToBottom();
               }
-              xterm.refresh(0, Math.max(0, xterm.rows - 1));
+              if (!webglRendererActiveRef.current) {
+                xterm.refresh(0, Math.max(0, xterm.rows - 1));
+              }
             });
           };
 
@@ -1050,8 +1066,10 @@ export function Terminal({
     //    xterm fall back to the DOM renderer automatically, so text keeps
     //    rendering. A one-shot fallback: we do not try to re-create the context.
     // The forced full-viewport refresh after each flush (see flushOutput) is a
-    // DOM-renderer paint fix (#1849); it is harmless under WebGL and keeps the
-    // fallback path correct, so it is intentionally left in place for both.
+    // DOM-renderer paint fix (#1849). It is skipped while WebGL is active
+    // (#2107) — tracked via webglRendererActiveRef, which mirrors the renderer
+    // state below — and resumes automatically on context-loss fallback so the
+    // DOM path stays correct.
     let webglAddon: WebglAddon | null = null;
     try {
       const addon = new WebglAddon();
@@ -1059,10 +1077,12 @@ export function Terminal({
         frontendLog("terminal", `webgl context lost tab=${tabId}; falling back to DOM renderer`);
         addon.dispose();
         webglAddon = null;
+        webglRendererActiveRef.current = false;
         el.dataset.terminalRenderer = "dom";
       });
       xterm.loadAddon(addon);
       webglAddon = addon;
+      webglRendererActiveRef.current = true;
       el.dataset.terminalRenderer = "webgl";
       frontendLog("terminal", `webgl renderer active tab=${tabId}`);
     } catch (err) {
@@ -1072,6 +1092,7 @@ export function Terminal({
       );
       webglAddon?.dispose();
       webglAddon = null;
+      webglRendererActiveRef.current = false;
       el.dataset.terminalRenderer = "dom";
     }
 
@@ -1352,6 +1373,9 @@ export function Terminal({
       // context-loss fallback, in which case it is already disposed.
       webglAddon?.dispose();
       webglAddon = null;
+      // Reset the renderer flag so a reconnect starts on the DOM-safe path
+      // (refresh enabled) until the new xterm re-activates WebGL (#2107).
+      webglRendererActiveRef.current = false;
       xterm.dispose();
       el.remove();
       terminalElRef.current = null;

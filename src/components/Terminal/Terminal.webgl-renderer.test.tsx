@@ -200,6 +200,23 @@ function renderTerminal() {
   });
 }
 
+// Drive one output chunk through the flush pipeline: output event → flushOutput
+// RAF → xterm.write → afterWrite → repaint RAF. Mirrors the real ordering so the
+// per-flush full-viewport refresh (#1849) fires exactly as it would in the app.
+async function pushOutputAndFlush() {
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 50));
+  });
+  if (outputCallback) {
+    act(() => outputCallback!(new Uint8Array([65, 66, 67])));
+  }
+  act(() => flushRaf());
+  if (capturedWriteCallback) {
+    act(() => capturedWriteCallback!());
+  }
+  act(() => flushRaf());
+}
+
 describe("Terminal WebGL renderer (#2078)", () => {
   it("loads the WebGL addon and wires up its context-loss handler", () => {
     renderTerminal();
@@ -255,5 +272,36 @@ describe("Terminal WebGL renderer (#2078)", () => {
     expect(mockRefresh).toHaveBeenCalledWith(0, 23);
     const container = document.querySelector('[data-testid="terminal-renderer-tab-1"]');
     expect(container?.getAttribute("data-terminal-renderer")).toBe("dom");
+  });
+});
+
+describe("Terminal per-flush refresh gating (#2107)", () => {
+  it("skips the full-viewport refresh while the WebGL renderer is active", async () => {
+    renderTerminal();
+
+    // Precondition: WebGL activated, so the DOM-renderer paint fix is redundant.
+    expect(h.webglInstances).toHaveLength(1);
+    const container = document.querySelector('[data-testid="terminal-renderer-tab-1"]');
+    expect(container?.getAttribute("data-terminal-renderer")).toBe("webgl");
+
+    await pushOutputAndFlush();
+
+    // Auto-scroll still runs; the redundant per-flush refresh does not.
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
+
+  it("resumes the full-viewport refresh after WebGL context loss falls back to DOM", async () => {
+    renderTerminal();
+
+    const webgl = h.webglInstances[0];
+    act(() => webgl.triggerContextLoss());
+
+    const container = document.querySelector('[data-testid="terminal-renderer-tab-1"]');
+    expect(container?.getAttribute("data-terminal-renderer")).toBe("dom");
+
+    await pushOutputAndFlush();
+
+    // Back on the DOM path, the #1849 stale-row fix must fire again.
+    expect(mockRefresh).toHaveBeenCalledWith(0, 23);
   });
 });
