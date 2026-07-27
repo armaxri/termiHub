@@ -9,7 +9,7 @@
   margin-bottom: var(--spacing-md);
   padding: var(--spacing-sm) var(--spacing-md);
   background-color: var(--bg-secondary, transparent);
-  border: 1px solid var(--border-subtle, var(--border-primary));
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
@@ -90,7 +90,7 @@
 
 .keyboard-settings__table td {
   padding: var(--spacing-xs) var(--spacing-sm);
-  border-bottom: 1px solid var(--border-subtle, var(--border-primary));
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .keyboard-settings__action-cell {

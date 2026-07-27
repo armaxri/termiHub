@@ -9,7 +9,7 @@
 }
 
 .ssh-hostkey__title-icon {
-  color: var(--color-accent, var(--text-primary));
+  color: var(--accent-color);
 }
 
 .ssh-hostkey__title-icon--warn {

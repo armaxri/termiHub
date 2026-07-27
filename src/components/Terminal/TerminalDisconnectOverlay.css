@@ -90,7 +90,7 @@
    vs. what does not, rendered a step quieter than the subheading. */
 .terminal-disconnect-overlay__note {
   font-size: var(--font-size-xs);
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-secondary);
   max-width: 42ch;
 }
 

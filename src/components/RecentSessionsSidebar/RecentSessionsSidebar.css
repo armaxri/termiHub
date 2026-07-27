@@ -39,7 +39,7 @@
   margin: 0;
   padding: 4px;
   list-style: none;
-  background: var(--bg-elevated, var(--bg-secondary));
+  background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md, 6px);
   box-shadow: var(--shadow-md, 0 4px 12px rgba(0, 0, 0, 0.3));

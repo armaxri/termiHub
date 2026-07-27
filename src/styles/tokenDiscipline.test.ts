@@ -280,10 +280,12 @@ function collectDefinedTokens(): Set<string> {
  * and borders vanished across 13+ stylesheets), so this guard fails on any
  * bare, fallback-less `var(--token)` whose token is not defined anywhere.
  *
- * Scope note: `var(--token, <fallback>)` is deliberately EXEMPT — the fallback
- * renders, so an undefined token there degrades gracefully rather than silently
- * breaking, exactly as the raw-hex guard exempts `var(--token, #hex)`. The
- * separately-tracked cleanup of undefined-but-fallback'd tokens is a follow-up.
+ * Scope note: the fallback-bearing form `var(--token, <fallback>)` was originally
+ * EXEMPT here — the fallback renders, so an undefined token there degrades
+ * gracefully rather than silently breaking. That cleanup landed as a follow-up
+ * (#2063), which reconciled every undefined-but-fallback'd reference, so the
+ * fallback form is now guarded too (see the fallback-bearing test below) — an
+ * undefined token can no longer hide behind a fallback and mask a stale rename.
  */
 describe("undefined design-token guard (#2052)", () => {
   const definedTokens = collectDefinedTokens();
@@ -311,6 +313,47 @@ describe("undefined design-token guard (#2052)", () => {
       "Fallback-less var(--token) references must resolve to a token defined in " +
         "src/styles/variables.css (or written by the theme engine). Rename each to the " +
         `current token or add the token. Dangling in:\n  ${offenders.join("\n  ")}`
+    ).toEqual([]);
+  });
+
+  /**
+   * Fallback-bearing ratchet (#2063). A `var(--token, <fallback>)` whose token is
+   * undefined still *renders* (via the fallback), so it does not visibly break —
+   * but the token name is stale/dangling and the fallback silently masks the
+   * rename. #2063 reconciled every such reference (define the token, or repoint to
+   * the current token whose value matches), leaving this set empty. The guard is
+   * the ratchet: a newly-introduced `var(--undefined, <fallback>)` now FAILS,
+   * forcing the token to be defined rather than papered over with a fallback.
+   *
+   * FALLBACK_UNDEFINED_ALLOWLIST is a shrinking ratchet — add a repo-relative
+   * suffix (POSIX separators) only with a written justification, and remove it as
+   * the underlying token is reconciled.
+   */
+  const FALLBACK_UNDEFINED_ALLOWLIST: string[] = [];
+
+  it("has no fallback-bearing var(--token, …) reference to an undefined token", () => {
+    // `var(--token,` — a token name immediately followed by a comma (a fallback).
+    // Only the outer token name is captured; the fallback (which may itself nest
+    // var()/color-mix() with parens) is not parsed, so nesting is handled.
+    const fallbackVarRe = /var\(\s*(--[a-z0-9-]+)\s*,/gi;
+    const offenders: string[] = [];
+    for (const file of collectCssFiles(COMPONENTS_DIR)) {
+      if (FALLBACK_UNDEFINED_ALLOWLIST.some((allowed) => toPosix(file).endsWith(allowed))) {
+        continue;
+      }
+      const css = stripCssComments(readFileSync(file, "utf8"));
+      const bad = new Set<string>();
+      for (const m of css.matchAll(fallbackVarRe)) {
+        if (!definedTokens.has(m[1])) bad.add(m[1]);
+      }
+      if (bad.size > 0) offenders.push(`${toPosix(file)} → ${[...bad].join(", ")}`);
+    }
+    expect(
+      offenders,
+      "Fallback-bearing var(--token, <fallback>) references must also resolve to a defined " +
+        "token — the fallback must not mask a dangling token name. Define the token in " +
+        "src/styles/variables.css (or the theme engine) or repoint to the current token whose " +
+        `value matches the fallback. Dangling in:\n  ${offenders.join("\n  ")}`
     ).toEqual([]);
   });
 });

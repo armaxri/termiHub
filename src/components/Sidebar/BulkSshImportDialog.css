@@ -78,7 +78,7 @@
   align-items: center;
   gap: 10px;
   padding: 4px 2px;
-  border-bottom: 1px solid var(--border-color, rgba(127, 127, 127, 0.25));
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .bulk-ssh-import__selectall-label {
@@ -100,5 +100,5 @@
 .bulk-ssh-import__row:hover,
 .bulk-ssh-import__row:focus-within {
   background: var(--bg-hover, rgba(127, 127, 127, 0.12));
-  border-color: var(--border-color, rgba(127, 127, 127, 0.25));
+  border-color: var(--border-primary);
 }
