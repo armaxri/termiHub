@@ -39,3 +39,22 @@
     transform: translateY(0);
   }
 }
+
+/* === Reduced-motion backstop ===
+   Global safety net for users who ask the OS to minimize non-essential motion
+   (`prefers-reduced-motion: reduce`). Per-component guards still take precedence
+   where they exist; this block guarantees that any animation or transition that
+   was NOT individually guarded is neutralized rather than played. Durations
+   collapse to a single frame (kept non-zero so `animationend`/`transitionend`
+   listeners still fire), iteration counts drop to one, and smooth scrolling is
+   disabled. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
