@@ -6,7 +6,16 @@ use std::time::Duration;
 /// Default SSH connect/handshake timeout (seconds) when a connection does not
 /// configure its own `connectTimeoutSecs`. Bounds how long a connect to an
 /// unreachable host may block before failing (#841).
-pub const DEFAULT_SSH_CONNECT_TIMEOUT_SECS: u64 = 20;
+///
+/// The budget covers the whole connect — DNS resolution, the TCP connect, and
+/// the SSH handshake all run inside it (see
+/// [`crate::backends::ssh::connect_and_authenticate`]). It was raised from the
+/// original 20 s (#2087): a host that resolves slowly on the first attempt of
+/// the day (cold DNS, e.g. a home Raspberry Pi) could spend most of a 20 s
+/// budget in resolution alone and fail before ever connecting. 45 s leaves room
+/// for a slow first resolve while still failing a genuinely dead host promptly;
+/// raise it further per connection via `connectTimeoutSecs`.
+pub const DEFAULT_SSH_CONNECT_TIMEOUT_SECS: u64 = 45;
 
 /// Return the user's home directory.
 ///
@@ -1915,6 +1924,14 @@ mod tests {
             let expanded = cfg.expand();
             assert_eq!(expanded.image, "alpine:3");
         });
+    }
+
+    #[test]
+    fn ssh_connect_timeout_default_is_forgiving() {
+        // Raised from 20 s (#2087) so a slow-first-resolve host (cold DNS) has
+        // room to connect within the budget instead of failing at 20 s of which
+        // most was DNS. Comfortably above the original 20 s.
+        assert_eq!(DEFAULT_SSH_CONNECT_TIMEOUT_SECS, 45);
     }
 
     #[test]
