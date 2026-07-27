@@ -5044,7 +5044,10 @@ export const useAppStore = create<AppState>((set, get) => {
       layoutPersistTimer = setTimeout(() => {
         const current = get();
         persistSettings({ ...current.settings, layout: updated }).catch((err) =>
-          console.error("Failed to persist layout config:", err)
+          frontendLog(
+            "app_store",
+            `Failed to persist layout config: ${err instanceof Error ? err.message : String(err)}`
+          )
         );
       }, 300);
     },
@@ -5057,7 +5060,10 @@ export const useAppStore = create<AppState>((set, get) => {
       layoutPersistTimer = setTimeout(() => {
         const current = get();
         persistSettings({ ...current.settings, layout: config }).catch((err) =>
-          console.error("Failed to persist layout preset:", err)
+          frontendLog(
+            "app_store",
+            `Failed to persist layout preset: ${err instanceof Error ? err.message : String(err)}`
+          )
         );
       }, 300);
     },
@@ -5079,7 +5085,10 @@ export const useAppStore = create<AppState>((set, get) => {
       layoutPersistTimer = setTimeout(() => {
         const current = get();
         persistSettings({ ...current.settings, layout: updated }).catch((err) =>
-          console.error("Failed to persist layout config:", err)
+          frontendLog(
+            "app_store",
+            `Failed to persist layout config: ${err instanceof Error ? err.message : String(err)}`
+          )
         );
       }, 300);
     },
@@ -5096,7 +5105,7 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
         if (externalErrors.length > 0) {
           for (const err of externalErrors) {
-            console.error(`Failed to load external file ${err.filePath}: ${err.error}`);
+            frontendLog("app_store", `Failed to load external file ${err.filePath}: ${err.error}`);
           }
         }
         const layoutConfig = settings.layout ?? DEFAULT_LAYOUT;
@@ -5135,14 +5144,24 @@ export const useAppStore = create<AppState>((set, get) => {
           set({});
         });
       } catch (err) {
-        console.error("Failed to load connections from backend:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load connections from backend: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(
+          `Failed to load connections: ${err instanceof Error ? err.message : String(err)}`,
+          { id: "load-connections-error" }
+        );
       }
       // Load connection type registry
       try {
         const connectionTypes = await getConnectionTypes();
         set({ connectionTypes });
       } catch (err) {
-        console.error("Failed to load connection types:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load connection types: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
       // Detect platform default shell
       try {
@@ -5154,7 +5173,10 @@ export const useAppStore = create<AppState>((set, get) => {
           set({ defaultShell: shells[0] as ShellType });
         }
       } catch (err) {
-        console.error("Failed to detect available shells:", err);
+        frontendLog(
+          "app_store",
+          `Failed to detect available shells: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
       // Load SSH tunnels
       get().loadTunnels();
@@ -5181,7 +5203,10 @@ export const useAppStore = create<AppState>((set, get) => {
           set({ recoveryWarnings: warnings, recoveryDialogOpen: true });
         }
       } catch (err) {
-        console.error("Failed to load recovery warnings:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load recovery warnings: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
       // Subscribe to persistent session state changes from the backend
       onPersistentSessionStateChanged((change) => {
@@ -5269,7 +5294,14 @@ export const useAppStore = create<AppState>((set, get) => {
           void get().loadPlugins();
         }
       } catch (err) {
-        console.error("Failed to save settings:", err);
+        frontendLog(
+          "app_store",
+          `Failed to save settings: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(
+          `Failed to save settings: ${err instanceof Error ? err.message : String(err)}`,
+          { id: "save-settings-error" }
+        );
       }
     },
 
@@ -5299,7 +5331,14 @@ export const useAppStore = create<AppState>((set, get) => {
           return { connections: [...mainConns, ...externalConns] };
         });
       } catch (err) {
-        console.error("Failed to reload external connections:", err);
+        frontendLog(
+          "app_store",
+          `Failed to reload external connections: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(
+          `Failed to reload external connections: ${err instanceof Error ? err.message : String(err)}`,
+          { id: "reload-external-connections-error" }
+        );
       }
     },
 
@@ -5312,7 +5351,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const toggled = folders.find((f) => f.id === folderId);
         if (toggled) {
           persistFolder(toggled).catch((err) => {
-            console.error("Failed to persist folder toggle:", err);
+            frontendLog(
+              "app_store",
+              `Failed to persist folder toggle: ${err instanceof Error ? err.message : String(err)}`
+            );
             toast.error(
               `Failed to save folder state: ${err instanceof Error ? err.message : String(err)}`
             );
@@ -5391,7 +5433,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return applyConnectionReload();
         })
         .catch((err) => {
-          console.error("Failed to persist new connection:", err);
+          frontendLog(
+            "app_store",
+            `Failed to persist new connection: ${err instanceof Error ? err.message : String(err)}`
+          );
           toast.error(
             `Failed to save ${connection.name}: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5419,7 +5464,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return applyConnectionReload();
         })
         .catch((err) => {
-          console.error("Failed to persist imported connections:", err);
+          frontendLog(
+            "app_store",
+            `Failed to persist imported connections: ${err instanceof Error ? err.message : String(err)}`
+          );
           toast.error(
             `Failed to import connections: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5440,7 +5488,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return applyConnectionReload();
         })
         .catch((err) => {
-          console.error("Failed to persist connection update:", err);
+          frontendLog(
+            "app_store",
+            `Failed to persist connection update: ${err instanceof Error ? err.message : String(err)}`
+          );
           toast.error(
             `Failed to save ${connection.name}: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5460,7 +5511,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return applyConnectionReload();
         })
         .catch((err) => {
-          console.error("Failed to persist connection deletion:", err);
+          frontendLog(
+            "app_store",
+            `Failed to persist connection deletion: ${err instanceof Error ? err.message : String(err)}`
+          );
           toast.error(
             `Failed to delete ${conn?.name ?? "connection"}: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5486,7 +5540,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return applyConnectionReload();
         })
         .catch((err) => {
-          console.error("Failed to persist bulk connection deletion:", err);
+          frontendLog(
+            "app_store",
+            `Failed to persist bulk connection deletion: ${err instanceof Error ? err.message : String(err)}`
+          );
           toast.error(
             `Failed to delete connections: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5499,7 +5556,10 @@ export const useAppStore = create<AppState>((set, get) => {
       persistFolder(folder)
         .then(() => applyConnectionReload())
         .catch((err) => {
-          console.error("Failed to persist new folder:", err);
+          frontendLog(
+            "app_store",
+            `Failed to persist new folder: ${err instanceof Error ? err.message : String(err)}`
+          );
           toast.error(
             `Failed to create folder ${folder.name}: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5525,7 +5585,10 @@ export const useAppStore = create<AppState>((set, get) => {
       removeFolder(folderId)
         .then(() => applyConnectionReload())
         .catch((err) => {
-          console.error("Failed to persist folder deletion:", err);
+          frontendLog(
+            "app_store",
+            `Failed to persist folder deletion: ${err instanceof Error ? err.message : String(err)}`
+          );
           toast.error(
             `Failed to delete folder: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5546,7 +5609,10 @@ export const useAppStore = create<AppState>((set, get) => {
       persistConnection(stripPassword(duplicate))
         .then(() => applyConnectionReload())
         .catch((err) => {
-          console.error("Failed to persist duplicated connection:", err);
+          frontendLog(
+            "app_store",
+            `Failed to persist duplicated connection: ${err instanceof Error ? err.message : String(err)}`
+          );
           toast.error(
             `Failed to duplicate ${original.name}: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -5564,7 +5630,10 @@ export const useAppStore = create<AppState>((set, get) => {
           connections: state.connections.map((c) => (c.id === connectionId ? updated : c)),
         }));
       } catch (err) {
-        console.error("Failed to move connection to file:", err);
+        frontendLog(
+          "app_store",
+          `Failed to move connection to file: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to move ${conn.name}: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -5585,7 +5654,10 @@ export const useAppStore = create<AppState>((set, get) => {
         persistConnection(stripPassword(moved))
           .then(() => applyConnectionReload())
           .catch((err) => {
-            console.error("Failed to persist connection move:", err);
+            frontendLog(
+              "app_store",
+              `Failed to persist connection move: ${err instanceof Error ? err.message : String(err)}`
+            );
             toast.error(
               `Failed to move ${moved.name}: ${err instanceof Error ? err.message : String(err)}`
             );
@@ -5610,7 +5682,10 @@ export const useAppStore = create<AppState>((set, get) => {
       Promise.all(moved.map((conn) => persistConnection(stripPassword(conn))))
         .then(() => applyConnectionReload())
         .catch((err) => {
-          console.error("Failed to persist bulk connection move:", err);
+          frontendLog(
+            "app_store",
+            `Failed to persist bulk connection move: ${err instanceof Error ? err.message : String(err)}`
+          );
           toast.error(
             `Failed to move connections: ${err instanceof Error ? err.message : String(err)}`
           );
@@ -6505,7 +6580,10 @@ export const useAppStore = create<AppState>((set, get) => {
         config: agent.config,
         agentSettings: agent.agentSettings,
       }).catch((err) => {
-        console.error("Failed to persist new agent:", err);
+        frontendLog(
+          "app_store",
+          `Failed to persist new agent: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to save agent ${agent.name}: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -6522,7 +6600,10 @@ export const useAppStore = create<AppState>((set, get) => {
         config: agent.config,
         agentSettings: agent.agentSettings,
       }).catch((err) => {
-        console.error("Failed to persist agent update:", err);
+        frontendLog(
+          "app_store",
+          `Failed to persist agent update: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to save agent ${agent.name}: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -6538,7 +6619,10 @@ export const useAppStore = create<AppState>((set, get) => {
       });
       const agentIds = get().remoteAgents.map((a) => a.id);
       persistAgentOrder(agentIds).catch((err) => {
-        console.error("Failed to persist agent reorder:", err);
+        frontendLog(
+          "app_store",
+          `Failed to persist agent reorder: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to save agent order: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -6565,7 +6649,10 @@ export const useAppStore = create<AppState>((set, get) => {
         ),
       }));
       removeAgent(agentId).catch((err) => {
-        console.error("Failed to persist agent deletion:", err);
+        frontendLog(
+          "app_store",
+          `Failed to persist agent deletion: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to delete agent ${agent?.name ?? ""}: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -6612,7 +6699,10 @@ export const useAppStore = create<AppState>((set, get) => {
         // (`setAgentConnectionState`), so it runs exactly once per connect and
         // also covers the reconnect path — do not refresh here (de-dup, G4).
       } catch (err) {
-        console.error(`Failed to connect agent ${agentId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to connect agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         // No optimistic "disconnected" write: the backend emits "disconnected"
         // on every connect-failure path, so the event will drive the state.
         throw err;
@@ -6623,7 +6713,10 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiDisconnectAgent(agentId);
       } catch (err) {
-        console.error(`Failed to disconnect agent ${agentId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to disconnect agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to disconnect agent: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -6717,7 +6810,10 @@ export const useAppStore = create<AppState>((set, get) => {
           agentFolders: { ...s.agentFolders, [agentId]: connectionsData.folders },
         }));
       } catch (err) {
-        console.error(`Failed to refresh agent sessions for ${agentId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to refresh agent sessions for ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to load agent sessions: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -6737,7 +6833,10 @@ export const useAppStore = create<AppState>((set, get) => {
           },
         }));
       } catch (err) {
-        console.error(`Failed to save agent definition on ${agentId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to save agent definition on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to save connection: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -6770,7 +6869,10 @@ export const useAppStore = create<AppState>((set, get) => {
           },
         }));
       } catch (err) {
-        console.error(`Failed to delete agent definition on ${agentId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to delete agent definition on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to delete connection: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -6789,7 +6891,10 @@ export const useAppStore = create<AppState>((set, get) => {
           },
         }));
       } catch (err) {
-        console.error(`Failed to update agent definition on ${agentId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to update agent definition on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to update connection: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -6817,7 +6922,10 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
         toast.success(`Created folder ${folder.name}`);
       } catch (err) {
-        console.error(`Failed to create agent folder on ${agentId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to create agent folder on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(`Failed to create folder: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
@@ -6838,7 +6946,10 @@ export const useAppStore = create<AppState>((set, get) => {
         }));
         if (isRename) toast.success(`Renamed folder to ${updated.name}`);
       } catch (err) {
-        console.error(`Failed to update agent folder on ${agentId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to update agent folder on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         if (isRename) {
           toast.error(
             `Failed to rename folder: ${err instanceof Error ? err.message : String(err)}`
@@ -6864,7 +6975,10 @@ export const useAppStore = create<AppState>((set, get) => {
           },
         }));
       } catch (err) {
-        console.error(`Failed to delete agent folder on ${agentId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to delete agent folder on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(`Failed to delete folder: ${err instanceof Error ? err.message : String(err)}`);
       }
     },
@@ -7030,7 +7144,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const available = await checkVscode();
         set({ vscodeAvailable: available });
       } catch (err) {
-        console.error("Failed to check VS Code availability:", err);
+        frontendLog(
+          "app_store",
+          `Failed to check VS Code availability: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -7240,7 +7357,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const connectionTypes = await getConnectionTypes();
         set({ connectionTypes });
       } catch (err) {
-        console.error("Failed to refresh connection types:", err);
+        frontendLog(
+          "app_store",
+          `Failed to refresh connection types: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -7254,7 +7374,10 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         set({ tunnels, tunnelStates });
       } catch (err) {
-        console.error("Failed to load tunnels:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load tunnels: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -7269,7 +7392,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return { tunnels };
         });
       } catch (err) {
-        console.error("Failed to save tunnel:", err);
+        frontendLog(
+          "app_store",
+          `Failed to save tunnel: ${err instanceof Error ? err.message : String(err)}`
+        );
         throw err;
       }
     },
@@ -7307,7 +7433,10 @@ export const useAppStore = create<AppState>((set, get) => {
         await apiStartTunnel(tunnelId);
         toast.success(`Started ${name}`, { id: toastId });
       } catch (err) {
-        console.error("Failed to start tunnel:", err);
+        frontendLog(
+          "app_store",
+          `Failed to start tunnel: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to start ${name}: ${err instanceof Error ? err.message : String(err)}`,
           { id: toastId }
@@ -7329,7 +7458,10 @@ export const useAppStore = create<AppState>((set, get) => {
         await apiStopTunnel(tunnelId);
         toast.success(`Stopped ${name}`, { id: toastId });
       } catch (err) {
-        console.error("Failed to stop tunnel:", err);
+        frontendLog(
+          "app_store",
+          `Failed to stop tunnel: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(`Failed to stop ${name}: ${err instanceof Error ? err.message : String(err)}`, {
           id: toastId,
         });
@@ -7354,7 +7486,10 @@ export const useAppStore = create<AppState>((set, get) => {
         await apiStartTunnel(tunnelId);
         toast.success(`Reconnected ${name}`, { id: toastId });
       } catch (err) {
-        console.error("Failed to reconnect tunnel:", err);
+        frontendLog(
+          "app_store",
+          `Failed to reconnect tunnel: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to reconnect ${name}: ${err instanceof Error ? err.message : String(err)}`,
           { id: toastId }
@@ -7430,7 +7565,10 @@ export const useAppStore = create<AppState>((set, get) => {
         }
         set({ embeddedServers: servers, embeddedServerStates });
       } catch (err) {
-        console.error("Failed to load embedded servers:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load embedded servers: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -7458,7 +7596,10 @@ export const useAppStore = create<AppState>((set, get) => {
           return { embeddedServers };
         });
       } catch (err) {
-        console.error("Failed to save embedded server:", err);
+        frontendLog(
+          "app_store",
+          `Failed to save embedded server: ${err instanceof Error ? err.message : String(err)}`
+        );
         throw err;
       }
     },
@@ -7532,7 +7673,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const macros = await apiListMacros();
         set({ macros });
       } catch (err) {
-        console.error("Failed to load macros:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load macros: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -7602,7 +7746,10 @@ export const useAppStore = create<AppState>((set, get) => {
         applyTheme(theme, customThemes);
       } catch (err) {
         // Read-only refresh: log rather than toast, matching loadMacros.
-        console.error("Failed to load plugins:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load plugins: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -7675,7 +7822,10 @@ export const useAppStore = create<AppState>((set, get) => {
       } catch (err) {
         // Read-only fetch: log rather than toast; the caller falls back to
         // schema defaults so the form still renders.
-        console.error(`Failed to load settings for plugin ${pluginId}:`, err);
+        frontendLog(
+          "app_store",
+          `Failed to load settings for plugin ${pluginId}: ${err instanceof Error ? err.message : String(err)}`
+        );
         throw err;
       }
     },
@@ -8067,7 +8217,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const workflows = await apiListWorkflows();
         set({ workflows });
       } catch (err) {
-        console.error("Failed to load workflows:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load workflows: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -8409,7 +8562,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const workspaces = await apiGetWorkspaces();
         set({ workspaces });
       } catch (err) {
-        console.error("Failed to load workspaces:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load workspaces: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
@@ -8418,7 +8574,10 @@ export const useAppStore = create<AppState>((set, get) => {
         await apiSaveWorkspace(definition);
         await get().loadWorkspaces();
       } catch (err) {
-        console.error("Failed to save workspace:", err);
+        frontendLog(
+          "app_store",
+          `Failed to save workspace: ${err instanceof Error ? err.message : String(err)}`
+        );
         throw err;
       }
     },
@@ -8440,7 +8599,10 @@ export const useAppStore = create<AppState>((set, get) => {
         await get().loadWorkspaces();
         toast.success("Duplicated workspace");
       } catch (err) {
-        console.error("Failed to duplicate workspace:", err);
+        frontendLog(
+          "app_store",
+          `Failed to duplicate workspace: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to duplicate workspace: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -8733,7 +8895,10 @@ export const useAppStore = create<AppState>((set, get) => {
         await get().loadWorkspaces();
         set({ activeWorkspaceName: name });
       } catch (err) {
-        console.error("Failed to save current layout as workspace:", err);
+        frontendLog(
+          "app_store",
+          `Failed to save current layout as workspace: ${err instanceof Error ? err.message : String(err)}`
+        );
         throw err;
       }
     },
@@ -8779,7 +8944,10 @@ export const useAppStore = create<AppState>((set, get) => {
           ...(totalTabs > 0 && windows ? { windows } : {}),
         });
       } catch (err) {
-        console.error("Failed to save last session:", err);
+        frontendLog(
+          "app_store",
+          `Failed to save last session: ${err instanceof Error ? err.message : String(err)}`
+        );
         // Auto-save fires on every layout change (debounced); use a stable id so
         // repeated failures collapse into a single, replaceable toast.
         toast.error(`Failed to save session: ${err instanceof Error ? err.message : String(err)}`, {
@@ -8894,7 +9062,10 @@ export const useAppStore = create<AppState>((set, get) => {
       try {
         await apiClearLastSession();
       } catch (err) {
-        console.error("Failed to clear last session:", err);
+        frontendLog(
+          "app_store",
+          `Failed to clear last session: ${err instanceof Error ? err.message : String(err)}`
+        );
         toast.error(
           `Failed to clear saved session: ${err instanceof Error ? err.message : String(err)}`
         );
@@ -8957,7 +9128,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const status = await apiGetCredentialStoreStatus();
         set({ credentialStoreStatus: status });
       } catch (err) {
-        console.error("Failed to load credential store status:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load credential store status: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
     unlockDialogOpen: false,
@@ -9001,7 +9175,10 @@ export const useAppStore = create<AppState>((set, get) => {
         const info = await apiGetAppMode();
         set({ isPortableMode: info.isPortable, portableDataDir: info.dataDir });
       } catch (err) {
-        console.error("Failed to load app mode:", err);
+        frontendLog(
+          "app_store",
+          `Failed to load app mode: ${err instanceof Error ? err.message : String(err)}`
+        );
       }
     },
 
