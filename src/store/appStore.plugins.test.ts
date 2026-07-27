@@ -88,6 +88,29 @@ import { loadPluginThemes, setRegisteredPluginThemes } from "@/themes";
 import { darkTheme } from "@/themes/dark";
 import type { ThemeDefinition } from "@/themes";
 import type { InstalledPlugin, PluginState } from "@/types/plugin";
+import { resetLoadedFrontendPlugins } from "@/plugins/frontendPlugins";
+
+/** A plugin declaring a frontend (JS) extension — a protocol parser entry point. */
+function frontendPlugin(id: string, state: PluginState = "active"): InstalledPlugin {
+  return {
+    manifest: {
+      id,
+      name: `Plugin ${id}`,
+      version: "1.0.0",
+      author: "tester",
+      description: "a frontend plugin",
+      license: "MIT",
+      apiVersion: "1.0",
+      platforms: ["linux"],
+      permissions: ["ui"],
+      extensions: {
+        protocolParser: { name: id, description: "d", entryPoint: "frontend/index.js" },
+      },
+    },
+    state,
+    installedAt: "2026-07-26T00:00:00Z",
+  };
+}
 
 function makePlugin(
   id: string,
@@ -179,6 +202,35 @@ describe("appStore — plugins (#1993)", () => {
     vi.mocked(apiListPlugins).mockRejectedValueOnce(new Error("backend down"));
     await expect(useAppStore.getState().loadPlugins()).resolves.toBeUndefined();
     expect(useAppStore.getState().plugins).toEqual([]);
+  });
+
+  // Frontend-plugin execution is gated behind the experimental opt-in (#2048):
+  // loadPlugins must read `settings.frontendPluginsEnabled` and only read/inject
+  // plugin JS when it is on.
+  it("loadPlugins does not execute frontend plugins while the experimental gate is off (#2048)", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock");
+    vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+    vi.mocked(apiListPlugins).mockResolvedValueOnce([frontendPlugin("fe")]);
+
+    // Default settings leave frontendPluginsEnabled unset (off).
+    await useAppStore.getState().loadPlugins();
+
+    expect(readPluginFile).not.toHaveBeenCalled();
+    resetLoadedFrontendPlugins();
+  });
+
+  it("loadPlugins executes frontend plugins once the experimental gate is on (#2048)", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock");
+    vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
+    vi.mocked(apiListPlugins).mockResolvedValueOnce([frontendPlugin("fe")]);
+    useAppStore.setState({
+      settings: { ...useAppStore.getState().settings, frontendPluginsEnabled: true },
+    });
+
+    await useAppStore.getState().loadPlugins();
+
+    expect(readPluginFile).toHaveBeenCalledWith("fe", "frontend/index.js");
+    resetLoadedFrontendPlugins();
   });
 
   it("installPlugin installs, refreshes, and toasts success", async () => {

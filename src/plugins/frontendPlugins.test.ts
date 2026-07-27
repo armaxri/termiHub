@@ -12,7 +12,7 @@
  * exercised directly (via `setLoadingPlugin` + `window.termihub`) here and in
  * `pluginRuntime.test.ts`.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { InstalledPlugin, PluginState } from "@/types/plugin";
 import {
   loadFrontendPlugin,
@@ -73,12 +73,41 @@ function registerWidgetAs(pluginId: string, widget: StatusBarWidget): void {
   makePluginApi(pluginId).registerStatusBarWidget(widget);
 }
 
+/**
+ * Injected plugin scripts load from a blob URL (not an inline body) so they run
+ * under the app's restrictive CSP (#2048). jsdom implements neither
+ * `URL.createObjectURL` nor `Blob.text()`, so we spy the `Blob` constructor to
+ * capture the exact wrapped source each script is built from and stub the object
+ * URL helpers.
+ */
+let blobParts: BlobPart[][];
+
 beforeEach(() => {
   clearRegistry();
   ensureTermiHubApi();
   resetLoadedFrontendPlugins();
   document.head.querySelectorAll("script[data-termihub-plugin]").forEach((s) => s.remove());
+
+  blobParts = [];
+  // A regular (non-arrow) function so it is usable as a constructor for
+  // `new Blob(...)`; it records the parts and returns a lightweight stand-in.
+  vi.spyOn(globalThis, "Blob").mockImplementation(function (this: unknown, parts?: BlobPart[]) {
+    blobParts.push(parts ?? []);
+    return { size: 0, type: "text/javascript" } as unknown as Blob;
+  } as unknown as typeof Blob);
+  let counter = 0;
+  vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:mock/${counter++}`);
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
 });
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+/** The wrapped source string of the nth injected plugin script (blob-captured). */
+function injectedSource(index = 0): string {
+  return String(blobParts[index]?.[0] ?? "");
+}
 
 describe("frontendEntryPoints / hasFrontendExtension", () => {
   it("collects and dedupes entry points across frontend extensions", () => {
@@ -106,7 +135,7 @@ describe("frontendEntryPoints / hasFrontendExtension", () => {
 });
 
 describe("loadFrontendPlugin", () => {
-  it("reads the entry point and injects a tagged inline script", async () => {
+  it("reads the entry point and injects a tagged blob-URL script", async () => {
     const read = reader();
     const errors = await loadFrontendPlugin(parserPlugin("p"), read);
 
@@ -116,11 +145,16 @@ describe("loadFrontendPlugin", () => {
       'script[data-termihub-plugin="p"]'
     );
     expect(script).not.toBeNull();
-    // The source is wrapped so the plugin runs against its own per-plugin API
-    // instance, bound to its id (#2020) — the original source is preserved inside.
-    expect(script?.textContent).toContain(SRC);
-    expect(script?.textContent).toContain('window.__termihubMakePluginApi("p")');
-    expect(script?.textContent).toMatch(/^\(function \(termihub\) \{/);
+    // The script loads from a blob URL rather than an inline body so it runs
+    // under the restrictive CSP (`script-src 'self' blob:`, no unsafe-inline) (#2048).
+    expect(script?.src).toMatch(/^blob:/);
+    expect(script?.textContent).toBe("");
+    // The blob's source is wrapped so the plugin runs against its own per-plugin
+    // API instance, bound to its id (#2020) — the original source is preserved.
+    const source = injectedSource();
+    expect(source).toContain(SRC);
+    expect(source).toContain('window.__termihubMakePluginApi("p")');
+    expect(source).toMatch(/^\(function \(termihub\) \{/);
     expect(loadedFrontendPluginIds()).toEqual(["p"]);
   });
 
@@ -199,5 +233,36 @@ describe("reconcileFrontendPlugins", () => {
     await reconcileFrontendPlugins(plugins, read);
     expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(1);
     expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  // Experimental frontend-plugin gate (#2048): the `enabled` flag is the
+  // default-off opt-in for executing frontend plugin JS.
+  it("loads nothing when the experimental gate is disabled", async () => {
+    const read = reader();
+    const errors = await reconcileFrontendPlugins([parserPlugin("p", "active")], read, false);
+    expect(errors).toEqual([]);
+    expect(read).not.toHaveBeenCalled();
+    expect(loadedFrontendPluginIds()).toEqual([]);
+    expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(0);
+  });
+
+  it("unloads already-injected plugins when the gate is toggled off", async () => {
+    const read = reader();
+    await reconcileFrontendPlugins([parserPlugin("p", "active")], read, true);
+    expect(loadedFrontendPluginIds()).toEqual(["p"]);
+
+    await reconcileFrontendPlugins([parserPlugin("p", "active")], read, false);
+    expect(loadedFrontendPluginIds()).toEqual([]);
+    expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(0);
+  });
+
+  it("loads active plugins again when the gate is toggled back on", async () => {
+    const plugins = [parserPlugin("p", "active")];
+    const read = reader();
+    await reconcileFrontendPlugins(plugins, read, false);
+    expect(loadedFrontendPluginIds()).toEqual([]);
+
+    await reconcileFrontendPlugins(plugins, read, true);
+    expect(loadedFrontendPluginIds()).toEqual(["p"]);
   });
 });
