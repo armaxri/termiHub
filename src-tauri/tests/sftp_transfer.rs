@@ -51,9 +51,46 @@ fn is_port_reachable(port: u16) -> bool {
         .unwrap_or(false)
 }
 
+/// Register a process-wide host-key verifier that trusts the local Docker
+/// fixture containers, so these desktop SFTP integration tests connect
+/// deterministically under the strict default host-key policy (#1969, #2032).
+///
+/// `SftpSession::new` goes through the same strict host-key path as the rest of
+/// the app: with no verifier registered it trusts only keys already recorded in
+/// the runner's `~/.ssh/known_hosts` and refuses everything else with "Unknown
+/// server key". CI runners (and any freshly-(re)built fixture image) never have
+/// the generated fixture key recorded, so the handshake fails pre-auth (#2105).
+/// These tests connect only to the loopback `sftp-stress` fixture, where there
+/// is no man-in-the-middle to guard against, so a test-only verifier that trusts
+/// every fixture key is safe and deterministic. This mirrors core's
+/// `trust_fixture_host_keys()` (`core/tests/common/mod.rs`). Registration is
+/// set-once and idempotent (first call wins), so calling it from every
+/// `require_sftp_stress!` site is harmless.
+fn trust_fixture_host_keys() {
+    use termihub_core::backends::ssh::host_key::{
+        set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+    };
+
+    struct TrustLocalFixtures;
+
+    #[async_trait::async_trait]
+    impl HostKeyVerifier for TrustLocalFixtures {
+        async fn verify(&self, _info: &HostKeyInfo) -> bool {
+            true
+        }
+    }
+
+    // First registration wins; any later call is a harmless no-op.
+    let _ = set_host_key_verifier(Arc::new(TrustLocalFixtures));
+}
+
 /// Skip the current test if the sftp-stress container is not reachable.
 macro_rules! require_sftp_stress {
     ($port:expr) => {
+        // Trust the loopback fixture host key before connecting, so the strict
+        // default host-key policy (#1969) does not refuse the freshly-built
+        // fixture container with "Unknown server key" (#2105, sibling of #2032).
+        trust_fixture_host_keys();
         if !is_port_reachable($port) {
             eprintln!(
                 "SKIPPED: sftp-stress container not reachable on port {} \
