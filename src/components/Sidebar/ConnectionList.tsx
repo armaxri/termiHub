@@ -34,6 +34,7 @@ import {
   FileSpreadsheet,
   Link,
   Square,
+  Hourglass,
 } from "lucide-react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
@@ -434,13 +435,18 @@ function ConnectionItem({
                   )}
                 </span>
               )}
+              {/* Desktop-local persistence marker (#2086). This session runs
+                  inside the app process and lives only while the app is open,
+                  so it must NOT claim the ∞ (which is reserved for agent-backed
+                  sessions that survive app close + machine restart). It gets a
+                  distinct, lesser Hourglass marker instead. */}
               {persistentCapable && (
                 <span
-                  className="connection-tree__persistent-badge"
-                  title="Runs while the app is open. Use an agent for across-session persistence."
-                  data-testid={`persistent-badge-${connection.id}`}
+                  className="connection-tree__local-persistent-badge"
+                  title="Runs while the app is open — closing termiHub ends the session. Use a remote agent for persistence across app restarts."
+                  data-testid={`local-persistent-badge-${connection.id}`}
                 >
-                  ∞
+                  <Hourglass size={12} />
                 </span>
               )}
               <span className="connection-tree__type">{connection.config.type}</span>

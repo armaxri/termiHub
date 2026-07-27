@@ -22,6 +22,7 @@ import {
   Plus,
   ChevronRight,
   Radio,
+  Hourglass,
 } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { TabStatus } from "@/utils/tabStatus";
@@ -188,7 +189,31 @@ export function Tab({
           <Radio size={12} />
         </span>
       )}
-      {tab.persistentConnectionId && <span className="tab__persistent-badge">∞</span>}
+      {/* Persistence tier badge (#2086). The ∞ is reserved for agent-backed
+          sessions — they live on the remote agent and survive closing termiHub
+          and restarting this machine. A desktop-local persistent session (an
+          ssh/docker/wsl/serial tab whose process runs inside this app) only
+          lives while the app is open, so it gets a distinct, lesser Hourglass
+          marker that does not overclaim. Agent-backed tabs are the ones opened
+          as a `remote-session`. */}
+      {tab.persistentConnectionId &&
+        (tab.config?.type === "remote-session" ? (
+          <span
+            className="tab__persistent-badge"
+            title="Persistent session — lives on the agent and survives closing termiHub and restarting this machine."
+            data-testid={`tab-persistent-badge-${tab.id}`}
+          >
+            ∞
+          </span>
+        ) : (
+          <span
+            className="tab__local-persistent-badge"
+            title="Runs while the app is open — closing termiHub ends the session. Use a remote agent for persistence across app restarts."
+            data-testid={`tab-local-persistent-badge-${tab.id}`}
+          >
+            <Hourglass size={12} />
+          </span>
+        ))}
       {tab.spawned && (
         <span className="tab__spawned-badge" title="Spawned container">
           Spawned
