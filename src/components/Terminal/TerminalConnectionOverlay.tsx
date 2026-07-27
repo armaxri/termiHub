@@ -6,6 +6,7 @@ import { toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useElapsed } from "@/hooks/useElapsed";
 import { getPlatform } from "@/utils/platform";
+import { backendFamilyFromSessionType, connectionErrorHint } from "@/utils/connectionErrorHints";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -187,8 +188,18 @@ export function TerminalConnectionOverlay({
   // The serial permission remediation is host-OS specific: only Linux has the
   // dialout group, so the `usermod` fix must not be shown on Windows/macOS (#1831).
   const platform = getPlatform();
-  const isAgentAuth = error.includes(SSH_AGENT_PATTERN);
+  // Resolve the backend family so every failure hint is chosen for the backend
+  // that actually raised it, not shown blanket across all backends (#2088).
+  const backendFamily = backendFamilyFromSessionType(sessionType);
+  // "Agent auth failed" is an SSH ssh-agent (key-auth) failure, so its remedy
+  // (starting ssh-agent) only makes sense on the SSH path — gate it to the SSH
+  // family so the SSH-agent hint can't leak onto telnet/serial/etc. (#2088).
+  const isAgentAuth = backendFamily === "ssh" && error.includes(SSH_AGENT_PATTERN);
   const isTimeout = error.includes(TIMEOUT_PATTERN) && !isAgentAuth;
+  // Backend-appropriate timeout guidance, sourced from the structured per-backend
+  // table rather than an inline string, so it can never again describe the wrong
+  // backend (e.g. the old "agent binary is installed" hint on an SSH timeout).
+  const timeoutHint = isTimeout ? connectionErrorHint(backendFamily, "timeout") : null;
   const isSerialNotFound = isSerial && SERIAL_NOT_FOUND_PATTERNS.some((p) => error.includes(p));
   const isSerialPermission = isSerial && error.includes(SERIAL_PERMISSION_PATTERN);
   const isSerialBusy =
@@ -402,11 +413,8 @@ export function TerminalConnectionOverlay({
           </div>
         )}
 
-        {isTimeout && (
-          <p className="terminal-connection-overlay__hint-text">
-            The connection timed out. Check that the host is reachable and the agent binary is
-            installed.
-          </p>
+        {isTimeout && timeoutHint && (
+          <p className="terminal-connection-overlay__hint-text">{timeoutHint}</p>
         )}
 
         {isSerialNotFound && (
