@@ -363,6 +363,49 @@ impl WindowManager {
 mod tests {
     use super::*;
 
+    /// The window-close flow (#1903) prevents the OS default close and calls
+    /// `getCurrentWindow().destroy()` from the frontend. Under Tauri v2's ACL
+    /// that IPC is denied unless the window's capability grants
+    /// `core:window:allow-destroy` — and `core:window:default` grants only
+    /// read-only queries, not destroy. Without this permission every close is
+    /// swallowed and the app can never be quit (#2089). Guard the capability so
+    /// the grant cannot silently regress, and make sure it reaches both the
+    /// primary `main` window and the multi-window `win-N` labels.
+    #[test]
+    fn default_capability_allows_window_destroy_for_every_window() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../../capabilities/default.json"))
+                .expect("capabilities/default.json is valid JSON");
+
+        let permissions: Vec<&str> = capability["permissions"]
+            .as_array()
+            .expect("capability has a permissions array")
+            .iter()
+            .filter_map(|p| p.as_str())
+            .collect();
+        assert!(
+            permissions.contains(&"core:window:allow-destroy"),
+            "default capability must grant core:window:allow-destroy so the \
+             close-window flow can actually close the window (#2089); got {permissions:?}"
+        );
+
+        let windows: Vec<&str> = capability["windows"]
+            .as_array()
+            .expect("capability has a windows array")
+            .iter()
+            .filter_map(|w| w.as_str())
+            .collect();
+        assert!(
+            windows.iter().any(|w| *w == "main"),
+            "capability must cover the primary `main` window; got {windows:?}"
+        );
+        assert!(
+            windows.iter().any(|w| *w == "win-*" || *w == "*"),
+            "capability must cover secondary `win-N` windows so their \
+             close-window flow works too (#2089); got {windows:?}"
+        );
+    }
+
     fn record(session_id: &str) -> HandoffRecord {
         HandoffRecord {
             tab: serde_json::json!({ "sessionId": session_id }),
