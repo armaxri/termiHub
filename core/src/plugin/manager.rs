@@ -1197,6 +1197,49 @@ mod tests {
     }
 
     #[test]
+    fn read_file_blocks_traversing_id() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json("assets", "1.0"),
+            &[("themes/dark.json", b"{\"bg\":\"#111\"}")],
+        );
+        mgr.install(&pkg, true, false).unwrap();
+
+        // A secret file living *outside* the plugin root that a traversing id
+        // would otherwise reach.
+        let secret = mgr.root().parent().unwrap().join("secret.json");
+        std::fs::write(&secret, b"top secret").unwrap();
+
+        // The `id` argument comes straight from the renderer over IPC and must
+        // be validated with the same slug rule as at manifest time: anything
+        // containing path separators, `..`, or non-slug characters is refused
+        // before it is joined into a filesystem path.
+        for bad_id in [
+            "..",
+            "../secret",
+            "../../etc",
+            "assets/../..",
+            "/etc",
+            "foo/bar",
+            "as..sets",
+            "",
+        ] {
+            assert!(
+                matches!(
+                    mgr.read_file(bad_id, "secret.json"),
+                    Err(PluginManagerError::PathTraversal(_))
+                ),
+                "id {bad_id:?} should be refused"
+            );
+        }
+
+        // The valid id still resolves normally.
+        let bytes = mgr.read_file("assets", "themes/dark.json").unwrap();
+        assert_eq!(bytes, b"{\"bg\":\"#111\"}");
+    }
+
+    #[test]
     fn extraction_rejects_zip_slip() {
         // A package whose entry tries to escape via `..`. `enclosed_name`
         // returns None for it, so install fails with UnsafePath and writes
