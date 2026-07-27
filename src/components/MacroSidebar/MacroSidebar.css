@@ -9,7 +9,7 @@
   display: flex;
   padding: 4px 8px;
   gap: 4px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .macro-sidebar__search {
@@ -17,7 +17,7 @@
   display: flex;
   align-items: center;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .macro-sidebar__search-icon {

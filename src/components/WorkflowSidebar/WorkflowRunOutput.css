@@ -8,7 +8,7 @@
   flex-direction: column;
   flex-shrink: 0;
   max-height: 45%;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--border-primary);
   background: var(--bg-secondary);
 }
 
@@ -17,7 +17,7 @@
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-xs) var(--spacing-sm);
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .workflow-run-output__spacer {
@@ -75,7 +75,7 @@
   gap: 6px;
   padding: var(--spacing-xs) var(--spacing-sm);
   color: var(--text-secondary);
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .workflow-run-output__command code {
@@ -115,7 +115,7 @@
 
 .workflow-run-output__footer {
   padding: var(--spacing-xs) var(--spacing-sm);
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--border-primary);
   font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);

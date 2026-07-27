@@ -108,7 +108,7 @@
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
-  background: var(--tab-bar-bg);
+  background: var(--tab-bg);
   border-bottom: 1px solid var(--panel-border);
   flex-shrink: 0;
 }
@@ -146,7 +146,7 @@
 }
 
 .zoom-overlay__close:hover {
-  background: var(--tab-hover-bg);
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 

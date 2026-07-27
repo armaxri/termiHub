@@ -9,7 +9,7 @@
   display: flex;
   padding: 4px 8px;
   gap: 4px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-primary);
 }
 
 .server-sidebar__list {
@@ -67,7 +67,7 @@
 
 .server-dialog__input {
   padding: 5px 8px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
@@ -99,7 +99,7 @@
 }
 
 .server-dialog__fieldset {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   padding: 8px 12px;
   display: flex;

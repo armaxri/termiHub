@@ -21,7 +21,7 @@
   margin: 0 0 8px;
   padding: 6px;
   list-style: none;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
 }
 
@@ -160,7 +160,7 @@
   flex-direction: column;
   gap: 6px;
   padding: 8px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
 }
 

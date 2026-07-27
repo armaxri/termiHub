@@ -1,7 +1,7 @@
 /* Plugins settings section (#2000): one card per plugin that declares settings. */
 
 .plugin-settings__group {
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   padding: var(--spacing-md);
   transition: border-color var(--transition-fast);
