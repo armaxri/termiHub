@@ -89,10 +89,12 @@ beforeEach(() => {
   document.head.querySelectorAll("script[data-termihub-plugin]").forEach((s) => s.remove());
 
   blobParts = [];
-  vi.spyOn(globalThis, "Blob").mockImplementation((parts?: BlobPart[]) => {
+  // A regular (non-arrow) function so it is usable as a constructor for
+  // `new Blob(...)`; it records the parts and returns a lightweight stand-in.
+  vi.spyOn(globalThis, "Blob").mockImplementation(function (this: unknown, parts?: BlobPart[]) {
     blobParts.push(parts ?? []);
     return { size: 0, type: "text/javascript" } as unknown as Blob;
-  });
+  } as unknown as typeof Blob);
   let counter = 0;
   vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:mock/${counter++}`);
   vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
