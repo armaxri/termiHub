@@ -1,5 +1,4 @@
-import { Component, useEffect } from "react";
-import type { ErrorInfo, ReactNode } from "react";
+import { useEffect } from "react";
 import { ActivityBar } from "@/components/ActivityBar";
 import { Sidebar } from "@/components/Sidebar";
 import { StatusBar } from "@/components/StatusBar";
@@ -26,7 +25,7 @@ import { CloseWindowDecisionDialog } from "@/components/Terminal/CloseWindowDeci
 import { SessionRestoreDialog } from "@/components/SessionRestoreDialog";
 import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotification";
 import { XServerConnectConsent } from "@/components/OpenConnections/XServerConnectConsent";
-import { ToastProvider, TooltipProvider } from "@/components/ui";
+import { ErrorBoundary, ToastProvider, TooltipProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useTransferEvents } from "@/hooks/useTransferEvents";
@@ -48,71 +47,6 @@ import { listWindows } from "@/services/api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import "./App.css";
-
-interface ErrorBoundaryState {
-  error: Error | null;
-}
-
-/**
- * Catches unhandled React rendering errors and displays them instead of
- * showing a blank grey screen.
- */
-class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { error: null };
-
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { error };
-  }
-
-  componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error("React render error:", error, info.componentStack);
-  }
-
-  render() {
-    if (this.state.error) {
-      return (
-        <div
-          style={{
-            padding: 24,
-            color: "var(--color-error)",
-            background: "var(--bg-primary)",
-            fontFamily: "monospace",
-            height: "100%",
-            overflow: "auto",
-          }}
-        >
-          <h2 style={{ color: "var(--text-primary)" }}>Something went wrong</h2>
-          <pre style={{ whiteSpace: "pre-wrap", marginTop: 12 }}>{this.state.error.message}</pre>
-          <pre
-            style={{
-              whiteSpace: "pre-wrap",
-              marginTop: 8,
-              fontSize: 12,
-              color: "var(--text-secondary)",
-            }}
-          >
-            {this.state.error.stack}
-          </pre>
-          <button
-            style={{
-              marginTop: 16,
-              padding: "6px 16px",
-              background: "var(--accent-color)",
-              color: "#fff",
-              border: "none",
-              borderRadius: 4,
-              cursor: "pointer",
-            }}
-            onClick={() => window.location.reload()}
-          >
-            Reload
-          </button>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 function App() {
   useKeyboardShortcuts();
