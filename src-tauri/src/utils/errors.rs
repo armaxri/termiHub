@@ -26,6 +26,9 @@ pub enum TerminalError {
     #[error("SSH error: {0}")]
     SshError(String),
 
+    #[error("SFTP error: {0}")]
+    SftpError(String),
+
     #[allow(dead_code)]
     #[error("Telnet error: {0}")]
     TelnetError(String),
@@ -83,5 +86,31 @@ impl serde::Serialize for TerminalError {
         S: serde::Serializer,
     {
         serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// SFTP file-operation failures must surface with an `SFTP error:` prefix,
+    /// not the misleading `SSH error:` prefix (issue #2094).
+    #[test]
+    fn sftp_error_renders_with_sftp_prefix() {
+        let err = TerminalError::SftpError("readdir failed: no such file".to_string());
+        let rendered = err.to_string();
+        assert_eq!(rendered, "SFTP error: readdir failed: no such file");
+        assert!(
+            !rendered.starts_with("SSH error:"),
+            "SFTP operation errors must not be labeled as SSH errors, got {rendered:?}"
+        );
+    }
+
+    /// The distinct `SshError` variant keeps its own prefix for genuine
+    /// SSH-session/transport failures.
+    #[test]
+    fn ssh_error_renders_with_ssh_prefix() {
+        let err = TerminalError::SshError("exec channel failed".to_string());
+        assert_eq!(err.to_string(), "SSH error: exec channel failed");
     }
 }
