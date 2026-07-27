@@ -4,6 +4,7 @@ use std::time::Duration;
 use termihub_core::backends::ssh::handler::SshSession;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+use super::channel::{ChannelOpener, SshChannelOpener};
 use super::config::{DynamicForwardConfig, TunnelStats};
 use super::local_forward::ForwarderStats;
 
@@ -35,6 +36,20 @@ impl DynamicForwarder {
         config: &DynamicForwardConfig,
         session: Arc<SshSession>,
     ) -> Result<Self, std::io::Error> {
+        Self::start_with_opener(config, SshChannelOpener::new(session))
+    }
+
+    /// Start a dynamic SOCKS5 forwarding tunnel over an injected
+    /// [`ChannelOpener`].
+    ///
+    /// Production goes through [`start`](Self::start) (which wraps the SSH
+    /// session in an [`SshChannelOpener`]); tests inject an in-memory opener to
+    /// exercise the SOCKS5 handshake, target parsing, and relay path without a
+    /// live SSH server (#2044).
+    pub fn start_with_opener<O: ChannelOpener>(
+        config: &DynamicForwardConfig,
+        opener: O,
+    ) -> Result<Self, std::io::Error> {
         let addr = format!("{}:{}", config.local_host, config.local_port);
         let std_listener = std::net::TcpListener::bind(&addr)?;
         std_listener.set_nonblocking(true)?;
@@ -42,11 +57,12 @@ impl DynamicForwarder {
 
         let stats = Arc::new(ForwarderStats::new());
         let stats_clone = Arc::clone(&stats);
+        let opener = Arc::new(opener);
 
         let (death_tx, death_rx) = tokio::sync::oneshot::channel();
         let task_handle = tokio::spawn(async move {
             let _death = death_tx;
-            Self::accept_loop(listener, session, stats_clone).await;
+            Self::accept_loop(listener, opener, stats_clone).await;
         });
 
         Ok(Self {
@@ -73,19 +89,19 @@ impl DynamicForwarder {
         }
     }
 
-    async fn accept_loop(
+    async fn accept_loop<O: ChannelOpener>(
         listener: tokio::net::TcpListener,
-        session: Arc<SshSession>,
+        opener: Arc<O>,
         stats: Arc<ForwarderStats>,
     ) {
         loop {
             match listener.accept().await {
                 Ok((stream, _addr)) => {
                     stats.increment_active();
-                    let session = Arc::clone(&session);
+                    let opener = Arc::clone(&opener);
                     let stats = Arc::clone(&stats);
                     tokio::spawn(async move {
-                        Self::handle_socks5(stream, session, &stats).await;
+                        Self::handle_socks5(stream, opener, &stats).await;
                         stats.decrement_active();
                     });
                 }
@@ -97,14 +113,14 @@ impl DynamicForwarder {
         }
     }
 
-    async fn handle_socks5(
+    async fn handle_socks5<O: ChannelOpener>(
         mut stream: tokio::net::TcpStream,
-        session: Arc<SshSession>,
+        opener: Arc<O>,
         stats: &ForwarderStats,
     ) {
         if tokio::time::timeout(
             Duration::from_secs(10),
-            Self::do_socks5(&mut stream, session, stats),
+            Self::do_socks5(&mut stream, opener, stats),
         )
         .await
         .is_err()
@@ -113,9 +129,9 @@ impl DynamicForwarder {
         }
     }
 
-    async fn do_socks5(
+    async fn do_socks5<O: ChannelOpener>(
         stream: &mut tokio::net::TcpStream,
-        session: Arc<SshSession>,
+        opener: Arc<O>,
         stats: &ForwarderStats,
     ) -> std::io::Result<()> {
         // Greeting
@@ -175,9 +191,7 @@ impl DynamicForwarder {
             }
         };
 
-        let channel = match session
-            .channel_open_direct_tcpip(&dest_host, dest_port as u32, "localhost", 0)
-            .await
+        let mut channel_stream = match opener.open_direct_tcpip(dest_host.clone(), dest_port).await
         {
             Ok(ch) => ch,
             Err(e) => {
@@ -194,7 +208,6 @@ impl DynamicForwarder {
 
         Self::send_reply(stream, SOCKS5_REP_SUCCESS).await?;
 
-        let mut channel_stream = channel.into_stream();
         if let Ok((sent, received)) =
             tokio::io::copy_bidirectional(stream, &mut channel_stream).await
         {
@@ -225,5 +238,252 @@ impl DynamicForwarder {
 impl Drop for DynamicForwarder {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the SOCKS5 handshake, target-address parsing, and relay,
+    //! driven over a loopback listener plus an in-memory [`ChannelOpener`] fake
+    //! (#2044). The forwarder previously sat at 0% coverage because
+    //! [`SshSession`] cannot be fabricated without a live SSH server.
+
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    use super::super::channel::test_support::EchoChannelOpener;
+    use super::super::config::DynamicForwardConfig;
+    use super::*;
+
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind ephemeral")
+            .local_addr()
+            .expect("local addr")
+            .port()
+    }
+
+    fn config_for(port: u16) -> DynamicForwardConfig {
+        DynamicForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: port,
+        }
+    }
+
+    /// Start a SOCKS proxy forwarder and connect a client to it, returning the
+    /// client stream and a handle to the opener's recorded targets.
+    async fn start_and_connect(
+        opener: EchoChannelOpener,
+    ) -> (DynamicForwarder, TcpStream, Arc<Mutex<Vec<(String, u16)>>>) {
+        let port = free_port();
+        let targets = opener.targets_handle();
+        let forwarder = DynamicForwarder::start_with_opener(&config_for(port), opener)
+            .expect("start forwarder");
+        let client = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect to socks proxy");
+        (forwarder, client, targets)
+    }
+
+    /// Send the no-auth greeting and assert the server selects it.
+    async fn greet_no_auth(client: &mut TcpStream) {
+        client
+            .write_all(&[SOCKS5_VERSION, 0x01, SOCKS5_NO_AUTH])
+            .await
+            .expect("write greeting");
+        let mut resp = [0u8; 2];
+        client
+            .read_exact(&mut resp)
+            .await
+            .expect("read method reply");
+        assert_eq!(resp, [SOCKS5_VERSION, SOCKS5_NO_AUTH]);
+    }
+
+    async fn read_reply(client: &mut TcpStream) -> [u8; 10] {
+        let mut reply = [0u8; 10];
+        client
+            .read_exact(&mut reply)
+            .await
+            .expect("read socks reply");
+        reply
+    }
+
+    #[tokio::test]
+    async fn ipv4_connect_parses_target_and_relays() {
+        let (forwarder, mut client, targets) = start_and_connect(EchoChannelOpener::new()).await;
+        greet_no_auth(&mut client).await;
+
+        // CONNECT 93.184.216.34:443
+        client
+            .write_all(&[
+                SOCKS5_VERSION,
+                SOCKS5_CMD_CONNECT,
+                0x00,
+                SOCKS5_ATYP_IPV4,
+                93,
+                184,
+                216,
+                34,
+                0x01,
+                0xBB,
+            ])
+            .await
+            .expect("write request");
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_SUCCESS, "connect should succeed");
+
+        // Relay: bytes past the handshake round-trip through the echo channel.
+        client.write_all(b"ping").await.expect("write payload");
+        client.shutdown().await.expect("half-close");
+        let mut echoed = Vec::new();
+        client.read_to_end(&mut echoed).await.expect("read echo");
+        assert_eq!(&echoed, b"ping");
+
+        assert_eq!(
+            targets.lock().unwrap().clone(),
+            vec![("93.184.216.34".to_string(), 443)],
+            "IPv4 host and port parsed"
+        );
+
+        let stats = forwarder.get_stats();
+        assert_eq!(stats.total_connections, 1);
+        drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn domain_connect_parses_hostname() {
+        let (forwarder, mut client, targets) = start_and_connect(EchoChannelOpener::new()).await;
+        greet_no_auth(&mut client).await;
+
+        let host = b"example.com";
+        let mut req = vec![
+            SOCKS5_VERSION,
+            SOCKS5_CMD_CONNECT,
+            0x00,
+            SOCKS5_ATYP_DOMAIN,
+            host.len() as u8,
+        ];
+        req.extend_from_slice(host);
+        req.extend_from_slice(&80u16.to_be_bytes());
+        client.write_all(&req).await.expect("write request");
+
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_SUCCESS);
+
+        assert_eq!(
+            targets.lock().unwrap().clone(),
+            vec![("example.com".to_string(), 80)],
+            "domain host and port parsed"
+        );
+        drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn rejects_when_no_acceptable_auth_method() {
+        let (forwarder, mut client, targets) = start_and_connect(EchoChannelOpener::new()).await;
+        // Offer only username/password (0x02) — server has no matching method.
+        client
+            .write_all(&[SOCKS5_VERSION, 0x01, 0x02])
+            .await
+            .expect("write greeting");
+        let mut resp = [0u8; 2];
+        client
+            .read_exact(&mut resp)
+            .await
+            .expect("read method reply");
+        assert_eq!(resp, [SOCKS5_VERSION, 0xFF], "no acceptable methods");
+        assert!(
+            targets.lock().unwrap().is_empty(),
+            "no channel opened when auth negotiation fails"
+        );
+        drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn unsupported_command_is_rejected() {
+        let (forwarder, mut client, targets) = start_and_connect(EchoChannelOpener::new()).await;
+        greet_no_auth(&mut client).await;
+        // BIND (0x02) is not supported — only CONNECT is.
+        client
+            .write_all(&[SOCKS5_VERSION, 0x02, 0x00, SOCKS5_ATYP_IPV4])
+            .await
+            .expect("write request");
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_CMD_NOT_SUPPORTED);
+        assert!(targets.lock().unwrap().is_empty());
+        drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn unsupported_address_type_is_rejected() {
+        let (forwarder, mut client, targets) = start_and_connect(EchoChannelOpener::new()).await;
+        greet_no_auth(&mut client).await;
+        // ATYP 0x04 (IPv6) is not handled.
+        client
+            .write_all(&[SOCKS5_VERSION, SOCKS5_CMD_CONNECT, 0x00, 0x04])
+            .await
+            .expect("write request");
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_CMD_NOT_SUPPORTED);
+        assert!(targets.lock().unwrap().is_empty());
+        drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn channel_open_failure_replies_general_failure() {
+        // The address still parses (and is recorded) before the open is tried.
+        let (forwarder, mut client, targets) =
+            start_and_connect(EchoChannelOpener::failing()).await;
+        greet_no_auth(&mut client).await;
+        client
+            .write_all(&[
+                SOCKS5_VERSION,
+                SOCKS5_CMD_CONNECT,
+                0x00,
+                SOCKS5_ATYP_IPV4,
+                10,
+                0,
+                0,
+                1,
+                0x00,
+                0x50,
+            ])
+            .await
+            .expect("write request");
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_GENERAL_FAILURE);
+        assert_eq!(
+            targets.lock().unwrap().clone(),
+            vec![("10.0.0.1".to_string(), 80)],
+            "target parsed even though the channel open failed"
+        );
+        drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn teardown_closes_the_listener() {
+        let port = free_port();
+        let forwarder =
+            DynamicForwarder::start_with_opener(&config_for(port), EchoChannelOpener::new())
+                .expect("start forwarder");
+        TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect while active");
+
+        drop(forwarder);
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            match TcpStream::connect(("127.0.0.1", port)).await {
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => break,
+                _ if tokio::time::Instant::now() >= deadline => {
+                    panic!("listener still accepting after teardown");
+                }
+                _ => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
     }
 }
