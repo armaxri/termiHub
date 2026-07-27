@@ -12,7 +12,7 @@
 2. [Phase 0: Pre-Release Automation (4–6 h)](#2-phase-0-pre-release-automation)
 3. [Phase 1: Code Freeze & Finalization (2–3 h)](#3-phase-1-code-freeze--finalization)
 4. [Phase 2: Automated Test Execution (2–3 h)](#4-phase-2-automated-test-execution)
-5. [Phase 3: Manual Testing (6–8 h)](#5-phase-3-manual-testing)
+5. [Phase 3: Manual Testing (12–16 h)](#5-phase-3-manual-testing)
 6. [Phase 4: Release (1–2 h)](#6-phase-4-release)
 7. [Phase 5: Post-Release Verification (1–2 h)](#7-phase-5-post-release-verification)
 8. [Interruption & Resume Guide](#8-interruption--resume-guide)
@@ -354,7 +354,7 @@ echo "Raspi: PASS/FAIL - $(date)" >> docs/release-0.1.0-results.md
 ## 5. Phase 3: Manual Testing
 
 **Goal**: Verify user-facing behavior that can't be automated.
-**Estimated time**: 6–8 hours across 3–4 sessions.
+**Estimated time**: 12–16 hours across 5 sessions.
 
 ### Strategy
 
@@ -363,18 +363,48 @@ spread testing across multiple sessions and machines.
 
 ### 5.1 Session Planning
 
-Split the 75 manual tests across machines and sessions:
+The manual gate is the `tests/manual/*.yaml` corpus: **166 tests across
+14 categories** (every case is `verification: manual` — none is automated).
+These counts are not maintained by hand — regenerate them any time from the
+YAMLs with:
 
-#### Session 1: Mac — Core UI & Local Shell (~2 h)
+```bash
+python scripts/test-manual.py --inventory
+```
+
+| Category (`--category`)                         |   Tests |
+| ----------------------------------------------- | ------: |
+| `ui-layout` (UI / Layout)                       |      28 |
+| `remote-agent` (Remote Agent)                   |      25 |
+| `ssh` (SSH)                                     |      24 |
+| `keyboard` (Keyboard Shortcuts)                 |      14 |
+| `network-tools` (Network Tools)                 |      13 |
+| `tab-management` (Tab Management)               |      13 |
+| `connection-management` (Connection Management) |      12 |
+| `serial` (Serial)                               |      11 |
+| `file-browser` (File Browser)                   |      10 |
+| `credential-store` (Credential Store)           |       4 |
+| `local-shell` (Local Shell)                     |       4 |
+| `portable-mode` (Portable Mode)                 |       4 |
+| `embedded-services` (Embedded Network Services) |       3 |
+| `cross-platform` (Cross-Platform)               |       1 |
+| **Total**                                       | **166** |
+
+Note: `--category` filtering also honours each test's `platforms:` field, so a
+per-platform run (e.g. Windows) sees fewer than the corpus totals above. The
+sessions below split the 166 tests across machines so each category is covered
+once, with a final Windows pass re-running the platform-sensitive subset.
+
+#### Session 1: Mac — Core UI, Local Shell & Tabs (~4 h)
 
 ```bash
 python scripts/test-manual.py \
-  --category local-shell \
-  --category tab-management \
   --category ui-layout \
-  --category keyboard
-# Tests: MT-LOCAL-*, MT-TAB-*, MT-UI-*, MT-KB-*
-# Count: 3 + 7 + 19 + 8 = 37 tests
+  --category tab-management \
+  --category keyboard \
+  --category local-shell
+# Tests: MT-UI-*, MT-TAB-*, MT-KB-*, MT-LOCAL-*
+# Count: 28 + 13 + 14 + 4 = 59 tests
 ```
 
 **How to stop**: Press `Ctrl+C` at any prompt. The runner saves progress
@@ -386,18 +416,19 @@ to a JSON report file in `tests/reports/`.
 python scripts/test-manual.py --resume tests/reports/manual-<timestamp>.json
 ```
 
-#### Session 2: Mac — Connections & File Browser (~1.5 h)
+#### Session 2: Mac — Connections, Files, Credentials & Portable (~2.5 h)
 
 ```bash
 python scripts/test-manual.py \
   --category connection-management \
   --category file-browser \
-  --category credential-store
-# Tests: MT-CONN-*, MT-FB-*, MT-CRED-*
-# Count: 10 + 10 + 3 = 23 tests
+  --category credential-store \
+  --category portable-mode
+# Tests: MT-CONN-*, MT-FB-*, MT-CRED-*, MT-PORT-*
+# Count: 12 + 10 + 4 + 4 = 30 tests
 ```
 
-#### Session 3: WSL or Mac — SSH & Remote (~1.5 h)
+#### Session 3: WSL or Mac — SSH, Remote Agent & Serial (~4 h)
 
 Requires Docker containers running for SSH targets. WSL is preferred
 over the Linux tower for this session — WSLg provides a proper GUI
@@ -413,7 +444,7 @@ python scripts/test-manual.py \
   --category remote-agent \
   --category serial
 # Tests: MT-SSH-*, MT-AGENT-*, MT-SER-*
-# Count: 10 + 2 + 2 = 14 tests
+# Count: 24 + 25 + 11 = 60 tests
 ```
 
 **After testing**:
@@ -422,17 +453,31 @@ python scripts/test-manual.py \
 cd tests/docker && docker compose down
 ```
 
-#### Session 4: Windows — Cross-Platform Verification (~1 h)
+#### Session 4: Mac or WSL — Network Services & Tools (~1.5 h)
 
-Run a targeted subset on Windows to verify platform-specific behavior:
+Also needs the Docker test infrastructure (embedded-server targets).
+
+```bash
+python scripts/test-manual.py \
+  --category network-tools \
+  --category embedded-services
+# Tests: MT-NET-*, MT-SVC-*
+# Count: 13 + 3 = 16 tests
+```
+
+#### Session 5: Windows — Cross-Platform Verification (~1.5 h)
+
+Run the cross-platform case plus the platform-sensitive subset on Windows
+to verify Windows-specific behavior (these re-run cases already covered on
+Mac in Sessions 1–2, so they do not add to the 166 unique total):
 
 ```bash
 python scripts/test-manual.py \
   --category cross-platform \
   --category keyboard \
   --category local-shell
-# Tests: MT-XPLAT-*, MT-KB-*, MT-LOCAL-*
-# Count: 1 + 8 + 3 = 12 tests
+# Tests: MT-XPLAT-*, plus Windows-applicable MT-KB-*, MT-LOCAL-*
+# The runner auto-filters each category to the Windows-tagged cases.
 ```
 
 Also manually verify these Windows-specific behaviors:
@@ -673,22 +718,23 @@ This is a hobby project. Here's how to safely stop and resume at any point.
 
 Each session should be 1–3 hours. Suggested session plan:
 
-| Session | Duration | Content                                              |
-| ------- | -------- | ---------------------------------------------------- |
-| 1       | 2–3 h    | Phase 0: Write release-check.sh + smoke-test.sh      |
-| 2       | 2–3 h    | Phase 0: Migrate manual tests to E2E                 |
-| 3       | 2 h      | Phase 1: CHANGELOG, docs, release branch             |
-| 4       | 1 h      | Phase 2: Automated tests on Mac                      |
-| 5       | 1 h      | Phase 2: Automated tests on WSL + Windows (parallel) |
-| 6       | 2 h      | Phase 3: Manual tests on Mac (Session 1)             |
-| 7       | 1.5 h    | Phase 3: Manual tests on Mac (Session 2)             |
-| 8       | 1.5 h    | Phase 3: Manual tests on WSL (SSH/agent)             |
-| 9       | 1 h      | Phase 3: Manual tests on Windows                     |
-| 10      | 0.5 h    | Phase 2: Final bare-metal validation on Linux tower  |
-| 11      | 1 h      | Phase 4: Release                                     |
-| 12      | 1 h      | Phase 5: Post-release verification                   |
+| Session | Duration | Content                                                      |
+| ------- | -------- | ------------------------------------------------------------ |
+| 1       | 2–3 h    | Phase 0: Write release-check.sh + smoke-test.sh              |
+| 2       | 2–3 h    | Phase 0: Migrate manual tests to E2E                         |
+| 3       | 2 h      | Phase 1: CHANGELOG, docs, release branch                     |
+| 4       | 1 h      | Phase 2: Automated tests on Mac                              |
+| 5       | 1 h      | Phase 2: Automated tests on WSL + Windows (parallel)         |
+| 6       | 4 h      | Phase 3: Manual tests on Mac (Session 1: UI/shell/tabs)      |
+| 7       | 2.5 h    | Phase 3: Manual tests on Mac (Session 2: connections/files)  |
+| 8       | 4 h      | Phase 3: Manual tests on WSL (Session 3: SSH/agent/serial)   |
+| 9       | 1.5 h    | Phase 3: Manual tests on Mac/WSL (Session 4: network svc)    |
+| 10      | 1.5 h    | Phase 3: Manual tests on Windows (Session 5: cross-platform) |
+| 11      | 0.5 h    | Phase 2: Final bare-metal validation on Linux tower          |
+| 12      | 1 h      | Phase 4: Release                                             |
+| 13      | 1 h      | Phase 5: Post-release verification                           |
 
-Total: \~16–19 hours across 12 sessions
+Total: \~23–27 hours across 13 sessions
 
 ---
 
@@ -710,7 +756,14 @@ Total: \~16–19 hours across 12 sessions
 
 ## 10. Appendix: Manual-to-Automated Migration Candidates
 
-### Full Analysis of 75 Manual Tests
+### Point-in-time migration analysis (at ~75 manual tests)
+
+> **Note**: This appendix is a **point-in-time snapshot** from when the manual
+> corpus held ~75 tests. The corpus has since grown to **166 tests across 14
+> categories** (see §5.1; regenerate with `python scripts/test-manual.py
+> --inventory`). The specific IDs and per-reason counts below reflect the
+> original ~75-test analysis and have **not** been re-derived for the full 166 —
+> treat them as illustrative migration candidates, not a current inventory.
 
 #### Can Be Automated (migrate before release) — 18 tests
 
