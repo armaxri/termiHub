@@ -226,6 +226,36 @@ mod tests {
     }
 
     #[test]
+    fn wrong_length_nonce_reports_error() {
+        // A corrupted/truncated nonce must surface a recoverable error, not
+        // panic inside `Nonce::from_slice` (#2049).
+        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
+        envelope.nonce = BASE64.encode([0u8; NONCE_LEN - 1]);
+
+        let result = decrypt_with_password("pw", &envelope);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .to_lowercase()
+            .contains("nonce"));
+    }
+
+    #[test]
+    fn wrong_length_salt_reports_error() {
+        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
+        envelope.kdf.salt = BASE64.encode([0u8; SALT_LEN - 1]);
+
+        let result = decrypt_with_password("pw", &envelope);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .to_lowercase()
+            .contains("salt"));
+    }
+
+    #[test]
     fn unsupported_version_fails() {
         let mut envelope = encrypt_with_password("pw", b"data").unwrap();
         envelope.version = 99;

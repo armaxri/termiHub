@@ -539,6 +539,55 @@ mod tests {
     }
 
     #[test]
+    fn unlock_classified_wrong_length_nonce_reports_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        // Corrupt the stored nonce to a wrong (too-short) length. Before the
+        // length check this panicked inside `Nonce::from_slice` (#2049).
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        let mut envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
+        envelope.nonce = BASE64.encode([0u8; NONCE_LEN - 1]);
+        fs::write(
+            &store.file_path,
+            serde_json::to_string(&envelope).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let err = store.unlock_classified("pw").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::Corrupted(_)),
+            "expected Corrupted for wrong-length nonce, got {err:?}"
+        );
+        assert!(!store.is_unlocked());
+    }
+
+    #[test]
+    fn unlock_classified_wrong_length_salt_reports_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        // Corrupt the stored salt to a wrong (too-short) length.
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        let mut envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
+        envelope.kdf.salt = BASE64.encode([0u8; SALT_LEN - 1]);
+        fs::write(
+            &store.file_path,
+            serde_json::to_string(&envelope).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let err = store.unlock_classified("pw").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::Corrupted(_)),
+            "expected Corrupted for wrong-length salt, got {err:?}"
+        );
+        assert!(!store.is_unlocked());
+    }
+
+    #[test]
     fn set_then_get_returns_value() {
         let dir = tempfile::tempdir().unwrap();
         let store = make_store(dir.path());
