@@ -1,3 +1,4 @@
+mod file_ops;
 pub mod graphical_manager;
 pub mod line_ending;
 pub mod manager;
