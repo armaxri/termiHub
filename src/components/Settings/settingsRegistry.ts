@@ -454,6 +454,24 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     keywords: ["experimental", "beta", "preview", "unstable", "hidden", "features", "labs"],
   },
   {
+    id: "frontendPluginsEnabled",
+    label: "Enable Frontend (JavaScript) Plugins",
+    description:
+      "Experimental: run plugin-provided JavaScript (protocol parsers, status-bar widgets) in the app. Off by default — these plugins run with full access and weak isolation.",
+    category: "plugins",
+    keywords: [
+      "plugin",
+      "frontend",
+      "javascript",
+      "experimental",
+      "security",
+      "parser",
+      "widget",
+      "untrusted",
+      "sandbox",
+    ],
+  },
+  {
     id: "restoreLastSessionOnStartup",
     label: "Restore Last Session on Startup",
     description:

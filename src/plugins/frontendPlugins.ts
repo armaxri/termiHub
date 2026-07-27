@@ -106,7 +106,20 @@ export async function loadFrontendPlugin(
       script.setAttribute(PLUGIN_SCRIPT_ATTR, pluginId);
       // Wrap so the plugin registers against its own per-plugin API instance,
       // making attribution independent of when register is called (#2020).
-      script.textContent = wrapPluginSource(pluginId, code);
+      const wrapped = wrapPluginSource(pluginId, code);
+      // Load the wrapped source from a blob URL rather than as an inline
+      // `<script>` body. The app ships a restrictive CSP whose `script-src` omits
+      // `'unsafe-inline'` to close the HTML-injection / XSS surface (#2048); an
+      // inline script would be blocked. `script-src 'self' blob:` still runs
+      // plugin code (creating a blob URL already requires script execution, so it
+      // is not an injection vector), so plugins load without weakening the policy.
+      const url = URL.createObjectURL(new Blob([wrapped], { type: "text/javascript" }));
+      // Revoke once the browser has fetched the source so the object URL is not
+      // leaked; the script stays live after revocation.
+      const revoke = () => URL.revokeObjectURL(url);
+      script.addEventListener("load", revoke);
+      script.addEventListener("error", revoke);
+      script.src = url;
       (doc.head ?? doc.documentElement).appendChild(script);
       scripts.push(script);
     } catch (err) {
@@ -142,20 +155,33 @@ export function unloadFrontendPlugin(pluginId: string): void {
  * loaded, and unload every previously-loaded plugin that is no longer active.
  * Returns any load errors, for logging by the caller. This is the single entry
  * point the store calls on every plugin refresh (install/enable/disable).
+ *
+ * `enabled` is the experimental frontend-plugin opt-in (#2048). Frontend plugins
+ * run with full IPC/command access in the shared WebView, so for v0.1.0 their
+ * execution is gated behind an explicit, default-off setting. When `enabled` is
+ * false this loads nothing and unloads any already-injected plugin scripts —
+ * toggling the setting off therefore tears the plugin JS down live.
  */
 export async function reconcileFrontendPlugins(
   plugins: InstalledPlugin[],
   readFile: PluginFileReader,
+  enabled = true,
   doc: Document = document
 ): Promise<FrontendPluginLoadError[]> {
   ensureTermiHubApi();
   const activeIds = new Set(
-    plugins.filter((p) => p.state === "active" && hasFrontendExtension(p)).map((p) => p.manifest.id)
+    enabled
+      ? plugins
+          .filter((p) => p.state === "active" && hasFrontendExtension(p))
+          .map((p) => p.manifest.id)
+      : []
   );
 
   for (const pluginId of [...loadedScripts.keys()]) {
     if (!activeIds.has(pluginId)) unloadFrontendPlugin(pluginId);
   }
+
+  if (!enabled) return [];
 
   const errors: FrontendPluginLoadError[] = [];
   for (const plugin of plugins) {

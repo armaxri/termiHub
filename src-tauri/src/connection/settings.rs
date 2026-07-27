@@ -255,6 +255,10 @@ pub struct AppSettings {
     /// Whether experimental features are enabled.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub experimental_features_enabled: Option<bool>,
+    /// Experimental opt-in for executing frontend (JavaScript) plugins (#2048).
+    /// `None`/`Some(false)` keeps the full-IPC plugin JS surface off by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontend_plugins_enabled: Option<bool>,
     /// Update checker configuration and state.
     #[serde(default)]
     pub updates: UpdateSettings,
@@ -337,6 +341,7 @@ impl Default for AppSettings {
             installed_language_packages: None,
             custom_language_grammars: None,
             experimental_features_enabled: None,
+            frontend_plugins_enabled: None,
             updates: UpdateSettings::default(),
             serial_port_scan_prefixes: None,
             shell_integration: ShellIntegrationSettings::default(),
@@ -1023,6 +1028,28 @@ mod tests {
         let settings = AppSettings::default();
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("experimentalFeaturesEnabled"));
+    }
+
+    #[test]
+    fn frontend_plugins_enabled_round_trip() {
+        let settings = AppSettings {
+            frontend_plugins_enabled: Some(true),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("frontendPluginsEnabled"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.frontend_plugins_enabled, Some(true));
+    }
+
+    #[test]
+    fn frontend_plugins_enabled_defaults_off_and_omitted() {
+        // Off by default (#2048): the field is None on a fresh settings object and
+        // omitted from serialized JSON, so v0.1.0 ships with frontend plugins off.
+        let settings = AppSettings::default();
+        assert_eq!(settings.frontend_plugins_enabled, None);
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(!json.contains("frontendPluginsEnabled"));
     }
 
     #[test]

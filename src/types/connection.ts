@@ -625,6 +625,17 @@ export interface AppSettings {
    */
   customLanguageGrammars?: CustomLanguageGrammar[];
   experimentalFeaturesEnabled?: boolean;
+  /**
+   * Experimental opt-in for executing **frontend (JavaScript) plugins** (#2048).
+   * Defaults to `false` (off). Frontend plugins are injected into the main
+   * WebView and run with full IPC/command access and no per-plugin permission
+   * enforcement (tracked in #2001), so for the first release their execution is
+   * gated behind this explicit, security-framed toggle. When off, no frontend
+   * plugin JS is loaded regardless of a plugin's enabled state; theme and
+   * backend-only plugins are unaffected. Toggling it live loads/unloads the
+   * injected plugin scripts (see `reconcileFrontendPlugins`).
+   */
+  frontendPluginsEnabled?: boolean;
   updates?: UpdateSettings;
   /** Linux `/dev` prefixes used when scanning for serial ports. Always present after `get_settings` (expanded from built-in defaults if never saved). */
   serialPortScanPrefixes?: SerialPortScanPrefix[];

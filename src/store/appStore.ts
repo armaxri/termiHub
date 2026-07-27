@@ -5258,6 +5258,16 @@ export const useAppStore = create<AppState>((set, get) => {
             }
           }
         }
+        // Toggling the experimental frontend-plugin gate (#2048) reconciles the
+        // injected plugin scripts: enabling loads active frontend plugins,
+        // disabling tears them down. loadPlugins re-runs reconcile with the new
+        // flag value it reads from the just-persisted settings.
+        if (
+          (oldSettings.frontendPluginsEnabled ?? false) !==
+          (newSettings.frontendPluginsEnabled ?? false)
+        ) {
+          void get().loadPlugins();
+        }
       } catch (err) {
         console.error("Failed to save settings:", err);
       }
@@ -7570,8 +7580,15 @@ export const useAppStore = create<AppState>((set, get) => {
         set({ plugins, pluginBackendTypes: derivePluginBackendTypes(plugins), pluginThemes });
         // Load/unload frontend JS plugins — protocol parsers + status-bar
         // widgets (#1998). Reconciles the injected scripts against the active
-        // set; individual load failures are logged and skipped.
-        const frontendErrors = await reconcileFrontendPlugins(plugins, readPluginFile);
+        // set; individual load failures are logged and skipped. Frontend-plugin
+        // execution is gated behind the experimental opt-in (#2048): when it is
+        // off, reconcile loads nothing and unloads anything already injected.
+        const frontendEnabled = get().settings.frontendPluginsEnabled ?? false;
+        const frontendErrors = await reconcileFrontendPlugins(
+          plugins,
+          readPluginFile,
+          frontendEnabled
+        );
         for (const err of frontendErrors) {
           frontendLog(
             "app_store",
