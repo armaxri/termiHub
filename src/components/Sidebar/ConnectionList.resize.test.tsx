@@ -1,11 +1,13 @@
 /**
  * Regression tests for the resize handle --resizable class.
  *
- * There are two levels of resize handles:
+ * There is a single resize handle level left:
  * - Outer (sidebar-outer-separator): between Connections and the entire Remote Agents section.
  *   Resizable whenever connections is expanded and experimental features are enabled.
- * - Inner (sidebar-group-separator-N): between individual agents inside the Remote Agents section.
- *   Resizable only when both adjacent agents are expanded.
+ *
+ * The former inner handles between individual agents were removed with #2116:
+ * the agent list now scrolls, with every agent at its natural content height,
+ * so there is no fixed height for a splitter to apportion between them.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -134,7 +136,7 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
   });
 });
 
-describe("ConnectionList – inner resize handles (between agents)", () => {
+describe("ConnectionList – no inner resize handles between agents (#2116)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -148,8 +150,13 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
     container.remove();
   });
 
-  it("no inner separator when there is only one agent", () => {
-    useAppStore.setState({ remoteAgents: [makeAgent({ isExpanded: true })] });
+  it("renders no inner separator even between two expanded agents (scroll model)", () => {
+    useAppStore.setState({
+      remoteAgents: [
+        makeAgent({ id: "a1", isExpanded: true }),
+        makeAgent({ id: "a2", isExpanded: true }),
+      ],
+    });
 
     act(() => {
       root.render(
@@ -161,67 +168,5 @@ describe("ConnectionList – inner resize handles (between agents)", () => {
     });
 
     expect(container.querySelector('[data-testid="sidebar-group-separator-0"]')).toBeNull();
-  });
-
-  it("inner separator appears between two agents", () => {
-    useAppStore.setState({
-      remoteAgents: [
-        makeAgent({ id: "a1", isExpanded: true }),
-        makeAgent({ id: "a2", isExpanded: true }),
-      ],
-    });
-
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
-
-    expect(container.querySelector('[data-testid="sidebar-group-separator-0"]')).toBeTruthy();
-  });
-
-  it("inner separator has --resizable class only when both adjacent agents are expanded", () => {
-    useAppStore.setState({
-      remoteAgents: [
-        makeAgent({ id: "a1", isExpanded: true }),
-        makeAgent({ id: "a2", isExpanded: true }),
-      ],
-    });
-
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
-
-    const sep = container.querySelector('[data-testid="sidebar-group-separator-0"]');
-    expect(sep?.classList.contains("connection-list__resize-handle--resizable")).toBe(true);
-  });
-
-  it("inner separator does NOT have --resizable class when the second agent is collapsed", () => {
-    useAppStore.setState({
-      remoteAgents: [
-        makeAgent({ id: "a1", isExpanded: true }),
-        makeAgent({ id: "a2", isExpanded: false }),
-      ],
-    });
-
-    act(() => {
-      root.render(
-        React.createElement(TooltipProvider, {
-          delayDuration: 0,
-          children: React.createElement(ConnectionList),
-        })
-      );
-    });
-
-    const sep = container.querySelector('[data-testid="sidebar-group-separator-0"]');
-    expect(sep?.classList.contains("connection-list__resize-handle--resizable")).toBe(false);
   });
 });
