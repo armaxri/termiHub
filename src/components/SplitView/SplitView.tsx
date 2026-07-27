@@ -63,6 +63,7 @@ import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBa
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
 import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
+import { PanelErrorBoundary } from "./PanelErrorBoundary";
 import "./SplitView.css";
 
 export function SplitView() {
@@ -396,98 +397,105 @@ export function SplitView() {
               </ContextMenu.Portal>
             </ContextMenu.Root>
             <div className="zoom-overlay__content">
-              {zoomedTab.contentType === "terminal" &&
-              (terminalSpawnErrors[zoomedTabId] ||
-                terminalConnecting[zoomedTabId] ||
-                (terminalAutoRetryCountZoom[zoomedTabId] ?? 0) > 0 ||
-                !!terminalWaitingForAgentZoom[zoomedTabId] ||
-                !!terminalReattachingZoom[zoomedTabId]) ? (
-                <TerminalConnectionOverlay
-                  key={`zoom-${zoomedTabId}`}
-                  tabId={zoomedTabId}
-                  panelId={zoomedTab.panelId}
-                  tabTitle={zoomedTab.title}
-                  isVisible={true}
-                  sessionType={
-                    zoomedTab.config.type === "remote-session"
-                      ? ((zoomedTab.config.config as { sessionType?: string }).sessionType ?? "")
-                      : zoomedTab.config.type
-                  }
-                />
-              ) : zoomedTab.contentType === "terminal" ? (
-                <>
-                  <TerminalSearchBar tabId={zoomedTabId} />
-                  {/* key forces a fresh mount on each zoomed-tab change so the
+              <PanelErrorBoundary label={`zoom ${zoomedTabId}`}>
+                {zoomedTab.contentType === "terminal" &&
+                (terminalSpawnErrors[zoomedTabId] ||
+                  terminalConnecting[zoomedTabId] ||
+                  (terminalAutoRetryCountZoom[zoomedTabId] ?? 0) > 0 ||
+                  !!terminalWaitingForAgentZoom[zoomedTabId] ||
+                  !!terminalReattachingZoom[zoomedTabId]) ? (
+                  <TerminalConnectionOverlay
+                    key={`zoom-${zoomedTabId}`}
+                    tabId={zoomedTabId}
+                    panelId={zoomedTab.panelId}
+                    tabTitle={zoomedTab.title}
+                    isVisible={true}
+                    sessionType={
+                      zoomedTab.config.type === "remote-session"
+                        ? ((zoomedTab.config.config as { sessionType?: string }).sessionType ?? "")
+                        : zoomedTab.config.type
+                    }
+                  />
+                ) : zoomedTab.contentType === "terminal" ? (
+                  <>
+                    <TerminalSearchBar tabId={zoomedTabId} />
+                    {/* key forces a fresh mount on each zoomed-tab change so the
                       adoption lifecycle always matches the initial-zoom case. */}
-                  <TerminalSlot
-                    key={`zoom-slot-${zoomedTabId}`}
+                    <TerminalSlot
+                      key={`zoom-slot-${zoomedTabId}`}
+                      tabId={zoomedTabId}
+                      isVisible={true}
+                    />
+                  </>
+                ) : zoomedTab.contentType === "settings" ? (
+                  <SettingsPanel tabId={zoomedTabId} isVisible={true} />
+                ) : zoomedTab.contentType === "log-viewer" ? (
+                  <LogViewer isVisible={true} />
+                ) : zoomedTab.contentType === "editor" && zoomedTab.editorMeta ? (
+                  <FileEditor
+                    key={`zoom-${zoomedTabId}`}
+                    tabId={zoomedTabId}
+                    meta={zoomedTab.editorMeta}
+                    isVisible={true}
+                    keepModel={true}
+                  />
+                ) : zoomedTab.contentType === "connection-editor" &&
+                  zoomedTab.connectionEditorMeta ? (
+                  <ConnectionEditor
+                    key={`zoom-${zoomedTabId}`}
+                    tabId={zoomedTabId}
+                    meta={zoomedTab.connectionEditorMeta}
+                    isVisible={true}
+                  />
+                ) : zoomedTab.contentType === "tunnel-editor" && zoomedTab.tunnelEditorMeta ? (
+                  <TunnelEditor
+                    key={`zoom-${zoomedTabId}`}
+                    tabId={zoomedTabId}
+                    meta={zoomedTab.tunnelEditorMeta}
+                    isVisible={true}
+                  />
+                ) : zoomedTab.contentType === "workspace-editor" &&
+                  zoomedTab.workspaceEditorMeta ? (
+                  <WorkspaceEditor
+                    key={`zoom-${zoomedTabId}`}
+                    tabId={zoomedTabId}
+                    meta={zoomedTab.workspaceEditorMeta}
+                    isVisible={true}
+                  />
+                ) : zoomedTab.contentType === "network-diagnostic" &&
+                  zoomedTab.networkDiagnosticMeta ? (
+                  <NetworkDiagnosticPanel
+                    key={`zoom-${zoomedTabId}`}
+                    meta={zoomedTab.networkDiagnosticMeta}
+                    isVisible={true}
+                  />
+                ) : zoomedTab.contentType === "plugin-detail" && zoomedTab.pluginDetailMeta ? (
+                  <PluginDetailPanel
+                    key={`zoom-${zoomedTabId}`}
+                    meta={zoomedTab.pluginDetailMeta}
+                    isVisible={true}
+                  />
+                ) : zoomedTab.contentType === "agent-error" && zoomedTab.agentErrorMeta ? (
+                  <AgentErrorTab
+                    key={`zoom-${zoomedTabId}`}
+                    tabId={zoomedTabId}
+                    meta={zoomedTab.agentErrorMeta}
+                    isVisible={true}
+                  />
+                ) : zoomedTab.contentType === "file-browser" ? (
+                  <FileBrowserTab
+                    key={`zoom-${zoomedTabId}`}
                     tabId={zoomedTabId}
                     isVisible={true}
                   />
-                </>
-              ) : zoomedTab.contentType === "settings" ? (
-                <SettingsPanel tabId={zoomedTabId} isVisible={true} />
-              ) : zoomedTab.contentType === "log-viewer" ? (
-                <LogViewer isVisible={true} />
-              ) : zoomedTab.contentType === "editor" && zoomedTab.editorMeta ? (
-                <FileEditor
-                  key={`zoom-${zoomedTabId}`}
-                  tabId={zoomedTabId}
-                  meta={zoomedTab.editorMeta}
-                  isVisible={true}
-                  keepModel={true}
-                />
-              ) : zoomedTab.contentType === "connection-editor" &&
-                zoomedTab.connectionEditorMeta ? (
-                <ConnectionEditor
-                  key={`zoom-${zoomedTabId}`}
-                  tabId={zoomedTabId}
-                  meta={zoomedTab.connectionEditorMeta}
-                  isVisible={true}
-                />
-              ) : zoomedTab.contentType === "tunnel-editor" && zoomedTab.tunnelEditorMeta ? (
-                <TunnelEditor
-                  key={`zoom-${zoomedTabId}`}
-                  tabId={zoomedTabId}
-                  meta={zoomedTab.tunnelEditorMeta}
-                  isVisible={true}
-                />
-              ) : zoomedTab.contentType === "workspace-editor" && zoomedTab.workspaceEditorMeta ? (
-                <WorkspaceEditor
-                  key={`zoom-${zoomedTabId}`}
-                  tabId={zoomedTabId}
-                  meta={zoomedTab.workspaceEditorMeta}
-                  isVisible={true}
-                />
-              ) : zoomedTab.contentType === "network-diagnostic" &&
-                zoomedTab.networkDiagnosticMeta ? (
-                <NetworkDiagnosticPanel
-                  key={`zoom-${zoomedTabId}`}
-                  meta={zoomedTab.networkDiagnosticMeta}
-                  isVisible={true}
-                />
-              ) : zoomedTab.contentType === "plugin-detail" && zoomedTab.pluginDetailMeta ? (
-                <PluginDetailPanel
-                  key={`zoom-${zoomedTabId}`}
-                  meta={zoomedTab.pluginDetailMeta}
-                  isVisible={true}
-                />
-              ) : zoomedTab.contentType === "agent-error" && zoomedTab.agentErrorMeta ? (
-                <AgentErrorTab
-                  key={`zoom-${zoomedTabId}`}
-                  tabId={zoomedTabId}
-                  meta={zoomedTab.agentErrorMeta}
-                  isVisible={true}
-                />
-              ) : zoomedTab.contentType === "file-browser" ? (
-                <FileBrowserTab key={`zoom-${zoomedTabId}`} tabId={zoomedTabId} isVisible={true} />
-              ) : zoomedTab.contentType === "remote-desktop" ? (
-                <RemoteDesktopTab
-                  key={`zoom-${zoomedTabId}`}
-                  tabId={zoomedTabId}
-                  isVisible={true}
-                />
-              ) : null}
+                ) : zoomedTab.contentType === "remote-desktop" ? (
+                  <RemoteDesktopTab
+                    key={`zoom-${zoomedTabId}`}
+                    tabId={zoomedTabId}
+                    isVisible={true}
+                  />
+                ) : null}
+              </PanelErrorBoundary>
             </div>
           </div>
         </div>
@@ -527,8 +535,13 @@ interface PanelNodeRendererProps {
 
 function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRendererProps) {
   if (node.type === "leaf") {
+    // Per-panel boundary (#2069): a render throw in one leaf is caught here and
+    // shown as a localized fallback, so it cannot propagate to the app-wide
+    // boundary and tear down the sibling panels' live sessions.
     return (
-      <LeafPanelView panel={node} setActivePanel={setActivePanel} activeDragTab={activeDragTab} />
+      <PanelErrorBoundary label={`panel ${node.id}`}>
+        <LeafPanelView panel={node} setActivePanel={setActivePanel} activeDragTab={activeDragTab} />
+      </PanelErrorBoundary>
     );
   }
 
