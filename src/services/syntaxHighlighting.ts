@@ -396,6 +396,16 @@ export class SyntaxHighlightingEngine {
   }
 
   /**
+   * Number of logical lines currently holding decoration disposables. Exposed
+   * for observability/tests: it must stay bounded over a long session because
+   * each line's Map entry is dropped when its marker disposes (line trimmed out
+   * of scrollback) — see the `marker.onDispose` hook in {@link decorate} (#2073).
+   */
+  get trackedLineCount(): number {
+    return this.lineDisposables.size;
+  }
+
+  /**
    * Enables highlighting with the given rules: compiles them, registers the
    * write hook, and scans the current viewport so already-visible output gets
    * highlighted immediately.
@@ -581,7 +591,16 @@ export class SyntaxHighlightingEngine {
     };
 
     for (const match of matches) {
-      this.applyMatch(match, logical.rows, cols, cursorAbs, getRowLine, cellRef, disposables);
+      this.applyMatch(
+        startRow,
+        match,
+        logical.rows,
+        cols,
+        cursorAbs,
+        getRowLine,
+        cellRef,
+        disposables
+      );
     }
 
     if (disposables.length > 0) this.lineDisposables.set(startRow, disposables);
@@ -593,6 +612,7 @@ export class SyntaxHighlightingEngine {
    * server's colors always win.
    */
   private applyMatch(
+    startRow: number,
     match: RuleMatch,
     rows: number[],
     cols: number,
@@ -608,7 +628,7 @@ export class SyntaxHighlightingEngine {
 
     const flush = (): void => {
       if (runWidth <= 0) return;
-      this.decorate(runRow, runStartX, runWidth, cursorAbs, match, runText, out);
+      this.decorate(startRow, runRow, runStartX, runWidth, cursorAbs, match, runText, out);
       runWidth = 0;
       runText = "";
     };
@@ -653,6 +673,7 @@ export class SyntaxHighlightingEngine {
    * with the run's styled text on render (see {@link styleDecorationElement}).
    */
   private decorate(
+    startRow: number,
     physRow: number,
     x: number,
     width: number,
@@ -663,6 +684,18 @@ export class SyntaxHighlightingEngine {
   ): void {
     const marker = this.xterm.registerMarker(physRow - cursorAbs);
     if (!marker) return;
+
+    // When xterm trims this line off the top of the scrollback the marker
+    // disposes; drop the logical line's Map entry so `lineDisposables` cannot
+    // grow without bound over a long session (#2073). Guarded by identity: only
+    // remove the entry while it still tracks *this* marker, so a later re-scan
+    // that reused the same absolute-row key (indices shift as the scrollback
+    // trims) is never clobbered. xterm disposes the attached decoration itself
+    // when the marker goes, so this only frees our tracking Map.
+    marker.onDispose(() => {
+      const current = this.lineDisposables.get(startRow);
+      if (current && current.includes(marker)) this.lineDisposables.delete(startRow);
+    });
 
     const style = match.rule.style;
     const styled = hasTextStyle(style);

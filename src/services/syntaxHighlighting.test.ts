@@ -436,4 +436,68 @@ describe("SyntaxHighlightingEngine lifecycle", () => {
 
     engine.dispose();
   });
+
+  it("drops a line's decoration-map entry when its marker disposes (#2073)", async () => {
+    // Deterministic: fake markers whose onDispose we fire ourselves, standing in
+    // for xterm trimming the line off the top of the scrollback.
+    term = await makeTerm("plain ERROR here\r\n");
+    const disposeCallbacks: Array<() => void> = [];
+    vi.spyOn(term, "registerMarker").mockImplementation(
+      (() =>
+        ({
+          id: 1,
+          line: 0,
+          isDisposed: false,
+          onDispose: (cb: () => void) => {
+            disposeCallbacks.push(cb);
+            return { dispose: () => {} };
+          },
+          dispose: () => {},
+        }) as unknown as ReturnType<typeof term.registerMarker>) as typeof term.registerMarker
+    );
+    vi.spyOn(term, "registerDecoration").mockImplementation(
+      ((opts) =>
+        ({
+          marker: opts.marker,
+          isDisposed: false,
+          onRender: () => ({ dispose: () => {} }),
+          onDispose: () => ({ dispose: () => {} }),
+          dispose: () => {},
+        }) as unknown as ReturnType<
+          typeof term.registerDecoration
+        >) as typeof term.registerDecoration
+    );
+
+    const engine = new SyntaxHighlightingEngine(term);
+    engine.enable([errorRule]);
+    expect(engine.trackedLineCount).toBe(1);
+    expect(disposeCallbacks.length).toBeGreaterThan(0);
+
+    // Simulate the line being trimmed: fire the marker's onDispose.
+    disposeCallbacks.forEach((cb) => cb());
+    expect(engine.trackedLineCount).toBe(0);
+
+    engine.dispose();
+  });
+
+  it("prunes the decoration map as matched lines scroll out of scrollback (#2073)", async () => {
+    // End-to-end against a real xterm with a tiny scrollback: the matched line is
+    // trimmed once enough output is written, disposing its marker and dropping
+    // the Map entry so `lineDisposables` cannot grow without bound.
+    term = new Terminal({ cols: 80, rows: 4, allowProposedApi: true, scrollback: 5 });
+    await new Promise<void>((r) => term.write("plain ERROR here\r\n", () => r()));
+
+    const engine = new SyntaxHighlightingEngine(term);
+    engine.enable([errorRule]);
+    expect(engine.trackedLineCount).toBe(1);
+
+    // Push far more non-matching lines than the buffer can hold (rows + scrollback),
+    // forcing the ERROR line off the top of the scrollback.
+    for (let i = 0; i < 40; i++) {
+      await new Promise<void>((r) => term.write(`filler line ${i}\r\n`, () => r()));
+    }
+
+    expect(engine.trackedLineCount).toBe(0);
+    engine.dispose();
+  });
 });
