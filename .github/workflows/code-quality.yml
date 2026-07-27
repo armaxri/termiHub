@@ -267,9 +267,22 @@ jobs:
         with:
           node-version: '22'
 
-      - name: pnpm audit
+      # Blocking gate on the RUNTIME dependency tree only. A high/critical
+      # advisory that ships to users must fail CI. Scoped to `--prod` so it does
+      # not fire on the dev/build toolchain (see the advisory step below) — that
+      # split is what makes this safe to make blocking (#2074).
+      - name: pnpm audit (production deps, blocking)
+        run: pnpm audit --prod --audit-level=high
+
+      # Advisory-only visibility for the FULL tree (incl. devDependencies). These
+      # are dev/build-time highs — eslint/typescript-eslint -> minimatch ->
+      # brace-expansion, commitlint -> ajv -> fast-uri, vite -> postcss — none of
+      # which reach the shipped app. Kept non-blocking so they surface in the log
+      # without gating the release; promote a fix to the blocking step above once
+      # the upstream dev tool patches land.
+      - name: pnpm audit (full tree, advisory)
         run: pnpm audit --audit-level=moderate
-        continue-on-error: true  # Don't fail build, just warn
+        continue-on-error: true  # Dev-only advisories: warn, do not fail
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -284,6 +297,20 @@ jobs:
 
       - name: Cargo Audit
         run: cargo audit
+
+      # cargo-deny yanked/bans gate (#2074): fails CI when the workspace lockfile
+      # pins a YANKED crate (e.g. the crypto-bigint 0.7.x line pulled via russh),
+      # so a silently-yanked transitive dep surfaces loudly instead of shipping.
+      # Config: deny.toml. Only `advisories bans` run here — the `licenses` and
+      # `sources` checks are intentionally not wired (they need a full allowlist;
+      # tracked separately). cargo-audit above still covers vulnerability RUSTSECs.
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Cargo Deny (yanked + bans gate)
+        run: cargo deny check advisories bans
 
   # Check conventional commits (PR only)
   commit-lint:

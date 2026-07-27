@@ -63,7 +63,7 @@
   },
   "pnpm": {
     "overrides": {
-      "dompurify": ">=3.4.11 <4",
+      "dompurify": ">=3.4.12 <4",
       "markdown-it": ">=14.2.0 <15",
       "js-yaml": ">=4.2.0 <5",
       "serialize-javascript": ">=7.0.5",
