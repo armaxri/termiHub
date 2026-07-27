@@ -7,6 +7,10 @@ on:
       - 'agent/**'
       - 'core/**'
       - 'Cargo.toml'
+      # Re-run the cross-compile legs when the build workflow itself changes, so
+      # edits to the musl build (e.g. the cross-image hardening in #2056) are
+      # exercised on their own PR instead of shipping unvalidated.
+      - '.github/workflows/agent.yml'
 
 # Cancel an in-flight agent build when a newer commit lands on the same PR.
 concurrency:
@@ -48,23 +52,19 @@ jobs:
           curl -fsSL https://github.com/cross-rs/cross/releases/latest/download/cross-x86_64-unknown-linux-gnu.tar.gz \
             | sudo tar xz -C /usr/local/bin
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Build custom cross-rs image
-        uses: docker/build-push-action@v7
-        with:
-          context: agent/docker
-          file: agent/docker/Dockerfile.${{ matrix.target }}
-          tags: localhost/termihub-cross:${{ matrix.target }}
-          load: true
-          cache-from: type=gha,scope=${{ matrix.target }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.target }}
-
+      # No Docker Buildx / custom cross image on CI: the flaky "Set up Docker
+      # Buildx" step pulled moby/buildkit from Docker Hub (registry-1.docker.io),
+      # which times out non-deterministically (#2056). cross-rs pulls its stock
+      # target images from GHCR, which is reliable, so we let it use the default
+      # images directly. The custom localhost/termihub-cross:* images (Cross.toml
+      # + agent/docker/) only add an lld linker + a chmod entrypoint needed for
+      # local Windows/Podman dev (DrvFs strips execute bits); neither is required
+      # on a Linux runner, so dropping CROSS_CONFIG here changes nothing but the
+      # image source. Local dev still uses Cross.toml via the build-agents scripts.
       - name: Build
         env:
           TERMIHUB_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
-        run: CROSS_CONFIG=agent/Cross.toml cross build --release --target ${{ matrix.target }} -p termihub-agent
+        run: cross build --release --target ${{ matrix.target }} -p termihub-agent
 
       - name: Upload artifact
         uses: actions/upload-artifact@v7
