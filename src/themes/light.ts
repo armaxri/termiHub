@@ -33,7 +33,7 @@ export const lightTheme: ThemeDefinition = {
     // Text
     textPrimary: "#383a42",
     textSecondary: "#6a737d",
-    textMuted: "#858a90",
+    textMuted: "#686d74",
     textDisabled: "#a0a0a0",
     textAccent: "#0366d6",
     textLink: "#0366d6",
@@ -49,7 +49,7 @@ export const lightTheme: ThemeDefinition = {
 
     // Status
     colorSuccess: "#22863a",
-    colorWarning: "#b08800",
+    colorWarning: "#856900",
     colorError: "#cb2431",
     colorInfo: "#0366d6",
 

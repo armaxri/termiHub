@@ -33,7 +33,7 @@ export const darkTheme: ThemeDefinition = {
     // Text
     textPrimary: "#cccccc",
     textSecondary: "#969696",
-    textMuted: "#7d7d7d",
+    textMuted: "#909090",
     textDisabled: "#5a5a5a",
     textAccent: "#4fc1ff",
     textLink: "#3794ff",
