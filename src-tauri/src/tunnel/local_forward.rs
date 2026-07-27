@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use termihub_core::backends::ssh::handler::SshSession;
 
+use super::channel::{ChannelOpener, SshChannelOpener};
 use super::config::{LocalForwardConfig, TunnelStats};
 
 /// Manages a local port forwarding tunnel.
@@ -74,6 +75,18 @@ impl LocalForwarder {
         config: &LocalForwardConfig,
         session: Arc<SshSession>,
     ) -> Result<Self, std::io::Error> {
+        Self::start_with_opener(config, SshChannelOpener::new(session))
+    }
+
+    /// Start a local port forwarding tunnel over an injected [`ChannelOpener`].
+    ///
+    /// Production goes through [`start`](Self::start) (which wraps the SSH
+    /// session in an [`SshChannelOpener`]); tests inject an in-memory opener to
+    /// exercise the accept/relay path without a live SSH server (#2044).
+    pub fn start_with_opener<O: ChannelOpener>(
+        config: &LocalForwardConfig,
+        opener: O,
+    ) -> Result<Self, std::io::Error> {
         let addr = format!("{}:{}", config.local_host, config.local_port);
         let std_listener = std::net::TcpListener::bind(&addr)?;
         std_listener.set_nonblocking(true)?;
@@ -81,6 +94,7 @@ impl LocalForwarder {
 
         let stats = Arc::new(ForwarderStats::new());
         let stats_clone = Arc::clone(&stats);
+        let opener = Arc::new(opener);
         let remote_host = config.remote_host.clone();
         let remote_port = config.remote_port;
 
@@ -91,7 +105,7 @@ impl LocalForwarder {
         let (death_tx, death_rx) = tokio::sync::oneshot::channel();
         let task_handle = tokio::spawn(async move {
             let _death = death_tx;
-            Self::accept_loop(listener, session, remote_host, remote_port, stats_clone).await;
+            Self::accept_loop(listener, opener, remote_host, remote_port, stats_clone).await;
         });
 
         Ok(Self {
@@ -118,9 +132,9 @@ impl LocalForwarder {
         }
     }
 
-    async fn accept_loop(
+    async fn accept_loop<O: ChannelOpener>(
         listener: tokio::net::TcpListener,
-        session: Arc<SshSession>,
+        opener: Arc<O>,
         remote_host: String,
         remote_port: u16,
         stats: Arc<ForwarderStats>,
@@ -129,11 +143,11 @@ impl LocalForwarder {
             match listener.accept().await {
                 Ok((stream, _addr)) => {
                     stats.increment_active();
-                    let session = Arc::clone(&session);
+                    let opener = Arc::clone(&opener);
                     let remote_host = remote_host.clone();
                     let stats = Arc::clone(&stats);
                     tokio::spawn(async move {
-                        Self::relay_connection(stream, session, &remote_host, remote_port, &stats)
+                        Self::relay_connection(stream, opener, remote_host, remote_port, &stats)
                             .await;
                         stats.decrement_active();
                     });
@@ -146,17 +160,14 @@ impl LocalForwarder {
         }
     }
 
-    async fn relay_connection(
+    async fn relay_connection<O: ChannelOpener>(
         mut stream: tokio::net::TcpStream,
-        session: Arc<SshSession>,
-        remote_host: &str,
+        opener: Arc<O>,
+        remote_host: String,
         remote_port: u16,
         stats: &ForwarderStats,
     ) {
-        let channel = match session
-            .channel_open_direct_tcpip(remote_host, remote_port as u32, "localhost", 0)
-            .await
-        {
+        let mut channel_stream = match opener.open_direct_tcpip(remote_host, remote_port).await {
             Ok(ch) => ch,
             Err(e) => {
                 tracing::error!("Failed to open direct-tcpip channel: {}", e);
@@ -164,7 +175,6 @@ impl LocalForwarder {
             }
         };
 
-        let mut channel_stream = channel.into_stream();
         if let Ok((sent, received)) =
             tokio::io::copy_bidirectional(&mut stream, &mut channel_stream).await
         {
@@ -177,5 +187,164 @@ impl LocalForwarder {
 impl Drop for LocalForwarder {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the local forwarder's relay path and stats, driven over a
+    //! loopback listener plus an in-memory [`ChannelOpener`] fake so no live SSH
+    //! server or network is needed (#2044). Before this the forwarder sat near
+    //! 0% coverage because [`SshSession`] cannot be fabricated without a server.
+
+    use std::io;
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    use super::super::channel::test_support::EchoChannelOpener;
+    use super::super::config::LocalForwardConfig;
+    use super::*;
+
+    /// Reserve an ephemeral loopback port, then release it so the forwarder can
+    /// bind it. A small TOCTOU window exists but is harmless for a unit test.
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind ephemeral")
+            .local_addr()
+            .expect("local addr")
+            .port()
+    }
+
+    fn config_for(port: u16) -> LocalForwardConfig {
+        LocalForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: port,
+            remote_host: "db.internal".to_string(),
+            remote_port: 5432,
+        }
+    }
+
+    /// Poll `get_stats()` until `pred` holds or the deadline passes.
+    async fn wait_for_stats(
+        forwarder: &LocalForwarder,
+        pred: impl Fn(&TunnelStats) -> bool,
+    ) -> TunnelStats {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let stats = forwarder.get_stats();
+            if pred(&stats) {
+                return stats;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return stats;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn relays_bytes_bidirectionally_and_records_stats() {
+        let port = free_port();
+        let opener = EchoChannelOpener::new();
+        let targets = opener.targets_handle();
+        let forwarder =
+            LocalForwarder::start_with_opener(&config_for(port), opener).expect("start forwarder");
+
+        let mut client = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect to local forward");
+        client.write_all(b"hello world").await.expect("write");
+        // Half-close so `copy_bidirectional` sees EOF client->channel; the echo
+        // task then closes its end, ending the copy so stats are recorded.
+        client.shutdown().await.expect("shutdown write half");
+
+        let mut echoed = Vec::new();
+        client
+            .read_to_end(&mut echoed)
+            .await
+            .expect("read echoed bytes");
+        assert_eq!(&echoed, b"hello world", "bytes should relay round-trip");
+
+        let stats = wait_for_stats(&forwarder, |s| s.bytes_received == 11).await;
+        assert_eq!(stats.bytes_sent, 11, "client->remote byte count");
+        assert_eq!(stats.bytes_received, 11, "remote->client byte count");
+        assert_eq!(stats.total_connections, 1);
+
+        // The forwarder opened a channel to the configured remote target.
+        let recorded = targets.lock().unwrap().clone();
+        assert_eq!(recorded, vec![("db.internal".to_string(), 5432)]);
+    }
+
+    #[tokio::test]
+    async fn teardown_closes_the_listener() {
+        let port = free_port();
+        let forwarder =
+            LocalForwarder::start_with_opener(&config_for(port), EchoChannelOpener::new())
+                .expect("start forwarder");
+
+        // Sanity: the port accepts while running.
+        TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect while active");
+
+        drop(forwarder); // Drop -> stop() aborts the accept task, freeing the port.
+
+        // The listener should stop accepting shortly after teardown.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            match TcpStream::connect(("127.0.0.1", port)).await {
+                Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => break,
+                _ if tokio::time::Instant::now() >= deadline => {
+                    panic!("listener still accepting after teardown");
+                }
+                _ => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn channel_open_failure_counts_connection_but_relays_nothing() {
+        let port = free_port();
+        let forwarder =
+            LocalForwarder::start_with_opener(&config_for(port), EchoChannelOpener::failing())
+                .expect("start forwarder");
+
+        let mut client = TcpStream::connect(("127.0.0.1", port))
+            .await
+            .expect("connect to local forward");
+        // The relay bails out when the channel fails to open, so the connection
+        // closes with no bytes relayed.
+        let mut buf = Vec::new();
+        let _ = client.read_to_end(&mut buf).await;
+        assert!(buf.is_empty(), "no bytes should be relayed on open failure");
+
+        let stats = wait_for_stats(&forwarder, |s| s.total_connections == 1).await;
+        assert_eq!(stats.total_connections, 1);
+        assert_eq!(stats.bytes_sent, 0);
+        assert_eq!(stats.bytes_received, 0);
+    }
+
+    #[test]
+    fn stats_counters_track_traffic_and_connections() {
+        let stats = ForwarderStats::new();
+        let initial = stats.to_tunnel_stats();
+        assert_eq!(initial.bytes_sent, 0);
+        assert_eq!(initial.bytes_received, 0);
+        assert_eq!(initial.active_connections, 0);
+        assert_eq!(initial.total_connections, 0);
+
+        stats.add_bytes_sent(100);
+        stats.add_bytes_received(250);
+        stats.increment_active();
+        stats.increment_active();
+        stats.decrement_active();
+
+        let snap = stats.to_tunnel_stats();
+        assert_eq!(snap.bytes_sent, 100);
+        assert_eq!(snap.bytes_received, 250);
+        assert_eq!(snap.active_connections, 1, "two opened, one closed");
+        assert_eq!(snap.total_connections, 2, "total is monotonic");
     }
 }

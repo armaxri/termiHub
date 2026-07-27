@@ -104,7 +104,7 @@ impl RemoteForwarder {
             let local_addr = format!("{}:{}", local_host, local_port);
             let stats = Arc::clone(&stats);
             tokio::spawn(async move {
-                relay_to_local(incoming, &local_addr, &stats).await;
+                relay_to_local(incoming.channel.into_stream(), &local_addr, &stats).await;
                 stats.decrement_active();
             });
         }
@@ -117,7 +117,15 @@ impl Drop for RemoteForwarder {
     }
 }
 
-async fn relay_to_local(incoming: IncomingChannel, local_addr: &str, stats: &ForwarderStats) {
+/// Relay a single incoming forwarded channel to the configured local target.
+///
+/// Generic over the channel byte stream so the relay/stats-accounting logic is
+/// unit-testable with an in-memory stream — the production caller passes the
+/// russh `ChannelStream` from `incoming.channel.into_stream()` (#2044).
+async fn relay_to_local<S>(mut channel_stream: S, local_addr: &str, stats: &ForwarderStats)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
     let mut tcp = match tokio::net::TcpStream::connect(local_addr).await {
         Ok(s) => s,
         Err(e) => {
@@ -130,10 +138,109 @@ async fn relay_to_local(incoming: IncomingChannel, local_addr: &str, stats: &For
         }
     };
 
-    let mut channel_stream = incoming.channel.into_stream();
     if let Ok((sent, received)) = tokio::io::copy_bidirectional(&mut tcp, &mut channel_stream).await
     {
         stats.add_bytes_sent(sent);
         stats.add_bytes_received(received);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Unit tests for the remote forwarder's per-channel relay to a local
+    //! target, driven with an in-memory duplex standing in for the SSH channel
+    //! plus a loopback echo server as the local target (#2044). The
+    //! `tcpip_forward` request itself needs a live SSH session and is covered by
+    //! the integration lanes; here we lock in the relay + stats-accounting path
+    //! that previously sat at 0% coverage.
+
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    use super::*;
+
+    /// Spawn a loopback TCP echo server, returning its `host:port`.
+    async fn spawn_echo_server() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind echo server");
+        let addr = listener.local_addr().expect("addr").to_string();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        match sock.read(&mut buf).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                if sock.write_all(&buf[..n]).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        addr
+    }
+
+    fn free_local_addr() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        // Drop the listener so the port is free (nothing listening -> refused).
+        addr.to_string()
+    }
+
+    #[tokio::test]
+    async fn relays_channel_to_local_target_and_records_stats() {
+        let addr = spawn_echo_server().await;
+        let stats = Arc::new(ForwarderStats::new());
+
+        // `channel_stream` stands in for the SSH channel; `peer` is the remote
+        // side that would write into it.
+        let (channel_stream, mut peer) = tokio::io::duplex(64 * 1024);
+        let stats_clone = Arc::clone(&stats);
+        let addr_clone = addr.clone();
+        let relay = tokio::spawn(async move {
+            relay_to_local(channel_stream, &addr_clone, &stats_clone).await;
+        });
+
+        peer.write_all(b"hello").await.expect("write to channel");
+        let mut echoed = [0u8; 5];
+        peer.read_exact(&mut echoed).await.expect("read echo");
+        assert_eq!(&echoed, b"hello", "channel <-> local relay round-trips");
+
+        peer.shutdown().await.expect("half-close channel");
+        drop(peer);
+
+        tokio::time::timeout(Duration::from_secs(3), relay)
+            .await
+            .expect("relay finished")
+            .expect("relay task ok");
+
+        let snap = stats.to_tunnel_stats();
+        assert_eq!(snap.bytes_sent, 5);
+        assert_eq!(snap.bytes_received, 5);
+    }
+
+    #[tokio::test]
+    async fn relay_to_unreachable_local_target_is_a_no_op() {
+        let addr = free_local_addr(); // nothing is listening here
+        let stats = Arc::new(ForwarderStats::new());
+        let (channel_stream, _peer) = tokio::io::duplex(1024);
+
+        // Should return promptly without panicking and without recording bytes.
+        tokio::time::timeout(
+            Duration::from_secs(3),
+            relay_to_local(channel_stream, &addr, &stats),
+        )
+        .await
+        .expect("relay returns on connect failure");
+
+        let snap = stats.to_tunnel_stats();
+        assert_eq!(snap.bytes_sent, 0);
+        assert_eq!(snap.bytes_received, 0);
     }
 }
