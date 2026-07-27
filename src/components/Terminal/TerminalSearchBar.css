@@ -7,8 +7,8 @@
   align-items: center;
   gap: 2px;
   padding: 4px 6px;
-  background: var(--background-secondary);
-  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
 }
@@ -16,9 +16,9 @@
 .terminal-search-bar__input {
   width: 180px;
   padding: 2px 6px;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border-primary);
   border-radius: 3px;
-  background: var(--input-background);
+  background: var(--bg-input);
   color: var(--text-primary);
   font-size: 12px;
   outline: none;
