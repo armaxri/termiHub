@@ -158,11 +158,11 @@ graph LR
 
     RUST -->|ConPTY / forkpty| PTY[PTY API]
     RUST -->|serialport crate| SERIAL_API[Serial Port API]
-    RUST -->|ssh2 crate| SSH_API[SSH/SFTP Protocol]
+    RUST -->|russh crate| SSH_API[SSH/SFTP Protocol]
     RUST -->|tokio TcpStream| TELNET_API[TCP Socket]
     RUST -->|bollard / CLI| DOCKER_API[Docker Engine]
     RUST -->|wsl.exe| WSL_API[WSL API]
-    RUST -->|std::fs / ssh2::Sftp| FS_API[File System API]
+    RUST -->|std::fs / russh-sftp| FS_API[File System API]
 
     PTY --> OS[Operating System]
     SERIAL_API --> HW[Serial Hardware]
@@ -176,12 +176,12 @@ graph LR
 | Frontend ↔ Backend | Tauri IPC (commands + events)                             | JSON-serialized Rust structs     |
 | Backend → PTY      | `portable-pty` crate (ConPTY on Windows, forkpty on Unix) | Raw bytes                        |
 | Backend → Serial   | `serialport` crate                                        | Raw bytes                        |
-| Backend → SSH      | `ssh2` crate (libssh2)                                    | SSH protocol (encrypted)         |
+| Backend → SSH      | `russh` crate (pure-Rust)                                 | SSH protocol (encrypted)         |
 | Backend → Telnet   | `tokio::net::TcpStream`                                   | Telnet protocol (IAC sequences)  |
 | Backend → Docker   | `bollard` crate (Docker Engine API) or Docker CLI         | Raw bytes via PTY/exec           |
 | Backend → WSL      | `wsl.exe` invocation (Windows only)                       | Raw bytes via PTY                |
 | Backend → FTP      | `suppaftp` crate (async, `async-rustls` TLS)              | FTP/FTPS control + data channels |
-| Backend → Files    | `std::fs` (local) / `ssh2::Sftp` (remote)                 | File I/O                         |
+| Backend → Files    | `std::fs` (local) / `russh-sftp` (remote)                 | File I/O                         |
 
 ---
 
@@ -407,7 +407,7 @@ graph TD
 | Module         | Location               | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Connection** | `core/src/connection/` | The central abstraction layer: `ConnectionType` async trait (the unified interface all backends implement), `ConnectionTypeRegistry` (runtime registry with factory functions), `SettingsSchema` types for dynamic UI form generation (groups, fields, field types including text, password, number, boolean, select, port, file path, key-value list, object list), `Condition` for conditional field visibility, `Capabilities` (monitoring, file browser, resize, persistent), and settings validation |
-| **Backends**   | `core/src/backends/`   | Concrete `ConnectionType` implementations, each gated behind a cargo feature flag: `local_shell` (portable-pty), `ssh` (ssh2 with auth, file browser, monitoring, X11), `serial` (serialport crate), `telnet` (raw TCP + IAC), `docker` (bollard + file browser), `wsl` (Windows only), `ftp` (suppaftp — FTP/FTPS client with file browser + transfers, desktop-only; see [§8 FTP client sessions](#ftp-client-sessions-and-the-transfer-queue))                                                         |
+| **Backends**   | `core/src/backends/`   | Concrete `ConnectionType` implementations, each gated behind a cargo feature flag: `local_shell` (portable-pty), `ssh` (russh + russh-sftp with auth, file browser, monitoring, X11), `serial` (serialport crate), `telnet` (raw TCP + IAC), `docker` (bollard + file browser), `wsl` (Windows only), `ftp` (suppaftp — FTP/FTPS client with file browser + transfers, desktop-only; see [§8 FTP client sessions](#ftp-client-sessions-and-the-transfer-queue))                                           |
 | **Buffer**     | `core/src/buffer/`     | `RingBuffer` — 1 MiB circular byte buffer for output replay and serial capture                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | **Config**     | `core/src/config/`     | Unified configuration types (`ShellConfig`, `SshConfig`, `DockerConfig`, `SerialConfig`, `WslConfig`, `PtySize`, `EnvVar`, `VolumeMount`) with config value expansion utilities (`${VAR}` and tilde expansion via `shellexpand`)                                                                                                                                                                                                                                                                          |
 | **Errors**     | `core/src/errors.rs`   | Shared error types (`CoreError`, `SessionError`, `FileError`) with `From` conversions for `std::io::Error`                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -510,7 +510,7 @@ classDiagram
     }
 
     class SshConnection {
-        ssh2 · auth · SFTP · monitoring · X11
+        russh · auth · SFTP · monitoring · X11
         +settings: host, port, user, authMethod, keyPath
     }
 
@@ -1587,7 +1587,6 @@ graph TD
 | **ConPTY dependency**                            | Windows PTY requires Windows 10 1809+                                                                                                                                                                      | Document minimum version; fail gracefully on older Windows                                                                                                                                                                                                                       |
 | **xterm.js canvas testing**                      | Terminal renders to `<canvas>`, invisible to DOM-based test tools                                                                                                                                          | Manual testing plan ([testing.md](testing.md#manual-testing)); E2E tests cover surrounding UI                                                                                                                                                                                    |
 | **WebView rendering differences**                | Tauri uses platform WebView (Edge/WebKitGTK/WebKit) with subtle CSS differences                                                                                                                            | CI builds on all 3 OSes; test matrix for visual regression                                                                                                                                                                                                                       |
-| **libssh2 limitations**                          | `ssh2` crate wraps libssh2 which has occasional compatibility issues with newer SSH servers                                                                                                                | Monitor upstream issues; consider `russh` migration if needed                                                                                                                                                                                                                    |
 | **Single-threaded IPC**                          | Tauri commands run on the main thread by default                                                                                                                                                           | Heavy operations use `tauri::async_runtime::spawn`                                                                                                                                                                                                                               |
 | **Session limit**                                | Hard cap at 50 concurrent terminals (desktop), 20 concurrent sessions (agent)                                                                                                                              | Sufficient for target use case; can be raised if needed                                                                                                                                                                                                                          |
 | **No automated cross-platform tests for serial** | Serial tests require physical hardware                                                                                                                                                                     | Docker-based virtual serial via socat in `examples/`                                                                                                                                                                                                                             |
