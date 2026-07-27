@@ -20,7 +20,7 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::files::FileEntry;
-use termihub_core::monitoring::{MonitorStatus, MonitorStatusReceiver, SystemStats};
+use termihub_core::monitoring::{MonitorStatus, SystemStats};
 use termihub_core::output::coalescer::OutputCoalescer;
 use termihub_core::output::screen_clear::ScreenClearDetector;
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
@@ -31,6 +31,7 @@ use crate::utils::errors::TerminalError;
 
 use super::file_ops::FileOps;
 use super::line_ending::{normalize_line_endings, LineEnding};
+use super::monitoring_controller::MonitoringController;
 use super::remote_proxy::RemoteProxy;
 use super::session_log::{default_session_log_path, desktop_clock};
 
@@ -207,19 +208,6 @@ pub struct SessionMonitoringStatsEvent {
 pub struct SessionMonitoringStatusEvent {
     pub session_id: String,
     pub status: MonitorStatus,
-}
-
-/// Receive from an optional status receiver for use inside `tokio::select!`.
-///
-/// When the receiver is `None`, the future never resolves (`pending`), so the
-/// select arm is inert and the other arm drives the loop. This lets the status
-/// arm be disabled after its channel closes without spinning on repeated
-/// `None`s.
-async fn recv_optional(rx: &mut Option<MonitorStatusReceiver>) -> Option<MonitorStatus> {
-    match rx.as_mut() {
-        Some(rx) => rx.recv().await,
-        None => std::future::pending().await,
-    }
 }
 
 /// Per-session scrollback capture buffers, keyed by `session_id` (#1900).
@@ -898,6 +886,19 @@ impl SessionManager {
             .map(|e| e.connection.capabilities())
     }
 
+    /// Borrow a [`MonitoringController`] facade over this manager's session and
+    /// monitoring-task maps (#2110).
+    ///
+    /// The facade is stateless — it holds only borrows of the `sessions` and
+    /// `monitoring_tasks` maps — so the public `*_session_monitoring` methods
+    /// below construct one per call and forward to it. This keeps the
+    /// monitoring plumbing (including the background push-task spawn / abort /
+    /// cancellation lifecycle) out of the manager while leaving the public API
+    /// and behavior unchanged.
+    fn monitoring(&self) -> MonitoringController<'_> {
+        MonitoringController::new(&self.sessions, &self.monitoring_tasks)
+    }
+
     /// Subscribe to a session's monitoring provider and forward stats and
     /// status as Tauri events.
     ///
@@ -906,104 +907,22 @@ impl SessionManager {
     /// `session-monitoring-status` events to the frontend. The status stream
     /// lets the UI surface an explicit `Stale` arm on a mid-stream drop instead
     /// of rendering frozen stats as live (#1229, audit gap G1). Call
-    /// [`stop_session_monitoring`] to cancel the task and unsubscribe.
+    /// [`stop_session_monitoring`](Self::stop_session_monitoring) to cancel the
+    /// task and unsubscribe.
     pub async fn start_session_monitoring<R: tauri::Runtime>(
         &self,
         session_id: &str,
         interval_ms: Option<u64>,
         app_handle: tauri::AppHandle<R>,
     ) -> Result<(), TerminalError> {
-        let subscription = {
-            let sessions = self.sessions.lock().await;
-            let entry = sessions
-                .get(session_id)
-                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-            let provider = entry.connection.monitoring().ok_or_else(|| {
-                TerminalError::RemoteError("No monitoring capability".to_string())
-            })?;
-            provider
-                .subscribe()
-                .await
-                .map_err(|e| TerminalError::RemoteError(e.to_string()))?
-        };
-
-        // Apply the caller's chosen refresh interval to the now-running loop
-        // (#1233). Done after the subscribe block so the provider reference is
-        // not held across this await. Takes effect on the next tick; omitted →
-        // provider default.
-        if let Some(ms) = interval_ms {
-            self.set_session_monitoring_interval(session_id, ms).await?;
-        }
-
-        let sid = session_id.to_string();
-        let join_handle = tokio::spawn(async move {
-            let mut stats_rx = subscription.stats;
-            // `Option` so a closed status channel stops being polled instead of
-            // spinning the select loop hot on repeated `None` (the agent path
-            // sends a single `Live` then drops its status sender).
-            let mut status_rx = Some(subscription.status);
-            loop {
-                tokio::select! {
-                    stats = stats_rx.recv() => {
-                        match stats {
-                            Some(stats) => {
-                                let event = SessionMonitoringStatsEvent {
-                                    session_id: sid.clone(),
-                                    stats,
-                                };
-                                if app_handle.emit("session-monitoring-stats", &event).is_err() {
-                                    break;
-                                }
-                            }
-                            // Stats channel closed: the collector loop ended.
-                            None => break,
-                        }
-                    }
-                    status = recv_optional(&mut status_rx) => {
-                        match status {
-                            Some(status) => {
-                                let event = SessionMonitoringStatusEvent {
-                                    session_id: sid.clone(),
-                                    status,
-                                };
-                                if app_handle.emit("session-monitoring-status", &event).is_err() {
-                                    break;
-                                }
-                            }
-                            // Status channel closed: stop polling it, keep
-                            // forwarding stats. Only a closed stats channel ends
-                            // the task.
-                            None => status_rx = None,
-                        }
-                    }
-                }
-            }
-            info!(session_id = %sid, "Session monitoring push task ended");
-        });
-
-        let abort_handle = join_handle.abort_handle();
-        self.monitoring_tasks
-            .lock()
+        self.monitoring()
+            .start_session_monitoring(session_id, interval_ms, app_handle)
             .await
-            .insert(session_id.to_string(), abort_handle);
-        Ok(())
     }
 
     /// Stop session-based monitoring: abort the push task and unsubscribe.
     pub async fn stop_session_monitoring(&self, session_id: &str) -> Result<(), TerminalError> {
-        if let Some(handle) = self.monitoring_tasks.lock().await.remove(session_id) {
-            handle.abort();
-        }
-
-        let sessions = self.sessions.lock().await;
-        if let Some(entry) = sessions.get(session_id) {
-            if let Some(provider) = entry.connection.monitoring() {
-                if let Err(e) = provider.unsubscribe().await {
-                    warn!(session_id, error = %e, "Session monitoring unsubscribe error");
-                }
-            }
-        }
-        Ok(())
+        self.monitoring().stop_session_monitoring(session_id).await
     }
 
     /// Pause or resume a session's monitoring loop (#1233).
@@ -1015,16 +934,9 @@ impl SessionManager {
         session_id: &str,
         paused: bool,
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let provider = entry
-            .connection
-            .monitoring()
-            .ok_or_else(|| TerminalError::RemoteError("No monitoring capability".to_string()))?;
-        provider.set_paused(paused).await;
-        Ok(())
+        self.monitoring()
+            .set_session_monitoring_paused(session_id, paused)
+            .await
     }
 
     /// Change a session monitoring loop's refresh interval (#1233).
@@ -1033,31 +945,18 @@ impl SessionManager {
         session_id: &str,
         interval_ms: u64,
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let provider = entry
-            .connection
-            .monitoring()
-            .ok_or_else(|| TerminalError::RemoteError("No monitoring capability".to_string()))?;
-        provider
-            .set_interval(std::time::Duration::from_millis(interval_ms.max(1)))
-            .await;
-        Ok(())
+        self.monitoring()
+            .set_session_monitoring_interval(session_id, interval_ms)
+            .await
     }
 
     /// Abort a session monitoring loop's in-flight connect / collect (#1233).
     ///
     /// Best-effort: a missing session or provider is treated as already gone.
     pub async fn cancel_session_monitoring(&self, session_id: &str) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        if let Some(entry) = sessions.get(session_id) {
-            if let Some(provider) = entry.connection.monitoring() {
-                provider.cancel_connect().await;
-            }
-        }
-        Ok(())
+        self.monitoring()
+            .cancel_session_monitoring(session_id)
+            .await
     }
 
     // ── Persistent session management ──────────────────────────────────
@@ -3539,5 +3438,219 @@ mod tests {
         let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
         let err = manager.read_file("ghost", "/").await.unwrap_err();
         assert!(matches!(err, TerminalError::SessionNotFound(_)));
+    }
+
+    // ── MonitoringController facade tests (#2110) ─────────────────────
+    //
+    // The session-monitoring methods were extracted into a
+    // `MonitoringController` facade (`session/monitoring_controller.rs`). These
+    // lock in the manager's delegation, the preserved error messages, and — for
+    // the provider-driven controls — that each call reaches the session's
+    // monitoring provider unchanged. `start_session_monitoring` needs a Tauri
+    // `AppHandle` (no mock runtime is wired for these unit tests), so it is
+    // exercised via the build and the event-serialisation test above; the four
+    // handle-free controls are covered directly here.
+
+    /// A monitoring provider that records the controller's calls in order, so a
+    /// test can assert the delegation reached it with the exact arguments.
+    #[derive(Default)]
+    struct RecordingMonitoringProvider {
+        calls: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl MonitoringProvider for RecordingMonitoringProvider {
+        async fn subscribe(
+            &self,
+        ) -> Result<
+            termihub_core::monitoring::MonitoringSubscription,
+            termihub_core::errors::CoreError,
+        > {
+            self.calls.lock().unwrap().push("subscribe".to_string());
+            let (_stats_tx, stats_rx) = tokio::sync::mpsc::channel(1);
+            let (_status_tx, status_rx) = tokio::sync::mpsc::channel(1);
+            Ok(termihub_core::monitoring::MonitoringSubscription {
+                stats: stats_rx,
+                status: status_rx,
+            })
+        }
+        async fn unsubscribe(&self) -> Result<(), termihub_core::errors::CoreError> {
+            self.calls.lock().unwrap().push("unsubscribe".to_string());
+            Ok(())
+        }
+        async fn set_interval(&self, interval: std::time::Duration) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("set_interval:{}", interval.as_millis()));
+        }
+        async fn set_paused(&self, paused: bool) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("set_paused:{paused}"));
+        }
+        async fn cancel_connect(&self) {
+            self.calls
+                .lock()
+                .unwrap()
+                .push("cancel_connect".to_string());
+        }
+    }
+
+    /// A connection that advertises a monitoring capability backed by a
+    /// [`RecordingMonitoringProvider`].
+    struct MonitoringConnection {
+        provider: RecordingMonitoringProvider,
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectionType for MonitoringConnection {
+        fn type_id(&self) -> &str {
+            "monitoring"
+        }
+        fn display_name(&self) -> &str {
+            "Monitoring"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                monitoring: true,
+                file_browser: false,
+                graphical: false,
+                resize: false,
+                persistent: false,
+                terminal: true,
+            }
+        }
+        async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {
+            Ok(())
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn write(&self, _: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _: u16, _: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            Some(&self.provider)
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            None
+        }
+    }
+
+    /// The provider-driven monitoring controls (pause, interval, cancel) and
+    /// `stop` forward to the session's monitoring provider with their arguments
+    /// intact — the interval is clamped to `>= 1ms` exactly as before the
+    /// facade extraction, and `stop` unsubscribes even with no running task.
+    #[tokio::test]
+    async fn monitoring_controls_delegate_to_session_provider() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session(
+                "mon-1",
+                Box::new(MonitoringConnection {
+                    provider: RecordingMonitoringProvider {
+                        calls: calls.clone(),
+                    },
+                }),
+            )
+            .await;
+
+        manager
+            .set_session_monitoring_paused("mon-1", true)
+            .await
+            .unwrap();
+        manager
+            .set_session_monitoring_interval("mon-1", 500)
+            .await
+            .unwrap();
+        // 0 is clamped to 1ms (interval_ms.max(1)).
+        manager
+            .set_session_monitoring_interval("mon-1", 0)
+            .await
+            .unwrap();
+        manager.cancel_session_monitoring("mon-1").await.unwrap();
+        // No push task was registered, so stop only unsubscribes.
+        manager.stop_session_monitoring("mon-1").await.unwrap();
+
+        assert_eq!(
+            calls.lock().unwrap().as_slice(),
+            &[
+                "set_paused:true".to_string(),
+                "set_interval:500".to_string(),
+                "set_interval:1".to_string(),
+                "cancel_connect".to_string(),
+                "unsubscribe".to_string(),
+            ]
+        );
+    }
+
+    /// A session whose connection exposes no monitoring provider yields the
+    /// exact `RemoteError("No monitoring capability")` the manager returned
+    /// before the facade extraction, for both provider-required controls.
+    #[tokio::test]
+    async fn monitoring_controls_error_when_connection_has_no_capability() {
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session("no-mon", Box::new(MockConnection::default()))
+            .await;
+
+        match manager.set_session_monitoring_paused("no-mon", true).await {
+            Err(TerminalError::RemoteError(msg)) => {
+                assert_eq!(msg, "No monitoring capability");
+            }
+            other => panic!("expected RemoteError, got {other:?}"),
+        }
+        match manager.set_session_monitoring_interval("no-mon", 100).await {
+            Err(TerminalError::RemoteError(msg)) => {
+                assert_eq!(msg, "No monitoring capability");
+            }
+            other => panic!("expected RemoteError, got {other:?}"),
+        }
+    }
+
+    /// The provider-required controls surface `SessionNotFound` for an unknown
+    /// session, unchanged by the facade.
+    #[tokio::test]
+    async fn monitoring_controls_error_when_session_unknown() {
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        assert!(matches!(
+            manager
+                .set_session_monitoring_paused("ghost", true)
+                .await
+                .unwrap_err(),
+            TerminalError::SessionNotFound(_)
+        ));
+        assert!(matches!(
+            manager
+                .set_session_monitoring_interval("ghost", 100)
+                .await
+                .unwrap_err(),
+            TerminalError::SessionNotFound(_)
+        ));
+    }
+
+    /// `stop` and `cancel` are best-effort: an unknown session is treated as
+    /// already gone and returns `Ok(())` rather than erroring.
+    #[tokio::test]
+    async fn stop_and_cancel_monitoring_are_noops_for_unknown_session() {
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager.stop_session_monitoring("ghost").await.unwrap();
+        manager.cancel_session_monitoring("ghost").await.unwrap();
     }
 }
