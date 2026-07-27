@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
-  "windows": ["main"],
+  "description": "Capability for the main and secondary (win-N) windows",
+  "windows": ["main", "win-*"],
   "permissions": [
     "core:default",
     "opener:default",
@@ -15,6 +15,8 @@
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
     "core:webview:allow-set-webview-zoom",
-    "core:window:allow-set-size"
+    "core:window:allow-set-size",
+    "core:window:allow-destroy",
+    "core:window:allow-close"
   ]
 }
