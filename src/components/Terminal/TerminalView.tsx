@@ -541,7 +541,7 @@ export function TerminalView() {
             </Tooltip>
           </div>
         </div>
-        <div className="terminal-view__content">
+        <div className="terminal-view__content" role="region" aria-label="Terminal">
           <TerminalHost />
           <SplitView />
         </div>
