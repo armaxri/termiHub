@@ -14,7 +14,6 @@ import { fileURLToPath } from "url";
 
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const COMPONENTS_DIR = join(SRC_DIR, "components");
-const STYLES_DIR = join(SRC_DIR, "styles");
 const THEMES_DIR = join(SRC_DIR, "themes");
 
 /** Absolute path of the shared primitive layer, excluded from most guards. */
