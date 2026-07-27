@@ -29,6 +29,7 @@ use tracing::{error, info, warn};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
+use super::file_ops::FileOps;
 use super::line_ending::{normalize_line_endings, LineEnding};
 use super::remote_proxy::RemoteProxy;
 use super::session_log::{default_session_log_path, desktop_clock};
@@ -175,8 +176,12 @@ pub struct SessionInfo {
 }
 
 /// Internal session entry held by the manager.
-struct SessionEntry {
-    connection: Box<dyn ConnectionType>,
+///
+/// `pub(super)` so the file-operations facade ([`super::file_ops`]) can resolve
+/// a session's `connection` and forward file-browser calls (#2076); the manager
+/// remains the only place entries are constructed and mutated.
+pub(super) struct SessionEntry {
+    pub(super) connection: Box<dyn ConnectionType>,
     info: SessionInfo,
     /// Remote session ID assigned by the agent (set for remote proxy sessions).
     remote_session_id: Option<String>,
@@ -809,40 +814,28 @@ impl SessionManager {
             .collect()
     }
 
+    /// Borrow a [`FileOps`] facade over this manager's sessions (#2076).
+    ///
+    /// The facade is stateless — it holds only a borrow of the `sessions` map —
+    /// so the public `*_file` methods below construct one per call and forward
+    /// to it. This keeps the file-browser plumbing out of the manager while
+    /// leaving the public API and behavior unchanged.
+    fn file_ops(&self) -> FileOps<'_> {
+        FileOps::new(&self.sessions)
+    }
+
     /// List directory contents via a session's file browser capability.
     pub async fn list_files(
         &self,
         session_id: &str,
         path: &str,
     ) -> Result<Vec<FileEntry>, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let browser = entry
-            .connection
-            .file_browser()
-            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
-        browser
-            .list_dir(path)
-            .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+        self.file_ops().list_dir(session_id, path).await
     }
 
     /// Read a file via a session's file browser capability.
     pub async fn read_file(&self, session_id: &str, path: &str) -> Result<Vec<u8>, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let browser = entry
-            .connection
-            .file_browser()
-            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
-        browser
-            .read_file(path)
-            .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+        self.file_ops().read_file(session_id, path).await
     }
 
     /// Get metadata for a single file via a session's file browser capability.
@@ -856,18 +849,7 @@ impl SessionManager {
         session_id: &str,
         path: &str,
     ) -> Result<FileEntry, TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let browser = entry
-            .connection
-            .file_browser()
-            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
-        browser
-            .stat(path)
-            .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+        self.file_ops().stat(session_id, path).await
     }
 
     /// Write a file via a session's file browser capability.
@@ -877,34 +859,12 @@ impl SessionManager {
         path: &str,
         data: &[u8],
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let browser = entry
-            .connection
-            .file_browser()
-            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
-        browser
-            .write_file(path, data)
-            .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+        self.file_ops().write_file(session_id, path, data).await
     }
 
     /// Delete a file via a session's file browser capability.
     pub async fn delete_file(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let browser = entry
-            .connection
-            .file_browser()
-            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
-        browser
-            .delete(path)
-            .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+        self.file_ops().delete(session_id, path).await
     }
 
     /// Rename a file via a session's file browser capability.
@@ -914,34 +874,12 @@ impl SessionManager {
         from: &str,
         to: &str,
     ) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let browser = entry
-            .connection
-            .file_browser()
-            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
-        browser
-            .rename(from, to)
-            .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+        self.file_ops().rename(session_id, from, to).await
     }
 
     /// Create a directory via a session's file browser capability.
     pub async fn mkdir_file(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let browser = entry
-            .connection
-            .file_browser()
-            .ok_or_else(|| TerminalError::RemoteError("No file browser capability".to_string()))?;
-        browser
-            .mkdir(path)
-            .await
-            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+        self.file_ops().mkdir(session_id, path).await
     }
 
     /// Get the list of available connection types from the registry.
@@ -3423,5 +3361,183 @@ mod tests {
             !json.contains("\"sessionId\""),
             "camelCase key must not appear; got: {json}"
         );
+    }
+
+    // ── FileOps facade tests (#2076) ──────────────────────────────────
+    //
+    // The file-op methods were extracted into a `FileOps` facade
+    // (`session/file_ops.rs`). These lock in the manager's delegation and the
+    // exact error messages it must preserve across the refactor.
+
+    /// A minimal in-memory [`FileBrowser`] that records the paths it was asked
+    /// to list and echoes deterministic data back, so the manager's delegation
+    /// can be asserted without a real file backend.
+    struct MockFileBrowser {
+        listed: Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl FileBrowser for MockFileBrowser {
+        async fn list_dir(
+            &self,
+            path: &str,
+        ) -> Result<Vec<FileEntry>, termihub_core::errors::FileError> {
+            self.listed.lock().unwrap().push(path.to_string());
+            Ok(vec![FileEntry {
+                name: "file.txt".to_string(),
+                path: format!("{path}/file.txt"),
+                is_directory: false,
+                size: 3,
+                modified: String::new(),
+                permissions: None,
+                writable: None,
+                is_symlink: false,
+                symlink_target: None,
+            }])
+        }
+        async fn read_file(&self, path: &str) -> Result<Vec<u8>, termihub_core::errors::FileError> {
+            // Echo the requested path so the test can prove the argument reached
+            // the browser through the facade.
+            Ok(path.as_bytes().to_vec())
+        }
+        async fn write_file(
+            &self,
+            _path: &str,
+            _data: &[u8],
+        ) -> Result<(), termihub_core::errors::FileError> {
+            Ok(())
+        }
+        async fn delete(&self, _path: &str) -> Result<(), termihub_core::errors::FileError> {
+            Ok(())
+        }
+        async fn rename(
+            &self,
+            _from: &str,
+            _to: &str,
+        ) -> Result<(), termihub_core::errors::FileError> {
+            Ok(())
+        }
+        async fn stat(&self, path: &str) -> Result<FileEntry, termihub_core::errors::FileError> {
+            Ok(FileEntry {
+                name: path.to_string(),
+                path: path.to_string(),
+                is_directory: false,
+                size: 0,
+                modified: String::new(),
+                permissions: None,
+                writable: None,
+                is_symlink: false,
+                symlink_target: None,
+            })
+        }
+        async fn mkdir(&self, _path: &str) -> Result<(), termihub_core::errors::FileError> {
+            Ok(())
+        }
+    }
+
+    /// A connection that advertises a file-browser capability backed by a
+    /// [`MockFileBrowser`].
+    struct FileConnection {
+        browser: MockFileBrowser,
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectionType for FileConnection {
+        fn type_id(&self) -> &str {
+            "file"
+        }
+        fn display_name(&self) -> &str {
+            "File"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                monitoring: false,
+                file_browser: true,
+                graphical: false,
+                resize: false,
+                persistent: false,
+                terminal: true,
+            }
+        }
+        async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {
+            Ok(())
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn write(&self, _: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _: u16, _: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            None
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            Some(&self.browser)
+        }
+    }
+
+    /// The manager's file-op methods forward to the session's file browser,
+    /// passing the path through and returning the browser's result unchanged.
+    #[tokio::test]
+    async fn file_ops_delegate_to_session_file_browser() {
+        let listed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session(
+                "fs-1",
+                Box::new(FileConnection {
+                    browser: MockFileBrowser {
+                        listed: listed.clone(),
+                    },
+                }),
+            )
+            .await;
+
+        let entries = manager.list_files("fs-1", "/home").await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "file.txt");
+        assert_eq!(listed.lock().unwrap().as_slice(), &["/home".to_string()]);
+
+        // read_file delegates and returns the browser's bytes (which echo the path).
+        let data = manager.read_file("fs-1", "/etc/hosts").await.unwrap();
+        assert_eq!(data, b"/etc/hosts");
+    }
+
+    /// A session whose connection exposes no file browser yields the exact
+    /// `RemoteError("No file browser capability")` the manager returned before
+    /// the facade extraction.
+    #[tokio::test]
+    async fn file_ops_error_when_connection_has_no_file_browser() {
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session("no-fs", Box::new(MockConnection::default()))
+            .await;
+        match manager.read_file("no-fs", "/").await {
+            Err(TerminalError::RemoteError(msg)) => {
+                assert_eq!(msg, "No file browser capability");
+            }
+            other => panic!("expected RemoteError, got {other:?}"),
+        }
+    }
+
+    /// An unknown session yields `SessionNotFound`, unchanged by the facade.
+    #[tokio::test]
+    async fn file_ops_error_when_session_unknown() {
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        let err = manager.read_file("ghost", "/").await.unwrap_err();
+        assert!(matches!(err, TerminalError::SessionNotFound(_)));
     }
 }
