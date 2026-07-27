@@ -35,7 +35,6 @@
 //! read-modify-write of the state files (concept "Edge Cases").
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -45,7 +44,10 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 use super::manifest::{parse_manifest, ApiCompatibility, PluginManifest};
-use super::package::{validate_package, PluginPackageError, MANIFEST_FILE_NAME};
+use super::package::{
+    check_package_size, read_entry_bounded, validate_package, PluginPackageError,
+    MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES, MAX_DECOMPRESSED_TOTAL_BYTES,
+};
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
 use super::signature::{self, VerifiedArchive};
 use super::trust_store::{TrustStore, TrustStoreError, TrustedPublisher};
@@ -357,6 +359,13 @@ impl PluginManager {
         accept_untrusted: bool,
         trust_publisher: bool,
     ) -> Result<InstalledPlugin, PluginManagerError> {
+        // Reject an oversize (compressed) package up front, before trust
+        // assessment opens and reads the archive. The compressed-size gate used to
+        // live only inside `validate_package`, which runs *after* the trust gate —
+        // so trust assessment would decompress an unbounded archive first (#2046).
+        // Per-entry decompression is separately bounded while reading.
+        check_package_size(package_path)?;
+
         // Trust gate (concept security flowchart): assessed before touching the
         // package. A tampered signature is a hard block; an unsigned package needs
         // the risk accepted; signed/verified proceed.
@@ -791,6 +800,24 @@ fn extract_package(
     dest: &Path,
     expected_key_id: Option<&str>,
 ) -> Result<(), PluginManagerError> {
+    extract_package_with_limits(
+        package_path,
+        dest,
+        expected_key_id,
+        MAX_DECOMPRESSED_ENTRY_BYTES,
+        MAX_DECOMPRESSED_TOTAL_BYTES,
+    )
+}
+
+/// [`extract_package`] with explicit decompression limits, so the zip-bomb guard
+/// on the extraction path can be exercised in tests with tiny fixtures.
+fn extract_package_with_limits(
+    package_path: &Path,
+    dest: &Path,
+    expected_key_id: Option<&str>,
+    per_entry_limit: u64,
+    total_limit: u64,
+) -> Result<(), PluginManagerError> {
     let file = std::fs::File::open(package_path)?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| PluginManagerError::Extract(e.to_string()))?;
@@ -832,6 +859,7 @@ fn extract_package(
         .map(|m| m.keys().collect())
         .unwrap_or_default();
 
+    let mut remaining = total_limit;
     for i in 0..archive.len() {
         let mut entry = archive
             .by_index(i)
@@ -849,8 +877,10 @@ fn extract_package(
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
+        // Bound decompression: an over-budget entry aborts extraction (surfaced as
+        // `PluginManagerError::Io`) instead of exhausting memory/disk (#2046).
         let mut buf = Vec::new();
-        entry.read_to_end(&mut buf)?;
+        read_entry_bounded(&mut entry, per_entry_limit, &mut remaining, &mut buf)?;
 
         // Bind the exact bytes about to be written to the signed digest map. The
         // signature entry itself is not part of the signed set, so skip it.
@@ -909,7 +939,7 @@ fn write_json_atomic<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
+    use std::io::{Read, Write};
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
@@ -1456,6 +1486,63 @@ mod tests {
         let err = extract_package(&unsigned, &dest, Some("sha256:approved")).unwrap_err();
         assert!(matches!(err, PluginManagerError::SignatureTampered));
         assert!(!dest.join(MANIFEST_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn extract_rejects_an_entry_over_the_decompression_budget() {
+        // A package entry whose decompressed size exceeds the per-entry cap is
+        // rejected while extracting, not read into memory — the extraction-path
+        // half of the zip-bomb guard (#2046). Unsigned + `None` so the signature
+        // binding does not short-circuit before the read.
+        let tmp = TempDir::new().unwrap();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json("bomb", "1.0"),
+            &[("bomb.bin", &[0u8; 4096])],
+        );
+        let dest = tmp.path().join("out");
+        let err = extract_package_with_limits(&pkg, &dest, None, 64, 1_000_000).unwrap_err();
+        assert!(
+            matches!(&err, PluginManagerError::Io(e) if e.kind() == std::io::ErrorKind::InvalidData),
+            "expected an InvalidData io error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn extract_rejects_when_total_budget_is_exhausted() {
+        // Every entry is under the per-entry cap, but their sum blows the whole-
+        // package budget — the running total must catch it on the extract path.
+        let tmp = TempDir::new().unwrap();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json("many", "1.0"),
+            &[("a.bin", &[0u8; 400]), ("b.bin", &[0u8; 400])],
+        );
+        let dest = tmp.path().join("out");
+        let err = extract_package_with_limits(&pkg, &dest, None, 10_000, 600).unwrap_err();
+        assert!(
+            matches!(&err, PluginManagerError::Io(e) if e.kind() == std::io::ErrorKind::InvalidData),
+            "expected an InvalidData io error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn extract_accepts_content_within_the_budget() {
+        // Content comfortably under both budgets still extracts — the guard does
+        // not reject legitimate packages.
+        let tmp = TempDir::new().unwrap();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json("ok", "1.0"),
+            &[("backend/lib.so", b"\x7fELF-small")],
+        );
+        let dest = tmp.path().join("out");
+        extract_package_with_limits(&pkg, &dest, None, 1_000_000, 1_000_000)
+            .expect("content within budget must extract");
+        assert_eq!(
+            std::fs::read(dest.join("backend/lib.so")).unwrap(),
+            b"\x7fELF-small"
+        );
     }
 
     #[test]

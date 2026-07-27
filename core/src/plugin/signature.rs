@@ -45,7 +45,10 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 use zip::ZipArchive;
 
-use super::package::MANIFEST_FILE_NAME;
+use super::package::{
+    read_entry_bounded, MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES,
+    MAX_DECOMPRESSED_TOTAL_BYTES,
+};
 
 /// The well-known signature entry at a signed package's root — present iff the
 /// package is signed, sitting beside [`MANIFEST_FILE_NAME`].
@@ -435,7 +438,22 @@ pub fn verify_signed_archive<R: Read + Seek>(
 pub fn digest_entries<R: Read + Seek>(
     archive: &mut ZipArchive<R>,
 ) -> Result<BTreeMap<String, String>, zip::result::ZipError> {
+    digest_entries_with_limits(
+        archive,
+        MAX_DECOMPRESSED_ENTRY_BYTES,
+        MAX_DECOMPRESSED_TOTAL_BYTES,
+    )
+}
+
+/// [`digest_entries`] with explicit decompression limits, so the zip-bomb guard
+/// can be exercised in tests without materializing a 128 MB fixture.
+fn digest_entries_with_limits<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+    per_entry_limit: u64,
+    total_limit: u64,
+) -> Result<BTreeMap<String, String>, zip::result::ZipError> {
     let mut digests = BTreeMap::new();
+    let mut remaining = total_limit;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         if entry.is_dir() {
@@ -445,8 +463,10 @@ pub fn digest_entries<R: Read + Seek>(
         if name == SIGNATURE_FILE_NAME {
             continue;
         }
+        // Bound decompression: an over-budget entry aborts here (surfaced as
+        // `ZipError::Io`) instead of exhausting memory (#2046).
         let mut buf = Vec::new();
-        entry.read_to_end(&mut buf)?;
+        read_entry_bounded(&mut entry, per_entry_limit, &mut remaining, &mut buf)?;
         digests.insert(name, sha256_digest(&buf));
     }
     Ok(digests)
@@ -462,8 +482,16 @@ fn read_entry<R: Read + Seek>(
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
         Err(e) => return Err(e),
     };
+    // Bound decompression of the named entry (e.g. `signature.json`) so it cannot
+    // be a zip-bomb vector before the signature is even parsed (#2046).
     let mut buf = Vec::new();
-    entry.read_to_end(&mut buf)?;
+    let mut remaining = MAX_DECOMPRESSED_ENTRY_BYTES;
+    read_entry_bounded(
+        &mut entry,
+        MAX_DECOMPRESSED_ENTRY_BYTES,
+        &mut remaining,
+        &mut buf,
+    )?;
     Ok(Some(buf))
 }
 
@@ -641,6 +669,49 @@ mod tests {
         // An entry the signer never saw was appended to the archive.
         let err = verify(&sig, &digests_of(&[("a", b"x"), ("evil.sh", b"rm -rf")])).unwrap_err();
         assert!(matches!(err, SignatureError::ExtraEntry(n) if n == "evil.sh"));
+    }
+
+    #[test]
+    fn digesting_rejects_an_entry_over_the_decompression_budget() {
+        // A single entry whose decompressed size exceeds the per-entry cap must be
+        // rejected while reading, not read into memory. Exercised with a tiny cap so
+        // no large fixture is needed (#2046).
+        let zip = zip_of(&[("manifest.json", b"{}"), ("bomb.bin", &[0u8; 4096])]);
+        let mut archive = ZipArchive::new(Cursor::new(zip)).unwrap();
+        let err = digest_entries_with_limits(&mut archive, 64, 1_000_000).unwrap_err();
+        assert!(
+            matches!(err, zip::result::ZipError::Io(ref e) if e.kind() == std::io::ErrorKind::InvalidData),
+            "expected an InvalidData io error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn digesting_rejects_when_total_budget_is_exhausted() {
+        // Each entry is under the per-entry cap, but together they blow the whole-
+        // package budget — the running total must catch it (#2046).
+        let zip = zip_of(&[("a.bin", &[0u8; 400]), ("b.bin", &[0u8; 400])]);
+        let mut archive = ZipArchive::new(Cursor::new(zip)).unwrap();
+        let err = digest_entries_with_limits(&mut archive, 1_000, 500).unwrap_err();
+        assert!(
+            matches!(err, zip::result::ZipError::Io(ref e) if e.kind() == std::io::ErrorKind::InvalidData),
+            "expected an InvalidData io error, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn digesting_accepts_content_within_the_budget() {
+        // A normal package well under both budgets still digests successfully — the
+        // guard does not reject legitimate content.
+        let entries: &[(&str, &[u8])] = &[("manifest.json", b"{}"), ("lib.so", b"\x7fELF....")];
+        let zip = zip_of(entries);
+        let mut archive = ZipArchive::new(Cursor::new(zip)).unwrap();
+        let digests = digest_entries_with_limits(
+            &mut archive,
+            MAX_DECOMPRESSED_ENTRY_BYTES,
+            MAX_DECOMPRESSED_TOTAL_BYTES,
+        )
+        .expect("content within budget must digest");
+        assert_eq!(digests, digests_of(entries));
     }
 
     #[test]
