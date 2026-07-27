@@ -9,6 +9,7 @@ use russh_sftp::client::SftpSession;
 use tracing::debug;
 
 use termihub_core::backends::ssh::handler::SshSession;
+use termihub_core::backends::ssh::sftp;
 
 use crate::utils::errors::TerminalError;
 
@@ -209,20 +210,13 @@ pub fn remove_via_sftp(session: &SshSession, remote_path: &str) -> Result<(), Te
 }
 
 /// Open a fresh SFTP subsystem on the given session.
+///
+/// Delegates to the shared core mechanism so every SFTP path opens the
+/// subsystem the same way (#2075).
 async fn open_sftp(session: &SshSession) -> Result<SftpSession, TerminalError> {
-    let channel = session
-        .channel_open_session()
+    sftp::open_sftp_subsystem(session)
         .await
-        .map_err(|e| TerminalError::SshError(format!("SFTP channel open failed: {e}")))?;
-
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| TerminalError::SshError(format!("SFTP subsystem request failed: {e}")))?;
-
-    SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|e| TerminalError::SshError(format!("SFTP init failed: {e}")))
+        .map_err(|e| TerminalError::SshError(e.to_string()))
 }
 
 // ── ELF architecture detection ───────────────────────────────────────
