@@ -4,6 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
@@ -970,6 +971,13 @@ export function Terminal({
     el.style.position = "absolute";
     el.style.inset = "0";
     el.style.overflow = "hidden";
+    // Expose which renderer is live for diagnostics (#2078). A renderer
+    // regression shows up as a blank/garbled terminal, so surfacing whether the
+    // GPU (webgl) or DOM path is active — in the DOM, readable in DevTools and by
+    // the system-test bridge — makes "did WebGL init or fall back?" observable in
+    // the field. Set to the final value once the addon is (or isn't) loaded below.
+    el.dataset.terminalRenderer = "dom";
+    el.setAttribute("data-testid", `terminal-renderer-${tabId}`);
     terminalElRef.current = el;
 
     // Inner viewport that hosts xterm. In horizontal-scroll mode this becomes the
@@ -1027,6 +1035,45 @@ export function Terminal({
     xterm.loadAddon(serializeAddon);
 
     xterm.open(scrollViewport);
+
+    // GPU-accelerated rendering (#2078). The WebGL addon replaces xterm's DOM
+    // renderer with a WebGL2 canvas renderer — the single biggest render-
+    // throughput win on high-volume output. It must be loaded AFTER open() so it
+    // can attach to the already-created terminal DOM/dimensions.
+    //
+    // Every failure path degrades to the DOM renderer, never to a blank pane:
+    //  - loadAddon() calls the addon's activate(), which creates the WebGL2
+    //    context and throws if the WebView cannot provide one — caught here, the
+    //    terminal simply keeps its DOM renderer.
+    //  - onContextLoss fires if the GPU context is lost at runtime (driver reset,
+    //    tab backgrounded, resource pressure). We dispose the addon, which makes
+    //    xterm fall back to the DOM renderer automatically, so text keeps
+    //    rendering. A one-shot fallback: we do not try to re-create the context.
+    // The forced full-viewport refresh after each flush (see flushOutput) is a
+    // DOM-renderer paint fix (#1849); it is harmless under WebGL and keeps the
+    // fallback path correct, so it is intentionally left in place for both.
+    let webglAddon: WebglAddon | null = null;
+    try {
+      const addon = new WebglAddon();
+      addon.onContextLoss(() => {
+        frontendLog("terminal", `webgl context lost tab=${tabId}; falling back to DOM renderer`);
+        addon.dispose();
+        webglAddon = null;
+        el.dataset.terminalRenderer = "dom";
+      });
+      xterm.loadAddon(addon);
+      webglAddon = addon;
+      el.dataset.terminalRenderer = "webgl";
+      frontendLog("terminal", `webgl renderer active tab=${tabId}`);
+    } catch (err) {
+      frontendLog(
+        "terminal",
+        `webgl renderer unavailable tab=${tabId}, using DOM renderer: ${String(err)}`
+      );
+      webglAddon?.dispose();
+      webglAddon = null;
+      el.dataset.terminalRenderer = "dom";
+    }
 
     // Instantiate the syntax-highlighting engine for this xterm and apply the
     // effective config. Created before the scrollback replay below so its
@@ -1300,6 +1347,11 @@ export function Terminal({
       // instance so no decorations or write hooks leak past teardown.
       highlightEngine.dispose();
       highlightEngineRef.current = null;
+      // Dispose the WebGL renderer explicitly before the terminal so its GPU
+      // context/canvas is released deterministically (#2078). Null after a
+      // context-loss fallback, in which case it is already disposed.
+      webglAddon?.dispose();
+      webglAddon = null;
       xterm.dispose();
       el.remove();
       terminalElRef.current = null;
