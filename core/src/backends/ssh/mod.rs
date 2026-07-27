@@ -423,7 +423,9 @@ impl ConnectionType for Ssh {
                             ),
                             help_text: Some(
                                 "Bounds how long a connection to an unreachable host blocks before \
-                                 failing. Leave empty to use the default (20 s)."
+                                 failing. The budget covers DNS resolution, the TCP connect, and \
+                                 the SSH handshake — so a host with slow first-of-the-day DNS \
+                                 needs enough headroom here. Leave empty to use the default (45 s)."
                                     .to_string(),
                             ),
                             field_type: FieldType::Number {
@@ -432,7 +434,7 @@ impl ConnectionType for Ssh {
                             },
                             required: false,
                             default: None,
-                            placeholder: Some("20".to_string()),
+                            placeholder: Some("45".to_string()),
                             supports_env_expansion: false,
                             supports_tilde_expansion: false,
                             visible_when: None,

@@ -175,7 +175,7 @@ export function JumpHostEntry({ hop, index, onChange, savedConnections }: JumpHo
           value={hop.connectTimeoutSecs ?? ""}
           min={1}
           max={300}
-          placeholder="Default (20 s)"
+          placeholder="Default (45 s)"
           onValueChange={(v) => onChange({ connectTimeoutSecs: v === "" ? undefined : v })}
           data-testid={tid("connect-timeout")}
         />
