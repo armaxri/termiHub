@@ -12,7 +12,10 @@ import { fileURLToPath } from "url";
  * that fights the global "one scrollbar" rule.
  */
 
-const COMPONENTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "components");
+const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
+const COMPONENTS_DIR = join(SRC_DIR, "components");
+const STYLES_DIR = join(SRC_DIR, "styles");
+const THEMES_DIR = join(SRC_DIR, "themes");
 
 /** Absolute path of the shared primitive layer, excluded from most guards. */
 const UI_DIR = join(COMPONENTS_DIR, "ui");
@@ -242,6 +245,73 @@ describe("Design-system regression guards (#1083)", () => {
       offenders,
       "Reference a token from src/styles/variables.css instead of a raw hex literal in: " +
         `${offenders.join(", ")}`
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Collect every design token DEFINED anywhere the app can define one:
+ *  - as a `--token:` custom-property declaration in any `src/**\/*.css`
+ *    (variables.css, global.css, animations.css, per-component files, …), and
+ *  - as a runtime custom property written by the theme engine
+ *    (`COLOR_TO_CSS_VAR` in src/themes/engine.ts), which sets per-theme values
+ *    on `document.documentElement` and therefore never appears as a static
+ *    `:root { --x: … }` declaration.
+ *
+ * @returns The set of every `--token` name that resolves at runtime.
+ */
+function collectDefinedTokens(): Set<string> {
+  const defined = new Set<string>();
+  const declRe = /(--[a-z0-9-]+)\s*:/gi;
+  for (const file of collectFiles(SRC_DIR, (name) => name.endsWith(".css"))) {
+    const css = stripCssComments(readFileSync(file, "utf8"));
+    for (const m of css.matchAll(declRe)) defined.add(m[1]);
+  }
+  // Runtime-defined tokens: the string literals in engine.ts's CSS-var map.
+  const engine = readFileSync(join(THEMES_DIR, "engine.ts"), "utf8");
+  for (const m of engine.matchAll(/"(--[a-z0-9-]+)"/gi)) defined.add(m[1]);
+  return defined;
+}
+
+/**
+ * Undefined-token guard (#2052). A `var(--token)` reference with **no fallback**
+ * resolves to nothing when `--token` is undefined — the property is dropped,
+ * rendering the element transparent / borderless. A token-rename migration left
+ * a cluster of these dangling (the Ctrl+F terminal search bar went transparent
+ * and borders vanished across 13+ stylesheets), so this guard fails on any
+ * bare, fallback-less `var(--token)` whose token is not defined anywhere.
+ *
+ * Scope note: `var(--token, <fallback>)` is deliberately EXEMPT — the fallback
+ * renders, so an undefined token there degrades gracefully rather than silently
+ * breaking, exactly as the raw-hex guard exempts `var(--token, #hex)`. The
+ * separately-tracked cleanup of undefined-but-fallback'd tokens is a follow-up.
+ */
+describe("undefined design-token guard (#2052)", () => {
+  const definedTokens = collectDefinedTokens();
+
+  it("defines the core tokens it depends on (sanity check)", () => {
+    for (const tok of ["--bg-secondary", "--border-primary", "--bg-input", "--tab-bg"]) {
+      expect(definedTokens.has(tok), `${tok} should be a defined token`).toBe(true);
+    }
+  });
+
+  it("has no fallback-less var(--token) reference to an undefined token", () => {
+    // `var(--token)` with no comma before the closing paren — i.e. no fallback.
+    const bareVarRe = /var\(\s*(--[a-z0-9-]+)\s*\)/gi;
+    const offenders: string[] = [];
+    for (const file of collectCssFiles(COMPONENTS_DIR)) {
+      const css = stripCssComments(readFileSync(file, "utf8"));
+      const bad = new Set<string>();
+      for (const m of css.matchAll(bareVarRe)) {
+        if (!definedTokens.has(m[1])) bad.add(m[1]);
+      }
+      if (bad.size > 0) offenders.push(`${toPosix(file)} → ${[...bad].join(", ")}`);
+    }
+    expect(
+      offenders,
+      "Fallback-less var(--token) references must resolve to a token defined in " +
+        "src/styles/variables.css (or written by the theme engine). Rename each to the " +
+        `current token or add the token. Dangling in:\n  ${offenders.join("\n  ")}`
     ).toEqual([]);
   });
 });
