@@ -1,18 +1,15 @@
 /**
- * Tiered persistence badge on the tab (#2086).
+ * Persistence marker on the tab (#2099).
  *
- * A tab attached to a persistent session carries a marker signalling that
- * closing it will detach (not terminate) the background process — but the
- * marker differs by persistence tier:
+ * The ∞ badge — signalling that closing the tab detaches (not terminates) the
+ * background process — appears ONLY on agent persistent shells: tabs opened as
+ * a `remote-session`, whose session lives on the remote agent and survives app
+ * close + machine restart.
  *
- *  - **Agent-backed** (the tab was opened as a `remote-session`) → the ∞ badge,
- *    because the session lives on the agent and survives app close + machine
- *    restart.
- *  - **Desktop-local** (an ssh/docker/wsl/serial tab whose process runs inside
- *    the app) → a distinct, lesser Hourglass marker, because it only lives
- *    while the app is open.
- *
- * A tab with no `persistentConnectionId` shows neither.
+ * A desktop-local tab (an ssh/docker/wsl/serial tab whose process runs inside
+ * the app) is multi-instance and dies with the window, so it shows NO marker at
+ * all — no ∞ and no hourglass. A tab with no `persistentConnectionId` likewise
+ * shows nothing.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -91,7 +88,7 @@ describe("Tab — tiered persistence badge (#2086)", () => {
     expect(badge?.getAttribute("title") ?? "").toContain("restarting this machine");
   });
 
-  it("shows the lesser Hourglass marker — NOT the ∞ — for a desktop-local persistent tab", () => {
+  it("shows NO marker for a desktop-local persistent tab (#2099)", () => {
     root = renderTab(
       makeTab({
         connectionType: "ssh",
@@ -99,15 +96,14 @@ describe("Tab — tiered persistence badge (#2086)", () => {
         persistentConnectionId: "ssh-1",
       })
     );
-    const marker = document.querySelector(".tab__local-persistent-badge");
-    expect(marker).not.toBeNull();
-    // The ∞ badge must not render on a desktop-local tab.
+    // A desktop-local tab dies with the window, so it carries no persistence
+    // marker — neither the ∞ nor the old hourglass.
     expect(document.querySelector(".tab__persistent-badge")).toBeNull();
-    // Tooltip does not overclaim.
-    expect(marker?.getAttribute("title") ?? "").toContain("Runs while the app is open");
+    expect(document.querySelector(".tab__local-persistent-badge")).toBeNull();
+    expect(document.body.textContent ?? "").not.toContain("∞");
   });
 
-  it("shows neither marker for a non-persistent tab", () => {
+  it("shows no marker for a non-persistent tab", () => {
     root = renderTab(makeTab({ persistentConnectionId: undefined }));
     expect(document.querySelector(".tab__persistent-badge")).toBeNull();
     expect(document.querySelector(".tab__local-persistent-badge")).toBeNull();

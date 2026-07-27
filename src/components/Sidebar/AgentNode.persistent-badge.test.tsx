@@ -1,11 +1,12 @@
 /**
- * Agent-backed persistence badge (#2086).
+ * Agent persistent-shell badge (#2086, refined by #2099).
  *
- * A persistent saved definition on a connected agent keeps the ∞ badge — the
- * session lives on the remote agent and survives closing termiHub AND powering
- * off / restarting this machine. The badge's tooltip states exactly that. A
- * non-persistent definition shows no badge. (The desktop-local, app-open-only
- * tier uses a different, lesser marker — see ConnectionList.persistent.test.)
+ * The ∞ badge appears ONLY on agent persistent shells. A persistent saved
+ * definition on a connected agent keeps the ∞ — the session lives on the remote
+ * agent and survives closing termiHub AND powering off / restarting this
+ * machine. The badge's tooltip states exactly that. A non-persistent definition
+ * shows no badge. Every other (non-agent) connection type shows no persistence
+ * marker at all — see ConnectionList.persistent.test / Tab.persistent-badge.test.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";

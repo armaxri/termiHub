@@ -1,20 +1,19 @@
 /**
  * Desktop-local persistent-session controls in the connection tree (#1881),
- * updated for the tiered persistence badge (#2086).
+ * updated for the agents-only persistence marker rule (#2099).
  *
  * A saved connection whose type reports `capabilities.persistent === true`
- * surfaces a desktop-local persistence marker, a run-state dot, and
- * state-dependent Start / Attach / Stop controls (inline + context menu) wired
- * to the store's `startPersistentSession` / `attachPersistentSession` /
- * `stopPersistentSession` actions, keyed by the plain connection id.
+ * still gets its state-dependent Start / Attach / Stop lifecycle controls
+ * (inline + context menu) wired to the store's `startPersistentSession` /
+ * `attachPersistentSession` / `stopPersistentSession` actions, keyed by the
+ * plain connection id — the #1881 backend mechanism is unchanged.
  *
- * Per the #2086 maintainer decision, the desktop-local marker is NOT the ∞
- * (that is reserved for agent-backed persistence that survives app close +
- * machine restart). Desktop-local persistence lives only while the app is open,
- * so it renders a distinct, lesser Hourglass marker
- * (`local-persistent-badge-*`) whose tooltip does not overclaim. A
- * non-persistence-capable connection shows none of this and keeps the plain
- * Connect affordance.
+ * Per the #2099 maintainer decision, however, these desktop-local connections
+ * (ssh/docker/wsl/serial/local) are multi-instance and die with the window, so
+ * they carry NO persistence marker at all: no ∞, no hourglass, and no
+ * persistence/run-state dot. The ∞ is reserved for agent persistent shells
+ * (see AgentNode). A non-persistence-capable connection likewise shows none of
+ * this and keeps the plain Connect affordance.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -28,7 +27,6 @@ import type {
   PersistentSessionEntry,
   RemoteAgentDefinition,
 } from "@/types/connection";
-import type { PanelNode, TabGroup, TerminalTab } from "@/types/terminal";
 
 vi.mock("@/services/api", () => ({
   listAvailableShells: vi.fn(() => Promise.resolve([])),
@@ -85,8 +83,7 @@ function render(
     startPersistentSession: () => Promise<void>;
     attachPersistentSession: () => Promise<void>;
     stopPersistentSession: () => Promise<void>;
-  }> = {},
-  extra: Partial<{ rootPanel: PanelNode; tabGroups: TabGroup[]; activeTabGroupId: string }> = {}
+  }> = {}
 ) {
   const initial = useAppStore.getInitialState();
   useAppStore.setState({
@@ -94,7 +91,6 @@ function render(
     connections: [SSH_CONN, TELNET_CONN],
     connectionTypes: [SSH_TYPE, TELNET_TYPE],
     persistentSessions,
-    ...extra,
     ...actionOverrides,
   });
   act(() => {
@@ -111,41 +107,8 @@ function q(testid: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testid}"]`);
 }
 
-function entry(
-  state: PersistentSessionEntry["state"],
-  attachedTabIds: string[] = []
-): PersistentSessionEntry {
-  return { connectionId: "ssh-1", sessionId: "sess-1", state, attachedTabIds };
-}
-
-function tab(id: string, title: string): TerminalTab {
-  return {
-    id,
-    sessionId: "sess-1",
-    title,
-    connectionType: "ssh",
-    contentType: "terminal",
-    config: { type: "ssh", config: { host: "example.com" } },
-    panelId: "panel-1",
-    isActive: false,
-    persistentConnectionId: "ssh-1",
-  };
-}
-
-/** A single-group layout whose active group's root panel holds `tabs`. */
-function layoutWithTabs(tabs: TerminalTab[]): {
-  rootPanel: PanelNode;
-  tabGroups: TabGroup[];
-  activeTabGroupId: string;
-} {
-  const rootPanel: PanelNode = {
-    type: "leaf",
-    id: "panel-1",
-    tabs,
-    activeTabId: tabs[0]?.id ?? null,
-  };
-  const group: TabGroup = { id: "group-1", name: "Group 1", rootPanel, activePanelId: "panel-1" };
-  return { rootPanel, tabGroups: [group], activeTabGroupId: "group-1" };
+function entry(state: PersistentSessionEntry["state"]): PersistentSessionEntry {
+  return { connectionId: "ssh-1", sessionId: "sess-1", state, attachedTabIds: [] };
 }
 
 beforeEach(() => {
@@ -160,49 +123,22 @@ afterEach(() => {
 });
 
 describe("ConnectionList — desktop-local persistent controls", () => {
-  it("shows the desktop-local (Hourglass) marker — NOT the ∞ — and state dot only for a persistence-capable connection", () => {
-    render();
-    // #2086: a plain SSH (desktop-local persistent) connection gets the lesser
-    // Hourglass marker and MUST NOT carry the agent-only ∞.
-    const marker = q("local-persistent-badge-ssh-1");
-    expect(marker).not.toBeNull();
-    expect(marker!.textContent ?? "").not.toContain("∞");
-    // The ∞ badge (agent-backed testid) never renders on a desktop-local row.
-    expect(q("persistent-badge-ssh-1")).toBeNull();
-    expect(q("persistent-state-dot-ssh-1")).not.toBeNull();
-    // Telnet is not persistence-capable — neither marker nor dot.
-    expect(q("local-persistent-badge-tel-1")).toBeNull();
+  it("shows NO persistence marker and NO state dot for a plain (desktop-local) connection", () => {
+    render({ "ssh-1": entry("running") });
+    // #2099: a plain SSH connection is multi-instance and dies with the window,
+    // so it carries no persistence surfacing whatsoever.
+    expect(q("persistent-badge-ssh-1")).toBeNull(); // no ∞
+    expect(q("local-persistent-badge-ssh-1")).toBeNull(); // no hourglass
+    expect(q("persistent-state-dot-ssh-1")).toBeNull(); // no state dot
+    expect(container.textContent ?? "").not.toContain("∞");
+    // Telnet (not persistence-capable) also shows nothing.
     expect(q("persistent-badge-tel-1")).toBeNull();
+    expect(q("local-persistent-badge-tel-1")).toBeNull();
     expect(q("persistent-state-dot-tel-1")).toBeNull();
     // The non-persistent connection keeps the plain Connect affordance; the
-    // persistent one does not.
+    // persistence-capable one still hides it in favour of the lifecycle controls.
     expect(q("connection-connect-tel-1")).not.toBeNull();
     expect(q("connection-connect-ssh-1")).toBeNull();
-  });
-
-  it("the desktop-local marker tooltip does not overclaim cross-restart persistence", () => {
-    render();
-    const title = q("local-persistent-badge-ssh-1")!.getAttribute("title") ?? "";
-    expect(title).toContain("Runs while the app is open");
-    // Must steer users to an agent for stronger persistence, and must not claim
-    // it survives a machine restart.
-    expect(title.toLowerCase()).toContain("agent");
-    expect(title.toLowerCase()).not.toContain("machine");
-  });
-
-  it("reflects the run state on the state dot", () => {
-    render();
-    // No entry → stopped.
-    expect(q("persistent-state-dot-ssh-1")!.className).toContain("state-dot--stopped");
-
-    render({ "ssh-1": entry("running") });
-    expect(q("persistent-state-dot-ssh-1")!.className).toContain("state-dot--running");
-
-    render({ "ssh-1": entry("error") });
-    expect(q("persistent-state-dot-ssh-1")!.className).toContain("state-dot--error");
-
-    render({ "ssh-1": entry("starting") });
-    expect(q("persistent-state-dot-ssh-1")!.className).toContain("state-dot--transitioning");
   });
 
   it("shows Start when stopped and calls startPersistentSession", () => {
@@ -239,41 +175,14 @@ describe("ConnectionList — desktop-local persistent controls", () => {
     expect(stopPersistentSession).toHaveBeenCalledWith("ssh-1");
   });
 
-  it("hides inline lifecycle buttons while transitioning", () => {
+  it("hides inline lifecycle buttons while transitioning and still shows no marker", () => {
     render({ "ssh-1": entry("starting") });
     expect(q("persistent-start-ssh-1")).toBeNull();
     expect(q("persistent-attach-ssh-1")).toBeNull();
     expect(q("persistent-stop-ssh-1")).toBeNull();
-    // The desktop-local marker/dot still render.
-    expect(q("local-persistent-badge-ssh-1")).not.toBeNull();
-  });
-
-  describe("attached-tab count badge (#1930)", () => {
-    it("shows a count badge only when attached to more than one tab", () => {
-      const tabs = [tab("t1", "Shell"), tab("t2", "Logs")];
-      render({ "ssh-1": entry("attached", ["t1", "t2"]) }, {}, layoutWithTabs(tabs));
-      const badge = q("persistent-state-dot-ssh-1-badge");
-      expect(badge).not.toBeNull();
-      expect(badge!.textContent).toBe("2");
-    });
-
-    it("does not show the badge for a single attached tab", () => {
-      render({ "ssh-1": entry("attached", ["t1"]) }, {}, layoutWithTabs([tab("t1", "Shell")]));
-      expect(q("persistent-state-dot-ssh-1-badge")).toBeNull();
-    });
-
-    it("does not show the badge when running but not attached", () => {
-      render({ "ssh-1": entry("running", ["t1", "t2"]) });
-      expect(q("persistent-state-dot-ssh-1-badge")).toBeNull();
-    });
-
-    it("lists the attached tab names in the dot tooltip", () => {
-      const tabs = [tab("t1", "Shell"), tab("t2", "Logs")];
-      render({ "ssh-1": entry("attached", ["t1", "t2"]) }, {}, layoutWithTabs(tabs));
-      const title = q("persistent-state-dot-ssh-1")!.getAttribute("title") ?? "";
-      expect(title).toContain("2 tabs attached:");
-      expect(title).toContain("Shell");
-      expect(title).toContain("Logs");
-    });
+    // No persistence marker or dot ever renders on a desktop-local row (#2099).
+    expect(q("local-persistent-badge-ssh-1")).toBeNull();
+    expect(q("persistent-badge-ssh-1")).toBeNull();
+    expect(q("persistent-state-dot-ssh-1")).toBeNull();
   });
 });
