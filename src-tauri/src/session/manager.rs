@@ -32,6 +32,7 @@ use crate::utils::errors::TerminalError;
 use super::file_ops::FileOps;
 use super::line_ending::{normalize_line_endings, LineEnding};
 use super::monitoring_controller::MonitoringController;
+use super::persistent_controller::PersistentController;
 use super::remote_proxy::RemoteProxy;
 use super::session_log::{default_session_log_path, desktop_clock};
 
@@ -104,15 +105,19 @@ pub struct PersistentSessionSummary {
 }
 
 /// Internal record for a persistent session.
-struct PersistentRecord {
-    connection_id: String,
-    session_id: String,
-    attached_tabs: HashSet<String>,
+///
+/// Fields are `pub(super)` so the persistent-session facade
+/// ([`super::persistent_controller`]) can read and construct records while the
+/// registry (`persistent_sessions`) stays a field on the manager (#2111).
+pub(super) struct PersistentRecord {
+    pub(super) connection_id: String,
+    pub(super) session_id: String,
+    pub(super) attached_tabs: HashSet<String>,
     /// Agent-side session ID — used to re-attach to the daemon when the desktop
     /// session entry is cleaned up after an agent SSH disconnect.
-    remote_session_id: Option<String>,
+    pub(super) remote_session_id: Option<String>,
     /// Agent that owns this session — paired with `remote_session_id` for reconnect.
-    agent_id: Option<String>,
+    pub(super) agent_id: Option<String>,
 }
 
 /// Error event emitted when a session-level error occurs.
@@ -183,13 +188,13 @@ pub struct SessionInfo {
 /// remains the only place entries are constructed and mutated.
 pub(super) struct SessionEntry {
     pub(super) connection: Box<dyn ConnectionType>,
-    info: SessionInfo,
+    pub(super) info: SessionInfo,
     /// Remote session ID assigned by the agent (set for remote proxy sessions).
-    remote_session_id: Option<String>,
+    pub(super) remote_session_id: Option<String>,
     /// Line ending applied to interactive input (Enter / paste) for this
     /// session. Set by the frontend via `set_session_line_ending`; defaults to
     /// [`LineEnding::Lf`] until then.
-    line_ending: LineEnding,
+    pub(super) line_ending: LineEnding,
 }
 
 /// Push event emitted via Tauri when session-based monitoring delivers stats.
@@ -242,7 +247,7 @@ pub struct SessionLogStatus {
 /// connections via [`RemoteProxy`].
 #[derive(Clone)]
 pub struct SessionManager {
-    sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
+    pub(super) sessions: Arc<Mutex<HashMap<String, SessionEntry>>>,
     /// Shared registry of connection-type factories.
     ///
     /// Wrapped in a [`StdMutex`] and held behind an [`Arc`] so the plugin host
@@ -253,11 +258,11 @@ pub struct SessionManager {
     /// briefly to look up a factory or snapshot the type list; it is never held
     /// across an `await`.
     registry: Arc<StdMutex<ConnectionTypeRegistry>>,
-    agent_manager: Arc<dyn AgentRpcClient>,
+    pub(super) agent_manager: Arc<dyn AgentRpcClient>,
     /// Abort handles for active session-monitoring push tasks, keyed by session ID.
     monitoring_tasks: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
     /// Registry for persistent sessions, keyed by connection ID.
-    persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
+    pub(super) persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
     /// Cancellation tokens for in-flight (still connecting) local sessions, keyed
     /// by the caller-supplied `connect_id`. Lets a Stop/close while connecting
     /// abort the handshake promptly instead of waiting out the timeout (#952).
@@ -272,13 +277,13 @@ pub struct SessionManager {
     /// scrollback — the multi-window foundation's "detach a view and re-attach it
     /// later with replay" primitive. The outer lock is held only briefly at
     /// create/replay/cleanup; the hot output path writes through the inner lock.
-    output_buffers: OutputBuffers,
+    pub(super) output_buffers: OutputBuffers,
     /// Per-session output-to-file loggers (#1960), keyed by `session_id`.
     ///
     /// Populated only for sessions with logging active. The output reader writes
     /// each emitted chunk through the matching logger, so a session's transcript
     /// captures exactly what the frontend receives — for every session type.
-    session_loggers: SessionLoggers,
+    pub(super) session_loggers: SessionLoggers,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -454,7 +459,7 @@ impl SessionManager {
     ///
     /// Returns a handle the output reader writes through and
     /// [`Self::replay_scrollback`] reads from.
-    fn ensure_output_buffer(&self, session_id: &str) -> Arc<StdMutex<RingBuffer>> {
+    pub(super) fn ensure_output_buffer(&self, session_id: &str) -> Arc<StdMutex<RingBuffer>> {
         let mut map = self
             .output_buffers
             .lock()
@@ -961,6 +966,23 @@ impl SessionManager {
 
     // ── Persistent session management ──────────────────────────────────
 
+    /// Borrow a [`PersistentController`] facade over this manager (#2111).
+    ///
+    /// The facade is stateless — it holds only a borrow of the manager — so the
+    /// public persistent-session methods below construct one per call and
+    /// forward to it. Unlike [`file_ops`](Self::file_ops) and
+    /// [`monitoring`](Self::monitoring), which hand the facade isolated maps, the
+    /// persistent cluster drives the manager's own session lifecycle
+    /// (`create_connection` / `close_session` / `run_output_reader`) and shares
+    /// the `sessions` map, so the facade borrows the whole manager. The
+    /// persistent registry (`persistent_sessions`) stays a field here. This keeps
+    /// the persistent plumbing (idempotency, the reconnect-after-agent-drop path,
+    /// and the emitted `persistent-session-state-changed` events) out of the
+    /// manager while leaving the public API and behavior unchanged.
+    fn persistent(&self) -> PersistentController<'_> {
+        PersistentController::new(self)
+    }
+
     /// Start a persistent session for `connection_id`.
     ///
     /// Creates a backend session and registers it in the persistent registry.
@@ -974,56 +996,9 @@ impl SessionManager {
         agent_id: Option<&str>,
         emitter: E,
     ) -> Result<String, TerminalError> {
-        // Idempotency: if already running return the existing session ID.
-        {
-            let ps = self.persistent_sessions.lock().await;
-            if let Some(record) = ps.get(connection_id) {
-                let sessions = self.sessions.lock().await;
-                if sessions.contains_key(&record.session_id) {
-                    return Ok(record.session_id.clone());
-                }
-                // Session is registered but backend entry is gone (crashed) — fall through.
-            }
-        }
-
-        let session_id = self
-            .create_connection(type_id, settings, agent_id, None, false, emitter.clone())
-            .await?;
-
-        // Capture the agent-side remote session ID so that attach_persistent_tab
-        // can re-create the RemoteProxy if the desktop session is cleaned up after
-        // an agent SSH disconnect (while the daemon itself survives).
-        let remote_session_id = {
-            let sessions = self.sessions.lock().await;
-            sessions
-                .get(&session_id)
-                .and_then(|e| e.remote_session_id.clone())
-        };
-
-        {
-            let mut ps = self.persistent_sessions.lock().await;
-            ps.insert(
-                connection_id.to_string(),
-                PersistentRecord {
-                    connection_id: connection_id.to_string(),
-                    session_id: session_id.clone(),
-                    attached_tabs: HashSet::new(),
-                    remote_session_id,
-                    agent_id: agent_id.map(|s| s.to_string()),
-                },
-            );
-        }
-
-        emitter.emit_persistent_state(&PersistentSessionStateEvent {
-            connection_id: connection_id.to_string(),
-            session_id: Some(session_id.clone()),
-            state: "running".to_string(),
-            attached_tab_count: 0,
-            error_message: None,
-        });
-
-        info!(connection_id, session_id, "Persistent session started");
-        Ok(session_id)
+        self.persistent()
+            .start_persistent_session(connection_id, type_id, settings, agent_id, emitter)
+            .await
     }
 
     /// Adopt an already-running agent session into the persistent registry.
@@ -1048,43 +1023,9 @@ impl SessionManager {
         agent_session_id: &str,
         emitter: E,
     ) -> Result<String, TerminalError> {
-        let session_id = agent_session_id.to_string();
-
-        let mut ps = self.persistent_sessions.lock().await;
-        if let Some(existing) = ps.get(connection_id) {
-            if existing.remote_session_id.as_deref() == Some(agent_session_id) {
-                return Ok(existing.session_id.clone());
-            }
-            return Err(TerminalError::SpawnFailed(format!(
-                "Persistent session {connection_id} already adopted with a different agent session"
-            )));
-        }
-
-        ps.insert(
-            connection_id.to_string(),
-            PersistentRecord {
-                connection_id: connection_id.to_string(),
-                session_id: session_id.clone(),
-                attached_tabs: HashSet::new(),
-                remote_session_id: Some(session_id.clone()),
-                agent_id: Some(agent_id.to_string()),
-            },
-        );
-        drop(ps);
-
-        emitter.emit_persistent_state(&PersistentSessionStateEvent {
-            connection_id: connection_id.to_string(),
-            session_id: Some(session_id.clone()),
-            state: "running".to_string(),
-            attached_tab_count: 0,
-            error_message: None,
-        });
-
-        info!(
-            connection_id,
-            agent_id, agent_session_id, "Adopted existing agent persistent session"
-        );
-        Ok(session_id)
+        self.persistent()
+            .adopt_persistent_session(connection_id, agent_id, agent_session_id, emitter)
+            .await
     }
 
     /// Stop a persistent session for `connection_id`.
@@ -1096,27 +1037,9 @@ impl SessionManager {
         connection_id: &str,
         emitter: E,
     ) -> Result<(), TerminalError> {
-        let record = {
-            let mut ps = self.persistent_sessions.lock().await;
-            ps.remove(connection_id)
-        };
-
-        let Some(record) = record else {
-            return Ok(());
-        };
-
-        self.close_session(&record.session_id).await?;
-
-        emitter.emit_persistent_state(&PersistentSessionStateEvent {
-            connection_id: connection_id.to_string(),
-            session_id: Some(record.session_id.clone()),
-            state: "stopped".to_string(),
-            attached_tab_count: 0,
-            error_message: None,
-        });
-
-        info!(connection_id, session_id = %record.session_id, "Persistent session stopped");
-        Ok(())
+        self.persistent()
+            .stop_persistent_session(connection_id, emitter)
+            .await
     }
 
     /// Register `tab_id` as attached to the persistent session for `connection_id`.
@@ -1137,128 +1060,9 @@ impl SessionManager {
         tab_id: &str,
         emitter: E,
     ) -> Result<u32, TerminalError> {
-        // Phase 1: Read record info without holding the persistent_sessions lock so we
-        // never hold it simultaneously with the sessions lock (avoids deadlock ordering).
-        let (session_id, opt_agent_id, opt_remote_sid) = {
-            let ps = self.persistent_sessions.lock().await;
-            let record = ps.get(connection_id).ok_or_else(|| {
-                TerminalError::SessionNotFound(format!(
-                    "No persistent session for connection {connection_id}"
-                ))
-            })?;
-            (
-                record.session_id.clone(),
-                record.agent_id.clone(),
-                record.remote_session_id.clone(),
-            )
-        };
-
-        // Phase 2: Check if the backend session is alive. If not, try to re-create
-        // the RemoteProxy by reconnecting to the surviving daemon on the agent.
-        let session_alive = self.sessions.lock().await.contains_key(&session_id);
-        if !session_alive {
-            match (opt_agent_id, opt_remote_sid) {
-                (Some(agent_id), Some(remote_sid)) => {
-                    // Re-create the RemoteProxy for the daemon that survived the disconnect.
-                    // This calls register_session_output + attach_session synchronously, so
-                    // buffer replay will be in-flight before subscribe_output() bridges it.
-                    //
-                    // `attach_session` internally uses `oneshot::Receiver::blocking_recv`,
-                    // which parks the calling thread; run on the blocking thread pool so the
-                    // tokio worker stays free to drive `agent_io_task` and deliver the reply.
-                    let agent_mgr = self.agent_manager.clone();
-                    let agent_id_clone = agent_id.clone();
-                    let remote_sid_clone = remote_sid.clone();
-                    let proxy = tokio::task::spawn_blocking(move || {
-                        RemoteProxy::reconnect_existing(agent_id_clone, remote_sid_clone, agent_mgr)
-                    })
-                    .await
-                    .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
-                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
-
-                    let output_rx = proxy.subscribe_output();
-
-                    // Re-insert under the same session_id so the tab's existingSessionId
-                    // prop and the TerminalOutputDispatcher's pendingOutput buffer both
-                    // continue to work without any frontend state update.
-                    {
-                        let mut sessions = self.sessions.lock().await;
-                        sessions.insert(
-                            session_id.clone(),
-                            SessionEntry {
-                                connection: Box::new(proxy),
-                                info: SessionInfo {
-                                    id: session_id.clone(),
-                                    title: "Persistent Session".to_string(),
-                                    connection_type: "remote".to_string(),
-                                    alive: true,
-                                    agent_id: Some(agent_id),
-                                    spawned: false,
-                                },
-                                remote_session_id: Some(remote_sid),
-                                line_ending: LineEnding::default(),
-                            },
-                        );
-                    }
-
-                    // Spawn output reader for the re-created session.
-                    let sessions_clone = self.sessions.clone();
-                    let emitter_clone = emitter.clone();
-                    let capture = self.ensure_output_buffer(&session_id);
-                    let output_buffers = self.output_buffers.clone();
-                    let session_loggers = self.session_loggers.clone();
-                    let sid = session_id.clone();
-                    tokio::spawn(async move {
-                        Self::run_output_reader(
-                            sid,
-                            output_rx,
-                            emitter_clone,
-                            sessions_clone,
-                            false,
-                            capture,
-                            output_buffers,
-                            session_loggers,
-                        )
-                        .await;
-                    });
-
-                    info!(
-                        connection_id,
-                        session_id = %session_id,
-                        "Persistent session backend re-created after agent reconnect"
-                    );
-                }
-                _ => {
-                    return Err(TerminalError::SessionNotFound(format!(
-                        "Persistent session {} for connection {} is no longer alive",
-                        session_id, connection_id
-                    )));
-                }
-            }
-        }
-
-        // Phase 3: Register tab attachment.
-        let count = {
-            let mut ps = self.persistent_sessions.lock().await;
-            let record = ps.get_mut(connection_id).ok_or_else(|| {
-                TerminalError::SessionNotFound(format!(
-                    "No persistent session for connection {connection_id}"
-                ))
-            })?;
-            record.attached_tabs.insert(tab_id.to_string());
-            record.attached_tabs.len() as u32
-        };
-
-        let state = if count > 0 { "attached" } else { "running" }.to_string();
-        emitter.emit_persistent_state(&PersistentSessionStateEvent {
-            connection_id: connection_id.to_string(),
-            session_id: Some(session_id),
-            state,
-            attached_tab_count: count,
-            error_message: None,
-        });
-
-        Ok(count)
+        self.persistent()
+            .attach_persistent_tab(connection_id, tab_id, emitter)
+            .await
     }
 
     /// Unregister `tab_id` from the persistent session identified by `session_id`.
@@ -1271,44 +1075,14 @@ impl SessionManager {
         tab_id: &str,
         emitter: E,
     ) -> Result<u32, TerminalError> {
-        let (connection_id, count) = {
-            let mut ps = self.persistent_sessions.lock().await;
-            let Some(record) = ps.values_mut().find(|r| r.session_id == session_id) else {
-                return Ok(0);
-            };
-            record.attached_tabs.remove(tab_id);
-            let count = record.attached_tabs.len() as u32;
-            (record.connection_id.clone(), count)
-        };
-
-        let state = if count > 0 { "attached" } else { "running" }.to_string();
-        emitter.emit_persistent_state(&PersistentSessionStateEvent {
-            connection_id: connection_id.clone(),
-            session_id: Some(session_id.to_string()),
-            state,
-            attached_tab_count: count,
-            error_message: None,
-        });
-
-        info!(
-            session_id,
-            tab_id,
-            remaining = count,
-            "Tab detached from persistent session"
-        );
-        Ok(count)
+        self.persistent()
+            .detach_persistent_tab(session_id, tab_id, emitter)
+            .await
     }
 
     /// List all registered persistent sessions and their current state.
     pub async fn list_persistent_sessions(&self) -> Vec<PersistentSessionSummary> {
-        let ps = self.persistent_sessions.lock().await;
-        ps.values()
-            .map(|r| PersistentSessionSummary {
-                connection_id: r.connection_id.clone(),
-                session_id: r.session_id.clone(),
-                attached_tab_count: r.attached_tabs.len() as u32,
-            })
-            .collect()
+        self.persistent().list_persistent_sessions().await
     }
 
     /// Fetch the scrollback buffer from the agent for a persistent session.
@@ -1320,44 +1094,9 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Result<Vec<u8>, TerminalError> {
-        let (agent_id, remote_sid) = {
-            let sessions = self.sessions.lock().await;
-            let entry = sessions
-                .get(session_id)
-                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-            let agent_id =
-                entry.info.agent_id.clone().ok_or_else(|| {
-                    TerminalError::RemoteError("not a remote session".to_string())
-                })?;
-            let remote_sid = entry.remote_session_id.clone().ok_or_else(|| {
-                TerminalError::RemoteError("remote session ID unavailable".to_string())
-            })?;
-            (agent_id, remote_sid)
-        };
-
-        // Run the sync RPC on the blocking thread pool — its internal
-        // `oneshot::Receiver::blocking_recv` would otherwise park a tokio worker.
-        let mgr = self.agent_manager.clone();
-        let result = tokio::task::spawn_blocking(move || {
-            mgr.send_request(
-                &agent_id,
-                "session.getBuffer",
-                serde_json::json!({ "session_id": remote_sid }),
-            )
-        })
-        .await
-        .map_err(|e| TerminalError::RemoteError(format!("spawn_blocking join: {e}")))?
-        .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
-
-        let b64 = result.get("data").and_then(|v| v.as_str()).unwrap_or("");
-        if b64.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .map_err(|e| TerminalError::RemoteError(format!("base64 decode error: {e}")))
+        self.persistent()
+            .get_remote_session_buffer(session_id)
+            .await
     }
 
     // ── End persistent session management ──────────────────────────────
@@ -1454,7 +1193,7 @@ impl SessionManager {
     /// Coalesces pending output chunks into a single event (up to
     /// `MAX_COALESCE_BYTES`) to reduce IPC overhead.
     #[allow(clippy::too_many_arguments)]
-    async fn run_output_reader<E: EventEmitter>(
+    pub(super) async fn run_output_reader<E: EventEmitter>(
         session_id: String,
         mut output_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
         emitter: E,
