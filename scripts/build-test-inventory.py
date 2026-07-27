@@ -24,7 +24,12 @@ For each collected test it records:
 * **feature** (category) — an explicit ``@pytest.mark.category("ssh")`` marker
   when present (on the item, its class, or the module ``pytestmark``), else the
   ``test_<feature>.py`` filename stem with the ``test_`` prefix stripped.
-* **lane** — ``manual`` when the ``manual`` marker applies, else ``automated``.
+* **lane** — ``manual`` (operator-guided), ``integration`` (launches the real
+  built app/agent — **excluded from the per-PR gate**, which runs ``pytest -m
+  "not integration"``), or ``automated`` (the fast machinery suite that runs on
+  every PR). Conflating integration with automated is what let this report lie
+  with "0 coverage gaps 🎉" while the SSH/SFTP/tunnel core went unexercised on
+  the merge gate (#2050).
 * **platforms** — ``linux`` / ``macos`` / ``windows``. The harness runs on all
   three by default; a recognized ``skipif`` marker (e.g. ``skip_on_non_windows``,
   ``sys.platform == 'darwin'``) narrows the set. Best-effort and documented as
@@ -74,6 +79,13 @@ MD_PATH = SYSTEM_DIR / "test-inventory.md"
 JSON_PATH = SYSTEM_DIR / "test-inventory.json"
 
 ALL_PLATFORMS = ("linux", "macos", "windows")
+
+# The CI lanes a test can fall into, and the one that actually gates a merge.
+# ``automated`` is the only lane the per-PR system-test job runs (it invokes
+# ``pytest -m "not integration"``, and ``manual`` is skipped without --manual);
+# ``integration`` runs only in the nightly/manual system-test lanes. See #2050.
+LANES = ("automated", "integration", "manual")
+PER_PR_LANE = "automated"
 
 # Curated map of feature area -> category substrings that count as covering it.
 # This is the source of truth for "what features do we track": a feature only
@@ -355,8 +367,29 @@ def _restriction_for(mark: Mark) -> "set[str] | None":
 
 
 def lane_for(marks: "list[Mark]") -> str:
-    """``"manual"`` if any applicable mark is ``manual``, else ``"automated"``."""
-    return "manual" if any(m.name == "manual" for m in marks) else "automated"
+    """The CI lane a test runs in: ``manual`` / ``integration`` / ``automated``.
+
+    The three lanes gate very differently, and conflating them is what let this
+    report lie (#2050):
+
+    * ``manual`` — an operator-guided test (``@pytest.mark.manual``); skipped
+      unless ``--manual`` + a TTY. Never runs in CI.
+    * ``integration`` — launches the real built app/agent
+      (``@pytest.mark.integration``). **Excluded from the per-PR gate**, which
+      runs ``pytest -m "not integration"``; it runs only in the dedicated
+      nightly/manual system-test lanes. Green per-PR CI proves nothing about it.
+    * ``automated`` — everything else: the fast machinery suite that actually
+      runs on **every PR** and is therefore the real merge-gate safety net.
+
+    Precedence ``manual`` > ``integration`` > ``automated`` mirrors how pytest
+    selects: a manual test is gated manual even when also integration-marked.
+    """
+    names = {m.name for m in marks}
+    if "manual" in names:
+        return "manual"
+    if "integration" in names:
+        return "integration"
+    return "automated"
 
 
 def platforms_for(marks: "list[Mark]") -> "list[str]":
@@ -471,7 +504,13 @@ def group_by_feature(records: "list[dict]") -> "dict[str, dict]":
     for rec in records:
         group = groups.setdefault(
             rec["feature"],
-            {"automated": 0, "manual": 0, "platforms": set(), "tests": []},
+            {
+                "automated": 0,
+                "integration": 0,
+                "manual": 0,
+                "platforms": set(),
+                "tests": [],
+            },
         )
         group[rec["lane"]] += 1
         group["platforms"].update(rec["platforms"])
@@ -487,7 +526,7 @@ def coverage(records: "list[dict]", feature_areas=FEATURE_AREAS) -> "dict[str, d
     "categories": [str, ...]}``.
     """
     result = {
-        area: {"automated": 0, "manual": 0, "categories": set()}
+        area: {"automated": 0, "integration": 0, "manual": 0, "categories": set()}
         for area in feature_areas
     }
     for rec in records:
@@ -500,13 +539,35 @@ def coverage(records: "list[dict]", feature_areas=FEATURE_AREAS) -> "dict[str, d
 
 
 def coverage_gaps(records: "list[dict]", feature_areas=FEATURE_AREAS) -> "list[str]":
-    """Curated feature areas with no automated **and** no manual test."""
+    """Curated feature areas with **no test at all**, in any lane.
+
+    The strongest gap: not automated, not integration, not manual — the feature
+    is entirely untracked. (An area covered only by nightly ``integration`` or
+    operator ``manual`` tests is *not* a total gap here — see
+    :func:`per_pr_gaps` for the merge-gate view, which is the one #2050 is about.)
+    """
     cov = coverage(records, feature_areas)
     return [
         area
         for area in feature_areas
-        if cov[area]["automated"] == 0 and cov[area]["manual"] == 0
+        if cov[area]["automated"] == 0
+        and cov[area]["integration"] == 0
+        and cov[area]["manual"] == 0
     ]
+
+
+def per_pr_gaps(records: "list[dict]", feature_areas=FEATURE_AREAS) -> "list[str]":
+    """Feature areas the **per-PR merge gate** never exercises (#2050).
+
+    The per-PR system-test lane runs ``pytest -m "not integration"``, so only the
+    ``automated`` lane (:data:`PER_PR_LANE`) gates a merge. An area covered
+    *only* by ``integration`` (nightly) and/or ``manual`` (operator) tests
+    therefore has **zero** merge-gate coverage: a regression in it can merge with
+    green CI. That is the dangerous gap the old "0 coverage gaps 🎉" headline hid
+    by counting integration tests as coverage.
+    """
+    cov = coverage(records, feature_areas)
+    return [area for area in feature_areas if cov[area][PER_PR_LANE] == 0]
 
 
 def unmapped_categories(records: "list[dict]", feature_areas=FEATURE_AREAS) -> "list[str]":
@@ -553,6 +614,7 @@ def build_report(records: "list[dict]") -> dict:
             {
                 "feature": feature,
                 "automated": group["automated"],
+                "integration": group["integration"],
                 "manual": group["manual"],
                 "platforms": _fmt_platforms(group["platforms"]),
                 "tests": group["tests"],
@@ -562,11 +624,13 @@ def build_report(records: "list[dict]") -> dict:
         "total_tests": len(records),
         "total_features": len(groups),
         "features": features,
+        "per_pr_gaps": per_pr_gaps(records),
         "coverage_gaps": coverage_gaps(records),
         "unmapped_categories": unmapped_categories(records),
         "feature_areas": {
             area: {
                 "automated": cov[area]["automated"],
+                "integration": cov[area]["integration"],
                 "manual": cov[area]["manual"],
                 "categories": sorted(cov[area]["categories"]),
             }
@@ -577,35 +641,70 @@ def build_report(records: "list[dict]") -> dict:
 
 def render_markdown(records: "list[dict]") -> str:
     report = build_report(records)
+    lane_totals = {lane: 0 for lane in LANES}
+    for feature in report["features"]:
+        for lane in LANES:
+            lane_totals[lane] += feature[lane]
     lines = [
         "# Test inventory & coverage-gap report",
         "",
         "<!-- GENERATED by scripts/build-test-inventory.py — DO NOT EDIT BY HAND. -->",
         "",
         "Every collected system-harness test mapped to its **feature**, **lane** "
-        "(automated / manual), and **platforms** — plus the feature areas with "
-        "**no** coverage (#1950).",
+        "(automated / integration / manual), and **platforms** — plus the feature "
+        "areas the **per-PR merge gate does not exercise** (#1950, #2050).",
         "",
         "- **Regenerate:** `python scripts/build-test-inventory.py`",
         "- **Not committed:** a local, git-ignored artifact; CI regenerates it "
         "(non-blocking) instead of diffing a file that goes stale per-branch (#1528).",
         "",
         f"- **Tests:** {report['total_tests']}  ·  "
-        f"**Features:** {report['total_features']}  ·  "
-        f"**Coverage gaps:** {len(report['coverage_gaps'])}",
+        f"**Features:** {report['total_features']}",
+        f"- **Lanes:** {lane_totals['automated']} automated (run on every PR)  ·  "
+        f"{lane_totals['integration']} integration (nightly/manual only — **not** "
+        f"on the per-PR gate)  ·  {lane_totals['manual']} manual",
+        f"- **Merge-gate gaps:** {len(report['per_pr_gaps'])} feature area(s) with "
+        f"no per-PR automated test  ·  **Untested areas:** "
+        f"{len(report['coverage_gaps'])}",
         "",
-        "## Features with no coverage",
+        "## Feature areas the per-PR merge gate does not exercise",
         "",
     ]
+    if report["per_pr_gaps"]:
+        lines += [
+            "These curated feature areas have **no `automated` test on the per-PR "
+            'gate** (which runs `pytest -m "not integration"`). They are covered '
+            "only by `integration` (nightly) and/or `manual` (operator) tests, so "
+            "a regression in them can merge with green CI. This is the risk the "
+            'old "0 coverage gaps" headline hid by counting integration tests as '
+            "coverage (#2050).",
+            "",
+        ]
+        for area in report["per_pr_gaps"]:
+            fa = report["feature_areas"][area]
+            lines.append(
+                f"- **{area}** — {fa['integration']} integration, "
+                f"{fa['manual']} manual, **0 per-PR automated**"
+            )
+    else:
+        lines.append(
+            "None — every curated feature area has at least one automated test on "
+            "the per-PR gate. 🎉"
+        )
+    lines.append("")
+
+    lines += ["## Feature areas with no test at all", ""]
     if report["coverage_gaps"]:
         lines += [
             "Curated feature areas (`FEATURE_AREAS` in the generator) with **no "
-            "automated and no manual** test:",
+            "test in any lane** (automated, integration, or manual):",
             "",
         ]
         lines += [f"- **{area}**" for area in report["coverage_gaps"]]
     else:
-        lines.append("None — every curated feature area has at least one test. 🎉")
+        lines.append(
+            "None — every curated feature area has at least one test in some lane."
+        )
     lines.append("")
 
     if report["unmapped_categories"]:

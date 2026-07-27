@@ -85,12 +85,26 @@ def test_module_level_category_marker(tmp_path, monkeypatch):
 # ── lane classification ─────────────────────────────────────────────────────
 
 
-def test_lane_is_automated_without_manual_mark():
-    assert mod.lane_for([mod.Mark("integration", None, "")]) == "automated"
+def test_lane_is_automated_without_any_lane_mark():
+    assert mod.lane_for([mod.Mark("slow", None, "")]) == "automated"
+    assert mod.lane_for([]) == "automated"
+
+
+def test_integration_mark_is_its_own_lane():
+    # #2050: integration tests do NOT run on the per-PR gate, so they must not be
+    # counted as "automated" merge-gate coverage.
+    assert mod.lane_for([mod.Mark("integration", None, "")]) == "integration"
 
 
 def test_lane_is_manual_with_manual_mark():
     assert mod.lane_for([mod.Mark("manual", None, "")]) == "manual"
+
+
+def test_manual_wins_over_integration():
+    lane = mod.lane_for(
+        [mod.Mark("integration", None, ""), mod.Mark("manual", None, "")]
+    )
+    assert lane == "manual"
 
 
 def test_module_manual_mark_applies_to_methods(tmp_path, monkeypatch):
@@ -221,10 +235,41 @@ def test_coverage_gap_flags_feature_with_no_tests():
     assert set(gaps) == {"serial", "telnet"}
 
 
-def test_coverage_gap_requires_no_automated_and_no_manual():
-    # A feature with only a manual test is NOT a gap.
+def test_coverage_gap_requires_no_test_in_any_lane():
+    # A feature with only a manual test is NOT a total gap.
     gaps = mod.coverage_gaps([_rec("serial", "manual")], _FEATURE_AREAS)
     assert "serial" not in gaps
+    # Nor is one covered only by an integration test.
+    gaps = mod.coverage_gaps([_rec("telnet", "integration")], _FEATURE_AREAS)
+    assert "telnet" not in gaps
+
+
+def test_per_pr_gap_flags_integration_only_feature():
+    # #2050: ssh covered ONLY by an integration test -> unexercised on the merge
+    # gate, so it is a per-PR gap even though it is not a total coverage gap.
+    records = [_rec("ssh", "integration")]
+    # ssh has an integration test (not a total gap) but no per-PR automated one.
+    assert "ssh" in mod.per_pr_gaps(records, _FEATURE_AREAS)
+    assert "ssh" not in mod.coverage_gaps(records, _FEATURE_AREAS)
+
+
+def test_per_pr_gap_flags_manual_only_feature():
+    records = [_rec("ssh", "manual")]
+    assert "ssh" in mod.per_pr_gaps(records, _FEATURE_AREAS)
+
+
+def test_per_pr_gap_cleared_by_an_automated_test():
+    # A single automated (per-PR) test removes the merge-gate gap.
+    records = [_rec("ssh", "automated"), _rec("ssh", "integration")]
+    assert "ssh" not in mod.per_pr_gaps(records, _FEATURE_AREAS)
+
+
+def test_coverage_counts_integration_lane():
+    cov = mod.coverage(
+        [_rec("ssh", "integration"), _rec("ssh", "automated")], _FEATURE_AREAS
+    )
+    assert cov["ssh"]["integration"] == 1
+    assert cov["ssh"]["automated"] == 1
 
 
 def test_coverage_counts_split_by_lane():
@@ -251,14 +296,18 @@ def test_live_report_is_wellformed():
     report = mod.build_report(records)
     assert report["total_tests"] == len(records)
     assert report["total_features"] == len(report["features"])
-    # Known feature areas must be covered by the real suite (no false gaps).
+    # Known feature areas have at least one test in some lane (no total gap).
     for area in ("ssh", "sftp", "serial", "telnet"):
         assert area not in report["coverage_gaps"]
+    # A per-PR gap is always a subset of "has some test" — it can never exceed
+    # the total set of tracked areas, and every per-PR gap is a real area.
+    assert set(report["per_pr_gaps"]) <= set(mod.FEATURE_AREAS)
 
 
 def test_live_markdown_has_required_sections():
     markdown = mod.render_markdown(mod.collect())
     assert "# Test inventory & coverage-gap report" in markdown
-    assert "## Features with no coverage" in markdown
+    assert "## Feature areas the per-PR merge gate does not exercise" in markdown
+    assert "## Feature areas with no test at all" in markdown
     assert "## Inventory by feature" in markdown
     assert "| test id | feature | lane | platforms |" in markdown
