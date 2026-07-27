@@ -34,7 +34,7 @@
 //! operations cannot race on the same directory or clobber each other's
 //! read-modify-write of the state files (concept "Edge Cases").
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -47,6 +47,7 @@ use thiserror::Error;
 use super::manifest::{parse_manifest, ApiCompatibility, PluginManifest};
 use super::package::{validate_package, PluginPackageError, MANIFEST_FILE_NAME};
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
+use super::signature::{self, VerifiedArchive};
 use super::trust_store::{TrustStore, TrustStoreError, TrustedPublisher};
 
 /// File holding per-plugin enabled/disabled state and install timestamps.
@@ -391,11 +392,22 @@ impl PluginManager {
         // Extract into a staging directory on the same filesystem, then swap it
         // into place, so a failed extraction never leaves a half-written plugin
         // dir behind.
+        //
+        // The trust gate above assessed a *separate* open of the package; the
+        // extractor re-opens the path and must bind the bytes it writes to what was
+        // verified, or a swap between the two opens (verify-then-use TOCTOU) would
+        // land unsigned/attacker bytes on disk (#2045). For a signed/verified
+        // package we hand the extractor the signer's fingerprint it must still see;
+        // an unsigned (accepted-risk) package has no signature to bind to.
+        let expected_key_id = match &assessment.level {
+            TrustLevel::Verified { .. } | TrustLevel::Signed { .. } => assessment.key_id.as_deref(),
+            TrustLevel::Untrusted | TrustLevel::Tampered => None,
+        };
         let staging = self.root.join(format!(".staging-{id}"));
         if staging.exists() {
             std::fs::remove_dir_all(&staging)?;
         }
-        let extract_result = extract_package(package_path, &staging);
+        let extract_result = extract_package(package_path, &staging, expected_key_id);
         if let Err(e) = extract_result {
             let _ = std::fs::remove_dir_all(&staging);
             return Err(e);
@@ -755,12 +767,70 @@ fn safe_relative(relative: &str) -> Option<PathBuf> {
 /// Every entry path is resolved through `enclosed_name`, which yields `None` for
 /// any path that would escape the destination (zip-slip); such an entry aborts
 /// the extraction with [`PluginManagerError::UnsafePath`].
-fn extract_package(package_path: &Path, dest: &Path) -> Result<(), PluginManagerError> {
+///
+/// # Binding extraction to the verified signature (TOCTOU)
+///
+/// The install trust gate verifies the signature on a *separate, earlier* open of
+/// the package path; this extractor re-opens the path, so on its own it would
+/// write whatever the file holds *now* — a verify-then-use gap where the loaded
+/// library need not be the signed one (#2045). To close it, extraction re-verifies
+/// the signature against **this** freshly-opened archive and binds every byte it
+/// writes to the signed digest map:
+///
+/// * `expected_key_id = Some(k)` — the gate approved a signature from key `k`.
+///   This archive must present a valid signature from that same key, and each
+///   extracted entry's SHA-256 must match the signed map (and the signed set must
+///   be exactly present). Any deviation — tampered content, a different signer, a
+///   dropped signature, a missing signed entry — is
+///   [`PluginManagerError::SignatureTampered`].
+/// * `expected_key_id = None` — the gate accepted the package as *unsigned*
+///   (accepted-risk install); there is nothing to bind to, so only the zip-slip
+///   check applies, as before.
+fn extract_package(
+    package_path: &Path,
+    dest: &Path,
+    expected_key_id: Option<&str>,
+) -> Result<(), PluginManagerError> {
     let file = std::fs::File::open(package_path)?;
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| PluginManagerError::Extract(e.to_string()))?;
 
+    // Re-verify against this open archive and resolve the digest map the written
+    // bytes must match. `Some(map)` means "bind every entry to this"; `None` means
+    // an unsigned, accepted-risk package with nothing to bind.
+    let signed_files: Option<BTreeMap<String, String>> =
+        match signature::verify_signed_archive(&mut archive)
+            .map_err(|e| PluginManagerError::Extract(e.to_string()))?
+        {
+            VerifiedArchive::Signed(verified) => {
+                // The signer must be exactly the key the trust gate approved — this
+                // rejects a swap to a *different* (even validly-signed) package
+                // between verification and extraction.
+                match expected_key_id {
+                    Some(k) if k == verified.identity.key_id => Some(verified.files),
+                    _ => return Err(PluginManagerError::SignatureTampered),
+                }
+            }
+            // A present-but-invalid signature is tampering regardless of the gate.
+            VerifiedArchive::Tampered(_) => return Err(PluginManagerError::SignatureTampered),
+            VerifiedArchive::Unsigned => {
+                // The gate verified a signature but the archive now presents none:
+                // a signed → unsigned swap between verify and extract.
+                if expected_key_id.is_some() {
+                    return Err(PluginManagerError::SignatureTampered);
+                }
+                None
+            }
+        };
+
     std::fs::create_dir_all(dest)?;
+
+    // Signed entries still owed an extraction — drained as we see them, so a signed
+    // entry absent from the archive at extract time is caught as tampering.
+    let mut unseen: BTreeSet<&String> = signed_files
+        .as_ref()
+        .map(|m| m.keys().collect())
+        .unwrap_or_default();
 
     for i in 0..archive.len() {
         let mut entry = archive
@@ -769,7 +839,7 @@ fn extract_package(package_path: &Path, dest: &Path) -> Result<(), PluginManager
         let raw_name = entry.name().to_string();
         let safe = entry
             .enclosed_name()
-            .ok_or(PluginManagerError::UnsafePath(raw_name))?;
+            .ok_or_else(|| PluginManagerError::UnsafePath(raw_name.clone()))?;
         let out_path = dest.join(safe);
 
         if entry.is_dir() {
@@ -779,11 +849,32 @@ fn extract_package(package_path: &Path, dest: &Path) -> Result<(), PluginManager
         if let Some(parent) = out_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let mut out = std::fs::File::create(&out_path)?;
         let mut buf = Vec::new();
         entry.read_to_end(&mut buf)?;
+
+        // Bind the exact bytes about to be written to the signed digest map. The
+        // signature entry itself is not part of the signed set, so skip it.
+        if let Some(files) = &signed_files {
+            if raw_name != signature::SIGNATURE_FILE_NAME {
+                let actual = signature::sha256_digest(&buf);
+                match files.get(&raw_name) {
+                    Some(expected) if *expected == actual => {
+                        unseen.remove(&raw_name);
+                    }
+                    _ => return Err(PluginManagerError::SignatureTampered),
+                }
+            }
+        }
+
+        let mut out = std::fs::File::create(&out_path)?;
         std::io::Write::write_all(&mut out, &buf)?;
     }
+
+    // Every signed entry must have actually been written.
+    if !unseen.is_empty() {
+        return Err(PluginManagerError::SignatureTampered);
+    }
+
     Ok(())
 }
 
@@ -1264,6 +1355,138 @@ mod tests {
             Err(PluginManagerError::SignatureTampered)
         ));
         assert!(!mgr.root().join("evil").exists());
+    }
+
+    /// Read a single entry's bytes from a `.termihub-plugin` on disk.
+    fn read_zip_entry(pkg: &Path, name: &str) -> Vec<u8> {
+        let file = std::fs::File::open(pkg).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        let mut entry = archive.by_name(name).unwrap();
+        let mut buf = Vec::new();
+        entry.read_to_end(&mut buf).unwrap();
+        buf
+    }
+
+    #[test]
+    fn extract_binds_signed_package_and_writes_verified_bytes() {
+        // The happy path: extracting a signed package whose bytes match the
+        // signer the trust gate approved writes every entry to disk.
+        let tmp = TempDir::new().unwrap();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json("bound", "1.0"),
+            &[("backend/lib.so", b"\x7fELF-GOOD")],
+        );
+        let key = sign(&pkg);
+
+        let dest = tmp.path().join("out");
+        extract_package(&pkg, &dest, Some(&key.key_id)).unwrap();
+        assert!(dest.join(MANIFEST_FILE_NAME).exists());
+        assert_eq!(
+            std::fs::read(dest.join("backend/lib.so")).unwrap(),
+            b"\x7fELF-GOOD"
+        );
+    }
+
+    #[test]
+    fn extract_rejects_content_altered_between_verify_and_extract() {
+        // Regression for #2045 (verify-then-use TOCTOU): the trust gate verified a
+        // signed package under `key`, then the package file was swapped for one
+        // whose backend bytes differ from what was signed (its old signature.json
+        // reused). Extraction must re-bind to the signed digest map and refuse,
+        // never landing the attacker's bytes on disk.
+        let tmp = TempDir::new().unwrap();
+        let good = make_package(
+            tmp.path(),
+            &manifest_json("toctou", "1.0"),
+            &[("backend/lib.so", b"GOOD-BYTES")],
+        );
+        let key = sign(&good);
+        let sig_json = read_zip_entry(&good, signature::SIGNATURE_FILE_NAME);
+
+        // The swapped-in archive: same manifest, ATTACKER backend bytes, but the
+        // original signature.json (signed over the GOOD bytes) reused verbatim.
+        let evil_dir = tmp.path().join("evil");
+        std::fs::create_dir_all(&evil_dir).unwrap();
+        let tampered = make_package(
+            &evil_dir,
+            &manifest_json("toctou", "1.0"),
+            &[
+                ("backend/lib.so", b"ATTACKER-BYTES"),
+                (signature::SIGNATURE_FILE_NAME, &sig_json),
+            ],
+        );
+
+        let dest = tmp.path().join("out");
+        let err = extract_package(&tampered, &dest, Some(&key.key_id)).unwrap_err();
+        assert!(matches!(err, PluginManagerError::SignatureTampered));
+        // Nothing signed-but-mismatched was written.
+        assert!(!dest.join("backend/lib.so").exists());
+    }
+
+    #[test]
+    fn extract_rejects_swap_to_a_different_signer() {
+        // The gate approved signer A; the file was swapped for a package validly
+        // signed by a *different* key B. Even though B's signature is internally
+        // valid, extraction must refuse — the bytes are not the ones the gate
+        // trusted.
+        let tmp = TempDir::new().unwrap();
+        let approved = make_package(tmp.path(), &manifest_json("signer", "1.0"), &[]);
+        let key_a = sign(&approved);
+
+        let other_dir = tmp.path().join("other");
+        std::fs::create_dir_all(&other_dir).unwrap();
+        let other = make_package(&other_dir, &manifest_json("signer", "1.0"), &[]);
+        let key_b = sign(&other);
+        assert_ne!(key_a.key_id, key_b.key_id);
+
+        let dest = tmp.path().join("out");
+        let err = extract_package(&other, &dest, Some(&key_a.key_id)).unwrap_err();
+        assert!(matches!(err, PluginManagerError::SignatureTampered));
+        assert!(!dest.join(MANIFEST_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn extract_rejects_signed_to_unsigned_swap() {
+        // The gate verified a signature; the file was swapped for an unsigned
+        // package. A signature the gate saw must still be present at extract time.
+        let tmp = TempDir::new().unwrap();
+        let unsigned = make_package(tmp.path(), &manifest_json("dropped", "1.0"), &[]);
+        let dest = tmp.path().join("out");
+        let err = extract_package(&unsigned, &dest, Some("sha256:approved")).unwrap_err();
+        assert!(matches!(err, PluginManagerError::SignatureTampered));
+        assert!(!dest.join(MANIFEST_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn install_verified_signed_package_with_files_lands_on_disk() {
+        // End-to-end: a signed package with real backend bytes, whose key is
+        // trusted, still installs as Verified and lands every file — the binding
+        // does not break the happy path.
+        let (mgr, tmp) = manager();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json("verified-files", "1.0"),
+            &[("backend/lib.so", b"\x7fELF-REAL")],
+        );
+        let key = sign(&pkg);
+        mgr.pin_publisher(&key.key_id, &key.public_key, "Test Publisher")
+            .unwrap();
+        assert_eq!(
+            mgr.assess_trust(&pkg).level,
+            TrustLevel::Verified {
+                publisher: "Test Publisher".into()
+            }
+        );
+
+        let installed = mgr.install(&pkg, false, false).unwrap();
+        assert_eq!(installed.manifest.id, "verified-files");
+        let dir = mgr.root().join("verified-files");
+        assert!(dir.join(MANIFEST_FILE_NAME).exists());
+        assert_eq!(
+            std::fs::read(dir.join("backend/lib.so")).unwrap(),
+            b"\x7fELF-REAL"
+        );
     }
 
     #[test]
