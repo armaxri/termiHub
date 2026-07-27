@@ -43,7 +43,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
-use super::manifest::{parse_manifest, ApiCompatibility, PluginManifest};
+use super::manifest::{is_valid_plugin_id, parse_manifest, ApiCompatibility, PluginManifest};
 use super::package::{
     check_package_size, read_entry_bounded, validate_package, PluginPackageError,
     MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES, MAX_DECOMPRESSED_TOTAL_BYTES,
@@ -643,6 +643,14 @@ impl PluginManager {
     /// refused. This is the helper the (later) theme/JS loaders use to pull
     /// asset bytes out of an installed plugin.
     pub fn read_file(&self, id: &str, relative: &str) -> Result<Vec<u8>, PluginManagerError> {
+        // `id` reaches this method from the renderer over IPC (the
+        // `read_plugin_file` command), so it is untrusted. Re-validate it with
+        // the same slug rule enforced at manifest time before it is joined into
+        // a filesystem path — otherwise a traversing id (`..`, separators) would
+        // escape the plugin root and turn this into an arbitrary-file read.
+        if !is_valid_plugin_id(id) {
+            return Err(PluginManagerError::PathTraversal(id.into()));
+        }
         let dir = self.plugin_dir(id);
         if !dir.exists() {
             return Err(PluginManagerError::NotFound(id.into()));
@@ -1194,6 +1202,49 @@ mod tests {
                 "path {bad:?} should be refused"
             );
         }
+    }
+
+    #[test]
+    fn read_file_blocks_traversing_id() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json("assets", "1.0"),
+            &[("themes/dark.json", b"{\"bg\":\"#111\"}")],
+        );
+        mgr.install(&pkg, true, false).unwrap();
+
+        // A secret file living *outside* the plugin root that a traversing id
+        // would otherwise reach.
+        let secret = mgr.root().parent().unwrap().join("secret.json");
+        std::fs::write(&secret, b"top secret").unwrap();
+
+        // The `id` argument comes straight from the renderer over IPC and must
+        // be validated with the same slug rule as at manifest time: anything
+        // containing path separators, `..`, or non-slug characters is refused
+        // before it is joined into a filesystem path.
+        for bad_id in [
+            "..",
+            "../secret",
+            "../../etc",
+            "assets/../..",
+            "/etc",
+            "foo/bar",
+            "as..sets",
+            "",
+        ] {
+            assert!(
+                matches!(
+                    mgr.read_file(bad_id, "secret.json"),
+                    Err(PluginManagerError::PathTraversal(_))
+                ),
+                "id {bad_id:?} should be refused"
+            );
+        }
+
+        // The valid id still resolves normally.
+        let bytes = mgr.read_file("assets", "themes/dark.json").unwrap();
+        assert_eq!(bytes, b"{\"bg\":\"#111\"}");
     }
 
     #[test]
