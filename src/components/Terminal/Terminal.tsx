@@ -1068,7 +1068,7 @@ export function Terminal({
     } catch (err) {
       frontendLog(
         "terminal",
-        `webgl renderer unavailable tab=${tabId}, using DOM renderer: ${String(err)}`,
+        `webgl renderer unavailable tab=${tabId}, using DOM renderer: ${String(err)}`
       );
       webglAddon?.dispose();
       webglAddon = null;

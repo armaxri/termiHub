@@ -195,7 +195,7 @@ function renderTerminal() {
     root.render(
       <TerminalPortalProvider>
         <Terminal tabId="tab-1" config={{ type: "local", config: {} }} isVisible={true} />
-      </TerminalPortalProvider>,
+      </TerminalPortalProvider>
     );
   });
 }
@@ -210,7 +210,7 @@ describe("Terminal WebGL renderer (#2078)", () => {
     expect(h.loadedAddons).toContain(webgl);
     // A context-loss handler is registered so the renderer can fall back.
     expect(
-      (webgl as unknown as { onContextLoss: ReturnType<typeof vi.fn> }).onContextLoss,
+      (webgl as unknown as { onContextLoss: ReturnType<typeof vi.fn> }).onContextLoss
     ).toHaveBeenCalledTimes(1);
     // The active renderer is surfaced on the container for diagnostics.
     const container = document.querySelector('[data-testid="terminal-renderer-tab-1"]');
