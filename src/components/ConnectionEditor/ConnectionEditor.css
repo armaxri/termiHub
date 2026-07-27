@@ -276,7 +276,7 @@
 }
 
 .jump-host__path-arrow {
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
 

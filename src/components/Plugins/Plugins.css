@@ -74,11 +74,11 @@
 
 .plugin-row--selected,
 .plugin-row--selected:hover {
-  background: var(--bg-selected, var(--bg-hover));
+  background: var(--bg-hover);
 }
 
 .plugin-row:focus-visible {
-  outline: 2px solid var(--border-focus, var(--text-accent));
+  outline: 2px solid var(--focus-border);
   outline-offset: -2px;
 }
 

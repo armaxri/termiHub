@@ -71,11 +71,11 @@
 }
 
 .connection-path-dialog__status--connected {
-  color: var(--status-success, #4caf50);
+  color: var(--color-success);
 }
 
 .connection-path-dialog__status--failed {
-  color: var(--status-error, #f44336);
+  color: var(--color-error);
 }
 
 .connection-path-dialog__status--spin {
@@ -90,7 +90,7 @@
 
 .connection-path-dialog__error {
   margin: 2px 0 0 30px;
-  color: var(--status-error, #f44336);
+  color: var(--color-error);
   font-size: 11px;
 }
 

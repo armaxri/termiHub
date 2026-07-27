@@ -22,5 +22,5 @@
 
 .fleet-onboard__row:hover {
   background: var(--bg-hover, rgba(127, 127, 127, 0.12));
-  border-color: var(--border-color, rgba(127, 127, 127, 0.25));
+  border-color: var(--border-primary);
 }
