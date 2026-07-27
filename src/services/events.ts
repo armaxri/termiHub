@@ -180,6 +180,13 @@ export class TerminalOutputDispatcher {
   private agentStateCallbacks = new Map<string, (state: string) => void>();
   /** Buffer output for sessions whose subscriber hasn't registered yet. */
   private pendingOutput = new Map<string, Uint8Array[]>();
+  /**
+   * Per-session cap on pre-subscribe buffered output (bytes). A session that
+   * emits a lot of output before (or without) a subscriber registering would
+   * otherwise grow its buffer without bound; past this ceiling the oldest chunks
+   * are dropped so long-lived sessions cannot leak memory here (#2073).
+   */
+  private static readonly MAX_PENDING_OUTPUT_BYTES = 256 * 1024;
   /** Buffer exit events for sessions whose subscriber hasn't registered yet. */
   private pendingExit = new Map<string, number | null>();
   private unlistenOutput: UnlistenFn | null = null;
@@ -223,6 +230,7 @@ export class TerminalOutputDispatcher {
           this.pendingOutput.set(session_id, buf);
         }
         buf.push(chunk);
+        this.trimPendingOutput(buf);
       }
     });
 
@@ -234,6 +242,12 @@ export class TerminalOutputDispatcher {
 
     const unlistenExit = await listen<TerminalExitPayload>("terminal-exit", (event) => {
       const { session_id, exit_code } = event.payload;
+      // The session is gone: drop any pre-subscribe output still buffered for it.
+      // A session that exits before (or without) a subscriber ever attaching would
+      // otherwise keep its buffered output alive forever (#2073). The scrollback a
+      // reattaching tab needs is restored from the backend's cached buffer, not
+      // from this live-tail buffer, so dropping it here loses nothing visible.
+      this.pendingOutput.delete(session_id);
       const cbs = this.exitCallbacks.get(session_id);
       if (cbs && cbs.size > 0) {
         for (const cb of cbs) cb(exit_code);
@@ -353,6 +367,20 @@ export class TerminalOutputDispatcher {
   /** Discard any buffered output for a session (call before writing cached buffer to avoid duplication). */
   clearPendingOutput(sessionId: string): void {
     this.pendingOutput.delete(sessionId);
+  }
+
+  /**
+   * Bounds a session's pre-subscribe buffer to
+   * {@link TerminalOutputDispatcher.MAX_PENDING_OUTPUT_BYTES}, dropping the
+   * oldest chunks once the ceiling is exceeded. Always keeps at least the most
+   * recent chunk, so a single oversized chunk is never discarded outright.
+   */
+  private trimPendingOutput(buf: Uint8Array[]): void {
+    let total = 0;
+    for (const chunk of buf) total += chunk.length;
+    while (total > TerminalOutputDispatcher.MAX_PENDING_OUTPUT_BYTES && buf.length > 1) {
+      total -= buf.shift()!.length;
+    }
   }
 
   /** Subscribe to remote state change events for a specific session. Returns an unsubscribe function. */

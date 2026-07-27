@@ -401,6 +401,67 @@ describe("events service", () => {
       expect(cb).toHaveBeenCalledTimes(2);
     });
 
+    it("drops buffered pre-subscribe output when the session exits (#2073)", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      // Output buffered before any subscriber attaches...
+      handlers["terminal-output"]({
+        payload: { session_id: "sess-gone", data: b64([1, 2, 3]) },
+      });
+      // ...then the session exits before anyone subscribed.
+      handlers["terminal-exit"]({
+        payload: { session_id: "sess-gone", exit_code: 0 },
+      });
+
+      // A late output subscriber must NOT receive the now-dropped buffer.
+      const outCb = vi.fn();
+      dispatcher.subscribeOutput("sess-gone", outCb);
+      expect(outCb).not.toHaveBeenCalled();
+
+      // The buffered exit is still delivered so the tab learns the session died.
+      const exitCb = vi.fn();
+      dispatcher.subscribeExit("sess-gone", exitCb);
+      expect(exitCb).toHaveBeenCalledWith(0);
+    });
+
+    it("caps buffered pre-subscribe output to a byte ceiling, dropping oldest chunks (#2073)", async () => {
+      const handlers: Record<string, (event: unknown) => void> = {};
+      mockedListen.mockImplementation((eventName, handler) => {
+        handlers[eventName as string] = handler as (event: unknown) => void;
+        return Promise.resolve(vi.fn());
+      });
+
+      await dispatcher.init();
+
+      const CHUNK = 100_000; // four of these (~400 KB) exceed the 256 KiB ceiling
+      const mk = (marker: number): string => b64(new Array(CHUNK).fill(marker));
+      for (const marker of [1, 2, 3, 4]) {
+        handlers["terminal-output"]({
+          payload: { session_id: "sess-big", data: mk(marker) },
+        });
+      }
+
+      const cb = vi.fn();
+      dispatcher.subscribeOutput("sess-big", cb);
+
+      const retainedBytes = cb.mock.calls.reduce(
+        (n, [chunk]) => n + (chunk as Uint8Array).length,
+        0
+      );
+      // The retained buffer stays under the 256 KiB ceiling.
+      expect(retainedBytes).toBeLessThanOrEqual(256 * 1024);
+      // The most recent chunk survived; the oldest was discarded.
+      const markers = cb.mock.calls.map(([chunk]) => (chunk as Uint8Array)[0]);
+      expect(markers).toContain(4);
+      expect(markers).not.toContain(1);
+    });
+
     it("buffers exit event for sessions with no subscriber", async () => {
       const handlers: Record<string, (event: unknown) => void> = {};
       mockedListen.mockImplementation((eventName, handler) => {
