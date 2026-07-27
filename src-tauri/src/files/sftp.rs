@@ -28,7 +28,7 @@ use crate::utils::ssh_auth::connect_and_authenticate;
 pub fn lock_session<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>, TerminalError> {
     mutex
         .lock()
-        .map_err(|_| TerminalError::SshError("SFTP session lock poisoned".to_string()))
+        .map_err(|_| TerminalError::SftpError("SFTP session lock poisoned".to_string()))
 }
 
 /// Drain every entry from a keyed session map, poison-safe, and drop the values.
@@ -219,7 +219,7 @@ impl SftpSession {
             tokio::runtime::Handle::current().block_on(async {
                 sftp::open_sftp_subsystem(&session)
                     .await
-                    .map_err(|e| TerminalError::SshError(e.to_string()))
+                    .map_err(|e| TerminalError::SftpError(e.to_string()))
             })
         })?;
 
@@ -257,7 +257,7 @@ impl SftpSession {
     pub async fn open_dedicated_sftp(&self) -> Result<RusshSftp, TerminalError> {
         sftp::open_sftp_subsystem(&self.session)
             .await
-            .map_err(|e| TerminalError::SshError(e.to_string()))
+            .map_err(|e| TerminalError::SftpError(e.to_string()))
     }
 
     /// Best-effort size (in bytes) of a remote file via SFTP `stat`.
@@ -279,7 +279,7 @@ impl SftpSession {
             tokio::runtime::Handle::current().block_on(async {
                 sftp::list_dir(&self.sftp, &path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("readdir failed: {e}")))
+                    .map_err(|e| TerminalError::SftpError(format!("readdir failed: {e}")))
             })
         })
     }
@@ -294,17 +294,17 @@ impl SftpSession {
                     .sftp
                     .open(&remote_path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("open remote file: {e}")))?;
+                    .map_err(|e| TerminalError::SftpError(format!("open remote file: {e}")))?;
 
                 let mut data = Vec::new();
                 remote
                     .read_to_end(&mut data)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("read failed: {e}")))?;
+                    .map_err(|e| TerminalError::SftpError(format!("read failed: {e}")))?;
 
                 tokio::fs::write(&local_path, &data)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("write local file: {e}")))?;
+                    .map_err(|e| TerminalError::SftpError(format!("write local file: {e}")))?;
 
                 Ok::<u64, TerminalError>(data.len() as u64)
             })
@@ -319,18 +319,17 @@ impl SftpSession {
             tokio::runtime::Handle::current().block_on(async {
                 let data = tokio::fs::read(&local_path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("open local file: {e}")))?;
+                    .map_err(|e| TerminalError::SftpError(format!("open local file: {e}")))?;
 
-                let mut remote = self
-                    .sftp
-                    .create(&remote_path)
-                    .await
-                    .map_err(|e| TerminalError::SshError(format!("create remote file: {e}")))?;
+                let mut remote =
+                    self.sftp.create(&remote_path).await.map_err(|e| {
+                        TerminalError::SftpError(format!("create remote file: {e}"))
+                    })?;
 
                 remote
                     .write_all(&data)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("write failed: {e}")))?;
+                    .map_err(|e| TerminalError::SftpError(format!("write failed: {e}")))?;
 
                 Ok::<u64, TerminalError>(data.len() as u64)
             })
@@ -345,7 +344,7 @@ impl SftpSession {
                 self.sftp
                     .create_dir(&path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("mkdir failed: {e}")))
+                    .map_err(|e| TerminalError::SftpError(format!("mkdir failed: {e}")))
             })
         })
     }
@@ -358,7 +357,7 @@ impl SftpSession {
                 self.sftp
                     .remove_file(&path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("unlink failed: {e}")))
+                    .map_err(|e| TerminalError::SftpError(format!("unlink failed: {e}")))
             })
         })
     }
@@ -371,7 +370,7 @@ impl SftpSession {
                 self.sftp
                     .remove_dir(&path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("rmdir failed: {e}")))
+                    .map_err(|e| TerminalError::SftpError(format!("rmdir failed: {e}")))
             })
         })
     }
@@ -385,13 +384,13 @@ impl SftpSession {
                     .sftp
                     .open(&remote_path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("open remote file: {e}")))?;
+                    .map_err(|e| TerminalError::SftpError(format!("open remote file: {e}")))?;
 
                 let mut content = String::new();
                 remote
                     .read_to_string(&mut content)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("read failed: {e}")))?;
+                    .map_err(|e| TerminalError::SftpError(format!("read failed: {e}")))?;
 
                 Ok::<String, TerminalError>(content)
             })
@@ -416,7 +415,7 @@ impl SftpSession {
                 self.sftp
                     .rename(&old_path, &new_path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("rename failed: {e}")))
+                    .map_err(|e| TerminalError::SftpError(format!("rename failed: {e}")))
             })
         })
     }
@@ -429,7 +428,7 @@ impl SftpSession {
             tokio::runtime::Handle::current().block_on(async {
                 sftp::stat(&self.sftp, &path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("stat failed: {e}")))
+                    .map_err(|e| TerminalError::SftpError(format!("stat failed: {e}")))
             })
         })
     }
@@ -487,7 +486,7 @@ impl SftpSession {
                 self.sftp
                     .canonicalize(&path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("realpath failed: {e}")))
+                    .map_err(|e| TerminalError::SftpError(format!("realpath failed: {e}")))
             })
         })
     }
@@ -502,13 +501,13 @@ impl SftpSession {
                     .sftp
                     .open(&remote_path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("open remote file: {e}")))?;
+                    .map_err(|e| TerminalError::SftpError(format!("open remote file: {e}")))?;
 
                 let mut data = Vec::new();
                 remote
                     .read_to_end(&mut data)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("read failed: {e}")))?;
+                    .map_err(|e| TerminalError::SftpError(format!("read failed: {e}")))?;
 
                 Ok::<Vec<u8>, TerminalError>(data)
             })
@@ -522,16 +521,15 @@ impl SftpSession {
         let remote_path = remote_path.to_string();
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                let mut remote = self
-                    .sftp
-                    .create(&remote_path)
-                    .await
-                    .map_err(|e| TerminalError::SshError(format!("create remote file: {e}")))?;
+                let mut remote =
+                    self.sftp.create(&remote_path).await.map_err(|e| {
+                        TerminalError::SftpError(format!("create remote file: {e}"))
+                    })?;
 
                 remote
                     .write_all(&data)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("write failed: {e}")))
+                    .map_err(|e| TerminalError::SftpError(format!("write failed: {e}")))
             })
         })
     }
@@ -1300,8 +1298,14 @@ mod tests {
         // A raw `.lock().unwrap()` would panic here; the helper must not.
         let result = lock_session(&mutex);
         assert!(
-            matches!(result, Err(TerminalError::SshError(_))),
-            "poisoned lock should return a recoverable SshError, got {result:?}"
+            matches!(result, Err(TerminalError::SftpError(_))),
+            "poisoned lock should return a recoverable SftpError, got {result:?}"
+        );
+        // The failure is an SFTP-session error, not a generic SSH error (#2094).
+        let rendered = result.unwrap_err().to_string();
+        assert!(
+            rendered.starts_with("SFTP error:"),
+            "SFTP session errors must carry the SFTP label, got {rendered:?}"
         );
     }
 
