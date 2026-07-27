@@ -184,6 +184,38 @@ pub struct VerifiedIdentity {
     pub signed_at: String,
 }
 
+/// A validly-signed archive's verified identity **plus** the signed content map,
+/// returned by [`verify_signed_archive`].
+///
+/// The [`files`](Self::files) map is proven — by the same Ed25519 check
+/// [`verify`] runs — to describe the exact bytes of every non-signature entry in
+/// the archive it was read from. A caller that then *extracts from that same
+/// archive* can re-check each entry it writes against this map, binding the bytes
+/// it lands on disk (and later loads) to what was signed — closing a
+/// verify-then-extract TOCTOU where extraction re-reads a package that may have
+/// changed since the trust gate verified it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedSignature {
+    /// The verified signing identity (fingerprint, public key, timestamp).
+    pub identity: VerifiedIdentity,
+    /// The signed per-entry `sha256:` digest map (every entry except
+    /// `signature.json`), proven to match the signature over these bytes.
+    pub files: BTreeMap<String, String>,
+}
+
+/// The outcome of verifying a signature *in place* against an already-opened
+/// archive — the borrowed-archive analogue of [`PackageVerification`], but
+/// carrying the signed digest map on success (see [`verify_signed_archive`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifiedArchive {
+    /// No `signature.json` entry — the archive is unsigned.
+    Unsigned,
+    /// A signature is present and fully valid; the signed content map is attached.
+    Signed(VerifiedSignature),
+    /// A signature is present but did not verify — treated as tampering.
+    Tampered(SignatureError),
+}
+
 /// Compute the `sha256:`-prefixed, lowercase-hex digest of `bytes`.
 #[must_use]
 pub fn sha256_digest(bytes: &[u8]) -> String {
@@ -344,28 +376,57 @@ pub fn verify_reader<R: Read + Seek>(
     reader: R,
 ) -> Result<PackageVerification, zip::result::ZipError> {
     let mut archive = ZipArchive::new(reader)?;
+    Ok(match verify_signed_archive(&mut archive)? {
+        VerifiedArchive::Unsigned => PackageVerification::Unsigned,
+        VerifiedArchive::Signed(v) => PackageVerification::Signed(v.identity),
+        VerifiedArchive::Tampered(e) => PackageVerification::Tampered(e),
+    })
+}
 
+/// Verify a package's embedded signature **in place**, against an already-opened
+/// archive, returning the signed content map on success.
+///
+/// This is the borrowed-archive core that [`verify_reader`] wraps. Exposing it
+/// lets an installer verify and then *extract from the very same open archive*,
+/// re-checking each extracted entry against the returned
+/// [`VerifiedSignature::files`] map — so the bytes it writes (and later loads)
+/// are provably the signed ones, not whatever a re-opened path happens to hold.
+///
+/// Returns [`VerifiedArchive::Unsigned`] when there is no `signature.json`,
+/// [`VerifiedArchive::Signed`] when one is present and fully valid, and
+/// [`VerifiedArchive::Tampered`] for any present-but-invalid signature. A read
+/// error on the archive surfaces as `Err` — a package that cannot be read as
+/// expected is not treated as trustworthy.
+pub fn verify_signed_archive<R: Read + Seek>(
+    archive: &mut ZipArchive<R>,
+) -> Result<VerifiedArchive, zip::result::ZipError> {
     // Read the signature entry, if any.
-    let raw_signature = match read_entry(&mut archive, SIGNATURE_FILE_NAME)? {
+    let raw_signature = match read_entry(archive, SIGNATURE_FILE_NAME)? {
         Some(bytes) => bytes,
-        None => return Ok(PackageVerification::Unsigned),
+        None => return Ok(VerifiedArchive::Unsigned),
     };
 
     let sig: PackageSignature = match serde_json::from_slice(&raw_signature) {
         Ok(sig) => sig,
         Err(e) => {
-            return Ok(PackageVerification::Tampered(
-                SignatureError::MalformedJson(e.to_string()),
-            ))
+            return Ok(VerifiedArchive::Tampered(SignatureError::MalformedJson(
+                e.to_string(),
+            )))
         }
     };
 
     // Compute digests of every entry except signature.json itself.
-    let actual_digests = digest_entries(&mut archive)?;
+    let actual_digests = digest_entries(archive)?;
 
     Ok(match verify(&sig, &actual_digests) {
-        Ok(identity) => PackageVerification::Signed(identity),
-        Err(e) => PackageVerification::Tampered(e),
+        // On success the exact-set check guarantees `actual_digests == sig.files`,
+        // so either map describes the archive's real content; hand back the signed
+        // one for the caller to bind extraction against.
+        Ok(identity) => VerifiedArchive::Signed(VerifiedSignature {
+            identity,
+            files: sig.files,
+        }),
+        Err(e) => VerifiedArchive::Tampered(e),
     })
 }
 
