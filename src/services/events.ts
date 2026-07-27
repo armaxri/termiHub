@@ -20,7 +20,36 @@ import type {
 
 interface TerminalOutputPayload {
   session_id: string;
-  data: number[];
+  /**
+   * Terminal output bytes as a base64 (standard alphabet, padded) string.
+   *
+   * Terminal output is the app's most important hot path. The backend encodes
+   * the raw `Vec<u8>` as base64 (see `TerminalOutputEvent` in
+   * `src-tauri/src/session/manager.rs`) instead of serde's default JSON
+   * number-array — that was a 3.3–4x byte bloat plus a per-byte copy on every
+   * flush. Decode with {@link base64ToBytes}, which is the exact inverse of the
+   * Rust encoder for all byte values including high bytes and empty input
+   * (#2072).
+   */
+  data: string;
+}
+
+/**
+ * Decode a base64 (standard alphabet, padded) string into a `Uint8Array`.
+ *
+ * Exact inverse of the backend's base64 encoding of terminal-output bytes
+ * (`serialize_bytes_base64` in `src-tauri/src/session/manager.rs`). Byte-for-byte
+ * faithful for all values 0x00–0xFF (high bytes and UTF-8 multi-byte sequences
+ * survive intact); an empty string decodes to a zero-length array (#2072).
+ */
+export function base64ToBytes(b64: string): Uint8Array {
+  const binary = atob(b64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 interface TerminalExitPayload {
@@ -44,7 +73,7 @@ export async function onTerminalOutput(
 ): Promise<UnlistenFn> {
   return await listen<TerminalOutputPayload>("terminal-output", (event) => {
     const { session_id, data } = event.payload;
-    callback(session_id, new Uint8Array(data));
+    callback(session_id, base64ToBytes(data));
   });
 }
 
@@ -182,8 +211,8 @@ export class TerminalOutputDispatcher {
     const unlistenOutput = await listen<TerminalOutputPayload>("terminal-output", (event) => {
       const { session_id, data } = event.payload;
       const cbs = this.outputCallbacks.get(session_id);
+      const chunk = base64ToBytes(data);
       if (cbs && cbs.size > 0) {
-        const chunk = new Uint8Array(data);
         for (const cb of cbs) cb(chunk);
       } else {
         // Buffer output for sessions whose subscriber hasn't registered yet
@@ -193,7 +222,7 @@ export class TerminalOutputDispatcher {
           buf = [];
           this.pendingOutput.set(session_id, buf);
         }
-        buf.push(new Uint8Array(data));
+        buf.push(chunk);
       }
     });
 

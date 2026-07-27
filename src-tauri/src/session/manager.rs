@@ -44,10 +44,35 @@ const MAX_COALESCE_BYTES: usize = 32 * 1024;
 const CLEAR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Output event emitted via Tauri events.
+///
+/// Terminal output is the app's single most important hot path — every byte of
+/// process output crosses the webview IPC boundary through this event. The
+/// `data` bytes are serialized as a **base64 string** rather than serde's
+/// default JSON number-array for `Vec<u8>` (which is a 3.3–4x byte bloat plus a
+/// per-byte array→`Uint8Array` copy on the frontend). base64 mirrors the remote
+/// protocol, is ~2.5x smaller on the wire, and decodes in one pass on the TS
+/// side (`src/services/events.ts`). The field stays `Vec<u8>` in Rust so the
+/// producer (the output reader loop) and tests are unchanged; only the wire form
+/// differs (#2072).
 #[derive(Debug, Clone, Serialize)]
 pub struct TerminalOutputEvent {
     pub session_id: String,
+    #[serde(serialize_with = "serialize_bytes_base64")]
     pub data: Vec<u8>,
+}
+
+/// Serialize a byte slice as a base64 (standard alphabet, padded) string.
+///
+/// Paired with the base64 decode in `src/services/events.ts`; the two are exact
+/// inverses, including high bytes (0x80–0xFF), UTF-8 multi-byte sequences, and
+/// empty input (which encodes to the empty string). See [`TerminalOutputEvent`].
+fn serialize_bytes_base64<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    use base64::Engine;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+    serializer.serialize_str(&encoded)
 }
 
 /// Exit event emitted when a terminal process exits.
@@ -1784,6 +1809,43 @@ mod tests {
         AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
     };
     use crate::terminal::backend::{OutputSender, RemoteAgentConfig};
+
+    /// The `data` field of a serialized [`TerminalOutputEvent`] must be a base64
+    /// string that decodes byte-for-byte back to the original bytes — the exact
+    /// inverse of the `base64ToBytes` decoder in `src/services/events.ts`. This
+    /// is the terminal's hot path, so a mismatch means corrupted/dropped output.
+    /// Covers high bytes (0x80–0xFF), UTF-8 multi-byte sequences, all 256 byte
+    /// values, and the empty chunk (#2072).
+    #[test]
+    fn terminal_output_event_serializes_data_as_base64() {
+        use base64::Engine;
+        let engine = base64::engine::general_purpose::STANDARD;
+
+        let cases: Vec<Vec<u8>> = vec![
+            Vec::new(),                              // empty chunk → ""
+            b"hello".to_vec(),                       // plain ASCII
+            vec![0x1b, b'[', b'3', b'1', b'm'],      // ANSI color escape
+            "héllo — 日本語 🎉".as_bytes().to_vec(), // UTF-8 multi-byte
+            vec![0x00, 0x7f, 0x80, 0xfe, 0xff],      // boundary + high bytes
+            (0u16..=255).map(|b| b as u8).collect(), // every byte value
+        ];
+
+        for bytes in cases {
+            let event = TerminalOutputEvent {
+                session_id: "s1".to_string(),
+                data: bytes.clone(),
+            };
+            let json: Value = serde_json::to_value(&event).unwrap();
+
+            // Wire form is a string (not a JSON number-array).
+            let encoded = json["data"].as_str().expect("data must serialize to a string");
+            assert_eq!(encoded, engine.encode(&bytes));
+
+            // Round-trip: decoding the wire string yields the original bytes.
+            let decoded = engine.decode(encoded).unwrap();
+            assert_eq!(decoded, bytes, "base64 round-trip must be byte-for-byte");
+        }
+    }
 
     /// A minimal mock connection without file browser capability. When `writes`
     /// is `Some`, every byte passed to `write` is recorded into it so tests can
