@@ -8,7 +8,7 @@
 }
 
 .rd-cert__title-icon {
-  color: var(--color-accent, var(--text-primary));
+  color: var(--accent-color);
 }
 
 .rd-cert__title-icon--warn {

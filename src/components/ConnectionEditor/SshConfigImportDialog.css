@@ -48,7 +48,7 @@
 .ssh-config-import__row:hover,
 .ssh-config-import__row:focus-visible {
   background: var(--bg-hover, rgba(127, 127, 127, 0.12));
-  border-color: var(--border-color, rgba(127, 127, 127, 0.25));
+  border-color: var(--border-primary);
 }
 
 .ssh-config-import__row-icon {
