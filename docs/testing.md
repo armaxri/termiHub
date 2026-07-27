@@ -296,6 +296,17 @@ the app-launching suites still run on a cadence:
 - **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR runs the bridge harness with `-m "not integration"`, so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
 - **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). A scheduled + `workflow_dispatch` job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
 
+> **Reading the coverage-gap report honestly (#2050).** Because the per-PR lane
+> runs `-m "not integration"`, an `integration`-marked test is **not** merge-gate
+> coverage — it only runs nightly. The test-inventory report
+> ([`scripts/build-test-inventory.py`](../scripts/build-test-inventory.py))
+> therefore classifies each test into three lanes (`automated` = per-PR,
+> `integration` = nightly, `manual` = operator) and leads with **"feature areas
+> the per-PR merge gate does not exercise"** — areas covered only by integration
+> or manual tests, where a regression can merge green. Do not read a `0` in that
+> section as "fully tested"; it means the per-PR gate touches every area, not
+> that every path is exercised.
+
 The lane runs the app natively on each OS; only the **Docker fixtures** are
 Linux-only:
 
