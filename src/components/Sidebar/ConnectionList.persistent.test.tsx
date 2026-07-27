@@ -1,12 +1,20 @@
 /**
- * Desktop-local persistent-session controls in the connection tree (#1881).
+ * Desktop-local persistent-session controls in the connection tree (#1881),
+ * updated for the tiered persistence badge (#2086).
  *
  * A saved connection whose type reports `capabilities.persistent === true`
- * surfaces the ∞ persistence badge, a run-state dot, and state-dependent
- * Start / Attach / Stop controls (inline + context menu) wired to the store's
- * `startPersistentSession` / `attachPersistentSession` / `stopPersistentSession`
- * actions, keyed by the plain connection id. A non-persistence-capable
- * connection shows none of this and keeps the plain Connect affordance.
+ * surfaces a desktop-local persistence marker, a run-state dot, and
+ * state-dependent Start / Attach / Stop controls (inline + context menu) wired
+ * to the store's `startPersistentSession` / `attachPersistentSession` /
+ * `stopPersistentSession` actions, keyed by the plain connection id.
+ *
+ * Per the #2086 maintainer decision, the desktop-local marker is NOT the ∞
+ * (that is reserved for agent-backed persistence that survives app close +
+ * machine restart). Desktop-local persistence lives only while the app is open,
+ * so it renders a distinct, lesser Hourglass marker
+ * (`local-persistent-badge-*`) whose tooltip does not overclaim. A
+ * non-persistence-capable connection shows none of this and keeps the plain
+ * Connect affordance.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -152,17 +160,34 @@ afterEach(() => {
 });
 
 describe("ConnectionList — desktop-local persistent controls", () => {
-  it("shows the ∞ badge and state dot only for a persistence-capable connection", () => {
+  it("shows the desktop-local (Hourglass) marker — NOT the ∞ — and state dot only for a persistence-capable connection", () => {
     render();
-    expect(q("persistent-badge-ssh-1")).not.toBeNull();
+    // #2086: a plain SSH (desktop-local persistent) connection gets the lesser
+    // Hourglass marker and MUST NOT carry the agent-only ∞.
+    const marker = q("local-persistent-badge-ssh-1");
+    expect(marker).not.toBeNull();
+    expect(marker!.textContent ?? "").not.toContain("∞");
+    // The ∞ badge (agent-backed testid) never renders on a desktop-local row.
+    expect(q("persistent-badge-ssh-1")).toBeNull();
     expect(q("persistent-state-dot-ssh-1")).not.toBeNull();
-    // Telnet is not persistence-capable.
+    // Telnet is not persistence-capable — neither marker nor dot.
+    expect(q("local-persistent-badge-tel-1")).toBeNull();
     expect(q("persistent-badge-tel-1")).toBeNull();
     expect(q("persistent-state-dot-tel-1")).toBeNull();
     // The non-persistent connection keeps the plain Connect affordance; the
     // persistent one does not.
     expect(q("connection-connect-tel-1")).not.toBeNull();
     expect(q("connection-connect-ssh-1")).toBeNull();
+  });
+
+  it("the desktop-local marker tooltip does not overclaim cross-restart persistence", () => {
+    render();
+    const title = q("local-persistent-badge-ssh-1")!.getAttribute("title") ?? "";
+    expect(title).toContain("Runs while the app is open");
+    // Must steer users to an agent for stronger persistence, and must not claim
+    // it survives a machine restart.
+    expect(title.toLowerCase()).toContain("agent");
+    expect(title.toLowerCase()).not.toContain("machine");
   });
 
   it("reflects the run state on the state dot", () => {
@@ -219,8 +244,8 @@ describe("ConnectionList — desktop-local persistent controls", () => {
     expect(q("persistent-start-ssh-1")).toBeNull();
     expect(q("persistent-attach-ssh-1")).toBeNull();
     expect(q("persistent-stop-ssh-1")).toBeNull();
-    // The badge/dot still render.
-    expect(q("persistent-badge-ssh-1")).not.toBeNull();
+    // The desktop-local marker/dot still render.
+    expect(q("local-persistent-badge-ssh-1")).not.toBeNull();
   });
 
   describe("attached-tab count badge (#1930)", () => {
