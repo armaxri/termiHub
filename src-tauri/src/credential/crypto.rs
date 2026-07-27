@@ -130,6 +130,22 @@ pub fn decrypt_with_password(password: &str, envelope: &EncryptedEnvelope) -> Re
         .decode(&envelope.data)
         .context("Invalid ciphertext encoding")?;
 
+    // Validate lengths before use: a wrong-length nonce would panic inside
+    // `Nonce::from_slice`, and a corrupted salt would silently derive a wrong
+    // key. Surface both as recoverable errors instead (#2049).
+    if salt.len() != SALT_LEN {
+        anyhow::bail!(
+            "Invalid salt length: expected {SALT_LEN}, got {}",
+            salt.len()
+        );
+    }
+    if nonce_bytes.len() != NONCE_LEN {
+        anyhow::bail!(
+            "Invalid nonce length: expected {NONCE_LEN}, got {}",
+            nonce_bytes.len()
+        );
+    }
+
     let key = derive_key(password, &salt)?;
 
     let cipher = Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
