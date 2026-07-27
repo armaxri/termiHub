@@ -467,19 +467,6 @@
   top: -3px;
 }
 
-/* Desktop-local persistence marker (#2086): a muted Hourglass, deliberately
-   distinct from the agent-backed ∞ so the two persistence tiers read as
-   different. "Bounded" (only while the app is open) vs. the unbounded ∞. */
-.connection-tree__local-persistent-badge {
-  display: inline-flex;
-  align-items: center;
-  align-self: center;
-  flex-shrink: 0;
-  margin-left: 3px;
-  color: var(--text-secondary);
-  opacity: 0.75;
-}
-
 .connection-tree__state-dot {
   display: inline-block;
   width: 7px;

@@ -105,18 +105,6 @@
   top: -3px;
 }
 
-/* Desktop-local persistence marker (#2086): a muted Hourglass on the tab,
-   distinct from the agent-backed ∞. Signals the session detaches (not
-   terminates) on close but only lives while the app is open. */
-.tab__local-persistent-badge {
-  display: inline-flex;
-  align-items: center;
-  flex-shrink: 0;
-  margin-left: 3px;
-  color: var(--text-secondary);
-  opacity: 0.75;
-}
-
 .tab__spawned-badge {
   flex-shrink: 0;
   margin-left: var(--spacing-xs);
