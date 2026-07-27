@@ -16,12 +16,17 @@ on:
     # 03:17 UTC daily (off the top of the hour to dodge scheduler congestion).
     - cron: "17 3 * * *"
   workflow_dispatch:
-  # Also run when the fixtures or the integration tests themselves change, so a
-  # PR that touches them gets feedback without waiting for the nightly run.
+  # Also run when the fixtures, the integration tests, or the backend *source*
+  # they exercise change — so a PR that edits the SSH/SFTP/telnet/serial/Docker
+  # backends gets integration feedback without waiting for the nightly run. The
+  # `require_docker!`-gated tests in core/tests self-skip on the per-PR gate
+  # (which runs with no containers up), so a backend change would otherwise reach
+  # `develop` with its integration path completely unexercised (#2050).
   pull_request:
     paths:
       - "tests/docker/**"
       - "core/tests/**"
+      - "core/src/backends/**"
       - ".github/workflows/integration-fixtures.yml"
 
 # A fixture run is self-contained; cancel an in-flight run when a newer commit
