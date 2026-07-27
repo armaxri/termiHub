@@ -11,20 +11,11 @@ use tokio::sync::Mutex;
 
 use crate::config::SshConfig;
 use crate::errors::FileError;
-use crate::files::utils::{chrono_from_epoch, format_permissions, writable_from_permissions};
 use crate::files::{FileBrowser, FileEntry};
 
 use super::handler::SshSession;
 use super::jump_host::{connect_target, GatewayHold};
-
-/// Derive the [`FileEntry::writable`] hint from an optional 9-char permission
-/// string, mirroring the desktop SFTP browser (#1324, #1482).
-///
-/// Returns `None` when no permission string is available; otherwise defers to
-/// [`writable_from_permissions`] (the cheap, conservative layer).
-fn writable_hint(permissions: Option<&str>) -> Option<bool> {
-    permissions.and_then(writable_from_permissions)
-}
+use super::sftp;
 
 /// State of a connected SFTP session.
 struct SftpState {
@@ -68,18 +59,9 @@ impl SftpFileBrowser {
             .await
             .map_err(|e| FileError::OperationFailed(format!("SFTP connection failed: {e}")))?;
 
-        let channel = session
-            .channel_open_session()
+        let sftp = sftp::open_sftp_subsystem(&session)
             .await
-            .map_err(|e| FileError::OperationFailed(format!("Channel open failed: {e}")))?;
-
-        channel.request_subsystem(true, "sftp").await.map_err(|e| {
-            FileError::OperationFailed(format!("SFTP subsystem request failed: {e}"))
-        })?;
-
-        let sftp = SftpSession::new(channel.into_stream())
-            .await
-            .map_err(|e| FileError::OperationFailed(format!("SFTP init failed: {e}")))?;
+            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
 
         *guard = Some(SftpState {
             _session: session,
@@ -100,47 +82,9 @@ impl FileBrowser for SftpFileBrowser {
             .as_ref()
             .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
 
-        let entries = state
-            .sftp
-            .read_dir(path)
+        sftp::list_dir(&state.sftp, path)
             .await
-            .map_err(|e| FileError::OperationFailed(format!("readdir failed: {e}")))?;
-
-        let mut result = Vec::new();
-        for entry in entries {
-            let name = entry.file_name();
-            if name == "." || name == ".." {
-                continue;
-            }
-            let meta = entry.metadata();
-            let full_path = format!("{}/{}", path.trim_end_matches('/'), name);
-            let permissions = meta.permissions.map(format_permissions);
-            let writable = writable_hint(permissions.as_deref());
-            // `read_dir` returns lstat-style attributes, so this flags the link
-            // itself. Resolve the target with a best-effort `readlink` only for
-            // link rows — a plain file never triggers the extra round-trip.
-            let is_symlink = meta.is_symlink();
-            let symlink_target = if is_symlink {
-                state.sftp.read_link(full_path.clone()).await.ok()
-            } else {
-                None
-            };
-            result.push(FileEntry {
-                name,
-                path: full_path,
-                is_directory: meta.is_dir(),
-                size: meta.size.unwrap_or(0),
-                modified: meta
-                    .mtime
-                    .map(|t| chrono_from_epoch(t as u64))
-                    .unwrap_or_default(),
-                permissions,
-                writable,
-                is_symlink,
-                symlink_target,
-            });
-        }
-        Ok(result)
+            .map_err(|e| FileError::OperationFailed(format!("readdir failed: {e}")))
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
@@ -254,56 +198,8 @@ impl FileBrowser for SftpFileBrowser {
             .as_ref()
             .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
 
-        let meta = state
-            .sftp
-            .metadata(path)
+        sftp::stat(&state.sftp, path)
             .await
-            .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))?;
-
-        let name = std::path::Path::new(path)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_default();
-
-        let permissions = meta.permissions.map(format_permissions);
-        let writable = writable_hint(permissions.as_deref());
-        Ok(FileEntry {
-            name,
-            path: path.to_string(),
-            is_directory: meta.is_dir(),
-            size: meta.size.unwrap_or(0),
-            modified: meta
-                .mtime
-                .map(|t| chrono_from_epoch(t as u64))
-                .unwrap_or_default(),
-            permissions,
-            writable,
-            // `metadata` follows the link, so this reports the target.
-            is_symlink: meta.is_symlink(),
-            symlink_target: None,
-        })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::writable_hint;
-
-    #[test]
-    fn writable_hint_none_without_permissions() {
-        assert_eq!(writable_hint(None), None);
-    }
-
-    #[test]
-    fn writable_hint_true_when_any_class_writable() {
-        // Owner-only write (typical `rw-r--r--`) still counts as writable.
-        assert_eq!(writable_hint(Some("rw-r--r--")), Some(true));
-        assert_eq!(writable_hint(Some("rwxr-xr-x")), Some(true));
-    }
-
-    #[test]
-    fn writable_hint_false_when_no_class_writable() {
-        assert_eq!(writable_hint(Some("r--r--r--")), Some(false));
-        assert_eq!(writable_hint(Some("r-xr-xr-x")), Some(false));
+            .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))
     }
 }

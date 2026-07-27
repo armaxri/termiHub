@@ -9,11 +9,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
-use termihub_core::backends::ssh::{ssh_exec_with_stdin, SshExecOutput};
+use termihub_core::backends::ssh::{sftp, ssh_exec_with_stdin, SshExecOutput};
 use termihub_core::errors::FileError;
-use termihub_core::files::utils::{
-    chrono_from_epoch, format_permissions, writable_from_permissions,
-};
 use termihub_core::files::{FileBackend, FileEntry};
 
 use crate::terminal::backend::SshConfig;
@@ -220,17 +217,9 @@ impl SftpSession {
 
         let sftp = tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                let channel = session
-                    .channel_open_session()
+                sftp::open_sftp_subsystem(&session)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("SFTP channel open: {e}")))?;
-                channel
-                    .request_subsystem(true, "sftp")
-                    .await
-                    .map_err(|e| TerminalError::SshError(format!("SFTP subsystem request: {e}")))?;
-                RusshSftp::new(channel.into_stream())
-                    .await
-                    .map_err(|e| TerminalError::SshError(format!("SFTP init: {e}")))
+                    .map_err(|e| TerminalError::SshError(e.to_string()))
             })
         })?;
 
@@ -266,18 +255,9 @@ impl SftpSession {
     /// without holding this session's `Mutex` — keeping directory listing /
     /// navigation live on the browsing channel during a transfer.
     pub async fn open_dedicated_sftp(&self) -> Result<RusshSftp, TerminalError> {
-        let channel = self
-            .session
-            .channel_open_session()
+        sftp::open_sftp_subsystem(&self.session)
             .await
-            .map_err(|e| TerminalError::SshError(format!("transfer channel open: {e}")))?;
-        channel
-            .request_subsystem(true, "sftp")
-            .await
-            .map_err(|e| TerminalError::SshError(format!("transfer subsystem request: {e}")))?;
-        RusshSftp::new(channel.into_stream())
-            .await
-            .map_err(|e| TerminalError::SshError(format!("transfer SFTP init: {e}")))
+            .map_err(|e| TerminalError::SshError(e.to_string()))
     }
 
     /// Best-effort size (in bytes) of a remote file via SFTP `stat`.
@@ -297,48 +277,9 @@ impl SftpSession {
         let path = path.to_string();
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                let entries = self
-                    .sftp
-                    .read_dir(&path)
+                sftp::list_dir(&self.sftp, &path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("readdir failed: {e}")))?;
-
-                let mut result = Vec::new();
-                for entry in entries {
-                    let name = entry.file_name();
-                    if name == "." || name == ".." {
-                        continue;
-                    }
-                    let meta = entry.metadata();
-                    let full_path = format!("{}/{}", path.trim_end_matches('/'), name);
-                    let permissions = meta.permissions.map(format_permissions);
-                    let writable = permissions.as_deref().and_then(writable_from_permissions);
-                    // `read_dir` returns lstat-style attributes, so this flags
-                    // the link itself. Resolve the target with a best-effort
-                    // `readlink` only for link rows — a plain file never
-                    // triggers the extra round-trip.
-                    let is_symlink = meta.is_symlink();
-                    let symlink_target = if is_symlink {
-                        self.sftp.read_link(full_path.clone()).await.ok()
-                    } else {
-                        None
-                    };
-                    result.push(FileEntry {
-                        name,
-                        path: full_path,
-                        is_directory: meta.is_dir(),
-                        size: meta.size.unwrap_or(0),
-                        modified: meta
-                            .mtime
-                            .map(|t| chrono_from_epoch(t as u64))
-                            .unwrap_or_default(),
-                        permissions,
-                        writable,
-                        is_symlink,
-                        symlink_target,
-                    });
-                }
-                Ok::<Vec<FileEntry>, TerminalError>(result)
+                    .map_err(|e| TerminalError::SshError(format!("readdir failed: {e}")))
             })
         })
     }
@@ -486,34 +427,9 @@ impl SftpSession {
         let path = path.to_string();
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                let meta = self
-                    .sftp
-                    .metadata(&path)
+                sftp::stat(&self.sftp, &path)
                     .await
-                    .map_err(|e| TerminalError::SshError(format!("stat failed: {e}")))?;
-
-                let name = std::path::Path::new(&path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_default();
-
-                let permissions = meta.permissions.map(format_permissions);
-                let writable = permissions.as_deref().and_then(writable_from_permissions);
-                Ok::<FileEntry, TerminalError>(FileEntry {
-                    name,
-                    path,
-                    is_directory: meta.is_dir(),
-                    size: meta.size.unwrap_or(0),
-                    modified: meta
-                        .mtime
-                        .map(|t| chrono_from_epoch(t as u64))
-                        .unwrap_or_default(),
-                    permissions,
-                    writable,
-                    // `metadata` follows the link, so this reports the target.
-                    is_symlink: meta.is_symlink(),
-                    symlink_target: None,
-                })
+                    .map_err(|e| TerminalError::SshError(format!("stat failed: {e}")))
             })
         })
     }
