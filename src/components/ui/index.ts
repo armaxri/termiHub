@@ -47,3 +47,6 @@ export type { ProgressProps } from "./Progress";
 
 export { ToastProvider, toast } from "./Toast";
 export type { ToastApi, ToastOptions, ToastPromiseMessages } from "./Toast";
+
+export { ErrorBoundary } from "./ErrorBoundary";
+export type { ErrorBoundaryProps } from "./ErrorBoundary";
