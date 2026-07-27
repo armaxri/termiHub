@@ -3,6 +3,7 @@ import { CredentialStoreStatusInfo } from "@/types/credential";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { DEFAULT_AGENT_SETTINGS } from "@/types/connection";
 import type { WorkspaceDefinition } from "@/types/workspace";
+import { onFrontendLog } from "@/utils/frontendLog";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -94,17 +95,20 @@ describe("appStore credential store state", () => {
   });
 
   it("loadCredentialStoreStatus handles errors gracefully", async () => {
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // #2068: the failure must reach the LogViewer via frontendLog, not vanish
+    // into an invisible console.error.
+    const logs: string[] = [];
+    const unsubscribe = onFrontendLog((entry) => {
+      if (entry.target === "frontend::app_store") logs.push(entry.message);
+    });
     mockedInvoke.mockRejectedValueOnce(new Error("Backend error"));
 
     await useAppStore.getState().loadCredentialStoreStatus();
 
     expect(useAppStore.getState().credentialStoreStatus).toBeNull();
-    expect(consoleSpy).toHaveBeenCalledWith(
-      "Failed to load credential store status:",
-      expect.any(Error)
-    );
-    consoleSpy.mockRestore();
+    expect(logs.some((m) => m.includes("Failed to load credential store status"))).toBe(true);
+    expect(logs.some((m) => m.includes("Backend error"))).toBe(true);
+    unsubscribe();
   });
 
   // Unlock dialog state
