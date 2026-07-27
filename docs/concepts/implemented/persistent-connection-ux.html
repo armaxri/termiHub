@@ -46,9 +46,24 @@ in the background, or attached to one or more tabs — and act accordingly.</p>
 persistent-capable:</p>
 <ol>
 <li>
-<p><strong>Persistence badge</strong> — a small pill or icon (e.g., <code>∞</code> infinity symbol or the label <code>PRS</code>)
-   shown to the left of the connection type chip. It is always visible and tells the user "this
-   connection can run in the background."</p>
+<p><strong>Persistence badge (tiered, #2086)</strong> — the badge encodes <em>how strong</em> the persistence
+   guarantee is, and the two tiers must be visually distinct so they are never confused:</p>
+<ul>
+<li><strong>∞ (infinity) — agent-backed only.</strong> Reserved for sessions that live on a remote
+  <strong>agent</strong>: they survive closing termiHub <em>and</em> powering off / restarting this
+  machine (true cross-session, cross-power persistence via the agent daemon). Its tooltip states
+  exactly that: "Persistent session — lives on the agent and survives closing termiHub and
+  restarting this machine." Rendered on the agent connection row (<code>AgentNode.tsx</code>).</li>
+<li><strong>Hourglass (⧗) — desktop-local.</strong> A saved SSH/Docker/WSL/Serial connection
+  (<code>capabilities.persistent === true</code>) whose process runs inside the desktop app. It
+  survives tab closes <em>while the app is open</em> but is lost when termiHub exits — so it must
+  <strong>not</strong> show the ∞. It gets a distinct, muted Hourglass marker whose tooltip does not
+  overclaim: "Runs while the app is open — closing termiHub ends the session. Use a remote agent
+  for persistence across app restarts." Rendered on the connection row
+  (<code>ConnectionItem</code> in <code>ConnectionList.tsx</code>).</li>
+</ul>
+<p>The marker sits to the left of the connection type chip and is always visible; it tells the user
+   both "this connection can run in the background" and <em>which persistence tier</em> it has.</p>
 </li>
 <li>
 <p><strong>State dot</strong> — a small circle to the right of the connection name. Colour and tooltip reflect
@@ -99,10 +114,15 @@ persistent-capable:</p>
 </table>
 </div>
 <p>Non-persistent connections show neither element.</p>
-<p><strong>Annotated wireframe (stopped vs. attached state):</strong></p>
-<pre><code> [∞] 🖥  My SSH Server      ssh  ● (grey)
- [∞] 🖥  Dev Docker         docker  ● (bright green, badge &quot;2&quot;)
+<p><strong>Annotated wireframe (desktop-local rows use the Hourglass marker; the ∞ appears only on an
+agent-backed row):</strong></p>
+<pre><code>Connections
+ [⧗] 🖥  My SSH Server      ssh     ● (grey — not running)
+ [⧗] 🖥  Dev Docker         docker  ● (bright green, badge &quot;2&quot; — attached)
      🖥  Local Shell        local
+Remote Agents
+  ▸ prod-agent ●
+      [∞] 🖥  Build shell    ● (green — running on the agent)
 </code></pre>
 <h3 id="attached-tab-count-badge">Attached-Tab Count Badge</h3>
 <p>When <code>attached</code> and more than one tab is connected to the same session, a small numeric badge
@@ -154,8 +174,15 @@ node's inline buttons):</p>
 <li><strong>Transitioning (Starting / Stopping)</strong>: a spinner only, no buttons</li>
 </ul>
 <h3 id="tab-decoration">Tab Decoration</h3>
-<p>Tabs that are attached to a persistent session display a small <code>∞</code> superscript on the tab title
-to signal that closing the tab will <strong>detach</strong>, not terminate, the background process.</p>
+<p>Tabs attached to a persistent session carry the same tiered marker as the sidebar (#2086), to
+signal that closing the tab will <strong>detach</strong>, not terminate, the background process — and
+which persistence tier it belongs to:</p>
+<ul>
+<li><strong>Agent-backed tab</strong> (opened as a <code>remote-session</code>) → the <code>∞</code> badge, same
+  strong tooltip as the sidebar.</li>
+<li><strong>Desktop-local persistent tab</strong> (an ssh/docker/wsl/serial tab whose process runs in the
+  app) → the muted Hourglass marker with the app-open-only tooltip.</li>
+</ul>
 <p>When the user closes such a tab via the <code>×</code> button, a one-time tooltip confirmation appears:</p>
 <blockquote>
 <p>"This session will keep running in the background. Use Stop in the sidebar to terminate it."</p>
@@ -282,9 +309,13 @@ desktop does not need to know a restart occurred.</p>
 process, not via a remote agent) run inside the Tauri backend process. They persist across
 <strong>tab closes within the same app session</strong> (the new behaviour added by this concept) but are
 <strong>lost when the desktop app exits</strong>. There is no daemon subprocess layer on the desktop side.</p>
-<p>The sidebar must make this distinction clear: desktop-local persistent sessions show the <code>∞</code>
-badge but the tooltip clarifies "Runs while the app is open. Use an agent for across-session
-persistence."</p>
+<p>The sidebar must make this distinction clear, and a shared tooltip is not enough — the maintainer
+decision (#2086) is that the <code>∞</code> is <strong>reserved for agent-backed persistence</strong> and must
+<strong>not</strong> appear on a desktop-local row, because it overclaims a guarantee (surviving app close +
+machine restart) that the app-local session does not have. Desktop-local persistent sessions
+therefore show a <strong>distinct, lesser Hourglass marker</strong> whose tooltip does not overclaim: "Runs
+while the app is open — closing termiHub ends the session. Use a remote agent for persistence across
+app restarts."</p>
 <hr>
 <h2 id="states-sequences">States &amp; Sequences</h2>
 <h3 id="state-machine">State Machine</h3>
@@ -552,8 +583,10 @@ or terminated.</p>
 On app exit, the Tauri backend should call a new <code>shutdown_persistent_sessions()</code> that
 detaches all sessions cleanly (the processes will still be killed when the app process exits,
 but this allows graceful cleanup and correct state dot display before the window closes).</p>
-<p>Both scopes should use the same CSS classes, badge, and tooltip conventions so the UX is
-uniform regardless of whether a connection runs locally or through an agent.</p>
+<p>Both scopes share the same run-state dot and Start/Attach/Stop lifecycle conventions, but the
+<strong>persistence badge deliberately differs by tier</strong> (#2086): agent-backed rows keep the <code>∞</code>,
+desktop-local rows use the lesser Hourglass marker. The badge is the one place the UX must
+<em>not</em> be uniform, because the two tiers make materially different persistence guarantees.</p>
 <hr>
 <h2 id="implementation-status">Implementation Status</h2>
 <p><strong>Status: Implemented.</strong> Implementation issue
@@ -598,6 +631,14 @@ store, IPC commands, event flow, and both sidebar scopes now exist. One small mo
 <li><strong>Status-bar background-session count</strong> — the <code>PersistentSessionsIndicator</code> in
   <code>StatusBar.tsx</code> shows the count of background persistent sessions. Landed via
   <a href="https://github.com/armaxri/termiHub/issues/1882">#1882</a> (closed).</li>
+<li><strong>Tiered persistence badge</strong> — the <code>∞</code> is now reserved for <strong>agent-backed</strong>
+  persistence (survives app close + machine restart) and carries a tooltip stating exactly that;
+  <strong>desktop-local</strong> persistent connections use a distinct, muted <strong>Hourglass</strong> marker
+  (<code>.connection-tree__local-persistent-badge</code> / <code>.tab__local-persistent-badge</code>) with a
+  tooltip that does not overclaim. Applies to all three render sites — the sidebar connection row
+  (<code>ConnectionList.tsx</code>), the agent connection row (<code>AgentNode.tsx</code>), and the tab
+  decoration (<code>Tab.tsx</code>). Landed via
+  <a href="https://github.com/armaxri/termiHub/issues/2086">#2086</a>.</li>
 </ul>
 <h3 id="what-is-missing">Residual</h3>
 <ul>
@@ -612,7 +653,7 @@ store, IPC commands, event flow, and both sidebar scopes now exist. One small mo
 <blockquote>
 <p>Maintained by <code>/sync-concept persistent-connection-ux</code>. The concept is the source of truth; when a real constraint or decision made the original design wrong, the concept is updated instead of the code.</p>
 </blockquote>
-<p><strong>Last synced:</strong> 2026-07-25 (status reconciliation) · <strong>Status:</strong> implemented. The full lifecycle shipped (#672), and both surfacing gaps landed (#1881 desktop-local sidebar, #1882 status-bar count). One mockup detail (attached-tab count badge + one-time detach tooltip) remains, tracked as #1930. Concept moved <code>partial/</code> → <code>implemented/</code>.</p>
+<p><strong>Last synced:</strong> 2026-07-27 (#2086 tiered badge) · <strong>Status:</strong> implemented. The full lifecycle shipped (#672), and both surfacing gaps landed (#1881 desktop-local sidebar, #1882 status-bar count). Per the maintainer decision on <a href="https://github.com/armaxri/termiHub/issues/2086">#2086</a>, the <code>∞</code> badge is now reserved for agent-backed persistence (survives app close + machine restart) and desktop-local persistent connections use a distinct, lesser Hourglass marker with a non-overclaiming tooltip. One mockup detail (attached-tab count badge + one-time detach tooltip) remains, tracked as #1930.</p>
 <h3 id="sync-open">Open divergences</h3>
 <div class="table-wrap">
 <table>
@@ -622,6 +663,7 @@ store, IPC commands, event flow, and both sidebar scopes now exist. One small mo
 <tr><td>2</td><td>Status-bar count of background sessions</td><td><strong>Resolved</strong> — <code>PersistentSessionsIndicator</code> in <code>StatusBar.tsx</code></td><td>Resolved</td><td>Landed via <a href="https://github.com/armaxri/termiHub/issues/1882">#1882</a> — closed</td></tr>
 <tr><td>3</td><td>Attached-tab numeric count badge on the state dot; one-time detach confirmation tooltip</td><td>Not built</td><td>Missing</td><td>Tracked <a href="https://github.com/armaxri/termiHub/issues/1930">#1930</a></td></tr>
 <tr><td>4</td><td>Concept proposes <code>connection.start()/attach()/stop()</code> IPC commands</td><td>Shipped as <code>start_/stop_/list_persistent_session</code> plus <code>attach_/detach_/adopt_persistent_*</code> and <code>get_agent_session_buffer</code> — a superset; sessions keyed <code>${agentId}:${definitionId}</code></td><td>Divergence (naming)</td><td>Concept command list reconciled to the shipped names</td></tr>
+<tr><td>5</td><td>Original concept: desktop-local persistent sessions show the same <code>∞</code> badge as agent-backed, distinguished only by tooltip</td><td><strong>Resolved</strong> — <code>∞</code> reserved for agent-backed (<code>AgentNode.tsx</code>/<code>Tab.tsx</code>); desktop-local uses a distinct Hourglass marker (<code>ConnectionList.tsx</code>/<code>Tab.tsx</code>)</td><td>Resolved (concept updated)</td><td>Maintainer decision on <a href="https://github.com/armaxri/termiHub/issues/2086">#2086</a> — a shared badge overclaimed the desktop-local guarantee; concept + code both updated to the tiered badge</td></tr>
 </tbody>
 </table>
 </div>

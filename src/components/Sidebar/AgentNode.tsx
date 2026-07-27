@@ -259,7 +259,20 @@ function AgentConnectionItem({
             />
           )}
           <span className="connection-tree__label">{definition.name}</span>
-          {definition.persistent && <span className="connection-tree__persistent-badge">∞</span>}
+          {/* Agent-backed persistence (#2086): the ∞ is reserved for sessions
+              that live on the remote agent and survive closing termiHub AND
+              powering off / restarting this machine. The tooltip states exactly
+              that so the strong claim is never confused with the desktop-local
+              (app-open-only) tier. */}
+          {definition.persistent && (
+            <span
+              className="connection-tree__persistent-badge"
+              title="Persistent session — lives on the agent and survives closing termiHub and restarting this machine."
+              data-testid={`persistent-badge-${definition.id}`}
+            >
+              ∞
+            </span>
+          )}
           {definition.persistent ? (
             <span className="connection-tree__persistent-actions">
               {!runState || runState === "stopped" || runState === "error" ? (
