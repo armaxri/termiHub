@@ -141,6 +141,23 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     keywords: ["save", "file", "tab", "editor", "monaco", "terminal", "open", "prompt"],
   },
   {
+    id: "screenReaderMode",
+    label: "Screen Reader Mode",
+    description: "Expose terminal output to assistive technology (screen readers)",
+    category: "terminal",
+    keywords: [
+      "screen reader",
+      "accessibility",
+      "a11y",
+      "assistive",
+      "aria",
+      "voiceover",
+      "nvda",
+      "jaws",
+      "narrator",
+    ],
+  },
+  {
     id: "syntaxHighlighting",
     label: "Syntax Highlighting",
     description: "Colorize errors, URLs, paths, IPs, and other patterns in plain terminal output",

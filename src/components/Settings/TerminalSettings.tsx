@@ -144,6 +144,18 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             />
           </SettingsField>
         )}
+        {show("screenReaderMode") && (
+          <SettingsField
+            label="Screen Reader Mode"
+            hint="Expose terminal output to assistive technology (screen readers such as VoiceOver, NVDA, JAWS). Adds some rendering overhead — enable only if you use a screen reader."
+          >
+            <Toggle
+              checked={settings.screenReaderMode ?? false}
+              onCheckedChange={(checked) => onChange({ ...settings, screenReaderMode: checked })}
+              data-testid="settings-screen-reader-mode"
+            />
+          </SettingsField>
+        )}
       </div>
       <SyntaxHighlightingSettings
         settings={settings}

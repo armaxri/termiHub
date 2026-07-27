@@ -1006,6 +1006,9 @@ export function Terminal({
       scrollback: tabOpts?.scrollbackBuffer ?? appSettings.scrollbackBuffer ?? DEFAULT_SCROLLBACK,
       cursorBlink: tabOpts?.cursorBlink ?? appSettings.cursorBlink ?? DEFAULT_CURSOR_BLINK,
       cursorStyle: tabOpts?.cursorStyle ?? appSettings.cursorStyle ?? DEFAULT_CURSOR_STYLE,
+      // Opt-in screen-reader mode (#2071): mirrors output into a live region for
+      // assistive technology. Off by default (adds rendering overhead).
+      screenReaderMode: appSettings.screenReaderMode ?? false,
       allowProposedApi: true,
     });
 
@@ -1400,6 +1403,7 @@ export function Terminal({
   const cursorBlink = useAppStore((s) => s.settings.cursorBlink);
   const cursorStyle = useAppStore((s) => s.settings.cursorStyle);
   const scrollbackBuffer = useAppStore((s) => s.settings.scrollbackBuffer);
+  const screenReaderMode = useAppStore((s) => s.settings.screenReaderMode);
   const tabTermOpts = useAppStore((s) => s.tabTerminalOptions[tabId]);
 
   useEffect(() => {
@@ -1414,6 +1418,7 @@ export function Terminal({
     xterm.options.cursorStyle = tabTermOpts?.cursorStyle ?? cursorStyle ?? DEFAULT_CURSOR_STYLE;
     xterm.options.scrollback =
       tabTermOpts?.scrollbackBuffer ?? scrollbackBuffer ?? DEFAULT_SCROLLBACK;
+    xterm.options.screenReaderMode = screenReaderMode ?? false;
 
     // Re-fit after font changes
     if (fitAddon) {
@@ -1425,7 +1430,17 @@ export function Terminal({
         // Ignore fit errors
       }
     }
-  }, [theme, fontFamily, fontSize, cursorBlink, cursorStyle, scrollbackBuffer, tabTermOpts, tabId]);
+  }, [
+    theme,
+    fontFamily,
+    fontSize,
+    cursorBlink,
+    cursorStyle,
+    scrollbackBuffer,
+    screenReaderMode,
+    tabTermOpts,
+    tabId,
+  ]);
 
   // Re-apply highlighting when the global config, the per-connection override, or
   // the per-session toggle changes on a live terminal. `applyHighlighting`

@@ -40,6 +40,13 @@
   color: var(--text-primary);
 }
 
+/* Keyboard focus ring for the roving tab stop (#2071). */
+.tab:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+  z-index: 1;
+}
+
 .tab--active {
   background-color: var(--tab-active-bg);
   color: var(--text-primary);

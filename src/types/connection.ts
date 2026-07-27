@@ -496,6 +496,14 @@ export interface AppSettings {
   scrollbackBuffer?: number;
   cursorStyle?: "block" | "underline" | "bar";
   cursorBlink?: boolean;
+  /**
+   * Enable xterm's screen-reader mode (#2071). When on, xterm mirrors terminal
+   * output into an off-screen live region so assistive technology (VoiceOver,
+   * NVDA, JAWS, Narrator) can read it. Off by default because it adds rendering
+   * overhead — it is an opt-in accessibility aid. Applied at terminal
+   * construction and updated live on open terminals.
+   */
+  screenReaderMode?: boolean;
   powerMonitoringEnabled: boolean;
   fileBrowserEnabled: boolean;
   /**

@@ -159,10 +159,35 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   // they live in different split panels.
   const allTabs = useMemo(() => getAllLeaves(rootPanel).flatMap((leaf) => leaf.tabs), [rootPanel]);
 
+  // Roving-focus keyboard navigation for the tab strip (#2071). Only the active
+  // tab is a Tab stop (`tabIndex=0`); Arrow/Home/End move focus between the
+  // `role="tab"` elements, matching the WAI-ARIA tabs pattern. Activation stays
+  // on click / the app's existing shortcuts — dnd-kit owns Space/Enter for drag.
+  const handleTabsKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    const tabEls = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'));
+    if (tabEls.length === 0) return;
+    const current = tabEls.indexOf(document.activeElement as HTMLElement);
+    if (current === -1) return;
+    e.preventDefault();
+    let next = current;
+    if (e.key === "ArrowLeft") next = (current - 1 + tabEls.length) % tabEls.length;
+    else if (e.key === "ArrowRight") next = (current + 1) % tabEls.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = tabEls.length - 1;
+    tabEls[next].focus();
+  };
+
   return (
     <div className={`tab-bar${isFocused ? " tab-bar--focused" : ""}`}>
       <SortableContext items={tabs.map((t) => t.id)} strategy={horizontalListSortingStrategy}>
-        <div className="tab-bar__tabs">
+        <div
+          className="tab-bar__tabs"
+          role="tablist"
+          aria-label="Open sessions"
+          aria-orientation="horizontal"
+          onKeyDown={handleTabsKeyDown}
+        >
           {tabs.map((tab) => (
             <Tab
               key={tab.id}

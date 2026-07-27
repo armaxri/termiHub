@@ -236,6 +236,50 @@ describe("DynamicField", () => {
       const toggle = query("field-flag") as HTMLButtonElement;
       expect(toggle.getAttribute("aria-checked")).toBe("false");
     });
+
+    describe("help dialog (#2071 — shared Modal)", () => {
+      const helpField: SettingsField = {
+        key: "shellIntegration",
+        label: "Shell Integration",
+        fieldType: { type: "boolean" },
+        required: false,
+        helpText: "First paragraph.\n\nSecond paragraph.",
+      };
+
+      it("shows no help button when the field has no helpText", () => {
+        renderField({ ...helpField, helpText: undefined }, false, vi.fn());
+        expect(query("field-shellIntegration-help")).toBeNull();
+      });
+
+      it("opens an accessible modal dialog with the field label as its name", () => {
+        renderField(helpField, false, vi.fn());
+        act(() => {
+          (query("field-shellIntegration-help") as HTMLElement).click();
+        });
+        // Radix Dialog portals to document.body, so query the whole document.
+        const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+        expect(dialog).toBeTruthy();
+        // The dialog is labelled by its title (Radix wires aria-labelledby).
+        expect(dialog.textContent).toContain("Shell Integration");
+        expect(dialog.textContent).toContain("First paragraph.");
+        expect(dialog.textContent).toContain("Second paragraph.");
+        // The shared Modal provides a real close affordance (focus trap/ESC come
+        // from Radix and are covered by the Modal primitive's own tests).
+        expect(document.querySelector('[data-testid="modal-close"]')).toBeTruthy();
+      });
+
+      it("closes the modal when the close button is clicked", () => {
+        renderField(helpField, false, vi.fn());
+        act(() => {
+          (query("field-shellIntegration-help") as HTMLElement).click();
+        });
+        expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+        act(() => {
+          (document.querySelector('[data-testid="modal-close"]') as HTMLElement).click();
+        });
+        expect(document.querySelector('[role="dialog"]')).toBeNull();
+      });
+    });
   });
 
   describe("select field", () => {
