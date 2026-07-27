@@ -46,14 +46,27 @@ pub async fn connect_local_agent_boxed() -> std::io::Result<Box<dyn LocalAgentSt
 /// Connect a raw byte stream to the local SSH agent (Unix `$SSH_AUTH_SOCK`).
 #[cfg(unix)]
 async fn connect_local_agent() -> std::io::Result<tokio::net::UnixStream> {
-    let sock = std::env::var_os("SSH_AUTH_SOCK")
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "SSH_AUTH_SOCK is not set (no running ssh-agent)",
-            )
-        })?;
+    connect_local_agent_at(std::env::var_os("SSH_AUTH_SOCK")).await
+}
+
+/// Connect to the local SSH agent at an explicit socket path (Unix).
+///
+/// The path-injecting core of [`connect_local_agent`], which passes the live
+/// `$SSH_AUTH_SOCK`. An empty or absent path is treated as "no agent" and yields
+/// a `NotFound` error, matching the graceful no-op the connector relies on
+/// (#1699). Keeping the env read out of this function lets tests exercise the
+/// unset / dangling-path cases by value, without mutating the process-global
+/// `SSH_AUTH_SOCK` and racing other parallel tests (#2122).
+#[cfg(unix)]
+async fn connect_local_agent_at(
+    sock: Option<std::ffi::OsString>,
+) -> std::io::Result<tokio::net::UnixStream> {
+    let sock = sock.filter(|s| !s.is_empty()).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "SSH_AUTH_SOCK is not set (no running ssh-agent)",
+        )
+    })?;
     tokio::net::UnixStream::connect(sock).await
 }
 
@@ -166,39 +179,42 @@ pub(crate) fn spawn_forwarded_agent_bridge(channel: Channel<Msg>) {
 mod tests {
     use super::*;
 
-    /// With `SSH_AUTH_SOCK` unset, no agent is reported available — the connector
-    /// relies on this to skip the forwarding request and log a no-op (#1699).
+    /// With no socket path (`SSH_AUTH_SOCK` unset), no agent is reachable — the
+    /// connector relies on this to skip the forwarding request and log a no-op
+    /// (#1699). Exercised through the injectable seam so the test never mutates
+    /// the process-global `SSH_AUTH_SOCK` and cannot race sibling tests (#2122).
     #[cfg(unix)]
     #[tokio::test]
     async fn local_agent_unavailable_when_sock_unset() {
-        // SAFETY: single-threaded test mutating a process env var it restores.
-        let orig = std::env::var_os("SSH_AUTH_SOCK");
-        unsafe { std::env::remove_var("SSH_AUTH_SOCK") };
-        let available = local_agent_available().await;
-        if let Some(val) = orig {
-            unsafe { std::env::set_var("SSH_AUTH_SOCK", val) };
-        }
         assert!(
-            !available,
+            connect_local_agent_at(None).await.is_err(),
             "no agent should be reachable without SSH_AUTH_SOCK"
         );
     }
 
+    /// An empty socket path is treated the same as unset — a stray empty
+    /// `SSH_AUTH_SOCK` must not be taken for a live agent.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_agent_unavailable_when_sock_empty() {
+        assert!(
+            connect_local_agent_at(Some(std::ffi::OsString::new()))
+                .await
+                .is_err(),
+            "an empty SSH_AUTH_SOCK is not a live agent"
+        );
+    }
+
     /// A pointer to a non-existent socket path is likewise unavailable rather than
-    /// an error that could abort a connect.
+    /// an error that could abort a connect. Passed by value through the seam, so
+    /// no process env is touched (#2122).
     #[cfg(unix)]
     #[tokio::test]
     async fn local_agent_unavailable_for_dangling_sock_path() {
-        // SAFETY: single-threaded test mutating a process env var it restores.
-        let orig = std::env::var_os("SSH_AUTH_SOCK");
-        unsafe { std::env::set_var("SSH_AUTH_SOCK", "/nonexistent/thub-agent-forward-test.sock") };
-        let available = local_agent_available().await;
-        match orig {
-            Some(val) => unsafe { std::env::set_var("SSH_AUTH_SOCK", val) },
-            None => unsafe { std::env::remove_var("SSH_AUTH_SOCK") },
-        }
         assert!(
-            !available,
+            connect_local_agent_at(Some("/nonexistent/thub-agent-forward-test.sock".into()))
+                .await
+                .is_err(),
             "a dangling SSH_AUTH_SOCK path is not a live agent"
         );
     }
