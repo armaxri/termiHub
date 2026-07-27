@@ -112,3 +112,74 @@ describe("TerminalConnectionOverlay — platform-aware serial permission hint (#
     ).toBeNull();
   });
 });
+
+/**
+ * #2088: the SSH-agent-not-running hint used to show a Windows-only PowerShell
+ * `Set-Service ssh-agent` command on every OS, which is non-actionable on
+ * macOS/Linux (no such service exists there). The remedy must follow the host
+ * OS, mirroring ConnectionEditor's "Setup SSH Agent" button.
+ */
+describe("TerminalConnectionOverlay — platform-aware SSH-agent hint (#2088)", () => {
+  const WIN_COMMAND = "Set-Service ssh-agent";
+  const UNIX_COMMAND = 'eval "$(ssh-agent -s)" && ssh-add';
+
+  function renderAgentAuthFailure() {
+    useAppStore.setState({
+      terminalConnecting: {},
+      terminalSpawnErrors: { [TAB_ID]: "Agent auth failed" },
+      terminalAutoRetryCount: {},
+      terminalWaitingForAgent: {},
+      terminalRetryCounters: {},
+      terminalReattaching: {},
+    });
+    act(() => {
+      root.render(
+        <TerminalConnectionOverlay
+          tabId={TAB_ID}
+          panelId={PANEL_ID}
+          tabTitle="my-server"
+          isVisible={true}
+          sessionType="ssh"
+        />
+      );
+    });
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    platformMock.value = "linux";
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("shows the PowerShell service command on Windows", () => {
+    platformMock.value = "windows";
+    renderAgentAuthFailure();
+    const text = container.textContent ?? "";
+    expect(text).toContain("SSH Agent not running");
+    expect(text).toContain(WIN_COMMAND);
+    expect(text).not.toContain(UNIX_COMMAND);
+  });
+
+  it("shows the ssh-agent/ssh-add command on macOS, not the Windows one", () => {
+    platformMock.value = "macos";
+    renderAgentAuthFailure();
+    const text = container.textContent ?? "";
+    expect(text).toContain("SSH Agent not running");
+    expect(text).toContain(UNIX_COMMAND);
+    expect(text).not.toContain(WIN_COMMAND);
+  });
+
+  it("shows the ssh-agent/ssh-add command on Linux, not the Windows one", () => {
+    platformMock.value = "linux";
+    renderAgentAuthFailure();
+    const text = container.textContent ?? "";
+    expect(text).toContain(UNIX_COMMAND);
+    expect(text).not.toContain(WIN_COMMAND);
+  });
+});
