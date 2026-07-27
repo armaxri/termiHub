@@ -7,6 +7,10 @@ on:
       - 'agent/**'
       - 'core/**'
       - 'Cargo.toml'
+      # Re-run the cross-compile legs when the build workflow itself changes, so
+      # edits to the musl build (e.g. the cross-image hardening in #2056) are
+      # exercised on their own PR instead of shipping unvalidated.
+      - '.github/workflows/agent.yml'
 
 # Cancel an in-flight agent build when a newer commit lands on the same PR.
 concurrency:
