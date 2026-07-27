@@ -7,6 +7,7 @@ import { useAppStore } from "@/store/appStore";
 import { useElapsed } from "@/hooks/useElapsed";
 import { getPlatform } from "@/utils/platform";
 import { backendFamilyFromSessionType, connectionErrorHint } from "@/utils/connectionErrorHints";
+import { sshAgentStartCommand } from "@/utils/sshAgentSetup";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -407,7 +408,7 @@ export function TerminalConnectionOverlay({
               run:
             </p>
             <CommandBlock
-              command="Start-Process powershell -Verb RunAs -ArgumentList 'Set-Service ssh-agent -StartupType Manual; Start-Service ssh-agent'"
+              command={sshAgentStartCommand(platform)}
               testId="terminal-connection-agent-copy-btn"
             />
           </div>

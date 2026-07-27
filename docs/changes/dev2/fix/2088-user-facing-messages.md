@@ -8,3 +8,8 @@
   a structured per-backend table so each backend (SSH, telnet, serial, Docker,
   local) gets a hint written for it, and the SSH ssh-agent hint no longer leaks
   onto non-SSH backends (#2088).
+- The "SSH Agent not running" hint on the connection screen now shows a
+  host-OS-appropriate command: the elevated PowerShell `Set-Service ssh-agent`
+  line on Windows, and `eval "$(ssh-agent -s)" && ssh-add` on macOS/Linux. It
+  previously showed the Windows-only command on every platform, where it was
+  meaningless (#2088).
