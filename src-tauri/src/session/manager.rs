@@ -1838,7 +1838,9 @@ mod tests {
             let json: Value = serde_json::to_value(&event).unwrap();
 
             // Wire form is a string (not a JSON number-array).
-            let encoded = json["data"].as_str().expect("data must serialize to a string");
+            let encoded = json["data"]
+                .as_str()
+                .expect("data must serialize to a string");
             assert_eq!(encoded, engine.encode(&bytes));
 
             // Round-trip: decoding the wire string yields the original bytes.
