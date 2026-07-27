@@ -146,6 +146,22 @@ impl MasterPasswordStore {
             .decode(&envelope.data)
             .map_err(|e| UnlockFailure::Corrupted(format!("invalid ciphertext encoding: {e}")))?;
 
+        // Validate lengths before use: a truncated/corrupted salt would derive a
+        // wrong key (masquerading as a wrong password) and a wrong-length nonce
+        // would panic inside `Nonce::from_slice`. Report both as corruption (#2049).
+        if salt.len() != SALT_LEN {
+            return Err(UnlockFailure::Corrupted(format!(
+                "invalid salt length: expected {SALT_LEN}, got {}",
+                salt.len()
+            )));
+        }
+        if nonce_bytes.len() != NONCE_LEN {
+            return Err(UnlockFailure::Corrupted(format!(
+                "invalid nonce length: expected {NONCE_LEN}, got {}",
+                nonce_bytes.len()
+            )));
+        }
+
         let key = derive_key(password, &salt)
             .map_err(|e| UnlockFailure::Corrupted(format!("key derivation failed: {e}")))?;
 
@@ -536,6 +552,57 @@ mod tests {
             matches!(err, UnlockFailure::Corrupted(_)),
             "expected Corrupted for unsupported version, got {err:?}"
         );
+    }
+
+    #[test]
+    fn unlock_classified_wrong_length_nonce_reports_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+        store.lock();
+
+        // Corrupt the stored nonce to a wrong (too-short) length. Before the
+        // length check this panicked inside `Nonce::from_slice` (#2049).
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        let mut envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
+        envelope.nonce = BASE64.encode([0u8; NONCE_LEN - 1]);
+        fs::write(
+            &store.file_path,
+            serde_json::to_string(&envelope).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let err = store.unlock_classified("pw").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::Corrupted(_)),
+            "expected Corrupted for wrong-length nonce, got {err:?}"
+        );
+        assert!(!store.is_unlocked());
+    }
+
+    #[test]
+    fn unlock_classified_wrong_length_salt_reports_corrupted() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+        store.lock();
+
+        // Corrupt the stored salt to a wrong (too-short) length.
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        let mut envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
+        envelope.kdf.salt = BASE64.encode([0u8; SALT_LEN - 1]);
+        fs::write(
+            &store.file_path,
+            serde_json::to_string(&envelope).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let err = store.unlock_classified("pw").unwrap_err();
+        assert!(
+            matches!(err, UnlockFailure::Corrupted(_)),
+            "expected Corrupted for wrong-length salt, got {err:?}"
+        );
+        assert!(!store.is_unlocked());
     }
 
     #[test]

@@ -130,6 +130,22 @@ pub fn decrypt_with_password(password: &str, envelope: &EncryptedEnvelope) -> Re
         .decode(&envelope.data)
         .context("Invalid ciphertext encoding")?;
 
+    // Validate lengths before use: a wrong-length nonce would panic inside
+    // `Nonce::from_slice`, and a corrupted salt would silently derive a wrong
+    // key. Surface both as recoverable errors instead (#2049).
+    if salt.len() != SALT_LEN {
+        anyhow::bail!(
+            "Invalid salt length: expected {SALT_LEN}, got {}",
+            salt.len()
+        );
+    }
+    if nonce_bytes.len() != NONCE_LEN {
+        anyhow::bail!(
+            "Invalid nonce length: expected {NONCE_LEN}, got {}",
+            nonce_bytes.len()
+        );
+    }
+
     let key = derive_key(password, &salt)?;
 
     let cipher = Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
@@ -223,6 +239,36 @@ mod tests {
         let envelope: EncryptedEnvelope = serde_json::from_str(json).unwrap();
         assert_eq!(envelope.kdf.memory_cost, 65536);
         assert_eq!(envelope.kdf.time_cost, 3);
+    }
+
+    #[test]
+    fn wrong_length_nonce_reports_error() {
+        // A corrupted/truncated nonce must surface a recoverable error, not
+        // panic inside `Nonce::from_slice` (#2049).
+        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
+        envelope.nonce = BASE64.encode([0u8; NONCE_LEN - 1]);
+
+        let result = decrypt_with_password("pw", &envelope);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .to_lowercase()
+            .contains("nonce"));
+    }
+
+    #[test]
+    fn wrong_length_salt_reports_error() {
+        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
+        envelope.kdf.salt = BASE64.encode([0u8; SALT_LEN - 1]);
+
+        let result = decrypt_with_password("pw", &envelope);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .to_lowercase()
+            .contains("salt"));
     }
 
     #[test]
