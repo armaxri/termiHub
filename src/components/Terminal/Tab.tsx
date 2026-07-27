@@ -154,6 +154,14 @@ export function Tab({
       data-testid={`tab-${tab.id}`}
       {...attributes}
       {...listeners}
+      // Tablist semantics (#2071): override dnd-kit's default `role="button"` /
+      // `tabIndex={0}` so each tab is announced as a selectable tab and the tab
+      // strip uses a single roving tab stop (only the active tab is Tab-reachable;
+      // ArrowLeft/Right/Home/End move focus — handled by TabBar). These must come
+      // after the dnd-kit spreads to take precedence.
+      role="tab"
+      aria-selected={tab.isActive}
+      tabIndex={tab.isActive ? 0 : -1}
     >
       {NonTerminalIcon ? (
         <NonTerminalIcon size={14} className="tab__icon" />
