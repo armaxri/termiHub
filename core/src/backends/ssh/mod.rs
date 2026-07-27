@@ -15,6 +15,7 @@ pub mod jump_host;
 mod legacy_pem;
 mod monitoring;
 pub mod session_pool;
+pub mod sftp;
 pub mod x11;
 
 pub use self::exec::{ssh_exec_with_stdin, SshExecOutput};
