@@ -761,7 +761,7 @@ Total: \~23–27 hours across 13 sessions
 > **Note**: This appendix is a **point-in-time snapshot** from when the manual
 > corpus held ~75 tests. The corpus has since grown to **166 tests across 14
 > categories** (see §5.1; regenerate with `python scripts/test-manual.py
-> --inventory`). The specific IDs and per-reason counts below reflect the
+--inventory`). The specific IDs and per-reason counts below reflect the
 > original ~75-test analysis and have **not** been re-derived for the full 166 —
 > treat them as illustrative migration candidates, not a current inventory.
 
