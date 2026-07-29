@@ -360,17 +360,29 @@ pub fn check_ssh_agent_status() -> String {
 
     #[cfg(not(target_os = "windows"))]
     {
-        use std::path::Path;
-        match std::env::var("SSH_AUTH_SOCK") {
-            Ok(sock_path) if !sock_path.is_empty() => {
-                if Path::new(&sock_path).exists() {
-                    "running".to_string()
-                } else {
-                    "stopped".to_string()
-                }
+        agent_status_for_sock(std::env::var_os("SSH_AUTH_SOCK"))
+    }
+}
+
+/// Resolve the agent status from an explicit `SSH_AUTH_SOCK` value (Unix).
+///
+/// The env-reading core of [`check_ssh_agent_status`]: an unset/empty path is
+/// `"stopped"`, a path that exists is `"running"`, and a dangling path is
+/// `"stopped"`. Keeping the env read out of this function lets tests exercise
+/// each case by value, without mutating the process-global `SSH_AUTH_SOCK` and
+/// racing other parallel tests (#2127).
+#[cfg(not(target_os = "windows"))]
+fn agent_status_for_sock(sock: Option<std::ffi::OsString>) -> String {
+    use std::path::Path;
+    match sock {
+        Some(sock_path) if !sock_path.is_empty() => {
+            if Path::new(&sock_path).exists() {
+                "running".to_string()
+            } else {
+                "stopped".to_string()
             }
-            _ => "stopped".to_string(),
         }
+        _ => "stopped".to_string(),
     }
 }
 
@@ -473,16 +485,27 @@ mod tests {
         );
     }
 
+    /// The status seam maps each `SSH_AUTH_SOCK` shape to running/stopped by
+    /// value, so these cases never touch the process-global env and cannot race
+    /// sibling tests (#2127).
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn check_ssh_agent_status_stopped_when_sock_unset() {
-        let orig = std::env::var("SSH_AUTH_SOCK").ok();
-        // SAFETY: test-only, single-threaded test runner
-        unsafe { std::env::remove_var("SSH_AUTH_SOCK") };
-        let status = check_ssh_agent_status();
-        assert_eq!(status, "stopped");
-        if let Some(val) = orig {
-            unsafe { std::env::set_var("SSH_AUTH_SOCK", val) };
-        }
+    fn agent_status_for_sock_maps_each_case() {
+        // Unset and empty are both "stopped" — no live agent.
+        assert_eq!(agent_status_for_sock(None), "stopped");
+        assert_eq!(
+            agent_status_for_sock(Some(std::ffi::OsString::new())),
+            "stopped"
+        );
+        // A path that does not exist is a dangling socket — "stopped".
+        assert_eq!(
+            agent_status_for_sock(Some("/nonexistent/thub-2127-agent.sock".into())),
+            "stopped"
+        );
+        // A path that exists reads as "running" (existence is all the check does).
+        assert_eq!(
+            agent_status_for_sock(Some(std::env::temp_dir().into_os_string())),
+            "running"
+        );
     }
 }

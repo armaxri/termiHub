@@ -91,14 +91,14 @@ mod tests {
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn check_ssh_agent_status_stopped_when_sock_unset() {
-        let orig = std::env::var("SSH_AUTH_SOCK").ok();
-        // SAFETY: test-only
-        unsafe { std::env::remove_var("SSH_AUTH_SOCK") };
-        let status = check_ssh_agent_status();
-        assert_eq!(status, "stopped");
-        if let Some(val) = orig {
-            unsafe { std::env::set_var("SSH_AUTH_SOCK", val) };
-        }
+        // This is a thin delegation to the core status check, which reads the
+        // env — there is no local seam to inject. `temp-env` scopes the unset to
+        // the closure, restores the original afterwards, and serializes with
+        // other `temp-env` users, so the process-global `SSH_AUTH_SOCK` is no
+        // longer mutated in a way that races sibling tests (#2127).
+        temp_env::with_var("SSH_AUTH_SOCK", None::<&str>, || {
+            assert_eq!(check_ssh_agent_status(), "stopped");
+        });
     }
 
     /// Regression guard for #828.

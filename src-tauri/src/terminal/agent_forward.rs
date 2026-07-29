@@ -22,8 +22,11 @@
 //! matching the no-agent behaviour of the SSH-reached path (#1699/#1719).
 
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use termihub_core::backends::ssh::agent_forward::{connect_local_agent_boxed, LocalAgentStream};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tracing::debug;
@@ -33,6 +36,24 @@ use super::agent_manager::AgentIoCommand;
 /// Max bytes read from the local agent per relay data frame; matches the
 /// agent-side chunk so neither side exceeds the transport's NDJSON line cap.
 const CHUNK_SIZE: usize = 65536;
+
+/// A one-shot factory that connects to the operator's local ssh-agent, yielding
+/// a duplex byte stream (or a `NotFound`-style error when no agent is
+/// reachable). Injected into the pump so tests can drive the no-local-agent path
+/// deterministically — by handing over a connector that fails — instead of
+/// pointing the process-global `SSH_AUTH_SOCK` at a dead path and racing sibling
+/// tests (#2127).
+type LocalAgentConnector = Box<
+    dyn FnOnce() -> Pin<Box<dyn Future<Output = std::io::Result<Box<dyn LocalAgentStream>>> + Send>>
+        + Send,
+>;
+
+/// The production connector: the operator's own local ssh-agent (Unix
+/// `$SSH_AUTH_SOCK` / the Windows OpenSSH named pipe), the exact connector the
+/// russh bridge uses.
+fn default_connector() -> LocalAgentConnector {
+    Box::new(|| Box::pin(connect_local_agent_boxed()))
+}
 
 /// Routes the desktop end of forwarded ssh-agent streams to the operator's
 /// local ssh-agent. One instance per connected agent's I/O loop.
@@ -54,12 +75,24 @@ impl DesktopAgentForward {
     /// Handle `agent.forward.open`: register the stream and start a task that
     /// connects to the local agent and pumps bytes for the stream's lifetime.
     pub fn on_open(&self, stream_id: String, command_tx: UnboundedSender<AgentIoCommand>) {
+        self.on_open_with(stream_id, command_tx, default_connector());
+    }
+
+    /// [`on_open`] with an injectable local-agent connector — the seam tests use
+    /// to exercise the no-local-agent path without mutating `SSH_AUTH_SOCK`
+    /// (#2127). Production calls [`on_open`], which passes [`default_connector`].
+    fn on_open_with(
+        &self,
+        stream_id: String,
+        command_tx: UnboundedSender<AgentIoCommand>,
+        connect: LocalAgentConnector,
+    ) {
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
         self.streams.lock().unwrap().insert(stream_id.clone(), tx);
 
         let streams = self.streams.clone();
         tokio::spawn(async move {
-            pump_local_agent(stream_id, rx, command_tx, streams).await;
+            pump_local_agent(stream_id, rx, command_tx, streams, connect).await;
         });
     }
 
@@ -85,9 +118,9 @@ async fn pump_local_agent(
     rx: mpsc::UnboundedReceiver<Vec<u8>>,
     command_tx: UnboundedSender<AgentIoCommand>,
     streams: Arc<Mutex<HashMap<String, UnboundedSender<Vec<u8>>>>>,
+    connect: LocalAgentConnector,
 ) {
-    let agent = match termihub_core::backends::ssh::agent_forward::connect_local_agent_boxed().await
-    {
+    let agent = match connect().await {
         Ok(agent) => agent,
         Err(e) => {
             // No local agent — mirror the russh no-op: tell the agent to drop the
@@ -162,14 +195,23 @@ mod tests {
     /// "no keys forwarded".
     #[tokio::test]
     async fn open_without_local_agent_closes_and_deregisters() {
-        // Point SSH_AUTH_SOCK at nothing so the connect fails deterministically.
-        // SAFETY: single-threaded test; the var is restored before returning.
-        let orig = std::env::var_os("SSH_AUTH_SOCK");
-        unsafe { std::env::set_var("SSH_AUTH_SOCK", "/nonexistent/thub-1727-test.sock") };
-
         let relay = DesktopAgentForward::new();
         let (tx, mut rx) = mpsc::unbounded_channel::<AgentIoCommand>();
-        relay.on_open("sess#1".to_string(), tx);
+        // Inject a connector that always fails — the no-local-agent path — so the
+        // test drives it deterministically, without pointing the process-global
+        // SSH_AUTH_SOCK at a dead path and racing sibling tests (#2127).
+        relay.on_open_with(
+            "sess#1".to_string(),
+            tx,
+            Box::new(|| {
+                Box::pin(async {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "no local ssh-agent",
+                    ))
+                })
+            }),
+        );
 
         // The pump task must report the stream closed …
         let cmd = rx.recv().await.expect("a close command");
@@ -185,10 +227,5 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert!(relay.streams.lock().unwrap().is_empty());
-
-        match orig {
-            Some(v) => unsafe { std::env::set_var("SSH_AUTH_SOCK", v) },
-            None => unsafe { std::env::remove_var("SSH_AUTH_SOCK") },
-        }
     }
 }
