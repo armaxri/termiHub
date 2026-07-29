@@ -137,10 +137,18 @@ if [ "$BUILD_ACTION" = "build" ]; then
         pnpm install
     fi
     echo "=== Building termiHub ($PROFILE) ==="
+    # The system-test bridge's in-app client connects out over a loopback
+    # WebSocket (ws://127.0.0.1:<port>), but the production CSP in
+    # tauri.conf.json no longer allows any ws:// in connect-src (#2059 — real
+    # users never run the bridge, so the app needs no WebSocket connect-src). The
+    # loopback allowance is re-added ONLY for test builds via this config overlay,
+    # which deep-merges over tauri.conf.json. A build without it cannot connect
+    # the bridge — so any test build MUST pass --config here (see also
+    # system-integration.yml and tests/system/README.md).
     if [ "$PROFILE" = "debug" ]; then
-        pnpm tauri build --debug
+        pnpm tauri build --debug --config src-tauri/tauri.test.conf.json
     else
-        pnpm tauri build
+        pnpm tauri build --config src-tauri/tauri.test.conf.json
     fi
 else
     echo "=== Build $BUILD_ACTION, using $APP_BINARY ==="
