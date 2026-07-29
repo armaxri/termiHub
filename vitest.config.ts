@@ -22,6 +22,18 @@ export default defineConfig({
       provider: "v8",
       include: ["src/**/*.ts"],
       exclude: ["src/test/**", "src/**/*.d.ts", "src/main.tsx"],
+      // Modest coverage floors so a real regression fails CI without blocking
+      // the current tree (#2066, follow-up to the #2050 audit). Measured on the
+      // develop tree: statements 78.5%, branches 71.5%, functions 74.6%,
+      // lines 79.7%. Each floor sits a few points below its measured value so
+      // normal fluctuation passes but a genuine drop trips the gate. Raise these
+      // (never lower) as coverage improves — they are a ratchet, not a target.
+      thresholds: {
+        lines: 75,
+        statements: 74,
+        functions: 70,
+        branches: 67,
+      },
     },
   },
 });
