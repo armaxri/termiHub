@@ -122,6 +122,52 @@ def load_tests(tests_dir: Path) -> list[dict[str, Any]]:
     return all_tests
 
 
+def category_inventory(
+    tests: list[dict[str, Any]],
+) -> list[tuple[str, str, int]]:
+    """Aggregate the loaded tests into ``(category, display_name, count)`` rows.
+
+    Rows preserve first-seen (file/alphabetical) order. This is the source of
+    truth for the manual-test counts quoted in ``docs/release-plan-0.1.0.md`` —
+    see :func:`print_inventory` and the ``--inventory`` flag.
+    """
+    order: list[str] = []
+    counts: dict[str, int] = {}
+    display: dict[str, str] = {}
+    for t in tests:
+        cat = t["_category"]
+        if cat not in counts:
+            order.append(cat)
+            counts[cat] = 0
+            display[cat] = t.get("_display_name", cat)
+        counts[cat] += 1
+    return [(cat, display[cat], counts[cat]) for cat in order]
+
+
+def print_inventory(tests: list[dict[str, Any]]) -> None:
+    """Print the per-category manual-test inventory across all platforms.
+
+    A plain, greppable table plus the grand total, so the release-plan doc's
+    manual-gate counts can be regenerated/verified from the YAMLs with a single
+    command instead of hand-counting (#2067).
+    """
+    rows = category_inventory(tests)
+    cat_w = max([len("category (--category)")] + [len(r[0]) for r in rows])
+    dn_w = max([len("display name")] + [len(r[1]) for r in rows])
+    header = f"  {'category (--category)':<{cat_w}}  {'display name':<{dn_w}}  tests"
+    rule = f"  {'-' * cat_w}  {'-' * dn_w}  -----"
+    print("\nManual test inventory - tests/manual/*.yaml\n")
+    print(header)
+    print(rule)
+    for cat, dn, count in rows:
+        print(f"  {cat:<{cat_w}}  {dn:<{dn_w}}  {count:>5}")
+    print(rule)
+    total = sum(r[2] for r in rows)
+    summary = f"{len(rows)} categories"
+    print(f"  {summary:<{cat_w}}  {'':<{dn_w}}  {total:>5}")
+    print()
+
+
 def filter_tests(
     tests: list[dict[str, Any]],
     current_platform: str,
@@ -779,6 +825,7 @@ def main() -> int:
     parser.add_argument("--report-dir", help="Output directory for reports")
     parser.add_argument("--resume", help="Resume a previous session from a report file")
     parser.add_argument("--list", action="store_true", help="List all tests for the current platform (no run)")
+    parser.add_argument("--inventory", action="store_true", help="Print per-category test counts across all platforms and exit (no run)")
 
     args = parser.parse_args()
 
@@ -799,6 +846,11 @@ def main() -> int:
     if not all_tests:
         print("ERROR: No test definitions found")
         return 1
+
+    # Inventory mode: platform-agnostic per-category counts (no filtering/infra).
+    if args.inventory:
+        print_inventory(all_tests)
+        return 0
 
     filtered = filter_tests(all_tests, plat, args.category, args.test)
     if not filtered:
