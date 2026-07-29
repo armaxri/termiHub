@@ -139,7 +139,15 @@ jobs:
         # The integration lane launches the real app; the harness resolves the
         # debug bundle (target/debug/…) when no release build is present. Debug
         # builds far faster than release, which is what we want for a nightly.
-        run: pnpm tauri build --debug
+        #
+        # --config src-tauri/tauri.test.conf.json re-adds the loopback ws:// the
+        # bridge's in-app client needs: the production CSP no longer allows any
+        # ws:// in connect-src (#2059), and the overlay restores it for test
+        # builds only. Everything else in the CSP (script-src, style-src, …) is
+        # identical to production, so this lane still exercises the shipped
+        # rendering-relevant policy — including the CSP-violation assertion in
+        # test_csp.py.
+        run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json
 
       - name: Bring up the Docker fixtures
         # Linux only. Pre-build and start the profile-less SSH/telnet fixtures so
