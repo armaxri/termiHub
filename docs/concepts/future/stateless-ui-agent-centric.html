@@ -1,0 +1,1750 @@
+<!doctype html>
+<!--
+  Single-file concept: Stateless UI / Agent-Centric Architecture.
+  Everything lives here — prose, Mermaid diagrams (editable text, rendered
+  client-side), the mockups (inline, real mockup.css classes + lucide icons),
+  and the sync ledger. See docs/concepts/implemented/ai-driven-concept-workflow.html.
+  Screenshot-verify: scripts/internal/screenshot-mockup.sh <this file>.
+
+  This is a FUTURE-tier, long-horizon architecture concept (a multi-quarter
+  restructure). It is intentionally heavier on Mermaid architecture diagrams
+  than on pixel mockups; the one visual surface it introduces — the per-service
+  "run location" selector — is mocked with the real app classes.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stateless UI / Agent-Centric Architecture (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+    <style>
+      /* Structural styling for the run-location mockup — not part of the kit. */
+      .svc-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 10px 12px;
+      }
+      .svc-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 10px;
+        border: 1px solid var(--border-secondary);
+        border-radius: var(--radius-md);
+        background: var(--bg-secondary);
+        font-size: 12px;
+      }
+      .svc-row__name {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 150px;
+        color: var(--text-primary);
+        font-weight: 500;
+      }
+      .svc-row__name .li {
+        width: 14px;
+        height: 14px;
+        color: var(--text-accent);
+      }
+      .svc-loc {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        width: 220px;
+        height: 28px;
+        padding: 0 10px;
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-primary);
+        border-radius: var(--radius-md);
+        color: var(--text-primary);
+      }
+      .svc-loc .li {
+        width: 13px;
+        height: 13px;
+        color: var(--text-secondary);
+      }
+      .svc-loc__where {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .svc-loc__where code {
+        font-family: var(--font-mono);
+        color: var(--text-accent);
+      }
+      .svc-row__spacer {
+        margin-left: auto;
+      }
+      .svc-state {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--text-secondary);
+      }
+      .svc-state .li {
+        width: 12px;
+        height: 12px;
+      }
+      .svc-state--running {
+        color: var(--state-connected);
+      }
+      .pill {
+        display: inline-block;
+        padding: 1px 7px;
+        border-radius: 999px;
+        font-size: 11px;
+        border: 1px solid var(--border-primary);
+        color: var(--text-secondary);
+        background: var(--bg-tertiary);
+      }
+      .pill--desktop {
+        border-color: color-mix(in srgb, var(--accent-color) 50%, var(--border-primary));
+        color: var(--text-accent);
+      }
+      .pill--agent {
+        border-color: var(--state-connected);
+        color: #8fe6c4;
+      }
+      .layer-legend {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+        font-size: 12px;
+        color: var(--text-secondary);
+        margin: 6px 0 0;
+      }
+      .layer-legend span b {
+        color: var(--text-primary);
+      }
+    </style>
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Copy only the symbols used. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24">
+        <path d="m4 17 6-6-6-6" />
+        <path d="M12 19h8" />
+      </symbol>
+      <symbol id="i-globe" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+        <path d="M2 12h20" />
+      </symbol>
+      <symbol id="i-folder-open" viewBox="0 0 24 24">
+        <path
+          d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"
+        />
+      </symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24">
+        <path d="m6 9 6 6 6-6" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-circle-check" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="m9 12 2 2 4-4" />
+      </symbol>
+      <symbol id="i-radio" viewBox="0 0 24 24">
+        <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9" />
+        <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5" />
+        <circle cx="12" cy="12" r="2" />
+        <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5" />
+        <path d="M19.1 4.9C23 8.8 23 15.1 19.1 19" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-scroll-text" viewBox="0 0 24 24">
+        <path d="M15 12h-5" />
+        <path d="M15 8h-5" />
+        <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+        <path
+          d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"
+        />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Stateless UI / Agent-Centric Architecture</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Future · not started</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/2139">#2139</a></span
+          >
+          <span><code>docs/concepts/future/stateless-ui-agent-centric.html</code></span>
+        </div>
+      </header>
+
+      <blockquote>
+        <p>
+          <strong>Single-file concept</strong> (AI-driven concept workflow). Prose, diagrams,
+          mockups, and the concept↔code reconciliation ledger all live in this one HTML file. The
+          concept is the source of truth; run <code>/sync-concept stateless-ui-agent-centric</code>
+          to reconcile it with the implementation.
+        </p>
+        <p>
+          <strong>Scope note.</strong> This is a north-star architecture concept describing a
+          multi-quarter restructure. It is <em>not</em> a single implementable unit — it defines the
+          target and a strangler-style migration whose individual phases are filed as their own
+          <code>Ready2Implement</code> issues. Read the <a href="#feasibility">Feasibility</a> and
+          <a href="#migration">Migration</a> sections before treating any part of it as buildable
+          now.
+        </p>
+      </blockquote>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#current">Current Architecture Map</a></li>
+          <li><a href="#ui">Target: Stateless UI</a></li>
+          <li><a href="#services">Agent-Executed Services &amp; Tools</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#feasibility">Feasibility, Scope &amp; Risks</a></li>
+          <li><a href="#migration">Phased Migration</a></li>
+          <li><a href="#decisions">Open Design Decisions</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          Two convergent principles restructure termiHub around a strong backend and a thin
+          frontend:
+        </p>
+        <ol>
+          <li>
+            <strong>Stateless UI.</strong> Move <em>all</em> business logic and authoritative state
+            out of the React frontend into the Rust backends — the Tauri desktop layer
+            (<code>src-tauri</code>), the shared <code>termihub-core</code> crate, and the remote
+            <code>agent</code>. The UI becomes a
+            <strong>thin, stateless projection and dispatcher</strong>: it renders backend-provided
+            view state and dispatches user intents, holding no authoritative state and no business
+            logic of its own — only view-local ephemera (scroll position, focus, hover, in-progress
+            text input, xterm's own render buffer).
+          </li>
+          <li>
+            <strong>Agent-centric services &amp; tools.</strong> Let <em>every</em> service and
+            network tool be executed by the remote <code>agent</code>, not only the desktop: the
+            embedded servers (HTTP/FTP/TFTP), the network utilities (ping, traceroute, port scanner,
+            DNS lookup, HTTP monitor, Wake-on-LAN), SSH tunnels, and system monitoring. Each becomes
+            a <strong>service/tool</strong> behind a shared trait that both the desktop host and the
+            agent host implement, so the user can choose <em>where</em> a service or a diagnostic
+            runs — from their laptop or from a build server three hops away.
+          </li>
+        </ol>
+        <p>
+          These are one idea seen from two ends. A stateless UI can only dispatch intents to a
+          backend that <em>owns</em> the corresponding capability; agent-centric services require
+          that capability to be modelled as a location-agnostic backend object rather than as logic
+          baked into a desktop component. Both push the same work the same direction: out of the
+          WebView, into a location-agnostic Rust service model.
+        </p>
+        <p>
+          The good news — quantified in <a href="#current">Current Architecture Map</a> — is that
+          termiHub is <em>already</em> half-way to both. The shared <code>core</code> crate already
+          defines the <code>ConnectionType</code>, <code>MonitoringProvider</code>, and
+          <code>FileBrowser</code> traits and the network diagnostics; the agent already exposes
+          <code>network.*</code> diagnostics and proxies files and monitoring over JSON-RPC; and the
+          terminal hot path is already a backend-push / UI-render pipeline. The redesign generalises
+          patterns that exist, rather than inventing new ones.
+        </p>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            The frontend holds <strong>no authoritative state</strong>. Every durable fact
+            (connections, sessions, tunnels, servers, workspaces, layout, monitors) lives in a
+            backend store; the UI subscribes to a projection of it.
+          </li>
+          <li>
+            The frontend contains <strong>no business logic</strong> — no state machines, no
+            reconnect/retry/backoff math, no panel-tree algebra, no validation, no reconciliation.
+            All of it moves to Rust.
+          </li>
+          <li>
+            A single <strong>intent → command / state → projection</strong> contract replaces the
+            current ad-hoc mix of 206 typed IPC commands + 36 event listeners + a 8.3k-line store.
+          </li>
+          <li>
+            A shared <strong>service/tool trait</strong> lets the embedded servers, network tools,
+            tunnels, and monitors run on either the desktop host or the remote agent, selected per
+            instance.
+          </li>
+          <li>
+            The migration is <strong>strangler-style</strong>: the app stays fully working after
+            every phase; no big-bang rewrite; one domain moves at a time behind a stable projection
+            boundary.
+          </li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            <strong>Not</strong> a UI redesign. The VS Code-inspired look, the design system, and
+            the component tree stay; only <em>where the logic lives</em> changes.
+          </li>
+          <li>
+            <strong>Not</strong> a rewrite in a different framework. React + Zustand + xterm.js
+            remain; Zustand shrinks to a projection cache.
+          </li>
+          <li>
+            <strong>Not</strong> the same as remote-client mode
+            (<code>future/remote-client-mode.html</code>), though it is the enabling substrate for
+            it — a truly stateless UI over a transport-agnostic backend is exactly what a browser /
+            iPad client needs. That concept is a downstream consumer, not a prerequisite.
+          </li>
+          <li>
+            <strong>Not</strong> moving credential secrets or OS-keychain access to the agent (see
+            <a href="#decisions">Open Decisions</a> — the trust boundary is a deliberate exception).
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Current Architecture Map ───────────────────────────────── -->
+      <section>
+        <h2 id="current">Current Architecture Map <a class="anchor" href="#current">#</a></h2>
+        <p>
+          Where does logic live today? A survey of the tree at concept-creation time (July 2026,
+          <code>develop</code>). The headline: the frontend is <em>fat</em> and the agent is
+          <em>thin</em> — the redesign inverts that.
+        </p>
+
+        <h3>Frontend — the fat client (~80.9k lines of non-test production TS)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th>Size</th>
+                <th>What lives there</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src/store/appStore.ts</code></td>
+                <td>
+                  <strong>8,353 lines</strong>, one Zustand store (~911 arrow fns, ~350 fields)
+                </td>
+                <td>
+                  <strong>Authoritative</strong> state + logic for ~20 domains: panel tree &amp;
+                  tabs, connections/folders/history, persistent sessions, terminal connect/reconnect
+                  (a full retry state machine — <code>driveAutoReconnect</code>), workspace-restore
+                  cohorts, multi-window handoff, SFTP/transfers reconciliation, file browsers,
+                  remote agents, monitoring, broadcast-input membership, workflows, workspaces,
+                  credential unlock gating, settings/layout/themes.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/store/slices/</code></td>
+                <td>~1,034 lines</td>
+                <td>
+                  Partially extracted slices — macros (402), plugins (279), tunnel (193),
+                  embedded-servers (160) — still typed against the shared <code>AppState</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/services/api.ts</code></td>
+                <td>2,459 lines</td>
+                <td>
+                  <strong>206 distinct Tauri commands</strong> (211 <code>invoke</code> sites) — the
+                  entire desktop IPC surface.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/services/events.ts</code></td>
+                <td>907 lines</td>
+                <td>
+                  <strong>36 backend→frontend event listeners</strong> incl. a batching
+                  <code>TerminalOutputDispatcher</code> and base64 decode.
+                </td>
+              </tr>
+              <tr>
+                <td>Other <code>src/services/</code></td>
+                <td>~4,800 lines</td>
+                <td>
+                  Real business logic, not IPC: <code>syntaxHighlighting</code> (798),
+                  <code>keybindings</code> (701), <code>workflowRunner</code> (371),
+                  <code>regexSafety</code> (293 — ReDoS guarding), <code>macroPlayback</code> (181),
+                  <code>sshConfigImport</code> (128 — SSH config parsing).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/utils/</code></td>
+                <td>~6,500 lines</td>
+                <td>
+                  Mostly <strong>pure logic</strong> already: <code>panelTree.ts</code> (341, 16
+                  pure tree-algebra fns), <code>workspaceLayout.ts</code> (718),
+                  <code>reconnectBackoff.ts</code> (213 — backoff math),
+                  <code>restoreMode.ts</code> (281 — restore-decision logic),
+                  <code>schemaDefaults.ts</code> (218).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/hooks/</code></td>
+                <td>~4,500 lines</td>
+                <td>
+                  Mostly orchestration: session/connect flows, remote-desktop lifecycle, event→store
+                  bridging. Few are pure view hooks.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/</code></td>
+                <td>~47,800 lines</td>
+                <td>
+                  Not purely view. Worst logic offenders: <code>FileBrowser.tsx</code> (1,816),
+                  <code>ConnectionList.tsx</code> (1,658, 39 memo/callbacks),
+                  <code>AgentNode.tsx</code> (1,579, 38), <code>Terminal.tsx</code> (1,552),
+                  <code>ConnectionEditor.tsx</code> (1,485), <code>FileEditor.tsx</code> (1,397, 20
+                  state + 14 effects), plus the imperative <code>TerminalRegistry.tsx</code> xterm
+                  registry.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong
+            >Estimate: ~45–55% of the 80.9k lines of production frontend TS is
+            business-logic/state</strong
+          >, concentrated in one monolithic store plus large logic-bearing components and
+          mostly-pure util modules. Almost none of it is <em>irreducibly</em> frontend — the pure
+          utils (<code>panelTree</code>, <code>reconnectBackoff</code>, <code>restoreMode</code>,
+          <code>schemaDefaults</code>) are Rust ports waiting to happen.
+        </p>
+
+        <h3>Backend — already trait-structured, but desktop-heavy</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Layer</th>
+                <th>State</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Desktop</strong> (<code>src-tauri/</code>)</td>
+                <td>
+                  <strong>275 <code>#[tauri::command]</code> handlers</strong> across 27 files.
+                  Large stateful managers: <code>session/manager.rs</code> (129 KB),
+                  <code>terminal/agent_manager.rs</code> (120 KB, the agent RPC client),
+                  <code>connection/manager.rs</code> (87 KB),
+                  <code>tunnel/tunnel_manager.rs</code> (78 KB),
+                  <code>session/remote_proxy.rs</code> (69 KB).
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Core</strong> (<code>core/</code>, <code>termihub-core</code>)</td>
+                <td>
+                  Already the shared engine. Trait families shared by desktop + agent:
+                  <code>ConnectionType</code> (<code>core/src/connection/mod.rs:114</code>),
+                  <code>MonitoringProvider</code>,
+                  <code>FileBrowser</code>/<code>FileBackend</code>. <code>network/</code> (ping,
+                  traceroute, port_scan, dns, wol, open_ports), <code>monitoring/</code>,
+                  <code>files/</code>, <code>ipc/</code>, <code>connection/</code>,
+                  <code>config/</code>, <code>protocol/</code> are
+                  <strong>always compiled</strong> (no feature gate) — already unconditionally
+                  shareable. Backends are feature-gated (<code>default = []</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Agent</strong> (<code>agent/</code>, <code>termihub-agent</code>)</td>
+                <td>
+                  Thin JSON-RPC proxy over the core registry. Dispatch table today:
+                  <code>connection.*</code> (create/attach/write/resize/close/list/types),
+                  <code>connection.files.*</code>, <code>connections.*</code> (CRUD),
+                  <code>monitoring.subscribe/unsubscribe</code>,
+                  <strong><code>network.*</code></strong> (ping, port_scan, dns_lookup, traceroute,
+                  wol, open_ports), <code>agent.*</code> (list_connections/update/shutdown),
+                  <code>health.check</code>. Enables backends
+                  <code>local-shell, serial, ssh, telnet, docker, wsl</code>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>The desktop-only capability gap</h3>
+        <p>
+          Everything the agent <em>cannot</em> do today — the exact surface principle #2 must close:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Capability</th>
+                <th>Where it lives</th>
+                <th>Agent-ready?</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Sessions (shell/ssh/serial/telnet/docker/wsl)</td>
+                <td><code>core/src/backends</code>, <code>core/src/session</code></td>
+                <td><span class="pill pill--agent">Yes — runs on agent</span></td>
+              </tr>
+              <tr>
+                <td>File browsing / SFTP relay</td>
+                <td>
+                  <code>core/src/files</code> + <code>FileBrowser</code>; proxied via
+                  <code>connection.files.*</code>
+                </td>
+                <td><span class="pill pill--agent">Yes — proxied</span></td>
+              </tr>
+              <tr>
+                <td>System monitoring</td>
+                <td>
+                  <code>core/src/monitoring</code>; proxied via <code>monitoring.subscribe</code>
+                </td>
+                <td><span class="pill pill--agent">Yes — proxied</span></td>
+              </tr>
+              <tr>
+                <td>Network diagnostics (ping/traceroute/portscan/DNS/WoL/open-ports)</td>
+                <td>
+                  <code>core/src/network</code> —
+                  <strong>agent already exposes <code>network.*</code></strong>
+                </td>
+                <td>
+                  <span class="pill pill--agent"
+                    >Yes — already on agent (desktop UI can't yet target it)</span
+                  >
+                </td>
+              </tr>
+              <tr>
+                <td>HTTP monitor</td>
+                <td><code>src-tauri/src/network/http_monitor.rs</code> (14 KB) + storage</td>
+                <td><span class="pill pill--desktop">Desktop-only</span></td>
+              </tr>
+              <tr>
+                <td>WoL device persistence</td>
+                <td>
+                  <code>src-tauri/src/network/wol_storage.rs</code> (packet-send is shared in core)
+                </td>
+                <td><span class="pill pill--desktop">Storage desktop-only</span></td>
+              </tr>
+              <tr>
+                <td>Embedded servers (HTTP / FTP / TFTP)</td>
+                <td>
+                  <code>src-tauri/src/embedded_servers/</code> (~82 KB). Concrete per-protocol
+                  structs, <strong>no shared trait</strong>, Tauri-coupled
+                  (<code>AppHandle</code>/<code>Emitter</code>, <code>std::thread</code>).
+                </td>
+                <td><span class="pill pill--desktop">Desktop-only, no trait</span></td>
+              </tr>
+              <tr>
+                <td>SSH tunnels (local/remote/dynamic)</td>
+                <td><code>src-tauri/src/tunnel/</code> (~150 KB). No agent/core counterpart.</td>
+                <td><span class="pill pill--desktop">Desktop-only</span></td>
+              </tr>
+              <tr>
+                <td>Credentials / OS keychain</td>
+                <td><code>src-tauri/src/credential/</code> (~88 KB)</td>
+                <td>
+                  <span class="pill pill--desktop">Desktop-only (by design — trust boundary)</span>
+                </td>
+              </tr>
+              <tr>
+                <td>Workspace / last-session persistence, spawn registry</td>
+                <td><code>src-tauri/src/{workspace,spawn}/</code></td>
+                <td><span class="pill pill--desktop">Desktop-only</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Where logic lives today (fat UI, thin agent)</span>
+          <pre class="mermaid">
+flowchart LR
+    subgraph UI["React WebView — ~80.9k LOC, ~half is logic/state"]
+        STORE["appStore.ts (8.3k lines)<br/>authoritative state + state machines"]
+        LOGIC["utils / services / hooks<br/>panelTree · backoff · restore · validation"]
+        COMP["large components<br/>FileBrowser · ConnectionList · AgentNode"]
+    end
+    subgraph DESK["Desktop (src-tauri) — 275 commands"]
+        MGRS["managers: session · connection · tunnel<br/>embedded servers · network · workspace"]
+        PROXY["RemoteProxy → agent"]
+    end
+    subgraph CORE["termihub-core (shared)"]
+        TRAITS["ConnectionType · MonitoringProvider · FileBrowser<br/>network diagnostics · ipc"]
+    end
+    subgraph AGENT["Remote agent — thin proxy"]
+        RPC["connection.* · files.* · monitoring.*<br/>network.* · agent.*"]
+    end
+    STORE <-->|"206 commands / 36 events"| MGRS
+    LOGIC -.mirrors.-> MGRS
+    MGRS --> TRAITS
+    PROXY -->|JSON-RPC/SSH| RPC
+    RPC --> TRAITS
+          </pre>
+        </div>
+        <div class="layer-legend">
+          <span><b>Fat</b> = authoritative state + logic</span>
+          <span><b>Thin</b> = transport / render only</span>
+        </div>
+      </section>
+
+      <!-- ── Target: Stateless UI ───────────────────────────────────── -->
+      <section>
+        <h2 id="ui">Target: Stateless UI <a class="anchor" href="#ui">#</a></h2>
+
+        <h3>The split — what the UI keeps vs. what moves</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Stays in the UI (view-local, ephemeral)</th>
+                <th>Moves to the backend (authoritative + logic)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Rendering (JSX → DOM), xterm.js canvas + its scrollback buffer</td>
+                <td>
+                  All session/connection/tunnel/server/monitor/workspace <strong>state</strong>
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Raw input capture (keystrokes, mouse, drag gestures) → dispatched as intents
+                </td>
+                <td>
+                  All <strong>state machines</strong>: connect/reconnect/backoff, restore cohorts,
+                  transfer queue, tunnel lifecycle, broadcast membership, workflow runs
+                </td>
+              </tr>
+              <tr>
+                <td>Focus, hover, scroll position, selection, in-progress unsubmitted text</td>
+                <td>
+                  The <strong>panel tree &amp; tab model</strong> (today's
+                  <code>panelTree.ts</code> algebra + <code>workspaceLayout.ts</code>)
+                </td>
+              </tr>
+              <tr>
+                <td>Which projection to subscribe to; optimistic echo of an in-flight intent</td>
+                <td>
+                  All <strong>validation</strong>, schema defaults, SSH-config / inventory parsing,
+                  ReDoS-safe regex, keybinding resolution
+                </td>
+              </tr>
+              <tr>
+                <td>Animation, theming CSS variables (values still authored backend-side)</td>
+                <td>
+                  All <strong>derivation</strong>: filtered/sorted trees, counts, badges,
+                  reconciliation of pushed events against prior state
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The test for "does this belong in the UI?":
+          <em
+            >if the app were driven by a second client (a browser tab, an automation script) the
+            fact would still have to be true and consistent</em
+          >
+          → it is authoritative → backend. If it evaporates when you close the window and no one
+          else could ever care about it → view-local → UI.
+        </p>
+
+        <h3>State flow — backend-pushed projections</h3>
+        <p>
+          The UI subscribes to <strong>view models</strong> — projections the backend computes and
+          pushes. A projection is a serialisable, render-ready snapshot of one screen region (the
+          connection tree, the tab bar for a window, the tunnel list, the Open Connections table).
+          The store (<code>appStore</code>) survives only as a
+          <strong>dumb projection cache</strong>: it holds the last snapshot the backend sent and
+          notifies React; it computes nothing and decides nothing.
+        </p>
+        <div class="diagram">
+          <span class="diagram__caption"
+            >State flow: backend owns state, UI renders a projection</span
+          >
+          <pre class="mermaid">
+flowchart LR
+    subgraph BE["Backend (desktop host or agent)"]
+        SS["Authoritative Store<br/>(sessions, tunnels, servers, layout, …)"]
+        PROJ["Projector<br/>state → view models"]
+        SS -->|on change| PROJ
+    end
+    subgraph FE["Stateless UI"]
+        CACHE["Projection cache<br/>(Zustand, dumb)"]
+        VIEW["React components<br/>pure render(viewModel)"]
+        CACHE --> VIEW
+    end
+    PROJ -->|"push: view-model diffs<br/>(one channel per region)"| CACHE
+    VIEW -.->|"no local logic;<br/>render only"| VIEW
+          </pre>
+        </div>
+
+        <h3>Intent flow — UI dispatches, backend decides</h3>
+        <p>
+          Every user action becomes an <strong>intent</strong> — a small serialisable message (<code
+            >{ kind, payload }</code
+          >) sent to the backend. The backend validates it, runs the business logic, mutates
+          authoritative state, and the resulting state change flows back as a projection push. The
+          UI never mutates state directly and never branches on business rules; at most it renders
+          an <em>optimistic echo</em> (e.g. a pending spinner) that the next projection confirms or
+          replaces.
+        </p>
+        <div class="diagram">
+          <span class="diagram__caption">Intent flow: the one-way round trip</span>
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant V as UI (stateless)
+    participant B as Backend (authoritative)
+    participant P as Projector
+    U->>V: click "Reconnect" / drag tab / type command
+    V->>B: intent { kind: "session.reconnect", id }
+    Note over V: optimistic echo only (pending state)
+    B->>B: validate + run logic (backoff SM, panel-tree edit, …)
+    B->>P: state changed
+    P-->>V: projection push (new view model)
+    V->>U: re-render from projection
+          </pre>
+        </div>
+        <p>
+          This collapses today's 206 typed commands + 36 event channels into
+          <strong>two generic channels</strong> — <code>dispatch(intent)</code> and
+          <code>subscribe(region) → viewModel</code> — plus the terminal byte stream (below). The
+          typed command surface does not disappear; it moves <em>behind</em> the intent boundary as
+          internal backend functions.
+        </p>
+
+        <h3>What happens to the 8.3k-line appStore</h3>
+        <p>
+          It is <strong>dismantled, not deleted</strong>. Each domain's authoritative half moves to
+          a Rust store + projector; the frontend keeps a thin per-region cache. Concretely:
+        </p>
+        <ul>
+          <li>
+            <strong>Panel tree / tabs / layout</strong> → a Rust <code>LayoutStore</code> (the
+            <code>panelTree.ts</code> 16-function algebra and <code>workspaceLayout.ts</code> port
+            almost verbatim). The UI receives a flat <em>render list</em> of panels + a tab bar per
+            window; drag-drop becomes a <code>layout.moveTab</code> intent.
+          </li>
+          <li>
+            <strong>Terminal connect/reconnect</strong> → the <code>driveAutoReconnect</code> state
+            machine and <code>reconnectBackoff.ts</code> math move into the session manager (which
+            already owns the real session). The UI renders a status the backend computes.
+          </li>
+          <li>
+            <strong
+              >Restore cohorts, transfer-queue reconciliation, broadcast membership, workflow
+              runs</strong
+            >
+            → each is a backend state machine emitting a projection; the store's reducers
+            (<code>settleRestoreCohort</code>, <code>reconcileTransferQueue</code>,
+            <code>refreshBroadcastMembership</code>) delete.
+          </li>
+          <li>
+            <strong>Promise-resolver fields</strong> (password prompt, unlock gating, spawn picker)
+            → replaced by request/response intents with a correlation id; the UI shows a dialog when
+            a projection says "awaiting input", and answers with an intent.
+          </li>
+        </ul>
+
+        <h3>The terminal hot path stays fast (it is already stateless)</h3>
+        <p>
+          Terminal output is the one channel that must not be reshaped into projections. It already
+          works the right way and is <strong>left alone</strong>: the backend coalesces PTY output
+          (up to 32 KB) and pushes bytes; <code>events.ts</code>'s
+          <code>TerminalOutputDispatcher</code> batches via <code>requestAnimationFrame</code> and
+          writes straight into xterm.js's canvas. xterm's scrollback is
+          <em>view-local render state</em>, explicitly allowed. The redesign preserves this byte
+          pipeline as a third dedicated channel alongside intents and projections — it does not
+          route terminal bytes through the projector.
+        </p>
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Three channels — projections, intents, and the raw terminal stream</span
+          >
+          <pre class="mermaid">
+flowchart TB
+    UI["Stateless UI"]
+    BE["Backend"]
+    UI -->|"1 · intents (dispatch)"| BE
+    BE -->|"2 · projections (view models)"| UI
+    BE -->|"3 · terminal bytes (coalesced, rAF-batched → xterm)"| UI
+          </pre>
+        </div>
+
+        <h3>The plugin-frontend runtime — the hard exception</h3>
+        <p>
+          Frontend JS plugins (<code>src/plugins/pluginRuntime.ts</code>, #1998) are the sharpest
+          collision with "no logic in the UI". A frontend plugin is JavaScript
+          <strong>injected into the shared WebView context</strong> that registers:
+        </p>
+        <ul>
+          <li>
+            <strong>Protocol parsers</strong> — <code>transform(data, sessionId)</code> runs over
+            <em>every chunk of terminal output</em> before xterm. This is arbitrary third-party
+            logic sitting <em>in the hot path, in the frontend</em>.
+          </li>
+          <li>
+            <strong>Status-bar widgets</strong> — <code>render(): HTMLElement</code>, i.e. plugins
+            that build DOM directly in the main context.
+          </li>
+        </ul>
+        <p>
+          A stateless UI cannot host arbitrary business logic, yet the plugin API's entire value is
+          letting third parties add exactly that on the client. This concept resolves it by
+          <strong
+            >declaring the sanctioned client-plugin surface an explicit, sandboxed exception</strong
+          >, not by pretending it moves:
+        </p>
+        <ul>
+          <li>
+            Protocol parsers
+            <strong>should prefer the existing Rust plugin backend</strong>
+            (<code>core/src/plugin</code>, the <code>termihub-plugin-api</code> ABI v4) — a Rust
+            parser in the backend output pipeline is both faster and compatible with the stateless
+            model. The frontend parser extension point becomes a fallback for presentation-only
+            transforms.
+          </li>
+          <li>
+            Status-bar widgets remain client-side but move into a
+            <strong>sandboxed runtime</strong> (Worker / iframe, already flagged as future work in
+            #1998) with a message-passing API — they render into a slot the stateless shell owns,
+            they do not reach into app state.
+          </li>
+        </ul>
+        <p>
+          This is the one place the "all logic in the backend" rule is deliberately bounded, and it
+          must be decided explicitly (see <a href="#decisions">Open Decisions</a>).
+        </p>
+      </section>
+
+      <!-- ── Agent-Executed Services & Tools ────────────────────────── -->
+      <section>
+        <h2 id="services">
+          Agent-Executed Services &amp; Tools <a class="anchor" href="#services">#</a>
+        </h2>
+        <p>
+          Today a service or tool is either "on the desktop" (embedded servers, tunnels, HTTP
+          monitor) or "on the agent" (sessions, network diagnostics) by accident of where its code
+          was written. The target makes <strong>location a runtime property</strong>: each service
+          or tool is a location-agnostic backend object, hosted by whichever host the user picks.
+        </p>
+
+        <h3>The abstraction — a <code>Service</code> / <code>Tool</code> trait pair in core</h3>
+        <p>
+          Mirroring the existing <code>ConnectionType</code> pattern, two new trait families live in
+          <code>core</code> and are hosted by <em>both</em> the desktop and the agent:
+        </p>
+        <ul>
+          <li>
+            <strong><code>Service</code></strong> — a long-lived, stateful daemon with a lifecycle:
+            <code>start</code> / <code>stop</code> / <code>status</code> /
+            <code>subscribe_events</code>, a <code>settings_schema()</code> and
+            <code>capabilities()</code> exactly like <code>ConnectionType</code>. Implementors: the
+            HTTP/FTP/TFTP embedded servers, SSH tunnels, the HTTP monitor, system monitors. A
+            <code>ServiceRegistry</code> (twin of <code>ConnectionTypeRegistry</code>) registers
+            factories at startup.
+          </li>
+          <li>
+            <strong><code>Tool</code></strong> — a one-shot or streaming invocation with no
+            persistent lifecycle: <code>run(params) → stream&lt;result&gt;</code>. Implementors:
+            ping, traceroute, port scan, DNS lookup, Wake-on-LAN. These already exist as plain
+            functions in <code>core/src/network</code>; the trait just gives them a uniform host + a
+            cancellation token.
+          </li>
+        </ul>
+        <p>
+          Both host processes populate their registry from the same core implementations, gated by
+          cargo features — exactly the mechanism that already lets desktop and agent share backends.
+          The desktop additionally decides <em>reachability</em>: a service on the agent is driven
+          through the <strong>same JSON-RPC proxy the sessions already use</strong> (<code
+            >RemoteProxy</code
+          >
+          / <code>agent_manager</code>), extended with <code>service.*</code> and
+          <code>tool.*</code> namespaces.
+        </p>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Service/Tool execution abstraction across desktop + agent</span
+          >
+          <pre class="mermaid">
+flowchart TB
+    subgraph CORE["termihub-core — shared implementations"]
+        SVC["Service trait<br/>start/stop/status/subscribe"]
+        TOOL["Tool trait<br/>run → stream"]
+        IMPLS["http_server · ftp_server · tftp_server<br/>tunnel · http_monitor · sys_monitor<br/>ping · traceroute · port_scan · dns · wol"]
+        IMPLS --> SVC
+        IMPLS --> TOOL
+    end
+    subgraph DESK["Desktop host"]
+        DREG["ServiceRegistry + ToolRegistry<br/>(local execution)"]
+        DSEL["Run-location resolver"]
+    end
+    subgraph AGENT["Agent host"]
+        AREG["ServiceRegistry + ToolRegistry<br/>(remote execution)"]
+        ADISP["dispatch: service.* / tool.*"]
+    end
+    SVC -. impls .-> DREG
+    SVC -. impls .-> AREG
+    TOOL -. impls .-> DREG
+    TOOL -. impls .-> AREG
+    DSEL -->|"run here"| DREG
+    DSEL -->|"run there (JSON-RPC/SSH)"| ADISP
+    ADISP --> AREG
+          </pre>
+        </div>
+
+        <h3>Per-capability porting effort</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Capability</th>
+                <th>What it takes to run on the agent</th>
+                <th>Effort</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Network tools (ping/traceroute/portscan/DNS/WoL/open-ports)</td>
+                <td>
+                  Logic already in <code>core/src/network</code> and
+                  <strong>already exposed as <code>network.*</code> on the agent</strong>. Work is
+                  almost entirely <em>desktop-side</em>: a run-location selector + routing the
+                  existing desktop <code>network.rs</code> commands to either local core calls or
+                  the agent proxy.
+                </td>
+                <td><span class="pill pill--agent">Low — mostly UI/routing</span></td>
+              </tr>
+              <tr>
+                <td>System monitoring</td>
+                <td>
+                  Already agent-hosted and proxied. Extend the run-location model to make "monitor
+                  from the agent" a first-class choice rather than implicit in a remote connection.
+                </td>
+                <td><span class="pill pill--agent">Low</span></td>
+              </tr>
+              <tr>
+                <td>HTTP monitor</td>
+                <td>
+                  Lift <code>src-tauri/src/network/http_monitor.rs</code> + its storage into a core
+                  <code>Service</code> impl (decouple from Tauri emit → use the service event
+                  channel), then register on the agent. Persistence becomes a host-provided store.
+                </td>
+                <td><span class="pill">Medium</span></td>
+              </tr>
+              <tr>
+                <td>Embedded servers (HTTP / FTP / TFTP)</td>
+                <td>
+                  The biggest lift. Move ~82 KB out of
+                  <code>src-tauri/src/embedded_servers/</code> into core behind
+                  <code>Service</code>, replacing <code>AppHandle</code>/<code>Emitter</code> and
+                  raw <code>std::thread</code> with the trait's event channel and tokio tasks. Then
+                  register on the agent. Running a TFTP/FTP server <em>on the remote host</em>
+                  is a genuinely new user capability (serve files from the server's own filesystem).
+                </td>
+                <td><span class="pill">Medium–High</span></td>
+              </tr>
+              <tr>
+                <td>SSH tunnels</td>
+                <td>
+                  ~150 KB in <code>src-tauri/src/tunnel/</code>, tightly bound to the desktop's
+                  russh session pool. Modelling an agent-hosted tunnel raises real semantic
+                  questions (a tunnel's endpoints are relative to <em>which</em> host?), so this is
+                  the last and most carefully-scoped service to move.
+                </td>
+                <td><span class="pill">High</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>UI Interface — the run-location selector</h3>
+        <p>
+          The one new visible surface. Every service/tool panel gains a
+          <strong>"Run on"</strong> control choosing the desktop or any connected agent. The mockup
+          below shows it on the Network Tools / embedded-servers surface using the real app chrome;
+          the control is a standard <code>Select</code> primitive per the design system.
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — Network Tools &amp; Servers with a per-item "Run on" selector</h3>
+          <div class="mockup-note">
+            Each service/tool row carries a <strong>Run on</strong> selector
+            <span class="callout">A</span> — <em>This computer</em> (desktop host) or a connected
+            agent (e.g. <code>build-server</code>). The location pill
+            <span class="callout">B</span> shows where the instance currently executes; the state
+            <span class="callout">C</span> is projected from the hosting backend regardless of
+            location.
+          </div>
+          <div class="app" style="height: 340px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item" title="Connections">
+                    <svg class="li"><use href="#i-network" /></svg>
+                  </button>
+                  <button
+                    class="activity-bar__item activity-bar__item--active"
+                    title="Network Tools"
+                  >
+                    <svg class="li"><use href="#i-radio" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                  <button class="activity-bar__item" title="File Browser">
+                    <svg class="li"><use href="#i-folder-open" /></svg>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Log Viewer">
+                    <svg class="li"><use href="#i-scroll-text" /></svg>
+                  </button>
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar">
+                <div class="sidebar__header">
+                  <span class="sidebar__title">Services &amp; Tools</span>
+                </div>
+                <div class="sidebar__content">
+                  <div class="svc-panel">
+                    <!-- Embedded HTTP server, running on the agent -->
+                    <div class="svc-row">
+                      <span class="svc-row__name">
+                        <svg class="li"><use href="#i-globe" /></svg> HTTP server
+                      </span>
+                      <span class="svc-loc" title="Run on">
+                        <span class="svc-loc__where">
+                          <svg class="li"><use href="#i-server" /></svg>
+                          <code>build-server</code>
+                        </span>
+                        <svg class="li"><use href="#i-chevron-down" /></svg>
+                      </span>
+                      <span class="callout">A</span>
+                      <span class="svc-row__spacer"></span>
+                      <span class="pill pill--agent">agent</span>
+                      <span class="callout">B</span>
+                      <span class="svc-state svc-state--running">
+                        <svg class="li"><use href="#i-circle-check" /></svg> :8080
+                      </span>
+                      <span class="callout">C</span>
+                    </div>
+
+                    <!-- TFTP server, running on the desktop -->
+                    <div class="svc-row">
+                      <span class="svc-row__name">
+                        <svg class="li"><use href="#i-server" /></svg> TFTP server
+                      </span>
+                      <span class="svc-loc" title="Run on">
+                        <span class="svc-loc__where">
+                          <svg class="li"><use href="#i-monitor" /></svg>
+                          This computer
+                        </span>
+                        <svg class="li"><use href="#i-chevron-down" /></svg>
+                      </span>
+                      <span class="svc-row__spacer"></span>
+                      <span class="pill pill--desktop">desktop</span>
+                      <span class="svc-state svc-state--running">
+                        <svg class="li"><use href="#i-circle-check" /></svg> :69
+                      </span>
+                    </div>
+
+                    <!-- Ping tool, targeted at the agent -->
+                    <div class="svc-row">
+                      <span class="svc-row__name">
+                        <svg class="li"><use href="#i-radio" /></svg> Ping
+                      </span>
+                      <span class="svc-loc" title="Run on">
+                        <span class="svc-loc__where">
+                          <svg class="li"><use href="#i-server" /></svg>
+                          <code>build-server</code>
+                        </span>
+                        <svg class="li"><use href="#i-chevron-down" /></svg>
+                      </span>
+                      <span class="svc-row__spacer"></span>
+                      <span class="pill pill--agent">agent</span>
+                      <span class="svc-state">from server's network</span>
+                    </div>
+                  </div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="terminal">
+                      <span class="prompt">ping (via build-server) 10.0.0.5</span><br />
+                      64 bytes from 10.0.0.5: icmp_seq=1 ttl=63 time=0.42 ms
+                      <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">
+                  <svg class="li"><use href="#i-server" /></svg> 2 services on build-server
+                </span>
+              </div>
+              <div class="status-bar__section status-bar__section--right">
+                <span class="status-bar__item">1 local</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> <strong>Run on</strong> selector (<code>Select</code>
+                primitive) — <em>This computer</em> or any connected agent. Changing it stop/starts
+                the service on the new host.
+              </li>
+              <li>
+                <span class="callout">B</span> Location pill — <code>desktop</code> /
+                <code>agent</code>; where the instance currently executes.
+              </li>
+              <li>
+                <span class="callout">C</span> State (bind/port, running dot) — projected from the
+                hosting backend, identical shape regardless of location.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Starting a service on a chosen host (desktop or agent)</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant V as Stateless UI
+    participant D as Desktop backend
+    participant A as Agent
+    V->>D: intent { kind: "service.start", type: "http", runOn: "agent:build-server", config }
+    D->>D: resolve run-location
+    alt runs on desktop
+        D->>D: ServiceRegistry.create("http").start(config)
+    else runs on agent
+        D->>A: service.start { type: "http", config } (JSON-RPC/SSH)
+        A->>A: ServiceRegistry.create("http").start(config)
+        A-->>D: { serviceId, status }
+        A-->>D: service.event (status/stats stream)
+    end
+    D->>V: projection push (service row: running @ host)
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Service lifecycle state machine (host-agnostic)</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Stopped
+    Stopped --> Starting : service.start
+    Starting --> Running : bound OK (host confirms)
+    Starting --> Error : bind failed / host unreachable
+    Running --> Stopping : service.stop / run-location change
+    Running --> Error : host lost (agent disconnect)
+    Error --> Starting : retry
+    Stopping --> Stopped : released
+    Running --> Migrating : run-location changed
+    Migrating --> Starting : stop on old host, start on new
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Strangler migration — one domain at a time, app always working</span
+          >
+          <pre class="mermaid">
+flowchart LR
+    A["Domain still in appStore<br/>(logic in UI)"] -->|"phase N: add Rust store + projector"| B["Domain served by projection<br/>UI reads view model"]
+    B -->|"remove store reducers + logic"| C["Domain stateless in UI"]
+    C -->|"repeat for next domain"| A
+    style B fill:#2d6,color:#031
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Feasibility, Scope & Risks ─────────────────────────────── -->
+      <section>
+        <h2 id="feasibility">
+          Feasibility, Scope &amp; Risks <a class="anchor" href="#feasibility">#</a>
+        </h2>
+
+        <h3>Verdict</h3>
+        <p>
+          <strong
+            >Feasible, but a multi-quarter restructure that touches nearly every file — and it must
+            be sequenced, not attempted at once.</strong
+          >
+          It is feasible <em>because</em> the hard architectural seams already exist: the
+          shared-core trait model, the JSON-RPC agent proxy, the backend-push terminal pipeline, and
+          mostly-pure logic utils that port cleanly to Rust. It is dangerous <em>because</em> the
+          authoritative state is concentrated in one 8.3k-line store whose reducers are load-bearing
+          across the whole app, and because
+          <strong>the backend is the least-tested layer</strong> (the pre-release audit flagged
+          exactly this) — moving logic <em>into</em> the least-tested layer without first building
+          test scaffolding would trade UI bugs for silent backend bugs.
+        </p>
+
+        <h3>Rough scope / effort</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Workstream</th>
+                <th>Rough effort</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  Projection + intent substrate (the two generic channels, projection cache, one
+                  pilot domain)
+                </td>
+                <td>1–2 months</td>
+              </tr>
+              <tr>
+                <td>
+                  Port each state domain (~20) to a Rust store + projector, deleting store reducers
+                </td>
+                <td>
+                  6–10 months (incremental, parallelisable across domains that don't share files)
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>Service</code>/<code>Tool</code> trait + registries + agent
+                  <code>service.*</code>/<code>tool.*</code> dispatch
+                </td>
+                <td>1–2 months</td>
+              </tr>
+              <tr>
+                <td>
+                  Port embedded servers + HTTP monitor into core services; wire network-tool
+                  run-location
+                </td>
+                <td>2–3 months</td>
+              </tr>
+              <tr>
+                <td>Agent-hosted tunnels (semantics + impl)</td>
+                <td>1–2 months, last</td>
+              </tr>
+              <tr>
+                <td>Backend test scaffolding (must lead, not trail)</td>
+                <td>ongoing, front-loaded</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Order-of-magnitude: <strong>~12–18 months of focused work</strong>, spread across many
+          independently-mergeable PRs. No single PR should be large; the value of the strangler
+          approach is that the app ships working the entire time.
+        </p>
+
+        <h3>Top risks</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Risk</th>
+                <th>Why it bites</th>
+                <th>Mitigation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Backend is least-tested</strong></td>
+                <td>
+                  Logic moving in lands in the thinnest safety net; regressions become silent (no UI
+                  to visibly break).
+                </td>
+                <td>
+                  Front-load backend test scaffolding: unit tests for every ported state machine
+                  (the JS tests port alongside the logic —
+                  <code>appStore.plugins.test.ts</code> etc. are a head start), plus the Python
+                  bridge harness asserting projections. A domain does not migrate until its backend
+                  tests exist.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Terminal-latency regression</strong></td>
+                <td>
+                  If terminal bytes ever get routed through the projector, the 40-terminal hot path
+                  dies.
+                </td>
+                <td>
+                  Keep the raw byte stream as a dedicated third channel, untouched. Benchmark
+                  before/after each phase near a terminal.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Projection chattiness / over-rendering</strong></td>
+                <td>
+                  Naive full-snapshot pushes on every keystroke will flood the IPC bridge (already
+                  single-threaded, ADR risk).
+                </td>
+                <td>
+                  Diff-based projections, per-region channels, coalescing — the same discipline the
+                  terminal dispatcher already uses.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Plugin-frontend runtime collision</strong></td>
+                <td>
+                  Frontend plugins run arbitrary JS logic in the WebView, in the terminal hot path —
+                  the antithesis of a stateless UI.
+                </td>
+                <td>
+                  Sanctioned bounded exception: prefer Rust backend parsers; sandbox client widgets
+                  (Worker/iframe, #1998). Decide explicitly.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Big-bang temptation</strong></td>
+                <td>
+                  The store is so interconnected that a "just rewrite it" push is tempting and would
+                  strand the app half-migrated.
+                </td>
+                <td>
+                  Hard rule: one domain per phase behind a stable projection boundary; never two
+                  colliding domains in flight (mirrors the coordinator's no-colliding-files rule).
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Agent-hosted tunnel semantics</strong></td>
+                <td>
+                  A tunnel's "local" and "remote" ends are relative to a host; moving hosts silently
+                  changes meaning.
+                </td>
+                <td>
+                  Treat tunnels last; specify endpoint semantics in a dedicated sub-concept before
+                  coding.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Offline / desktop-only capabilities</strong></td>
+                <td>
+                  Credentials/keychain, spawn rendezvous, local file watch cannot and should not
+                  move to an agent.
+                </td>
+                <td>
+                  Explicitly scope them as desktop-host services; the run-location selector simply
+                  omits "agent" for them.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Test scaffolding needed first</h3>
+        <ul>
+          <li>
+            Rust unit-test coverage for each state machine <em>before</em> it moves (backoff,
+            restore cohort, transfer queue, panel-tree algebra — the latter has a clean
+            pure-function shape ideal for property tests).
+          </li>
+          <li>
+            A projection-assertion harness in the Python bridge: drive an intent, assert the pushed
+            view model. This becomes the contract test for the stateless boundary.
+          </li>
+          <li>
+            Integration coverage for agent-hosted services (the <code>service.*</code> path) —
+            noting per-PR CI does <em>not</em> run integration tests, so these need local container
+            runs.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── Phased Migration ───────────────────────────────────────── -->
+      <section>
+        <h2 id="migration">Phased Migration <a class="anchor" href="#migration">#</a></h2>
+        <p>
+          Strangler-style. Each phase is independently shippable and leaves the app fully working.
+          Phases 0–2 build the substrate; 3+ move domains; the service/tool track (S1–S3) can run in
+          parallel once the trait lands.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Phase</th>
+                <th>Deliverable</th>
+                <th>Keeps app working by…</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>0 · Test scaffolding</strong></td>
+                <td>
+                  Backend unit-test harness + projection-assertion bridge tests. Port the pure logic
+                  utils (<code>panelTree</code>, <code>reconnectBackoff</code>,
+                  <code>restoreMode</code>, <code>schemaDefaults</code>) to Rust <em>with</em> their
+                  tests, dual-run against the TS versions.
+                </td>
+                <td>Nothing changes for the user; Rust ports run behind the existing TS.</td>
+              </tr>
+              <tr>
+                <td><strong>1 · Substrate</strong></td>
+                <td>
+                  The two generic channels — <code>dispatch(intent)</code> and
+                  <code>subscribe(region)</code> — plus a dumb projection-cache adapter in the
+                  store. Terminal byte stream stays as-is.
+                </td>
+                <td>Old typed commands still work; the new channels sit beside them.</td>
+              </tr>
+              <tr>
+                <td><strong>2 · Pilot domain</strong></td>
+                <td>
+                  Migrate one self-contained domain end-to-end (candidate:
+                  <strong>SSH tunnels</strong> — already sliced, already a slice file, clear
+                  lifecycle) to Rust store + projector; delete its store reducers.
+                </td>
+                <td>
+                  Only the tunnel slice changes; everything else untouched. Proves the pattern.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>3 · Layout &amp; tabs</strong></td>
+                <td>
+                  Move the panel tree + tab model to a Rust <code>LayoutStore</code> (biggest single
+                  win — the <code>panelTree.ts</code>/<code>workspaceLayout.ts</code> ports from
+                  phase 0 activate). UI renders a flat panel/tab render-list.
+                </td>
+                <td>Drag-drop becomes an intent; visuals identical.</td>
+              </tr>
+              <tr>
+                <td><strong>4 · Session lifecycle</strong></td>
+                <td>
+                  Connect/reconnect/restore/broadcast/workflow state machines move server-side; the
+                  UI renders projected status.
+                </td>
+                <td>
+                  The real sessions already live backend-side; only the state machine relocates.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>5 · The long tail</strong></td>
+                <td>
+                  Remaining domains (connections tree, file browsers, transfers, agents, monitors,
+                  settings) one at a time.
+                </td>
+                <td>Each is one PR; the store shrinks monotonically.</td>
+              </tr>
+              <tr>
+                <td><strong>S1 · Service/Tool trait</strong></td>
+                <td>
+                  Add <code>Service</code>/<code>Tool</code> traits + registries in core; agent
+                  <code>service.*</code>/<code>tool.*</code> dispatch; desktop run-location
+                  resolver.
+                </td>
+                <td>Existing desktop services keep working through the new trait locally.</td>
+              </tr>
+              <tr>
+                <td><strong>S2 · Tools + servers to agent</strong></td>
+                <td>
+                  Wire network-tool run-location (agent already exposes <code>network.*</code>);
+                  lift embedded servers + HTTP monitor into core services; add the run-location
+                  selector UI.
+                </td>
+                <td>Default run-location stays "This computer" until the user opts in.</td>
+              </tr>
+              <tr>
+                <td><strong>S3 · Tunnels to agent</strong></td>
+                <td>Agent-hosted tunnels, after the endpoint-semantics sub-concept.</td>
+                <td>Desktop tunnels unchanged; agent hosting is additive.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Open Design Decisions ──────────────────────────────────── -->
+      <section>
+        <h2 id="decisions">Open Design Decisions <a class="anchor" href="#decisions">#</a></h2>
+        <p>The maintainer must settle these before the target design is finalised:</p>
+        <ol>
+          <li>
+            <strong>Projection granularity &amp; transport.</strong> Per-region diff channels over
+            Tauri events? A single reactive document (CRDT-like)? Something like a
+            query/subscription layer? This is the load-bearing choice; everything else follows from
+            it.
+          </li>
+          <li>
+            <strong>How stateless is "stateless"?</strong> Is a small amount of derived,
+            non-authoritative caching allowed in the UI for render performance (e.g. memoised
+            filtered lists), or is the rule absolute (every derived value comes from the backend)?
+          </li>
+          <li>
+            <strong>Frontend plugin API future.</strong> Do protocol parsers move to the Rust plugin
+            backend (breaking the current JS extension point), stay as a bounded client-side
+            exception, or both (Rust preferred, JS fallback)? This decides the plugin ecosystem's
+            shape.
+          </li>
+          <li>
+            <strong>Desktop-only boundary.</strong> Confirm the permanent desktop-host set:
+            credentials/keychain, spawn rendezvous, local file watch, OS-window management. The
+            run-location selector omits "agent" for these.
+          </li>
+          <li>
+            <strong>Agent-hosted tunnel endpoint semantics.</strong> When a tunnel runs on an agent,
+            what do "local" and "remote" mean, and how is that surfaced without confusing users?
+          </li>
+          <li>
+            <strong>Multi-client consistency.</strong> A stateless UI over an authoritative backend
+            invites multiple clients (remote-client mode). Is that in-scope now (shapes the
+            projection design) or explicitly deferred (single-client projections first)?
+          </li>
+          <li>
+            <strong>Migration appetite vs. feature work.</strong> A 12–18-month restructure competes
+            with feature delivery. Is this a background strangler (slow, safe) or a funded push?
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the architecture at concept-creation time (July 2026); indicative, not binding.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>core/src/service/</code></td>
+                <td>
+                  <strong>New</strong> — <code>Service</code> trait, <code>ServiceRegistry</code>,
+                  event channel (twin of <code>connection/</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/tool/</code></td>
+                <td>
+                  <strong>New</strong> — <code>Tool</code> trait wrapping
+                  <code>core/src/network</code> functions with a uniform host + cancellation.
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/embedded_servers/</code></td>
+                <td>
+                  <strong>New (moved)</strong> — HTTP/FTP/TFTP servers lifted from
+                  <code>src-tauri/src/embedded_servers/</code>, decoupled from
+                  <code>AppHandle</code>/<code>Emitter</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>agent/src/handler/dispatch.rs</code></td>
+                <td>
+                  Add <code>service.*</code> and <code>tool.*</code> method registration (mirrors
+                  existing <code>network.*</code>/<code>connection.*</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/…/run_location.rs</code></td>
+                <td>
+                  <strong>New</strong> — resolver routing a service/tool to local registry or the
+                  agent proxy.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/projection/</code></td>
+                <td>
+                  <strong>New</strong> — the projector: authoritative stores → view models,
+                  per-region push channels.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/services/transport/</code></td>
+                <td>
+                  <strong>New</strong> — <code>dispatch(intent)</code> /
+                  <code>subscribe(region)</code> (shares shape with the transport abstraction in
+                  <code>remote-client-mode.html</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/store/appStore.ts</code></td>
+                <td>
+                  <strong>Shrinks monotonically</strong> — each phase deletes a domain's
+                  authoritative state + reducers, leaving a projection cache.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/utils/panelTree.ts</code>, <code>reconnectBackoff.ts</code>,
+                  <code>restoreMode.ts</code>
+                </td>
+                <td>
+                  <strong>Ported to Rust</strong> (phase 0), then deleted from TS once the
+                  layout/session stores own them.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/plugins/pluginRuntime.ts</code></td>
+                <td>
+                  Reworked — Rust-preferred parsers; client widgets sandboxed (Worker/iframe,
+                  #1998).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Implementation Status ──────────────────────────────────── -->
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <p>
+          <strong>Not started</strong> — this is a <code>future/</code> north-star concept. It is
+          deliberately not a single implementable unit; its phases (see
+          <a href="#migration">Phased Migration</a>) are filed as their own
+          <code>Ready2Implement</code> issues as they are picked up. Once any phase begins, run
+          <code>/sync-concept stateless-ui-agent-centric</code> after each change to keep the Sync
+          Ledger current. Tracking issue:
+          <a href="https://github.com/armaxri/termiHub/issues/2139">#2139</a>.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by the <code>/sync-concept stateless-ui-agent-centric</code> skill. Records
+            the last commit at which the concept and code were reconciled, plus open divergences.
+            The concept is the source of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (not started) · <strong>Status:</strong> diverged
+          (entirely unbuilt — future concept)
+        </p>
+
+        <h3>Open divergences</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Stateless UI — no authoritative state / logic in the frontend</td>
+                <td>
+                  ~45–55% of production frontend TS is logic/state; <code>appStore.ts</code> 8,353
+                  lines is authoritative
+                </td>
+                <td>Missing (future)</td>
+                <td>Migrate per phases 0–5, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Services/tools run on desktop <em>or</em> agent via a shared trait</td>
+                <td>
+                  Sessions/files/monitoring/network already agent-capable; embedded servers, HTTP
+                  monitor, tunnels desktop-only; no <code>Service</code>/<code>Tool</code> trait
+                </td>
+                <td>Partial substrate</td>
+                <td>Land S1–S3; re-sync per service moved</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Frontend plugins do not host business logic in the UI</td>
+                <td>
+                  <code>pluginRuntime.ts</code> runs JS parsers in the terminal hot path + DOM
+                  widgets in the WebView context (#1998)
+                </td>
+                <td>Design decision open</td>
+                <td>Resolve decision #3, then re-sync</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Resolved</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>#</th>
+                <th>Resolution</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
