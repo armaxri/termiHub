@@ -3,6 +3,7 @@ use termihub_core::service::ServiceInfo;
 
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState};
 use crate::embedded_servers::server_manager::EmbeddedServerManager;
+use crate::run_location::RunLocation;
 use crate::utils::errors::TerminalError;
 
 /// A network interface with its bound IP address, for the bind-address dropdown.
@@ -92,6 +93,22 @@ pub fn get_embedded_server_states(
     manager: State<'_, EmbeddedServerManager>,
 ) -> Result<Vec<ServerState>, TerminalError> {
     manager.get_states()
+}
+
+/// Set (or clear) which machine hosts a server — "This computer" or a named
+/// agent (#2214).
+///
+/// Recording an agent routes the server's next start to that agent over the
+/// agent RPC; `ThisComputer` clears the preference (back to desktop hosting).
+/// This backs the run-location selector UI (a later S-phase) and is the hook for
+/// exercising agent-hosted servers meanwhile.
+#[tauri::command]
+pub fn set_embedded_server_run_location(
+    server_id: String,
+    run_location: RunLocation,
+    manager: State<'_, EmbeddedServerManager>,
+) -> Result<(), TerminalError> {
+    manager.set_run_location(&server_id, run_location)
 }
 
 /// Start a server by ID.
