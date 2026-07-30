@@ -18,6 +18,7 @@ import {
   findLeafByTab,
   generatePanelId,
   getAllLeaves,
+  normalizeSizes,
   removeLeaf,
   simplifyTree,
   splitLeaf,
@@ -124,6 +125,47 @@ vi.mock("@/services/transport", () => ({
         }
         root = simplifyTree(root);
         backend.push({ root, activePanelId: view.activePanelId });
+      } else if (intent.kind === "layout.removePanel") {
+        // Mirrors the Rust store's remove_panel: drop the whole leaf, simplify,
+        // repoint focus onto the first survivor when the removed panel held it.
+        const view = backend.view as { root: PanelNode; activePanelId: string | null };
+        const panelId = intent.payload.panelId as string;
+        const removed = removeLeaf(view.root, panelId);
+        const root = removed ? simplifyTree(removed) : view.root;
+        let active = view.activePanelId;
+        if (!active || !findLeaf(root, active)) {
+          active = getAllLeaves(root)[0]?.id ?? null;
+        }
+        backend.push({ root, activePanelId: active });
+      } else if (intent.kind === "layout.reorderTabs") {
+        // Mirrors the Rust store's reorder_tabs: move a tab within its leaf,
+        // leaving focus untouched.
+        const view = backend.view as { root: PanelNode; activePanelId: string | null };
+        const panelId = intent.payload.panelId as string;
+        const oldIndex = intent.payload.oldIndex as number;
+        const newIndex = intent.payload.newIndex as number;
+        const root = updateLeaf(view.root, panelId, (leaf) => {
+          const tabs = [...leaf.tabs];
+          const [moved] = tabs.splice(oldIndex, 1);
+          tabs.splice(newIndex, 0, moved);
+          return { ...leaf, tabs };
+        });
+        backend.push({ root, activePanelId: view.activePanelId });
+      } else if (intent.kind === "layout.setActivePanel") {
+        // Mirrors the Rust store's set_active_panel: repoint focus, tree unchanged.
+        const view = backend.view as { root: PanelNode };
+        backend.push({ root: view.root, activePanelId: intent.payload.panelId as string });
+      } else if (intent.kind === "layout.resize") {
+        // Mirrors the Rust store's resize: set the split's normalized sizes.
+        const view = backend.view as { root: PanelNode; activePanelId: string | null };
+        const splitId = intent.payload.splitId as string;
+        const sizes = normalizeSizes(intent.payload.sizes as number[]);
+        const setSizes = (n: PanelNode): PanelNode => {
+          if (n.type === "leaf") return n;
+          const children = n.children.map(setSizes);
+          return n.id === splitId ? { ...n, children, sizes } : { ...n, children };
+        };
+        backend.push({ root: setSizes(view.root), activePanelId: view.activePanelId });
       }
       return {
         intentId: "intent-test",
@@ -318,6 +360,91 @@ describe("appStore layout bridge — cut ↔ local parity (#2151)", () => {
       useAppStore.getState().splitPanelWithTab("t3", "b", "a", "right")
     );
     expect(cut).toEqual(local);
+  });
+
+  it("removePanel drops the panel identically both ways (#2188)", async () => {
+    const { local, cut } = await runBothWays(() => useAppStore.getState().removePanel("a"));
+    expect(cut).toEqual(local);
+  });
+
+  it("removePanel keeps focus on a surviving panel identically both ways (#2188)", async () => {
+    // Focus starts on "a"; removing "b" must leave "a" focused on both paths.
+    const run = async (flag: boolean): Promise<unknown> => {
+      useAppStore.setState(useAppStore.getInitialState());
+      useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
+      backend.reset();
+      setLayoutIntentsEnabled(flag);
+      useAppStore.getState().removePanel("b");
+      await flush();
+      const s = useAppStore.getState();
+      return normalize(s.rootPanel, s.activePanelId);
+    };
+    expect(await run(true)).toEqual(await run(false));
+    expect(useAppStore.getState().activePanelId).toBe("a");
+  });
+
+  it("reorderTabs reorders within a leaf identically both ways (#2188)", async () => {
+    const { local, cut } = await runBothWays(() =>
+      useAppStore.getState().reorderTabs("a", 0, 1)
+    );
+    expect(cut).toEqual(local);
+  });
+
+  it("setActivePanel folds focus into the projection while applying locally (#2188)", async () => {
+    // Flag off (rollback): pure-local focus change, nothing dispatched.
+    useAppStore.setState(useAppStore.getInitialState());
+    useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
+    backend.reset();
+    dispatched.length = 0;
+    setLayoutIntentsEnabled(false);
+    useAppStore.getState().setActivePanel("b");
+    expect(useAppStore.getState().activePanelId).toBe("b");
+    expect(dispatched).toHaveLength(0);
+
+    // Flag on: focus applies synchronously (instant UX) AND folds into the region.
+    useAppStore.setState(useAppStore.getInitialState());
+    useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
+    backend.reset();
+    dispatched.length = 0;
+    setLayoutIntentsEnabled(true);
+    useAppStore.getState().setActivePanel("b");
+    expect(useAppStore.getState().activePanelId).toBe("b");
+    await flush();
+    expect(dispatched.map((d) => d.kind)).toEqual(["layout.replace", "layout.setActivePanel"]);
+    // The projection now tracks the folded focus.
+    expect((backend.view as { activePanelId: string }).activePanelId).toBe("b");
+  });
+
+  it("setActivePanel preserves zoom-follow both ways (#2188)", async () => {
+    const run = async (flag: boolean): Promise<string | null> => {
+      useAppStore.setState(useAppStore.getInitialState());
+      useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a", zoomedTabId: "t1" });
+      backend.reset();
+      setLayoutIntentsEnabled(flag);
+      // Switching focus to b, while zoomed, follows to b's active tab (t3).
+      useAppStore.getState().setActivePanel("b");
+      await flush();
+      return useAppStore.getState().zoomedTabId;
+    };
+    expect(await run(true)).toBe("t3");
+    expect(await run(false)).toBe("t3");
+  });
+
+  it("setPanelSizes persists identical split sizes both ways (#2188)", async () => {
+    const sizesOf = async (flag: boolean): Promise<number[] | undefined> => {
+      useAppStore.setState(useAppStore.getInitialState());
+      useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
+      backend.reset();
+      setLayoutIntentsEnabled(flag);
+      useAppStore.getState().setPanelSizes("root", [70, 30]);
+      await flush();
+      const root = useAppStore.getState().rootPanel;
+      return root.type === "split" ? root.sizes : undefined;
+    };
+    const cut = await sizesOf(true);
+    const local = await sizesOf(false);
+    expect(cut).toEqual(local);
+    expect(cut).toEqual([70, 30]);
   });
 
   it("dragging a middle active tab out preserves the source's focus both ways", async () => {
