@@ -746,7 +746,8 @@ impl TunnelManager {
     /// config, rebuild the forwarder, and re-register + re-supervise it. Returns
     /// `true` on success (the tunnel is `Connected` again), `false` if the build
     /// failed (the loop then backs off and retries). Runs on `&self` — the
-    /// supervisor task reaches it via `app_handle.try_state::<TunnelManager>()`.
+    /// supervisor task reaches it via `resolve_managed_arc::<TunnelManager>`,
+    /// which resolves the app-managed `Arc<TunnelManager>` (#2168).
     fn attempt_reconnect(&self, tunnel_id: &str) -> bool {
         let config = {
             match self.tunnel_configs.lock() {
@@ -1118,7 +1119,7 @@ async fn supervise(
                 )),
             );
         },
-        |_attempt| match app_handle.try_state::<TunnelManager>() {
+        |_attempt| match resolve_managed_arc::<TunnelManager, _>(&app_handle) {
             Some(mgr) => mgr.attempt_reconnect(&tunnel_id),
             None => false,
         },
