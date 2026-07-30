@@ -152,6 +152,7 @@ impl AgentTunnelRegistry {
     }
 
     /// Number of tunnels currently forwarding on this agent.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn active_count(&self) -> usize {
         self.tunnels.lock().await.len()
     }

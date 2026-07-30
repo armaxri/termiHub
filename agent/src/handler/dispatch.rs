@@ -41,8 +41,8 @@ use crate::protocol::methods::{
     NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
     SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
     SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult, SessionInputParams,
-    SessionListEntry, SessionListResult, SessionResizeParams, TunnelStartParams, TunnelStartResult,
-    TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult, TunnelForwardSpec,
+    SessionListEntry, SessionListResult, SessionResizeParams, TunnelForwardSpec, TunnelStartParams,
+    TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
     UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 use crate::registry_daemon::client::RegistryClient;
@@ -1460,7 +1460,9 @@ fn register_tunnel_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 fn register_tunnel_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("tunnel.stop", |params, ctx, _ext| async move {
         let registry = get_tunnel_registry(&ctx).await?;
-        let p: TunnelStopParams = params.parse().map_err(|e| invalid_params("tunnel.stop", e))?;
+        let p: TunnelStopParams = params
+            .parse()
+            .map_err(|e| invalid_params("tunnel.stop", e))?;
         let stopped = registry.stop(&p.tunnel_id).await;
         Ok::<_, ErrorObjectOwned>(serde_json::to_value(TunnelStopResult { stopped }).unwrap())
     })?;
