@@ -8,7 +8,24 @@ vectors and must produce identical output, so any drift between the two
 implementations fails a test.
 
 The panel-tree port (#2143) established this convention; the sibling ports
-(#2144–#2147) reuse it verbatim.
+(#2144–#2146) reuse it verbatim, and #2147 extracted the shared runner they all
+drive (see [Shared runner](#shared-runner) below).
+
+## TypeScript is authoritative
+
+The vectors are **derived from the TypeScript suite, which stays the source of
+truth.** The direction is one-way: expected values are lifted from the util's
+`*.test.ts` cases, and the Rust port is written to reproduce them. So when a
+golden case fails, the default is that **the Rust port is wrong** — fix the Rust
+side (or, if the TS behaviour genuinely changed, update the TS test first, then
+regenerate the affected vectors). Never "fix" a red case by editing `expected`
+to match whatever Rust currently emits; that silently ratifies a divergence,
+which is exactly what these fixtures exist to catch.
+
+(The fixtures are plain JSON so a future `vitest` loader could replay them
+against the TS implementation too — a genuine dual-run. Today only the Rust
+`cargo test` side loads them; the TS side remains the authoring source rather
+than a second reader.)
 
 ## Layout
 
@@ -63,8 +80,9 @@ Nodes use the same shape both languages serialize to:
 
 ## Matcher conventions
 
-The Rust harness (`core/tests/panel_tree_golden.rs`) compares `expected` to the
-serialized actual result structurally, with two deliberate relaxations:
+The shared runner (`core/tests/support/golden.rs`, see below) compares
+`expected` to the serialized actual result structurally, with two deliberate
+relaxations:
 
 1. **`"__GENERATED__"`** as an expected string matches any string in the actual
    output. Use it for freshly generated panel ids (`splitLeaf` wrapping a leaf,
@@ -75,3 +93,60 @@ serialized actual result structurally, with two deliberate relaxations:
 
 Object key sets must match exactly — so omit optional fields (`sizes`,
 `lastActiveLeafId`) from `expected` whenever the function does not set them.
+
+## Shared runner
+
+The loader, the structural matcher above, and the driver loop live **once** in
+`core/tests/support/golden.rs` — a test-only support module (not a `cargo test`
+target of its own; it sits in a subdirectory). It exposes three items:
+
+- `run_golden_suite(util, min_cases, run_case)` — loads every `*.json` under
+  `golden/<util>/`, and for each `{operation, cases}` envelope calls
+  `run_case(operation, case)` per case and asserts the result matches. The
+  `min_cases` floor fails the suite if fewer than that many cases ran (guards a
+  fixture dir that silently loads nothing).
+- `from::<T>(value)` — deserialize a fixture JSON value into a port argument
+  type, panicking with a clear message on a shape mismatch.
+- `json_matches(expected, actual)` / `fixture_dir(util)` — the matcher and path
+  helper, exposed for direct use if ever needed (the driver uses them itself).
+
+A per-util `*_golden.rs` file therefore contains **only** its `run_case`
+mapping plus a one-line `#[test]`. See `core/tests/panel_tree_golden.rs` for the
+worked example.
+
+## Adding a new port's golden vectors
+
+1. **Extract the vectors from the TS suite.** For the util's `src/utils/<util>.test.ts`,
+   capture each interesting case as `{name, input, args?, expected}` and group
+   the cases per exported function into `golden/<util>/<function>.json` with the
+   `{operation, cases}` envelope above. `operation` is the exported (camelCase)
+   TS function name; `expected` is its result serialized to JSON.
+2. **Add the runner.** Create `core/tests/<util>_golden.rs`:
+
+   ```rust
+   mod support;
+   use serde_json::Value;
+   use support::golden::{from, run_golden_suite};
+   // + the port's public items from termihub_core
+
+   fn run_case(operation: &str, case: &Value) -> Value {
+       let input = &case["input"];
+       let args = &case["args"];
+       match operation {
+           "yourFunction" => serde_json::to_value(
+               termihub_core::your_module::your_function(&from(input)),
+           )
+           .expect("serialize"),
+           other => panic!("unknown golden operation: {other}"),
+       }
+   }
+
+   #[test]
+   fn golden_vectors_match_typescript() {
+       run_golden_suite("<util>", <min_cases>, run_case);
+   }
+   ```
+
+3. **Run it:** `cargo test -p termihub-core --test <util>_golden`. Every TS case
+   must reproduce exactly; a mismatch means the Rust port diverges (fix the port,
+   per [TypeScript is authoritative](#typescript-is-authoritative)).
