@@ -109,6 +109,41 @@ fn registry_for(store: Arc<LayoutStore>) -> HandlerRegistry {
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
+    let s = store.clone();
+    registry.route("layout.removePanel", move |intent, projector| {
+        let panel_id = required_str(intent, "panelId")?;
+        s.remove_panel(&intent.client_id, &panel_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.reorderTabs", move |intent, projector| {
+        let panel_id = required_str(intent, "panelId")?;
+        let old_index = required_usize(intent, "oldIndex")?;
+        let new_index = required_usize(intent, "newIndex")?;
+        s.reorder_tabs(&intent.client_id, &panel_id, old_index, new_index)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.setActivePanel", move |intent, projector| {
+        let panel_id = required_str(intent, "panelId")?;
+        s.set_active_panel(&intent.client_id, &panel_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.resize", move |intent, projector| {
+        let split_id = required_str(intent, "splitId")?;
+        let sizes = required_sizes(intent, "sizes")?;
+        s.resize(&intent.client_id, &split_id, sizes)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
     let s = store;
     registry.route("layout.replace", move |intent, projector| {
         let (root, active_panel_id) = parse_replace(intent)?;
@@ -340,6 +375,108 @@ fn replace_seeds_a_tree_then_a_structural_intent_round_trips() {
         termihub_core::layout::panel_tree::count_tabs_in_tree(&root),
         3
     );
+}
+
+#[test]
+fn the_step2b_intents_round_trip_and_converge_on_authority() {
+    // The four step-2b cuts (#2188): removePanel, reorderTabs, setActivePanel,
+    // resize each accept and fan a single diff, and the client cache converges on
+    // the store's authoritative view after each.
+    let store = Arc::new(LayoutStore::new());
+    // A three-leaf tree so removePanel/resize have structure to work on.
+    let tree = PanelNode::Split(SplitContainer {
+        id: "root".to_string(),
+        direction: Direction::Horizontal,
+        children: vec![
+            PanelNode::Leaf(leaf("a", &["t1", "t2"])),
+            PanelNode::Leaf(leaf("b", &["t3"])),
+            PanelNode::Leaf(leaf("c", &["t4"])),
+        ],
+        sizes: None,
+        last_active_leaf_id: None,
+    });
+    store.seed_for_test("A", tree, Some("a".to_string()));
+    let region = layout_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(&region, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    let ack = dispatcher.dispatch(intent(
+        "layout.reorderTabs",
+        "A",
+        json!({ "panelId": "a", "oldIndex": 0, "newIndex": 1 }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    let ack = dispatcher.dispatch(intent(
+        "layout.resize",
+        "A",
+        json!({ "splitId": "root", "sizes": [50.0, 25.0, 25.0] }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    let ack = dispatcher.dispatch(intent(
+        "layout.setActivePanel",
+        "A",
+        json!({ "panelId": "c" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    let ack = dispatcher.dispatch(intent("layout.removePanel", "A", json!({ "panelId": "b" })));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 4, "one diff per accepted intent");
+    for diff in &diffs {
+        cache.apply(diff);
+    }
+    assert_eq!(cache.version, 4);
+    assert_eq!(
+        cache.view,
+        store.snapshot("A"),
+        "cache converges on authority"
+    );
+
+    // Final assertions on the authoritative tree.
+    let root: PanelNode = serde_json::from_value(store.snapshot("A")["root"].clone()).unwrap();
+    let a = termihub_core::layout::panel_tree::find_leaf(&root, "a").unwrap();
+    assert_eq!(
+        a.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        vec!["t2", "t1"],
+        "reorder landed"
+    );
+    assert!(
+        termihub_core::layout::panel_tree::find_leaf(&root, "b").is_none(),
+        "removePanel dropped b"
+    );
+    assert_eq!(
+        store.snapshot("A")["activePanelId"],
+        json!("c"),
+        "focus folded into the projection"
+    );
+}
+
+#[test]
+fn a_bad_reorder_index_is_rejected_without_advancing() {
+    let store = seeded_store("A");
+    let region = layout_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(&region, "sub", "A", sink.clone());
+
+    // b holds a single tab → index 5 is out of range.
+    let ack = dispatcher.dispatch(intent(
+        "layout.reorderTabs",
+        "A",
+        json!({ "panelId": "b", "oldIndex": 5, "newIndex": 0 }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Rejected);
+    assert_eq!(ack.error.unwrap().code, "bad_payload");
+    assert_eq!(sink.diffs().len(), 0);
+    assert_eq!(projector.region_version(&region), Some(0));
 }
 
 #[test]

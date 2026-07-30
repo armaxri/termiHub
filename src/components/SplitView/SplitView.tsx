@@ -35,7 +35,7 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/useLayoutRenderTree";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
-import { getAllLeaves, findLeafByTab, isWindowEmpty } from "@/utils/panelTree";
+import { getAllLeaves, findLeafByTab, isWindowEmpty, normalizeSizes } from "@/utils/panelTree";
 import { broadcastPanelClass } from "@/utils/broadcastPanel";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { isWindows, isMac } from "@/utils/platform";
@@ -538,6 +538,10 @@ interface PanelNodeRendererProps {
 }
 
 function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRendererProps) {
+  // Hook is read unconditionally (before the leaf/split branch) so a node that
+  // flips between leaf and split across renders keeps a stable hook order.
+  const setPanelSizes = useAppStore((s) => s.setPanelSizes);
+
   if (node.type === "leaf") {
     // Per-panel boundary (#2069): a render throw in one leaf is caught here and
     // shown as a localized fallback, so it cannot propagate to the app-wide
@@ -549,12 +553,28 @@ function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRen
     );
   }
 
-  const orientation = node.direction === "horizontal" ? "horizontal" : "vertical";
+  const split = node;
+  const orientation = split.direction === "horizontal" ? "horizontal" : "vertical";
+
+  // Persist a resize-handle drag (#2188). `onLayoutChanged` reports the settled
+  // layout as an id→percentage map; map it back to child order and route through
+  // `setPanelSizes` (→ `layout.resize` intent, with a local fallback). Skip when
+  // the layout is unchanged from what is already stored (the initial equal split,
+  // or a re-fire with the same sizes) so mounts do not churn the tree/backend.
+  const handleLayoutChanged = (layout: Record<string, number>): void => {
+    const next = split.children.map((c) => layout[c.id]);
+    if (!next.every((n) => typeof n === "number" && Number.isFinite(n))) return;
+    const prev = split.sizes ?? split.children.map(() => 100 / split.children.length);
+    const normPrev = normalizeSizes(prev);
+    const normNext = normalizeSizes(next);
+    if (normNext.every((n, i) => Math.abs(n - normPrev[i]) < 0.5)) return;
+    setPanelSizes(split.id, next);
+  };
 
   return (
-    <Group orientation={orientation} className="split-view">
-      {node.children.map((child, index) => (
-        <SplitChild key={child.id} index={index} defaultSize={node.sizes?.[index]}>
+    <Group orientation={orientation} className="split-view" onLayoutChanged={handleLayoutChanged}>
+      {split.children.map((child, index) => (
+        <SplitChild key={child.id} id={child.id} index={index} defaultSize={split.sizes?.[index]}>
           <PanelNodeRenderer
             node={child}
             setActivePanel={setActivePanel}
@@ -567,10 +587,12 @@ function PanelNodeRenderer({ node, setActivePanel, activeDragTab }: PanelNodeRen
 }
 
 function SplitChild({
+  id,
   index,
   defaultSize,
   children,
 }: {
+  id: string;
   index: number;
   defaultSize?: number;
   children: React.ReactNode;
@@ -580,7 +602,7 @@ function SplitChild({
       {index > 0 && (
         <Separator className="split-view__resize-handle" data-testid="split-view-resize-handle" />
       )}
-      <Panel minSize={10} defaultSize={defaultSize}>
+      <Panel id={id} minSize={10} defaultSize={defaultSize}>
         {children}
       </Panel>
     </>

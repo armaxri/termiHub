@@ -322,6 +322,169 @@ fn close_of_unknown_tab_is_rejected() {
     );
 }
 
+// ── removePanel ──────────────────────────────────────────────────────────────
+
+#[test]
+fn remove_panel_drops_the_whole_leaf_and_simplifies() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    store.remove_panel("C", "a").unwrap();
+
+    let root = root_of(&store, "C");
+    // a (and its two tabs) is gone; the split simplifies to the single leaf b.
+    let leaves = get_all_leaves(&root);
+    assert_eq!(leaves.len(), 1, "removed panel dropped, split simplified");
+    assert_eq!(leaves[0].id, "b");
+    assert_eq!(count_tabs_in_tree(&root), 1, "only b's tab survives");
+    // Focus was on the removed panel → repointed onto the survivor.
+    assert_eq!(active_of(&store, "C").as_deref(), Some("b"));
+}
+
+#[test]
+fn remove_panel_keeps_focus_when_a_different_panel_is_removed() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    store.remove_panel("C", "b").unwrap();
+    // a was focused and survives → focus unchanged (frontend parity).
+    assert_eq!(active_of(&store, "C").as_deref(), Some("a"));
+}
+
+#[test]
+fn remove_panel_on_the_sole_leaf_is_a_no_op() {
+    let store = LayoutStore::new();
+    let root = PanelNode::Leaf(leaf("only", &["t1"]));
+    store.seed_for_test("C", root, Some("only".to_string()));
+    store.remove_panel("C", "only").unwrap();
+
+    let root = root_of(&store, "C");
+    // The app always keeps one panel; the sole leaf is untouched.
+    assert_eq!(get_all_leaves(&root).len(), 1);
+    assert_eq!(count_tabs_in_tree(&root), 1);
+    assert_eq!(active_of(&store, "C").as_deref(), Some("only"));
+}
+
+#[test]
+fn remove_panel_of_unknown_panel_is_rejected() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    assert_eq!(
+        store.remove_panel("C", "ghost").unwrap_err(),
+        LayoutError::PanelNotFound("ghost".to_string()),
+    );
+}
+
+// ── reorderTabs ──────────────────────────────────────────────────────────────
+
+#[test]
+fn reorder_tabs_moves_a_tab_within_its_leaf_keeping_active() {
+    let store = LayoutStore::new();
+    let root = PanelNode::Leaf(LeafPanel {
+        id: "a".to_string(),
+        tabs: vec![tab("t1"), tab("t2"), tab("t3")],
+        active_tab_id: Some("t1".to_string()),
+    });
+    store.seed_for_test("C", root, Some("a".to_string()));
+    // Move t1 (index 0) to index 2.
+    store.reorder_tabs("C", "a", 0, 2).unwrap();
+
+    let root = root_of(&store, "C");
+    let a = find_leaf(&root, "a").unwrap();
+    let ids: Vec<&str> = a.tabs.iter().map(|t| t.id.as_str()).collect();
+    assert_eq!(ids, vec!["t2", "t3", "t1"], "tab reordered");
+    assert_eq!(
+        a.active_tab_id.as_deref(),
+        Some("t1"),
+        "active tab preserved"
+    );
+}
+
+#[test]
+fn reorder_tabs_rejects_an_out_of_range_index() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    // b holds one tab → index 1 is out of range.
+    assert_eq!(
+        store.reorder_tabs("C", "b", 1, 0).unwrap_err(),
+        LayoutError::IndexOutOfRange,
+    );
+    assert_eq!(LayoutError::IndexOutOfRange.code(), "bad_payload");
+}
+
+#[test]
+fn reorder_tabs_of_unknown_panel_is_rejected() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    assert_eq!(
+        store.reorder_tabs("C", "ghost", 0, 0).unwrap_err(),
+        LayoutError::PanelNotFound("ghost".to_string()),
+    );
+}
+
+// ── setActivePanel ───────────────────────────────────────────────────────────
+
+#[test]
+fn set_active_panel_repoints_focus_without_touching_the_tree() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    let before = root_of(&store, "C");
+    store.set_active_panel("C", "b").unwrap();
+
+    assert_eq!(active_of(&store, "C").as_deref(), Some("b"), "focus moved");
+    assert_eq!(root_of(&store, "C"), before, "tree unchanged");
+}
+
+#[test]
+fn set_active_panel_of_unknown_panel_is_rejected() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    assert_eq!(
+        store.set_active_panel("C", "ghost").unwrap_err(),
+        LayoutError::PanelNotFound("ghost".to_string()),
+    );
+}
+
+// ── resize ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn resize_persists_normalized_sizes_on_the_split() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    // Supply sizes that do not sum to 100 → stored normalized.
+    store.resize("C", "root", vec![30.0, 10.0]).unwrap();
+
+    let root = root_of(&store, "C");
+    match root {
+        PanelNode::Split(split) => {
+            let sizes = split.sizes.expect("sizes persisted");
+            assert_eq!(sizes.len(), 2);
+            assert!((sizes[0] - 75.0).abs() < 1e-9, "normalized to sum 100");
+            assert!((sizes[1] - 25.0).abs() < 1e-9);
+        }
+        _ => panic!("expected a split at the root"),
+    }
+}
+
+#[test]
+fn resize_rejects_a_mismatched_size_count() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    assert_eq!(
+        store.resize("C", "root", vec![100.0]).unwrap_err(),
+        LayoutError::SizeMismatch,
+    );
+    assert_eq!(LayoutError::SizeMismatch.code(), "bad_payload");
+}
+
+#[test]
+fn resize_of_unknown_split_is_rejected() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    assert_eq!(
+        store.resize("C", "ghost", vec![50.0, 50.0]).unwrap_err(),
+        LayoutError::PanelNotFound("ghost".to_string()),
+    );
+}
+
 // ── Property tests over the transforms ───────────────────────────────────────
 
 /// After every applied transform: at least one leaf survives, leaf ids stay
