@@ -8,18 +8,15 @@ import { HttpMonitorPanel } from "./HttpMonitorPanel";
 import { TraceroutePanel } from "./TraceroutePanel";
 import { WolPanel } from "./WolPanel";
 import { OpenPortsPanel } from "./OpenPortsPanel";
+import { NetworkToolRunLocation } from "./NetworkToolRunLocation";
 
 interface NetworkDiagnosticPanelProps {
   meta: NetworkDiagnosticMeta;
   isVisible: boolean;
 }
 
-/**
- * Router component: renders the correct diagnostic panel based on `meta.tool`.
- */
-export function NetworkDiagnosticPanel({ meta, isVisible }: NetworkDiagnosticPanelProps) {
-  if (!isVisible) return null;
-
+/** Render the tool panel for a diagnostic tab. */
+function renderTool(meta: NetworkDiagnosticMeta) {
   switch (meta.tool) {
     case "port-scanner":
       return <PortScannerPanel prefillHost={meta.prefillHost} />;
@@ -44,4 +41,21 @@ export function NetworkDiagnosticPanel({ meta, isVisible }: NetworkDiagnosticPan
         </div>
       );
   }
+}
+
+/**
+ * Router component: renders the correct diagnostic panel based on `meta.tool`,
+ * topped by the per-tool "Run on" selector (#2191).
+ */
+export function NetworkDiagnosticPanel({ meta, isVisible }: NetworkDiagnosticPanelProps) {
+  if (!isVisible) return null;
+
+  return (
+    <div className="network-diagnostic" data-testid={`network-diagnostic-${meta.tool}`}>
+      <div className="network-diagnostic__runbar">
+        <NetworkToolRunLocation tool={meta.tool} />
+      </div>
+      {renderTool(meta)}
+    </div>
+  );
 }

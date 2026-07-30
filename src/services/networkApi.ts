@@ -24,6 +24,22 @@ import type {
   PingSweepSummary,
   TracerouteHop,
 } from "@/types/network";
+import type { RunLocation } from "@/types/tunnel";
+
+// ── Run location (#2190/#2191) ───────────────────────────────────────────────
+
+/**
+ * Set (or clear) which machine a network tool runs on — "This computer" or a
+ * named agent. `tool` is the backend tool key (e.g. `ping`, `port_scan`).
+ * `RunLocation.ThisComputer` clears the preference (back to the desktop
+ * default); a desktop-only tool (the HTTP monitor) rejects an agent location.
+ */
+export async function setNetworkToolRunLocation(
+  tool: string,
+  runLocation: RunLocation
+): Promise<void> {
+  await invoke("set_network_tool_run_location", { tool, runLocation });
+}
 
 // ── Port Scanner ─────────────────────────────────────────────────────────────
 

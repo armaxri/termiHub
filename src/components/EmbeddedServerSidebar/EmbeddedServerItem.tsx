@@ -6,6 +6,9 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button, toast, Tooltip } from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
+import { RunLocationSelect } from "@/components/RunLocationSelect";
+import type { RemoteAgentDefinition } from "@/types/connection";
+import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import {
   EmbeddedServerConfig,
   ServerState,
@@ -17,6 +20,12 @@ import {
 interface Props {
   config: EmbeddedServerConfig;
   state: ServerState | undefined;
+  /** Agents offered as run targets for this server's "Run on" selector. */
+  agents?: RemoteAgentDefinition[];
+  /** The server's current run-location (This computer or an agent). */
+  runLocation?: RunLocation;
+  /** Called when the user picks a new run-location for this server. */
+  onRunLocationChange?: (location: RunLocation) => void;
   onStart: (id: string) => void | Promise<void>;
   onStop: (id: string) => void | Promise<void>;
   onEdit: (id: string) => void;
@@ -66,6 +75,9 @@ function isActive(status: ServerStatus | undefined): boolean {
 export function EmbeddedServerItem({
   config,
   state,
+  agents = [],
+  runLocation = THIS_COMPUTER,
+  onRunLocationChange,
   onStart,
   onStop,
   onEdit,
@@ -218,6 +230,22 @@ export function EmbeddedServerItem({
               {status === "error" && state?.error && (
                 <span className="sidebar-list-item__error">{state.error}</span>
               )}
+              {/* Run-location selector (#2191). Stop click/double-click from
+                  bubbling to the row's edit/context handlers. */}
+              <span
+                className="server-item__runon"
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+              >
+                <span className="server-item__runon-label">Run on</span>
+                <RunLocationSelect
+                  value={runLocation}
+                  agents={agents}
+                  onChange={onRunLocationChange ?? (() => {})}
+                  aria-label={`Run ${config.name} on`}
+                  data-testid={`server-runloc-${config.id}`}
+                />
+              </span>
             </>
           }
         />
