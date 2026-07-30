@@ -25,6 +25,7 @@ pub mod output;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 pub mod protocol;
+pub mod reconnect_backoff;
 pub mod service;
 pub mod session;
 pub mod tool;
