@@ -49,6 +49,7 @@ use tauri::{AppHandle, Manager};
 
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 use crate::session_projection::store::SessionLifecycleStore;
+use crate::session_projection::timer::ReconnectTimerDriver;
 
 /// The projection region id for the session-lifecycle domain (shared, per Open
 /// Design Decision #4).
@@ -74,87 +75,118 @@ pub fn publish_sessions(
 ///
 /// Each route resolves the managed [`SessionLifecycleStore`] lazily (so it
 /// rejects gracefully rather than panicking if the store is somehow absent),
-/// applies the transition, and publishes the shared region. All transitions are
-/// pure/fast map edits, so they run inline on the dispatcher's single writer.
+/// applies the transition, publishes the shared region, and then reconciles the
+/// backend reconnect timer for that session ([`sync_timer`]). All transitions
+/// are pure/fast map edits, so they run inline on the dispatcher's single writer.
 pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppHandle) {
     let handle = app_handle.clone();
     registry.route("session.connect", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.connect(&required_str(intent, "sessionId")?);
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.connect(&id);
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
 
     let handle = app_handle.clone();
     registry.route("session.connected", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.connected(&required_str(intent, "sessionId")?);
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.connected(&id);
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
 
     let handle = app_handle.clone();
     registry.route("session.connectFailed", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.connect_failed(
-            &required_str(intent, "sessionId")?,
-            optional_str(intent, "error"),
-        );
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.connect_failed(&id, optional_str(intent, "error"));
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
 
     let handle = app_handle.clone();
     registry.route("session.disconnect", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.disconnect(&required_str(intent, "sessionId")?);
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.disconnect(&id);
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
 
     let handle = app_handle.clone();
     registry.route("session.dropped", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.dropped(
-            &required_str(intent, "sessionId")?,
-            optional_str(intent, "error"),
-        );
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.dropped(&id, optional_str(intent, "error"));
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
 
     let handle = app_handle.clone();
     registry.route("session.reconnect", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.reconnect(&required_str(intent, "sessionId")?);
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.reconnect(&id);
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
 
     let handle = app_handle.clone();
     registry.route("session.reconnectAttempt", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.reconnect_attempt(&required_str(intent, "sessionId")?);
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.reconnect_attempt(&id);
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
 
     let handle = app_handle.clone();
     registry.route("session.reconnectFailed", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.reconnect_failed(
-            &required_str(intent, "sessionId")?,
-            optional_str(intent, "error"),
-        );
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.reconnect_failed(&id, optional_str(intent, "error"));
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
 
     let handle = app_handle.clone();
     registry.route("session.cancelReconnect", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.cancel_reconnect(&required_str(intent, "sessionId")?);
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.cancel_reconnect(&id);
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
 
     let handle = app_handle;
     registry.route("session.remove", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.remove(&required_str(intent, "sessionId")?);
-        Ok(publish_sessions(projector, &store))
+        let id = required_str(intent, "sessionId")?;
+        store.remove(&id);
+        let produced = publish_sessions(projector, &store);
+        sync_timer(&handle, &id);
+        Ok(produced)
     });
+}
+
+/// Reconcile the backend reconnect timer for a session after a transition, when
+/// the timer driver is present. Off-path (a silent no-op) if the driver is not
+/// managed yet — e.g. the shadow-only setup where nothing arms the loop.
+fn sync_timer(app_handle: &AppHandle, session_id: &str) {
+    if let Some(driver) = app_handle.try_state::<Arc<ReconnectTimerDriver>>() {
+        (*driver).sync(session_id);
+    }
 }
 
 /// Resolve the managed session-lifecycle store, or a rejectable error if absent.

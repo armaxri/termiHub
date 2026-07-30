@@ -722,6 +722,32 @@ pub fn run() {
                         commands::projection_diag::initial_view(),
                     );
                 }
+                // Backend reconnect timer driver (#2203, Phase 4 step 2): moves
+                // the frontend `setTimeout` reconnect loop server-side. Built
+                // here — after the projector exists — so a fired backoff timer
+                // can advance the store and fan the `session-lifecycle` diff out
+                // itself. In shadow mode it stays off-path (nothing dispatches
+                // `session.reconnect` yet); once the frontend `sessionIntents`
+                // flag is on, the store's `Waiting` phases arm it and it drives
+                // the `reconnectAttempt` edge on the ported #2144 backoff schedule.
+                if let Some(store) =
+                    app.handle().try_state::<Arc<session_projection::SessionLifecycleStore>>()
+                {
+                    let store: Arc<session_projection::SessionLifecycleStore> = (*store).clone();
+                    let projector = projection_state.projector.clone();
+                    let store_for_publish = store.clone();
+                    let driver = Arc::new(session_projection::ReconnectTimerDriver::new(
+                        store,
+                        Arc::new(session_projection::TokioReconnectScheduler::new()),
+                        Arc::new(move || {
+                            session_projection::projection::publish_sessions(
+                                &projector,
+                                &store_for_publish,
+                            );
+                        }),
+                    ));
+                    app.manage(driver);
+                }
                 app.manage(projection_state);
             }
 
