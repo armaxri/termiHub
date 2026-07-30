@@ -230,6 +230,28 @@ impl LayoutStore {
         Ok(())
     }
 
+    /// `layout.replace` — install a complete tree for a client, replacing any
+    /// existing one.
+    ///
+    /// This is the **seed-before-mutate** entry point the step-2 frontend bridge
+    /// uses to keep the store authoritative for structure while tab *creation*
+    /// still lives in `appStore` (partial projection). Because tabs enter the
+    /// app via session creation — not a layout intent — the store would
+    /// otherwise never learn about them; the bridge pushes its current
+    /// structural tree (in the minimal `{ id, sessionId, contentType }` tab
+    /// form) here immediately before dispatching a structural intent, so the
+    /// four transforms operate on the real tree and project a diff the frontend
+    /// can reconcile back. The active panel is repointed at a real leaf when the
+    /// supplied id is absent.
+    pub fn replace(&self, client_id: &str, root: PanelNode, active_panel_id: Option<String>) {
+        let mut state = LayoutState {
+            root,
+            active_panel_id,
+        };
+        fix_active(&mut state);
+        self.lock().insert(client_id.to_string(), state);
+    }
+
     /// Install a specific tree for a client — test-only seeding so intent tests
     /// can start from a populated layout without a tab-creating intent (tabs
     /// enter via session creation in `appStore`, out of this shadow's scope).
