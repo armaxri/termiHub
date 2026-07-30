@@ -328,7 +328,11 @@ export async function runLayoutIntent(
 }
 
 /** Map a {@link DropEdge} to a `layout.moveTab` payload for a split-with-tab drop. */
-export function moveTabPayload(tabId: string, targetPanelId: string, edge: DropEdge): Record<string, unknown> {
+export function moveTabPayload(
+  tabId: string,
+  targetPanelId: string,
+  edge: DropEdge
+): Record<string, unknown> {
   return { tabId, targetPanelId, edge };
 }
 

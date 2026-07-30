@@ -71,7 +71,11 @@ vi.mock("@/services/transport", () => ({
     async dispatch(intent: { kind: string; payload: Record<string, unknown> }) {
       dispatched.push({ kind: intent.kind, payload: intent.payload });
       if (backend.reject) {
-        return { intentId: "intent-test", status: "rejected", error: { code: "x", message: "nope" } };
+        return {
+          intentId: "intent-test",
+          status: "rejected",
+          error: { code: "x", message: "nope" },
+        };
       }
       if (intent.kind === "layout.replace") {
         backend.push({ root: intent.payload.root, activePanelId: intent.payload.activePanelId });

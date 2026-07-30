@@ -4692,9 +4692,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const { rootPanel, activePanelId } = get();
       const sourceLeaf = findLeaf(rootPanel, fromPanelId);
       const selfEdgeSingleTab =
-        edge !== "center" &&
-        fromPanelId === targetPanelId &&
-        (sourceLeaf?.tabs.length ?? 0) <= 1;
+        edge !== "center" && fromPanelId === targetPanelId && (sourceLeaf?.tabs.length ?? 0) <= 1;
       if (!sourceLeaf || selfEdgeSingleTab) return applyLocal();
 
       void runLayoutIntent(

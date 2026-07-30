@@ -87,7 +87,12 @@ describe("layoutBridge — tree mapping", () => {
       direction: "horizontal" as const,
       sizes: [50, 50],
       children: [
-        { type: "leaf" as const, id: "a", tabs: [{ id: "t2", contentType: "terminal" }], activeTabId: "t2" },
+        {
+          type: "leaf" as const,
+          id: "a",
+          tabs: [{ id: "t2", contentType: "terminal" }],
+          activeTabId: "t2",
+        },
         {
           type: "leaf" as const,
           id: "b",
