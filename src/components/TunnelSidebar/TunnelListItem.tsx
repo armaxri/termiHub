@@ -1,11 +1,24 @@
 import type React from "react";
-import { Play, Square, Pencil, Copy, Trash2, RotateCw, Info, AlertTriangle } from "lucide-react";
+import {
+  Play,
+  Square,
+  Pencil,
+  Copy,
+  Trash2,
+  RotateCw,
+  Info,
+  AlertTriangle,
+  Monitor,
+  Server,
+} from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
+import { useAppStore } from "@/store/appStore";
+import { resolveTunnelHost, isAgentHost, tunnelHostBadge } from "@/utils/tunnelHost";
 
 interface TunnelListItemProps {
   tunnel: TunnelConfig;
@@ -77,12 +90,21 @@ export function TunnelListItem({
   rowRef,
   rowProps,
 }: TunnelListItemProps) {
+  const remoteAgents = useAppStore((s) => s.remoteAgents);
   const status = state?.status ?? "disconnected";
   const isActive = status === "connected" || status === "connecting" || status === "reconnecting";
   const isError = status === "error";
   const lastError = state?.error;
   const sshConn = connections.find((c) => c.id === tunnel.sshConnectionId);
   const sshLabel = sshConn?.name ?? "Unknown";
+
+  // Vantage badge: which machine hosts this tunnel (S3, #2155). Always shown,
+  // including "this computer" for desktop tunnels.
+  const tunnelHost = resolveTunnelHost(tunnel);
+  const hostAgentName = isAgentHost(tunnelHost)
+    ? (remoteAgents.find((a) => a.id === tunnelHost.agentId)?.name ?? tunnelHost.agentId)
+    : undefined;
+  const hostBadge = tunnelHostBadge(tunnelHost, hostAgentName);
   const typeLabel =
     tunnel.tunnelType.type.charAt(0).toUpperCase() + tunnel.tunnelType.type.slice(1);
 
@@ -241,6 +263,21 @@ export function TunnelListItem({
         <>
           <span>{getPortMapping(tunnel)}</span>
           <span>via {sshLabel}</span>
+          <span
+            className="tunnel-item__host"
+            data-testid={`tunnel-host-${tunnel.id}`}
+            data-on-agent={hostBadge.onAgent}
+            title={
+              hostBadge.onAgent ? `Hosted on agent ${hostBadge.label}` : "Hosted on this computer"
+            }
+          >
+            {hostBadge.onAgent ? (
+              <Server size={11} className="tunnel-item__host-icon" />
+            ) : (
+              <Monitor size={11} className="tunnel-item__host-icon" />
+            )}
+            <span className="tunnel-item__host-label">{hostBadge.label}</span>
+          </span>
           {isActive && state?.stats && (
             <div className="tunnel-item__stats">
               <span>↑ {formatBytes(state.stats.bytesSent)}</span>

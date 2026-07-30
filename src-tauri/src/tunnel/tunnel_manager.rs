@@ -23,6 +23,7 @@ use super::remote_forward::RemoteForwarder;
 use super::storage::TunnelStorage;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
+use crate::run_location::{Locality, ResolvedLocation, RunLocationResolver};
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_with_registry_cancellable;
 
@@ -140,6 +141,29 @@ fn resting_status(
         (TunnelStatus::Error, Some(error))
     } else {
         (TunnelStatus::Disconnected, None)
+    }
+}
+
+/// Decide whether a tunnel may start on the desktop's local forwarder path, per
+/// its run-location host (S3, #2155).
+///
+/// A tunnel is never desktop-only, so the resolver honours whatever host the
+/// config carries. [`RunLocation::ThisComputer`] resolves to the local path
+/// (`Ok(())`) — today's behaviour. [`RunLocation::Agent`] is recognised but the
+/// agent-side tunnel forwarding backend is not built yet, so it yields a
+/// human-readable error the caller records + emits as the tunnel's resting
+/// `Error` rather than silently forwarding on the desktop. Pure (no locking, no
+/// IO, no `AppHandle`) so the routing decision is unit-testable directly.
+fn resolve_local_tunnel_host(
+    tunnel_id: &str,
+    host: &crate::run_location::RunLocation,
+) -> Result<(), String> {
+    match RunLocationResolver::new().resolve(tunnel_id, Locality::LocalOrAgent, host) {
+        Ok(ResolvedLocation::Local) => Ok(()),
+        Ok(ResolvedLocation::Agent(agent_id)) => Err(format!(
+            "agent-hosted tunnels are not yet supported (tunnel '{tunnel_id}' requested agent '{agent_id}')"
+        )),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -413,6 +437,18 @@ impl TunnelManager {
                     TerminalError::TunnelError(format!("Tunnel not found: {}", tunnel_id))
                 })?
         };
+
+        // Route by run-location (S3, #2155). Desktop-hosted tunnels (the default)
+        // take the existing local forwarder path below; agent-hosted tunnels are
+        // recognised here but their forwarding backend is not built yet, so
+        // surface a clear, durable `Error` rather than silently running the
+        // forward on the desktop. Mirrors the analogous stub in
+        // `NetworkManager::spawn_http_monitor` (S1, #2148).
+        if let Err(message) = resolve_local_tunnel_host(tunnel_id, &config.host) {
+            record_last_error(&self.last_errors, tunnel_id, message.clone());
+            self.emit_status(tunnel_id, TunnelStatus::Error, Some(message.clone()));
+            return Err(TerminalError::TunnelError(message));
+        }
 
         // Check if already active
         {
@@ -1280,10 +1316,12 @@ mod tests {
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::super::local_forward::ForwarderStats;
     use super::{
-        backoff_delay, clear_last_error, last_error_for, record_last_error, resolve_managed_arc,
-        resting_status, run_reconnect_loop, snapshot_active_stats, wait_forwarder_death,
-        wait_session_death, ActiveTunnel, ReconnectOutcome, TunnelStatsUpdate,
+        backoff_delay, clear_last_error, last_error_for, record_last_error,
+        resolve_local_tunnel_host, resolve_managed_arc, resting_status, run_reconnect_loop,
+        snapshot_active_stats, wait_forwarder_death, wait_session_death, ActiveTunnel,
+        ReconnectOutcome, TunnelStatsUpdate,
     };
+    use crate::run_location::RunLocation;
     use crate::tunnel::config::TunnelStatus;
     use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
@@ -1493,6 +1531,25 @@ mod tests {
         );
         assert_eq!(status, TunnelStatus::Error);
         assert_eq!(error.as_deref(), Some("connect refused"));
+    }
+
+    /// S3 (#2155): a desktop-hosted tunnel routes to the local forwarder path.
+    #[test]
+    fn this_computer_host_routes_local() {
+        assert!(resolve_local_tunnel_host(TUNNEL_ID, &RunLocation::ThisComputer).is_ok());
+    }
+
+    /// S3 (#2155): an agent-hosted tunnel is recognised but not yet forwardable,
+    /// so it yields a clear error naming the tunnel and the requested agent —
+    /// never a silent fall-through to the desktop path.
+    #[test]
+    fn agent_host_is_not_yet_supported() {
+        let err =
+            resolve_local_tunnel_host(TUNNEL_ID, &RunLocation::Agent("build-box".to_string()))
+                .expect_err("agent-hosted tunnels must not resolve to the local path yet");
+        assert!(err.contains("not yet supported"), "message: {err}");
+        assert!(err.contains("build-box"), "message names the agent: {err}");
+        assert!(err.contains(TUNNEL_ID), "message names the tunnel: {err}");
     }
 
     /// GAP 3: "never started" (no map entry) stays `Disconnected` — distinct

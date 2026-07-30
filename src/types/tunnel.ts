@@ -34,12 +34,29 @@ export type TunnelType =
   | { type: "remote"; config: RemoteForwardConfig }
   | { type: "dynamic"; config: DynamicForwardConfig };
 
+/**
+ * Where a capability (here: a tunnel's SSH client) runs — the S1 run-location
+ * (#2148). Mirrors the Rust `RunLocation` enum's tagged serde shape
+ * (`{ kind: "thisComputer" }` | `{ kind: "agent", agentId }`).
+ */
+export type RunLocation = { kind: "thisComputer" } | { kind: "agent"; agentId: string };
+
+/** The desktop-host run-location — the default for a tunnel. */
+export const THIS_COMPUTER: RunLocation = { kind: "thisComputer" };
+
 /** A saved tunnel configuration. */
 export interface TunnelConfig {
   id: string;
   name: string;
   sshConnectionId: string;
   tunnelType: TunnelType;
+  /**
+   * Which machine hosts (runs the SSH client for) this tunnel (S3, #2155).
+   * Optional for backward compatibility: a config persisted before this field
+   * existed, or a hand-built fixture, is treated as {@link THIS_COMPUTER}. The
+   * Rust side defaults the field on load, so the projection always sends it.
+   */
+  host?: RunLocation;
   autoStart: boolean;
   reconnectOnDisconnect: boolean;
 }

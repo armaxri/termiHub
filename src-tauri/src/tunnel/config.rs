@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::run_location::RunLocation;
+
 /// The three SSH tunnel types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "config", rename_all = "camelCase")]
@@ -62,6 +64,15 @@ pub struct TunnelConfig {
     pub ssh_connection_id: String,
     /// Tunnel type and its specific configuration.
     pub tunnel_type: TunnelType,
+    /// Which machine hosts (runs the SSH client for) this tunnel.
+    ///
+    /// [`RunLocation::ThisComputer`] (the default) is today's behaviour — the
+    /// forward runs on the desktop. [`RunLocation::Agent`] routes hosting to a
+    /// remote agent through the S1 run-location resolver (S3, #2155). Defaulted
+    /// on deserialize so tunnels saved before this field existed load as
+    /// desktop-hosted, and so agent hosting stays opt-in.
+    #[serde(default)]
+    pub host: RunLocation,
     /// Whether to start this tunnel automatically when the app launches.
     #[serde(default)]
     pub auto_start: bool,
@@ -142,6 +153,7 @@ mod tests {
                 remote_host: "db.internal".to_string(),
                 remote_port: 5432,
             }),
+            host: RunLocation::ThisComputer,
             auto_start: true,
             reconnect_on_disconnect: false,
         };
@@ -170,6 +182,7 @@ mod tests {
                 local_host: "127.0.0.1".to_string(),
                 local_port: 3000,
             }),
+            host: RunLocation::ThisComputer,
             auto_start: false,
             reconnect_on_disconnect: true,
         };
@@ -195,6 +208,7 @@ mod tests {
                 local_host: "127.0.0.1".to_string(),
                 local_port: 1080,
             }),
+            host: RunLocation::ThisComputer,
             auto_start: false,
             reconnect_on_disconnect: false,
         };
@@ -221,6 +235,7 @@ mod tests {
                     remote_host: "localhost".to_string(),
                     remote_port: 80,
                 }),
+                host: RunLocation::ThisComputer,
                 auto_start: false,
                 reconnect_on_disconnect: false,
             }],
@@ -298,6 +313,36 @@ mod tests {
         let config: TunnelConfig = serde_json::from_str(json).unwrap();
         assert!(!config.auto_start);
         assert!(!config.reconnect_on_disconnect);
+        // A config saved before the run-location field existed loads as
+        // desktop-hosted, so agent hosting is opt-in (S3, #2155).
+        assert_eq!(config.host, RunLocation::ThisComputer);
+    }
+
+    #[test]
+    fn host_round_trips_and_defaults_to_this_computer() {
+        // Explicit agent host round-trips through the tagged run-location shape.
+        let config = TunnelConfig {
+            id: "tun-agent".to_string(),
+            name: "Agent DB".to_string(),
+            ssh_connection_id: "conn-1".to_string(),
+            tunnel_type: TunnelType::Local(LocalForwardConfig {
+                local_host: "127.0.0.1".to_string(),
+                local_port: 5432,
+                remote_host: "db.internal".to_string(),
+                remote_port: 5432,
+            }),
+            host: RunLocation::Agent("build-box".to_string()),
+            auto_start: false,
+            reconnect_on_disconnect: false,
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert_eq!(json["host"]["kind"], "agent");
+        assert_eq!(json["host"]["agentId"], "build-box");
+        let back: TunnelConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back.host, RunLocation::Agent("build-box".to_string()));
+
+        // The serde default (no field in JSON) is desktop hosting.
+        assert_eq!(RunLocation::default(), RunLocation::ThisComputer);
     }
 
     #[test]
@@ -312,6 +357,7 @@ mod tests {
                 remote_host: "localhost".to_string(),
                 remote_port: 80,
             }),
+            host: RunLocation::ThisComputer,
             auto_start: false,
             reconnect_on_disconnect: false,
         };

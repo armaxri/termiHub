@@ -26,6 +26,7 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Modal, Button, Tooltip, Progress, ConfirmDialog, toast } from "@/components/ui";
 import { formatBytes } from "@/utils/formatters";
+import { resolveTunnelHost, isAgentHost, tunnelHostBadge } from "@/utils/tunnelHost";
 import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
 import { MONITORING_INTERVAL_OPTIONS, DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
@@ -841,12 +842,23 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
               // the "connecting" badge, error surfaces its persisted message.
               const badge: BadgeVariant =
                 status === "connected" ? "connected" : status === "error" ? "error" : "connecting";
+              // Vantage badge: always state where the tunnel is hosted (S3, #2155),
+              // then append any error message.
+              const tunnelHost = resolveTunnelHost(t);
+              const hostAgentName = isAgentHost(tunnelHost)
+                ? (remoteAgents.find((a) => a.id === tunnelHost.agentId)?.name ??
+                  tunnelHost.agentId)
+                : undefined;
+              const hostBadge = tunnelHostBadge(tunnelHost, hostAgentName);
+              const hostText = hostBadge.onAgent ? `agent ${hostBadge.label}` : "this computer";
+              const detail =
+                status === "error" && state?.error ? `${hostText} · ${state.error}` : hostText;
               return (
                 <ConnectionRow
                   key={t.id}
                   icon={<ArrowLeftRight size={14} />}
                   title={t.name}
-                  detail={status === "error" ? state?.error : undefined}
+                  detail={detail}
                   badge={badge}
                   onKill={() => handleKillTunnel(t.id)}
                   killLabel="Stop"
