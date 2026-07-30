@@ -273,7 +273,8 @@ fn removing_a_middle_active_tab_falls_back_positionally_like_the_frontend() {
     store.seed_for_test("C", root, Some("a".to_string()));
     store.close_tab_structure("C", "t2").unwrap();
 
-    let a = find_leaf(&root_of(&store, "C"), "a").unwrap();
+    let root = root_of(&store, "C");
+    let a = find_leaf(&root, "a").unwrap();
     assert_eq!(
         a.active_tab_id.as_deref(),
         Some("t3"),
