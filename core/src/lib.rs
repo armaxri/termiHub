@@ -13,6 +13,8 @@ pub mod backends;
 pub mod buffer;
 pub mod config;
 pub mod connection;
+#[cfg(feature = "embedded-servers")]
+pub mod embedded_servers;
 pub mod errors;
 pub mod files;
 pub mod ipc;

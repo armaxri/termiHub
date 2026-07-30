@@ -17,11 +17,9 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::config::{
-    EmbeddedServerConfig, EmbeddedServerStore, ServerState, ServerStats, ServerStatus, ServerType,
+    EmbeddedServerConfig, EmbeddedServerStore, ServerState, ServerStats, ServerStatus,
 };
-use super::service::{
-    auto_start_error_state, service_id_for, EmbeddedServerService, STATUS_EVENT_KIND,
-};
+use super::service::{auto_start_error_state, EmbeddedServerService, STATUS_EVENT_KIND};
 use super::storage::EmbeddedServerStorage;
 use crate::connection::recovery::RecoveryWarning;
 use crate::run_location::{ResolvedLocation, RunLocationResolver};
@@ -191,7 +189,7 @@ impl EmbeddedServerManager {
         let service = services
             .get_mut(server_id)
             .expect("service was just inserted");
-        service.start_with(config)
+        service.start_with(config).map_err(Into::into)
     }
 
     /// Stop a running server by ID (kept listed as `Stopped`).
@@ -262,24 +260,12 @@ impl EmbeddedServerManager {
 }
 
 /// Build the [`ServiceRegistry`] with the run-location-routable server types.
+///
+/// Delegates to [`termihub_core::embedded_servers::build_service_registry`] so
+/// the desktop host and the agent register identical server-type factories from
+/// one source of truth (#2192).
 fn build_service_registry() -> ServiceRegistry {
-    let mut registry = ServiceRegistry::new();
-    for (ty, icon) in [
-        (ServerType::Http, "globe"),
-        (ServerType::Ftp, "folder"),
-        (ServerType::Tftp, "download"),
-    ] {
-        let id = service_id_for(&ty);
-        let display = super::service::display_name_for(&ty);
-        let ty_for_factory = ty.clone();
-        registry.register(
-            id,
-            display,
-            icon,
-            Box::new(move || Box::new(EmbeddedServerService::new(ty_for_factory.clone()))),
-        );
-    }
-    registry
+    termihub_core::embedded_servers::build_service_registry()
 }
 
 /// Bridge a server's core [`EventChannel`](termihub_core::service::EventChannel)
@@ -310,40 +296,19 @@ fn spawn_event_bridge(app: AppHandle, mut events: termihub_core::service::Servic
 mod tests {
     use super::*;
 
+    /// The desktop manager sources its server-type registry from the shared core
+    /// factory (#2192). The factory's contents are tested in
+    /// `termihub_core::embedded_servers`; here we only confirm the desktop wires
+    /// through to it and exposes the three run-location-routable types.
     #[test]
-    fn registry_exposes_the_three_server_types() {
-        let registry = build_service_registry();
-        let ids: Vec<String> = registry
+    fn build_service_registry_delegates_to_core_and_lists_the_three_types() {
+        let ids: Vec<String> = build_service_registry()
             .available_services()
             .into_iter()
             .map(|s| s.service_id)
             .collect();
-        assert!(ids.contains(&service_id_for(&ServerType::Http).to_string()));
-        assert!(ids.contains(&service_id_for(&ServerType::Ftp).to_string()));
-        assert!(ids.contains(&service_id_for(&ServerType::Tftp).to_string()));
-    }
-
-    #[test]
-    fn registered_server_types_are_not_desktop_only() {
-        // Serving files may run on an agent — the run-location selector must be
-        // allowed to offer an agent for these.
-        let registry = build_service_registry();
-        for svc in registry.available_services() {
-            assert!(svc.capabilities.emits_events);
-            assert!(
-                !svc.capabilities.desktop_only,
-                "{} must not be desktop-only",
-                svc.service_id
-            );
-        }
-    }
-
-    #[test]
-    fn registry_create_yields_a_stopped_service() {
-        let registry = build_service_registry();
-        let svc = registry
-            .create(service_id_for(&ServerType::Ftp))
-            .expect("ftp server type is registered");
-        assert_eq!(svc.service_id(), service_id_for(&ServerType::Ftp));
+        assert!(ids.contains(&"http_server".to_string()));
+        assert!(ids.contains(&"ftp_server".to_string()));
+        assert!(ids.contains(&"tftp_server".to_string()));
     }
 }

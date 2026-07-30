@@ -3,8 +3,10 @@
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use termihub_core::connection::ConnectionTypeInfo;
+use termihub_core::service::ServiceStatus;
 use termihub_core::tunnel::config::{
     DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats,
 };
@@ -775,6 +777,76 @@ pub struct TunnelStatusResult {
     pub reachable_from: Option<ReachableFrom>,
 }
 
+// ── service.* (agent-hosted embedded servers, #2192) ────────────────
+//
+// An agent-hosted embedded server (HTTP/FTP/TFTP) runs its listen socket on the
+// agent; the desktop keeps only control (start/stop/status over this RPC). The
+// agent creates the server from its `ServiceRegistry` by `service_id`, keyed for
+// later stop/status by the desktop-chosen `instance_id`.
+
+/// Params for `service.start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStartParams {
+    /// The desktop's instance id, used as the key for later stop/status.
+    pub instance_id: String,
+    /// Which registered service type to start (e.g. `"http_server"`).
+    pub service_id: String,
+    /// The service's config JSON (an `EmbeddedServerConfig` for the servers).
+    pub config: Value,
+}
+
+/// Result of `service.start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStartResult {
+    /// The service's lifecycle status once started.
+    pub status: ServiceStatus,
+    /// The latest status payload streamed on the service's event channel, if any
+    /// (the `ServerState` for the embedded servers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<Value>,
+}
+
+/// Params for `service.stop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStopParams {
+    /// The instance id to stop.
+    pub instance_id: String,
+}
+
+/// Result of `service.stop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStopResult {
+    /// Whether a running instance with that id was found and stopped.
+    pub stopped: bool,
+}
+
+/// Params for `service.status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStatusParams {
+    /// The instance id to inspect.
+    pub instance_id: String,
+}
+
+/// Result of `service.status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStatusResult {
+    /// Whether the instance is currently hosted on this agent.
+    pub running: bool,
+    /// The service's lifecycle status (present only when running).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ServiceStatus>,
+    /// The latest status payload streamed on its event channel (present only when
+    /// running, and only once at least one event has been emitted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<Value>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -897,6 +969,79 @@ mod tests {
         let value = serde_json::to_value(&result).unwrap();
         assert_eq!(value["boundAddress"], "127.0.0.1:5432");
         assert_eq!(value["reachableFrom"], "agentOnly");
+    }
+
+    // ── service.* (agent-hosted embedded servers, #2192) ────────────
+
+    /// Locks the `service.start` wire contract against desktop/agent drift
+    /// (#2192): the desktop builds this exact JSON — `config` is the
+    /// camelCase `EmbeddedServerConfig` shape carried opaquely. If either side
+    /// changes the shape, this parse fails.
+    #[test]
+    fn service_start_params_parse_the_desktop_wire_shape() {
+        let wire = json!({
+            "instanceId": "srv-1",
+            "serviceId": "http_server",
+            "config": {
+                "id": "srv-1",
+                "name": "Docs",
+                "serverType": "http",
+                "rootDirectory": "/srv/docs",
+                "bindHost": "0.0.0.0",
+                "port": 8080,
+                "readOnly": true,
+                "directoryListing": true
+            }
+        });
+        let params: ServiceStartParams =
+            serde_json::from_value(wire).expect("desktop service.start shape must parse");
+        assert_eq!(params.instance_id, "srv-1");
+        assert_eq!(params.service_id, "http_server");
+        assert_eq!(params.config["serverType"], "http");
+        assert_eq!(params.config["port"], 8080);
+    }
+
+    #[test]
+    fn service_start_result_serializes_camel_case_and_omits_absent_state() {
+        let result = ServiceStartResult {
+            status: ServiceStatus::Running,
+            state: None,
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(value["status"]["state"], "running");
+        assert!(value.get("state").is_none());
+    }
+
+    #[test]
+    fn service_status_result_running_carries_status_and_state() {
+        let result = ServiceStatusResult {
+            running: true,
+            status: Some(ServiceStatus::Running),
+            state: Some(json!({ "serverId": "srv-1", "status": "running" })),
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(value["running"], true);
+        assert_eq!(value["status"]["state"], "running");
+        assert_eq!(value["state"]["serverId"], "srv-1");
+    }
+
+    #[test]
+    fn service_status_result_not_running_omits_optional_fields() {
+        let result = ServiceStatusResult {
+            running: false,
+            status: None,
+            state: None,
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(value["running"], false);
+        assert!(value.get("status").is_none());
+        assert!(value.get("state").is_none());
+    }
+
+    #[test]
+    fn service_stop_result_serializes_camel_case() {
+        let value = serde_json::to_value(ServiceStopResult { stopped: true }).unwrap();
+        assert_eq!(value["stopped"], true);
     }
 
     #[test]

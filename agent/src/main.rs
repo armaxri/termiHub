@@ -8,6 +8,7 @@ mod network;
 mod protocol;
 mod registry;
 mod registry_daemon;
+mod service;
 mod session;
 mod state;
 mod transport;

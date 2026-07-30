@@ -18,7 +18,6 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
-use termihub_core::service::ServiceRegistry;
 use termihub_core::tool::{CollectingHost, ToolRegistry};
 use tokio_util::sync::CancellationToken;
 
@@ -39,14 +38,17 @@ use crate::protocol::methods::{
     FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
     MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
     NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
-    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
-    SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult, SessionInputParams,
-    SessionListEntry, SessionListResult, SessionResizeParams, TunnelForwardSpec, TunnelStartParams,
-    TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
+    ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
+    ServiceStopParams, ServiceStopResult, SessionAttachParams, SessionCloseParams,
+    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionGetBufferParams,
+    SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
+    SessionResizeParams, TunnelForwardSpec, TunnelStartParams, TunnelStartResult,
+    TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
     UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 use crate::registry_daemon::client::RegistryClient;
 use crate::registry_daemon::protocol::{BroadcastEnvelope, ClientRecord};
+use crate::service::AgentServiceRegistry;
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
     DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,
@@ -65,7 +67,9 @@ use crate::update::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 /// and notifications (#1727).
 /// Bumped to 0.6.0 for the additive `tunnel.*` agent-hosted forwarding methods
 /// (#2185).
-const AGENT_PROTOCOL_VERSION: &str = "0.6.0";
+/// Bumped to 0.7.0 for the additive `service.start/stop/status` agent-hosted
+/// embedded-server methods (#2192).
+const AGENT_PROTOCOL_VERSION: &str = "0.7.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -102,11 +106,11 @@ struct HandlerState {
     /// dispatch through it, mirroring how `network.*` calls the same core
     /// functions directly.
     tool_registry: Arc<ToolRegistry>,
-    /// Registry of long-lived services this agent can host (#2148). Empty in
-    /// S1 — moving concrete services (embedded servers, HTTP monitor) onto the
-    /// agent is S2 — but the `service.*` methods dispatch through it so the
-    /// namespace exists now.
-    service_registry: Arc<ServiceRegistry>,
+    /// Registry of long-lived services this agent can host (#2148), plus the live
+    /// instances currently hosted. Populated with the embedded HTTP/FTP/TFTP
+    /// server factories (#2192); the `service.*` methods start/stop/status
+    /// instances through it, and `agent.shutdown` tears them all down.
+    service_registry: Arc<AgentServiceRegistry>,
     /// Tunnels currently forwarding on this agent, keyed by tunnel id (S3,
     /// #2185). Populated by `tunnel.start`, drained by `tunnel.stop` /
     /// `agent.shutdown`; `tunnel.status` reads live stats from it.
@@ -152,12 +156,15 @@ impl AgentHandler {
         let client_id = uuid::Uuid::new_v4().to_string();
         let registry_client: Arc<OnceLock<Arc<RegistryClient>>> = Arc::new(OnceLock::new());
 
-        // Built-in tool set, shared and stateless; services start empty (S2
-        // lifts concrete services onto the agent). Both are constructed here so
-        // `AgentHandler::new`'s public signature is unchanged — the registries
-        // are self-contained infrastructure, exactly like the shutdown flag.
+        // Built-in tool set, shared and stateless; the service registry is
+        // populated with the embedded HTTP/FTP/TFTP server factories (#2192).
+        // Both are constructed here so `AgentHandler::new`'s public signature is
+        // unchanged — the registries are self-contained infrastructure, exactly
+        // like the shutdown flag.
         let tool_registry = Arc::new(ToolRegistry::with_builtin_network_tools());
-        let service_registry = Arc::new(ServiceRegistry::new());
+        let service_registry = Arc::new(AgentServiceRegistry::new(
+            termihub_core::embedded_servers::build_service_registry(),
+        ));
         let tunnel_registry = Arc::new(AgentTunnelRegistry::new());
 
         let state = Mutex::new(HandlerState {
@@ -376,7 +383,7 @@ async fn get_tool_registry(
 
 async fn get_service_registry(
     ctx: &tokio::sync::Mutex<HandlerState>,
-) -> Result<Arc<ServiceRegistry>, ErrorObjectOwned> {
+) -> Result<Arc<AgentServiceRegistry>, ErrorObjectOwned> {
     let s = ctx.lock().await;
     if !s.initialized {
         return Err(not_initialized());
@@ -437,6 +444,9 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_tool_list(module)?;
     register_tool_run(module)?;
     register_service_list(module)?;
+    register_service_start(module)?;
+    register_service_stop(module)?;
+    register_service_status(module)?;
     register_health_check(module)?;
     register_agent_shutdown(module)?;
     register_agent_settings_update(module)?;
@@ -1425,6 +1435,69 @@ fn register_service_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
     Ok(())
 }
 
+// ── service.start/stop/status (agent-hosted embedded servers, #2192) ─
+//
+// The agent runs the embedded server's listen socket; the desktop keeps only
+// control. `service.start` creates the server from the `ServiceRegistry` by
+// `service_id` and starts it under the desktop-chosen `instance_id`;
+// `service.stop` tears it down; `service.status` reports its streamed status.
+
+fn register_service_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("service.start", |params, ctx, _ext| async move {
+        let registry = get_service_registry(&ctx).await?;
+        let p: ServiceStartParams = params
+            .parse()
+            .map_err(|e| invalid_params("service.start", e))?;
+        let snapshot = registry
+            .start(&p.instance_id, &p.service_id, p.config)
+            .await
+            .map_err(|e| rpc_err(errors::SERVICE_START_FAILED, e.to_string()))?;
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(ServiceStartResult {
+                status: snapshot.status,
+                state: snapshot.state,
+            })
+            .unwrap(),
+        )
+    })?;
+    Ok(())
+}
+
+fn register_service_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("service.stop", |params, ctx, _ext| async move {
+        let registry = get_service_registry(&ctx).await?;
+        let p: ServiceStopParams = params
+            .parse()
+            .map_err(|e| invalid_params("service.stop", e))?;
+        let stopped = registry.stop(&p.instance_id).await;
+        Ok::<_, ErrorObjectOwned>(serde_json::to_value(ServiceStopResult { stopped }).unwrap())
+    })?;
+    Ok(())
+}
+
+fn register_service_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("service.status", |params, ctx, _ext| async move {
+        let registry = get_service_registry(&ctx).await?;
+        let p: ServiceStatusParams = params
+            .parse()
+            .map_err(|e| invalid_params("service.status", e))?;
+        let result = match registry.status(&p.instance_id).await {
+            Some(snapshot) => ServiceStatusResult {
+                running: true,
+                status: Some(snapshot.status),
+                state: snapshot.state,
+            },
+            None => ServiceStatusResult {
+                running: false,
+                status: None,
+                state: None,
+            },
+        };
+        Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).unwrap())
+    })?;
+    Ok(())
+}
+
 // ── tunnel.* (agent-hosted forwarding, #2185) ──────────────────────
 //
 // The agent runs the SSH client and the listen socket; the desktop keeps only
@@ -1529,7 +1602,7 @@ fn register_health_check(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 
 fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("agent.shutdown", |params, ctx, _ext| async move {
-        let (session_manager, monitoring_manager, tunnel_registry, shutdown_flag) = {
+        let (session_manager, monitoring_manager, service_registry, tunnel_registry, shutdown_flag) = {
             let s = ctx.lock().await;
             if !s.initialized {
                 return Err(not_initialized());
@@ -1537,6 +1610,7 @@ fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
             (
                 s.session_manager.clone(),
                 s.monitoring_manager.clone(),
+                s.service_registry.clone(),
                 s.tunnel_registry.clone(),
                 s.shutdown_flag.clone(),
             )
@@ -1548,6 +1622,9 @@ fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
 
         let detached = session_manager.active_count().await;
         monitoring_manager.shutdown().await;
+        // Tear down any agent-hosted embedded servers so no listen socket
+        // outlives the agent (#2192).
+        service_registry.stop_all().await;
         // Tear down any agent-hosted tunnels so no forwarder / SSH session
         // outlives the agent (#2185).
         tunnel_registry.stop_all().await;
@@ -2239,11 +2316,11 @@ mod tests {
 
     /// The RPC must be advertised, and the bump is what tells an older desktop
     /// which additive capabilities (`agent.update_pending`, the `agent.forward.*`
-    /// ssh-agent relay, the `tunnel.*` agent-hosted forwarding methods) may now
-    /// arrive.
+    /// ssh-agent relay, the `tunnel.*` agent-hosted forwarding methods, the
+    /// `service.*` agent-hosted embedded servers) may now arrive.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.6.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.7.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -3571,17 +3648,114 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn service_list_is_empty_in_s1() {
-        // The agent hosts no services yet (S2 lifts them on); the namespace
-        // exists and reports an empty set.
+    async fn service_list_reports_the_embedded_server_types() {
+        // The agent hosts the three embedded server types (#2192); the namespace
+        // lists them with their ids.
         let handler = make_handler();
         init_handler(&handler).await;
 
         let result = dispatch(&handler, "service.list", json!({}), 2).await;
+        let services = result["result"]["services"]
+            .as_array()
+            .expect("services array");
+        let ids: Vec<&str> = services
+            .iter()
+            .filter_map(|s| s["serviceId"].as_str())
+            .collect();
+        assert!(ids.contains(&"http_server"), "{result}");
+        assert!(ids.contains(&"ftp_server"), "{result}");
+        assert!(ids.contains(&"tftp_server"), "{result}");
+    }
+
+    /// End-to-end: the desktop starts an embedded HTTP server on the agent over
+    /// `service.start`, the server actually serves, `service.status` reports it
+    /// running, and `service.stop` tears it down (#2192). This is the agent-RPC
+    /// path the local container run exercises.
+    #[tokio::test]
+    async fn service_start_hosts_a_serving_http_server_then_stops_it() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        // Reserve an ephemeral loopback port, then free it for the server.
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let start = dispatch(
+            &handler,
+            "service.start",
+            json!({
+                "instanceId": "srv-1",
+                "serviceId": "http_server",
+                "config": {
+                    "id": "srv-1",
+                    "name": "Agent HTTP",
+                    "serverType": "http",
+                    "rootDirectory": ".",
+                    "bindHost": "127.0.0.1",
+                    "port": port,
+                    "readOnly": true,
+                    "directoryListing": true
+                }
+            }),
+            2,
+        )
+        .await;
         assert_eq!(
-            result["result"]["services"].as_array().map(Vec::len),
-            Some(0),
-            "service.list must be empty in S1: {result}"
+            start["result"]["status"]["state"], "running",
+            "service.start must report running: {start}"
+        );
+
+        // The hosted server actually accepts connections on its bound port.
+        assert!(
+            std::net::TcpStream::connect(("127.0.0.1", port)).is_ok(),
+            "agent-hosted HTTP server must accept connections"
+        );
+
+        let status = dispatch(
+            &handler,
+            "service.status",
+            json!({ "instanceId": "srv-1" }),
+            3,
+        )
+        .await;
+        assert_eq!(status["result"]["running"], true, "{status}");
+
+        let stop = dispatch(
+            &handler,
+            "service.stop",
+            json!({ "instanceId": "srv-1" }),
+            4,
+        )
+        .await;
+        assert_eq!(stop["result"]["stopped"], true, "{stop}");
+
+        let after = dispatch(
+            &handler,
+            "service.status",
+            json!({ "instanceId": "srv-1" }),
+            5,
+        )
+        .await;
+        assert_eq!(after["result"]["running"], false, "{after}");
+    }
+
+    /// An unknown `serviceId` surfaces `SERVICE_START_FAILED`, not a panic.
+    #[tokio::test]
+    async fn service_start_unknown_service_id_errors() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+        let result = dispatch(
+            &handler,
+            "service.start",
+            json!({ "instanceId": "x", "serviceId": "nope", "config": {} }),
+            2,
+        )
+        .await;
+        assert_eq!(
+            result["error"]["code"],
+            errors::SERVICE_START_FAILED,
+            "{result}"
         );
     }
 

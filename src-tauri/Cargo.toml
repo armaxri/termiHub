@@ -81,11 +81,9 @@ shlex = "1"
 base64 = "0.22"
 anyhow = "1"
 thiserror = { workspace = true }
-termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "docker", "wsl", "plugin"] }
+termihub-core = { path = "../core", features = ["serial", "local-shell", "telnet", "ssh", "docker", "wsl", "plugin", "embedded-servers"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync", "macros", "net", "time", "io-util"] }
 tokio-util = { version = "0.7", features = ["rt"] }
-axum = "0.7"
-tower-http = { version = "0.5", features = ["fs"] }
 async-trait = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }
 semver = "1"
@@ -110,8 +108,6 @@ rand = "0.8"
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-cli = "2"
 if-addrs = "0.6"
-libunftp = "0.20"
-unftp-sbe-fs = "0.2"
 # Native OS credential store (macOS Keychain / Windows Credential Manager /
 # Linux Secret Service). Platform backends are enabled per-target below; the
 # base crate always provides the `mock` backend used in unit tests.
@@ -213,4 +209,3 @@ proptest = "1"
 # regression test (#2168) without launching the real Wry app.
 tauri = { version = "2", default-features = false, features = ["wry", "compression", "dynamic-acl", "test"] }
 temp-env = "0.3"
-tower = { version = "0.5", features = ["util"] }
