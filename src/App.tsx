@@ -153,7 +153,7 @@ function App() {
       }
 
       const store = useAppStore.getState();
-      const restoreMode = resolveRestoreMode(store.settings);
+      const restoreMode = await resolveRestoreMode(store.settings);
       if (restoreMode === "never") {
         // Never restore: drop any stale stored session from a previous run.
         await store.clearLastSession();

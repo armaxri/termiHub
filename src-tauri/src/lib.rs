@@ -1182,6 +1182,10 @@ pub fn run() {
             commands::workspace::save_last_session,
             commands::workspace::load_last_session,
             commands::workspace::clear_last_session,
+            // Startup session-restore decision logic, wired to core (#2200)
+            commands::restore_mode::restore_resolve_mode,
+            commands::restore_mode::restore_summarize_last_session,
+            commands::restore_mode::restore_filter_session_by_selection,
             // Multi-window foundation (#1900)
             commands::window::open_window,
             commands::window::claim_session,

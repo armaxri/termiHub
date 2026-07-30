@@ -8295,7 +8295,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const state = get();
       // Respect the setting at save time so toggling it takes effect immediately.
       // "never" means the user does not want a session kept, so skip the write.
-      if (resolveRestoreMode(state.settings) === "never") return;
+      if ((await resolveRestoreMode(state.settings)) === "never") return;
       const ownGroups = captureAllTabGroups(
         state.tabGroups,
         state.activeTabGroupId,
@@ -8363,7 +8363,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // Partial restore (#1931): prune the stored session to the tabs the user
         // checked before building anything. An empty selection restores nothing.
         const session = selectedIndices
-          ? filterSessionBySelection(loaded, new Set(selectedIndices))
+          ? await filterSessionBySelection(loaded, new Set(selectedIndices))
           : loaded;
         if (session.tabGroups.length === 0) return false;
         const state = get();
@@ -8467,7 +8467,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // Pass loaded connections so `connectionRef` tabs resolve a host/serial
         // target for the reachability probe (connections are loaded before this
         // runs at startup).
-        const summary = summarizeLastSession(session, get().connections);
+        const summary = await summarizeLastSession(session, get().connections);
         // Nothing launchable → treat as "no session" and stay silent.
         if (summary.tabCount === 0) return;
         set({ restorePrompt: summary });

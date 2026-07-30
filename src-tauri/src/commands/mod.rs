@@ -14,6 +14,7 @@ pub mod portable;
 pub mod projection;
 pub mod projection_diag;
 pub mod remote_desktop;
+pub mod restore_mode;
 pub mod session;
 pub mod session_history;
 pub mod shell_integration;
