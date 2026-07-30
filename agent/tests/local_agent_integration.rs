@@ -685,13 +685,28 @@ impl AgentClient {
         )
     }
 
-    /// Read `connection.output` notifications until one contains `needle` or
-    /// the deadline is exceeded. Uses short per-read timeouts so the loop
-    /// reacts promptly to new data without spinning.
+    /// Read `connection.output` notifications until one contains `needle` or the
+    /// shared readiness budget ([`ready_timeout`]) elapses. Uses short per-read
+    /// timeouts so the loop reacts promptly to new data without spinning.
+    ///
+    /// # Why the ceiling is [`ready_timeout`] and not a per-call fixed budget
+    ///
+    /// A shell's cold start plus the command round-trip (write → PTY echo →
+    /// forwarder → notification channel → TCP) can momentarily exceed a tight
+    /// fixed budget on a loaded **Windows** CI runner. A hardcoded 10s ceiling
+    /// here is what flaked the attach/reattach tests (#2194): the assertion fired
+    /// "no connection.output … received" even though the output was merely late,
+    /// not lost — and the very tests that flaked were exactly the ones using this
+    /// fixed-budget wait, while the reconnect test that instead polls on
+    /// [`ready_timeout`] never did. A fixed budget is a guess; this reuses the
+    /// same generous, env-overridable ([`TERMIHUB_TEST_READY_TIMEOUT_SECS`])
+    /// ceiling as the other readiness waits. Because the loop polls and returns
+    /// the instant `needle` arrives, a higher ceiling never slows the passing
+    /// path — it only widens the window before we give up.
     ///
     /// Returns `true` if `needle` was found in the decoded output.
-    fn wait_for_output(&mut self, needle: &str, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
+    fn wait_for_output(&mut self, needle: &str) -> bool {
+        let deadline = Instant::now() + ready_timeout();
         self.set_read_timeout(Some(Duration::from_millis(100)));
 
         loop {
@@ -785,7 +800,7 @@ fn shell_session_attach_and_receive_output() {
         "connection.write failed: {write_resp}"
     );
 
-    let got = client.wait_for_output("termihub-output-marker", Duration::from_secs(10));
+    let got = client.wait_for_output("termihub-output-marker");
     assert!(
         got,
         "no connection.output notification containing 'termihub-output-marker' received"
@@ -871,7 +886,7 @@ fn shell_session_reattach_after_reconnect() {
             "write on first connection failed: {write_resp}"
         );
 
-        let got = client.wait_for_output("first-connection", Duration::from_secs(10));
+        let got = client.wait_for_output("first-connection");
         assert!(got, "shell did not respond on first connection");
         // implicit drop → disconnects
     }
@@ -908,7 +923,7 @@ fn shell_session_reattach_after_reconnect() {
         "write after re-attach failed: {write_resp}"
     );
 
-    let got = client2.wait_for_output("second-connection", Duration::from_secs(10));
+    let got = client2.wait_for_output("second-connection");
     assert!(
         got,
         "no output after re-attach — shell may not have survived reconnect"
@@ -1175,7 +1190,7 @@ fn persistent_shell_buffer_replayed_on_same_connection_reattach() {
     let wr = client.write_input(&setup.session_id, &cmd);
     assert!(wr["result"].is_object(), "write failed: {wr}");
     assert!(
-        client.wait_for_output(marker, Duration::from_secs(15)),
+        client.wait_for_output(marker),
         "marker '{marker}' not received on first attach — shell not responding"
     );
 
@@ -1194,7 +1209,7 @@ fn persistent_shell_buffer_replayed_on_same_connection_reattach() {
     assert!(ra["result"].is_object(), "re-attach failed: {ra}");
 
     assert!(
-        client.wait_for_output(marker, Duration::from_secs(10)),
+        client.wait_for_output(marker),
         "buffer replay after re-attach did not contain '{marker}' — \
          persistent session ring buffer not working"
     );
@@ -1234,7 +1249,7 @@ fn persistent_shell_buffer_replayed_after_tcp_reconnect() {
         let wr = client.write_input(&setup.session_id, &cmd);
         assert!(wr["result"].is_object(), "write failed: {wr}");
         assert!(
-            client.wait_for_output(marker, Duration::from_secs(15)),
+            client.wait_for_output(marker),
             "marker not received on first connection"
         );
         // Drop: TCP connection closes → agent calls detach_all() → DaemonClient
@@ -1272,7 +1287,7 @@ fn persistent_shell_buffer_replayed_after_tcp_reconnect() {
         assert!(ar["result"].is_object(), "re-attach failed: {ar}");
 
         assert!(
-            client.wait_for_output(marker, Duration::from_secs(10)),
+            client.wait_for_output(marker),
             "buffer replay after TCP reconnect did not contain '{marker}' — \
              ring buffer may not have survived the disconnect"
         );
