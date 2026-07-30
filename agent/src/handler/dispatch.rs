@@ -18,6 +18,10 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
 
+use termihub_core::service::ServiceRegistry;
+use termihub_core::tool::{CollectingHost, ToolRegistry};
+use tokio_util::sync::CancellationToken;
+
 use crate::client_registry::ConnectionRegistry;
 use crate::files::local::LocalFileBackend;
 use crate::files::{FileBackend, FileError};
@@ -89,6 +93,16 @@ struct HandlerState {
     /// Shared with [`AgentHandler::shutdown_flag`] so the transport loop can
     /// detect shutdown without re-locking the mutex after every request.
     shutdown_flag: Arc<AtomicBool>,
+    /// Registry of one-shot / streaming tools this agent can host (#2148).
+    /// Populated with the built-in network diagnostics; the `tool.*` methods
+    /// dispatch through it, mirroring how `network.*` calls the same core
+    /// functions directly.
+    tool_registry: Arc<ToolRegistry>,
+    /// Registry of long-lived services this agent can host (#2148). Empty in
+    /// S1 — moving concrete services (embedded servers, HTTP monitor) onto the
+    /// agent is S2 — but the `service.*` methods dispatch through it so the
+    /// namespace exists now.
+    service_registry: Arc<ServiceRegistry>,
 }
 
 // ── AgentHandler ───────────────────────────────────────────────────
@@ -130,6 +144,13 @@ impl AgentHandler {
         let client_id = uuid::Uuid::new_v4().to_string();
         let registry_client: Arc<OnceLock<Arc<RegistryClient>>> = Arc::new(OnceLock::new());
 
+        // Built-in tool set, shared and stateless; services start empty (S2
+        // lifts concrete services onto the agent). Both are constructed here so
+        // `AgentHandler::new`'s public signature is unchanged — the registries
+        // are self-contained infrastructure, exactly like the shutdown flag.
+        let tool_registry = Arc::new(ToolRegistry::with_builtin_network_tools());
+        let service_registry = Arc::new(ServiceRegistry::new());
+
         let state = Mutex::new(HandlerState {
             session_manager,
             connection_store,
@@ -141,6 +162,8 @@ impl AgentHandler {
             client_id: client_id.clone(),
             registry_client: registry_client.clone(),
             shutdown_flag: shutdown_flag.clone(),
+            tool_registry,
+            service_registry,
         });
 
         let mut module: RpcModule<Mutex<HandlerState>> = RpcModule::new(state);
@@ -331,6 +354,26 @@ async fn get_monitoring_managers(
     Ok((s.session_manager.clone(), s.monitoring_manager.clone()))
 }
 
+async fn get_tool_registry(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<Arc<ToolRegistry>, ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(s.tool_registry.clone())
+}
+
+async fn get_service_registry(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<Arc<ServiceRegistry>, ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(s.service_registry.clone())
+}
+
 // ── Method registration ────────────────────────────────────────────
 
 fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
@@ -368,6 +411,9 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_network_open_ports(module)?;
     register_network_traceroute(module)?;
     register_network_wol(module)?;
+    register_tool_list(module)?;
+    register_tool_run(module)?;
+    register_service_list(module)?;
     register_health_check(module)?;
     register_agent_shutdown(module)?;
     register_agent_settings_update(module)?;
@@ -1296,6 +1342,62 @@ fn register_network_wol(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
         network::handle_wol(p)
             .map(|()| json!({}))
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+    })?;
+    Ok(())
+}
+
+// ── tool.* / service.* ────────────────────────────────────────────
+//
+// The uniform Service/Tool substrate (#2148, part of #2139). `tool.*`
+// dispatches through the agent's ToolRegistry — the same core network
+// diagnostics `network.*` calls, now reachable behind the location-agnostic
+// trait. `service.*` exposes the (S1-empty) ServiceRegistry so the namespace
+// exists before S2 lifts concrete services onto the agent.
+
+fn register_tool_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("tool.list", |_params, ctx, _ext| async move {
+        let registry = get_tool_registry(&ctx).await?;
+        Ok::<_, ErrorObjectOwned>(json!({ "tools": registry.available_tools() }))
+    })?;
+    Ok(())
+}
+
+fn register_tool_run(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("tool.run", |params, ctx, _ext| async move {
+        let registry = get_tool_registry(&ctx).await?;
+
+        let p: Value = params.parse().map_err(|e| invalid_params("tool.run", e))?;
+        let tool_id = p
+            .get("toolId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| rpc_err(errors::INVALID_PARAMS, "tool.run requires 'toolId'"))?
+            .to_string();
+        let tool_params = p.get("params").cloned().unwrap_or_else(|| json!({}));
+
+        // Collect the streamed events into a single JSON-RPC response, the same
+        // way `network.*` collects its results (the NDJSON transport is
+        // request/response, not streaming). Real-time streaming to the desktop
+        // is a later phase.
+        let host = CollectingHost::new();
+        let result = registry
+            .run(
+                &tool_id,
+                tool_params,
+                host.clone(),
+                CancellationToken::new(),
+            )
+            .await
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
+
+        Ok::<_, ErrorObjectOwned>(json!({ "events": host.take(), "result": result }))
+    })?;
+    Ok(())
+}
+
+fn register_service_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("service.list", |_params, ctx, _ext| async move {
+        let registry = get_service_registry(&ctx).await?;
+        Ok::<_, ErrorObjectOwned>(json!({ "services": registry.available_services() }))
     })?;
     Ok(())
 }
@@ -3305,6 +3407,90 @@ mod tests {
 
         let result = dispatch(&handler, "network.open_ports", json!({}), 1).await;
         assert_eq!(result["error"]["code"], errors::NOT_INITIALIZED);
+    }
+
+    // ── tool.* / service.* (#2148) ─────────────────────────────────
+
+    #[tokio::test]
+    async fn tool_list_returns_builtin_network_tools() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(&handler, "tool.list", json!({}), 2).await;
+        let tools = result["result"]["tools"].as_array().expect("tools array");
+        let ids: Vec<&str> = tools.iter().filter_map(|t| t["toolId"].as_str()).collect();
+        assert!(
+            ids.contains(&"ping"),
+            "tool.list must include ping: {result}"
+        );
+        assert!(ids.contains(&"port_scan"));
+        assert!(ids.contains(&"dns"));
+        assert!(ids.contains(&"wol"));
+    }
+
+    #[tokio::test]
+    async fn tool_run_open_ports_round_trip() {
+        // open_ports is network-free, so it exercises the full tool.run path
+        // (dispatch → registry → CollectingHost → response) deterministically.
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "tool.run",
+            json!({ "toolId": "open_ports", "params": {} }),
+            2,
+        )
+        .await;
+        assert!(
+            result["result"]["result"]["ports"].is_array(),
+            "expected open_ports list: {result}"
+        );
+        // One-shot tool: no streamed events.
+        assert_eq!(result["result"]["events"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[tokio::test]
+    async fn tool_run_unknown_tool_errors() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "tool.run",
+            json!({ "toolId": "ghost", "params": {} }),
+            2,
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::INTERNAL_ERROR);
+    }
+
+    #[tokio::test]
+    async fn service_list_is_empty_in_s1() {
+        // The agent hosts no services yet (S2 lifts them on); the namespace
+        // exists and reports an empty set.
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(&handler, "service.list", json!({}), 2).await;
+        assert_eq!(
+            result["result"]["services"].as_array().map(Vec::len),
+            Some(0),
+            "service.list must be empty in S1: {result}"
+        );
+    }
+
+    #[tokio::test]
+    async fn tool_and_service_methods_require_initialization() {
+        let handler = make_handler();
+        for method in ["tool.list", "tool.run", "service.list"] {
+            let result = dispatch(&handler, method, json!({}), 1).await;
+            assert_eq!(
+                result["error"]["code"],
+                errors::NOT_INITIALIZED,
+                "{method} must require initialize"
+            );
+        }
     }
 
     // ── Mock managers for DI tests ─────────────────────────────────

@@ -22,6 +22,7 @@ mod macos_clipboard;
 mod macos_services;
 mod macros;
 mod network;
+pub mod run_location;
 mod session;
 mod session_history;
 mod spawn;
