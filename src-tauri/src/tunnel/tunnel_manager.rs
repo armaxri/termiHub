@@ -24,6 +24,7 @@ use super::storage::TunnelStorage;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
 use crate::run_location::{Locality, ResolvedLocation, RunLocationResolver};
+use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_with_registry_cancellable;
 
@@ -144,27 +145,23 @@ fn resting_status(
     }
 }
 
-/// Decide whether a tunnel may start on the desktop's local forwarder path, per
-/// its run-location host (S3, #2155).
+/// Resolve a tunnel's run-location host to its execution target (S3, #2155).
 ///
 /// A tunnel is never desktop-only, so the resolver honours whatever host the
-/// config carries. [`RunLocation::ThisComputer`] resolves to the local path
-/// (`Ok(())`) — today's behaviour. [`RunLocation::Agent`] is recognised but the
-/// agent-side tunnel forwarding backend is not built yet, so it yields a
-/// human-readable error the caller records + emits as the tunnel's resting
-/// `Error` rather than silently forwarding on the desktop. Pure (no locking, no
-/// IO, no `AppHandle`) so the routing decision is unit-testable directly.
-fn resolve_local_tunnel_host(
+/// config carries. [`RunLocation::ThisComputer`] resolves to
+/// [`ResolvedLocation::Local`] (the desktop forwarder path — today's
+/// behaviour); [`RunLocation::Agent`] resolves to [`ResolvedLocation::Agent`],
+/// routing hosting to that agent over the agent RPC (#2185). The error string
+/// is what the caller records + emits as the tunnel's resting `Error`. Pure (no
+/// locking, no IO, no `AppHandle`) so the routing decision is unit-testable
+/// directly.
+fn resolve_tunnel_host(
     tunnel_id: &str,
     host: &crate::run_location::RunLocation,
-) -> Result<(), String> {
-    match RunLocationResolver::new().resolve(tunnel_id, Locality::LocalOrAgent, host) {
-        Ok(ResolvedLocation::Local) => Ok(()),
-        Ok(ResolvedLocation::Agent(agent_id)) => Err(format!(
-            "agent-hosted tunnels are not yet supported (tunnel '{tunnel_id}' requested agent '{agent_id}')"
-        )),
-        Err(e) => Err(e.to_string()),
-    }
+) -> Result<ResolvedLocation, String> {
+    RunLocationResolver::new()
+        .resolve(tunnel_id, Locality::LocalOrAgent, host)
+        .map_err(|e| e.to_string())
 }
 
 /// How often the live stats emitter samples each active tunnel and pushes a
@@ -247,6 +244,19 @@ struct ActiveTunnel {
     supervisor_cancel: CancellationToken,
 }
 
+/// A tunnel hosted on a remote agent (S3, #2185).
+///
+/// The desktop holds only *control* state — which agent forwards it — so
+/// `stop_tunnel` can send `tunnel.stop` to the right agent. The data path
+/// (listen socket, SSH session, forwarder) lives entirely on the agent, so
+/// there is no `ActiveForwarder` here. The agent-reported endpoint details
+/// (`boundAddress` / `reachableFrom`) are logged on start; surfacing them into
+/// the projection view model is a follow-up to #2185.
+struct AgentTunnelHandle {
+    /// The agent forwarding this tunnel.
+    agent_id: String,
+}
+
 /// Central manager for SSH tunnels.
 ///
 /// Handles CRUD operations on tunnel configurations, starting/stopping tunnels,
@@ -270,6 +280,11 @@ pub struct TunnelManager {
     /// task can register/deregister its own loop without `&self`.
     reconnecting: Arc<Mutex<HashMap<String, CancellationToken>>>,
     connecting: ConnectingTracker,
+    /// Tunnels currently hosted on a remote agent, keyed by tunnel id (S3,
+    /// #2185). Disjoint from `active_tunnels` (which holds desktop-hosted
+    /// forwarders): an agent-hosted tunnel's data path runs on the agent, so the
+    /// desktop tracks only the control handle here.
+    agent_tunnels: Mutex<HashMap<String, AgentTunnelHandle>>,
     /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
     /// same connection. Jump-host gateway sessions are pooled separately in the
     /// process-wide [`shared_gateway_pool`](termihub_core::backends::ssh::session_pool::shared_gateway_pool).
@@ -299,6 +314,7 @@ impl TunnelManager {
             last_errors: Arc::new(Mutex::new(HashMap::new())),
             reconnecting: Arc::new(Mutex::new(HashMap::new())),
             connecting: ConnectingTracker::new(),
+            agent_tunnels: Mutex::new(HashMap::new()),
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
@@ -376,6 +392,10 @@ impl TunnelManager {
             .reconnecting
             .lock()
             .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+        let agent_tunnels = self
+            .agent_tunnels
+            .lock()
+            .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
 
         let states = store
             .tunnels
@@ -387,6 +407,17 @@ impl TunnelManager {
                         status: TunnelStatus::Connected,
                         error: None,
                         stats: tunnel.forwarder.stats(),
+                    }
+                } else if agent_tunnels.contains_key(&config.id) {
+                    // Hosted on an agent (#2185): the data path runs on the
+                    // agent, so the desktop reports `Connected` without live
+                    // stats (streaming per-tick stats over the agent RPC is a
+                    // follow-up).
+                    TunnelState {
+                        tunnel_id: config.id.clone(),
+                        status: TunnelStatus::Connected,
+                        error: None,
+                        stats: TunnelStats::default(),
                     }
                 } else if reconnecting.contains_key(&config.id) {
                     // In a reconnect-backoff loop (#1246) — report `Reconnecting`
@@ -438,16 +469,19 @@ impl TunnelManager {
                 })?
         };
 
-        // Route by run-location (S3, #2155). Desktop-hosted tunnels (the default)
-        // take the existing local forwarder path below; agent-hosted tunnels are
-        // recognised here but their forwarding backend is not built yet, so
-        // surface a clear, durable `Error` rather than silently running the
-        // forward on the desktop. Mirrors the analogous stub in
-        // `NetworkManager::spawn_http_monitor` (S1, #2148).
-        if let Err(message) = resolve_local_tunnel_host(tunnel_id, &config.host) {
-            record_last_error(&self.last_errors, tunnel_id, message.clone());
-            self.emit_status(tunnel_id, TunnelStatus::Error, Some(message.clone()));
-            return Err(TerminalError::TunnelError(message));
+        // Route by run-location (S3, #2155/#2185). Desktop-hosted tunnels (the
+        // default) take the existing local forwarder path below; agent-hosted
+        // tunnels are forwarded on the agent over the agent RPC.
+        match resolve_tunnel_host(tunnel_id, &config.host) {
+            Ok(ResolvedLocation::Local) => {}
+            Ok(ResolvedLocation::Agent(agent_id)) => {
+                return self.start_agent_tunnel(tunnel_id, &config, &agent_id);
+            }
+            Err(message) => {
+                record_last_error(&self.last_errors, tunnel_id, message.clone());
+                self.emit_status(tunnel_id, TunnelStatus::Error, Some(message.clone()));
+                return Err(TerminalError::TunnelError(message));
+            }
         }
 
         // Check if already active
@@ -532,6 +566,157 @@ impl TunnelManager {
 
         tracing::info!("Tunnel {} started", tunnel_id);
         Ok(())
+    }
+
+    /// Start a tunnel hosted on a remote agent (S3, #2185).
+    ///
+    /// The agent runs the SSH client and the listen socket; the desktop sends
+    /// only control over the agent RPC. This first slice forwards **local**
+    /// (`ssh -L`) tunnels on the agent; remote (`-R`) and dynamic (`-D`) agent
+    /// hosting are follow-ups, so they surface a clear, durable `Error` rather
+    /// than silently forwarding on the desktop. On success the agent-reported
+    /// `bound_address` / `reachable_from` are stored for the projection and the
+    /// tunnel rests `Connected`.
+    fn start_agent_tunnel(
+        &self,
+        tunnel_id: &str,
+        config: &TunnelConfig,
+        agent_id: &str,
+    ) -> Result<(), TerminalError> {
+        // Only local forwarding runs on an agent today.
+        let local_config = match &config.tunnel_type {
+            TunnelType::Local(local) => local.clone(),
+            TunnelType::Remote(_) | TunnelType::Dynamic(_) => {
+                let mode = match &config.tunnel_type {
+                    TunnelType::Remote(_) => "remote (-R)",
+                    TunnelType::Dynamic(_) => "dynamic (-D)",
+                    TunnelType::Local(_) => unreachable!(),
+                };
+                let message = format!(
+                    "agent-hosted {mode} forwarding is not yet supported (tunnel '{tunnel_id}'); \
+                     only local (-L) forwarding runs on an agent today"
+                );
+                record_last_error(&self.last_errors, tunnel_id, message.clone());
+                self.emit_status(tunnel_id, TunnelStatus::Error, Some(message.clone()));
+                return Err(TerminalError::TunnelError(message));
+            }
+        };
+
+        // Reject a double-start (already active on the desktop or an agent).
+        {
+            let active = self
+                .active_tunnels
+                .lock()
+                .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+            let agent = self
+                .agent_tunnels
+                .lock()
+                .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+            if active.contains_key(tunnel_id) || agent.contains_key(tunnel_id) {
+                return Err(TerminalError::TunnelError(format!(
+                    "Tunnel {} is already active",
+                    tunnel_id
+                )));
+            }
+        }
+
+        self.emit_status(tunnel_id, TunnelStatus::Connecting, None);
+
+        // Resolve the SSH connection so the agent can open the session to the
+        // "via" server itself; any inline jump-host chain is already expanded.
+        let ssh_config = match self.resolve_ssh_config(&config.ssh_connection_id) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                record_last_error(&self.last_errors, tunnel_id, e.to_string());
+                self.emit_status(tunnel_id, TunnelStatus::Error, Some(e.to_string()));
+                return Err(e);
+            }
+        };
+
+        let agent_manager = self
+            .app_handle
+            .try_state::<Arc<dyn AgentRpcClient>>()
+            .ok_or_else(|| {
+                TerminalError::TunnelError("Agent manager is not available".to_string())
+            })?;
+
+        // Build the tunnel.start request. `forward` is the agent's
+        // internally-tagged `TunnelForwardSpec::Local` shape: the local-forward
+        // config fields plus a `mode` discriminator.
+        let mut forward = serde_json::to_value(&local_config).map_err(|e| {
+            TerminalError::TunnelError(format!("Failed to serialize forward config: {}", e))
+        })?;
+        forward["mode"] = serde_json::json!("local");
+        let params = serde_json::json!({
+            "tunnelId": tunnel_id,
+            "sshConfig": ssh_config,
+            "forward": forward,
+        });
+
+        match agent_manager.send_request(agent_id, "tunnel.start", params) {
+            Ok(result) => {
+                let bound_address = result["boundAddress"].as_str().unwrap_or("");
+                let reachable_from = result["reachableFrom"].as_str().unwrap_or("");
+                {
+                    let mut agent = self
+                        .agent_tunnels
+                        .lock()
+                        .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
+                    agent.insert(
+                        tunnel_id.to_string(),
+                        AgentTunnelHandle {
+                            agent_id: agent_id.to_string(),
+                        },
+                    );
+                }
+                clear_last_error(&self.last_errors, tunnel_id);
+                self.emit_status(tunnel_id, TunnelStatus::Connected, None);
+                tracing::info!(
+                    "Tunnel {} started on agent {} (bound {} on the agent, reachable from {})",
+                    tunnel_id,
+                    agent_id,
+                    bound_address,
+                    reachable_from
+                );
+                Ok(())
+            }
+            Err(e) => {
+                let message = format!("agent-hosted tunnel start failed: {}", e);
+                record_last_error(&self.last_errors, tunnel_id, message.clone());
+                self.emit_status(tunnel_id, TunnelStatus::Error, Some(message.clone()));
+                Err(TerminalError::TunnelError(message))
+            }
+        }
+    }
+
+    /// Stop an agent-hosted tunnel, if `tunnel_id` is one. Returns `true` when a
+    /// handle was found and a `tunnel.stop` sent to the agent (best-effort — the
+    /// desktop drops its handle regardless so the UI reflects the stop).
+    fn stop_agent_tunnel(&self, tunnel_id: &str) -> bool {
+        let handle = {
+            let mut agent = match self.agent_tunnels.lock() {
+                Ok(a) => a,
+                Err(_) => return false,
+            };
+            agent.remove(tunnel_id)
+        };
+        let Some(handle) = handle else {
+            return false;
+        };
+        if let Some(agent_manager) = self.app_handle.try_state::<Arc<dyn AgentRpcClient>>() {
+            let params = serde_json::json!({ "tunnelId": tunnel_id });
+            if let Err(e) = agent_manager.send_request(&handle.agent_id, "tunnel.stop", params) {
+                tracing::warn!(
+                    "Failed to stop agent-hosted tunnel {} on agent {}: {}",
+                    tunnel_id,
+                    handle.agent_id,
+                    e
+                );
+            }
+        }
+        self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
+        tracing::info!("Tunnel {} stopped on agent {}", tunnel_id, handle.agent_id);
+        true
     }
 
     /// Ensure the single periodic live-stats emitter task is running.
@@ -858,6 +1043,12 @@ impl TunnelManager {
         // from the `Error` resting state to `Disconnected` (GAP 3, #1238).
         clear_last_error(&self.last_errors, tunnel_id);
 
+        // Agent-hosted tunnels live in their own track: send `tunnel.stop` to the
+        // agent and drop the control handle (S3, #2185).
+        if self.stop_agent_tunnel(tunnel_id) {
+            return Ok(());
+        }
+
         let tunnel = {
             let mut active = self
                 .active_tunnels
@@ -945,6 +1136,16 @@ impl TunnelManager {
             if let Err(e) = self.stop_tunnel(&tunnel_id) {
                 tracing::error!("Failed to stop tunnel {}: {}", tunnel_id, e);
             }
+        }
+
+        // Tear down agent-hosted tunnels too (#2185) — `stop_agent_tunnel` sends
+        // `tunnel.stop` to each agent and drops the handle.
+        let agent_tunnels: Vec<String> = match self.agent_tunnels.lock() {
+            Ok(a) => a.keys().cloned().collect(),
+            Err(_) => Vec::new(),
+        };
+        for tunnel_id in agent_tunnels {
+            self.stop_agent_tunnel(&tunnel_id);
         }
 
         // Abort the live-stats emitter promptly on shutdown rather than waiting
@@ -1316,12 +1517,12 @@ mod tests {
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::super::local_forward::ForwarderStats;
     use super::{
-        backoff_delay, clear_last_error, last_error_for, record_last_error,
-        resolve_local_tunnel_host, resolve_managed_arc, resting_status, run_reconnect_loop,
-        snapshot_active_stats, wait_forwarder_death, wait_session_death, ActiveTunnel,
-        ReconnectOutcome, TunnelStatsUpdate,
+        backoff_delay, clear_last_error, last_error_for, record_last_error, resolve_managed_arc,
+        resolve_tunnel_host, resting_status, run_reconnect_loop, snapshot_active_stats,
+        wait_forwarder_death, wait_session_death, ActiveTunnel, ReconnectOutcome,
+        TunnelStatsUpdate,
     };
-    use crate::run_location::RunLocation;
+    use crate::run_location::{ResolvedLocation, RunLocation};
     use crate::tunnel::config::TunnelStatus;
     use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
@@ -1536,20 +1737,20 @@ mod tests {
     /// S3 (#2155): a desktop-hosted tunnel routes to the local forwarder path.
     #[test]
     fn this_computer_host_routes_local() {
-        assert!(resolve_local_tunnel_host(TUNNEL_ID, &RunLocation::ThisComputer).is_ok());
+        assert_eq!(
+            resolve_tunnel_host(TUNNEL_ID, &RunLocation::ThisComputer),
+            Ok(ResolvedLocation::Local)
+        );
     }
 
-    /// S3 (#2155): an agent-hosted tunnel is recognised but not yet forwardable,
-    /// so it yields a clear error naming the tunnel and the requested agent —
-    /// never a silent fall-through to the desktop path.
+    /// S3 (#2185): an agent-hosted tunnel resolves to its agent, so `start_tunnel`
+    /// routes hosting to that agent over the agent RPC rather than the desktop.
     #[test]
-    fn agent_host_is_not_yet_supported() {
-        let err =
-            resolve_local_tunnel_host(TUNNEL_ID, &RunLocation::Agent("build-box".to_string()))
-                .expect_err("agent-hosted tunnels must not resolve to the local path yet");
-        assert!(err.contains("not yet supported"), "message: {err}");
-        assert!(err.contains("build-box"), "message names the agent: {err}");
-        assert!(err.contains(TUNNEL_ID), "message names the tunnel: {err}");
+    fn agent_host_routes_to_the_agent() {
+        assert_eq!(
+            resolve_tunnel_host(TUNNEL_ID, &RunLocation::Agent("build-box".to_string())),
+            Ok(ResolvedLocation::Agent("build-box".to_string()))
+        );
     }
 
     /// GAP 3: "never started" (no map entry) stays `Disconnected` — distinct
