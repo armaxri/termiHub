@@ -448,6 +448,7 @@ fn ack_omits_absent_fields() {
 #[test]
 fn projection_frame_is_tagged_by_kind() {
     let snap = ProjectionFrame::Snapshot(SnapshotFrame {
+        kind: SnapshotKind::Snapshot,
         region: "tunnels".into(),
         version: 41,
         view: json!({ "tunnels": [] }),
@@ -458,6 +459,7 @@ fn projection_frame_is_tagged_by_kind() {
     assert_eq!(v["version"], json!(41));
 
     let diff = ProjectionFrame::Diff(DiffFrame {
+        kind: DiffKind::Diff,
         region: "tunnels".into(),
         base_version: 41,
         version: 42,
@@ -476,4 +478,58 @@ fn projection_frame_is_tagged_by_kind() {
 
     // Round-trips back to the same frame.
     assert_eq!(serde_json::from_value::<ProjectionFrame>(v).unwrap(), diff);
+}
+
+/// #2170 — a snapshot must carry exactly one `kind: "snapshot"` discriminator in
+/// *both* wire forms: the bare [`SnapshotFrame`] returned by
+/// `projection_subscribe` / `projection_resync`, and the enum-wrapped
+/// [`ProjectionFrame::Snapshot`] pushed over the diff channel. The original bug
+/// was a *missing* tag on the bare form; the fix must not introduce a *doubled*
+/// tag on the wrapped form.
+#[test]
+fn snapshot_frame_carries_single_kind_discriminator_in_both_forms() {
+    // Build a snapshot the way the wire delivers one (no explicit kind).
+    let bare: SnapshotFrame = serde_json::from_value(json!({
+        "region": "tunnels",
+        "version": 7,
+        "view": { "tunnels": [] },
+    }))
+    .expect("snapshot deserializes without an explicit kind");
+
+    // Standalone form — the subscribe/resync return value.
+    let standalone = serde_json::to_string(&bare).unwrap();
+    assert_eq!(
+        standalone.matches("\"kind\"").count(),
+        1,
+        "standalone snapshot must carry exactly one kind: {standalone}",
+    );
+    let standalone_v = serde_json::to_value(&bare).unwrap();
+    assert_eq!(standalone_v["kind"], json!("snapshot"));
+    assert_eq!(standalone_v["region"], json!("tunnels"));
+    assert_eq!(standalone_v["version"], json!(7));
+    assert_eq!(standalone_v["view"], json!({ "tunnels": [] }));
+
+    // Enum-wrapped form — the channel-pushed `ProjectionFrame::Snapshot`.
+    let wrapped = ProjectionFrame::Snapshot(bare.clone());
+    let wrapped_s = serde_json::to_string(&wrapped).unwrap();
+    assert_eq!(
+        wrapped_s.matches("\"kind\"").count(),
+        1,
+        "enum-wrapped snapshot must carry exactly one kind (no double tag): {wrapped_s}",
+    );
+    let wrapped_v = serde_json::to_value(&wrapped).unwrap();
+    assert_eq!(wrapped_v["kind"], json!("snapshot"));
+    assert_eq!(wrapped_v["region"], json!("tunnels"));
+    assert_eq!(wrapped_v["version"], json!(7));
+    assert_eq!(wrapped_v["view"], json!({ "tunnels": [] }));
+
+    // Both forms round-trip back to the same value.
+    assert_eq!(
+        serde_json::from_value::<SnapshotFrame>(standalone_v).unwrap(),
+        bare,
+    );
+    assert_eq!(
+        serde_json::from_value::<ProjectionFrame>(wrapped_v).unwrap(),
+        wrapped,
+    );
 }
