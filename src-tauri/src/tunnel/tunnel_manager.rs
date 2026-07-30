@@ -1316,9 +1316,10 @@ mod tests {
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::super::local_forward::ForwarderStats;
     use super::{
-        backoff_delay, clear_last_error, last_error_for, record_last_error, resolve_local_tunnel_host,
-        resolve_managed_arc, resting_status, run_reconnect_loop, snapshot_active_stats,
-        wait_forwarder_death, wait_session_death, ActiveTunnel, ReconnectOutcome, TunnelStatsUpdate,
+        backoff_delay, clear_last_error, last_error_for, record_last_error,
+        resolve_local_tunnel_host, resolve_managed_arc, resting_status, run_reconnect_loop,
+        snapshot_active_stats, wait_forwarder_death, wait_session_death, ActiveTunnel,
+        ReconnectOutcome, TunnelStatsUpdate,
     };
     use crate::run_location::RunLocation;
     use crate::tunnel::config::TunnelStatus;
@@ -1543,8 +1544,9 @@ mod tests {
     /// never a silent fall-through to the desktop path.
     #[test]
     fn agent_host_is_not_yet_supported() {
-        let err = resolve_local_tunnel_host(TUNNEL_ID, &RunLocation::Agent("build-box".to_string()))
-            .expect_err("agent-hosted tunnels must not resolve to the local path yet");
+        let err =
+            resolve_local_tunnel_host(TUNNEL_ID, &RunLocation::Agent("build-box".to_string()))
+                .expect_err("agent-hosted tunnels must not resolve to the local path yet");
         assert!(err.contains("not yet supported"), "message: {err}");
         assert!(err.contains("build-box"), "message names the agent: {err}");
         assert!(err.contains(TUNNEL_ID), "message names the tunnel: {err}");
