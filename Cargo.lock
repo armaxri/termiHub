@@ -7713,6 +7713,7 @@ dependencies = [
  "dirs",
  "hex",
  "if-addrs",
+ "json-patch",
  "keyring",
  "libc",
  "libunftp",
