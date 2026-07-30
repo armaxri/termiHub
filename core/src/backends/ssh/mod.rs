@@ -18,7 +18,10 @@ pub mod session_pool;
 pub mod sftp;
 pub mod x11;
 
-pub use self::exec::{ssh_exec_with_stdin, SshExecOutput};
+pub use self::exec::{
+    exec_probe_indicates_capability, probe_exec_capability, ssh_exec_with_stdin, SshExecOutput,
+    EXEC_PROBE_MARKER,
+};
 
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};

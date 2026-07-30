@@ -2,10 +2,10 @@
 //! Integration tests for [`ssh_exec_with_stdin`] against Docker SSH fixtures.
 //!
 //! Covers the helper's three captured outputs (stdout, stderr, exit status)
-//! and stdin delivery, plus the exec-capability discriminator used by
-//! [`SftpSession::has_exec_capability`](../../src-tauri): a shell connection
-//! echoes a probe marker back on stdout (capable), while an SFTP-only
-//! (`ForceCommand internal-sftp`) connection does not (not capable).
+//! and stdin delivery, plus the shared [`probe_exec_capability`] discriminator
+//! used by `SftpSession::has_exec_capability` (in `src-tauri`): a shell
+//! connection echoes the probe marker back on stdout (capable), while an
+//! SFTP-only (`ForceCommand internal-sftp`) connection does not (not capable).
 //!
 //! Requires: `docker compose -f tests/docker/docker-compose.yml up -d`
 //! Skips gracefully if the containers are not running.
@@ -13,11 +13,9 @@
 mod common;
 
 use common::{port_ssh_password, port_ssh_sftp_only, require_docker, ssh_password_config};
-use termihub_core::backends::ssh::{auth::connect_and_authenticate, ssh_exec_with_stdin};
-
-/// Marker echoed by the exec-capability probe. Kept in sync with the probe in
-/// `src-tauri/src/files/sftp.rs`.
-const EXEC_PROBE_MARKER: &str = "termihub_exec_probe_ok";
+use termihub_core::backends::ssh::{
+    auth::connect_and_authenticate, probe_exec_capability, ssh_exec_with_stdin,
+};
 
 #[tokio::test]
 async fn exec_captures_stdout_and_zero_exit_for_id() {
@@ -94,15 +92,11 @@ async fn exec_capability_probe_true_for_shell_connection() {
         .await
         .expect("password auth should succeed");
 
-    let out = ssh_exec_with_stdin(&session, &format!("echo {EXEC_PROBE_MARKER}"), "")
-        .await
-        .expect("probe should execute on a shell connection");
-
-    assert_eq!(out.exit_status, 0);
+    // Exercise the production discriminator directly: a shell connection can
+    // open and use an exec channel, so the probe reports it as capable.
     assert!(
-        out.stdout.contains(EXEC_PROBE_MARKER),
-        "a shell connection must echo the probe marker back, got: {}",
-        out.stdout
+        probe_exec_capability(&session).await,
+        "a shell connection must be reported as exec-capable"
     );
 }
 
@@ -116,16 +110,11 @@ async fn exec_capability_probe_false_for_sftp_only_connection() {
         .expect("password auth should succeed on the sftp-only fixture");
 
     // The server forces `internal-sftp`, so the exec request is replaced by the
-    // SFTP subsystem: the probe marker never reaches stdout. The channel may
-    // still open, so we assert on the *absence of the marker*, which is exactly
-    // what `has_exec_capability` keys off.
-    let out = ssh_exec_with_stdin(&session, &format!("echo {EXEC_PROBE_MARKER}"), "").await;
-
-    let marker_present = out
-        .map(|o| o.stdout.contains(EXEC_PROBE_MARKER))
-        .unwrap_or(false);
+    // SFTP subsystem: the probe marker never reaches stdout (and the channel may
+    // still open or error). The production discriminator keys off exactly that,
+    // so it must report the connection as not exec-capable.
     assert!(
-        !marker_present,
-        "an SFTP-only connection must not echo the probe marker (no usable exec channel)"
+        !probe_exec_capability(&session).await,
+        "an SFTP-only connection must be reported as not exec-capable (no usable exec channel)"
     );
 }
