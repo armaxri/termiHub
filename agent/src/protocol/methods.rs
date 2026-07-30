@@ -5,6 +5,8 @@
 use serde::{Deserialize, Serialize};
 use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use termihub_core::connection::ConnectionTypeInfo;
+use termihub_core::tunnel::config::{LocalForwardConfig, TunnelStats};
+use termihub_core::tunnel::ReachableFrom;
 // Used by shell/session modules on unix; re-exported for test access on all platforms.
 #[allow(unused_imports)]
 pub use termihub_core::config::ShellConfig;
@@ -678,6 +680,91 @@ pub struct UpdateAvailableNotification {
     /// `true` once the binary has been downloaded and SHA-256-verified to the
     /// agent's staging path; `false` when only a newer version was detected.
     pub staged: bool,
+}
+
+// ── tunnel.* (agent-hosted forwarding, #2185) ───────────────────────
+//
+// An agent-hosted tunnel runs its SSH client and listen socket on the agent;
+// the desktop keeps only control (start/stop/status over this RPC). Endpoint
+// semantics: `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
+
+/// Which forwarding mode an agent-hosted tunnel runs.
+///
+/// Only **local** (`ssh -L`) is implemented in the first S3 slice; remote
+/// (`-R`) and dynamic (`-D`) agent hosting are tracked as follow-ups to #2185.
+/// Tagged so those variants can be added additively without breaking the
+/// existing shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "camelCase")]
+pub enum TunnelForwardSpec {
+    /// Local (`ssh -L`) forwarding: the listen socket binds on the agent and the
+    /// target is resolved from the SSH server's network.
+    Local(LocalForwardConfig),
+}
+
+/// Params for `tunnel.start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelStartParams {
+    /// The desktop's tunnel id, used as the key for later stop/status.
+    pub tunnel_id: String,
+    /// The SSH connection the agent opens to the "via" server (already resolved
+    /// desktop-side, including any inline jump-host chain).
+    pub ssh_config: SshSessionConfig,
+    /// The forwarding mode and its configuration.
+    pub forward: TunnelForwardSpec,
+}
+
+/// Result of `tunnel.start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelStartResult {
+    /// The `host:port` the listen socket bound on the agent.
+    pub bound_address: String,
+    /// Who can reach the listen socket (loopback → agent-only).
+    pub reachable_from: ReachableFrom,
+}
+
+/// Params for `tunnel.stop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelStopParams {
+    /// The tunnel id to stop.
+    pub tunnel_id: String,
+}
+
+/// Result of `tunnel.stop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelStopResult {
+    /// Whether a running tunnel with that id was found and stopped.
+    pub stopped: bool,
+}
+
+/// Params for `tunnel.status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelStatusParams {
+    /// The tunnel id to inspect.
+    pub tunnel_id: String,
+}
+
+/// Result of `tunnel.status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelStatusResult {
+    /// Whether the tunnel is currently forwarding on this agent.
+    pub running: bool,
+    /// Live traffic counters (present only when running).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stats: Option<TunnelStats>,
+    /// The `host:port` the listen socket bound on the agent (present only when
+    /// running).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_address: Option<String>,
+    /// Who can reach the listen socket (present only when running).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reachable_from: Option<ReachableFrom>,
 }
 
 #[cfg(test)]

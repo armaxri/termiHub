@@ -11,6 +11,7 @@ mod registry_daemon;
 mod session;
 mod state;
 mod transport;
+mod tunnel;
 mod update;
 
 use tokio_util::sync::CancellationToken;

@@ -41,8 +41,9 @@ use crate::protocol::methods::{
     NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
     SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
     SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult, SessionInputParams,
-    SessionListEntry, SessionListResult, SessionResizeParams, UpdatePendingNotification,
-    AGENT_UPDATE_PENDING,
+    SessionListEntry, SessionListResult, SessionResizeParams, TunnelStartParams, TunnelStartResult,
+    TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult, TunnelForwardSpec,
+    UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 use crate::registry_daemon::client::RegistryClient;
 use crate::registry_daemon::protocol::{BroadcastEnvelope, ClientRecord};
@@ -50,6 +51,7 @@ use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
     DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,
 };
+use crate::tunnel::AgentTunnelRegistry;
 use crate::update::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 
 /// The agent's protocol version.
@@ -61,7 +63,9 @@ use crate::update::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 /// `agent.update_pending` notification (#1351).
 /// Bumped to 0.5.0 for the additive `agent.forward.*` ssh-agent relay methods
 /// and notifications (#1727).
-const AGENT_PROTOCOL_VERSION: &str = "0.5.0";
+/// Bumped to 0.6.0 for the additive `tunnel.*` agent-hosted forwarding methods
+/// (#2185).
+const AGENT_PROTOCOL_VERSION: &str = "0.6.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -103,6 +107,10 @@ struct HandlerState {
     /// agent is S2 — but the `service.*` methods dispatch through it so the
     /// namespace exists now.
     service_registry: Arc<ServiceRegistry>,
+    /// Tunnels currently forwarding on this agent, keyed by tunnel id (S3,
+    /// #2185). Populated by `tunnel.start`, drained by `tunnel.stop` /
+    /// `agent.shutdown`; `tunnel.status` reads live stats from it.
+    tunnel_registry: Arc<AgentTunnelRegistry>,
 }
 
 // ── AgentHandler ───────────────────────────────────────────────────
@@ -150,6 +158,7 @@ impl AgentHandler {
         // are self-contained infrastructure, exactly like the shutdown flag.
         let tool_registry = Arc::new(ToolRegistry::with_builtin_network_tools());
         let service_registry = Arc::new(ServiceRegistry::new());
+        let tunnel_registry = Arc::new(AgentTunnelRegistry::new());
 
         let state = Mutex::new(HandlerState {
             session_manager,
@@ -164,6 +173,7 @@ impl AgentHandler {
             shutdown_flag: shutdown_flag.clone(),
             tool_registry,
             service_registry,
+            tunnel_registry,
         });
 
         let mut module: RpcModule<Mutex<HandlerState>> = RpcModule::new(state);
@@ -374,6 +384,16 @@ async fn get_service_registry(
     Ok(s.service_registry.clone())
 }
 
+async fn get_tunnel_registry(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<Arc<AgentTunnelRegistry>, ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(s.tunnel_registry.clone())
+}
+
 // ── Method registration ────────────────────────────────────────────
 
 fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
@@ -411,6 +431,9 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_network_open_ports(module)?;
     register_network_traceroute(module)?;
     register_network_wol(module)?;
+    register_tunnel_start(module)?;
+    register_tunnel_stop(module)?;
+    register_tunnel_status(module)?;
     register_tool_list(module)?;
     register_tool_run(module)?;
     register_service_list(module)?;
@@ -1402,6 +1425,73 @@ fn register_service_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
     Ok(())
 }
 
+// ── tunnel.* (agent-hosted forwarding, #2185) ──────────────────────
+//
+// The agent runs the SSH client and the listen socket; the desktop keeps only
+// control. `tunnel.start` opens the SSH session and binds the forwarder here;
+// `tunnel.stop` tears it down; `tunnel.status` reports live stats. Endpoint
+// semantics: `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
+
+fn register_tunnel_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("tunnel.start", |params, ctx, _ext| async move {
+        let registry = get_tunnel_registry(&ctx).await?;
+        let p: TunnelStartParams = params
+            .parse()
+            .map_err(|e| invalid_params("tunnel.start", e))?;
+
+        let outcome = match &p.forward {
+            TunnelForwardSpec::Local(forward) => registry
+                .start_local(&p.tunnel_id, &p.ssh_config, forward)
+                .await
+                .map_err(|e| rpc_err(errors::TUNNEL_START_FAILED, e.to_string()))?,
+        };
+
+        Ok::<_, ErrorObjectOwned>(
+            serde_json::to_value(TunnelStartResult {
+                bound_address: outcome.bound_address,
+                reachable_from: outcome.reachable_from,
+            })
+            .unwrap(),
+        )
+    })?;
+    Ok(())
+}
+
+fn register_tunnel_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("tunnel.stop", |params, ctx, _ext| async move {
+        let registry = get_tunnel_registry(&ctx).await?;
+        let p: TunnelStopParams = params.parse().map_err(|e| invalid_params("tunnel.stop", e))?;
+        let stopped = registry.stop(&p.tunnel_id).await;
+        Ok::<_, ErrorObjectOwned>(serde_json::to_value(TunnelStopResult { stopped }).unwrap())
+    })?;
+    Ok(())
+}
+
+fn register_tunnel_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("tunnel.status", |params, ctx, _ext| async move {
+        let registry = get_tunnel_registry(&ctx).await?;
+        let p: TunnelStatusParams = params
+            .parse()
+            .map_err(|e| invalid_params("tunnel.status", e))?;
+        let result = match registry.status(&p.tunnel_id).await {
+            Some(snapshot) => TunnelStatusResult {
+                running: true,
+                stats: Some(snapshot.stats),
+                bound_address: Some(snapshot.bound_address),
+                reachable_from: Some(snapshot.reachable_from),
+            },
+            None => TunnelStatusResult {
+                running: false,
+                stats: None,
+                bound_address: None,
+                reachable_from: None,
+            },
+        };
+        Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).unwrap())
+    })?;
+    Ok(())
+}
+
 // ── health.check / agent.* ────────────────────────────────────────
 
 fn register_health_check(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
@@ -1429,7 +1519,7 @@ fn register_health_check(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 
 fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("agent.shutdown", |params, ctx, _ext| async move {
-        let (session_manager, monitoring_manager, shutdown_flag) = {
+        let (session_manager, monitoring_manager, tunnel_registry, shutdown_flag) = {
             let s = ctx.lock().await;
             if !s.initialized {
                 return Err(not_initialized());
@@ -1437,6 +1527,7 @@ fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
             (
                 s.session_manager.clone(),
                 s.monitoring_manager.clone(),
+                s.tunnel_registry.clone(),
                 s.shutdown_flag.clone(),
             )
         };
@@ -1447,6 +1538,9 @@ fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
 
         let detached = session_manager.active_count().await;
         monitoring_manager.shutdown().await;
+        // Tear down any agent-hosted tunnels so no forwarder / SSH session
+        // outlives the agent (#2185).
+        tunnel_registry.stop_all().await;
         shutdown_flag.store(true, Ordering::Release);
 
         Ok::<_, ErrorObjectOwned>(
@@ -2135,10 +2229,11 @@ mod tests {
 
     /// The RPC must be advertised, and the bump is what tells an older desktop
     /// which additive capabilities (`agent.update_pending`, the `agent.forward.*`
-    /// ssh-agent relay) may now arrive.
+    /// ssh-agent relay, the `tunnel.*` agent-hosted forwarding methods) may now
+    /// arrive.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.5.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.6.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -3491,6 +3586,45 @@ mod tests {
                 "{method} must require initialize"
             );
         }
+    }
+
+    // ── tunnel.* (agent-hosted forwarding, #2185) ──────────────────
+
+    #[tokio::test]
+    async fn tunnel_methods_require_initialization() {
+        let handler = make_handler();
+        for method in ["tunnel.start", "tunnel.stop", "tunnel.status"] {
+            let result = dispatch(&handler, method, json!({ "tunnelId": "t1" }), 1).await;
+            assert_eq!(
+                result["error"]["code"],
+                errors::NOT_INITIALIZED,
+                "{method} must require initialize"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn tunnel_status_and_stop_report_unknown_tunnel() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        // Nothing is running, so status reports not-running and stop reports
+        // that no tunnel was found — neither is an error.
+        let status = dispatch(&handler, "tunnel.status", json!({ "tunnelId": "ghost" }), 2).await;
+        assert_eq!(status["result"]["running"], json!(false), "{status}");
+
+        let stop = dispatch(&handler, "tunnel.stop", json!({ "tunnelId": "ghost" }), 3).await;
+        assert_eq!(stop["result"]["stopped"], json!(false), "{stop}");
+    }
+
+    #[tokio::test]
+    async fn tunnel_start_rejects_malformed_params() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        // Missing `forward`/`sshConfig`: params fail to parse → INVALID_PARAMS.
+        let result = dispatch(&handler, "tunnel.start", json!({ "tunnelId": "t1" }), 2).await;
+        assert_eq!(result["error"]["code"], errors::INVALID_PARAMS, "{result}");
     }
 
     // ── Mock managers for DI tests ─────────────────────────────────
