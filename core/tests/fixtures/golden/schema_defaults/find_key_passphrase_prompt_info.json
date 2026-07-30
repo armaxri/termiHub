@@ -1,0 +1,87 @@
+{
+  "operation": "findKeyPassphrasePromptInfo",
+  "cases": [
+    {
+      "name": "returns prompt info for key auth when the key is encrypted (#885)",
+      "input": {
+        "groups": [
+          {
+            "key": "connection",
+            "label": "Connection",
+            "fields": [
+              { "key": "host", "label": "host", "fieldType": { "type": "text" }, "required": true },
+              { "key": "username", "label": "username", "fieldType": { "type": "text" }, "required": true }
+            ]
+          },
+          {
+            "key": "authentication",
+            "label": "Authentication",
+            "fields": [
+              { "key": "password", "label": "password", "fieldType": { "type": "password" }, "required": false, "visibleWhen": { "field": "authMethod", "equals": "password" } }
+            ]
+          }
+        ]
+      },
+      "args": { "settings": { "authMethod": "key", "host": "example.com", "username": "admin" }, "keyEncrypted": true },
+      "expected": { "hostKey": "host", "usernameKey": "username", "passwordKey": "password" }
+    },
+    {
+      "name": "prompts for an encrypted key even when savePassword is off (#885)",
+      "input": {
+        "groups": [
+          {
+            "key": "connection",
+            "label": "Connection",
+            "fields": [
+              { "key": "host", "label": "host", "fieldType": { "type": "text" }, "required": true },
+              { "key": "username", "label": "username", "fieldType": { "type": "text" }, "required": true },
+              { "key": "password", "label": "password", "fieldType": { "type": "password" }, "required": false }
+            ]
+          }
+        ]
+      },
+      "args": { "settings": { "authMethod": "key", "savePassword": false, "host": "h", "username": "u" }, "keyEncrypted": true },
+      "expected": { "hostKey": "host", "usernameKey": "username", "passwordKey": "password" }
+    },
+    {
+      "name": "returns null for an unencrypted key even when savePassword is on (#885)",
+      "input": {
+        "groups": [
+          { "key": "connection", "label": "Connection", "fields": [ { "key": "host", "label": "host", "fieldType": { "type": "text" }, "required": true } ] }
+        ]
+      },
+      "args": { "settings": { "authMethod": "key", "savePassword": true, "host": "h", "username": "u" }, "keyEncrypted": false },
+      "expected": null
+    },
+    {
+      "name": "returns null for password auth",
+      "input": {
+        "groups": [
+          { "key": "connection", "label": "Connection", "fields": [ { "key": "host", "label": "host", "fieldType": { "type": "text" }, "required": true } ] }
+        ]
+      },
+      "args": { "settings": { "authMethod": "password" }, "keyEncrypted": true },
+      "expected": null
+    },
+    {
+      "name": "returns null for agent auth",
+      "input": {
+        "groups": [
+          { "key": "connection", "label": "Connection", "fields": [ { "key": "host", "label": "host", "fieldType": { "type": "text" }, "required": true } ] }
+        ]
+      },
+      "args": { "settings": { "authMethod": "agent" }, "keyEncrypted": true },
+      "expected": null
+    },
+    {
+      "name": "falls back to default field keys when the schema omits them",
+      "input": {
+        "groups": [
+          { "key": "conn", "label": "Connection", "fields": [ { "key": "foo", "label": "foo", "fieldType": { "type": "text" }, "required": false } ] }
+        ]
+      },
+      "args": { "settings": { "authMethod": "key" }, "keyEncrypted": true },
+      "expected": { "hostKey": "host", "usernameKey": "username", "passwordKey": "password" }
+    }
+  ]
+}

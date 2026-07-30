@@ -1,0 +1,107 @@
+{
+  "operation": "buildDefaults",
+  "cases": [
+    {
+      "name": "extracts default values from schema fields",
+      "input": {
+        "groups": [
+          {
+            "key": "connection",
+            "label": "Connection",
+            "fields": [
+              { "key": "host", "label": "host", "fieldType": { "type": "text" }, "required": true, "placeholder": "example.com" },
+              { "key": "port", "label": "Port", "fieldType": { "type": "port" }, "required": true, "default": 22 },
+              { "key": "username", "label": "username", "fieldType": { "type": "text" }, "required": true }
+            ]
+          },
+          {
+            "key": "authentication",
+            "label": "Authentication",
+            "fields": [
+              {
+                "key": "authMethod",
+                "label": "Auth Method",
+                "fieldType": {
+                  "type": "select",
+                  "options": [
+                    { "value": "key", "label": "SSH Key" },
+                    { "value": "password", "label": "Password" },
+                    { "value": "agent", "label": "SSH Agent" }
+                  ]
+                },
+                "required": true,
+                "default": "key"
+              },
+              {
+                "key": "keyPath",
+                "label": "Key Path",
+                "fieldType": { "type": "filePath", "kind": "file" },
+                "required": false,
+                "visibleWhen": { "field": "authMethod", "equals": "key" }
+              },
+              {
+                "key": "password",
+                "label": "password",
+                "fieldType": { "type": "password" },
+                "required": false,
+                "visibleWhen": { "field": "authMethod", "equals": "password" }
+              }
+            ]
+          }
+        ]
+      },
+      "expected": { "port": 22, "authMethod": "key" }
+    },
+    {
+      "name": "provides empty arrays for keyValueList and objectList fields",
+      "input": {
+        "groups": [
+          {
+            "key": "container",
+            "label": "Container",
+            "fields": [
+              { "key": "image", "label": "image", "fieldType": { "type": "text" }, "required": true, "default": "ubuntu:22.04" },
+              { "key": "envVars", "label": "Environment Variables", "fieldType": { "type": "keyValueList" }, "required": false },
+              {
+                "key": "volumes",
+                "label": "Volumes",
+                "fieldType": {
+                  "type": "objectList",
+                  "fields": [
+                    { "key": "hostPath", "label": "hostPath", "fieldType": { "type": "text" }, "required": false },
+                    { "key": "containerPath", "label": "containerPath", "fieldType": { "type": "text" }, "required": false },
+                    { "key": "readOnly", "label": "Read Only", "fieldType": { "type": "boolean" }, "required": false, "default": false }
+                  ]
+                },
+                "required": false
+              },
+              { "key": "removeOnExit", "label": "Remove on Exit", "fieldType": { "type": "boolean" }, "required": false, "default": true }
+            ]
+          }
+        ]
+      },
+      "expected": { "image": "ubuntu:22.04", "envVars": [], "volumes": [], "removeOnExit": true }
+    },
+    {
+      "name": "returns empty object for schema with no defaults",
+      "input": {
+        "groups": [
+          {
+            "key": "basic",
+            "label": "Basic",
+            "fields": [
+              { "key": "host", "label": "host", "fieldType": { "type": "text" }, "required": false },
+              { "key": "port", "label": "port", "fieldType": { "type": "text" }, "required": false }
+            ]
+          }
+        ]
+      },
+      "expected": {}
+    },
+    {
+      "name": "handles empty schema",
+      "input": { "groups": [] },
+      "expected": {}
+    }
+  ]
+}

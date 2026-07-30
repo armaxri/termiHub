@@ -1,0 +1,95 @@
+{
+  "operation": "isFieldVisible",
+  "cases": [
+    {
+      "name": "returns true for fields without visibleWhen",
+      "input": { "key": "host", "label": "host", "fieldType": { "type": "text" }, "required": false },
+      "args": { "settings": {} },
+      "expected": true
+    },
+    {
+      "name": "returns true when condition is met",
+      "input": {
+        "key": "password",
+        "label": "password",
+        "fieldType": { "type": "password" },
+        "required": false,
+        "visibleWhen": { "field": "authMethod", "equals": "password" }
+      },
+      "args": { "settings": { "authMethod": "password" } },
+      "expected": true
+    },
+    {
+      "name": "returns false when condition is not met",
+      "input": {
+        "key": "password",
+        "label": "password",
+        "fieldType": { "type": "password" },
+        "required": false,
+        "visibleWhen": { "field": "authMethod", "equals": "password" }
+      },
+      "args": { "settings": { "authMethod": "key" } },
+      "expected": false
+    },
+    {
+      "name": "boolean condition value true matches",
+      "input": {
+        "key": "extraOption",
+        "label": "extraOption",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "advanced", "equals": true }
+      },
+      "args": { "settings": { "advanced": true } },
+      "expected": true
+    },
+    {
+      "name": "boolean condition value false does not match",
+      "input": {
+        "key": "extraOption",
+        "label": "extraOption",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "advanced", "equals": true }
+      },
+      "args": { "settings": { "advanced": false } },
+      "expected": false
+    },
+    {
+      "name": "numeric condition value matches",
+      "input": {
+        "key": "highPort",
+        "label": "highPort",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "mode", "equals": 2 }
+      },
+      "args": { "settings": { "mode": 2 } },
+      "expected": true
+    },
+    {
+      "name": "numeric condition value does not match",
+      "input": {
+        "key": "highPort",
+        "label": "highPort",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "mode", "equals": 2 }
+      },
+      "args": { "settings": { "mode": 1 } },
+      "expected": false
+    },
+    {
+      "name": "returns false when referenced field is missing",
+      "input": {
+        "key": "extra",
+        "label": "extra",
+        "fieldType": { "type": "text" },
+        "required": false,
+        "visibleWhen": { "field": "mode", "equals": "advanced" }
+      },
+      "args": { "settings": {} },
+      "expected": false
+    }
+  ]
+}
