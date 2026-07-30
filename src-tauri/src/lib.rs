@@ -34,6 +34,11 @@ pub mod projection;
 pub mod run_location;
 mod session;
 mod session_history;
+/// Shadow session-lifecycle authority (#2152, Phase 4 step 1 of #2139): the
+/// shared `session-lifecycle` projection region + `session.*` intents, built on
+/// the ported auto-reconnect engine (#2144). Registered and served but not yet
+/// driving the live UI — see [`session_projection`].
+mod session_projection;
 mod spawn;
 mod terminal;
 mod tunnel;
@@ -670,6 +675,18 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
+                // Shadow SessionLifecycleStore (#2152 step 1): the shared
+                // `session-lifecycle` region + `session.*` intents on the ported
+                // auto-reconnect engine (#2144). Managed authoritative state that
+                // serves intents, but nothing in the live UI subscribes to or
+                // renders the region yet — a pure shadow foundation (later steps
+                // cut the transitions, then rendering, over to it). The shared
+                // region is seeded below once the store is managed.
+                app.manage(Arc::new(session_projection::SessionLifecycleStore::new()));
+                session_projection::projection::register_session_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
                 // Test-bridge-only: add the diagnostic region's `diag.*` routes so
                 // the projection-assertion harness (#2164) has a self-contained
                 // region to drive. Never registered in production launches. See
@@ -686,6 +703,17 @@ pub fn run() {
                     projection_state.projector.register_region(
                         tunnel::projection::TUNNELS_REGION,
                         tunnel::projection::build_tunnel_view(&manager),
+                    );
+                }
+                // Seed the shared `session-lifecycle` region with the (empty)
+                // store baseline at version 0, so a subscriber attaches to a real
+                // region before the first `session.*` intent (#2152).
+                if let Some(store) =
+                    app.handle().try_state::<Arc<session_projection::SessionLifecycleStore>>()
+                {
+                    projection_state.projector.register_region(
+                        session_projection::projection::SESSION_LIFECYCLE_REGION,
+                        store.snapshot(),
                     );
                 }
                 if diagnostics {
