@@ -147,6 +147,57 @@ export function sessionIntentsEnabled(): boolean {
   return false;
 }
 
+// ── Render-cut feature flag (step 3 #2204, on by default) ──────────────────────
+
+let renderFlagOverride: boolean | null = null;
+
+interface SessionRenderFlagWindow {
+  __TERMIHUB_SESSION_RENDER_FROM_PROJECTION__?: boolean;
+  localStorage?: Storage;
+}
+
+/**
+ * Programmatic override for the render-cut flag (tests, and a runtime toggle).
+ * `null` clears the override and falls back to the window/localStorage signal,
+ * then to the default (on).
+ */
+export function setSessionRenderFromProjectionEnabled(value: boolean | null): void {
+  renderFlagOverride = value;
+}
+
+/**
+ * Whether the terminal overlays render their session status from the projected
+ * `session-lifecycle` region (step 3, #2204) instead of reading `appStore`'s
+ * status fields directly.
+ *
+ * **On by default** — the render cut is parity-safe: the overlays render from the
+ * region only when it faithfully mirrors `appStore`'s status
+ * ({@link projectedReconnectMirrors}), and otherwise fall back to `appStore`
+ * verbatim, so the output is byte-identical to the pre-cut path regardless of
+ * {@link sessionIntentsEnabled}. Independent of the mutation flag: the local
+ * reconnect record seeds the effective view, so it is always populated even when
+ * nothing has written the backend region. Overridable at runtime for rollback /
+ * tests via `window.__TERMIHUB_SESSION_RENDER_FROM_PROJECTION__` or
+ * `localStorage["termihub.sessionRenderFromProjection"]`.
+ */
+export function sessionRenderFromProjectionEnabled(): boolean {
+  if (renderFlagOverride !== null) return renderFlagOverride;
+  try {
+    if (typeof window !== "undefined") {
+      const w = window as unknown as SessionRenderFlagWindow;
+      if (typeof w.__TERMIHUB_SESSION_RENDER_FROM_PROJECTION__ === "boolean") {
+        return w.__TERMIHUB_SESSION_RENDER_FROM_PROJECTION__;
+      }
+      const ls = w.localStorage?.getItem("termihub.sessionRenderFromProjection");
+      if (ls === "true") return true;
+      if (ls === "false") return false;
+    }
+  } catch {
+    // A missing/blocked window or storage just means "use the default".
+  }
+  return true;
+}
+
 // ── Transport + region client (lazy, mirrors the tunnel slice) ─────────────────
 
 let transportInstance: Transport | null = null;
@@ -357,6 +408,61 @@ export function projectedToAutoReconnect(
     };
   }
   return null;
+}
+
+// ── Render cut: faithful-mirror gate + effective display record (#2204) ─────────
+
+/**
+ * Whether a projected lifecycle's `reconnect` detail faithfully mirrors the
+ * local auto-reconnect display `record` — the gate that decides if the overlay
+ * may render the countdown from the projection (true) or must fall back to
+ * `appStore` (false). Compares the loop's coarse status the region carries
+ * (phase / attempt / backoff delay); the per-client presentation the region does
+ * not carry (the wall-clock anchor, the on-reconnect command) is out of scope
+ * for the gate and re-attached from the local record when composing.
+ *
+ * The twin of the layout render cut's {@link import("./layoutBridge").viewMatchesTree}.
+ */
+export function projectedReconnectMirrors(
+  projected: ProjectedSessionLifecycle | undefined,
+  record: TerminalAutoReconnectState | undefined
+): boolean {
+  if (!projected || !record) return false;
+  const r = projected.reconnect;
+  return r.phase === record.phase && r.attempt === record.attempt && r.delayMs === record.delayMs;
+}
+
+/**
+ * The auto-reconnect display record the disconnect overlay renders, sourced from
+ * the projected `session-lifecycle` region when it faithfully mirrors `appStore`
+ * ({@link projectedReconnectMirrors}), and otherwise the local `record` verbatim
+ * — so the countdown is byte-identical to the pre-cut path.
+ *
+ * When the region mirrors, the loop numbers (phase / attempt / backoff delay /
+ * max attempts) come from the projection via {@link projectedToAutoReconnect},
+ * and the per-client presentation the region does not carry — the wall-clock
+ * `nextAttemptAt` anchor and the on-reconnect command — is re-attached from the
+ * local record (the partial-projection seam, exactly as the layout render cut
+ * re-attaches per-tab content onto the projected structure, #2151). Because the
+ * gate guarantees the loop numbers already agree, the composed record equals the
+ * local one; the projection merely becomes the source of record.
+ *
+ * `undefined` in ⇒ `undefined` out: no active loop, nothing to render.
+ */
+export function effectiveAutoReconnect(
+  record: TerminalAutoReconnectState | undefined,
+  projected: ProjectedSessionLifecycle | undefined
+): TerminalAutoReconnectState | undefined {
+  if (!record) return undefined;
+  if (!sessionRenderFromProjectionEnabled()) return record;
+  if (!projectedReconnectMirrors(projected, record)) return record;
+  // `now0` reproduces the local anchor exactly: with `nextAttemptAt = now0 +
+  // delayMs` and the gate guaranteeing `projected.reconnect.delayMs ===
+  // record.delayMs`, the composed `nextAttemptAt` equals the local record's, so
+  // the live countdown keeps its fixed wall-clock deadline (never re-anchored per
+  // render).
+  const now0 = record.nextAttemptAt - projected!.reconnect.delayMs;
+  return projectedToAutoReconnect(projected!, now0, record.onReconnectCommand) ?? record;
 }
 
 /** Log a bridge fallback so the local-path recovery is visible in the LogViewer. */

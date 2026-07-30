@@ -20,13 +20,17 @@ import {
 
 import {
   dispatchSessionIntent,
+  effectiveAutoReconnect,
   mirrorSessionIntent,
   onSessionView,
+  projectedReconnectMirrors,
   projectedToAutoReconnect,
   runSessionIntent,
   SESSION_LIFECYCLE_REGION,
   sessionIntentsEnabled,
+  sessionRenderFromProjectionEnabled,
   setSessionIntentsEnabled,
+  setSessionRenderFromProjectionEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
   type ProjectedSessionLifecycle,
@@ -109,6 +113,7 @@ afterEach(() => {
   stopSessionSubscription();
   setSessionTransportForTest(null);
   setSessionIntentsEnabled(null);
+  setSessionRenderFromProjectionEnabled(null);
 });
 
 describe("sessionIntentsEnabled flag", () => {
@@ -288,5 +293,95 @@ describe("runSessionIntent", () => {
       resync: async () => null,
     });
     await expect(runSessionIntent("session.connect", "tab-z")).rejects.toThrow(/nope/);
+  });
+});
+
+describe("sessionRenderFromProjectionEnabled flag (#2204)", () => {
+  it("defaults on and honours the programmatic override", () => {
+    expect(sessionRenderFromProjectionEnabled()).toBe(true);
+    setSessionRenderFromProjectionEnabled(false);
+    expect(sessionRenderFromProjectionEnabled()).toBe(false);
+    setSessionRenderFromProjectionEnabled(true);
+    expect(sessionRenderFromProjectionEnabled()).toBe(true);
+    setSessionRenderFromProjectionEnabled(null);
+    expect(sessionRenderFromProjectionEnabled()).toBe(true);
+  });
+});
+
+describe("projectedReconnectMirrors — the faithful-mirror gate (#2204)", () => {
+  const record: TerminalAutoReconnectState = {
+    phase: "waiting",
+    attempt: 2,
+    maxAttempts: 10,
+    delayMs: 4_000,
+    nextAttemptAt: 1_004_000,
+  };
+  const projected = (
+    life: Partial<ProjectedSessionLifecycle["reconnect"]>
+  ): ProjectedSessionLifecycle => ({
+    status: "reconnecting",
+    reconnect: { phase: "waiting", attempt: 2, delayMs: 4_000, ...life },
+  });
+
+  it("matches when phase, attempt and delay all agree", () => {
+    expect(projectedReconnectMirrors(projected({}), record)).toBe(true);
+  });
+
+  it("does not match on a phase / attempt / delay divergence", () => {
+    expect(projectedReconnectMirrors(projected({ phase: "connecting" }), record)).toBe(false);
+    expect(projectedReconnectMirrors(projected({ attempt: 3 }), record)).toBe(false);
+    expect(projectedReconnectMirrors(projected({ delayMs: 8_000 }), record)).toBe(false);
+  });
+
+  it("never matches when either side is absent", () => {
+    expect(projectedReconnectMirrors(undefined, record)).toBe(false);
+    expect(projectedReconnectMirrors(projected({}), undefined)).toBe(false);
+    expect(projectedReconnectMirrors(undefined, undefined)).toBe(false);
+  });
+});
+
+describe("effectiveAutoReconnect — render-cut source selection (#2204)", () => {
+  const record: TerminalAutoReconnectState = {
+    phase: "waiting",
+    attempt: 2,
+    maxAttempts: DEFAULT_BACKOFF.maxAttempts,
+    delayMs: 4_000,
+    nextAttemptAt: 1_004_000,
+    onReconnectCommand: "tmux attach",
+  };
+  const mirror: ProjectedSessionLifecycle = {
+    status: "reconnecting",
+    reconnect: { phase: "waiting", attempt: 2, delayMs: 4_000 },
+  };
+
+  it("returns undefined when there is no local loop, whatever the projection says", () => {
+    expect(effectiveAutoReconnect(undefined, mirror)).toBeUndefined();
+    expect(effectiveAutoReconnect(undefined, undefined)).toBeUndefined();
+  });
+
+  it("sources from the projection when it mirrors, byte-identical to the local record", () => {
+    // The gate holds → the record is recomposed from the projected snapshot, and
+    // the re-attached wall-clock anchor + command keep it identical to the local.
+    expect(effectiveAutoReconnect(record, mirror)).toEqual(record);
+  });
+
+  it("falls back to the local record when the projection does not mirror", () => {
+    const stale: ProjectedSessionLifecycle = {
+      status: "reconnecting",
+      reconnect: { phase: "waiting", attempt: 5, delayMs: 30_000 },
+    };
+    // Must be the local record verbatim — never the stale projected numbers.
+    expect(effectiveAutoReconnect(record, stale)).toBe(record);
+    expect(effectiveAutoReconnect(record, undefined)).toBe(record);
+  });
+
+  it("falls back to the local record when the render cut is off", () => {
+    setSessionRenderFromProjectionEnabled(false);
+    expect(effectiveAutoReconnect(record, mirror)).toBe(record);
+  });
+
+  it("preserves the fixed countdown deadline (never re-anchors nextAttemptAt)", () => {
+    const composed = effectiveAutoReconnect(record, mirror);
+    expect(composed?.nextAttemptAt).toBe(record.nextAttemptAt);
   });
 });
