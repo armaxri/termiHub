@@ -1,0 +1,25 @@
+{
+  "operation": "normalizeSizes",
+  "cases": [
+    {
+      "name": "already summing to 100 is preserved",
+      "input": [30, 20, 50],
+      "expected": [30, 20, 50]
+    },
+    {
+      "name": "scales up when sum is less than 100",
+      "input": [10, 10],
+      "expected": [50, 50]
+    },
+    {
+      "name": "scales down when sum exceeds 100",
+      "input": [100, 100],
+      "expected": [50, 50]
+    },
+    {
+      "name": "zero total distributes equally",
+      "input": [0, 0, 0],
+      "expected": [33.33333333333333, 33.33333333333333, 33.33333333333333]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "operation": "findLeafByTab",
+  "cases": [
+    {
+      "name": "finds leaf containing a tab",
+      "input": {
+        "type": "leaf",
+        "id": "leaf-1",
+        "activeTabId": "tab-a",
+        "tabs": [
+          { "id": "tab-a", "sessionId": null, "contentType": "terminal" },
+          { "id": "tab-b", "sessionId": null, "contentType": "terminal" }
+        ]
+      },
+      "args": { "tabId": "tab-b" },
+      "expected": {
+        "type": "leaf",
+        "id": "leaf-1",
+        "activeTabId": "tab-a",
+        "tabs": [
+          { "id": "tab-a", "sessionId": null, "contentType": "terminal" },
+          { "id": "tab-b", "sessionId": null, "contentType": "terminal" }
+        ]
+      }
+    },
+    {
+      "name": "returns null for unknown tab",
+      "input": {
+        "type": "leaf",
+        "id": "leaf-1",
+        "activeTabId": "tab-a",
+        "tabs": [{ "id": "tab-a", "sessionId": null, "contentType": "terminal" }]
+      },
+      "args": { "tabId": "tab-unknown" },
+      "expected": null
+    }
+  ]
+}

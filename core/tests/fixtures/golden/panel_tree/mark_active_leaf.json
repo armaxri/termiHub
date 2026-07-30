@@ -1,0 +1,100 @@
+{
+  "operation": "markActiveLeaf",
+  "cases": [
+    {
+      "name": "marks all ancestor splits with the leaf id",
+      "input": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          {
+            "type": "split",
+            "id": "v",
+            "direction": "vertical",
+            "children": [
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+            ]
+          }
+        ]
+      },
+      "args": { "leafId": "leaf-3" },
+      "expected": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "lastActiveLeafId": "leaf-3",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          {
+            "type": "split",
+            "id": "v",
+            "direction": "vertical",
+            "lastActiveLeafId": "leaf-3",
+            "children": [
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "does not mark splits that do not contain the leaf",
+      "input": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "children": [
+          {
+            "type": "split",
+            "id": "left",
+            "direction": "vertical",
+            "children": [
+              { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+            ]
+          },
+          { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+        ]
+      },
+      "args": { "leafId": "leaf-3" },
+      "expected": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "lastActiveLeafId": "leaf-3",
+        "children": [
+          {
+            "type": "split",
+            "id": "left",
+            "direction": "vertical",
+            "children": [
+              { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+            ]
+          },
+          { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+        ]
+      }
+    },
+    {
+      "name": "returns the tree unchanged when the leaf is not found",
+      "input": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "children": [{ "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }]
+      },
+      "args": { "leafId": "nonexistent" },
+      "expected": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "children": [{ "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }]
+      }
+    }
+  ]
+}

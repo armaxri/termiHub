@@ -1,0 +1,117 @@
+{
+  "operation": "isWindowEmpty",
+  "cases": [
+    {
+      "name": "empty when the only group's active tree has no tabs",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "args": {
+        "tabGroups": [
+          {
+            "id": "g1",
+            "name": "g1",
+            "activePanelId": null,
+            "rootPanel": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }
+          }
+        ],
+        "activeTabGroupId": "g1"
+      },
+      "expected": true
+    },
+    {
+      "name": "not empty when the active group holds a tab",
+      "input": {
+        "type": "leaf",
+        "id": "leaf-1",
+        "activeTabId": "a",
+        "tabs": [{ "id": "a", "sessionId": null, "contentType": "terminal" }]
+      },
+      "args": {
+        "tabGroups": [
+          {
+            "id": "g1",
+            "name": "g1",
+            "activePanelId": null,
+            "rootPanel": {
+              "type": "leaf",
+              "id": "leaf-1",
+              "activeTabId": "a",
+              "tabs": [{ "id": "a", "sessionId": null, "contentType": "terminal" }]
+            }
+          }
+        ],
+        "activeTabGroupId": "g1"
+      },
+      "expected": false
+    },
+    {
+      "name": "not empty when an inactive group still holds tabs",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "args": {
+        "tabGroups": [
+          {
+            "id": "g1",
+            "name": "g1",
+            "activePanelId": null,
+            "rootPanel": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }
+          },
+          {
+            "id": "g2",
+            "name": "g2",
+            "activePanelId": null,
+            "rootPanel": {
+              "type": "leaf",
+              "id": "leaf-2",
+              "activeTabId": "a",
+              "tabs": [{ "id": "a", "sessionId": null, "contentType": "terminal" }]
+            }
+          }
+        ],
+        "activeTabGroupId": "g1"
+      },
+      "expected": false
+    },
+    {
+      "name": "empty when every group across the window is empty",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "args": {
+        "tabGroups": [
+          {
+            "id": "g1",
+            "name": "g1",
+            "activePanelId": null,
+            "rootPanel": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }
+          },
+          {
+            "id": "g2",
+            "name": "g2",
+            "activePanelId": null,
+            "rootPanel": { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+          }
+        ],
+        "activeTabGroupId": "g1"
+      },
+      "expected": true
+    },
+    {
+      "name": "uses the live active tree, not the stale stored copy",
+      "input": {
+        "type": "leaf",
+        "id": "leaf-1",
+        "activeTabId": "a",
+        "tabs": [{ "id": "a", "sessionId": null, "contentType": "terminal" }]
+      },
+      "args": {
+        "tabGroups": [
+          {
+            "id": "g1",
+            "name": "g1",
+            "activePanelId": null,
+            "rootPanel": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }
+          }
+        ],
+        "activeTabGroupId": "g1"
+      },
+      "expected": false
+    }
+  ]
+}

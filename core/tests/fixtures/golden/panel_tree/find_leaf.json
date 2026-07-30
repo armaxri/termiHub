@@ -1,0 +1,31 @@
+{
+  "operation": "findLeaf",
+  "cases": [
+    {
+      "name": "finds a single leaf by id",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "args": { "leafId": "leaf-1" },
+      "expected": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }
+    },
+    {
+      "name": "finds a leaf in a nested split",
+      "input": {
+        "type": "split",
+        "id": "split-1",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+        ]
+      },
+      "args": { "leafId": "leaf-2" },
+      "expected": { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+    },
+    {
+      "name": "returns null for unknown id",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "args": { "leafId": "unknown" },
+      "expected": null
+    }
+  ]
+}

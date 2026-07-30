@@ -1,0 +1,35 @@
+{
+  "operation": "getAllLeaves",
+  "cases": [
+    {
+      "name": "returns single leaf in array",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "expected": [{ "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }]
+    },
+    {
+      "name": "returns all leaves from a nested tree in order",
+      "input": {
+        "type": "split",
+        "id": "s-root",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          {
+            "type": "split",
+            "id": "s-inner",
+            "direction": "vertical",
+            "children": [
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+        { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+        { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+      ]
+    }
+  ]
+}

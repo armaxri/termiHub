@@ -1,0 +1,36 @@
+{
+  "operation": "countTabsInTree",
+  "cases": [
+    {
+      "name": "zero for an empty leaf",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "expected": 0
+    },
+    {
+      "name": "sums tabs across every leaf in a split tree",
+      "input": {
+        "type": "split",
+        "id": "split-1",
+        "direction": "horizontal",
+        "children": [
+          {
+            "type": "leaf",
+            "id": "leaf-1",
+            "activeTabId": "a",
+            "tabs": [
+              { "id": "a", "sessionId": null, "contentType": "terminal" },
+              { "id": "b", "sessionId": null, "contentType": "terminal" }
+            ]
+          },
+          {
+            "type": "leaf",
+            "id": "leaf-2",
+            "activeTabId": "c",
+            "tabs": [{ "id": "c", "sessionId": null, "contentType": "terminal" }]
+          }
+        ]
+      },
+      "expected": 3
+    }
+  ]
+}

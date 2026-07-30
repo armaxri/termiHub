@@ -1,0 +1,30 @@
+{
+  "operation": "edgeToSplit",
+  "cases": [
+    {
+      "name": "left maps to horizontal/before",
+      "input": "left",
+      "expected": { "direction": "horizontal", "position": "before" }
+    },
+    {
+      "name": "right maps to horizontal/after",
+      "input": "right",
+      "expected": { "direction": "horizontal", "position": "after" }
+    },
+    {
+      "name": "top maps to vertical/before",
+      "input": "top",
+      "expected": { "direction": "vertical", "position": "before" }
+    },
+    {
+      "name": "bottom maps to vertical/after",
+      "input": "bottom",
+      "expected": { "direction": "vertical", "position": "after" }
+    },
+    {
+      "name": "center returns null",
+      "input": "center",
+      "expected": null
+    }
+  ]
+}
