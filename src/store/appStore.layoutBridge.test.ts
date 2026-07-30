@@ -10,13 +10,18 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
-import type { PanelNode } from "@/types/terminal";
+import type { LeafPanel, PanelNode } from "@/types/terminal";
 import {
   createLeafPanel,
-  getAllLeaves,
+  edgeToSplit,
   findLeaf,
+  findLeafByTab,
+  generatePanelId,
+  getAllLeaves,
+  removeLeaf,
   simplifyTree,
   splitLeaf,
+  updateLeaf,
 } from "@/utils/panelTree";
 
 interface RegionState {
@@ -82,6 +87,39 @@ vi.mock("@/services/transport", () => ({
         );
         root = simplifyTree(root);
         backend.push({ root, activePanelId: newLeaf.id });
+      } else if (intent.kind === "layout.moveTab") {
+        // Mirrors the Rust store's move_tab: detach (positional active fallback),
+        // place (center = append / edge = split), prune emptied source, simplify.
+        // It does NOT repoint the active panel — the frontend bridge does.
+        const view = backend.view as { root: PanelNode; activePanelId: string | null };
+        const tabId = intent.payload.tabId as string;
+        const target = intent.payload.targetPanelId as string;
+        const src = findLeafByTab(view.root, tabId)!;
+        const theTab = src.tabs.find((t) => t.id === tabId)!;
+        let root = updateLeaf(view.root, src.id, (leaf) => removeTabMinimal(leaf, tabId));
+        const splitInfo = edgeToSplit(intent.payload.edge as never);
+        if (!splitInfo) {
+          root = updateLeaf(root, target, (leaf) => ({
+            ...leaf,
+            tabs: [...leaf.tabs, { ...theTab }],
+            activeTabId: tabId,
+          }));
+        } else {
+          const newLeaf: LeafPanel = {
+            type: "leaf",
+            id: generatePanelId(),
+            tabs: [{ ...theTab }],
+            activeTabId: tabId,
+          };
+          root = splitLeaf(root, target, newLeaf, splitInfo.direction, splitInfo.position);
+        }
+        const src2 = findLeaf(root, src.id);
+        if (src2 && src2.tabs.length === 0) {
+          const removed = removeLeaf(root, src.id);
+          root = removed ?? root;
+        }
+        root = simplifyTree(root);
+        backend.push({ root, activePanelId: view.activePanelId });
       }
       return {
         intentId: "intent-test",
@@ -131,6 +169,33 @@ function tab(id: string): TerminalTab {
     panelId: "a",
     isActive: id === "t1",
   } as TerminalTab;
+}
+
+/** Minimal-view tab removal with the positional active fallback (Rust parity). */
+function removeTabMinimal(leaf: LeafPanel, tabId: string): LeafPanel {
+  const idx = leaf.tabs.findIndex((t) => t.id === tabId);
+  if (idx === -1) return leaf;
+  const tabs = leaf.tabs.filter((t) => t.id !== tabId);
+  let activeTabId = leaf.activeTabId;
+  if (activeTabId === tabId) {
+    activeTabId = tabs.length ? tabs[Math.min(idx, tabs.length - 1)].id : null;
+  }
+  return { ...leaf, tabs, activeTabId };
+}
+
+/**
+ * A structural fingerprint of a tree, ignoring panel ids (which legitimately
+ * differ between the local reducer and the store) but keeping tab id order and
+ * per-leaf active tab — so two trees compare equal iff they place the same tabs
+ * the same way. `activeTabs` records the tab ids of the focused panel.
+ */
+function normalize(root: PanelNode, activePanelId: string | null): unknown {
+  const shape = (n: PanelNode): unknown =>
+    n.type === "leaf"
+      ? { leaf: n.tabs.map((t) => t.id), active: n.activeTabId }
+      : { split: n.direction, children: n.children.map(shape) };
+  const activeLeaf = activePanelId ? findLeaf(root, activePanelId) : null;
+  return { tree: shape(root), activeTabs: activeLeaf?.tabs.map((t) => t.id) ?? null };
 }
 
 function seedTree(): PanelNode {
@@ -202,5 +267,79 @@ describe("appStore layout bridge — splitPanel cut (#2151)", () => {
 
     // Still ended up split — via the local fallback path.
     expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
+  });
+});
+
+/**
+ * Parity: the store-cut (flag on) path must place tabs identically to the local
+ * reducer (flag off) for every operation cut in step 2. Runs the same operation
+ * both ways from a fresh tree and compares the id-agnostic fingerprint.
+ */
+describe("appStore layout bridge — cut ↔ local parity (#2151)", () => {
+  async function runBothWays(op: () => void): Promise<{ local: unknown; cut: unknown }> {
+    // Local (flag off).
+    useAppStore.setState(useAppStore.getInitialState());
+    useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
+    setLayoutIntentsEnabled(false);
+    op();
+    const s1 = useAppStore.getState();
+    const local = normalize(s1.rootPanel, s1.activePanelId);
+
+    // Cut (flag on) — same starting tree, backend simulated by the panel-tree algebra.
+    useAppStore.setState(useAppStore.getInitialState());
+    useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
+    backend.reset();
+    setLayoutIntentsEnabled(true);
+    op();
+    await flush();
+    const s2 = useAppStore.getState();
+    const cut = normalize(s2.rootPanel, s2.activePanelId);
+    return { local, cut };
+  }
+
+  it("splitPanel produces an identical tree both ways", async () => {
+    const { local, cut } = await runBothWays(() => useAppStore.getState().splitPanel("vertical"));
+    expect(cut).toEqual(local);
+  });
+
+  it("drag-to-center (merge a tab into another panel) matches the local reducer", async () => {
+    const { local, cut } = await runBothWays(() =>
+      useAppStore.getState().splitPanelWithTab("t1", "a", "b", "center")
+    );
+    expect(cut).toEqual(local);
+  });
+
+  it("drag-to-edge (split a panel with a tab) matches the local reducer", async () => {
+    const { local, cut } = await runBothWays(() =>
+      useAppStore.getState().splitPanelWithTab("t3", "b", "a", "right")
+    );
+    expect(cut).toEqual(local);
+  });
+
+  it("dragging a middle active tab out preserves the source's focus both ways", async () => {
+    const threeTab = (): PanelNode => ({
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "a", tabs: [tab("t1"), tab("t2"), tab("t3")], activeTabId: "t2" },
+        { type: "leaf", id: "b", tabs: [tab("t4")], activeTabId: "t4" },
+      ],
+    });
+    // Local.
+    useAppStore.setState(useAppStore.getInitialState());
+    useAppStore.setState({ rootPanel: threeTab(), activePanelId: "a" });
+    setLayoutIntentsEnabled(false);
+    useAppStore.getState().splitPanelWithTab("t2", "a", "b", "center");
+    const local = normalize(useAppStore.getState().rootPanel, useAppStore.getState().activePanelId);
+    // Cut.
+    useAppStore.setState(useAppStore.getInitialState());
+    useAppStore.setState({ rootPanel: threeTab(), activePanelId: "a" });
+    backend.reset();
+    setLayoutIntentsEnabled(true);
+    useAppStore.getState().splitPanelWithTab("t2", "a", "b", "center");
+    await flush();
+    const cut = normalize(useAppStore.getState().rootPanel, useAppStore.getState().activePanelId);
+    expect(cut).toEqual(local);
   });
 });
