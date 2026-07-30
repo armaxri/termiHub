@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { Monitor, Server, AlertTriangle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
   TunnelConfig,
@@ -6,15 +7,34 @@ import {
   LocalForwardConfig,
   RemoteForwardConfig,
   DynamicForwardConfig,
+  RunLocation,
+  THIS_COMPUTER,
 } from "@/types/tunnel";
 import { TunnelEditorMeta } from "@/types/terminal";
 import { Button, Input, NumberInput, Select, Field, Toggle, toast } from "@/components/ui";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import { frontendLog } from "@/utils/frontendLog";
+import {
+  isAgentHost,
+  tunnelEndpointLines,
+  tunnelReachabilityWarning,
+  WIDE_BIND_HOST,
+} from "@/utils/tunnelHost";
 import { TunnelDiagram } from "./TunnelDiagram";
 import { validateTunnelType } from "./tunnelValidation";
 import "./TunnelEditor.css";
+
+/** Encode a run-location as a `Select` option value, and decode it back. */
+const HOST_THIS = "this";
+function encodeHost(host: RunLocation): string {
+  return isAgentHost(host) ? `agent:${host.agentId}` : HOST_THIS;
+}
+function decodeHost(value: string): RunLocation {
+  return value.startsWith("agent:")
+    ? { kind: "agent", agentId: value.slice("agent:".length) }
+    : THIS_COMPUTER;
+}
 
 interface TunnelEditorProps {
   tabId: string;
@@ -55,6 +75,7 @@ function defaultTunnelType(type: "local" | "remote" | "dynamic"): TunnelType {
 export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const tunnels = useAppStore((s) => s.tunnels);
   const connections = useAppStore((s) => s.connections);
+  const remoteAgents = useAppStore((s) => s.remoteAgents);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const startTunnel = useAppStore((s) => s.startTunnel);
   const closeTab = useAppStore((s) => s.closeTab);
@@ -73,6 +94,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const [tunnelType, setTunnelType] = useState<TunnelType>(
     existingTunnel?.tunnelType ?? defaultTunnelType("local")
   );
+  // Which machine hosts this tunnel (S3, #2155). New tunnels default to This
+  // computer — agent hosting is opt-in.
+  const [host, setHost] = useState<RunLocation>(existingTunnel?.host ?? THIS_COMPUTER);
   const [autoStart, setAutoStart] = useState(existingTunnel?.autoStart ?? false);
   const [reconnect, setReconnect] = useState(existingTunnel?.reconnectOnDisconnect ?? false);
 
@@ -82,6 +106,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       setName(existingTunnel.name);
       setSshConnectionId(existingTunnel.sshConnectionId);
       setTunnelType(existingTunnel.tunnelType);
+      setHost(existingTunnel.host ?? THIS_COMPUTER);
       setAutoStart(existingTunnel.autoStart);
       setReconnect(existingTunnel.reconnectOnDisconnect);
     }
@@ -122,6 +147,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         name: name || "Untitled Tunnel",
         sshConnectionId,
         tunnelType,
+        host,
         autoStart,
         reconnectOnDisconnect: reconnect,
       };
@@ -150,6 +176,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       name,
       sshConnectionId,
       tunnelType,
+      host,
       autoStart,
       reconnect,
       saveTunnel,
@@ -169,6 +196,26 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   }, [rootPanel, tabId, closeTab]);
 
   const sshOptions = sshConnections.map((c) => ({ value: c.id, label: c.name }));
+
+  // Tunnel host (run-location) selector: This computer + every remote agent.
+  const hostOptions = [
+    { value: HOST_THIS, label: "This computer" },
+    ...remoteAgents.map((a) => ({ value: `agent:${a.id}`, label: `Agent · ${a.name}` })),
+  ];
+  const hostAgentName = isAgentHost(host)
+    ? (remoteAgents.find((a) => a.id === host.agentId)?.name ?? host.agentId)
+    : undefined;
+  const sshLabel = sshConnections.find((c) => c.id === sshConnectionId)?.name;
+  const endpointLines = tunnelEndpointLines(tunnelType, host, {
+    agentName: hostAgentName,
+    sshLabel,
+  });
+  const reachability = tunnelReachabilityWarning(tunnelType, host, hostAgentName);
+
+  /** Widen an agent-hosted loopback bind to 0.0.0.0 so this computer can reach it. */
+  const handleWidenBind = useCallback(() => {
+    updateConfig("localHost", WIDE_BIND_HOST);
+  }, [updateConfig]);
 
   const nameRef = useAutofocusSelect<HTMLInputElement>();
 
@@ -215,6 +262,16 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           />
         </Field>
 
+        <Field label="Tunnel host" htmlFor={`tunnel-host-${tabId}`}>
+          <Select
+            value={encodeHost(host)}
+            onChange={(v) => setHost(decodeHost(v))}
+            options={hostOptions}
+            aria-label="Tunnel host"
+            data-testid="tunnel-editor-host"
+          />
+        </Field>
+
         <div className="tunnel-editor__field">
           <label className="tunnel-editor__label">Tunnel Type</label>
           <div className="tunnel-editor__type-selector" data-testid="tunnel-editor-type-selector">
@@ -246,6 +303,41 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         </div>
 
         <TunnelDiagram tunnelType={tunnelType} />
+
+        <div className="tunnel-editor__endpoints" data-testid="tunnel-editor-endpoints">
+          <div className="tunnel-editor__endpoints-host">
+            {isAgentHost(host) ? <Server size={13} /> : <Monitor size={13} />}
+            <span>
+              Host:{" "}
+              <strong>{isAgentHost(host) ? `agent ${hostAgentName}` : "this computer"}</strong>
+            </span>
+          </div>
+          {endpointLines.map((line, i) => (
+            <div className="tunnel-editor__endpoint-line" key={i}>
+              <strong>{line.label}</strong> {line.machine && <span>{line.machine}</span>}
+              {line.machine && line.address ? " · " : ""}
+              {line.address && <code>{line.address}</code>}
+              {line.note && <span className="tunnel-editor__endpoint-note"> ({line.note})</span>}
+            </div>
+          ))}
+        </div>
+
+        {reachability && (
+          <div className="tunnel-editor__reachability" data-testid="tunnel-editor-reachability">
+            <AlertTriangle size={14} className="tunnel-editor__reachability-icon" />
+            <span className="tunnel-editor__reachability-text">
+              {reachability.message}{" "}
+              <button
+                type="button"
+                className="tunnel-editor__reachability-action"
+                onClick={handleWidenBind}
+                data-testid="tunnel-editor-widen-bind"
+              >
+                Widen bind
+              </button>
+            </span>
+          </div>
+        )}
 
         {tunnelType.type === "local" && (
           <>
