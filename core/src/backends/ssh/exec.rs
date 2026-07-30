@@ -171,6 +171,42 @@ pub async fn ssh_exec_with_stdin(
     run_exec(&mut channel, command, stdin).await
 }
 
+/// Marker string echoed by the exec-capability probe.
+///
+/// A working shell/exec channel echoes it back on stdout; an SFTP-only
+/// connection (`ForceCommand internal-sftp`) or a relayed connection cannot run
+/// the command, so the marker never reaches stdout. Kept beside the probe that
+/// uses it (and consumed by the SSH exec integration tests) so the single
+/// definition can never drift.
+pub const EXEC_PROBE_MARKER: &str = "termihub_exec_probe_ok";
+
+/// Decide, from an exec probe's captured output, whether the connection can run
+/// remote commands (i.e. an exec channel is usable).
+///
+/// Keyed off the marker in stdout (not just a zero exit) so an SFTP-only server
+/// that quietly closes the forced-subsystem channel with exit 0 is still
+/// reported as not capable.
+pub fn exec_probe_indicates_capability(output: &SshExecOutput) -> bool {
+    output.exit_status == 0 && output.stdout.contains(EXEC_PROBE_MARKER)
+}
+
+/// Probe whether an exec (command) channel can be opened and used on `session`.
+///
+/// Runs a tiny command that echoes [`EXEC_PROBE_MARKER`] back over an exec
+/// channel. A normal SSH+shell connection echoes it (`true`); an SFTP-only
+/// (`ForceCommand internal-sftp`) or relayed connection cannot run the command,
+/// so the marker never appears (`false`). Any transport error is also reported
+/// as `false` — an unusable exec channel is "not capable", never a propagated
+/// error. Lets a caller know whether privilege-elevated writes — which need a
+/// shell to run `sudo` — are possible for this connection.
+pub async fn probe_exec_capability(session: &SshSession) -> bool {
+    let probe = format!("echo {EXEC_PROBE_MARKER}");
+    match ssh_exec_with_stdin(session, &probe, "").await {
+        Ok(output) => exec_probe_indicates_capability(&output),
+        Err(_) => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +350,37 @@ mod tests {
         let err = run_exec(&mut ch, "id", "").await.unwrap_err();
 
         assert!(matches!(err, CoreError::Other(_)));
+    }
+
+    // --- Exec-capability probe discriminator (migrated from src-tauri) ---
+
+    fn probe_output(stdout: &str, exit_status: i32) -> SshExecOutput {
+        SshExecOutput {
+            stdout: stdout.to_string(),
+            exit_status,
+            ..Default::default()
+        }
+    }
+
+    /// A shell connection echoes the probe marker with exit 0 → capable.
+    #[test]
+    fn exec_probe_true_when_marker_echoed_and_exit_zero() {
+        let output = probe_output(&format!("{EXEC_PROBE_MARKER}\n"), 0);
+        assert!(exec_probe_indicates_capability(&output));
+    }
+
+    /// An SFTP-only channel yields no marker (e.g. binary SFTP bytes, even at
+    /// exit 0) → not capable.
+    #[test]
+    fn exec_probe_false_when_marker_absent() {
+        let output = probe_output("\u{0}\u{0}sftp-subsystem-bytes", 0);
+        assert!(!exec_probe_indicates_capability(&output));
+    }
+
+    /// A non-zero exit means the probe did not run cleanly → not capable.
+    #[test]
+    fn exec_probe_false_on_nonzero_exit() {
+        let output = probe_output(&format!("{EXEC_PROBE_MARKER}\n"), 1);
+        assert!(!exec_probe_indicates_capability(&output));
     }
 }
