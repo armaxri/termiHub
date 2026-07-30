@@ -40,6 +40,12 @@ mod session_history;
 /// driving the live UI — see [`session_projection`].
 mod session_projection;
 mod spawn;
+/// Shadow system-monitor authority (#2224, Phase 5 of #2139): the shared
+/// `system-monitors` projection region + `monitor.*` intents, built on the
+/// monitoring types shared with the agent crate (`termihub_core::monitoring`).
+/// Registered and served but not yet driving the live UI — see
+/// [`system_monitor_projection`].
+mod system_monitor_projection;
 mod terminal;
 mod tunnel;
 mod utils;
@@ -687,6 +693,19 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
+                // Shadow SystemMonitorStore (#2224, Phase 5): the shared
+                // `system-monitors` region + `monitor.*` intents on the
+                // monitoring types shared with the agent crate
+                // (`termihub_core::monitoring`). Managed authoritative state that
+                // serves intents, but nothing in the live UI subscribes to or
+                // renders the region yet — a pure shadow foundation (later steps
+                // cut rendering, then mutations, over to it). The shared region is
+                // seeded below once the store is managed.
+                app.manage(Arc::new(system_monitor_projection::SystemMonitorStore::new()));
+                system_monitor_projection::projection::register_monitor_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
                 // Test-bridge-only: add the diagnostic region's `diag.*` routes so
                 // the projection-assertion harness (#2164) has a self-contained
                 // region to drive. Never registered in production launches. See
@@ -713,6 +732,17 @@ pub fn run() {
                 {
                     projection_state.projector.register_region(
                         session_projection::projection::SESSION_LIFECYCLE_REGION,
+                        store.snapshot(),
+                    );
+                }
+                // Seed the shared `system-monitors` region with the (empty) store
+                // baseline at version 0, so a subscriber attaches to a real region
+                // before the first `monitor.*` intent (#2224).
+                if let Some(store) =
+                    app.handle().try_state::<Arc<system_monitor_projection::SystemMonitorStore>>()
+                {
+                    projection_state.projector.register_region(
+                        system_monitor_projection::projection::SYSTEM_MONITORS_REGION,
                         store.snapshot(),
                     );
                 }
