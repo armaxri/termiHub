@@ -63,12 +63,7 @@ fn dynamic_tunnel(id: &str, name: &str) -> TunnelConfig {
 }
 
 fn state(id: &str, status: TunnelStatus) -> TunnelState {
-    TunnelState {
-        tunnel_id: id.to_string(),
-        status,
-        error: None,
-        stats: TunnelStats::default(),
-    }
+    TunnelState::desktop(id.to_string(), status, None, TunnelStats::default())
 }
 
 // ── The pure view builder ────────────────────────────────────────────────────
