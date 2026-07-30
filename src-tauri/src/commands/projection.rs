@@ -17,8 +17,8 @@ use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::projection::{
-    Dispatcher, HandlerRegistry, Intent, IntentAck, ProjectionError, ProjectionFrame,
-    ProjectionSink, Projector, SnapshotFrame,
+    Dispatcher, HandlerRegistry, Intent, IntentAck, IntentHandler, ProjectionError,
+    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
 
 /// Managed Tauri state holding the projector and the intent dispatcher.
@@ -28,12 +28,19 @@ pub struct ProjectionState {
 }
 
 impl ProjectionState {
+    /// An empty projector + dispatcher whose registry serves no domain yet
+    /// (every intent is rejected `unknown_intent`).
     pub fn new() -> Self {
+        Self::with_handler(Arc::new(HandlerRegistry::new()))
+    }
+
+    /// Build the state around a pre-populated intent handler. Domains register
+    /// their routes on a [`HandlerRegistry`] and pass it here (Phase 2+); the
+    /// tunnel pilot wires `tunnel.*` this way in `lib.rs` once the tunnel
+    /// manager is managed. See [`crate::tunnel::projection`].
+    pub fn with_handler(handler: Arc<dyn IntentHandler>) -> Self {
         let projector = Arc::new(Projector::new());
-        let dispatcher = Arc::new(Dispatcher::new(
-            projector.clone(),
-            Arc::new(HandlerRegistry::new()),
-        ));
+        let dispatcher = Arc::new(Dispatcher::new(projector.clone(), handler));
         Self {
             projector,
             dispatcher,

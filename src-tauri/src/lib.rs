@@ -289,9 +289,10 @@ pub fn run() {
         .manage(window::WindowManager::new())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(commands::local_process::LocalProcessRegistry::default())
-        // Stateless-UI projection substrate (#2149) — projector + intent
-        // dispatcher, wired beside the existing typed commands (strangler).
-        .manage(commands::projection::ProjectionState::new())
+        // Stateless-UI projection substrate (#2149) + tunnel pilot (#2150): the
+        // projector + intent dispatcher are constructed in `setup` (below), once
+        // the tunnel manager exists to seed the `tunnels` region and serve the
+        // `tunnel.*` intents. Wired beside the existing typed commands (strangler).
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
 
@@ -640,6 +641,28 @@ pub fn run() {
                         details: Some(e.to_string()),
                     });
                 }
+            }
+
+            // Stateless-UI projection substrate (#2149) + SSH-tunnels pilot
+            // (#2150). Built here — not in the builder chain — so the tunnel
+            // manager (managed just above) can seed the `tunnels` region and
+            // serve the `tunnel.*` intents. If the tunnel manager failed to
+            // initialize, the region/intents degrade gracefully (intents reject
+            // `unavailable`; the region stays empty).
+            {
+                let mut registry = crate::projection::HandlerRegistry::new();
+                tunnel::projection::register_tunnel_intents(&mut registry, app.handle().clone());
+                let projection_state =
+                    commands::projection::ProjectionState::with_handler(Arc::new(registry));
+                if let Some(manager) =
+                    app.handle().try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>()
+                {
+                    projection_state.projector.register_region(
+                        tunnel::projection::TUNNELS_REGION,
+                        tunnel::projection::build_tunnel_view(&manager),
+                    );
+                }
+                app.manage(projection_state);
             }
 
             // Initialize workspace manager with recovery loading.

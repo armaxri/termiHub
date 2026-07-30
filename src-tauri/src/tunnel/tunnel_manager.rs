@@ -540,6 +540,11 @@ impl TunnelManager {
                 for update in &updates {
                     let _ = app_handle.emit(TUNNEL_STATS_EVENT, update);
                 }
+                // Project live stats onto the `tunnels` region (#2150) so a
+                // projection subscriber sees the same per-tick ↑/↓ + conn counts
+                // as the legacy event above. The active-tunnels lock is already
+                // released here, so the re-lock inside is safe.
+                crate::tunnel::projection::publish_tunnels(&app_handle);
             }
 
             // Self-reap: drop our own handle from the tracking slot so
@@ -1022,6 +1027,11 @@ fn emit_tunnel_status(
         stats: TunnelStats::default(),
     };
     let _ = app_handle.emit("tunnel-status-changed", &state);
+    // Project the change onto the stateless-UI `tunnels` region (#2150). Kept
+    // beside the legacy event above (strangler): this is the single status-emit
+    // choke point, and every caller emits outside the manager's locks, so the
+    // re-lock inside `publish_tunnels` cannot deadlock.
+    crate::tunnel::projection::publish_tunnels(app_handle);
 }
 
 /// Per-tunnel supervisor loop (#1243, GAP 1 + GAP 2).
