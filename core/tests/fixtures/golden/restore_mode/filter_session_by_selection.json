@@ -1,0 +1,176 @@
+{
+  "operation": "filterSessionBySelection",
+  "cases": [
+    {
+      "name": "keeps only the selected tabs across a split",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "Group",
+            "layout": {
+              "type": "split",
+              "direction": "horizontal",
+              "sizes": [60, 40],
+              "children": [
+                {
+                  "type": "leaf",
+                  "tabs": [
+                    { "title": "ssh", "inlineConfig": { "type": "ssh", "config": { "host": "h" } } },
+                    { "title": "serial", "inlineConfig": { "type": "serial", "config": { "device": "/dev/x" } } }
+                  ]
+                },
+                { "type": "leaf", "tabs": [{ "title": "local", "inlineConfig": { "type": "local", "config": {} } }] }
+              ]
+            }
+          }
+        ]
+      },
+      "args": { "selected": [0, 2] },
+      "expected": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "Group",
+            "layout": {
+              "type": "split",
+              "direction": "horizontal",
+              "sizes": [60, 40],
+              "children": [
+                { "type": "leaf", "tabs": [{ "title": "ssh", "inlineConfig": { "type": "ssh", "config": { "host": "h" } } }] },
+                { "type": "leaf", "tabs": [{ "title": "local", "inlineConfig": { "type": "local", "config": {} } }] }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "collapses a split whose sibling leaf empties out",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "Group",
+            "layout": {
+              "type": "split",
+              "direction": "horizontal",
+              "sizes": [60, 40],
+              "children": [
+                {
+                  "type": "leaf",
+                  "tabs": [
+                    { "title": "ssh", "inlineConfig": { "type": "ssh", "config": { "host": "h" } } },
+                    { "title": "serial", "inlineConfig": { "type": "serial", "config": { "device": "/dev/x" } } }
+                  ]
+                },
+                { "type": "leaf", "tabs": [{ "title": "local", "inlineConfig": { "type": "local", "config": {} } }] }
+              ]
+            }
+          }
+        ]
+      },
+      "args": { "selected": [0, 1] },
+      "expected": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "Group",
+            "layout": {
+              "type": "leaf",
+              "tabs": [
+                { "title": "ssh", "inlineConfig": { "type": "ssh", "config": { "host": "h" } } },
+                { "title": "serial", "inlineConfig": { "type": "serial", "config": { "device": "/dev/x" } } }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "drops a group whose every tab was deselected and remaps active",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 1,
+        "tabGroups": [
+          { "name": "A", "layout": { "type": "leaf", "tabs": [{ "title": "a" }] } },
+          { "name": "B", "layout": { "type": "leaf", "tabs": [{ "title": "b" }] } }
+        ]
+      },
+      "args": { "selected": [0] },
+      "expected": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [{ "name": "A", "layout": { "type": "leaf", "tabs": [{ "title": "a" }] } }]
+      }
+    },
+    {
+      "name": "yields no groups when nothing is selected",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "Group",
+            "layout": {
+              "type": "split",
+              "direction": "horizontal",
+              "sizes": [60, 40],
+              "children": [
+                { "type": "leaf", "tabs": [{ "title": "ssh" }, { "title": "serial" }] },
+                { "type": "leaf", "tabs": [{ "title": "local" }] }
+              ]
+            }
+          }
+        ]
+      },
+      "args": { "selected": [] },
+      "expected": { "version": "1", "activeGroupIndex": 0, "tabGroups": [] }
+    },
+    {
+      "name": "redistributes sizes when a middle child is dropped",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "G",
+            "layout": {
+              "type": "split",
+              "direction": "vertical",
+              "sizes": [60, 20, 20],
+              "children": [
+                { "type": "leaf", "tabs": [{ "title": "x" }] },
+                { "type": "leaf", "tabs": [{ "title": "y" }] },
+                { "type": "leaf", "tabs": [{ "title": "z" }] }
+              ]
+            }
+          }
+        ]
+      },
+      "args": { "selected": [0, 2] },
+      "expected": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "G",
+            "layout": {
+              "type": "split",
+              "direction": "vertical",
+              "sizes": [75, 25],
+              "children": [
+                { "type": "leaf", "tabs": [{ "title": "x" }] },
+                { "type": "leaf", "tabs": [{ "title": "z" }] }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

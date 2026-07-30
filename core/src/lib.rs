@@ -26,6 +26,7 @@ pub mod output;
 pub mod plugin;
 pub mod protocol;
 pub mod reconnect_backoff;
+pub mod restore_mode;
 pub mod service;
 pub mod session;
 pub mod tool;
