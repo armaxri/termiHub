@@ -615,4 +615,144 @@ mod tests {
         assert!(registry.stop("t-remote").await);
         assert_eq!(registry.active_count().await, 0);
     }
+
+    /// Full end-to-end start of an agent-hosted **dynamic** (`-D`, SOCKS5)
+    /// forward against the `ssh-tunnel-target` container (port 2207: internal
+    /// HTTP on 8080, unreachable from the host). The SOCKS proxy listen socket
+    /// binds on the agent; the per-connection target is chosen by the SOCKS
+    /// client and reached from the SSH server:
+    ///
+    /// 1. `start_dynamic` opens the SSH session and binds the SOCKS5 proxy on an
+    ///    ephemeral agent loopback port.
+    /// 2. A SOCKS5 client negotiates no-auth and issues `CONNECT localhost:8080`
+    ///    — the container's internal HTTP server, resolved from the **server**.
+    /// 3. An HTTP request flows through the proxied channel and a response comes
+    ///    back, proving the agent-hosted SOCKS proxy reaches a server-only target.
+    ///
+    /// Skips gracefully when the container is not running (per-PR CI has no SSH
+    /// server), matching the local/remote tests above.
+    #[tokio::test]
+    async fn start_dynamic_socks_forwards_http_over_ssh() {
+        use std::time::Duration;
+        use termihub_core::tunnel::config::DynamicForwardConfig;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpStream;
+
+        let port: u16 = std::env::var("TERMIHUB_TEST_SSH_TUNNEL_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2207);
+
+        if TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+            eprintln!("skipping: ssh-tunnel-target not reachable on 127.0.0.1:{port}");
+            return;
+        }
+
+        {
+            use termihub_core::backends::ssh::host_key::{
+                set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+            };
+            struct TrustAll;
+            #[async_trait::async_trait]
+            impl HostKeyVerifier for TrustAll {
+                async fn verify(&self, _info: &HostKeyInfo) -> bool {
+                    true
+                }
+            }
+            let _ = set_host_key_verifier(Arc::new(TrustAll));
+        }
+
+        let ssh_config = SshConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "testuser".to_string(),
+            auth_method: "password".to_string(),
+            password: Some("testpass".to_string()),
+            ..Default::default()
+        };
+        let listen_port = {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .expect("bind ephemeral")
+                .local_addr()
+                .expect("local addr")
+                .port()
+        };
+        let forward = DynamicForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: listen_port,
+        };
+
+        let registry = AgentTunnelRegistry::new();
+        let outcome = registry
+            .start_dynamic("t-socks", &ssh_config, &forward)
+            .await
+            .expect("agent-hosted dynamic forward should start");
+        assert_eq!(
+            outcome.reachable_from,
+            ReachableFrom::AgentOnly,
+            "a loopback SOCKS bind is reachable only from the agent"
+        );
+        assert_eq!(outcome.bound_address, format!("127.0.0.1:{listen_port}"));
+        assert_eq!(registry.active_count().await, 1);
+
+        // Drive an HTTP request through the SOCKS proxy: negotiate no-auth, then
+        // `CONNECT localhost:8080` (resolved from the SSH server) and speak HTTP.
+        let mut client = TcpStream::connect(("127.0.0.1", listen_port))
+            .await
+            .expect("connect to the agent-bound SOCKS port");
+        client
+            .write_all(&[0x05, 0x01, 0x00])
+            .await
+            .expect("send SOCKS5 no-auth greeting");
+        let mut method = [0u8; 2];
+        client
+            .read_exact(&mut method)
+            .await
+            .expect("read method selection");
+        assert_eq!(method, [0x05, 0x00], "server selects no-auth");
+
+        let host = b"localhost";
+        let mut req = vec![0x05, 0x01, 0x00, 0x03, host.len() as u8];
+        req.extend_from_slice(host);
+        req.extend_from_slice(&8080u16.to_be_bytes());
+        client
+            .write_all(&req)
+            .await
+            .expect("send SOCKS5 CONNECT localhost:8080");
+        let mut reply = [0u8; 10];
+        client
+            .read_exact(&mut reply)
+            .await
+            .expect("read SOCKS5 CONNECT reply");
+        assert_eq!(reply[1], 0x00, "CONNECT should succeed through the server");
+
+        client
+            .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            .await
+            .expect("send HTTP request through the SOCKS tunnel");
+        client.shutdown().await.ok();
+        let mut response = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), client.read_to_end(&mut response))
+            .await
+            .expect("HTTP response before timeout")
+            .expect("read HTTP response");
+        assert!(
+            String::from_utf8_lossy(&response).starts_with("HTTP/"),
+            "expected an HTTP response proxied through the agent-hosted SOCKS tunnel"
+        );
+
+        // Stopping removes the forward and frees the SOCKS listen port.
+        assert!(registry.stop("t-socks").await);
+        assert_eq!(registry.active_count().await, 0);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            match TcpStream::connect(("127.0.0.1", listen_port)).await {
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => break,
+                _ if tokio::time::Instant::now() >= deadline => {
+                    panic!("agent SOCKS forward still accepting after stop")
+                }
+                _ => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+    }
 }
