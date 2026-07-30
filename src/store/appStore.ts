@@ -4552,8 +4552,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
       })),
 
     splitPanel: (direction) => {
-      // Local reducer (the shipped path, and the fallback when the store cut is
-      // enabled). Kept verbatim so the flag-off behaviour is unchanged.
+      // Local reducer. Since #2184 the intent path below is the default, so this
+      // is the retained resilience/rollback fallback: it runs when the flag is
+      // explicitly off (rollback) or an intent dispatch/reconcile fails, so a
+      // backend hiccup can never break layout. Not a duplicate algebra — it
+      // orchestrates the shared `@/utils/panelTree` helpers (the same seam the
+      // Rust store ports), so keeping it costs no drift, only a safety net.
       const applyLocal = () =>
         set((state) => {
           const dir = direction ?? "horizontal";
@@ -4566,9 +4570,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
           return { rootPanel, activePanelId: newLeaf.id };
         });
 
-      // Step-2 cut (#2151): route the structural split through the `layout.split`
-      // intent; the store mutates and the diff is reconciled back. On any failure
-      // fall back to the local reducer so layout never breaks.
+      // Structural split cut (#2151 step 2, default-on since #2184): route
+      // through the `layout.split` intent; the backend LayoutStore mutates and
+      // reconcileNode is the authoritative writer of the reconciled tree. On any
+      // failure fall back to the local reducer so layout never breaks.
       if (!layoutIntentsEnabled()) return applyLocal();
       const { rootPanel, activePanelId } = get();
       if (!activePanelId) return applyLocal();
@@ -4610,7 +4615,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }),
 
     splitPanelWithTab: (tabId, fromPanelId, targetPanelId, edge) => {
-      // Local reducer (shipped path + fallback), kept verbatim.
+      // Local reducer. As with splitPanel, since #2184 this is the retained
+      // resilience/rollback fallback (flag off, or an intent failure) rather than
+      // the default path — kept as a safety net over the shared panelTree algebra.
       const applyLocal = () =>
         set((state) => {
           const splitInfo = edgeToSplit(edge);
@@ -4683,11 +4690,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           return { rootPanel, activePanelId: newLeaf.id };
         });
 
-      // Step-2 cut (#2151): a tab-carrying drop maps to `layout.moveTab`
-      // (center = merge into the target stack, edge = split the target). The
-      // backend collapses an emptied self-drop source but the local reducer
-      // keeps it, so the single-tab self-edge-drop corner stays on the local
-      // path to preserve exact parity; everything else routes through the store.
+      // Tab-carrying drop cut (#2151 step 2, default-on since #2184): maps to
+      // `layout.moveTab` (center = merge into the target stack, edge = split the
+      // target). The backend collapses an emptied self-drop source but the local
+      // reducer keeps it, so the single-tab self-edge-drop corner stays on the
+      // local path to preserve exact parity; everything else routes through the
+      // store, with reconcileNode as the authoritative writer.
       if (!layoutIntentsEnabled()) return applyLocal();
       const { rootPanel, activePanelId } = get();
       const sourceLeaf = findLeaf(rootPanel, fromPanelId);
