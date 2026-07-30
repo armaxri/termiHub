@@ -20,7 +20,7 @@ use libunftp::ServerBuilder;
 use unftp_sbe_fs::Filesystem;
 
 use super::config::{AtomicServerStats, EmbeddedServerConfig, FtpAuth};
-use super::server_manager::BindSignal;
+use super::service::BindSignal;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
