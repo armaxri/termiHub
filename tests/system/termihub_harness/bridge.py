@@ -330,6 +330,76 @@ class Driver:
         """
         return self._call({"action": "screenshot"})
 
+    # ── Projection substrate (#2149 / harness #2164) ─────────────────────────
+    def projection_subscribe(self, region: str) -> dict[str, Any]:
+        """Attach to a projection ``region`` and start recording its frames.
+
+        Returns the recording state ``{subscriptionId, region, snapshot, frames,
+        cache, dropRemaining}``. The ``subscriptionId`` is passed to the other
+        ``projection_*`` verbs. The substrate's diff frames ride a per-region
+        Tauri IPC channel, so they are invisible to the DOM/state verbs — this
+        subscribes through the app's real transport + ``ProjectionClient`` cache
+        and buffers every raw frame for assertion.
+        """
+        return self._call({"action": "projectionSubscribe", "region": region})
+
+    def projection_dispatch(
+        self,
+        kind: str,
+        payload: Any = None,
+        *,
+        intent_id: Optional[str] = None,
+        client_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Dispatch an intent (channel 1); returns the ``IntentAck`` receipt.
+
+        The result of an accepted intent is never inline — it arrives as a diff
+        frame on the affected region, recorded against any active subscription.
+        ``intentId`` / ``clientId`` are minted app-side when omitted.
+        """
+        return self._call(
+            {
+                "action": "projectionDispatch",
+                "kind": kind,
+                "payload": payload,
+                "intentId": intent_id,
+                "clientId": client_id,
+            }
+        )
+
+    def projection_state(self, subscription_id: str) -> dict[str, Any]:
+        """Read a subscription's current recorded frames + cache state by id."""
+        return self._call(
+            {"action": "projectionState", "subscriptionId": subscription_id}
+        )
+
+    def projection_drop_next(self, subscription_id: str, count: int) -> None:
+        """Schedule the next ``count`` delivered diffs to be dropped before the cache.
+
+        The dropped diffs are still recorded, so the next diff arrives with a
+        ``baseVersion`` ahead of the cache and trips the real gap -> resync
+        re-baseline — the app's honest way to simulate a lost/reordered frame.
+        """
+        self._call(
+            {
+                "action": "projectionDropNext",
+                "subscriptionId": subscription_id,
+                "count": count,
+            }
+        )
+
+    def projection_resync(self, subscription_id: str) -> dict[str, Any]:
+        """Re-baseline a subscription's cache from the backend; returns new state."""
+        return self._call(
+            {"action": "projectionResync", "subscriptionId": subscription_id}
+        )
+
+    def projection_unsubscribe(self, subscription_id: str) -> None:
+        """Detach one projection subscription (idempotent)."""
+        self._call(
+            {"action": "projectionUnsubscribe", "subscriptionId": subscription_id}
+        )
+
 
 def screenshot_to_png_bytes(data_url: str) -> bytes:
     """Decode a ``data:image/png;base64,…`` screenshot URL to raw PNG bytes.
