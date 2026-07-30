@@ -1,0 +1,33 @@
+{
+  "operation": "getWorkspaceLeaves",
+  "cases": [
+    {
+      "name": "a single leaf returns itself",
+      "input": { "type": "leaf", "tabs": [{ "title": "only" }] },
+      "expected": [{ "type": "leaf", "tabs": [{ "title": "only" }] }]
+    },
+    {
+      "name": "nested splits flatten depth-first left-to-right",
+      "input": {
+        "type": "split",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "tabs": [{ "title": "a" }] },
+          {
+            "type": "split",
+            "direction": "vertical",
+            "children": [
+              { "type": "leaf", "tabs": [{ "title": "b" }] },
+              { "type": "leaf", "tabs": [{ "title": "c" }] }
+            ]
+          }
+        ]
+      },
+      "expected": [
+        { "type": "leaf", "tabs": [{ "title": "a" }] },
+        { "type": "leaf", "tabs": [{ "title": "b" }] },
+        { "type": "leaf", "tabs": [{ "title": "c" }] }
+      ]
+    }
+  ]
+}
