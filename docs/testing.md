@@ -3174,3 +3174,36 @@ app. The fix portals these into the dialog's own content node (via the shared
 2. Reorder, edit, and delete steps as normal to confirm the fix changed nothing
    else about the editor's behavior.
 3. Save the workflow and confirm it persists with the steps you added.
+
+### Run-location "Run on" selector — Network Tools & Servers (#2191)
+
+The selector, its desktop-only gating, and the backend wiring are covered by
+component tests (`RunLocationSelect.test.tsx`, `NetworkToolRunLocation.test.tsx`,
+`EmbeddedServerRunLocation.test.tsx`, `runLocation.test.ts`,
+`runLocationStore.test.ts`). This manual pass confirms an agent choice actually
+routes execution end-to-end, which per-PR CI cannot (it needs a live agent).
+
+**Prerequisites.** A configured remote agent that connects successfully (see
+"Parallel test isolation" for a dev agent, or any reachable agent).
+
+**Network tool runs on the agent.**
+
+1. Open a Network Tool (e.g. **Ping**). Confirm a **"Run on"** control appears at
+   the top of the panel, defaulting to **This computer**.
+2. Open it → confirm **This computer** plus one **Agent · «name»** entry per
+   connected agent. Pick the agent.
+3. Run the tool against a host reachable from the agent's network → confirm the
+   result reflects the **agent's** vantage (e.g. a host only the agent can reach
+   resolves/pings), and the control keeps showing the agent.
+4. Open the **HTTP monitor**, **Ping sweep**, and **Open ports** tools → confirm
+   the "Run on" control is present but offers **only This computer** (desktop-only,
+   Open Design Decision #4).
+
+**Embedded server hosted on the agent.**
+
+1. In the **Services** sidebar, confirm each server row shows a **"Run on"**
+   control in its details, defaulting to **This computer**.
+2. Pick an agent, then **Start** the server → confirm it comes up hosted on the
+   agent (reachable on the agent's network / port bound there), not the desktop.
+3. Switch back to **This computer** and restart → confirm it is hosted locally
+   again.
