@@ -7723,6 +7723,7 @@ dependencies = [
  "objc2-foundation",
  "percent-encoding",
  "portable-pty",
+ "proptest",
  "quick-xml",
  "rand 0.8.6",
  "reqwest 0.12.28",

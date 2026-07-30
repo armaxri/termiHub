@@ -147,8 +147,7 @@ impl LayoutStore {
         let merged = update_leaf(&state.root, target_panel_id, |leaf| {
             with_tabs_appended(leaf, &tabs)
         });
-        let pruned =
-            remove_leaf(&merged, source_panel_id).unwrap_or_else(|| single_empty_leaf());
+        let pruned = remove_leaf(&merged, source_panel_id).unwrap_or_else(single_empty_leaf);
         state.root = simplify_tree(&pruned);
         state.active_panel_id = Some(target_panel_id.to_string());
         fix_active(state);
@@ -183,11 +182,13 @@ impl LayoutStore {
             return Err(LayoutError::PanelNotFound(target_panel_id.to_string()));
         }
 
-        let detached = update_leaf(&state.root, &source_id, |leaf| with_tab_removed(leaf, tab_id));
+        let detached = update_leaf(&state.root, &source_id, |leaf| {
+            with_tab_removed(leaf, tab_id)
+        });
         let placed = match edge {
-            DropEdge::Center => {
-                update_leaf(&detached, target_panel_id, |leaf| with_tab_added(leaf, tab.clone()))
-            }
+            DropEdge::Center => update_leaf(&detached, target_panel_id, |leaf| {
+                with_tab_added(leaf, tab.clone())
+            }),
             edge => {
                 let spec = edge_to_split(edge).ok_or(LayoutError::BadEdge)?;
                 let new_leaf = LeafPanel {
@@ -195,7 +196,13 @@ impl LayoutStore {
                     tabs: vec![tab.clone()],
                     active_tab_id: Some(tab.id.clone()),
                 };
-                split_leaf(&detached, target_panel_id, &new_leaf, spec.direction, spec.position)
+                split_leaf(
+                    &detached,
+                    target_panel_id,
+                    &new_leaf,
+                    spec.direction,
+                    spec.position,
+                )
             }
         };
         let pruned = remove_leaf_if_empty(&placed, &source_id);
@@ -254,7 +261,12 @@ fn single_empty_leaf() -> PanelNode {
 /// A copy of `leaf` with `tab_id` removed; the active tab falls back to the
 /// first remaining tab when the removed tab was active.
 fn with_tab_removed(leaf: &LeafPanel, tab_id: &str) -> LeafPanel {
-    let tabs: Vec<Tab> = leaf.tabs.iter().filter(|t| t.id != tab_id).cloned().collect();
+    let tabs: Vec<Tab> = leaf
+        .tabs
+        .iter()
+        .filter(|t| t.id != tab_id)
+        .cloned()
+        .collect();
     let active_tab_id = if leaf.active_tab_id.as_deref() == Some(tab_id) {
         tabs.first().map(|t| t.id.clone())
     } else {

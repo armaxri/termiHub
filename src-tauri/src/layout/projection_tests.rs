@@ -19,8 +19,8 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, Projector,
-    ProjectionError, ProjectionFrame, ProjectionSink, SnapshotFrame,
+    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
+    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
 use termihub_core::layout::panel_tree::{
     Direction, DropEdge, LeafPanel, PanelNode, Position, SplitContainer, Tab,
@@ -238,7 +238,11 @@ fn split_intent_produces_one_diff_fanned_to_two_subscribers() {
     assert_eq!(diffs_a[0].version, 1);
 
     cache_a.apply(&diffs_a[0]);
-    assert_eq!(cache_a.view, store.snapshot("A"), "cache converges on authority");
+    assert_eq!(
+        cache_a.view,
+        store.snapshot("A"),
+        "cache converges on authority"
+    );
 }
 
 #[test]
@@ -273,7 +277,11 @@ fn move_and_close_intents_advance_the_region_monotonically() {
         cache.apply(diff);
     }
     assert_eq!(cache.version, 2);
-    assert_eq!(cache.view, store.snapshot("A"), "cache converges on authority");
+    assert_eq!(
+        cache.view,
+        store.snapshot("A"),
+        "cache converges on authority"
+    );
 }
 
 #[test]

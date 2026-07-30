@@ -154,7 +154,10 @@ fn merge_moves_all_tabs_into_target_and_drops_the_source() {
 fn merge_into_self_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    assert_eq!(store.merge("C", "a", "a").unwrap_err(), LayoutError::SamePanel);
+    assert_eq!(
+        store.merge("C", "a", "a").unwrap_err(),
+        LayoutError::SamePanel
+    );
 }
 
 #[test]
