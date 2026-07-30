@@ -26,8 +26,8 @@
  */
 
 import {
-  createTransport,
   ProjectionClient,
+  TauriTransport,
   newClientId,
   newIntentId,
 } from "@/services/transport";
@@ -124,9 +124,17 @@ export class ProjectionRecorder {
   private readonly recordings = new Map<string, Recording>();
   private counter = 0;
 
-  /** `transport` is injectable for unit tests; defaults to the real transport. */
+  /**
+   * `transport` is injectable for unit tests; defaults to a {@link TauriTransport}.
+   *
+   * Constructed directly rather than via `createTransport()`: the recorder only
+   * ever runs inside the desktop app (test-bridge mode), and `createTransport`'s
+   * `isTauri()` probe keys off `window.__TAURI__`, which is absent unless
+   * `withGlobalTauri` is set — so it would wrongly take the remote-client branch
+   * here even though Tauri IPC (`__TAURI_INTERNALS__`) is available.
+   */
   constructor(transport?: Transport) {
-    this.transport = transport ?? createTransport();
+    this.transport = transport ?? new TauriTransport();
   }
 
   /** Attach to `region`; returns the new subscription id and its baseline state. */
