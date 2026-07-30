@@ -1,0 +1,45 @@
+{
+  "operation": "resolveRestoreMode",
+  "cases": [
+    {
+      "name": "explicit never wins",
+      "input": { "version": "1", "externalConnectionFiles": [], "restoreLastSessionMode": "never" },
+      "expected": "never"
+    },
+    {
+      "name": "explicit ask wins",
+      "input": { "version": "1", "externalConnectionFiles": [], "restoreLastSessionMode": "ask" },
+      "expected": "ask"
+    },
+    {
+      "name": "explicit always wins",
+      "input": { "version": "1", "externalConnectionFiles": [], "restoreLastSessionMode": "always" },
+      "expected": "always"
+    },
+    {
+      "name": "explicit mode beats the legacy boolean",
+      "input": { "version": "1", "restoreLastSessionMode": "always", "restoreLastSessionOnStartup": false },
+      "expected": "always"
+    },
+    {
+      "name": "legacy boolean false migrates to never",
+      "input": { "version": "1", "restoreLastSessionOnStartup": false },
+      "expected": "never"
+    },
+    {
+      "name": "defaults to ask when nothing is set",
+      "input": { "version": "1", "externalConnectionFiles": [] },
+      "expected": "ask"
+    },
+    {
+      "name": "legacy boolean true defaults to ask",
+      "input": { "version": "1", "restoreLastSessionOnStartup": true },
+      "expected": "ask"
+    },
+    {
+      "name": "out-of-range mode falls through to ask",
+      "input": { "version": "1", "restoreLastSessionMode": "bogus" },
+      "expected": "ask"
+    }
+  ]
+}

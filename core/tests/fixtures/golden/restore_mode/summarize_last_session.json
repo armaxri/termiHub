@@ -1,0 +1,133 @@
+{
+  "operation": "summarizeLastSession",
+  "cases": [
+    {
+      "name": "nested leaves: titles, type labels and probe targets",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "Group",
+            "layout": {
+              "type": "split",
+              "direction": "horizontal",
+              "children": [
+                {
+                  "type": "leaf",
+                  "tabs": [
+                    { "title": "prod-db", "inlineConfig": { "type": "ssh", "config": { "host": "prod-db" } } },
+                    { "inlineConfig": { "type": "serial", "config": { "device": "/dev/ttyUSB0" } } }
+                  ]
+                },
+                {
+                  "type": "leaf",
+                  "tabs": [{ "inlineConfig": { "type": "local", "config": { "shell": "bash" } } }]
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expected": {
+        "tabCount": 3,
+        "tabs": [
+          { "title": "prod-db", "typeLabel": "SSH", "target": { "kind": "host", "host": "prod-db", "port": 22 } },
+          { "title": "/dev/ttyUSB0", "typeLabel": "Serial", "target": { "kind": "serial", "device": "/dev/ttyUSB0" } },
+          { "title": "Local", "typeLabel": "Local", "target": { "kind": "local" } }
+        ]
+      }
+    },
+    {
+      "name": "telnet uses the default port when unspecified",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "G",
+            "layout": { "type": "leaf", "tabs": [{ "inlineConfig": { "type": "telnet", "config": { "host": "switch" } } }] }
+          }
+        ]
+      },
+      "expected": {
+        "tabCount": 1,
+        "tabs": [{ "title": "switch", "typeLabel": "Telnet", "target": { "kind": "host", "host": "switch", "port": 23 } }]
+      }
+    },
+    {
+      "name": "an explicit host port is honoured",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "G",
+            "layout": { "type": "leaf", "tabs": [{ "inlineConfig": { "type": "ssh", "config": { "host": "h", "port": 2222 } } }] }
+          }
+        ]
+      },
+      "expected": {
+        "tabCount": 1,
+        "tabs": [{ "title": "h", "typeLabel": "SSH", "target": { "kind": "host", "host": "h", "port": 2222 } }]
+      }
+    },
+    {
+      "name": "connectionRef resolves its target from supplied connections",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          { "name": "G", "layout": { "type": "leaf", "tabs": [{ "connectionRef": "c1", "title": "prod" }] } }
+        ]
+      },
+      "args": {
+        "connections": [{ "id": "c1", "config": { "type": "ssh", "config": { "host": "10.0.0.5", "port": 22 } } }]
+      },
+      "expected": {
+        "tabCount": 1,
+        "tabs": [{ "title": "prod", "typeLabel": "Terminal", "target": { "kind": "host", "host": "10.0.0.5", "port": 22 } }]
+      }
+    },
+    {
+      "name": "connectionRef without connections cannot resolve and is local",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          { "name": "G", "layout": { "type": "leaf", "tabs": [{ "connectionRef": "c1", "title": "prod" }] } }
+        ]
+      },
+      "expected": {
+        "tabCount": 1,
+        "tabs": [{ "title": "prod", "typeLabel": "Terminal", "target": { "kind": "local" } }]
+      }
+    },
+    {
+      "name": "agentRef yields an agent target and label",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [
+          {
+            "name": "G",
+            "layout": { "type": "leaf", "tabs": [{ "agentRef": { "agentId": "a1", "definitionId": "d1" } }] }
+          }
+        ]
+      },
+      "expected": {
+        "tabCount": 1,
+        "tabs": [{ "title": "Agent", "typeLabel": "Agent", "target": { "kind": "agent", "agentId": "a1" } }]
+      }
+    },
+    {
+      "name": "an empty session summarises to zero tabs",
+      "input": {
+        "version": "1",
+        "activeGroupIndex": 0,
+        "tabGroups": [{ "name": "Empty", "layout": { "type": "leaf", "tabs": [] } }]
+      },
+      "expected": { "tabCount": 0, "tabs": [] }
+    }
+  ]
+}
