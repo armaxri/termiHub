@@ -205,5 +205,8 @@ keyring = { version = "3", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+# Property tests over the shadow LayoutStore's tree transitions (#2151); the
+# panel-tree algebra it drives is proptest-covered in `termihub-core` (#2143).
+proptest = "1"
 temp-env = "0.3"
 tower = { version = "0.5", features = ["util"] }

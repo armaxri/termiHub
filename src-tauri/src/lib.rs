@@ -6,6 +6,11 @@ mod embedded_servers;
 /// subsystem (public so integration tests can drive `SftpSession` /
 /// `TransferRegistry` directly — issue #1245).
 pub mod files;
+/// Shadow `LayoutStore` (#2151, Phase 3 step 1 of #2139): the client-scoped
+/// `layout@<clientId>` projection region + `layout.*` intents, built on the
+/// ported panel-tree algebra (#2143). Registered and served but not yet driving
+/// the live UI — see [`layout`].
+mod layout;
 /// Native Linux X11 `CLIPBOARD`-selection binding for pasting remote-copied RDP
 /// clipboard files into local apps with delayed rendering (`text/uri-list`) —
 /// the X11 `CLIPBOARD` owner (#1815) plus the native-Wayland `wlr-data-control`
@@ -652,6 +657,19 @@ pub fn run() {
             {
                 let mut registry = crate::projection::HandlerRegistry::new();
                 tunnel::projection::register_tunnel_intents(&mut registry, app.handle().clone());
+                // Shadow LayoutStore (#2151 step 1): client-scoped
+                // `layout@<clientId>` region + `layout.*` intents on the ported
+                // panel-tree algebra (#2143). The store is managed authoritative
+                // state and serves intents, but nothing in the live UI subscribes
+                // to or renders the region yet — a pure shadow foundation (steps
+                // 2+ cut mutations, then rendering, over to it). No client region
+                // is seeded here: layout regions are client-scoped and created
+                // lazily on a client's first `layout.*` intent.
+                app.manage(Arc::new(layout::LayoutStore::new()));
+                layout::projection::register_layout_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
                 // Test-bridge-only: add the diagnostic region's `diag.*` routes so
                 // the projection-assertion harness (#2164) has a self-contained
                 // region to drive. Never registered in production launches. See
