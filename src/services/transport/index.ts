@@ -31,9 +31,20 @@ export {
 } from "./ProjectionClient";
 export { newClientId, newIntentId } from "./ids";
 
-/** True when running inside the Tauri desktop shell. */
+/**
+ * True when running inside the Tauri desktop shell.
+ *
+ * Probes `__TAURI_INTERNALS__` — the object `@tauri-apps/api`'s `invoke`/
+ * `Channel` actually use — rather than `__TAURI__`. The desktop app leaves
+ * `app.withGlobalTauri` off (see `src-tauri/tauri.conf.json`), so `__TAURI__`
+ * is absent even though IPC is fully available; keying off it would wrongly
+ * fall through to the remote-client path inside the running app (#2166).
+ * `__TAURI__` is kept as a secondary probe for a globals-enabled build.
+ */
 export function isTauri(): boolean {
-  return typeof window !== "undefined" && "__TAURI__" in window;
+  return (
+    typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)
+  );
 }
 
 /**
