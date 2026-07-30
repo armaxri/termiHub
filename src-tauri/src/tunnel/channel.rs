@@ -1,72 +1,19 @@
-//! Channel-opener seam for the tunnel forwarders (test injection point, #2044).
+//! Channel-opener seam for the tunnel forwarders.
 //!
-//! The local and dynamic (SOCKS5) forwarders open one SSH `direct-tcpip`
-//! channel per accepted connection and relay bytes over its stream. In
-//! production that stream comes from a russh channel, but [`SshSession`] is a
-//! concrete `russh::client::Handle` that cannot be fabricated without a live
-//! SSH server — which left the forwarders' relay and SOCKS5-handshake logic
-//! untestable at the unit level (the whole data path sat at ~0% coverage).
-//!
-//! This trait abstracts *only* the channel-open step, so a test can inject an
-//! in-memory loopback stream while production keeps using the real SSH session
-//! unchanged. The public `start(config, Arc<SshSession>)` entry points are
-//! preserved (they wrap the session in an [`SshChannelOpener`]), so nothing
-//! outside the `tunnel` module — including `tunnel_manager` — has to change.
+//! Lifted into core (#2185) so the same forwarders run on the desktop or on an
+//! agent (S3, part of #2139). This module re-exports the core trait and the
+//! production [`SshChannelOpener`] so existing desktop call sites
+//! (`super::channel::…`) are unchanged. The still-desktop-only dynamic (`-D`)
+//! and remote (`-R`) forwarders keep using it.
 
-use std::sync::Arc;
-
-use termihub_core::backends::ssh::handler::SshSession;
-use tokio::io::{AsyncRead, AsyncWrite};
-
-/// Opens a bidirectional byte-stream channel to a remote `host:port`.
-///
-/// The real implementation ([`SshChannelOpener`]) opens an SSH `direct-tcpip`
-/// channel; tests supply a fake that returns an in-memory duplex stream and
-/// records the requested target so address parsing can be asserted.
-pub trait ChannelOpener: Send + Sync + 'static {
-    /// The bidirectional byte stream a relay copies over.
-    type Stream: AsyncRead + AsyncWrite + Unpin + Send + 'static;
-
-    /// Open a channel to `host:port`, returning its byte stream.
-    fn open_direct_tcpip(
-        &self,
-        host: String,
-        port: u16,
-    ) -> impl std::future::Future<Output = std::io::Result<Self::Stream>> + Send;
-}
-
-/// Production [`ChannelOpener`] backed by a shared SSH session.
-///
-/// Opens a russh `channel_open_direct_tcpip` channel (originator
-/// `localhost:0`, matching the previous inline calls) and hands back its byte
-/// stream via `into_stream()`.
-pub struct SshChannelOpener {
-    session: Arc<SshSession>,
-}
-
-impl SshChannelOpener {
-    /// Wrap a shared SSH session as a channel opener.
-    pub fn new(session: Arc<SshSession>) -> Self {
-        Self { session }
-    }
-}
-
-impl ChannelOpener for SshChannelOpener {
-    type Stream = russh::ChannelStream<russh::client::Msg>;
-
-    async fn open_direct_tcpip(&self, host: String, port: u16) -> std::io::Result<Self::Stream> {
-        let channel = self
-            .session
-            .channel_open_direct_tcpip(host, port as u32, "localhost", 0)
-            .await
-            .map_err(|e| std::io::Error::other(e.to_string()))?;
-        Ok(channel.into_stream())
-    }
-}
+pub use termihub_core::tunnel::channel::{ChannelOpener, SshChannelOpener};
 
 #[cfg(test)]
 pub(crate) mod test_support {
-    //! In-memory [`ChannelOpener`] fakes shared by the forwarder unit tests.
+    //! In-memory [`ChannelOpener`] fake for the desktop forwarder unit tests
+    //! (the dynamic/remote engines still live in this crate). The core local
+    //! forwarder has its own copy behind `cfg(test)` — a tiny, deterministic
+    //! test fake is cheaper duplicated than exposed across a crate boundary.
 
     use std::sync::{Arc, Mutex};
 
@@ -125,9 +72,6 @@ pub(crate) mod test_support {
                 return Err(std::io::Error::other("simulated channel open failure"));
             }
 
-            // `near` is handed to the forwarder as the "channel"; `far` is
-            // echoed by a detached task, so bytes written by the forwarder come
-            // straight back — proving bidirectional relay.
             let (near, mut far) = tokio::io::duplex(64 * 1024);
             tokio::spawn(async move {
                 let mut buf = [0u8; 4096];

@@ -2,6 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::run_location::RunLocation;
 
+// `LocalForwardConfig` and `TunnelStats` were lifted into core (#2185) so the
+// shared local-forward engine runs on the desktop or an agent (S3, part of
+// #2139). Re-exported here so `TunnelType::Local(LocalForwardConfig)`,
+// `TunnelState { stats }`, and every existing call site are unchanged.
+pub use termihub_core::tunnel::config::{LocalForwardConfig, TunnelStats};
+
 /// The three SSH tunnel types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", content = "config", rename_all = "camelCase")]
@@ -12,20 +18,6 @@ pub enum TunnelType {
     Remote(RemoteForwardConfig),
     /// Dynamic (SOCKS5) forwarding: binds a local port as a SOCKS5 proxy via SSH.
     Dynamic(DynamicForwardConfig),
-}
-
-/// Configuration for local port forwarding (ssh -L).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct LocalForwardConfig {
-    /// Local address to bind (e.g. "127.0.0.1").
-    pub local_host: String,
-    /// Local port to listen on.
-    pub local_port: u16,
-    /// Remote host to connect to (from the SSH server's perspective).
-    pub remote_host: String,
-    /// Remote port to connect to.
-    pub remote_port: u16,
 }
 
 /// Configuration for remote port forwarding (ssh -R).
@@ -90,20 +82,6 @@ pub enum TunnelStatus {
     Connected,
     Reconnecting,
     Error,
-}
-
-/// Live traffic statistics for an active tunnel.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct TunnelStats {
-    /// Total bytes sent through the tunnel.
-    pub bytes_sent: u64,
-    /// Total bytes received through the tunnel.
-    pub bytes_received: u64,
-    /// Number of currently active connections through the tunnel.
-    pub active_connections: u32,
-    /// Total connections made since the tunnel started.
-    pub total_connections: u64,
 }
 
 /// Combined runtime state for a tunnel.

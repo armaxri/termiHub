@@ -30,3 +30,5 @@ pub mod restore_mode;
 pub mod service;
 pub mod session;
 pub mod tool;
+#[cfg(feature = "ssh")]
+pub mod tunnel;
