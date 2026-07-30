@@ -191,7 +191,7 @@ impl EmbeddedServerManager {
         let service = services
             .get_mut(server_id)
             .expect("service was just inserted");
-        service.start_with(config)
+        service.start_with(config).map_err(Into::into)
     }
 
     /// Stop a running server by ID (kept listed as `Stopped`).

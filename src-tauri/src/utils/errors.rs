@@ -80,6 +80,15 @@ pub enum TerminalError {
     Io(#[from] std::io::Error),
 }
 
+/// Preserve the exact embedded-server message text when the relocated core
+/// service (#2192) surfaces an error to the desktop, so the frontend sees the
+/// same string as before the relocation.
+impl From<termihub_core::embedded_servers::service::EmbeddedServerError> for TerminalError {
+    fn from(err: termihub_core::embedded_servers::service::EmbeddedServerError) -> Self {
+        TerminalError::EmbeddedServerError(err.0)
+    }
+}
+
 impl serde::Serialize for TerminalError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

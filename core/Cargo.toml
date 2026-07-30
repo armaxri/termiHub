@@ -102,6 +102,21 @@ libloading = { version = "0.8", optional = true }
 # loader resolves the plugin's exported symbols to the type aliases this crate
 # defines and drives the backend through its safe wrappers. Behind `plugin`.
 termihub-plugin-api = { path = "../plugin-api", optional = true }
+# Embedded HTTP/FTP/TFTP file servers (#2192), so the same server implementations
+# run on the desktop or a remote agent. Behind the optional `embedded-servers`
+# feature so non-hosting core consumers do not pull the web-server stack.
+# `axum` + `tower-http` serve the HTTP file server; `libunftp` + `unftp-sbe-fs`
+# power the FTP server; `chrono` timestamps `started_at`. The TFTP server is
+# hand-rolled over std UDP (RFC 1350) — no crate.
+axum = { version = "0.7", optional = true }
+tower-http = { version = "0.5", features = ["fs"], optional = true }
+# The embedded server implementations use `anyhow` for their internal
+# error plumbing (`Context`, `anyhow!`); gated behind `embedded-servers` so the
+# rest of core keeps its `thiserror`-only error surface.
+anyhow = { version = "1", optional = true }
+libunftp = { version = "0.20", optional = true }
+unftp-sbe-fs = { version = "0.2", optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
 # Ed25519 plugin package signing / verification (#2036). Mature, misuse-resistant
 # Ed25519 implementation (library-first over hand-rolled curve code). The
 # `rand_core` feature enables `SigningKey::generate` for the keygen tool; the
@@ -154,6 +169,9 @@ required-features = ["plugin"]
 [dev-dependencies]
 async-trait = { workspace = true }
 tempfile = "3"
+# `ServiceExt::oneshot` for driving the embedded HTTP router in unit tests
+# (#2192) without binding a real socket.
+tower = { version = "0.5", features = ["util"] }
 temp-env = "0.3"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync", "net"] }
 serde_json = { workspace = true }
@@ -168,6 +186,20 @@ serial_test = "3"
 
 [features]
 default = []
+# Embedded HTTP/FTP/TFTP file servers (#2192). Pulls the web-server stack
+# (`axum`/`tower-http` for HTTP, `libunftp`/`unftp-sbe-fs` for FTP) plus `chrono`
+# for status timestamps and `tracing` for lifecycle logs. Enabled by the desktop
+# (`src-tauri`) and the agent so both can host the servers.
+embedded-servers = [
+    "dep:axum",
+    "dep:tower-http",
+    "dep:libunftp",
+    "dep:unftp-sbe-fs",
+    "dep:chrono",
+    "dep:tracing",
+    "dep:anyhow",
+    "tokio/fs",
+]
 # Plugin package format + manifest schema/validation (#1989), plus the native
 # host loader (#1995). Pulls `zip` to read `.termihub-plugin` archives,
 # `libloading` to open a plugin's backend dynamic library, and

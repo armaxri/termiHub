@@ -1,24 +1,21 @@
 //! Embedded server lifted onto the core [`Service`] trait.
 //!
-//! # S2 lift — embedded servers behind the core `Service` trait (#2154)
+//! # S2 relocation — embedded servers on the core `Service` trait (#2154, #2192)
 //!
 //! Following the HTTP-monitor pilot (#2157/#2172), each embedded HTTP/FTP/TFTP
-//! server is an [`EmbeddedServerService`] implementing
-//! [`termihub_core::service::Service`] (the S1 substrate from #2148). A server's
-//! lifecycle — spawn its listener thread, confirm the bind, track live stats,
-//! stop — is owned by the service, which emits status transitions as
-//! [`ServiceEvent`]s on the core-owned [`EventChannel`] instead of pushing them
-//! through Tauri's [`Emitter`](tauri::Emitter). The desktop host
-//! ([`EmbeddedServerManager`](super::server_manager::EmbeddedServerManager))
-//! bridges that channel to the existing `embedded-server-status-changed` Tauri
-//! event, so the frontend contract is byte-for-byte unchanged.
+//! server is an [`EmbeddedServerService`] implementing the core
+//! [`Service`](crate::service::Service) trait (the S1 substrate from #2148). A
+//! server's lifecycle — spawn its listener thread, confirm the bind, track live
+//! stats, stop — is owned by the service, which emits status transitions as
+//! [`ServiceEvent`](crate::service::ServiceEvent)s on the core-owned
+//! [`EventChannel`](crate::service::EventChannel) instead of a host-specific
+//! emitter. The desktop host bridges that channel to the existing
+//! `embedded-server-status-changed` Tauri event, and the agent bridges it to its
+//! RPC event stream, so both hosts run the same implementation unchanged.
 //!
-//! Decoupling the servers from `AppHandle` is what lets the *same* service run
-//! on the desktop **or** a remote agent (concept #2139, Phase S2). Physically
-//! relocating the server implementations into `core/src/embedded_servers/` and
-//! registering them on the agent is a follow-up (it requires moving the `axum`
-//! / `libunftp` dependency stack into the core + agent crates); this lift lands
-//! the trait, the event channel, run-location routing, and discovery.
+//! Decoupling the servers from `AppHandle` (#2154) is what let the *same* service
+//! run on the desktop **or** a remote agent; #2192 relocated the implementations
+//! here so the agent crate can compile and host them.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender};
@@ -28,9 +25,11 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use termihub_core::connection::schema::{FieldType, SettingsField, SettingsGroup};
-use termihub_core::connection::SettingsSchema;
-use termihub_core::service::{
+use thiserror::Error;
+
+use crate::connection::schema::{FieldType, SettingsField, SettingsGroup};
+use crate::connection::SettingsSchema;
+use crate::service::{
     EventChannel, Service, ServiceCapabilities, ServiceError, ServiceEvent, ServiceEventReceiver,
     ServiceStatus,
 };
@@ -41,7 +40,23 @@ use super::config::{
 use super::ftp_server::start_ftp_server;
 use super::http_server::start_http_server;
 use super::tftp_server::start_tftp_server;
-use crate::utils::errors::TerminalError;
+
+/// Error from an embedded-server lifecycle operation.
+///
+/// A thin string newtype so the desktop can map it onto its `TerminalError`
+/// (and the async [`Service`] trait onto [`ServiceError`]) while preserving the
+/// exact user-facing message text the servers produced before the #2192
+/// relocation.
+#[derive(Debug, Clone, Error)]
+#[error("{0}")]
+pub struct EmbeddedServerError(pub String);
+
+impl EmbeddedServerError {
+    /// Build an error from any displayable value.
+    fn new(msg: impl Into<String>) -> Self {
+        Self(msg.into())
+    }
+}
 
 /// Machine-readable service id for the embedded HTTP server.
 pub const SERVICE_ID_HTTP: &str = "http_server";
@@ -185,12 +200,12 @@ impl EmbeddedServerService {
     /// Attempt a quick bind to check whether a config's port is available.
     ///
     /// Static so the pre-flight check can be exercised without a live service.
-    pub fn check_port_config(config: &EmbeddedServerConfig) -> Result<(), TerminalError> {
+    pub fn check_port_config(config: &EmbeddedServerConfig) -> Result<(), EmbeddedServerError> {
         let addr = format!("{}:{}", config.bind_host, config.port);
         match config.server_type {
             ServerType::Tftp => {
                 let socket = std::net::UdpSocket::bind(&addr).map_err(|e| {
-                    TerminalError::EmbeddedServerError(format!(
+                    EmbeddedServerError::new(format!(
                         "Port {} is already in use: {e}",
                         config.port
                     ))
@@ -199,7 +214,7 @@ impl EmbeddedServerService {
             }
             _ => {
                 let listener = std::net::TcpListener::bind(&addr).map_err(|e| {
-                    TerminalError::EmbeddedServerError(format!(
+                    EmbeddedServerError::new(format!(
                         "Port {} is already in use: {e}",
                         config.port
                     ))
@@ -217,11 +232,11 @@ impl EmbeddedServerService {
     /// The desktop host calls this directly from a synchronous Tauri command; the
     /// trait's async [`start`](Service::start) parses a JSON config and delegates
     /// here.
-    pub fn start_with(&mut self, config: EmbeddedServerConfig) -> Result<(), TerminalError> {
+    pub fn start_with(&mut self, config: EmbeddedServerConfig) -> Result<(), EmbeddedServerError> {
         // A live server genuinely blocks a second start; a dead husk from a prior
         // runtime failure does not (so a start acts as a Retry — GAP G2/G9).
         if self.is_live() {
-            return Err(TerminalError::EmbeddedServerError(format!(
+            return Err(EmbeddedServerError::new(format!(
                 "Server {} is already running",
                 config.id
             )));
@@ -322,7 +337,7 @@ impl EmbeddedServerService {
                     ServerStats::default(),
                     None,
                 ));
-                Err(TerminalError::EmbeddedServerError(reason))
+                Err(EmbeddedServerError::new(reason))
             }
         }
     }
@@ -585,7 +600,7 @@ fn active_entry_is_live(error: &Arc<Mutex<Option<String>>>) -> bool {
 
 /// Build the `Error` [`ServerState`] surfaced when a server marked `auto_start`
 /// fails to start at launch (e.g. its port is already in use) (GAP G7, #1145).
-pub(super) fn auto_start_error_state(server_id: &str, error: &str) -> ServerState {
+pub fn auto_start_error_state(server_id: &str, error: &str) -> ServerState {
     ServerState {
         server_id: server_id.to_string(),
         status: ServerStatus::Error,
@@ -599,7 +614,7 @@ pub(super) fn auto_start_error_state(server_id: &str, error: &str) -> ServerStat
 mod tests {
     use super::*;
     use std::sync::mpsc;
-    use termihub_core::service::ServiceEventReceiver;
+    use crate::service::ServiceEventReceiver;
 
     fn http_config(port: u16) -> EmbeddedServerConfig {
         EmbeddedServerConfig {
