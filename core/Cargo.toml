@@ -35,6 +35,11 @@ portable-pty = { version = "0.8", optional = true }
 tracing = { version = "0.1", optional = true }
 russh = { workspace = true, optional = true }
 russh-sftp = { workspace = true, optional = true }
+# Privilege-elevated SFTP writes (sftp_ops): POSIX-quote the untrusted remote
+# destination path so it can never break out of the `sudo /bin/sh` command, and
+# generate the tool-owned `/tmp/termihub-<uuid>` temp upload path.
+shlex = { version = "1", optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
 # Loading legacy PKCS#5-encrypted PEM EC keys that russh 0.61 can't parse
 # (see backends/ssh/legacy_pem.rs). Versions mirror russh's own crypto stack.
 aes = { version = "0.9", optional = true }
@@ -222,6 +227,8 @@ telnet = ["dep:tracing"]
 ssh = [
     "dep:russh",
     "dep:russh-sftp",
+    "dep:shlex",
+    "dep:uuid",
     "dep:tracing",
     "dep:aes",
     "dep:cbc",
