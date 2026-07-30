@@ -2,11 +2,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::run_location::RunLocation;
 
-// `LocalForwardConfig` and `TunnelStats` were lifted into core (#2185) so the
-// shared local-forward engine runs on the desktop or an agent (S3, part of
-// #2139). Re-exported here so `TunnelType::Local(LocalForwardConfig)`,
-// `TunnelState { stats }`, and every existing call site are unchanged.
-pub use termihub_core::tunnel::config::{LocalForwardConfig, TunnelStats};
+// `LocalForwardConfig`, `RemoteForwardConfig`, and `TunnelStats` were lifted
+// into core (#2185) so the shared forward engines run on the desktop or an agent
+// (S3, part of #2139). Re-exported here so `TunnelType::Local(LocalForwardConfig)`,
+// `TunnelType::Remote(RemoteForwardConfig)`, `TunnelState { stats }`, and every
+// existing call site are unchanged.
+pub use termihub_core::tunnel::config::{LocalForwardConfig, RemoteForwardConfig, TunnelStats};
 
 /// The three SSH tunnel types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -18,20 +19,6 @@ pub enum TunnelType {
     Remote(RemoteForwardConfig),
     /// Dynamic (SOCKS5) forwarding: binds a local port as a SOCKS5 proxy via SSH.
     Dynamic(DynamicForwardConfig),
-}
-
-/// Configuration for remote port forwarding (ssh -R).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct RemoteForwardConfig {
-    /// Address on the SSH server to bind.
-    pub remote_host: String,
-    /// Port on the SSH server to listen on.
-    pub remote_port: u16,
-    /// Local host to forward connections to.
-    pub local_host: String,
-    /// Local port to forward connections to.
-    pub local_port: u16,
 }
 
 /// Configuration for dynamic (SOCKS5) forwarding (ssh -D).
