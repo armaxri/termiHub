@@ -101,11 +101,18 @@ fn registry_for(store: Arc<LayoutStore>) -> HandlerRegistry {
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
-    let s = store;
+    let s = store.clone();
     registry.route("layout.closeTabStructure", move |intent, projector| {
         let tab_id = required_str(intent, "tabId")?;
         s.close_tab_structure(&intent.client_id, &tab_id)
             .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store;
+    registry.route("layout.replace", move |intent, projector| {
+        let (root, active_panel_id) = parse_replace(intent)?;
+        s.replace(&intent.client_id, root, active_panel_id);
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
@@ -281,6 +288,57 @@ fn move_and_close_intents_advance_the_region_monotonically() {
         cache.view,
         store.snapshot("A"),
         "cache converges on authority"
+    );
+}
+
+#[test]
+fn replace_seeds_a_tree_then_a_structural_intent_round_trips() {
+    // The step-2 bridge flow: an empty store is seeded from the frontend tree via
+    // `layout.replace`, then a structural intent mutates that seeded tree and the
+    // cache converges on authority — the round-trip the frontend reconciles.
+    let store = Arc::new(LayoutStore::new());
+    let region = layout_region("A");
+    let projector = Arc::new(Projector::new());
+    // Lazily seeds an empty leaf; the region exists before the first replace.
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(&region, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    // Seed the store with the frontend's authoritative tree.
+    let ack = dispatcher.dispatch(intent(
+        "layout.replace",
+        "A",
+        json!({ "root": two_panel_tree(), "activePanelId": "a" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    // Now a structural intent operates on the seeded tree.
+    let ack = dispatcher.dispatch(intent(
+        "layout.moveTab",
+        "A",
+        json!({ "tabId": "t1", "targetPanelId": "b", "edge": "center" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 2, "one diff for replace, one for the move");
+    for diff in &diffs {
+        cache.apply(diff);
+    }
+    assert_eq!(cache.version, 2);
+    assert_eq!(
+        cache.view,
+        store.snapshot("A"),
+        "cache converges on authority"
+    );
+    // t1 landed in b; a is left with t2 — tab count is conserved across the seed.
+    let root: PanelNode = serde_json::from_value(store.snapshot("A")["root"].clone()).unwrap();
+    assert_eq!(
+        termihub_core::layout::panel_tree::count_tabs_in_tree(&root),
+        3
     );
 }
 
