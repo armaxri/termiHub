@@ -11,6 +11,7 @@ pub mod macros;
 pub mod network;
 pub mod plugin;
 pub mod portable;
+pub mod projection;
 pub mod remote_desktop;
 pub mod session;
 pub mod session_history;

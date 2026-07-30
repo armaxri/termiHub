@@ -22,6 +22,10 @@ mod macos_clipboard;
 mod macos_services;
 mod macros;
 mod network;
+/// Stateless-UI projection substrate (#2149): server-authoritative per-region
+/// versioned diff channels with multi-subscriber fan-out. Public so integration
+/// tests can drive the projector directly.
+pub mod projection;
 pub mod run_location;
 mod session;
 mod session_history;
@@ -285,6 +289,9 @@ pub fn run() {
         .manage(window::WindowManager::new())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(commands::local_process::LocalProcessRegistry::default())
+        // Stateless-UI projection substrate (#2149) — projector + intent
+        // dispatcher, wired beside the existing typed commands (strangler).
+        .manage(commands::projection::ProjectionState::new())
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
 
@@ -875,6 +882,11 @@ pub fn run() {
             commands::ssh_host_key::ssh_host_key_decision,
             commands::ssh_host_key::ssh_trust_list,
             commands::ssh_host_key::ssh_trust_forget,
+            // Stateless-UI projection substrate (#2149)
+            commands::projection::intent_dispatch,
+            commands::projection::projection_subscribe,
+            commands::projection::projection_unsubscribe,
+            commands::projection::projection_resync,
             // Plugin management layer (#1992)
             commands::plugin::list_plugins,
             commands::plugin::validate_plugin,
