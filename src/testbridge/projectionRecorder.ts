@@ -25,7 +25,7 @@
  * Installed only in test-bridge mode; it never loads in a production launch.
  */
 
-import { ProjectionClient, TauriTransport, newClientId, newIntentId } from "@/services/transport";
+import { ProjectionClient, createTransport, newClientId, newIntentId } from "@/services/transport";
 import type {
   FrameHandler,
   Intent,
@@ -120,16 +120,14 @@ export class ProjectionRecorder {
   private counter = 0;
 
   /**
-   * `transport` is injectable for unit tests; defaults to a {@link TauriTransport}.
-   *
-   * Constructed directly rather than via `createTransport()`: the recorder only
-   * ever runs inside the desktop app (test-bridge mode), and `createTransport`'s
-   * `isTauri()` probe keys off `window.__TAURI__`, which is absent unless
-   * `withGlobalTauri` is set — so it would wrongly take the remote-client branch
-   * here even though Tauri IPC (`__TAURI_INTERNALS__`) is available.
+   * `transport` is injectable for unit tests; defaults to the production
+   * transport via {@link createTransport}, which resolves to `TauriTransport`
+   * inside the desktop shell. Since #2166 the `isTauri()` probe keys off
+   * `window.__TAURI_INTERNALS__` (what Tauri IPC actually uses), so this
+   * selects the desktop transport correctly even with `withGlobalTauri` off.
    */
   constructor(transport?: Transport) {
-    this.transport = transport ?? new TauriTransport();
+    this.transport = transport ?? createTransport();
   }
 
   /** Attach to `region`; returns the new subscription id and its baseline state. */

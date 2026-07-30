@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createTransport, isTauri } from "./index";
+import { TauriTransport } from "./TauriTransport";
 import { WebSocketTransport, type JsonRpcSocket } from "./WebSocketTransport";
 import type { DiffFrame, IntentAck, SnapshotFrame } from "./types";
 
@@ -108,6 +109,39 @@ describe("createTransport selector", () => {
     vi.stubGlobal("window", { __TAURI__: {} });
     try {
       expect(isTauri()).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  // Regression for #2166: the desktop app runs with `app.withGlobalTauri`
+  // off, so `window.__TAURI__` is absent even though Tauri IPC is fully
+  // available via `window.__TAURI_INTERNALS__` (what `invoke`/`Channel` use).
+  // Detection must key off the internals object, not the optional global.
+  it("detects the desktop shell via __TAURI_INTERNALS__ (withGlobalTauri off)", () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: { invoke: () => {} } });
+    try {
+      expect(isTauri()).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("selects TauriTransport in the desktop shell with withGlobalTauri off", () => {
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: { invoke: () => {} } });
+    try {
+      expect(createTransport()).toBeInstanceOf(TauriTransport);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("falls back to WebSocketTransport in a plain browser (no Tauri internals)", () => {
+    vi.stubGlobal("window", {});
+    try {
+      const socket = new FakeSocket();
+      expect(isTauri()).toBe(false);
+      expect(createTransport({ socket })).toBeInstanceOf(WebSocketTransport);
     } finally {
       vi.unstubAllGlobals();
     }
