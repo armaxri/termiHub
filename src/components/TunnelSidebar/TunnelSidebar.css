@@ -83,3 +83,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Vantage host badge on a tunnel row (S3, #2155). */
+.tunnel-item__host {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-secondary);
+}
+
+.tunnel-item__host[data-on-agent="true"] {
+  color: var(--accent-color);
+}
+
+.tunnel-item__host-icon {
+  flex-shrink: 0;
+}

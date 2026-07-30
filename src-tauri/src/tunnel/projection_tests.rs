@@ -41,6 +41,7 @@ fn local_tunnel(id: &str, name: &str) -> TunnelConfig {
             remote_host: "db.internal".to_string(),
             remote_port: 5432,
         }),
+        host: crate::run_location::RunLocation::ThisComputer,
         auto_start: false,
         reconnect_on_disconnect: false,
     }
@@ -55,6 +56,7 @@ fn dynamic_tunnel(id: &str, name: &str) -> TunnelConfig {
             local_host: "127.0.0.1".to_string(),
             local_port: 1080,
         }),
+        host: crate::run_location::RunLocation::ThisComputer,
         auto_start: false,
         reconnect_on_disconnect: false,
     }

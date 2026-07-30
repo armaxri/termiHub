@@ -122,3 +122,70 @@
   padding-top: 8px;
   border-top: 1px solid var(--border-primary);
 }
+
+/* Named endpoint lines — surface the vantage point (S3, #2155). */
+.tunnel-editor__endpoints {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.tunnel-editor__endpoints-host {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.tunnel-editor__endpoint-line code {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+}
+
+.tunnel-editor__endpoint-note {
+  color: var(--text-secondary);
+}
+
+/* Non-blocking reachability warning for an agent-hosted loopback listen. */
+.tunnel-editor__reachability {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-md);
+  background: var(--bg-warning);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.tunnel-editor__reachability-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--color-warning);
+}
+
+.tunnel-editor__reachability-text {
+  color: var(--text-primary);
+}
+
+.tunnel-editor__reachability-action {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-color);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.tunnel-editor__reachability-action:hover {
+  color: var(--text-primary);
+}
