@@ -18,8 +18,9 @@
  *
  * # Safety (strangler)
  *
- * - **Gated** by {@link layoutIntentsEnabled}. Flag off → the hook returns
- *   `appStore.rootPanel` verbatim, so the renderer is byte-for-byte unchanged.
+ * - **Gated** by {@link layoutRenderFromProjectionEnabled}. Flag off → the hook
+ *   returns `appStore.rootPanel` verbatim, so the renderer is byte-for-byte
+ *   unchanged.
  * - **Faithful-mirror gate.** The projection drives the render only when its
  *   view is a structural mirror of `appStore`'s tree ({@link viewMatchesTree}).
  *   Tab create/close/reorder/activate are not yet layout intents, so they edit
