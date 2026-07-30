@@ -158,6 +158,9 @@ temp-env = "0.3"
 tokio = { version = "1", features = ["rt", "macros", "time", "sync", "net"] }
 serde_json = { workspace = true }
 russh = { workspace = true }
+# Property-based testing for the panel-tree algebra (#2143) — its pure-function
+# tree operations have a clean invariant shape ideal for proptest.
+proptest = "1"
 # Serializes integration tests that mutate shared single-instance container
 # state (e.g. the network-fault-proxy's `tc` qdisc) so the suite is parallel-safe
 # regardless of `--test-threads` (#864).
