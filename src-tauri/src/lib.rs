@@ -652,6 +652,14 @@ pub fn run() {
             {
                 let mut registry = crate::projection::HandlerRegistry::new();
                 tunnel::projection::register_tunnel_intents(&mut registry, app.handle().clone());
+                // Test-bridge-only: add the diagnostic region's `diag.*` routes so
+                // the projection-assertion harness (#2164) has a self-contained
+                // region to drive. Never registered in production launches. See
+                // `commands::projection_diag`.
+                let diagnostics = utils::test_bridge::is_test_bridge_enabled();
+                if diagnostics {
+                    commands::projection_diag::register_diagnostic_routes(&mut registry);
+                }
                 let projection_state =
                     commands::projection::ProjectionState::with_handler(Arc::new(registry));
                 if let Some(manager) =
@@ -660,6 +668,12 @@ pub fn run() {
                     projection_state.projector.register_region(
                         tunnel::projection::TUNNELS_REGION,
                         tunnel::projection::build_tunnel_view(&manager),
+                    );
+                }
+                if diagnostics {
+                    projection_state.projector.register_region(
+                        commands::projection_diag::DIAG_REGION,
+                        commands::projection_diag::initial_view(),
                     );
                 }
                 app.manage(projection_state);

@@ -578,6 +578,7 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 | SSH Keys (system)      | `tests/system/tests/test_ssh_keys.py`               | ssh-keys:2203                                             | Key-based auth flows (ported from `ssh-keys.test.js`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | SSH Infra (system)     | `tests/system/tests/test_ssh.py`                    | ssh-password:2201, ssh-keys:2203                          | Password/key auth, password-prompt modal, connection failure, session output, monitoring show/hide (ported from `ssh.test.js`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | Win Shells (system)    | `tests/system/tests/test_windows_shells.py`         | none                                                      | PowerShell / cmd.exe selection, rendering, input, the shell selector, and WSL sessions (cwd / `/mnt` path translation). Windows-only; WSL cases skip without WSL2 (ported from `windows-shells.test.js`, #975)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Projection (system)    | `tests/system/tests/test_projection_bridge.py`      | none                                                      | Projection substrate assertions over the bridge (#2164): snapshot-on-attach, intent → diff (baseVersion/version + JSON-Patch ops + resulting view), forced gap → resync re-baseline, multi-subscriber identical version sequence, intent rejection. Drives the test-only `diag.counter` region. See [Projection-assertion harness (#2164)](#projection-assertion-harness-2164)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### Skip Behavior
 
@@ -632,6 +633,41 @@ the desktop-launched `termihub-agent --stdio` process (the var can never be a CL
 flag). It is a separate service from `remote-agent` on purpose: the on-attach
 update announcement would otherwise surface a banner in the banner-_surfacing_
 suite, whose gating tests assert none appears until they announce one.
+
+#### Projection-assertion harness (#2164)
+
+The stateless-UI projection substrate (#2149) pushes per-region **versioned diff
+frames** over a Tauri IPC channel: a client subscribes to a region and gets a
+`snapshot` baseline, then an ordered stream of `diff` frames as intents mutate
+it; a detected version gap is recovered by a `resync` that re-baselines from a
+fresh snapshot. Those frames never touch the DOM or the Zustand store, so the
+bridge's usual introspection verbs cannot see them. The projection-assertion
+harness closes that gap:
+
+- **App side** — a page-scoped `ProjectionRecorder` (`src/testbridge/projectionRecorder.ts`)
+  subscribes through the **real** transport + `ProjectionClient` cache and buffers
+  every raw frame, exposed via six bridge verbs
+  (`projectionSubscribe`/`Dispatch`/`State`/`DropNext`/`Resync`/`Unsubscribe`). A
+  **forced gap** is produced honestly: `dropNext` swallows the next delivered diff
+  before it reaches the client, so the following diff trips the real gap → resync
+  path — exactly what a lost/reordered frame triggers in production.
+- **Harness side** — `ProjectionHarness` (`tests/system/termihub_harness/projection.py`)
+  wraps those verbs with polling (`wait_for_frame_count` / `wait_for_version`) and
+  frame-shape / version-sequence assertions (`assert_snapshot`, `assert_diff`,
+  `assert_version_sequence`). It is **reusable**: a Phase-2 domain (tunnels,
+  layout, session) mixes it in and asserts _its_ projection the same way, rather
+  than re-rolling frame assertions.
+
+Phase 1 migrates no domain onto the substrate, so `test_projection_bridge.py`
+drives a **test-only diagnostic region** (`diag.counter`) with `diag.*` intent
+routes. It is installed **only** in test-bridge mode
+(`src-tauri/src/commands/projection_diag.rs`, gated on `TERMIHUB_TEST_BRIDGE_PORT`
+in the app's `setup`, beside the real tunnel pilot); production launches register
+neither the diagnostic routes nor the region. Run it locally — it needs no Docker:
+
+```bash
+./scripts/test-system-py.sh -m integration -k projection_bridge
+```
 
 #### Python system-test harness — cross-platform shells (#886)
 

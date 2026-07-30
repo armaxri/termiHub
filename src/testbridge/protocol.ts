@@ -322,6 +322,71 @@ export interface EmitEventCommand {
   payload?: unknown;
 }
 
+/**
+ * Attach to a projection-substrate region (#2149) and start recording its
+ * pushed frames — the app-side of the projection-assertion harness (#2164).
+ *
+ * The substrate's diff frames ride a per-region Tauri IPC channel, invisible to
+ * the DOM- and store-facing verbs; this subscribes through the real transport +
+ * {@link import("@/services/transport").ProjectionClient} cache and buffers every
+ * raw frame so the synchronous Python harness can poll and assert them. Returns
+ * `{ subscriptionId, region, snapshot, frames, cache, dropRemaining }` — the id
+ * is passed to the other `projection*` verbs. Resolves against an injected
+ * `projection` dep, so unit tests supply a fake transport-backed recorder.
+ */
+export interface ProjectionSubscribeCommand {
+  action: "projectionSubscribe";
+  region: string;
+}
+
+/**
+ * Dispatch an intent over the substrate's channel-1 (`intent_dispatch`),
+ * returning the {@link import("@/services/transport").IntentAck} receipt.
+ *
+ * The result of an accepted intent is never inline — it arrives as a diff frame
+ * on the affected region, recorded against any active
+ * {@link ProjectionSubscribeCommand}. `intentId` / `clientId` are minted when
+ * omitted.
+ */
+export interface ProjectionDispatchCommand {
+  action: "projectionDispatch";
+  /** Dotted `<domain>.<action>`, e.g. `"diag.increment"`. */
+  kind: string;
+  /** Kind-specific payload; defaults to `{}`. */
+  payload?: unknown;
+  intentId?: string;
+  clientId?: string;
+}
+
+/** Read a subscription's current recorded frames + cache state by id. */
+export interface ProjectionStateCommand {
+  action: "projectionState";
+  subscriptionId: string;
+}
+
+/**
+ * Schedule the next `count` delivered diffs on a subscription to be dropped
+ * before they reach its cache — the forced-gap control. The dropped diffs are
+ * still recorded, so the next diff trips the real gap → resync re-baseline.
+ */
+export interface ProjectionDropNextCommand {
+  action: "projectionDropNext";
+  subscriptionId: string;
+  count: number;
+}
+
+/** Re-baseline a subscription's cache from the backend; returns its new state. */
+export interface ProjectionResyncCommand {
+  action: "projectionResync";
+  subscriptionId: string;
+}
+
+/** Detach one projection subscription (idempotent). */
+export interface ProjectionUnsubscribeCommand {
+  action: "projectionUnsubscribe";
+  subscriptionId: string;
+}
+
 /** A terminal viewport scroll position, returned by `getTerminalViewport`. */
 export interface TerminalViewport {
   /** Buffer line shown at the top of the visible area. */
@@ -352,7 +417,13 @@ export type BridgeCommand =
   | GetTerminalViewportCommand
   | GetStateCommand
   | ScreenshotCommand
-  | EmitEventCommand;
+  | EmitEventCommand
+  | ProjectionSubscribeCommand
+  | ProjectionDispatchCommand
+  | ProjectionStateCommand
+  | ProjectionDropNextCommand
+  | ProjectionResyncCommand
+  | ProjectionUnsubscribeCommand;
 
 /** The discriminator literal of any {@link BridgeCommand}. */
 export type BridgeAction = BridgeCommand["action"];

@@ -50,6 +50,7 @@ from .manual import (
 from .clipboard import read_os_clipboard
 from .display import ensure_local_display
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
+from .projection import ProjectionHarness
 from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
 from .systemtest import SystemTest, unique_name
 from .transfers import TftpUnavailable, ftp_download, ftp_list, tftp_download
@@ -93,6 +94,7 @@ __all__ = [
     "app_binary_path",
     "agent_binary_path",
     "SystemTest",
+    "ProjectionHarness",
     "AgentUi",
     "ConfigRecoveryUi",
     "ConnectionsUi",
