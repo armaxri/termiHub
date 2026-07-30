@@ -1187,6 +1187,7 @@ pub fn run() {
             commands::network::network_http_monitor_list,
             commands::network::network_services_list,
             // Embedded servers
+            commands::embedded_servers::embedded_servers_services_list,
             commands::embedded_servers::list_embedded_servers,
             commands::embedded_servers::save_embedded_server,
             commands::embedded_servers::delete_embedded_server,
