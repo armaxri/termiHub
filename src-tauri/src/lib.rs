@@ -1167,6 +1167,7 @@ pub fn run() {
             commands::network::network_http_monitor_resume,
             commands::network::network_http_monitor_stop_all,
             commands::network::network_http_monitor_list,
+            commands::network::network_services_list,
             // Embedded servers
             commands::embedded_servers::list_embedded_servers,
             commands::embedded_servers::save_embedded_server,
