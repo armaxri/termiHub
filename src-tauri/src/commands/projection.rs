@@ -17,8 +17,8 @@ use tauri::ipc::Channel;
 use tauri::State;
 
 use crate::projection::{
-    Dispatcher, HandlerRegistry, Intent, IntentAck, ProjectionError, ProjectionFrame,
-    ProjectionSink, Projector, SnapshotFrame,
+    Dispatcher, HandlerRegistry, Intent, IntentAck, IntentHandler, ProjectionError,
+    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
 
 /// Managed Tauri state holding the projector and the intent dispatcher.
@@ -28,32 +28,19 @@ pub struct ProjectionState {
 }
 
 impl ProjectionState {
-    /// Production wiring: an **empty** handler registry (Phase 1 — mechanism
-    /// only, no domain migrated yet). Every intent is rejected `unknown_intent`.
+    /// An empty projector + dispatcher whose registry serves no domain yet
+    /// (every intent is rejected `unknown_intent`).
     pub fn new() -> Self {
-        Self::from_registry(HandlerRegistry::new())
+        Self::with_handler(Arc::new(HandlerRegistry::new()))
     }
 
-    /// Test-bridge-only wiring: [`new`](Self::new) plus a self-contained
-    /// diagnostic region and `diag.*` routes so the projection-assertion harness
-    /// (#2164) has a live region to drive before any real domain migrates onto
-    /// the substrate (Phase 2, #2150). Installed only when the test bridge is
-    /// enabled (see [`crate::utils::test_bridge::is_test_bridge_enabled`]); never
-    /// in production launches. See [`crate::commands::projection_diag`].
-    pub fn with_diagnostics() -> Self {
-        let mut registry = HandlerRegistry::new();
-        crate::commands::projection_diag::register_diagnostic_routes(&mut registry);
-        let state = Self::from_registry(registry);
-        state.projector.register_region(
-            crate::commands::projection_diag::DIAG_REGION,
-            crate::commands::projection_diag::initial_view(),
-        );
-        state
-    }
-
-    fn from_registry(registry: HandlerRegistry) -> Self {
+    /// Build the state around a pre-populated intent handler. Domains register
+    /// their routes on a [`HandlerRegistry`] and pass it here (Phase 2+); the
+    /// tunnel pilot wires `tunnel.*` this way in `lib.rs` once the tunnel
+    /// manager is managed. See [`crate::tunnel::projection`].
+    pub fn with_handler(handler: Arc<dyn IntentHandler>) -> Self {
         let projector = Arc::new(Projector::new());
-        let dispatcher = Arc::new(Dispatcher::new(projector.clone(), Arc::new(registry)));
+        let dispatcher = Arc::new(Dispatcher::new(projector.clone(), handler));
         Self {
             projector,
             dispatcher,

@@ -8,13 +8,14 @@
 //! (`tests/system`) can exercise the full loop against the *running app*:
 //! subscribe → snapshot, dispatch(intent) → diff, forced gap → resync.
 //!
-//! It is a **test-only hook**: [`crate::commands::projection::ProjectionState`]
-//! installs it only when the test bridge is enabled
+//! It is a **test-only hook**: the app's `setup` registers these routes and the
+//! diagnostic region only when the test bridge is enabled
 //! (`TERMIHUB_TEST_BRIDGE_PORT` set — see
-//! [`crate::utils::test_bridge::is_test_bridge_enabled`]). Production launches
-//! register nothing here, so the diagnostic region never exists outside the
-//! harness. It touches no substrate production module; it only *uses* the public
-//! [`Projector`] / [`HandlerRegistry`] API, exactly as a migrated domain will.
+//! [`crate::utils::test_bridge::is_test_bridge_enabled`]), beside the real
+//! tunnel pilot. Production launches register nothing here, so the diagnostic
+//! region never exists outside the harness. It touches no substrate production
+//! module; it only *uses* the public [`HandlerRegistry`] / `Projector` API,
+//! exactly as a migrated domain does.
 
 use serde_json::{json, Value};
 

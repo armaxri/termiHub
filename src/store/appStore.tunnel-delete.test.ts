@@ -1,16 +1,27 @@
 /**
- * Regression tests for GAP 7 from the SSH tunnel audit (#1141).
+ * Regression tests for GAP 7 from the SSH tunnel audit (#1141), carried across
+ * the projection migration (#2150).
  *
  * The store's `deleteTunnel` previously swallowed errors with a bare
  * `console.error` and gave no user feedback on success or failure (violating
  * design-system rule 4: every action gives feedback). These tests pin that
  * deleting a tunnel emits a loading→success toast on success and a
  * loading→error toast on failure, mirroring the existing start/stop pattern.
+ *
+ * Post-#2150 the delete is a `tunnel.remove` intent over the projection
+ * transport; the actual row removal is driven by the resulting projection diff
+ * (asserted in `tunnelSlice.projection.test.ts`), so on failure the row must NOT
+ * be optimistically removed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
+import type { IntentAck } from "@/services/transport";
+
+const { dispatchMock } = vi.hoisted(() => ({ dispatchMock: vi.fn() }));
+
 // Mock the service modules the store imports at module load. We only care about
-// tunnelApi + the toast primitive here, but the store pulls in the full graph.
+// the projection transport + the toast primitive here, but the store pulls in
+// the full graph.
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
     Promise.resolve({ connections: [], folders: [], agents: [], externalErrors: [] })
@@ -38,13 +49,17 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-vi.mock("@/services/tunnelApi", () => ({
-  getTunnels: vi.fn(() => Promise.resolve([])),
-  saveTunnel: vi.fn(),
-  deleteTunnel: vi.fn(() => Promise.resolve()),
-  startTunnel: vi.fn(),
-  stopTunnel: vi.fn(),
-  getTunnelStatuses: vi.fn(() => Promise.resolve([])),
+vi.mock("@/services/transport", () => ({
+  createTransport: () => ({ dispatch: dispatchMock, subscribe: vi.fn(), resync: vi.fn() }),
+  newClientId: () => "client-test",
+  newIntentId: () => "intent-test",
+  ProjectionClient: class {
+    onChange() {
+      return () => {};
+    }
+    async start() {}
+    stop() {}
+  },
 }));
 
 vi.mock("@/components/ui", async () => {
@@ -60,9 +75,10 @@ vi.mock("@/components/ui", async () => {
 });
 
 import { useAppStore } from "./appStore";
-import { deleteTunnel as apiDeleteTunnel } from "@/services/tunnelApi";
 import { toast } from "@/components/ui";
 import type { TunnelConfig } from "@/types/tunnel";
+
+const ACCEPTED: IntentAck = { intentId: "intent-test", status: "accepted", produced: [] };
 
 function makeTunnel(id: string, name: string): TunnelConfig {
   return {
@@ -83,33 +99,42 @@ describe("appStore — deleteTunnel feedback (GAP 7, #1141)", () => {
     useAppStore.setState(useAppStore.getInitialState());
     useAppStore.setState({ tunnels: [makeTunnel("tun-1", "My Tunnel")] });
     vi.clearAllMocks();
+    dispatchMock.mockResolvedValue(ACCEPTED);
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it("shows a loading then success toast when a tunnel is deleted", async () => {
+  it("dispatches a tunnel.remove intent with loading then success toast", async () => {
     await useAppStore.getState().deleteTunnel("tun-1");
 
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(dispatchMock.mock.calls[0][0]).toMatchObject({
+      kind: "tunnel.remove",
+      payload: { id: "tun-1" },
+    });
     expect(toast.loading).toHaveBeenCalled();
     expect(toast.success).toHaveBeenCalledWith(
       expect.stringContaining("My Tunnel"),
       expect.objectContaining({ id: "toast-id" })
     );
     expect(toast.error).not.toHaveBeenCalled();
-    // The tunnel is removed from the store on success.
-    expect(useAppStore.getState().tunnels).toHaveLength(0);
   });
 
-  it("shows an error toast and keeps the tunnel when deletion fails", async () => {
-    vi.mocked(apiDeleteTunnel).mockRejectedValueOnce(new Error("boom"));
+  it("shows an error toast and keeps the tunnel when the intent is rejected", async () => {
+    dispatchMock.mockResolvedValueOnce({
+      intentId: "intent-test",
+      status: "rejected",
+      error: { code: "delete_failed", message: "boom" },
+    });
 
     await expect(useAppStore.getState().deleteTunnel("tun-1")).rejects.toThrow("boom");
 
     expect(toast.error).toHaveBeenCalled();
     expect(toast.success).not.toHaveBeenCalled();
-    // On failure the row must NOT be optimistically removed (no desync).
+    // On failure the row must NOT be optimistically removed (no desync — the
+    // projection diff is the only thing that mutates the list).
     expect(useAppStore.getState().tunnels).toHaveLength(1);
   });
 });

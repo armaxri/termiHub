@@ -289,16 +289,10 @@ pub fn run() {
         .manage(window::WindowManager::new())
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(commands::local_process::LocalProcessRegistry::default())
-        // Stateless-UI projection substrate (#2149) — projector + intent
-        // dispatcher, wired beside the existing typed commands (strangler). In
-        // test-bridge mode, install the diagnostic region + `diag.*` routes so
-        // the projection-assertion harness (#2164) has a live region to drive;
-        // production launches get the empty Phase-1 registry.
-        .manage(if utils::test_bridge::is_test_bridge_enabled() {
-            commands::projection::ProjectionState::with_diagnostics()
-        } else {
-            commands::projection::ProjectionState::new()
-        })
+        // Stateless-UI projection substrate (#2149) + tunnel pilot (#2150): the
+        // projector + intent dispatcher are constructed in `setup` (below), once
+        // the tunnel manager exists to seed the `tunnels` region and serve the
+        // `tunnel.*` intents. Wired beside the existing typed commands (strangler).
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
 
@@ -647,6 +641,42 @@ pub fn run() {
                         details: Some(e.to_string()),
                     });
                 }
+            }
+
+            // Stateless-UI projection substrate (#2149) + SSH-tunnels pilot
+            // (#2150). Built here — not in the builder chain — so the tunnel
+            // manager (managed just above) can seed the `tunnels` region and
+            // serve the `tunnel.*` intents. If the tunnel manager failed to
+            // initialize, the region/intents degrade gracefully (intents reject
+            // `unavailable`; the region stays empty).
+            {
+                let mut registry = crate::projection::HandlerRegistry::new();
+                tunnel::projection::register_tunnel_intents(&mut registry, app.handle().clone());
+                // Test-bridge-only: add the diagnostic region's `diag.*` routes so
+                // the projection-assertion harness (#2164) has a self-contained
+                // region to drive. Never registered in production launches. See
+                // `commands::projection_diag`.
+                let diagnostics = utils::test_bridge::is_test_bridge_enabled();
+                if diagnostics {
+                    commands::projection_diag::register_diagnostic_routes(&mut registry);
+                }
+                let projection_state =
+                    commands::projection::ProjectionState::with_handler(Arc::new(registry));
+                if let Some(manager) =
+                    app.handle().try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>()
+                {
+                    projection_state.projector.register_region(
+                        tunnel::projection::TUNNELS_REGION,
+                        tunnel::projection::build_tunnel_view(&manager),
+                    );
+                }
+                if diagnostics {
+                    projection_state.projector.register_region(
+                        commands::projection_diag::DIAG_REGION,
+                        commands::projection_diag::initial_view(),
+                    );
+                }
+                app.manage(projection_state);
             }
 
             // Initialize workspace manager with recovery loading.

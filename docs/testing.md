@@ -662,8 +662,8 @@ Phase 1 migrates no domain onto the substrate, so `test_projection_bridge.py`
 drives a **test-only diagnostic region** (`diag.counter`) with `diag.*` intent
 routes. It is installed **only** in test-bridge mode
 (`src-tauri/src/commands/projection_diag.rs`, gated on `TERMIHUB_TEST_BRIDGE_PORT`
-via `ProjectionState::with_diagnostics()`); production launches keep the empty
-Phase-1 registry and never register it. Run it locally — it needs no Docker:
+in the app's `setup`, beside the real tunnel pilot); production launches register
+neither the diagnostic routes nor the region. Run it locally — it needs no Docker:
 
 ```bash
 ./scripts/test-system-py.sh -m integration -k projection_bridge
