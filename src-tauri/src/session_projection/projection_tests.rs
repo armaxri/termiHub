@@ -16,14 +16,11 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
-use super::*;
 use crate::projection::{
     apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
     ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
-use crate::session_projection::projection::{
-    publish_sessions, register_session_intents, SESSION_LIFECYCLE_REGION,
-};
+use crate::session_projection::projection::{publish_sessions, SESSION_LIFECYCLE_REGION};
 use crate::session_projection::store::SessionLifecycleStore;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -194,8 +191,18 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     let projector = Arc::new(Projector::new());
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
 
-    let snap_a = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub-a", "A", Arc::new(VecSink::new()));
-    let snap_b = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub-b", "B", Arc::new(VecSink::new()));
+    let snap_a = projector.subscribe(
+        SESSION_LIFECYCLE_REGION,
+        "sub-a",
+        "A",
+        Arc::new(VecSink::new()),
+    );
+    let snap_b = projector.subscribe(
+        SESSION_LIFECYCLE_REGION,
+        "sub-b",
+        "B",
+        Arc::new(VecSink::new()),
+    );
 
     assert_eq!(snap_a.version, 0);
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
@@ -236,7 +243,11 @@ fn a_lifecycle_intent_produces_one_diff_fanned_to_two_subscribers() {
     assert_eq!(diffs_a[0].version, 1);
 
     cache_a.apply(&diffs_a[0]);
-    assert_eq!(cache_a.view, store.snapshot(), "cache converges on authority");
+    assert_eq!(
+        cache_a.view,
+        store.snapshot(),
+        "cache converges on authority"
+    );
     assert_eq!(cache_a.view["sessions"]["s1"]["status"], json!("connected"));
 }
 
@@ -254,7 +265,10 @@ fn a_full_reconnect_loop_advances_monotonically_and_converges() {
     // s2 was connected; drive it through drop → reconnect → attempt → fail →
     // attempt → success. Each accepted intent that changes the view = one diff.
     for kind_payload in [
-        ("session.dropped", json!({ "sessionId": "s2", "error": "reset" })),
+        (
+            "session.dropped",
+            json!({ "sessionId": "s2", "error": "reset" }),
+        ),
         ("session.reconnect", json!({ "sessionId": "s2" })),
         ("session.reconnectAttempt", json!({ "sessionId": "s2" })),
         ("session.reconnectFailed", json!({ "sessionId": "s2" })),
@@ -262,7 +276,12 @@ fn a_full_reconnect_loop_advances_monotonically_and_converges() {
         ("session.connected", json!({ "sessionId": "s2" })),
     ] {
         let ack = dispatcher.dispatch(intent(kind_payload.0, kind_payload.1));
-        assert_eq!(ack.status, IntentStatus::Accepted, "{} accepted", kind_payload.0);
+        assert_eq!(
+            ack.status,
+            IntentStatus::Accepted,
+            "{} accepted",
+            kind_payload.0
+        );
     }
 
     let diffs = sink.diffs();
@@ -325,7 +344,11 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     dead.alive.store(false, Ordering::SeqCst);
     dispatcher.dispatch(intent("session.connected", json!({ "sessionId": "s1" })));
 
-    assert_eq!(live.diffs().len(), 1, "the live subscriber still gets the diff");
+    assert_eq!(
+        live.diffs().len(),
+        1,
+        "the live subscriber still gets the diff"
+    );
     assert_eq!(
         projector.subscriber_count(SESSION_LIFECYCLE_REGION),
         1,

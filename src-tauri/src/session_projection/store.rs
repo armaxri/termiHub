@@ -121,7 +121,11 @@ impl Inner {
     /// Run one reconnect-engine event for a session, returning the next
     /// [`ReconnectState`]. Reads the session's current reconnect state (Copy) and
     /// the config before borrowing `rand`, so the field borrows stay disjoint.
-    fn reconnect_event(&mut self, current: ReconnectState, event: ReconnectEvent) -> ReconnectState {
+    fn reconnect_event(
+        &mut self,
+        current: ReconnectState,
+        event: ReconnectEvent,
+    ) -> ReconnectState {
         let config = self.config;
         let rand = &mut self.rand;
         let mut adapter = || (*rand)();
@@ -156,7 +160,7 @@ impl SessionLifecycleStore {
             inner: Mutex::new(Inner {
                 sessions: HashMap::new(),
                 config,
-                rand: Box::new(|| rand::random::<f64>()),
+                rand: Box::new(rand::random::<f64>),
             }),
         }
     }
@@ -328,15 +332,6 @@ impl SessionLifecycleStore {
     #[cfg(test)]
     pub fn get(&self, session_id: &str) -> Option<SessionLifecycle> {
         self.lock().sessions.get(session_id).cloned()
-    }
-
-    /// Install a specific lifecycle for a session — test-only seeding so intent
-    /// tests can start from a populated region.
-    #[cfg(test)]
-    pub fn seed_for_test(&self, session_id: &str, lifecycle: SessionLifecycle) {
-        self.lock()
-            .sessions
-            .insert(session_id.to_string(), lifecycle);
     }
 
     /// Replace the jitter source — test-only, for a deterministic backoff

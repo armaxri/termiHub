@@ -181,10 +181,19 @@ fn snapshot_shape_maps_session_ids_to_lifecycles() {
     store.connect("s2");
     store.connected("s2");
     let view = store.snapshot();
-    assert_eq!(view["sessions"]["s1"]["status"], serde_json::json!("connecting"));
-    assert_eq!(view["sessions"]["s2"]["status"], serde_json::json!("connected"));
+    assert_eq!(
+        view["sessions"]["s1"]["status"],
+        serde_json::json!("connecting")
+    );
+    assert_eq!(
+        view["sessions"]["s2"]["status"],
+        serde_json::json!("connected")
+    );
     // Reconnect detail is always present; optional fields are omitted when unset.
-    assert_eq!(view["sessions"]["s1"]["reconnect"]["phase"], serde_json::json!("idle"));
+    assert_eq!(
+        view["sessions"]["s1"]["reconnect"]["phase"],
+        serde_json::json!("idle")
+    );
     assert!(view["sessions"]["s1"].get("error").is_none());
 }
 

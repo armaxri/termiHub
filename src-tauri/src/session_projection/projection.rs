@@ -94,7 +94,10 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
     let handle = app_handle.clone();
     registry.route("session.connectFailed", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.connect_failed(&required_str(intent, "sessionId")?, optional_str(intent, "error"));
+        store.connect_failed(
+            &required_str(intent, "sessionId")?,
+            optional_str(intent, "error"),
+        );
         Ok(publish_sessions(projector, &store))
     });
 
@@ -108,7 +111,10 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
     let handle = app_handle.clone();
     registry.route("session.dropped", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.dropped(&required_str(intent, "sessionId")?, optional_str(intent, "error"));
+        store.dropped(
+            &required_str(intent, "sessionId")?,
+            optional_str(intent, "error"),
+        );
         Ok(publish_sessions(projector, &store))
     });
 
@@ -129,7 +135,10 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
     let handle = app_handle.clone();
     registry.route("session.reconnectFailed", move |intent, projector| {
         let store = store_of(&handle)?;
-        store.reconnect_failed(&required_str(intent, "sessionId")?, optional_str(intent, "error"));
+        store.reconnect_failed(
+            &required_str(intent, "sessionId")?,
+            optional_str(intent, "error"),
+        );
         Ok(publish_sessions(projector, &store))
     });
 
