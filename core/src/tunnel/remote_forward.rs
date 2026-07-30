@@ -48,8 +48,7 @@ impl RemoteForwarder {
         registry: ForwardedChannelRegistry,
     ) -> Result<Self, std::io::Error> {
         tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(Self::start_async(config, session, registry))
+            tokio::runtime::Handle::current().block_on(Self::start_async(config, session, registry))
         })
     }
 
