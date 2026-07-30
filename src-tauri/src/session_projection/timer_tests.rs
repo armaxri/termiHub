@@ -16,11 +16,14 @@ use crate::projection::Projector;
 use crate::session_projection::projection::{publish_sessions, SESSION_LIFECYCLE_REGION};
 use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
 
+/// The armed one-shots a [`ManualScheduler`] records: `key → (delay, task)`.
+type ArmedTasks = std::collections::HashMap<String, (u64, Box<dyn FnOnce() + Send>)>;
+
 /// A test scheduler that records the armed one-shots instead of sleeping, so a
 /// test can inspect the armed delay and fire the timer synchronously.
 #[derive(Default)]
 struct ManualScheduler {
-    tasks: Mutex<std::collections::HashMap<String, (u64, Box<dyn FnOnce() + Send>)>>,
+    tasks: Mutex<ArmedTasks>,
 }
 
 impl ManualScheduler {
@@ -30,11 +33,7 @@ impl ManualScheduler {
 
     /// The delay a key is currently armed for, or `None` if nothing is armed.
     fn armed_delay(&self, key: &str) -> Option<u64> {
-        self.tasks
-            .lock()
-            .unwrap()
-            .get(key)
-            .map(|(delay, _)| *delay)
+        self.tasks.lock().unwrap().get(key).map(|(delay, _)| *delay)
     }
 
     /// Run and consume the armed task for `key` (the timer "elapsed").
@@ -56,16 +55,19 @@ impl ReconnectScheduler for ManualScheduler {
     }
 }
 
-/// A store (zero jitter), projector-registered region, a manual scheduler, and a
-/// driver whose publish hook fans the region out. Returns them all so a test can
-/// both drive intents and inspect the timer.
-fn harness() -> (
+/// The test harness bundle: store, projector, scheduler, driver, publish counter.
+type Harness = (
     Arc<SessionLifecycleStore>,
     Arc<Projector>,
     Arc<ManualScheduler>,
     Arc<ReconnectTimerDriver>,
     Arc<AtomicUsize>,
-) {
+);
+
+/// A store (zero jitter), projector-registered region, a manual scheduler, and a
+/// driver whose publish hook fans the region out. Returns them all so a test can
+/// both drive intents and inspect the timer.
+fn harness() -> Harness {
     let store = Arc::new(SessionLifecycleStore::new());
     store.set_rand_for_test(Box::new(|| 0.5));
     let projector = Arc::new(Projector::new());
@@ -96,19 +98,31 @@ fn a_waiting_phase_arms_the_backoff_delay_and_a_success_cancels_it() {
     store.connected("s1");
     store.dropped("s1", Some("reset".into()));
     driver.sync("s1");
-    assert_eq!(scheduler.armed_delay("s1"), None, "a plain drop does not retry");
+    assert_eq!(
+        scheduler.armed_delay("s1"),
+        None,
+        "a plain drop does not retry"
+    );
 
     store.reconnect("s1");
     driver.sync("s1");
     assert_eq!(store.get("s1").unwrap().status, SessionStatus::Reconnecting);
-    assert_eq!(scheduler.armed_delay("s1"), Some(1000), "attempt-1 backoff armed");
+    assert_eq!(
+        scheduler.armed_delay("s1"),
+        Some(1000),
+        "attempt-1 backoff armed"
+    );
 
     // The timer fires: the store advances Waiting → Connecting (attempt++).
     scheduler.fire("s1");
     let s = store.get("s1").unwrap();
     assert_eq!(s.reconnect.phase, ReconnectPhase::Connecting);
     assert_eq!(s.reconnect.attempt, 1);
-    assert_eq!(scheduler.armed_delay("s1"), None, "no timer while connecting");
+    assert_eq!(
+        scheduler.armed_delay("s1"),
+        None,
+        "no timer while connecting"
+    );
 
     // The attempt succeeds → the loop settles and any timer is cancelled.
     store.connected("s1");
@@ -127,7 +141,9 @@ fn the_timer_drives_the_expected_backoff_attempt_sequence_until_giveup() {
 
     // Expected uncapped backoff schedule (base 1000, factor 2, cap 30000):
     // attempt 1..=10 → 1000, 2000, 4000, 8000, 16000, then capped at 30000.
-    let expected = [1000u64, 2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000, 30000];
+    let expected = [
+        1000u64, 2000, 4000, 8000, 16000, 30000, 30000, 30000, 30000, 30000,
+    ];
     for (i, want) in expected.iter().enumerate() {
         assert_eq!(
             scheduler.armed_delay("s1"),
@@ -149,7 +165,11 @@ fn the_timer_drives_the_expected_backoff_attempt_sequence_until_giveup() {
     let s = store.get("s1").unwrap();
     assert_eq!(s.status, SessionStatus::Failed);
     assert_eq!(s.reconnect.phase, ReconnectPhase::Gaveup);
-    assert_eq!(scheduler.armed_delay("s1"), None, "give-up cancels the timer");
+    assert_eq!(
+        scheduler.armed_delay("s1"),
+        None,
+        "give-up cancels the timer"
+    );
 }
 
 #[test]
@@ -166,7 +186,10 @@ fn a_fired_timer_publishes_the_advanced_region_as_a_diff() {
     let after = projector.region_version(SESSION_LIFECYCLE_REGION).unwrap();
     assert_eq!(after, before + 1, "the fired attempt fanned out one diff");
     let snap = projector.snapshot(SESSION_LIFECYCLE_REGION);
-    assert_eq!(snap.view["sessions"]["s1"]["reconnect"]["phase"], json!("connecting"));
+    assert_eq!(
+        snap.view["sessions"]["s1"]["reconnect"]["phase"],
+        json!("connecting")
+    );
 }
 
 #[test]
@@ -179,7 +202,11 @@ fn cancel_reconnect_stops_the_timer() {
 
     store.cancel_reconnect("s1");
     driver.sync("s1");
-    assert_eq!(scheduler.armed_delay("s1"), None, "user cancel disarms the loop");
+    assert_eq!(
+        scheduler.armed_delay("s1"),
+        None,
+        "user cancel disarms the loop"
+    );
     assert_eq!(store.get("s1").unwrap().status, SessionStatus::Disconnected);
 }
 
@@ -193,5 +220,9 @@ fn remove_disarms_any_pending_timer() {
 
     store.remove("s1");
     driver.sync("s1");
-    assert_eq!(scheduler.armed_delay("s1"), None, "a removed session has no timer");
+    assert_eq!(
+        scheduler.armed_delay("s1"),
+        None,
+        "a removed session has no timer"
+    );
 }
