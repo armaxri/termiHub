@@ -276,6 +276,14 @@ import {
   moveTabPayload,
   runLayoutIntent,
 } from "@/store/layoutBridge";
+import {
+  ensureSessionSubscribed,
+  logSessionBridgeFallback,
+  mirrorSessionIntent,
+  onSessionView,
+  sessionIntentsEnabled,
+  type SessionIntentKind,
+} from "@/store/sessionBridge";
 
 export type SidebarView =
   | "connections"
@@ -2174,6 +2182,70 @@ function runOnReconnectCommand(tabId: string): void {
 }
 
 /**
+ * Map an auto-reconnect loop event to the `session.*` intent that drives the
+ * same transition in the backend `SessionLifecycleStore` (#2203). When the
+ * session-intents cut is on, {@link driveAutoReconnect} mirrors each event so the
+ * store tracks the loop and the backend timer driver arms the `Waiting → Attempt`
+ * edge. Best-effort — {@link mirrorSessionIntent} logs and swallows any failure,
+ * so the local path is never disrupted (the resilience fallback).
+ */
+function mirrorAutoReconnectEvent(
+  tabId: string,
+  event: "drop" | "attempt" | "success" | "failure" | "cancel",
+  error?: string
+): void {
+  const kind: SessionIntentKind | null =
+    event === "drop"
+      ? "session.reconnect"
+      : event === "attempt"
+        ? "session.reconnectAttempt"
+        : event === "success"
+          ? "session.connected"
+          : event === "failure"
+            ? "session.reconnectFailed"
+            : event === "cancel"
+              ? "session.cancelReconnect"
+              : null;
+  if (kind) mirrorSessionIntent(kind, tabId, error);
+}
+
+// The backend reconnect-timer reconcile is wired lazily on the first `waiting`
+// arm under the session-intents cut, so the subscription is only opened when the
+// cut is actually exercised (never in the default-off path or plain unit tests).
+let sessionReconcileWired = false;
+
+/**
+ * Wire the backend-timer reconcile once: subscribe to the `session-lifecycle`
+ * region and, when the backend timer fires a session's `Waiting → Connecting`
+ * edge, start the local attempt (redriving the real connection). Guarded so it
+ * only acts on that specific backend-driven transition and only while the local
+ * loop is still `waiting`, making a `driveAutoReconnect(tabId, "attempt")` that
+ * races the projected diff idempotent (a second attempt from `connecting` is a
+ * reducer no-op).
+ */
+function ensureSessionReconcileWired(): void {
+  // The reconcile listener is registered exactly once (it reads the live store,
+  // so one listener serves every tab); the region subscription is (re-)ensured
+  // on every call, which is idempotent and lets a dropped subscription recover.
+  if (!sessionReconcileWired) {
+    sessionReconcileWired = true;
+    onSessionView((next, prev) => {
+      for (const [tabId, life] of Object.entries(next)) {
+        const before = prev[tabId];
+        if (
+          life.reconnect.phase === "connecting" &&
+          before?.reconnect.phase === "waiting" &&
+          useAppStore.getState().terminalAutoReconnect[tabId]?.phase === "waiting"
+        ) {
+          driveAutoReconnect(tabId, "attempt");
+        }
+      }
+    });
+  }
+  ensureSessionSubscribed().catch((err) => logSessionBridgeFallback("subscribe", err));
+}
+
+/**
  * Drive the resilient-reconnect state machine for one tab by feeding it an event
  * (#1962), then reconcile the imperative side effects (backoff timer, redriving
  * the connection, overlay state) with the resulting phase. Centralising this
@@ -2185,6 +2257,15 @@ function runOnReconnectCommand(tabId: string): void {
  * the Cancel affordance (`cancel`). Reads/writes the live store via
  * `useAppStore`, so it must only run after module init (always true at call
  * time). Uses the module-scoped `reconnectReducer` for the pure decision.
+ *
+ * # Backend timer cut (#2203)
+ *
+ * When {@link sessionIntentsEnabled} is on, each event is mirrored to a
+ * `session.*` intent and the backoff *timing* is owned by the backend timer
+ * driver: the local `setTimeout` is not armed for a `waiting` phase; instead the
+ * backend fires the attempt and {@link ensureSessionReconcileWired} drives it
+ * back. When off (the default), the local `setTimeout` path runs exactly as
+ * before — the rollback / resilience fallback.
  */
 function driveAutoReconnect(
   tabId: string,
@@ -2206,6 +2287,16 @@ function driveAutoReconnect(
   }
 
   clearAutoReconnectTimer(tabId);
+
+  // Mirror the loop event to the backend session store when the cut is on, so it
+  // tracks the loop and the backend timer drives the Waiting→Attempt edge. The
+  // `attempt` event is not mirrored here: under the cut, an attempt originates
+  // from the backend timer (reconciled below), so re-dispatching it would be a
+  // redundant no-op against the store already in `Connecting`.
+  const cutOn = sessionIntentsEnabled();
+  if (cutOn && event !== "attempt") {
+    mirrorAutoReconnectEvent(tabId, event, error);
+  }
 
   // The configured on-reconnect command (#1978), echoed into the display state so
   // the countdown overlay can announce what will run once the link is back.
@@ -2229,11 +2320,18 @@ function driveAutoReconnect(
         terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
         terminalDisconnectErrors: omitKey(state.terminalDisconnectErrors, tabId),
       }));
-      const handle = setTimeout(() => {
-        autoReconnectTimers.delete(tabId);
-        driveAutoReconnect(tabId, "attempt");
-      }, next.delayMs);
-      autoReconnectTimers.set(tabId, handle);
+      if (cutOn) {
+        // Backend timer cut (#2203): the backend `SessionLifecycleStore` timer
+        // owns this backoff window and fires the attempt itself; the reconcile
+        // (wired here) drives it back into the local loop. No local `setTimeout`.
+        ensureSessionReconcileWired();
+      } else {
+        const handle = setTimeout(() => {
+          autoReconnectTimers.delete(tabId);
+          driveAutoReconnect(tabId, "attempt");
+        }, next.delayMs);
+        autoReconnectTimers.set(tabId, handle);
+      }
       frontendLog(
         "disconnect",
         `auto-reconnect tab=${tabId}: waiting ${next.delayMs}ms before attempt ${next.attempt + 1}`
@@ -3871,6 +3969,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // loop. (No-op when no loop is active.)
         if (get().terminalAutoReconnect[tabId]) {
           driveAutoReconnect(tabId, "success");
+        } else if (sessionIntentsEnabled()) {
+          // Session-intents cut (#2203): a plain (non-loop) connect succeeded —
+          // settle the tab live in the backend store. The loop case above already
+          // mirrors `session.connected` via `driveAutoReconnect`.
+          mirrorSessionIntent("session.connected", tabId);
         }
 
         // On-connect workflow triggers (#1855): a terminal session that opened
@@ -4327,6 +4430,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
     setPendingAttachedTabCloseConfirm: (req) => set({ pendingAttachedTabCloseConfirm: req }),
 
     closeTab: (tabId, panelId) => {
+      // Session-intents cut (#2203): the tab is gone — drop its lifecycle record
+      // from the shared region so the store does not leak a dead session. Any
+      // pending backend reconnect timer is cancelled by `session.remove`.
+      if (sessionIntentsEnabled()) mirrorSessionIntent("session.remove", tabId);
+
       // Relinquish backend ownership of this tab's live session (#1939). A closed
       // tab's session is torn down here (or already exited), so its
       // `session → window` entry (#1900) must be dropped or it leaks a stale
@@ -6052,7 +6160,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
           [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
         },
       })),
-    setTerminalConnecting: (tabId, connecting) =>
+    setTerminalConnecting: (tabId, connecting) => {
+      // Session-intents cut (#2203): an initial connect entering "Connecting…"
+      // is `session.connect` (a fresh connect resets any stale record). Skipped
+      // while an auto-reconnect loop owns the tab — that loop's `connecting`
+      // phase is driven by `session.reconnectAttempt`, not a fresh connect.
+      if (sessionIntentsEnabled() && connecting && !get().terminalAutoReconnect[tabId]) {
+        mirrorSessionIntent("session.connect", tabId);
+      }
       set((state) => ({
         terminalConnecting: connecting
           ? { ...state.terminalConnecting, [tabId]: true }
@@ -6060,7 +6175,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         terminalConnectDeadline: connecting
           ? armConnectDeadline(state.terminalConnectDeadline, tabId, "connecting")
           : omitKey(state.terminalConnectDeadline, tabId),
-      })),
+      }));
+    },
     setTerminalAutoRetrying: (tabId, count) =>
       set((state) => ({
         terminalConnecting: omitKey(state.terminalConnecting, tabId),
@@ -6170,10 +6286,24 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // that opted in kicks off the backoff loop instead of leaving the user at
       // the manual disconnect prompt. Only an unexpected drop qualifies — a clean
       // exit or a user kill must not silently reconnect.
+      let startedLoop = false;
       if (info?.reason === "dropped") {
         const tab = collectLiveTabs(get()).find((t) => t.id === tabId);
         if (isResilientReconnectTab(tab)) {
           get().startAutoReconnect(tabId);
+          startedLoop = true;
+        }
+      }
+      // Session-intents cut (#2203): mirror the exit to the backend store when no
+      // auto-reconnect loop took over. A user kill is a graceful
+      // `session.disconnect`; an unexpected drop that does not arm the loop is
+      // `session.dropped`. When the loop started, `session.reconnect` was already
+      // mirrored by `driveAutoReconnect`, so this is skipped.
+      if (sessionIntentsEnabled() && !startedLoop) {
+        if (info?.reason === "killed") {
+          mirrorSessionIntent("session.disconnect", tabId);
+        } else if (info?.reason === "dropped") {
+          mirrorSessionIntent("session.dropped", tabId);
         }
       }
     },
@@ -6194,6 +6324,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
       return wasKilled;
     },
     setTerminalDisconnectWithError: (tabId, error) => {
+      // Session-intents cut (#2203): a failed (re)connect with no active loop is
+      // a terminal `session.connectFailed`. A loop's own failure is driven
+      // through `driveAutoReconnect("failure")` instead, so it is skipped here.
+      if (sessionIntentsEnabled() && !get().terminalAutoReconnect[tabId]) {
+        mirrorSessionIntent("session.connectFailed", tabId, error);
+      }
       set((state) => ({
         terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
         terminalDisconnectErrors: { ...state.terminalDisconnectErrors, [tabId]: error },

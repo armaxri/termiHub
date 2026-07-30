@@ -22,5 +22,7 @@
 
 pub mod projection;
 pub mod store;
+pub mod timer;
 
 pub use store::SessionLifecycleStore;
+pub use timer::{ReconnectTimerDriver, TokioReconnectScheduler};

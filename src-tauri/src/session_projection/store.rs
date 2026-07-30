@@ -334,6 +334,14 @@ impl SessionLifecycleStore {
         self.lock().sessions.get(session_id).cloned()
     }
 
+    /// The current auto-reconnect loop state for a session, or `None` if the
+    /// session is unknown. Read by the backend timer driver ([`crate::session_projection::timer`],
+    /// #2203) to decide whether to arm a backoff timer (a `Waiting` phase) and
+    /// for how long (`delay_ms`).
+    pub fn reconnect_state(&self, session_id: &str) -> Option<ReconnectState> {
+        self.lock().sessions.get(session_id).map(|s| s.reconnect)
+    }
+
     /// Replace the jitter source — test-only, for a deterministic backoff
     /// schedule.
     #[cfg(test)]
