@@ -81,12 +81,13 @@ class TestProjectionBridge(ProjectionHarness, SystemTest):
         self.projection_dispatch_intent("diag.append", {"item": "hello"})
 
         state = self.wait_for_frame_count(sid, 1)
-        self.assert_diff(
-            self.diffs(state)[-1],
-            base_version=base,
-            version=base + 1,
-            ops=[{"op": "add", "path": "/items/-", "value": "hello"}],
-        )
+        diff = self.diffs(state)[-1]
+        # Step + op-kind are pinned; the exact append path (`/items/-` vs `/items/0`)
+        # is the JSON-Patch differ's choice, so assert the op shape, not the path.
+        self.assert_diff(diff, base_version=base, version=base + 1)
+        assert len(diff["ops"]) == 1
+        assert diff["ops"][0]["op"] == "add"
+        assert diff["ops"][0]["value"] == "hello"
         assert state["cache"]["view"] == {"count": 0, "items": ["hello"]}
 
     # ── Multi-subscriber fan-out ─────────────────────────────────────────────

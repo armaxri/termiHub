@@ -141,8 +141,16 @@ class ProjectionHarness(HarnessMixin):
     def assert_snapshot(
         snapshot: dict[str, Any], *, version: int, view: Any = None
     ) -> None:
-        """Assert a snapshot frame's ``kind``/``version`` (and ``view`` if given)."""
-        assert snapshot["kind"] == "snapshot", f"not a snapshot frame: {snapshot}"
+        """Assert a snapshot's ``version`` (and ``view`` if given).
+
+        The snapshot returned by ``projection_subscribe`` / ``projection_resync`` is
+        a bare ``SnapshotFrame`` on the wire — ``{region, version, view}`` with **no**
+        ``kind`` discriminator (only the channel-pushed ``ProjectionFrame`` enum
+        carries the ``kind`` tag). So ``kind`` is asserted only when present, and the
+        substantive check is on ``version`` (and ``view``). See #2170.
+        """
+        if "kind" in snapshot:
+            assert snapshot["kind"] == "snapshot", f"not a snapshot frame: {snapshot}"
         assert (
             snapshot["version"] == version
         ), f"snapshot version {snapshot['version']} != {version}"

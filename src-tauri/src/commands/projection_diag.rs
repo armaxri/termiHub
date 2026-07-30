@@ -18,7 +18,7 @@
 
 use serde_json::{json, Value};
 
-use crate::projection::{HandlerRegistry, ProducedRegion, Projector};
+use crate::projection::{HandlerRegistry, ProducedRegion};
 
 /// The region id the harness subscribes to and drives.
 pub const DIAG_REGION: &str = "diag.counter";
@@ -118,7 +118,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::projection::{Dispatcher, IntentStatus};
+    use crate::projection::{Dispatcher, IntentStatus, Projector};
 
     /// Build a projector seeded with the diagnostic region and a dispatcher whose
     /// registry carries the `diag.*` routes — the exact wiring
