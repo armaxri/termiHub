@@ -7,19 +7,21 @@
 //! local/remote/dynamic meanings are invariant. See
 //! `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
 //!
-//! Currently lifted: the **local** (`ssh -L`) and **remote** (`ssh -R`) engines
-//! plus the shared channel-opener seam and stats. The desktop `tunnel` module
-//! re-exports these so existing call sites are unchanged; the agent uses them to
-//! forward on the agent. The dynamic (`-D`) engine remains desktop-only for now
-//! and is tracked as a follow-up to #2185.
+//! Currently lifted: the **local** (`ssh -L`), **remote** (`ssh -R`), and
+//! **dynamic** (`ssh -D`, SOCKS5) engines plus the shared channel-opener seam
+//! and stats. The desktop `tunnel` module re-exports these so existing call
+//! sites are unchanged; the agent uses them to forward on the agent (#2198
+//! completed the trilogy with `-D`).
 
 pub mod channel;
 pub mod config;
+pub mod dynamic_forward;
 pub mod local_forward;
 pub mod remote_forward;
 
 pub use channel::{ChannelOpener, SshChannelOpener};
-pub use config::{LocalForwardConfig, RemoteForwardConfig, TunnelStats};
+pub use config::{DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats};
+pub use dynamic_forward::DynamicForwarder;
 pub use local_forward::{ForwarderStats, LocalForwarder};
 pub use remote_forward::RemoteForwarder;
 

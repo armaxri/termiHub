@@ -573,11 +573,11 @@ impl TunnelManager {
     /// The agent runs the SSH client; the desktop sends only control over the
     /// agent RPC. Forwards **local** (`ssh -L`) and **remote** (`ssh -R`)
     /// tunnels on the agent — for `-L` the listen socket binds on the agent, for
-    /// `-R` the SSH server binds it and the target is resolved from the agent
-    /// (see the endpoint-semantics concept). Dynamic (`-D`) agent hosting is a
-    /// follow-up, so it surfaces a clear, durable `Error` rather than silently
-    /// forwarding on the desktop. On success the agent-reported `bound_address` /
-    /// `reachable_from` are stored for the projection and the tunnel rests
+    /// `-R` the SSH server binds it and the target is resolved from the agent,
+    /// and for `-D` the SOCKS5 proxy listen socket binds on the agent while each
+    /// connection's target is resolved from the server (see the
+    /// endpoint-semantics concept). On success the agent-reported `bound_address`
+    /// / `reachable_from` are stored for the projection and the tunnel rests
     /// `Connected`.
     fn start_agent_tunnel(
         &self,
@@ -586,8 +586,8 @@ impl TunnelManager {
         agent_id: &str,
     ) -> Result<(), TerminalError> {
         // Build the agent's internally-tagged `TunnelForwardSpec` (a `mode`
-        // discriminator plus the flattened forward config). Local and remote run
-        // on an agent; dynamic does not yet.
+        // discriminator plus the flattened forward config). Local, remote, and
+        // dynamic all run on an agent (#2185, #2198).
         let forward = match &config.tunnel_type {
             TunnelType::Local(local) => {
                 let mut forward = serde_json::to_value(local).map_err(|e| {
@@ -603,15 +603,12 @@ impl TunnelManager {
                 forward["mode"] = serde_json::json!("remote");
                 forward
             }
-            TunnelType::Dynamic(_) => {
-                let message = format!(
-                    "agent-hosted dynamic (-D) forwarding is not yet supported (tunnel \
-                     '{tunnel_id}'); only local (-L) and remote (-R) forwarding run on an agent \
-                     today"
-                );
-                record_last_error(&self.last_errors, tunnel_id, message.clone());
-                self.emit_status(tunnel_id, TunnelStatus::Error, Some(message.clone()));
-                return Err(TerminalError::TunnelError(message));
+            TunnelType::Dynamic(dynamic) => {
+                let mut forward = serde_json::to_value(dynamic).map_err(|e| {
+                    TerminalError::TunnelError(format!("Failed to serialize forward config: {}", e))
+                })?;
+                forward["mode"] = serde_json::json!("dynamic");
+                forward
             }
         };
 

@@ -8,16 +8,18 @@
 //! the *data* path — listen socket, SSH channel, target connection — lives
 //! entirely here.
 //!
-//! Implemented so far: **local** (`ssh -L`) and **remote** (`ssh -R`)
-//! forwarding. In both the agent opens its own SSH session to the tunnel's "via"
-//! server, reusing the shared core forward engines. For `-L` the agent binds the
-//! listen socket (loopback by default) and forwards to a target on the server's
-//! network. For `-R` the **SSH server** binds the listen socket (via
-//! `tcpip_forward`) and each incoming channel is relayed to a target resolved
-//! from the **agent** (the tunnel host) — SSH's semantics are invariant, only the
-//! tunnel host moves (see
-//! `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`). Dynamic
-//! (`-D`) agent hosting is tracked as a follow-up to #2185.
+//! Implemented: **local** (`ssh -L`), **remote** (`ssh -R`), and **dynamic**
+//! (`ssh -D`, SOCKS5) forwarding (#2185, #2198). In each the agent opens its own
+//! SSH session to the tunnel's "via" server, reusing the shared core forward
+//! engines. For `-L` the agent binds the listen socket (loopback by default) and
+//! forwards to a target on the server's network. For `-R` the **SSH server**
+//! binds the listen socket (via `tcpip_forward`) and each incoming channel is
+//! relayed to a target resolved from the **agent** (the tunnel host) — SSH's
+//! semantics are invariant, only the tunnel host moves. For `-D` the agent binds
+//! the SOCKS5 proxy listen socket (loopback by default) and each proxied
+//! connection's target — chosen by the SOCKS client — is reached from the SSH
+//! server's network (see
+//! `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,7 +28,10 @@ use anyhow::{Context, Result};
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::config::SshConfig;
-use termihub_core::tunnel::config::{LocalForwardConfig, RemoteForwardConfig, TunnelStats};
+use termihub_core::tunnel::config::{
+    DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats,
+};
+use termihub_core::tunnel::dynamic_forward::DynamicForwarder;
 use termihub_core::tunnel::local_forward::LocalForwarder;
 use termihub_core::tunnel::remote_forward::RemoteForwarder;
 use termihub_core::tunnel::{classify_reachability, ReachableFrom};
@@ -42,6 +47,9 @@ enum ActiveForwarder {
     /// A remote (`ssh -R`) forward; the SSH server binds the listen socket and
     /// the [`RemoteForwarder`] owns the SSH session it rides.
     Remote(RemoteForwarder),
+    /// A dynamic (`ssh -D`, SOCKS5) forward; the SOCKS proxy listen socket binds
+    /// on the agent.
+    Dynamic(DynamicForwarder),
 }
 
 impl ActiveForwarder {
@@ -49,6 +57,7 @@ impl ActiveForwarder {
         match self {
             ActiveForwarder::Local(f) => f.get_stats(),
             ActiveForwarder::Remote(f) => f.get_stats(),
+            ActiveForwarder::Dynamic(f) => f.get_stats(),
         }
     }
 }
@@ -210,6 +219,66 @@ impl AgentTunnelRegistry {
             RunningTunnel {
                 forwarder: ActiveForwarder::Remote(forwarder),
                 _session: None,
+                bound_address: bound_address.clone(),
+                reachable_from,
+            },
+        );
+
+        Ok(TunnelStartOutcome {
+            bound_address,
+            reachable_from,
+        })
+    }
+
+    /// Start a dynamic (`ssh -D`, SOCKS5) forward on this agent.
+    ///
+    /// Opens an SSH session to `ssh_config`'s server and binds the SOCKS5 proxy
+    /// listen socket on the agent per `forward.local_host:local_port` (loopback
+    /// by default). Each proxied connection's target is chosen by the SOCKS
+    /// client per-connection and resolved from the SSH server's network — the
+    /// agent is the tunnel host, so the listen socket moves onto it while the
+    /// per-connection target vantage stays on the server (see the
+    /// endpoint-semantics concept). The reported `reachable_from` is classified
+    /// from the bind host (loopback → [`ReachableFrom::AgentOnly`]), the same
+    /// loopback-safe default as `-L`. Fails if a tunnel with `tunnel_id` is
+    /// already running here, if the SSH connect fails, or if the bind fails
+    /// (e.g. address in use).
+    pub async fn start_dynamic(
+        &self,
+        tunnel_id: &str,
+        ssh_config: &SshConfig,
+        forward: &DynamicForwardConfig,
+    ) -> Result<TunnelStartOutcome> {
+        {
+            let tunnels = self.tunnels.lock().await;
+            if tunnels.contains_key(tunnel_id) {
+                anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
+            }
+        }
+
+        // The agent runs the SSH client — this is the hop that moves in-network
+        // (agent ↔ server) instead of desktop ↔ server.
+        let (session, _registry) = connect_and_authenticate(ssh_config)
+            .await
+            .context("agent SSH connect for tunnel failed")?;
+        let session = Arc::new(session);
+
+        let forwarder = DynamicForwarder::start(forward, Arc::clone(&session))
+            .context("failed to bind agent-hosted dynamic (SOCKS5) forwarder")?;
+
+        let bound_address = format!("{}:{}", forward.local_host, forward.local_port);
+        let reachable_from = classify_reachability(&forward.local_host);
+
+        let mut tunnels = self.tunnels.lock().await;
+        // Re-check under the write lock in case a concurrent start raced us.
+        if tunnels.contains_key(tunnel_id) {
+            anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
+        }
+        tunnels.insert(
+            tunnel_id.to_string(),
+            RunningTunnel {
+                forwarder: ActiveForwarder::Dynamic(forwarder),
+                _session: Some(session),
                 bound_address: bound_address.clone(),
                 reachable_from,
             },
