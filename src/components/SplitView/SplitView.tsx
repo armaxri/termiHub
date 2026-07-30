@@ -33,6 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useLayoutRenderTree } from "@/store/useLayoutRenderTree";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab, isWindowEmpty } from "@/utils/panelTree";
 import { broadcastPanelClass } from "@/utils/broadcastPanel";
@@ -67,7 +68,10 @@ import { PanelErrorBoundary } from "./PanelErrorBoundary";
 import "./SplitView.css";
 
 export function SplitView() {
-  const rootPanel = useAppStore((s) => s.rootPanel);
+  // Structure from the projected layout render-list (#2151 step 3); content is
+  // overlaid per-tab from appStore. Flag-off / desync falls back to appStore's
+  // tree verbatim, so rendering is byte-for-byte unchanged.
+  const rootPanel = useLayoutRenderTree();
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   const setActivePanel = useAppStore((s) => s.setActivePanel);
