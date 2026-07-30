@@ -105,8 +105,7 @@ export function TestBridge() {
         dropNext: (subscriptionId, count) =>
           getProjectionRecorder().dropNext(subscriptionId, count),
         resync: (subscriptionId) => getProjectionRecorder().resync(subscriptionId),
-        unsubscribe: (subscriptionId) =>
-          getProjectionRecorder().unsubscribe(subscriptionId),
+        unsubscribe: (subscriptionId) => getProjectionRecorder().unsubscribe(subscriptionId),
       },
     };
 

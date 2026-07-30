@@ -25,12 +25,7 @@
  * Installed only in test-bridge mode; it never loads in a production launch.
  */
 
-import {
-  ProjectionClient,
-  TauriTransport,
-  newClientId,
-  newIntentId,
-} from "@/services/transport";
+import { ProjectionClient, TauriTransport, newClientId, newIntentId } from "@/services/transport";
 import type {
   FrameHandler,
   Intent,
@@ -146,10 +141,7 @@ export class ProjectionRecorder {
       frames: [],
       dropRemaining: 0,
     };
-    const client = new ProjectionClient(
-      new RecordingTransport(this.transport, recording),
-      region
-    );
+    const client = new ProjectionClient(new RecordingTransport(this.transport, recording), region);
     recording.client = client;
     await client.start();
     this.recordings.set(subscriptionId, recording);
@@ -214,10 +206,7 @@ export class ProjectionRecorder {
     return recording;
   }
 
-  private stateOf(
-    subscriptionId: string,
-    recording: Recording
-  ): ProjectionRecordingState {
+  private stateOf(subscriptionId: string, recording: Recording): ProjectionRecordingState {
     if (!recording.snapshot) {
       throw new Error(`subscription "${subscriptionId}" has no snapshot yet`);
     }

@@ -78,7 +78,12 @@ describe("ProjectionRecorder", () => {
     const recorder = new ProjectionRecorder(new FakeBackend());
     const sub = await recorder.subscribe(REGION);
 
-    expect(sub.snapshot).toEqual({ region: REGION, kind: "snapshot", version: 0, view: { count: 0 } });
+    expect(sub.snapshot).toEqual({
+      region: REGION,
+      kind: "snapshot",
+      version: 0,
+      view: { count: 0 },
+    });
     expect(sub.frames).toEqual([]);
     expect(sub.cache).toEqual({ version: 0, view: { count: 0 } });
   });

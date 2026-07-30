@@ -1,9 +1,6 @@
 import type { IntentAck } from "@/services/transport";
 
-import type {
-  ProjectionDispatchRequest,
-  ProjectionRecordingState,
-} from "./projectionRecorder";
+import type { ProjectionDispatchRequest, ProjectionRecordingState } from "./projectionRecorder";
 import type { BridgeCommand, BridgeResponse } from "./protocol";
 
 /**
