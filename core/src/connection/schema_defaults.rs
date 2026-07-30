@@ -141,8 +141,7 @@ pub fn find_key_passphrase_prompt_info(
 
     Some(PasswordPromptInfo {
         host_key: find_field_key(schema, "host").unwrap_or_else(|| "host".to_string()),
-        username_key: find_field_key(schema, "username")
-            .unwrap_or_else(|| "username".to_string()),
+        username_key: find_field_key(schema, "username").unwrap_or_else(|| "username".to_string()),
         password_key: find_field_key(schema, "password").unwrap_or_else(|| "password".to_string()),
     })
 }
@@ -546,7 +545,10 @@ mod tests {
         assert_eq!(
             find_password_prompt_info(
                 &ssh_like_schema(),
-                &settings(&[("authMethod", json!("password")), ("password", json!("secret"))])
+                &settings(&[
+                    ("authMethod", json!("password")),
+                    ("password", json!("secret"))
+                ])
             ),
             None
         );
@@ -731,7 +733,11 @@ mod tests {
     }
 
     fn field_keys(schema: &SettingsSchema) -> Vec<String> {
-        schema.groups[0].fields.iter().map(|f| f.key.clone()).collect()
+        schema.groups[0]
+            .fields
+            .iter()
+            .map(|f| f.key.clone())
+            .collect()
     }
 
     #[test]
@@ -823,7 +829,10 @@ mod tests {
     #[test]
     fn runtime_keeps_all_options_when_both_available() {
         let result = filter_runtime_options(&runtime_schema(), true, true);
-        assert_eq!(runtime_option_values(&result), vec!["auto", "docker", "podman"]);
+        assert_eq!(
+            runtime_option_values(&result),
+            vec!["auto", "docker", "podman"]
+        );
     }
 
     #[test]
@@ -841,7 +850,10 @@ mod tests {
     #[test]
     fn runtime_fallback_when_neither_available() {
         let result = filter_runtime_options(&runtime_schema(), false, false);
-        assert_eq!(runtime_option_values(&result), vec!["auto", "docker", "podman"]);
+        assert_eq!(
+            runtime_option_values(&result),
+            vec!["auto", "docker", "podman"]
+        );
     }
 
     #[test]
@@ -861,5 +873,144 @@ mod tests {
             serde_json::to_value(&result.groups[0].fields[0]).unwrap(),
             serde_json::to_value(&schema.groups[0].fields[0]).unwrap()
         );
+    }
+}
+
+/// Property-based tests for the condition-evaluation and filter invariants.
+#[cfg(test)]
+mod prop_tests {
+    use super::*;
+    use crate::connection::schema::{Condition, SelectOption};
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    /// A scalar JSON value of the kind a `Condition.equals` / stored setting
+    /// actually carries (string, integer, or boolean).
+    fn scalar_value() -> impl Strategy<Value = Value> {
+        prop_oneof![
+            any::<bool>().prop_map(Value::from),
+            any::<i64>().prop_map(Value::from),
+            "[a-z0-9]{0,6}".prop_map(Value::from),
+        ]
+    }
+
+    fn text_field(key: &str) -> SettingsField {
+        SettingsField {
+            key: key.to_string(),
+            label: key.to_string(),
+            description: None,
+            help_text: None,
+            field_type: FieldType::Text,
+            required: false,
+            default: None,
+            placeholder: None,
+            supports_env_expansion: false,
+            supports_tilde_expansion: false,
+            visible_when: None,
+        }
+    }
+
+    proptest! {
+        /// A field with no `visible_when` is visible for any settings.
+        #[test]
+        fn field_without_condition_is_always_visible(
+            settings in prop::collection::hash_map("[a-z]{1,4}", scalar_value(), 0..4)
+        ) {
+            let field = text_field("x");
+            let map: Settings = settings.into_iter().collect();
+            prop_assert!(is_field_visible(&field, &map));
+        }
+
+        /// A conditional field is visible exactly when the referenced setting is
+        /// present and equal to `equals` — the missing field stays hidden, and a
+        /// present-but-different value stays hidden.
+        #[test]
+        fn conditional_visibility_matches_reference_semantics(
+            ref_field in "[a-z]{1,4}",
+            equals in scalar_value(),
+            present in any::<bool>(),
+            stored in scalar_value(),
+        ) {
+            let field = SettingsField {
+                visible_when: Some(Condition {
+                    field: ref_field.clone(),
+                    equals: equals.clone(),
+                }),
+                ..text_field("target")
+            };
+            let mut settings = Settings::new();
+            if present {
+                settings.insert(ref_field.clone(), stored.clone());
+            }
+            let expected = present && stored == equals;
+            prop_assert_eq!(is_field_visible(&field, &settings), expected);
+        }
+
+        /// `filter_credential_fields` with any mode other than `"none"` is the
+        /// identity (returns a structurally identical schema).
+        #[test]
+        fn non_none_credential_mode_is_identity(mode in "[a-z_]{1,12}") {
+            prop_assume!(mode != "none");
+            let schema = SettingsSchema {
+                groups: vec![SettingsGroup {
+                    key: "auth".to_string(),
+                    label: "Auth".to_string(),
+                    fields: vec![
+                        text_field("host"),
+                        SettingsField { field_type: FieldType::Password, ..text_field("password") },
+                        SettingsField { default: Some(json!(false)), field_type: FieldType::Boolean, ..text_field("savePassword") },
+                    ],
+                }],
+            };
+            let filtered = filter_credential_fields(&schema, Some(mode.as_str()));
+            prop_assert_eq!(
+                serde_json::to_value(&filtered).unwrap(),
+                serde_json::to_value(&schema).unwrap()
+            );
+        }
+
+        /// `filter_runtime_options` never invents an option and is idempotent:
+        /// filtering the already-filtered schema with the same availability
+        /// yields the same result, and the option set is always a subset of the
+        /// original.
+        #[test]
+        fn runtime_filter_is_subset_and_idempotent(
+            docker in any::<bool>(),
+            podman in any::<bool>(),
+        ) {
+            let schema = SettingsSchema {
+                groups: vec![SettingsGroup {
+                    key: "container".to_string(),
+                    label: "Container".to_string(),
+                    fields: vec![SettingsField {
+                        label: "Runtime".to_string(),
+                        field_type: FieldType::Select {
+                            options: vec![
+                                SelectOption { value: "auto".to_string(), label: "Auto".to_string() },
+                                SelectOption { value: "docker".to_string(), label: "Docker".to_string() },
+                                SelectOption { value: "podman".to_string(), label: "Podman".to_string() },
+                            ],
+                        },
+                        required: true,
+                        ..text_field("runtime")
+                    }],
+                }],
+            };
+
+            let once = filter_runtime_options(&schema, docker, podman);
+            let twice = filter_runtime_options(&once, docker, podman);
+            prop_assert_eq!(
+                serde_json::to_value(&once).unwrap(),
+                serde_json::to_value(&twice).unwrap()
+            );
+
+            let option_count = |s: &SettingsSchema| -> usize {
+                match &s.groups[0].fields[0].field_type {
+                    FieldType::Select { options } => options.len(),
+                    _ => unreachable!(),
+                }
+            };
+            prop_assert!(option_count(&once) <= option_count(&schema));
+        }
     }
 }
