@@ -12,6 +12,10 @@ use crate::run_location::RunLocation;
 pub use termihub_core::tunnel::config::{
     DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats,
 };
+// `ReachableFrom` (who can reach an agent-hosted tunnel's listen socket) lives in
+// core beside the forward engines. Re-exported here so `TunnelState` can carry
+// the agent-reported vantage (#2199) and desktop call sites use the one type.
+pub use termihub_core::tunnel::ReachableFrom;
 
 /// The three SSH tunnel types.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -78,6 +82,43 @@ pub struct TunnelState {
     pub error: Option<String>,
     /// Live traffic statistics.
     pub stats: TunnelStats,
+    /// For an agent-hosted tunnel: which agent forwards it (its agent id), as
+    /// confirmed by the agent's report. `None` for desktop-hosted tunnels
+    /// (#2199). The frontend resolves the id to a human agent name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_on: Option<String>,
+    /// For an agent-hosted tunnel: the `host:port` the listen socket actually
+    /// bound (on the agent for `-L`/`-D`, on the SSH server for `-R`), reported
+    /// by the agent. `None` for desktop-hosted tunnels (#2199).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_address: Option<String>,
+    /// For an agent-hosted tunnel: who can reach the listen socket, as the agent
+    /// classified it at bind time. `None` for desktop-hosted tunnels (#2199).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reachable_from: Option<ReachableFrom>,
+}
+
+impl TunnelState {
+    /// A desktop-hosted (or not-yet-resolved) tunnel state: no agent vantage.
+    ///
+    /// The common constructor for every non-agent path, so adding an agent-only
+    /// field to the view model does not churn each call site.
+    pub fn desktop(
+        tunnel_id: String,
+        status: TunnelStatus,
+        error: Option<String>,
+        stats: TunnelStats,
+    ) -> Self {
+        Self {
+            tunnel_id,
+            status,
+            error,
+            stats,
+            bound_on: None,
+            bound_address: None,
+            reachable_from: None,
+        }
+    }
 }
 
 /// Top-level schema for the tunnels JSON file.
@@ -214,32 +255,58 @@ mod tests {
 
     #[test]
     fn tunnel_state_serde_round_trip() {
-        let state = TunnelState {
-            tunnel_id: "tun-1".to_string(),
-            status: TunnelStatus::Connected,
-            error: None,
-            stats: TunnelStats {
+        let state = TunnelState::desktop(
+            "tun-1".to_string(),
+            TunnelStatus::Connected,
+            None,
+            TunnelStats {
                 bytes_sent: 1024,
                 bytes_received: 2048,
                 active_connections: 2,
                 total_connections: 10,
             },
-        };
+        );
         let json = serde_json::to_string(&state).unwrap();
         let deserialized: TunnelState = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.status, TunnelStatus::Connected);
         assert!(deserialized.error.is_none());
         assert_eq!(deserialized.stats.bytes_sent, 1024);
+        // Desktop tunnels carry no agent vantage, and it stays off the wire.
+        assert!(deserialized.bound_on.is_none());
+        assert!(deserialized.reachable_from.is_none());
+        assert!(!json.contains("boundOn"));
+        assert!(!json.contains("reachableFrom"));
+    }
+
+    #[test]
+    fn tunnel_state_agent_vantage_round_trips_camel_case() {
+        let state = TunnelState {
+            tunnel_id: "tun-agent".to_string(),
+            status: TunnelStatus::Connected,
+            error: None,
+            stats: TunnelStats::default(),
+            bound_on: Some("build-box".to_string()),
+            bound_address: Some("127.0.0.1:5432".to_string()),
+            reachable_from: Some(ReachableFrom::AgentOnly),
+        };
+        let json = serde_json::to_value(&state).unwrap();
+        assert_eq!(json["boundOn"], "build-box");
+        assert_eq!(json["boundAddress"], "127.0.0.1:5432");
+        assert_eq!(json["reachableFrom"], "agentOnly");
+        let back: TunnelState = serde_json::from_value(json).unwrap();
+        assert_eq!(back.bound_on.as_deref(), Some("build-box"));
+        assert_eq!(back.bound_address.as_deref(), Some("127.0.0.1:5432"));
+        assert_eq!(back.reachable_from, Some(ReachableFrom::AgentOnly));
     }
 
     #[test]
     fn tunnel_state_error_included_when_set() {
-        let state = TunnelState {
-            tunnel_id: "tun-1".to_string(),
-            status: TunnelStatus::Error,
-            error: Some("Connection refused".to_string()),
-            stats: TunnelStats::default(),
-        };
+        let state = TunnelState::desktop(
+            "tun-1".to_string(),
+            TunnelStatus::Error,
+            Some("Connection refused".to_string()),
+            TunnelStats::default(),
+        );
         let json = serde_json::to_string(&state).unwrap();
         assert!(json.contains("Connection refused"));
         let deserialized: TunnelState = serde_json::from_str(&json).unwrap();
@@ -248,12 +315,12 @@ mod tests {
 
     #[test]
     fn tunnel_state_error_omitted_when_none() {
-        let state = TunnelState {
-            tunnel_id: "tun-1".to_string(),
-            status: TunnelStatus::Disconnected,
-            error: None,
-            stats: TunnelStats::default(),
-        };
+        let state = TunnelState::desktop(
+            "tun-1".to_string(),
+            TunnelStatus::Disconnected,
+            None,
+            TunnelStats::default(),
+        );
         let json = serde_json::to_string(&state).unwrap();
         assert!(!json.contains("error"));
     }

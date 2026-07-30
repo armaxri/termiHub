@@ -26,7 +26,12 @@ import {
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { Modal, Button, Tooltip, Progress, ConfirmDialog, toast } from "@/components/ui";
 import { formatBytes } from "@/utils/formatters";
-import { resolveTunnelHost, isAgentHost, tunnelHostBadge } from "@/utils/tunnelHost";
+import {
+  resolveTunnelHost,
+  isAgentHost,
+  tunnelHostBadge,
+  reportedReachability,
+} from "@/utils/tunnelHost";
 import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
 import { MONITORING_INTERVAL_OPTIONS, DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
@@ -851,8 +856,28 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 : undefined;
               const hostBadge = tunnelHostBadge(tunnelHost, hostAgentName);
               const hostText = hostBadge.onAgent ? `agent ${hostBadge.label}` : "this computer";
-              const detail =
-                status === "error" && state?.error ? `${hostText} · ${state.error}` : hostText;
+              // Live stats + reported reachability for a running tunnel (#2199):
+              // agent-hosted tunnels now carry the same up/down bytes + conn
+              // counts as desktop ones, plus the agent's runtime vantage.
+              const isRunning = status === "connected";
+              const statsText =
+                isRunning && state?.stats
+                  ? `↑ ${formatBytes(state.stats.bytesSent)} ↓ ${formatBytes(
+                      state.stats.bytesReceived
+                    )} · ${state.stats.activeConnections} conn`
+                  : undefined;
+              const reach =
+                isRunning && state?.reachableFrom
+                  ? reportedReachability(state.reachableFrom, hostBadge.label)
+                  : null;
+              const detail = [
+                hostText,
+                statsText,
+                reach?.label,
+                status === "error" && state?.error ? state.error : undefined,
+              ]
+                .filter(Boolean)
+                .join(" · ");
               return (
                 <ConnectionRow
                   key={t.id}

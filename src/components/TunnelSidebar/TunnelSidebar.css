@@ -99,3 +99,28 @@
 .tunnel-item__host-icon {
   flex-shrink: 0;
 }
+
+/* Runtime reachability note from the agent's report (#2199). Neutral by
+ * default; amber when the listen port is not reachable from this computer
+ * (a loopback bind on the agent). */
+.tunnel-item__reach {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.tunnel-item__reach[data-warn="true"] {
+  color: var(--color-warning);
+}
+
+.tunnel-item__reach-icon {
+  flex-shrink: 0;
+}
+
+.tunnel-item__reach-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

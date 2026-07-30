@@ -7,6 +7,7 @@ import {
   tunnelHostBadge,
   tunnelEndpointLines,
   tunnelReachabilityWarning,
+  reportedReachability,
 } from "./tunnelHost";
 
 const AGENT: RunLocation = { kind: "agent", agentId: "agent-1" };
@@ -115,5 +116,26 @@ describe("tunnelReachabilityWarning", () => {
 
   it("does not fire for a remote forward (listen is on the SSH server)", () => {
     expect(tunnelReachabilityWarning(remote(), AGENT)).toBeNull();
+  });
+});
+
+describe("reportedReachability", () => {
+  it("warns for a loopback bind on the agent (agentOnly)", () => {
+    const r = reportedReachability("agentOnly", "build-box");
+    expect(r).toEqual({ label: "reachable only on build-box", warn: true });
+  });
+
+  it("does not warn for a widened bind on the agent LAN", () => {
+    const r = reportedReachability("agentLan", "build-box");
+    expect(r).toEqual({ label: "reachable on build-box's network", warn: false });
+  });
+
+  it("describes an -R forward as reachable on the SSH server's network", () => {
+    const r = reportedReachability("sshServer", "build-box");
+    expect(r).toEqual({ label: "reachable on the SSH server's network", warn: false });
+  });
+
+  it("returns null when the agent has not reported (undefined)", () => {
+    expect(reportedReachability(undefined, "build-box")).toBeNull();
   });
 });

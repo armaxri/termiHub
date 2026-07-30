@@ -18,7 +18,12 @@ import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
 import { useAppStore } from "@/store/appStore";
-import { resolveTunnelHost, isAgentHost, tunnelHostBadge } from "@/utils/tunnelHost";
+import {
+  resolveTunnelHost,
+  isAgentHost,
+  tunnelHostBadge,
+  reportedReachability,
+} from "@/utils/tunnelHost";
 
 interface TunnelListItemProps {
   tunnel: TunnelConfig;
@@ -105,6 +110,12 @@ export function TunnelListItem({
     ? (remoteAgents.find((a) => a.id === tunnelHost.agentId)?.name ?? tunnelHost.agentId)
     : undefined;
   const hostBadge = tunnelHostBadge(tunnelHost, hostAgentName);
+  // Runtime vantage from the agent's report (#2199): authoritative reachability
+  // for a running agent-hosted tunnel, surfaced only while it is active.
+  const reach =
+    isActive && state?.reachableFrom
+      ? reportedReachability(state.reachableFrom, hostBadge.label)
+      : null;
   const typeLabel =
     tunnel.tunnelType.type.charAt(0).toUpperCase() + tunnel.tunnelType.type.slice(1);
 
@@ -284,6 +295,19 @@ export function TunnelListItem({
               <span>↓ {formatBytes(state.stats.bytesReceived)}</span>
               <span>{state.stats.activeConnections} conn</span>
             </div>
+          )}
+          {reach && (
+            <span
+              className="tunnel-item__reach"
+              data-testid={`tunnel-reach-${tunnel.id}`}
+              data-warn={reach.warn}
+              title={
+                state?.boundAddress ? `Bound ${state.boundAddress} — ${reach.label}` : reach.label
+              }
+            >
+              {reach.warn && <AlertTriangle size={11} className="tunnel-item__reach-icon" />}
+              <span className="tunnel-item__reach-text">{reach.label}</span>
+            </span>
           )}
           {isError && lastError && (
             <span className="tunnel-item__error" title={lastError}>

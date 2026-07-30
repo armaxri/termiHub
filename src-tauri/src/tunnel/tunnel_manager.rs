@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 use crate::terminal::backend::SshConfig;
 
 use super::config::{
-    TunnelConfig, TunnelState, TunnelStats, TunnelStatus, TunnelStore, TunnelType,
+    ReachableFrom, TunnelConfig, TunnelState, TunnelStats, TunnelStatus, TunnelStore, TunnelType,
 };
 use super::connecting::{ConnectingTracker, FinishOutcome};
 use super::dynamic_forward::DynamicForwarder;
@@ -207,6 +207,49 @@ fn snapshot_active_stats(active: &HashMap<String, ActiveTunnel>) -> Vec<TunnelSt
         .collect()
 }
 
+/// Poll each agent-hosted tunnel's live `tunnel.status` over the agent RPC,
+/// returning the fresh stats per still-running tunnel (#2199).
+///
+/// Free function (no `&self`) so the poller task can call it inside
+/// `spawn_blocking`. `targets` is a snapshot of `(tunnel_id, agent_id)` pairs. A
+/// failed RPC or a not-running tunnel simply contributes no sample, leaving the
+/// handle's last-known stats in place rather than flickering them to zero.
+fn poll_agent_tunnel_stats(
+    client: Arc<dyn AgentRpcClient>,
+    targets: &[(String, String)],
+) -> Vec<(String, TunnelStats)> {
+    let mut out = Vec::with_capacity(targets.len());
+    for (tunnel_id, agent_id) in targets {
+        let params = serde_json::json!({ "tunnelId": tunnel_id });
+        match client.send_request(agent_id, "tunnel.status", params) {
+            Ok(result) => {
+                if let Some(stats) = stats_from_status_reply(&result) {
+                    out.push((tunnel_id.clone(), stats));
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    "tunnel.status poll for {} on agent {} failed: {}",
+                    tunnel_id,
+                    agent_id,
+                    e
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Extract the live [`TunnelStats`] from a `tunnel.status` reply, or `None` when
+/// the tunnel is not running on the agent or the reply carries no parseable
+/// stats (#2199). Pure, so the parse is unit-testable without an agent mock.
+fn stats_from_status_reply(result: &serde_json::Value) -> Option<TunnelStats> {
+    if result["running"].as_bool() != Some(true) {
+        return None;
+    }
+    serde_json::from_value::<TunnelStats>(result["stats"].clone()).ok()
+}
+
 impl ActiveForwarder {
     /// Take the forwarder's death receiver (once) for the tunnel supervisor.
     fn take_death_signal(&mut self) -> Option<tokio::sync::oneshot::Receiver<()>> {
@@ -244,17 +287,27 @@ struct ActiveTunnel {
     supervisor_cancel: CancellationToken,
 }
 
-/// A tunnel hosted on a remote agent (S3, #2185).
+/// A tunnel hosted on a remote agent (S3, #2185, enriched #2199).
 ///
-/// The desktop holds only *control* state — which agent forwards it — so
-/// `stop_tunnel` can send `tunnel.stop` to the right agent. The data path
-/// (listen socket, SSH session, forwarder) lives entirely on the agent, so
-/// there is no `ActiveForwarder` here. The agent-reported endpoint details
-/// (`boundAddress` / `reachableFrom`) are logged on start; surfacing them into
-/// the projection view model is a follow-up to #2185.
+/// The desktop holds only *control* + *reported* state — which agent forwards
+/// it, where the agent bound its listen socket, and the last live stats sampled
+/// off the agent. The data path (listen socket, SSH session, forwarder) lives
+/// entirely on the agent, so there is no `ActiveForwarder` here. The
+/// endpoint details (`bound_address` / `reachable_from`) come from the agent's
+/// `tunnel.start` reply; `stats` is refreshed by the periodic `tunnel.status`
+/// poller (#2199) so the projection shows live up/down bytes + connection counts
+/// like a desktop tunnel, instead of frozen zeros.
 struct AgentTunnelHandle {
     /// The agent forwarding this tunnel.
     agent_id: String,
+    /// The `host:port` the listen socket bound on the tunnel host (the agent for
+    /// `-L`/`-D`, the SSH server for `-R`), as the agent reported it.
+    bound_address: String,
+    /// Who can reach the listen socket, as the agent classified its bind.
+    reachable_from: ReachableFrom,
+    /// Last live traffic counters sampled from the agent via `tunnel.status`.
+    /// Starts at zero and is refreshed each poll tick (#2199).
+    stats: TunnelStats,
 }
 
 /// Central manager for SSH tunnels.
@@ -283,8 +336,10 @@ pub struct TunnelManager {
     /// Tunnels currently hosted on a remote agent, keyed by tunnel id (S3,
     /// #2185). Disjoint from `active_tunnels` (which holds desktop-hosted
     /// forwarders): an agent-hosted tunnel's data path runs on the agent, so the
-    /// desktop tracks only the control handle here.
-    agent_tunnels: Mutex<HashMap<String, AgentTunnelHandle>>,
+    /// desktop tracks only the control handle here. `Arc`-shared so the periodic
+    /// `tunnel.status` poller task can refresh each handle's live stats without a
+    /// `&self` reference (#2199).
+    agent_tunnels: Arc<Mutex<HashMap<String, AgentTunnelHandle>>>,
     /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
     /// same connection. Jump-host gateway sessions are pooled separately in the
     /// process-wide [`shared_gateway_pool`](termihub_core::backends::ssh::session_pool::shared_gateway_pool).
@@ -295,6 +350,13 @@ pub struct TunnelManager {
     /// `Some` while at least one tunnel is active; the task self-reaps and clears
     /// this slot once no tunnel remains, and `stop_all` aborts it on shutdown.
     stats_emitter: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// Handle to the single periodic agent `tunnel.status` poller task (#2199).
+    /// `Some` while at least one agent-hosted tunnel exists; the task self-reaps
+    /// and clears this slot once none remain, and `stop_all` aborts it on
+    /// shutdown. Distinct from `stats_emitter` because agent tunnels live in
+    /// their own track (`agent_tunnels`) and are sampled over the agent RPC
+    /// rather than from a local forwarder.
+    agent_stats_poller: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl TunnelManager {
@@ -314,11 +376,12 @@ impl TunnelManager {
             last_errors: Arc::new(Mutex::new(HashMap::new())),
             reconnecting: Arc::new(Mutex::new(HashMap::new())),
             connecting: ConnectingTracker::new(),
-            agent_tunnels: Mutex::new(HashMap::new()),
+            agent_tunnels: Arc::new(Mutex::new(HashMap::new())),
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
             stats_emitter: Arc::new(Mutex::new(None)),
+            agent_stats_poller: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -402,32 +465,36 @@ impl TunnelManager {
             .iter()
             .map(|config| {
                 if let Some(tunnel) = active.get(&config.id) {
-                    TunnelState {
-                        tunnel_id: config.id.clone(),
-                        status: TunnelStatus::Connected,
-                        error: None,
-                        stats: tunnel.forwarder.stats(),
-                    }
-                } else if agent_tunnels.contains_key(&config.id) {
+                    TunnelState::desktop(
+                        config.id.clone(),
+                        TunnelStatus::Connected,
+                        None,
+                        tunnel.forwarder.stats(),
+                    )
+                } else if let Some(handle) = agent_tunnels.get(&config.id) {
                     // Hosted on an agent (#2185): the data path runs on the
-                    // agent, so the desktop reports `Connected` without live
-                    // stats (streaming per-tick stats over the agent RPC is a
-                    // follow-up).
+                    // agent, so the desktop surfaces the agent-reported vantage
+                    // (which agent, where it bound, who can reach it) plus the
+                    // live stats last sampled by the `tunnel.status` poller
+                    // (#2199) — no longer frozen zeros.
                     TunnelState {
                         tunnel_id: config.id.clone(),
                         status: TunnelStatus::Connected,
                         error: None,
-                        stats: TunnelStats::default(),
+                        stats: handle.stats.clone(),
+                        bound_on: Some(handle.agent_id.clone()),
+                        bound_address: Some(handle.bound_address.clone()),
+                        reachable_from: Some(handle.reachable_from),
                     }
                 } else if reconnecting.contains_key(&config.id) {
                     // In a reconnect-backoff loop (#1246) — report `Reconnecting`
                     // so a reload does not briefly launder it back to Error.
-                    TunnelState {
-                        tunnel_id: config.id.clone(),
-                        status: TunnelStatus::Reconnecting,
-                        error: None,
-                        stats: TunnelStats::default(),
-                    }
+                    TunnelState::desktop(
+                        config.id.clone(),
+                        TunnelStatus::Reconnecting,
+                        None,
+                        TunnelStats::default(),
+                    )
                 } else {
                     // A tunnel that is neither active nor connecting rests as
                     // either `Disconnected` (never failed) or `Error` (its last
@@ -438,12 +505,7 @@ impl TunnelManager {
                         self.connecting.is_connecting(&config.id),
                         last_error_for(&self.last_errors, &config.id),
                     );
-                    TunnelState {
-                        tunnel_id: config.id.clone(),
-                        status,
-                        error,
-                        stats: TunnelStats::default(),
-                    }
+                    TunnelState::desktop(config.id.clone(), status, error, TunnelStats::default())
                 }
             })
             .collect();
@@ -661,8 +723,14 @@ impl TunnelManager {
 
         match agent_manager.send_request(agent_id, "tunnel.start", params) {
             Ok(result) => {
-                let bound_address = result["boundAddress"].as_str().unwrap_or("");
-                let reachable_from = result["reachableFrom"].as_str().unwrap_or("");
+                let bound_address = result["boundAddress"].as_str().unwrap_or("").to_string();
+                // The agent reports its runtime classification (loopback → agent
+                // only, widened → agent LAN, `-R` → the SSH server). Fall back to
+                // the loopback-safe `AgentOnly` if the field is missing/garbled so
+                // the UI never over-promises reachability (#2199).
+                let reachable_from =
+                    serde_json::from_value::<ReachableFrom>(result["reachableFrom"].clone())
+                        .unwrap_or(ReachableFrom::AgentOnly);
                 {
                     let mut agent = self
                         .agent_tunnels
@@ -672,13 +740,19 @@ impl TunnelManager {
                         tunnel_id.to_string(),
                         AgentTunnelHandle {
                             agent_id: agent_id.to_string(),
+                            bound_address: bound_address.clone(),
+                            reachable_from,
+                            stats: TunnelStats::default(),
                         },
                     );
                 }
                 clear_last_error(&self.last_errors, tunnel_id);
                 self.emit_status(tunnel_id, TunnelStatus::Connected, None);
+                // Sample the agent's live stats periodically so the projection's
+                // ↑/↓ bytes + conn count update instead of resting at zero (#2199).
+                self.ensure_agent_stats_poller();
                 tracing::info!(
-                    "Tunnel {} started on agent {} (bound {} on the agent, reachable from {})",
+                    "Tunnel {} started on agent {} (bound {} on the agent, reachable from {:?})",
                     tunnel_id,
                     agent_id,
                     bound_address,
@@ -782,6 +856,104 @@ impl TunnelManager {
         });
 
         *slot = Some(handle);
+    }
+
+    /// Ensure the single periodic agent `tunnel.status` poller task is running
+    /// (#2199).
+    ///
+    /// Idempotent, mirroring [`Self::ensure_stats_emitter`] but for agent-hosted
+    /// tunnels: every [`STATS_EMIT_INTERVAL`] it snapshots the live agent-tunnel
+    /// set, polls each one's `tunnel.status` over the agent RPC **off** the
+    /// projection's single-writer dispatcher (a plain background task, with the
+    /// blocking RPC batch on a `spawn_blocking` thread), writes the fresh stats
+    /// back into the handles, and republishes the `tunnels` region so
+    /// subscribers see live ↑/↓ bytes + connection counts. The task self-reaps
+    /// (clearing this slot) once no agent tunnel remains, so a stopped tunnel
+    /// naturally ends the polling.
+    fn ensure_agent_stats_poller(&self) {
+        let mut slot = match self.agent_stats_poller.lock() {
+            Ok(slot) => slot,
+            Err(_) => return,
+        };
+        // Already running (and not yet finished) — nothing to do.
+        if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return;
+        }
+
+        let agent_tunnels = Arc::clone(&self.agent_tunnels);
+        let app_handle = self.app_handle.clone();
+        let poller_slot = Arc::clone(&self.agent_stats_poller);
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(STATS_EMIT_INTERVAL).await;
+
+                // Snapshot the (tunnel id, agent id) targets under the lock, then
+                // release it before any RPC so a slow agent never blocks a
+                // start/stop that also touches this map.
+                let targets: Vec<(String, String)> = match agent_tunnels.lock() {
+                    Ok(map) => map
+                        .iter()
+                        .map(|(id, handle)| (id.clone(), handle.agent_id.clone()))
+                        .collect(),
+                    Err(_) => break,
+                };
+
+                // No agent-hosted tunnel left: stop polling and clear the slot so
+                // a later start re-spawns the task.
+                if targets.is_empty() {
+                    break;
+                }
+
+                // Resolve the agent RPC client fresh each tick (an agent may
+                // connect after the poller started). Absent → skip this tick.
+                let Some(client) = app_handle
+                    .try_state::<Arc<dyn AgentRpcClient>>()
+                    .map(|state| (*state).clone())
+                else {
+                    continue;
+                };
+
+                // `tunnel.status` is a blocking RPC; run the whole batch on a
+                // blocking thread so no async worker is stalled (mirrors how the
+                // agent-tunnel start path runs its blocking RPC).
+                let samples =
+                    tokio::task::spawn_blocking(move || poll_agent_tunnel_stats(client, &targets))
+                        .await
+                        .unwrap_or_default();
+
+                // Write the fresh samples back into the live handles under the
+                // lock. `bound_address` / `reachable_from` are fixed at bind time
+                // (from the start reply), so only the stats are refreshed here.
+                if let Ok(mut map) = agent_tunnels.lock() {
+                    for (tunnel_id, stats) in samples {
+                        if let Some(handle) = map.get_mut(&tunnel_id) {
+                            handle.stats = stats;
+                        }
+                    }
+                }
+
+                // Project the refreshed stats onto the `tunnels` region (#2199).
+                // `publish` diffs, so an unchanged tick is a no-op.
+                crate::tunnel::projection::publish_tunnels(&app_handle);
+            }
+
+            // Self-reap: drop our own handle so a later start re-spawns the task.
+            if let Ok(mut slot) = poller_slot.lock() {
+                *slot = None;
+            }
+        });
+
+        *slot = Some(handle);
+    }
+
+    /// Abort the agent `tunnel.status` poller task (if any) and clear its slot.
+    fn stop_agent_stats_poller(&self) {
+        if let Ok(mut slot) = self.agent_stats_poller.lock() {
+            if let Some(handle) = slot.take() {
+                handle.abort();
+            }
+        }
     }
 
     /// Build the forwarder for a tunnel config, performing the SSH handshake.
@@ -1157,6 +1329,8 @@ impl TunnelManager {
         // Abort the live-stats emitter promptly on shutdown rather than waiting
         // for its next tick to observe the now-empty active set (GAP 6, #1248).
         self.stop_stats_emitter();
+        // Likewise abort the agent `tunnel.status` poller (#2199).
+        self.stop_agent_stats_poller();
     }
 
     /// Abort the live-stats emitter task (if any) and clear its tracking slot.
@@ -1264,12 +1438,10 @@ fn emit_tunnel_status(
     status: TunnelStatus,
     error: Option<String>,
 ) {
-    let state = TunnelState {
-        tunnel_id: tunnel_id.to_string(),
-        status,
-        error,
-        stats: TunnelStats::default(),
-    };
+    // A status-change event carries no vantage/stats — the projection's
+    // `get_statuses` path fills those for the resting state on the publish below
+    // (#2199); the legacy event stays a bare status ping.
+    let state = TunnelState::desktop(tunnel_id.to_string(), status, error, TunnelStats::default());
     let _ = app_handle.emit("tunnel-status-changed", &state);
     // Project the change onto the stateless-UI `tunnels` region (#2150). Kept
     // beside the legacy event above (strangler): this is the single status-emit
@@ -1524,8 +1696,8 @@ mod tests {
     use super::{
         backoff_delay, clear_last_error, last_error_for, record_last_error, resolve_managed_arc,
         resolve_tunnel_host, resting_status, run_reconnect_loop, snapshot_active_stats,
-        wait_forwarder_death, wait_session_death, ActiveTunnel, ReconnectOutcome,
-        TunnelStatsUpdate,
+        stats_from_status_reply, wait_forwarder_death, wait_session_death, ActiveTunnel,
+        ReconnectOutcome, TunnelStatsUpdate,
     };
     use crate::run_location::{ResolvedLocation, RunLocation};
     use crate::tunnel::config::TunnelStatus;
@@ -2201,5 +2373,40 @@ mod tests {
             updates.is_empty(),
             "no active tunnel must yield no stats events so the emitter stops"
         );
+    }
+
+    /// #2199: a running `tunnel.status` reply yields the parsed live stats, which
+    /// the poller writes back onto the agent handle so the projection shows real
+    /// ↑/↓ bytes + connection counts instead of frozen zeros.
+    #[test]
+    fn stats_from_running_status_reply_are_parsed() {
+        let reply = serde_json::json!({
+            "running": true,
+            "stats": {
+                "bytesSent": 2048,
+                "bytesReceived": 4096,
+                "activeConnections": 3,
+                "totalConnections": 7
+            },
+            "boundAddress": "127.0.0.1:5432",
+            "reachableFrom": "agentOnly"
+        });
+        let stats = stats_from_status_reply(&reply).expect("running reply yields stats");
+        assert_eq!(stats.bytes_sent, 2048);
+        assert_eq!(stats.bytes_received, 4096);
+        assert_eq!(stats.active_connections, 3);
+        assert_eq!(stats.total_connections, 7);
+    }
+
+    /// #2199: a not-running reply (tunnel gone on the agent) contributes no
+    /// sample, so the poller leaves the handle's last-known stats untouched
+    /// rather than flickering them to zero.
+    #[test]
+    fn stats_from_not_running_status_reply_are_ignored() {
+        let reply = serde_json::json!({ "running": false });
+        assert!(stats_from_status_reply(&reply).is_none());
+        // A running reply that somehow omits stats is likewise skipped.
+        let no_stats = serde_json::json!({ "running": true });
+        assert!(stats_from_status_reply(&no_stats).is_none());
     }
 }
