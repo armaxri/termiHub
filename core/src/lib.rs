@@ -24,4 +24,6 @@ pub mod output;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 pub mod protocol;
+pub mod service;
 pub mod session;
+pub mod tool;
