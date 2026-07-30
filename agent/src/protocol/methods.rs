@@ -3,7 +3,9 @@
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
+use termihub_core::service::ServiceStatus;
 pub use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::tunnel::config::{
     DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats,
@@ -773,6 +775,76 @@ pub struct TunnelStatusResult {
     /// Who can reach the listen socket (present only when running).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reachable_from: Option<ReachableFrom>,
+}
+
+// ── service.* (agent-hosted embedded servers, #2192) ────────────────
+//
+// An agent-hosted embedded server (HTTP/FTP/TFTP) runs its listen socket on the
+// agent; the desktop keeps only control (start/stop/status over this RPC). The
+// agent creates the server from its `ServiceRegistry` by `service_id`, keyed for
+// later stop/status by the desktop-chosen `instance_id`.
+
+/// Params for `service.start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStartParams {
+    /// The desktop's instance id, used as the key for later stop/status.
+    pub instance_id: String,
+    /// Which registered service type to start (e.g. `"http_server"`).
+    pub service_id: String,
+    /// The service's config JSON (an `EmbeddedServerConfig` for the servers).
+    pub config: Value,
+}
+
+/// Result of `service.start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStartResult {
+    /// The service's lifecycle status once started.
+    pub status: ServiceStatus,
+    /// The latest status payload streamed on the service's event channel, if any
+    /// (the `ServerState` for the embedded servers).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<Value>,
+}
+
+/// Params for `service.stop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStopParams {
+    /// The instance id to stop.
+    pub instance_id: String,
+}
+
+/// Result of `service.stop`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStopResult {
+    /// Whether a running instance with that id was found and stopped.
+    pub stopped: bool,
+}
+
+/// Params for `service.status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStatusParams {
+    /// The instance id to inspect.
+    pub instance_id: String,
+}
+
+/// Result of `service.status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceStatusResult {
+    /// Whether the instance is currently hosted on this agent.
+    pub running: bool,
+    /// The service's lifecycle status (present only when running).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ServiceStatus>,
+    /// The latest status payload streamed on its event channel (present only when
+    /// running, and only once at least one event has been emitted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<Value>,
 }
 
 #[cfg(test)]

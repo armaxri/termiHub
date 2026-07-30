@@ -68,6 +68,10 @@ pub const DEFERRED_UPDATE_FAILED: i64 = -32016;
 /// An agent-hosted SSH tunnel failed to start (SSH connect or bind error).
 pub const TUNNEL_START_FAILED: i64 = -32017;
 
+/// An agent-hosted embedded server (HTTP/FTP/TFTP) failed to start (bad config,
+/// port bind failure, or an unknown service type).
+pub const SERVICE_START_FAILED: i64 = -32018;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +101,7 @@ mod tests {
             SHUTDOWN_ERROR,
             DEFERRED_UPDATE_FAILED,
             TUNNEL_START_FAILED,
+            SERVICE_START_FAILED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");

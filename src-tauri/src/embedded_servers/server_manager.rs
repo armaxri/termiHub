@@ -262,24 +262,12 @@ impl EmbeddedServerManager {
 }
 
 /// Build the [`ServiceRegistry`] with the run-location-routable server types.
+///
+/// Delegates to [`termihub_core::embedded_servers::build_service_registry`] so
+/// the desktop host and the agent register identical server-type factories from
+/// one source of truth (#2192).
 fn build_service_registry() -> ServiceRegistry {
-    let mut registry = ServiceRegistry::new();
-    for (ty, icon) in [
-        (ServerType::Http, "globe"),
-        (ServerType::Ftp, "folder"),
-        (ServerType::Tftp, "download"),
-    ] {
-        let id = service_id_for(&ty);
-        let display = super::service::display_name_for(&ty);
-        let ty_for_factory = ty.clone();
-        registry.register(
-            id,
-            display,
-            icon,
-            Box::new(move || Box::new(EmbeddedServerService::new(ty_for_factory.clone()))),
-        );
-    }
-    registry
+    termihub_core::embedded_servers::build_service_registry()
 }
 
 /// Bridge a server's core [`EventChannel`](termihub_core::service::EventChannel)
