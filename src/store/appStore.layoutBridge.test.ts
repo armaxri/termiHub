@@ -384,9 +384,7 @@ describe("appStore layout bridge — cut ↔ local parity (#2151)", () => {
   });
 
   it("reorderTabs reorders within a leaf identically both ways (#2188)", async () => {
-    const { local, cut } = await runBothWays(() =>
-      useAppStore.getState().reorderTabs("a", 0, 1)
-    );
+    const { local, cut } = await runBothWays(() => useAppStore.getState().reorderTabs("a", 0, 1));
     expect(cut).toEqual(local);
   });
 
