@@ -1,0 +1,1050 @@
+<!doctype html>
+<!--
+  Design sub-concept: the projection substrate for the stateless-UI /
+  agent-centric port (parent concept: future/stateless-ui-agent-centric.html).
+  Focused contract for the two generic channels — dispatch(intent) and
+  subscribe(region) — plus per-region versioning, resync and multi-subscriber
+  fan-out. Design only; not an implementation target on its own.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stateless-UI Projection Substrate (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Stateless-UI Projection Substrate</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Future · design only</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/2149">#2149</a> ·
+            Part of <a href="https://github.com/armaxri/termiHub/issues/2139">#2139</a></span
+          >
+          <span><code>docs/concepts/future/stateless-ui-projection-substrate.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#channels">The Three Channels</a></li>
+          <li><a href="#envelopes">Envelope Schemas</a></li>
+          <li><a href="#versioning">Per-Region Versioned Projections</a></li>
+          <li><a href="#fanout">Multi-Subscriber Fan-Out</a></li>
+          <li><a href="#granularity">Region Granularity</a></li>
+          <li><a href="#coexistence">Coexistence &amp; Migration</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#example">Worked Example — SSH Tunnels</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#remote">Alignment with Remote-Client Mode</a></li>
+          <li><a href="#decisions">Open Design Decisions</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          The
+          <a href="stateless-ui-agent-centric.html">stateless-UI / agent-centric port</a> (umbrella
+          <a href="https://github.com/armaxri/termiHub/issues/2139">#2139</a>) moves all
+          authoritative state and business logic out of the React UI and into the Rust backend. The
+          UI becomes a <strong>thin projection and dispatcher</strong>: it renders backend-provided
+          view models and dispatches user intents, holding no authoritative state. The parent
+          concept collapses today's
+          <strong>~206 typed Tauri commands + ~36 event channels</strong> into
+          <strong>two generic channels</strong> — <code>dispatch(intent)</code> and
+          <code>subscribe(region)</code> — plus the untouched terminal byte stream. Everything else
+          in the port depends on the exact shape of those two channels.
+        </p>
+        <p>
+          This sub-concept is that shape: <strong>the substrate contract</strong>. It is the
+          load-bearing "Open Decision #1" of the parent, now settled by the maintainer (see
+          <a href="https://github.com/armaxri/termiHub/issues/2139">#2139</a>, 2026-07-30) and
+          worked into a concrete design:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Settled decision</th>
+                <th>What it means for the substrate</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Transport = server-authoritative per-region diff channels</strong></td>
+                <td>
+                  Snapshot-on-attach, then ordered <strong>per-region versioned diffs</strong>,
+                  resync-on-reconnect. The backend is the single authoritative writer.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Not a CRDT</strong></td>
+                <td>
+                  Clients only dispatch intents; the backend serialises them. There is no
+                  concurrent-edit merge — versioning exists to detect <em>loss</em>, not to
+                  reconcile <em>conflict</em>.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Multi-client IS in scope</strong></td>
+                <td>
+                  N UIs may attach to one backend session. Every region is designed for
+                  <strong>multi-subscriber fan-out</strong> from the start, aligned with
+                  <a href="remote-client-mode.html">remote-client mode</a>.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Define the two envelopes — the <strong>intent</strong> (UI→backend) and the
+            <strong>projection frame</strong> (backend→UI, snapshot or diff) — precisely enough to
+            implement Phase&nbsp;1.
+          </li>
+          <li>
+            Specify <strong>per-region versioning</strong>: monotonic version, ordered diffs,
+            gap-detection, snapshot-on-attach, resync-on-reconnect.
+          </li>
+          <li>
+            Specify <strong>multi-subscriber fan-out</strong>: subscription lifecycle, single-writer
+            apply-then-emit, and a consistent snapshot for late joiners.
+          </li>
+          <li>
+            Give <strong>region-granularity guidance</strong> that keeps projections off the
+            single-threaded IPC bridge's critical path (the parent's top risk).
+          </li>
+          <li>
+            Keep the <strong>terminal byte stream</strong> a separate untouched channel and let the
+            existing typed commands <strong>coexist</strong> during a strangler migration.
+          </li>
+          <li>
+            <strong>Reuse</strong> remote-client mode's transport abstraction rather than fork it.
+          </li>
+        </ul>
+
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Migrating any domain. This designs the pipe; porting the ~20 state domains through it is
+            the parent's Phases&nbsp;2–5.
+          </li>
+          <li>
+            Reshaping the terminal output hot path. It already works the right way and is explicitly
+            left alone.
+          </li>
+          <li>
+            A CRDT, operational-transform, or offline-edit layer. Out of scope by the settled
+            decision.
+          </li>
+          <li>The WebSocket server itself — that is remote-client mode's Phase&nbsp;2.</li>
+        </ul>
+      </section>
+
+      <!-- ── The Three Channels ─────────────────────────────────────── -->
+      <section>
+        <h2 id="channels">The Three Channels <a class="anchor" href="#channels">#</a></h2>
+        <p>
+          The substrate carries three independent channels. Two are new and generic; the third
+          already exists and is untouched.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Channel</th>
+                <th>Direction</th>
+                <th>Carries</th>
+                <th>Ordering / delivery</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td><code>dispatch(intent)</code></td>
+                <td>UI → backend</td>
+                <td>One serialisable intent; returns an <em>ack</em> (accepted / rejected).</td>
+                <td>Request/response; the backend serialises all intents (single writer).</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td><code>subscribe(region)</code></td>
+                <td>backend → UI</td>
+                <td>
+                  An initial <strong>snapshot</strong>, then an ordered stream of
+                  <strong>diffs</strong> for that region.
+                </td>
+                <td>Ordered <em>per region</em>; no cross-region ordering guarantee.</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td><code>terminal-output</code> (existing)</td>
+                <td>backend → UI</td>
+                <td>Coalesced raw PTY bytes, base64, per session.</td>
+                <td>
+                  Ordered per session; rAF-batched into xterm. <strong>Never</strong> projected.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Three channels — intents, projections, and the raw terminal stream</span
+          >
+          <pre class="mermaid">
+flowchart TB
+    subgraph FE["Stateless UI (N clients)"]
+        UI["React + dumb projection cache (Zustand)"]
+    end
+    subgraph BE["Backend (desktop host or agent) — single authoritative writer"]
+        DISP["Intent dispatcher<br/>(serialises intents)"]
+        STORE["Authoritative domain stores"]
+        PROJ["Projector<br/>state -&gt; view models -&gt; per-region diffs"]
+        PTY["PTY output coalescer (32 KB)"]
+        DISP --> STORE --> PROJ
+    end
+    UI -->|"1 · dispatch(intent) -&gt; ack"| DISP
+    PROJ -->|"2 · snapshot + versioned diffs (per region, fanned to N)"| UI
+    PTY -->|"3 · terminal-output bytes (rAF-batched -&gt; xterm)"| UI
+          </pre>
+        </div>
+        <p>
+          The typed command surface does not vanish. Each of today's commands becomes an
+          <strong>internal backend function</strong> called by an intent handler; each of today's
+          push events becomes a <strong>projection diff</strong>. During migration both the old and
+          new channels are live at once (see <a href="#coexistence">Coexistence</a>).
+        </p>
+      </section>
+
+      <!-- ── Envelope Schemas ───────────────────────────────────────── -->
+      <section>
+        <h2 id="envelopes">Envelope Schemas <a class="anchor" href="#envelopes">#</a></h2>
+        <p>
+          All envelopes are transport-neutral: identical whether they ride Tauri IPC (desktop) or
+          JSON-RPC over WebSocket (remote-client mode). Types are given in TypeScript for the
+          frontend; the Rust structs are their <code>serde</code> mirror, exactly as
+          <code>core/src/protocol/</code> already mirrors its JSON-RPC types today.
+        </p>
+
+        <h3>Intent envelope (channel 1, UI → backend)</h3>
+        <pre><code>interface Intent&lt;P = unknown&gt; {
+  intentId: string;   // client-generated ULID; correlates the ack (and optimistic echo)
+  kind: string;       // dotted "&lt;domain&gt;.&lt;action&gt;", e.g. "tunnel.start", "layout.moveTab"
+  payload: P;         // kind-specific, serialisable; validated backend-side
+  clientId: string;   // which attached client dispatched it (fan-out / audit identity)
+}
+
+interface IntentAck {
+  intentId: string;                       // echoes the request
+  status: "accepted" | "rejected";
+  error?: { code: string; message: string };   // present iff rejected
+  // Regions this intent advanced, so a client can await the matching diff
+  // before clearing an optimistic echo. Empty for no-op / query intents.
+  produced?: Array&lt;{ region: string; version: number }&gt;;
+}</code></pre>
+        <p>
+          The ack is a <strong>receipt</strong>, not the result. The result of an intent is always a
+          projection diff on the affected region(s) — never data returned inline. This is what makes
+          multi-client correct: a change requested by client&nbsp;A reaches client&nbsp;B by exactly
+          the same path it reaches A (the region's diff stream), so no client can hold state another
+          client cannot see.
+        </p>
+
+        <h3>Projection frame (channel 2, backend → UI)</h3>
+        <pre><code>type ProjectionFrame =
+  | SnapshotFrame
+  | DiffFrame;
+
+interface SnapshotFrame {
+  region: string;      // region id, e.g. "tunnels" or "layout@client-7"
+  kind: "snapshot";
+  version: number;     // u64 monotonic; the cache adopts this as its baseline
+  view: unknown;       // the complete, render-ready view model for the region
+}
+
+interface DiffFrame {
+  region: string;
+  kind: "diff";
+  baseVersion: number; // MUST equal the cache's current version, else it is a gap
+  version: number;     // == baseVersion + 1 (see Versioning)
+  ops: DiffOp[];       // ordered mutations to apply to the cached view model
+}
+
+// Default diff shape: an RFC 6902 JSON-Patch subset (add / remove / replace).
+// A domain MAY emit compact semantic ops instead (see Open Decisions).
+type DiffOp =
+  | { op: "replace"; path: string; value: unknown }
+  | { op: "add";     path: string; value: unknown }
+  | { op: "remove";  path: string };</code></pre>
+
+        <h3>Subscription control (channel 2 setup / teardown)</h3>
+        <pre><code>// Attach. Returns the current snapshot AND begins the diff stream atomically
+// (no diff can slip between the snapshot's version and the first streamed diff).
+subscribe(region: string): Promise&lt;{ frame: SnapshotFrame; stream: ProjectionStream }&gt;
+
+// Detach. Idempotent; releases the client's slot in the fan-out registry.
+unsubscribe(region: string): void
+
+// Recover. Client asks the backend to re-baseline a region after a detected gap
+// or a reconnect. `have` lets the backend skip work if the client is current.
+resync(region: string, have?: number): Promise&lt;SnapshotFrame&gt;</code></pre>
+        <blockquote>
+          <p>
+            <strong>Region ids</strong> are <code>"&lt;domain&gt;"</code> for globally-shared
+            regions (e.g. <code>tunnels</code>, <code>openConnections</code>) and
+            <code>"&lt;domain&gt;@&lt;clientId&gt;"</code> for client-scoped regions (e.g. a
+            per-client tab layout — see <a href="#granularity">Region Granularity</a>). The
+            <code>@client</code> suffix is the only thing that distinguishes a shared region from a
+            per-client one; the envelope and versioning rules are identical for both.
+          </p>
+        </blockquote>
+      </section>
+
+      <!-- ── Versioning ─────────────────────────────────────────────── -->
+      <section>
+        <h2 id="versioning">
+          Per-Region Versioned Projections <a class="anchor" href="#versioning">#</a>
+        </h2>
+        <p>
+          Each region owns a single <strong>monotonic <code>u64</code> version</strong>, held
+          backend-side and mirrored in the client's cache. The version is the entire consistency
+          mechanism; because the backend is the only writer, versioning need only detect
+          <em>dropped or reordered</em> frames, never merge concurrent edits.
+        </p>
+
+        <h4>The three invariants</h4>
+        <ul>
+          <li>
+            <strong>Snapshot-on-attach.</strong> <code>subscribe</code> returns a
+            <code>SnapshotFrame</code> at the region's current version <em>V</em>. The client adopts
+            <em>V</em> as its baseline. Attach is atomic with stream start: the backend registers
+            the subscriber and captures the snapshot under the same region lock, so no diff is lost
+            between the snapshot and the first streamed diff, and none is double-applied.
+          </li>
+          <li>
+            <strong>Ordered diffs.</strong> Every mutation emits one <code>DiffFrame</code> with
+            <code>baseVersion = V</code>, <code>version = V+1</code>. A client applies a diff
+            <em>only if</em> <code>frame.baseVersion === cache.version</code>; it then advances
+            <code>cache.version = frame.version</code>. Delivery is ordered per region on both
+            transports (Tauri per-channel events and a single WebSocket both preserve order), so in
+            the normal case every diff fits exactly.
+          </li>
+          <li>
+            <strong>Resync-on-gap / reconnect.</strong> If
+            <code>frame.baseVersion !== cache.version</code> (a gap: a frame was dropped, reordered,
+            or the socket reconnected), the client discards the diff, calls
+            <code>resync(region, cache.version)</code>, and re-baselines from the returned snapshot.
+            No diff is ever applied out of order.
+          </li>
+        </ul>
+
+        <div class="diagram">
+          <span class="diagram__caption">Version lifecycle for one region</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Attaching : subscribe(region)
+    Attaching --> Live : snapshot @ V (cache.version = V)
+    Live --> Live : diff base=V ver=V+1 (fits) -&gt; apply, version = V+1
+    Live --> Gap : diff base != cache.version (drop / reorder / reconnect)
+    Gap --> Live : resync -&gt; snapshot @ W (cache.version = W)
+    Live --> [*] : unsubscribe(region)
+          </pre>
+        </div>
+
+        <p>
+          <strong>Version scope.</strong> Versions are per region and monotonic
+          <em>for the life of the backend process's region instance</em>. A region that is destroyed
+          and recreated (e.g. the backend restarts) resets to 0; the client detects this because a
+          fresh <code>subscribe</code> always yields a snapshot, never a diff, so no stale
+          <code>baseVersion</code> comparison survives a re-attach. Versions are never compared
+          across regions.
+        </p>
+      </section>
+
+      <!-- ── Fan-out ────────────────────────────────────────────────── -->
+      <section>
+        <h2 id="fanout">Multi-Subscriber Fan-Out <a class="anchor" href="#fanout">#</a></h2>
+        <p>
+          A region may have <em>N</em> subscribers — several tabs in one desktop app, or a desktop
+          plus a browser plus an iPad in remote-client mode. The backend is the single writer: it
+          <strong
+            >applies an intent once, bumps the region version once, computes the diff once, and fans
+            that one diff out to every current subscriber</strong
+          >. All subscribers of a region therefore step through the identical version sequence.
+        </p>
+
+        <h3>Subscription registry</h3>
+        <p>
+          The projector holds a <code>SubscriptionRegistry</code>:
+          <code>region → Set&lt;Subscriber&gt;</code>, where a <code>Subscriber</code> is
+          <code>{ clientId, sink }</code> and <code>sink</code> is the delivery handle (a Tauri
+          <code>ipc::Channel</code> on desktop, a WebSocket send half in remote mode). Lifecycle:
+        </p>
+        <ul>
+          <li>
+            <strong>Attach</strong> inserts the subscriber under the region lock and hands back the
+            snapshot (invariant&nbsp;1). First subscriber of a region may lazily instantiate the
+            region's projector.
+          </li>
+          <li>
+            <strong>Emit</strong> iterates the region's subscriber set and pushes the one diff to
+            each sink. A sink whose client has gone (closed channel / dead socket) is dropped from
+            the set — the emit path is where dead subscribers are reaped.
+          </li>
+          <li>
+            <strong>Detach</strong> (explicit <code>unsubscribe</code>, tab close, or client
+            disconnect) removes the subscriber. When the set empties, the region projector may be
+            torn down to reclaim memory; the next attach rebuilds it from authoritative state.
+          </li>
+        </ul>
+
+        <h3>Late joiners get a consistent snapshot</h3>
+        <p>
+          A client attaching to a region that is already live does not replay history. It receives a
+          <strong>snapshot at the current version</strong>, computed from authoritative state under
+          the region lock, and joins the diff stream from there. Because snapshot capture and
+          subscriber insertion happen under the same lock, a late joiner can neither miss a diff
+          that lands during attach nor receive one that predates its snapshot. Every subscriber —
+          first or hundredth — converges on byte-identical view state at the same version.
+        </p>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Multi-client fan-out: one intent, one diff, N subscribers</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant A as Client A (desktop)
+    participant B as Client B (browser)
+    participant D as Intent dispatcher
+    participant S as Domain store (authoritative)
+    participant P as Projector + registry
+    A->>D: dispatch(intent "tunnel.start")
+    D->>S: apply (serialised, single writer)
+    S->>P: changed -&gt; version V+1, diff computed once
+    D-->>A: ack { accepted, produced:[tunnels@V+1] }
+    par fan-out to all current subscribers of "tunnels"
+        P-->>A: diff base=V ver=V+1
+    and
+        P-->>B: diff base=V ver=V+1
+    end
+    Note over A,B: both caches now at version V+1 — identical view
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Region Granularity ─────────────────────────────────────── -->
+      <section>
+        <h2 id="granularity">Region Granularity <a class="anchor" href="#granularity">#</a></h2>
+        <p>
+          The parent concept's <strong>top risk is projection chattiness</strong>: naive
+          full-snapshot pushes on every change would flood the Tauri IPC bridge, which is already
+          single-threaded (an architecture ADR risk). Region design is the discipline that prevents
+          it. Four rules:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Rule</th>
+                <th>Guidance</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Diff, don't re-snapshot</strong></td>
+                <td>
+                  After attach, steady state is diffs only. A full snapshot is emitted only on
+                  attach and on resync. A one-field change is one <code>replace</code> op, not a
+                  whole view model.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>One region per view / domain</strong></td>
+                <td>
+                  Split state so a subscriber only receives what its view renders. Candidate
+                  regions: <code>conntree</code> (connection sidebar), <code>tunnels</code>,
+                  <code>openConnections</code>, <code>servers</code>, <code>transfers</code>,
+                  <code>monitors@&lt;host&gt;</code>, <code>layout@&lt;client&gt;</code>. A
+                  collapsed panel need not be subscribed at all.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Coalesce bursts</strong></td>
+                <td>
+                  The projector debounces a region: many mutations within a tick collapse into
+                  <em>one</em> diff (or a fresh snapshot if the backlog is large), advancing the
+                  version by one. This mirrors the terminal path's existing coalescing discipline
+                  (the 32&nbsp;KB PTY coalescer + rAF batching) rather than inventing a new one.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Subscribe on demand</strong></td>
+                <td>
+                  A client subscribes to a region when its view mounts and unsubscribes when it
+                  unmounts. Fan-out cost scales with <em>visible</em> regions × clients, not total
+                  state.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Shared vs. client-scoped regions.</strong> Authoritative facts that every client
+          must agree on are <em>shared</em> regions (one version stream fanned to all): running
+          tunnels, live sessions, embedded servers, the connection tree. View state that is
+          legitimately per-client — remote-client mode already states each client has an independent
+          tab layout — is a <em>client-scoped</em> region (<code>layout@&lt;clientId&gt;</code>),
+          authoritative in the backend but keyed per client and fanned out only to that client's own
+          subscribers (e.g. its multiple windows). The substrate treats both identically; only the
+          region id differs. <em>Which</em> domains are shared vs. client-scoped is a per-domain
+          product call — see <a href="#decisions">Open Decisions</a>.
+        </p>
+      </section>
+
+      <!-- ── Coexistence ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="coexistence">
+          Coexistence &amp; Migration <a class="anchor" href="#coexistence">#</a>
+        </h2>
+
+        <h3>The terminal byte stream stays separate and untouched</h3>
+        <p>
+          Terminal output is the app's hottest path and already works the right way: the backend
+          coalesces PTY output (up to 32&nbsp;KB) and emits base64 bytes on the
+          <code>terminal-output</code> event (with <code>terminal-exit</code> for teardown);
+          <code>events.ts</code>'s <code>TerminalOutputDispatcher</code> batches per session via
+          <code>requestAnimationFrame</code> and writes straight into xterm.js. This channel
+          <strong>never</strong> passes through the projector — routing bytes through versioned
+          diffs would add latency and defeat the coalescer. It is channel&nbsp;3, wholly independent
+          of the substrate; the substrate must not touch it. xterm's scrollback remains view-local
+          render state.
+        </p>
+
+        <h3>Typed commands coexist (strangler)</h3>
+        <p>
+          The substrate lands <em>beside</em> the existing ~206 typed commands and ~36 events, not
+          in place of them. During migration:
+        </p>
+        <ul>
+          <li>
+            A domain that has not yet migrated keeps using its typed commands and events exactly as
+            today.
+          </li>
+          <li>
+            A migrated domain is served by a region; its old commands become internal functions
+            behind the intent handler, and its old events stop firing (their data now flows as
+            diffs).
+          </li>
+          <li>
+            The two never serve the same domain at once — the strangler rule "one domain per phase
+            behind a stable projection boundary" keeps the boundary clean, so there is no
+            double-write.
+          </li>
+        </ul>
+        <p>
+          Because the substrate is additive, the app stays fully working after every phase, and any
+          single phase is independently revertable.
+        </p>
+
+        <h3>Plugin-runtime interaction</h3>
+        <p>
+          Frontend JS plugins (<code>src/plugins/pluginRuntime.ts</code>) are the parent concept's
+          sharpest exception to "no logic in the UI". Two interactions matter for the substrate:
+        </p>
+        <ul>
+          <li>
+            <strong>Protocol parsers</strong> run <code>transform(data, sessionId)</code> over every
+            terminal chunk. They sit on channel&nbsp;3, <em>not</em> the projection channel — the
+            preferred path is to move them to the Rust plugin backend
+            (<code>termihub-plugin-api</code>), which keeps them off the frontend hot path entirely.
+            Either way they never see projection frames.
+          </li>
+          <li>
+            <strong>Status-bar widgets</strong> render DOM in the UI. They become sandboxed
+            (Worker/iframe) consumers that render into a shell-owned slot; if a widget needs backend
+            state it <strong>subscribes to a region</strong> like any other view, rather than
+            reaching into app state. It never becomes an authoritative writer.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Intent round-trip — ack is a receipt, the diff is the result</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant V as UI (stateless)
+    participant D as Intent dispatcher
+    participant S as Domain store
+    participant P as Projector
+    U->>V: click / drag / type
+    V->>D: dispatch(intent { intentId, kind, payload, clientId })
+    Note over V: optional optimistic echo (pending), keyed by intentId
+    D->>D: validate + serialise (single writer)
+    alt rejected
+        D-->>V: ack { rejected, error }
+        Note over V: roll back optimistic echo, surface error
+    else accepted
+        D->>S: run business logic, mutate authoritative state
+        S->>P: region changed
+        D-->>V: ack { accepted, produced:[region@V+1] }
+        P-->>V: diff base=V ver=V+1
+        V->>U: re-render from cache; clear echo when produced version arrives
+    end
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Reconnect &amp; resync — recover a region after a dropped stream</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant V as UI cache (version = 7)
+    participant T as Transport
+    participant P as Projector
+    Note over V,T: socket drops (network hiccup / iPad backgrounded); region advances 7 -&gt; 11 backend-side
+    T-->>V: reconnect established
+    V->>P: resync("tunnels", have = 7)
+    alt backend still at 7
+        P-->>V: (no-op) already current
+    else advanced to 11
+        P-->>V: snapshot @ 11
+        Note over V: cache re-baselines: version = 11, resume diff stream
+    end
+          </pre>
+        </div>
+        <p>
+          A gap detected mid-stream (a <code>DiffFrame</code> whose <code>baseVersion</code> does
+          not match the cache) triggers the identical <code>resync</code> path — reconnect is just
+          the most common cause of a gap.
+        </p>
+      </section>
+
+      <!-- ── Worked Example ─────────────────────────────────────────── -->
+      <section>
+        <h2 id="example">Worked Example — SSH Tunnels <a class="anchor" href="#example">#</a></h2>
+        <p>
+          SSH tunnels are the parent concept's <strong>Phase&nbsp;2 pilot domain</strong> (already a
+          self-contained store slice with a clear lifecycle). This walks one region,
+          <code>tunnels</code>, end-to-end across two attached clients and a reconnect.
+        </p>
+
+        <h4>The region's view model</h4>
+        <pre><code>// region "tunnels" — the whole render-ready list for the tunnel sidebar
+{
+  "tunnels": [
+    { "id": "t1", "label": "db → localhost:5432", "kind": "local",
+      "status": "connected", "bind": "127.0.0.1:5432" },
+    { "id": "t2", "label": "socks", "kind": "dynamic",
+      "status": "connecting", "bind": "127.0.0.1:1080" }
+  ]
+}</code></pre>
+
+        <h4>Step by step</h4>
+        <ol>
+          <li>
+            <strong>Attach.</strong> Client&nbsp;A (desktop) and Client&nbsp;B (browser) both
+            <code>subscribe("tunnels")</code>. Each receives
+            <code>SnapshotFrame { version: 41, view: {…} }</code> and registers in the fan-out set.
+          </li>
+          <li>
+            <strong>Dispatch.</strong> On A, the user clicks "Start" on tunnel <code>t2</code>. A
+            sends
+            <code
+              >dispatch({ intentId: "01J…", kind: "tunnel.start", payload: { id: "t2" }, clientId:
+              "A" })</code
+            >. A shows an optimistic "connecting…" echo keyed by that <code>intentId</code>.
+          </li>
+          <li>
+            <strong>Apply (single writer).</strong> The dispatcher validates, calls the existing
+            tunnel-start logic (now an internal function), and the tunnel store transitions
+            <code>t2</code> to <code>connecting</code>, bumping the region version
+            <code>41 → 42</code>.
+          </li>
+          <li>
+            <strong>Ack.</strong> A receives
+            <code>ack { status: "accepted", produced: [{ region: "tunnels", version: 42 }] }</code>.
+          </li>
+          <li>
+            <strong>Fan-out.</strong> The projector emits one diff and pushes it to both
+            subscribers:
+            <pre><code>{ "region": "tunnels", "kind": "diff", "baseVersion": 41, "version": 42,
+  "ops": [ { "op": "replace", "path": "/tunnels/1/status", "value": "connecting" } ] }</code></pre>
+            A applies it and drops its optimistic echo (the produced version arrived). B — which
+            never issued the intent — applies the identical diff and now shows
+            <code>t2</code> connecting too. Both caches are at version 42.
+          </li>
+          <li>
+            <strong>Real completion.</strong> The SSH layer confirms the bind; the store moves
+            <code>t2 → connected</code> (version <code>42 → 43</code>). One more diff fans out to
+            both; both reach version 43.
+          </li>
+          <li>
+            <strong>Reconnect + resync.</strong> B's browser is backgrounded; its socket drops.
+            While away, the user on A stops <code>t1</code> (version <code>43 → 44</code>). B
+            reconnects and calls <code>resync("tunnels", 43)</code>. The backend is at 44, so it
+            returns <code>SnapshotFrame { version: 44, view: {…} }</code>; B re-baselines to 44 and
+            resumes the diff stream. B never applied a stale diff and never saw an inconsistent
+            list.
+          </li>
+        </ol>
+        <div class="diagram">
+          <span class="diagram__caption"
+            >SSH-tunnels pilot — dispatch, fan-out to 2 clients, then B reconnects and resyncs</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant A as Client A (desktop)
+    participant B as Client B (browser)
+    participant BE as Backend (dispatcher + tunnel store + projector)
+    A->>BE: subscribe("tunnels")
+    BE-->>A: snapshot @ 41
+    B->>BE: subscribe("tunnels")
+    BE-->>B: snapshot @ 41
+    A->>BE: dispatch(tunnel.start t2)
+    BE-->>A: ack accepted (produced tunnels@42)
+    par fan-out @42
+        BE-->>A: diff 41-&gt;42 (t2 connecting)
+    and
+        BE-->>B: diff 41-&gt;42 (t2 connecting)
+    end
+    Note over B: socket drops (backgrounded)
+    BE->>BE: t2 connected (42-&gt;43), then A stops t1 (43-&gt;44)
+    BE-->>A: diff 42-&gt;43, diff 43-&gt;44
+    Note over B: reconnects
+    B->>BE: resync("tunnels", have=43)
+    BE-->>B: snapshot @ 44
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the architecture at concept-creation time (July 2026); indicative, not binding.
+          The substrate is Phase&nbsp;1 of the parent concept — the two channels plus a dumb
+          projection-cache adapter, terminal stream untouched.
+        </p>
+
+        <h3>Rust side — <code>src-tauri/src/projection/</code> (+ <code>core</code>)</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src-tauri/src/projection/mod.rs</code></td>
+                <td>
+                  <strong>New</strong> — the <code>Projector</code>: owns the
+                  <code>SubscriptionRegistry</code> (<code>region → Set&lt;Subscriber&gt;</code>),
+                  the per-region version counters, and the coalescing/diff step. Exposes
+                  <code>subscribe</code> / <code>unsubscribe</code> / <code>resync</code> /
+                  <code>emit</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/projection/region.rs</code></td>
+                <td>
+                  <strong>New</strong> — a <code>ProjectedStore</code> trait a domain store
+                  implements: <code>fn region_id(&amp;self) -&gt; &amp;str</code>,
+                  <code>fn snapshot(&amp;self) -&gt; ViewModel</code>, and a change signal. The
+                  projector diffs consecutive snapshots (default) or accepts semantic ops from the
+                  store (opt-in, hot domains). The natural first seam is the existing app-side
+                  authority — <code>SessionManager</code> in
+                  <code>src-tauri/src/session/manager.rs</code> already owns the session registry,
+                  scrollback and event emitter — which a region wraps rather than replaces.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/projection/frame.rs</code></td>
+                <td>
+                  <strong>New</strong> — <code>serde</code> structs for <code>Intent</code>,
+                  <code>IntentAck</code>, <code>SnapshotFrame</code>, <code>DiffFrame</code>,
+                  <code>DiffOp</code>. Twin of the TS envelopes; lives next to / reuses
+                  <code>core/src/protocol/</code> so remote-client mode speaks the same dialect.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/commands/projection.rs</code></td>
+                <td>
+                  <strong>New</strong> — two Tauri commands:
+                  <code>intent_dispatch(intent) -&gt; IntentAck</code> and
+                  <code>projection_subscribe(region) -&gt; SnapshotFrame</code>, the latter opening
+                  a <code>tauri::ipc::Channel&lt;ProjectionFrame&gt;</code> per region for the diff
+                  stream (efficient per-region push, avoids a global event fan-in).
+                </td>
+              </tr>
+              <tr>
+                <td><code>core/src/output/</code> (existing)</td>
+                <td>
+                  <strong>Untouched</strong> — the <code>OutputCoalescer</code> and the
+                  <code>terminal-output</code> path stay exactly as-is (channel 3).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>TS side — <code>src/services/transport/</code></h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src/services/transport/index.ts</code></td>
+                <td>
+                  <strong>New</strong> — transport selector (shared with remote-client mode):
+                  <code>window.__TAURI__</code> present → <code>TauriTransport</code>, else
+                  <code>WebSocketTransport</code>.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/services/transport/TauriTransport.ts</code>,
+                  <code>WebSocketTransport.ts</code>
+                </td>
+                <td>
+                  <strong>New</strong> — implement one <code>Transport</code> interface:
+                  <code>dispatch(intent)</code>, <code>subscribe(region)</code>,
+                  <code>resync(region, have)</code>. Tauri wraps <code>invoke</code> + the
+                  <code>ipc::Channel</code>; WebSocket wraps JSON-RPC over the socket.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/services/transport/ProjectionClient.ts</code></td>
+                <td>
+                  <strong>New</strong> — per-region cache adapter: holds
+                  <code>{ version, view }</code>, applies diffs,
+                  <strong>detects gaps</strong> (<code>baseVersion !== version</code>) and calls
+                  <code>resync</code>, and re-baselines on reconnect. Emits changes to the store.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/store/appStore.ts</code></td>
+                <td>
+                  A migrated domain's slice becomes a <strong>dumb projection cache</strong>: it
+                  holds the last view model for its region and notifies React; it computes and
+                  decides nothing. Non-migrated slices are unchanged (strangler).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/services/api.ts</code>, <code>src/services/events.ts</code></td>
+                <td>
+                  Unchanged for non-migrated domains; the terminal
+                  <code>TerminalOutputDispatcher</code> path in <code>events.ts</code> stays exactly
+                  as-is.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          <strong>Diff library.</strong> Per the repo's "prefer libraries" rule, the default
+          structural diff should use a maintained RFC&nbsp;6902 JSON-Patch crate (Rust, produce) +
+          npm package (TS, apply) rather than a hand-rolled differ — with the semantic-op escape
+          hatch reserved for domains that measure a hot path.
+        </p>
+      </section>
+
+      <!-- ── Remote-client alignment ────────────────────────────────── -->
+      <section>
+        <h2 id="remote">
+          Alignment with Remote-Client Mode <a class="anchor" href="#remote">#</a>
+        </h2>
+        <p>
+          This substrate <strong>reuses, does not fork</strong>,
+          <a href="remote-client-mode.html">remote-client mode</a>'s transport abstraction. That
+          concept already defines <code>src/services/transport/</code> with an
+          <code>index.ts</code> selector choosing <code>TauriTransport</code> vs.
+          <code>WebSocketTransport</code>, both speaking the same JSON-RPC dialect as the existing
+          desktop↔agent protocol. The substrate lives inside that abstraction:
+        </p>
+        <ul>
+          <li>
+            The intent/projection envelopes become additional JSON-RPC methods/notifications
+            (<code>intent.dispatch</code>, <code>projection.subscribe</code>,
+            <code>projection.frame</code>, <code>projection.resync</code>) carried by whichever
+            transport is selected — no second transport layer.
+          </li>
+          <li>
+            Remote-client mode already states sessions are owned by the agent, survive a dropped
+            socket, and re-attach on reconnect, and that multiple clients may connect at once. The
+            substrate's snapshot-on-attach + resync-on-reconnect + multi-subscriber fan-out is the
+            <em>state</em> counterpart of that <em>session</em> behaviour — the same lifecycle,
+            applied to projected view models.
+          </li>
+          <li>
+            Remote-client mode's note that "each client has an independent tab layout" is realised
+            as a client-scoped <code>layout@&lt;clientId&gt;</code> region; its
+            <code>settings/changed</code> broadcast becomes a shared <code>settings</code> region.
+          </li>
+        </ul>
+        <p>
+          Net: remote-client mode owns <em>where the bytes travel</em> (Tauri IPC vs. WebSocket,
+          auth, TLS); this concept owns <em>what state-shaped messages travel over it</em>. They
+          compose; neither duplicates the other.
+        </p>
+      </section>
+
+      <!-- ── Open Design Decisions ──────────────────────────────────── -->
+      <section>
+        <h2 id="decisions">Open Design Decisions <a class="anchor" href="#decisions">#</a></h2>
+        <p>
+          The transport and multi-client questions are <strong>settled</strong> (see
+          <a href="#overview">Overview</a>). The following surfaced while designing the substrate
+          and need a maintainer call before Phase-1 implementation locks — none blocks starting, but
+          each shapes the API.
+        </p>
+        <ol>
+          <li>
+            <strong>Intent-acknowledgement model.</strong> This design proposes an explicit
+            <code>IntentAck</code> (accepted/rejected + <code>produced</code> versions) so errors
+            are reported at the dispatch site and a client can correlate an optimistic echo to the
+            diff that confirms it. The alternative is fire-and-forget: no ack, the UI learns of
+            success or failure only by observing the next projection (rejections would need an error
+            region). The ack model costs a round-trip reply but makes error handling and
+            optimistic-echo teardown deterministic. <em>Recommended: explicit ack.</em>
+          </li>
+          <li>
+            <strong>Optimistic vs. pessimistic UI updates.</strong> Does the UI echo an intent
+            optimistically (show "connecting…" immediately) or wait for the confirming diff? On the
+            desktop the round-trip is sub-millisecond, so pessimistic is invisible; over a WebSocket
+            it is not. Proposal: <strong>pessimistic by default</strong>, with opt-in optimistic
+            echo (keyed by <code>intentId</code>, cleared when the <code>produced</code> version
+            arrives) for latency-sensitive interactions like drag-drop and typing. This has real
+            product feel implications and interacts with decision&nbsp;1.
+          </li>
+          <li>
+            <strong>Diff granularity / format.</strong> Default is a generic RFC&nbsp;6902
+            JSON-Patch subset (uniform, library-backed, works for any region). Hot or large regions
+            may warrant compact <em>semantic</em> ops (e.g.
+            <code>tunnelStatusChanged{id,status}</code>) to avoid path-diffing cost. Proposal:
+            JSON-Patch default with a per-domain semantic-op escape hatch. The decision is how much
+            to invest up front vs. defer until a region measures hot.
+          </li>
+          <li>
+            <strong>Which domains are shared vs. client-scoped.</strong> The substrate supports
+            both; the assignment is a product call per domain. Clear cases:
+            tunnels/sessions/servers/ connection-tree are <em>shared</em>; tab layout is
+            <em>client-scoped</em> (remote-client mode already says so). Ambiguous: selection,
+            active tab, sidebar collapse, filter text — per-client view state, but should a "follow
+            my session" mode ever mirror them? Needs a per-domain ruling as each domain migrates,
+            not one global answer.
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── Implementation Status ──────────────────────────────────── -->
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <p>
+          <strong>Not started — design only.</strong> This sub-concept exists to lock the substrate
+          contract before
+          <a href="https://github.com/armaxri/termiHub/issues/2149">#2149</a> (Phase&nbsp;1
+          substrate) begins implementation. It is complete enough for Phase-1 implementation to
+          start once the four <a href="#decisions">Open Decisions</a> above are ruled on (all have a
+          recommended default that lets work begin immediately). The pilot domain is SSH tunnels
+          (parent Phase&nbsp;2). Run
+          <code>/sync-concept stateless-ui-projection-substrate</code> after the substrate lands to
+          reconcile this document with the code.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept &lt;name&gt;</code>. Records the last commit at which
+            the concept and code were reconciled, plus open divergences. The concept is the source
+            of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (design only) · <strong>Status:</strong> not
+          implemented
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td><code>src-tauri/src/projection/</code> — projector + registry</td>
+                <td>Absent</td>
+                <td>Missing</td>
+                <td>Implement in Phase 1 (#2149), then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td><code>src/services/transport/</code> — dispatch/subscribe client</td>
+                <td>Absent (shared with remote-client mode)</td>
+                <td>Missing</td>
+                <td>Implement in Phase 1, coordinate with remote-client mode</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Terminal <code>terminal-output</code> stream stays a separate channel</td>
+                <td>Present and untouched (<code>TerminalOutputDispatcher</code>)</td>
+                <td>Aligned</td>
+                <td>Keep as-is; substrate must not touch it</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
