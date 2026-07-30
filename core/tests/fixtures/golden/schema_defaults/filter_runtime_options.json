@@ -1,0 +1,117 @@
+{
+  "operation": "filterRuntimeOptions",
+  "cases": [
+    {
+      "name": "keeps all options when both runtimes are available",
+      "input": {
+        "groups": [
+          {
+            "key": "container",
+            "label": "Container",
+            "fields": [
+              { "key": "image", "label": "image", "fieldType": { "type": "text" }, "required": false, "default": "ubuntu:22.04" },
+              { "key": "runtime", "label": "Runtime", "fieldType": { "type": "select", "options": [ { "value": "auto", "label": "Auto" }, { "value": "docker", "label": "Docker" }, { "value": "podman", "label": "Podman" } ] }, "required": true, "default": "auto" }
+            ]
+          }
+        ]
+      },
+      "args": { "dockerAvailable": true, "podmanAvailable": true },
+      "expected": {
+        "groups": [
+          {
+            "key": "container",
+            "label": "Container",
+            "fields": [
+              { "key": "image", "label": "image", "fieldType": { "type": "text" }, "required": false, "default": "ubuntu:22.04", "supportsEnvExpansion": false, "supportsTildeExpansion": false },
+              { "key": "runtime", "label": "Runtime", "fieldType": { "type": "select", "options": [ { "value": "auto", "label": "Auto" }, { "value": "docker", "label": "Docker" }, { "value": "podman", "label": "Podman" } ] }, "required": true, "default": "auto", "supportsEnvExpansion": false, "supportsTildeExpansion": false }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "shows only Docker when only Docker is available",
+      "input": {
+        "groups": [
+          {
+            "key": "container",
+            "label": "Container",
+            "fields": [
+              { "key": "image", "label": "image", "fieldType": { "type": "text" }, "required": false, "default": "ubuntu:22.04" },
+              { "key": "runtime", "label": "Runtime", "fieldType": { "type": "select", "options": [ { "value": "auto", "label": "Auto" }, { "value": "docker", "label": "Docker" }, { "value": "podman", "label": "Podman" } ] }, "required": true, "default": "auto" }
+            ]
+          }
+        ]
+      },
+      "args": { "dockerAvailable": true, "podmanAvailable": false },
+      "expected": {
+        "groups": [
+          {
+            "key": "container",
+            "label": "Container",
+            "fields": [
+              { "key": "image", "label": "image", "fieldType": { "type": "text" }, "required": false, "default": "ubuntu:22.04", "supportsEnvExpansion": false, "supportsTildeExpansion": false },
+              { "key": "runtime", "label": "Runtime", "fieldType": { "type": "select", "options": [ { "value": "docker", "label": "Docker" } ] }, "required": true, "default": "auto", "supportsEnvExpansion": false, "supportsTildeExpansion": false }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "shows only Podman when only Podman is available",
+      "input": {
+        "groups": [
+          {
+            "key": "container",
+            "label": "Container",
+            "fields": [
+              { "key": "image", "label": "image", "fieldType": { "type": "text" }, "required": false, "default": "ubuntu:22.04" },
+              { "key": "runtime", "label": "Runtime", "fieldType": { "type": "select", "options": [ { "value": "auto", "label": "Auto" }, { "value": "docker", "label": "Docker" }, { "value": "podman", "label": "Podman" } ] }, "required": true, "default": "auto" }
+            ]
+          }
+        ]
+      },
+      "args": { "dockerAvailable": false, "podmanAvailable": true },
+      "expected": {
+        "groups": [
+          {
+            "key": "container",
+            "label": "Container",
+            "fields": [
+              { "key": "image", "label": "image", "fieldType": { "type": "text" }, "required": false, "default": "ubuntu:22.04", "supportsEnvExpansion": false, "supportsTildeExpansion": false },
+              { "key": "runtime", "label": "Runtime", "fieldType": { "type": "select", "options": [ { "value": "podman", "label": "Podman" } ] }, "required": true, "default": "auto", "supportsEnvExpansion": false, "supportsTildeExpansion": false }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "keeps all options when neither runtime is available (fallback)",
+      "input": {
+        "groups": [
+          {
+            "key": "container",
+            "label": "Container",
+            "fields": [
+              { "key": "image", "label": "image", "fieldType": { "type": "text" }, "required": false, "default": "ubuntu:22.04" },
+              { "key": "runtime", "label": "Runtime", "fieldType": { "type": "select", "options": [ { "value": "auto", "label": "Auto" }, { "value": "docker", "label": "Docker" }, { "value": "podman", "label": "Podman" } ] }, "required": true, "default": "auto" }
+            ]
+          }
+        ]
+      },
+      "args": { "dockerAvailable": false, "podmanAvailable": false },
+      "expected": {
+        "groups": [
+          {
+            "key": "container",
+            "label": "Container",
+            "fields": [
+              { "key": "image", "label": "image", "fieldType": { "type": "text" }, "required": false, "default": "ubuntu:22.04", "supportsEnvExpansion": false, "supportsTildeExpansion": false },
+              { "key": "runtime", "label": "Runtime", "fieldType": { "type": "select", "options": [ { "value": "auto", "label": "Auto" }, { "value": "docker", "label": "Docker" }, { "value": "podman", "label": "Podman" } ] }, "required": true, "default": "auto", "supportsEnvExpansion": false, "supportsTildeExpansion": false }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
