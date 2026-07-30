@@ -133,3 +133,16 @@
   gap: 8px;
   padding-left: 20px;
 }
+
+/* Per-server "Run on" run-location control (#2191), in the item's details. */
+.server-item__runon {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+}
+
+.server-item__runon-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}

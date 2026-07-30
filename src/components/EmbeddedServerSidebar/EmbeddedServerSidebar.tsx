@@ -1,8 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useRunLocationStore } from "@/store/runLocationStore";
 import { Button, ConfirmDialog, toast } from "@/components/ui";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
+import { setEmbeddedServerRunLocation } from "@/services/embeddedServerApi";
+import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import "./EmbeddedServerSidebar.css";
@@ -13,10 +16,30 @@ import "./EmbeddedServerSidebar.css";
 export function EmbeddedServerSidebar() {
   const servers = useAppStore((s) => s.embeddedServers);
   const serverStates = useAppStore((s) => s.embeddedServerStates);
+  const agents = useAppStore((s) => s.remoteAgents);
   const saveEmbeddedServer = useAppStore((s) => s.saveEmbeddedServer);
   const deleteEmbeddedServer = useAppStore((s) => s.deleteEmbeddedServer);
   const startEmbeddedServer = useAppStore((s) => s.startEmbeddedServer);
   const stopEmbeddedServer = useAppStore((s) => s.stopEmbeddedServer);
+  const serverLocations = useRunLocationStore((s) => s.serverLocations);
+  const setServerLocation = useRunLocationStore((s) => s.setServerLocation);
+
+  // Record a server's run-location: mirror it UI-side (optimistic) and persist
+  // it on the desktop backend, which routes the server's next start. Roll back
+  // and surface a toast if the backend rejects the choice.
+  const handleRunLocationChange = useCallback(
+    (serverId: string, location: RunLocation) => {
+      const previous = serverLocations[serverId] ?? THIS_COMPUTER;
+      setServerLocation(serverId, location);
+      setEmbeddedServerRunLocation(serverId, location).catch((err: unknown) => {
+        setServerLocation(serverId, previous);
+        toast.error("Couldn't change run location", {
+          description: err instanceof Error ? err.message : String(err),
+        });
+      });
+    },
+    [serverLocations, setServerLocation]
+  );
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<EmbeddedServerConfig | null>(null);
@@ -142,6 +165,9 @@ export function EmbeddedServerSidebar() {
               key={cfg.id}
               config={cfg}
               state={serverStates[cfg.id]}
+              agents={agents}
+              runLocation={serverLocations[cfg.id] ?? THIS_COMPUTER}
+              onRunLocationChange={(location) => handleRunLocationChange(cfg.id, location)}
               onStart={startEmbeddedServer}
               onStop={stopEmbeddedServer}
               onEdit={handleEdit}

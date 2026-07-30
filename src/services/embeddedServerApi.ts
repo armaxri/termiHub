@@ -4,10 +4,24 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { EmbeddedServerConfig, NetworkInterface, ServerState } from "@/types/embeddedServer";
+import type { RunLocation } from "@/types/tunnel";
 
 /** Return all saved embedded server configurations. */
 export async function listEmbeddedServers(): Promise<EmbeddedServerConfig[]> {
   return await invoke<EmbeddedServerConfig[]>("list_embedded_servers");
+}
+
+/**
+ * Set (or clear) which machine hosts a server — "This computer" or a named
+ * agent (#2214). `RunLocation.ThisComputer` clears the preference (back to
+ * desktop hosting); an agent value routes the server's next start to that
+ * agent. Takes effect on the server's next start.
+ */
+export async function setEmbeddedServerRunLocation(
+  serverId: string,
+  runLocation: RunLocation
+): Promise<void> {
+  await invoke("set_embedded_server_run_location", { serverId, runLocation });
 }
 
 /** Add or update an embedded server configuration. */
