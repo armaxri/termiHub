@@ -107,10 +107,18 @@ impl IntentAck {
 
 /// A projection frame pushed to a subscriber (channel 2, backend → UI).
 ///
-/// Internally tagged by `kind`, matching the TypeScript discriminated union
-/// `{ kind: "snapshot" | "diff", ... }`.
+/// A discriminated union on `kind`, matching the TypeScript
+/// `{ kind: "snapshot" | "diff", ... }`. The discriminator lives on each
+/// variant's own struct ([`SnapshotFrame::kind`] / [`DiffFrame::kind`]) rather
+/// than being synthesised by an internal serde `tag`, so a frame returned
+/// **bare** from a command (`projection_subscribe` / `projection_resync` hand
+/// back a lone [`SnapshotFrame`]) carries exactly the same `kind` as the same
+/// frame wrapped in this enum — no missing tag on the bare form, no doubled tag
+/// on the wrapped form (#2170). The enum is therefore `untagged`: it adds
+/// nothing to the wire, and the per-variant literal `kind` markers are what let
+/// deserialisation tell a snapshot from a diff.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "lowercase")]
+#[serde(untagged)]
 pub enum ProjectionFrame {
     Snapshot(SnapshotFrame),
     Diff(DiffFrame),
@@ -134,12 +142,40 @@ impl ProjectionFrame {
     }
 }
 
+/// The `kind` discriminator of a [`SnapshotFrame`] — always `"snapshot"`.
+///
+/// A dedicated single-variant enum (rather than a bare `String`) so the field
+/// is self-describing and, crucially, so a *diff*'s `kind: "diff"` fails to
+/// deserialise into it — that mismatch is what lets the `untagged`
+/// [`ProjectionFrame`] discriminate the two frames.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SnapshotKind {
+    #[default]
+    Snapshot,
+}
+
+/// The `kind` discriminator of a [`DiffFrame`] — always `"diff"`. See
+/// [`SnapshotKind`] for why this is a single-variant enum.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffKind {
+    #[default]
+    Diff,
+}
+
 /// The complete, render-ready view model for a region at a baseline version.
 ///
 /// Emitted on attach and on resync only; steady state is [`DiffFrame`]s.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotFrame {
+    /// Discriminator (`"snapshot"`); carried on the struct so the bare
+    /// subscribe/resync return value tags itself, matching the TS
+    /// `SnapshotFrame` type (#2170). `default` keeps a producer that omits it
+    /// deserialisable.
+    #[serde(default)]
+    pub kind: SnapshotKind,
     pub region: String,
     /// `u64` monotonic; the cache adopts this as its baseline.
     pub version: u64,
@@ -154,6 +190,11 @@ pub struct SnapshotFrame {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct DiffFrame {
+    /// Discriminator (`"diff"`); carried on the struct so this frame tags
+    /// itself identically whether bare or wrapped in [`ProjectionFrame`]
+    /// (#2170). `default` keeps a producer that omits it deserialisable.
+    #[serde(default)]
+    pub kind: DiffKind,
     pub region: String,
     /// MUST equal the cache's current version, else it is a gap.
     pub base_version: u64,
