@@ -4,7 +4,7 @@ import { ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
 import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
-import { resolveRestoreMode } from "@/utils/restoreMode";
+import { resolveRestoreMode, type RestoreLastSessionMode } from "@/utils/restoreMode";
 import { isWindows } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
 import { Button, NumberInput, Select, SelectItem, Toggle, toast } from "@/components/ui";
@@ -52,6 +52,24 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
   const platformDefaultShell = useAppStore((s) => s.defaultShell);
   const historyCount = useAppStore((s) => s.sessionHistory.length);
   const clearSessionHistory = useAppStore((s) => s.clearSessionHistory);
+
+  // The restore-mode decision now lives in `core::restore_mode` (#2200), so the
+  // dropdown value is resolved asynchronously via the `restore_resolve_mode`
+  // command. Seed with the explicit mode when set (the common case, no flicker);
+  // the effect below then authoritatively resolves the legacy-boolean migration.
+  const explicitMode = settings.restoreLastSessionMode;
+  const [restoreMode, setRestoreMode] = useState<RestoreLastSessionMode>(
+    explicitMode === "never" || explicitMode === "always" ? explicitMode : "ask"
+  );
+  useEffect(() => {
+    let active = true;
+    void resolveRestoreMode(settings).then((mode) => {
+      if (active) setRestoreMode(mode);
+    });
+    return () => {
+      active = false;
+    };
+  }, [settings]);
 
   const refreshShells = useCallback(() => {
     detectAvailableShells().then(setAvailableShells);
@@ -235,7 +253,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             hint="Choose how the tabs and panel layout from your previous session are handled when the app starts. Never starts fresh; Ask offers a restore dialog; Always restores silently. Sessions that can no longer reconnect are shown in a disconnected state."
           >
             <Select
-              value={resolveRestoreMode(settings)}
+              value={restoreMode}
               onChange={(value) =>
                 onChange({
                   ...settings,
