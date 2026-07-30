@@ -1,0 +1,77 @@
+{
+  "operation": "reconnectReducer",
+  "cases": [
+    {
+      "name": "drop from idle arms the first backoff window",
+      "input": { "phase": "idle", "attempt": 0, "delayMs": 0 },
+      "args": { "event": "drop", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "waiting", "attempt": 0, "delayMs": 1000 }
+    },
+    {
+      "name": "attempt from waiting starts a connection and counts it",
+      "input": { "phase": "waiting", "attempt": 0, "delayMs": 1000 },
+      "args": { "event": "attempt", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "connecting", "attempt": 1, "delayMs": 0 }
+    },
+    {
+      "name": "success from connecting settles the loop and resets the counter",
+      "input": { "phase": "connecting", "attempt": 1, "delayMs": 0 },
+      "args": { "event": "success", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "connected", "attempt": 0, "delayMs": 0 }
+    },
+    {
+      "name": "failure from connecting backs off with a longer delay",
+      "input": { "phase": "connecting", "attempt": 1, "delayMs": 0 },
+      "args": { "event": "failure", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "waiting", "attempt": 1, "delayMs": 2000 }
+    },
+    {
+      "name": "failure gives up once the attempt budget is spent",
+      "input": { "phase": "connecting", "attempt": 5, "delayMs": 0 },
+      "args": { "event": "failure", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "gaveup", "attempt": 5, "delayMs": 0 }
+    },
+    {
+      "name": "cancel from waiting gives up",
+      "input": { "phase": "waiting", "attempt": 0, "delayMs": 1000 },
+      "args": { "event": "cancel", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "gaveup", "attempt": 0, "delayMs": 0 }
+    },
+    {
+      "name": "cancel from connecting gives up and keeps the attempt count",
+      "input": { "phase": "connecting", "attempt": 2, "delayMs": 0 },
+      "args": { "event": "cancel", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "gaveup", "attempt": 2, "delayMs": 0 }
+    },
+    {
+      "name": "drop after a successful reconnect restarts from attempt 1",
+      "input": { "phase": "connected", "attempt": 0, "delayMs": 0 },
+      "args": { "event": "drop", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "waiting", "attempt": 0, "delayMs": 1000 }
+    },
+    {
+      "name": "attempt while idle is a no-op",
+      "input": { "phase": "idle", "attempt": 0, "delayMs": 0 },
+      "args": { "event": "attempt", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "idle", "attempt": 0, "delayMs": 0 }
+    },
+    {
+      "name": "success while idle is a no-op",
+      "input": { "phase": "idle", "attempt": 0, "delayMs": 0 },
+      "args": { "event": "success", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "idle", "attempt": 0, "delayMs": 0 }
+    },
+    {
+      "name": "duplicate drop while waiting does not re-arm",
+      "input": { "phase": "waiting", "attempt": 0, "delayMs": 1000 },
+      "args": { "event": "drop", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "waiting", "attempt": 0, "delayMs": 1000 }
+    },
+    {
+      "name": "unbounded failure arms the next capped window instead of giving up",
+      "input": { "phase": "connecting", "attempt": 100, "delayMs": 0 },
+      "args": { "event": "failure", "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 0, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": { "phase": "waiting", "attempt": 100, "delayMs": 8000 }
+    }
+  ]
+}

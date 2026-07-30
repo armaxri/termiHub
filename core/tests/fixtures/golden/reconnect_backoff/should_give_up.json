@@ -1,0 +1,29 @@
+{
+  "operation": "shouldGiveUp",
+  "cases": [
+    {
+      "name": "keeps trying below maxAttempts",
+      "input": 4,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": false
+    },
+    {
+      "name": "gives up once attempts reach maxAttempts",
+      "input": 5,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": true
+    },
+    {
+      "name": "gives up past maxAttempts",
+      "input": 6,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": true
+    },
+    {
+      "name": "never gives up when maxAttempts is 0 (unbounded)",
+      "input": 1000,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 0, "jitterRatio": 0 } },
+      "expected": false
+    }
+  ]
+}
