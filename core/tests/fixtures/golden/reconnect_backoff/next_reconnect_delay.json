@@ -1,0 +1,35 @@
+{
+  "operation": "nextReconnectDelay",
+  "cases": [
+    {
+      "name": "equals the plain backoff when jitter is disabled",
+      "input": 3,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 }, "rand": 0.5 },
+      "expected": 4000
+    },
+    {
+      "name": "rand=0 swings to the lower jitter bound",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.2 }, "rand": 0 },
+      "expected": 800
+    },
+    {
+      "name": "rand near 1 swings to the upper jitter bound",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.2 }, "rand": 0.999999 },
+      "expected": 1200
+    },
+    {
+      "name": "rand=0.5 yields no swing (exactly base)",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0.2 }, "rand": 0.5 },
+      "expected": 1000
+    },
+    {
+      "name": "never returns a negative delay under extreme jitter",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 2 }, "rand": 0 },
+      "expected": 0
+    }
+  ]
+}

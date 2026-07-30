@@ -1,0 +1,53 @@
+{
+  "operation": "backoffDelay",
+  "cases": [
+    {
+      "name": "base delay for the first attempt",
+      "input": 1,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": 1000
+    },
+    {
+      "name": "doubles on attempt 2",
+      "input": 2,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": 2000
+    },
+    {
+      "name": "grows exponentially on attempt 3",
+      "input": 3,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": 4000
+    },
+    {
+      "name": "reaches the cap exactly on attempt 4",
+      "input": 4,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": 8000
+    },
+    {
+      "name": "caps at maxDelayMs on attempt 5",
+      "input": 5,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": 8000
+    },
+    {
+      "name": "stays capped far out",
+      "input": 50,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": 8000
+    },
+    {
+      "name": "attempt 0 is treated as the first attempt",
+      "input": 0,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": 1000
+    },
+    {
+      "name": "negative attempt is treated as the first attempt",
+      "input": -3,
+      "args": { "config": { "baseDelayMs": 1000, "factor": 2, "maxDelayMs": 8000, "maxAttempts": 5, "jitterRatio": 0 } },
+      "expected": 1000
+    }
+  ]
+}

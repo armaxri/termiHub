@@ -1,0 +1,10 @@
+{
+  "operation": "isActiveReconnectPhase",
+  "cases": [
+    { "name": "waiting is active", "input": "waiting", "expected": true },
+    { "name": "connecting is active", "input": "connecting", "expected": true },
+    { "name": "idle is not active", "input": "idle", "expected": false },
+    { "name": "connected is not active", "input": "connected", "expected": false },
+    { "name": "gaveup is not active", "input": "gaveup", "expected": false }
+  ]
+}

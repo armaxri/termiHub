@@ -20,7 +20,9 @@ core/tests/fixtures/golden/
 ```
 
 For the panel-tree algebra that is `golden/panel_tree/<function>.json`
-(e.g. `split_leaf.json`, `find_adjacent_leaf.json`).
+(e.g. `split_leaf.json`, `find_adjacent_leaf.json`); for the reconnect-backoff
+state machine (#2144) it is `golden/reconnect_backoff/<function>.json`
+(e.g. `backoff_delay.json`, `reconnect_reducer.json`).
 
 ## Fixture file format
 
@@ -44,7 +46,9 @@ Each file is a single JSON object:
   `LeafPanel` for `getPanelActiveSessionId`, the size array for `normalizeSizes`,
   the edge string for `edgeToSplit`.
 - **`args`** carries the rest by name (`leafId`, `targetId`, `newLeaf`,
-  `direction`, `position`, `currentLeafId`, `tabGroups`, `activeTabGroupId`, …).
+  `direction`, `position`, `currentLeafId`, `tabGroups`, `activeTabGroupId`, …;
+  for reconnect-backoff: `config`, `event`, and a constant `rand` value
+  standing in for the injected `() => number` generator).
 - **`expected`** is the function's result serialized as JSON. A returned node is
   a full `PanelNode` (`{"type":"leaf",…}` / `{"type":"split",…}`); a "not found"
   / center result is `null`; scalars are plain JSON numbers, booleans or strings.
