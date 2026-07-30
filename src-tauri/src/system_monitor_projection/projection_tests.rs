@@ -65,7 +65,11 @@ fn registry_for(store: Arc<SystemMonitorStore>) -> HandlerRegistry {
     registry.route("monitor.open", move |intent, projector| {
         s.open(
             &required_key(intent)?,
-            intent.payload.get("host").and_then(Value::as_str).map(str::to_string),
+            intent
+                .payload
+                .get("host")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             intent.payload.get("intervalMs").and_then(Value::as_u64),
         );
         Ok(publish_monitors(projector, &s))
@@ -79,7 +83,11 @@ fn registry_for(store: Arc<SystemMonitorStore>) -> HandlerRegistry {
     registry.route("monitor.openFailed", move |intent, projector| {
         s.open_failed(
             &required_key(intent)?,
-            intent.payload.get("error").and_then(Value::as_str).map(str::to_string),
+            intent
+                .payload
+                .get("error")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         );
         Ok(publish_monitors(projector, &s))
     });
@@ -200,10 +208,18 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     let projector = Arc::new(Projector::new());
     projector.register_region(SYSTEM_MONITORS_REGION, store.snapshot());
 
-    let snap_a =
-        projector.subscribe(SYSTEM_MONITORS_REGION, "sub-a", "A", Arc::new(VecSink::new()));
-    let snap_b =
-        projector.subscribe(SYSTEM_MONITORS_REGION, "sub-b", "B", Arc::new(VecSink::new()));
+    let snap_a = projector.subscribe(
+        SYSTEM_MONITORS_REGION,
+        "sub-a",
+        "A",
+        Arc::new(VecSink::new()),
+    );
+    let snap_b = projector.subscribe(
+        SYSTEM_MONITORS_REGION,
+        "sub-b",
+        "B",
+        Arc::new(VecSink::new()),
+    );
 
     assert_eq!(snap_a.version, 0);
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
@@ -244,7 +260,11 @@ fn a_monitor_intent_produces_one_diff_fanned_to_two_subscribers() {
     assert_eq!(diffs_a[0].version, 1);
 
     cache_a.apply(&diffs_a[0]);
-    assert_eq!(cache_a.view, store.snapshot(), "cache converges on authority");
+    assert_eq!(
+        cache_a.view,
+        store.snapshot(),
+        "cache converges on authority"
+    );
     assert_eq!(cache_a.view["monitors"]["s1"]["status"], json!("live"));
 }
 
@@ -263,13 +283,24 @@ fn a_full_monitor_lifecycle_advances_monotonically_and_converges() {
     // intent that changes the view = one diff.
     for kind_payload in [
         ("monitor.opened", json!({ "key": "s1" })),
-        ("monitor.stats", json!({ "key": "s1", "stats": stats("host-a", 12.0) })),
-        ("monitor.stats", json!({ "key": "s1", "stats": stats("host-a", 34.0) })),
+        (
+            "monitor.stats",
+            json!({ "key": "s1", "stats": stats("host-a", 12.0) }),
+        ),
+        (
+            "monitor.stats",
+            json!({ "key": "s1", "stats": stats("host-a", 34.0) }),
+        ),
         ("monitor.setPaused", json!({ "key": "s1", "paused": true })),
         ("monitor.close", json!({ "key": "s1" })),
     ] {
         let ack = dispatcher.dispatch(intent(kind_payload.0, kind_payload.1));
-        assert_eq!(ack.status, IntentStatus::Accepted, "{} accepted", kind_payload.0);
+        assert_eq!(
+            ack.status,
+            IntentStatus::Accepted,
+            "{} accepted",
+            kind_payload.0
+        );
     }
 
     let diffs = sink.diffs();
@@ -281,7 +312,10 @@ fn a_full_monitor_lifecycle_advances_monotonically_and_converges() {
     assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
     // s1's entry is gone but its last stats survive in the cache.
     assert_eq!(cache.view["monitors"].get("s1"), None);
-    assert_eq!(cache.view["statsCache"]["s1"]["cpuUsagePercent"], json!(34.0));
+    assert_eq!(
+        cache.view["statsCache"]["s1"]["cpuUsagePercent"],
+        json!(34.0)
+    );
 }
 
 #[test]
@@ -334,7 +368,11 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     dead.alive.store(false, Ordering::SeqCst);
     dispatcher.dispatch(intent("monitor.opened", json!({ "key": "s1" })));
 
-    assert_eq!(live.diffs().len(), 1, "the live subscriber still gets the diff");
+    assert_eq!(
+        live.diffs().len(),
+        1,
+        "the live subscriber still gets the diff"
+    );
     assert_eq!(
         projector.subscriber_count(SYSTEM_MONITORS_REGION),
         1,

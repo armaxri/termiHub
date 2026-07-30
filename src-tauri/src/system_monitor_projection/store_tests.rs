@@ -30,7 +30,10 @@ fn sample(hostname: &str, cpu: f64) -> SystemStats {
 #[test]
 fn a_fresh_store_snapshots_empty() {
     let store = SystemMonitorStore::new();
-    assert_eq!(store.snapshot(), json!({ "monitors": {}, "statsCache": {} }));
+    assert_eq!(
+        store.snapshot(),
+        json!({ "monitors": {}, "statsCache": {} })
+    );
 }
 
 #[test]

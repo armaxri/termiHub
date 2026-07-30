@@ -79,7 +79,11 @@ pub fn register_monitor_intents(registry: &mut HandlerRegistry, app_handle: AppH
     registry.route("monitor.open", move |intent, projector| {
         let store = store_of(&handle)?;
         let key = required_str(intent, "key")?;
-        store.open(&key, optional_str(intent, "host"), optional_u64(intent, "intervalMs"));
+        store.open(
+            &key,
+            optional_str(intent, "host"),
+            optional_u64(intent, "intervalMs"),
+        );
         Ok(publish_monitors(projector, &store))
     });
 
@@ -173,7 +177,11 @@ fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> 
 
 /// Extract an optional string field; absent → `None`.
 fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent.payload.get(key).and_then(Value::as_str).map(str::to_string)
+    intent
+        .payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Extract a required bool field from an intent payload.
