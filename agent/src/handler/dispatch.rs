@@ -3667,6 +3667,76 @@ mod tests {
         assert!(ids.contains(&"tftp_server"), "{result}");
     }
 
+    /// End-to-end: the desktop starts an embedded HTTP server on the agent over
+    /// `service.start`, the server actually serves, `service.status` reports it
+    /// running, and `service.stop` tears it down (#2192). This is the agent-RPC
+    /// path the local container run exercises.
+    #[tokio::test]
+    async fn service_start_hosts_a_serving_http_server_then_stops_it() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        // Reserve an ephemeral loopback port, then free it for the server.
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let start = dispatch(
+            &handler,
+            "service.start",
+            json!({
+                "instanceId": "srv-1",
+                "serviceId": "http_server",
+                "config": {
+                    "id": "srv-1",
+                    "name": "Agent HTTP",
+                    "serverType": "http",
+                    "rootDirectory": ".",
+                    "bindHost": "127.0.0.1",
+                    "port": port,
+                    "readOnly": true,
+                    "directoryListing": true
+                }
+            }),
+            2,
+        )
+        .await;
+        assert_eq!(
+            start["result"]["status"]["state"], "running",
+            "service.start must report running: {start}"
+        );
+
+        // The hosted server actually accepts connections on its bound port.
+        assert!(
+            std::net::TcpStream::connect(("127.0.0.1", port)).is_ok(),
+            "agent-hosted HTTP server must accept connections"
+        );
+
+        let status = dispatch(&handler, "service.status", json!({ "instanceId": "srv-1" }), 3).await;
+        assert_eq!(status["result"]["running"], true, "{status}");
+
+        let stop = dispatch(&handler, "service.stop", json!({ "instanceId": "srv-1" }), 4).await;
+        assert_eq!(stop["result"]["stopped"], true, "{stop}");
+
+        let after = dispatch(&handler, "service.status", json!({ "instanceId": "srv-1" }), 5).await;
+        assert_eq!(after["result"]["running"], false, "{after}");
+    }
+
+    /// An unknown `serviceId` surfaces `SERVICE_START_FAILED`, not a panic.
+    #[tokio::test]
+    async fn service_start_unknown_service_id_errors() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+        let result = dispatch(
+            &handler,
+            "service.start",
+            json!({ "instanceId": "x", "serviceId": "nope", "config": {} }),
+            2,
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::SERVICE_START_FAILED, "{result}");
+    }
+
     #[tokio::test]
     async fn tool_and_service_methods_require_initialization() {
         let handler = make_handler();
