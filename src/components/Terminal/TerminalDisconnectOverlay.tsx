@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { WifiOff, RefreshCw, X, AlertTriangle, Loader2, CheckCircle2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useSessionAutoReconnect } from "@/store/useSessionLifecycle";
 import { Button, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import "./TerminalDisconnectOverlay.css";
@@ -54,7 +55,9 @@ function disconnectCopyFor(info: TerminalExitInfo | undefined): DisconnectCopy {
  * without an agent, and a Cancel affordance that stops the loop.
  */
 function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
-  const auto = useAppStore((s) => s.terminalAutoReconnect[tabId]);
+  // The loop detail is sourced from the projected `session-lifecycle` region when
+  // it faithfully mirrors appStore, else from appStore verbatim (#2204).
+  const auto = useSessionAutoReconnect(tabId);
   const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
   // Tick once a second so the countdown stays live.
   const [now, setNow] = useState(() => Date.now());
@@ -138,9 +141,9 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   const setTerminalExited = useAppStore((s) => s.setTerminalExited);
   const disconnectError = useAppStore((s) => s.terminalDisconnectErrors[tabId]);
   const isReconnecting = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
-  const autoReconnectWaiting = useAppStore(
-    (s) => s.terminalAutoReconnect[tabId]?.phase === "waiting"
-  );
+  // The auto-reconnect gate reads the same projected-with-fallback loop detail as
+  // the countdown overlay itself, so the region drives which variant shows (#2204).
+  const autoReconnectWaiting = useSessionAutoReconnect(tabId)?.phase === "waiting";
   const reconnectTriggerError = useAppStore((s) => s.terminalReconnectTriggerErrors[tabId]);
   const exitInfo = useAppStore((s) => s.terminalExitInfo[tabId]);
 
