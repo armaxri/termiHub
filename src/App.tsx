@@ -27,7 +27,6 @@ import { UpdateNotification } from "@/components/UpdateNotification/UpdateNotifi
 import { XServerConnectConsent } from "@/components/OpenConnections/XServerConnectConsent";
 import { ErrorBoundary, ToastProvider, TooltipProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import { useTunnelEvents } from "@/hooks/useTunnelEvents";
 import { useTransferEvents } from "@/hooks/useTransferEvents";
 import { useTransferReconcile } from "@/hooks/useTransferReconcile";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
@@ -50,7 +49,6 @@ import "./App.css";
 
 function App() {
   useKeyboardShortcuts();
-  useTunnelEvents();
   useTransferEvents();
   useTransferReconcile();
   useEmbeddedServerEvents();

@@ -14,6 +14,23 @@ import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
 
+// Post-#2150 the store's `stopTunnel` action dispatches a `tunnel.stop` intent
+// over the projection transport rather than calling the typed `stop_tunnel`
+// command; capture the dispatched intent to assert the force-Stop wiring.
+const { dispatchMock } = vi.hoisted(() => ({ dispatchMock: vi.fn() }));
+vi.mock("@/services/transport", () => ({
+  createTransport: () => ({ dispatch: dispatchMock, subscribe: vi.fn(), resync: vi.fn() }),
+  newClientId: () => "client-test",
+  newIntentId: () => "intent-test",
+  ProjectionClient: class {
+    onChange() {
+      return () => {};
+    }
+    async start() {}
+    stop() {}
+  },
+}));
+
 // jsdom lacks the observer/pointer-capture APIs Radix Tooltip touches.
 class ResizeObserverStub {
   observe() {}
@@ -42,13 +59,6 @@ vi.mock("@/services/api", () => ({
     Promise.resolve({ state: "absent", platform: "linux", managed: false })
   ),
   xServerStop: vi.fn(() => Promise.resolve()),
-}));
-
-const getTunnelStatuses = vi.fn(() => Promise.resolve([] as TunnelState[]));
-const stopTunnel = vi.fn((_id: string) => Promise.resolve());
-vi.mock("@/services/tunnelApi", () => ({
-  getTunnelStatuses: () => getTunnelStatuses(),
-  stopTunnel: (id: string) => stopTunnel(id),
 }));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
@@ -99,8 +109,8 @@ describe("OpenConnectionsModal — errored tunnels (#1240)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    getTunnelStatuses.mockClear();
-    stopTunnel.mockClear();
+    dispatchMock.mockReset();
+    dispatchMock.mockResolvedValue({ intentId: "intent-test", status: "accepted", produced: [] });
   });
 
   afterEach(() => {
@@ -131,7 +141,7 @@ describe("OpenConnectionsModal — errored tunnels (#1240)", () => {
     expect(rows[0].textContent).toContain("expose-web");
   });
 
-  it("force-Stop on an errored tunnel invokes stop_tunnel", () => {
+  it("force-Stop on an errored tunnel dispatches a tunnel.stop intent", () => {
     useAppStore.setState({
       tunnels: [tunnelConfig("t1", "expose-web")],
       tunnelStates: { t1: erroredState("t1", "SSH session closed by peer") },
@@ -145,6 +155,10 @@ describe("OpenConnectionsModal — errored tunnels (#1240)", () => {
       killBtn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(stopTunnel).toHaveBeenCalledWith("t1");
+    expect(dispatchMock).toHaveBeenCalledTimes(1);
+    expect(dispatchMock.mock.calls[0][0]).toMatchObject({
+      kind: "tunnel.stop",
+      payload: { id: "t1" },
+    });
   });
 });
