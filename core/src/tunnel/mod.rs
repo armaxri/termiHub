@@ -7,28 +7,34 @@
 //! local/remote/dynamic meanings are invariant. See
 //! `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
 //!
-//! Currently lifted: the **local** (`ssh -L`) engine plus its channel-opener
-//! seam and stats. The desktop `tunnel` module re-exports these so existing
-//! call sites are unchanged; the agent uses them to forward on the agent. The
-//! dynamic (`-D`) and remote (`-R`) engines remain desktop-only for now and are
-//! tracked as follow-ups to #2185.
+//! Currently lifted: the **local** (`ssh -L`) and **remote** (`ssh -R`) engines
+//! plus the shared channel-opener seam and stats. The desktop `tunnel` module
+//! re-exports these so existing call sites are unchanged; the agent uses them to
+//! forward on the agent. The dynamic (`-D`) engine remains desktop-only for now
+//! and is tracked as a follow-up to #2185.
 
 pub mod channel;
 pub mod config;
 pub mod local_forward;
+pub mod remote_forward;
 
 pub use channel::{ChannelOpener, SshChannelOpener};
-pub use config::{LocalForwardConfig, TunnelStats};
+pub use config::{LocalForwardConfig, RemoteForwardConfig, TunnelStats};
 pub use local_forward::{ForwarderStats, LocalForwarder};
+pub use remote_forward::RemoteForwarder;
 
 use serde::{Deserialize, Serialize};
 
 /// Who can reach an agent-hosted tunnel's listen socket.
 ///
-/// Per the endpoint-semantics concept, an agent-hosted local/dynamic forward
-/// bound to loopback is reachable only from the agent itself; a widened bind
-/// (the agent's LAN address or `0.0.0.0`) is reachable from the agent's
-/// network. The desktop surfaces this as the "reachability" warning + badge.
+/// Per the endpoint-semantics concept, the listen socket's home depends on the
+/// mode. An agent-hosted **local**/**dynamic** forward binds on the agent: a
+/// loopback bind is reachable only from the agent itself; a widened bind (the
+/// agent's LAN address or `0.0.0.0`) is reachable from the agent's network. An
+/// agent-hosted **remote** (`-R`) forward instead binds on the **SSH server** —
+/// SSH's own semantics are invariant, only the tunnel host moves — so its listen
+/// socket lives on the server's network, not the agent's. The desktop surfaces
+/// this as the "reachability" warning + badge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ReachableFrom {
@@ -37,6 +43,11 @@ pub enum ReachableFrom {
     /// Widened bind — reachable from the agent's LAN (and thus, potentially,
     /// the desktop) at the agent's address.
     AgentLan,
+    /// The listen socket lives on the **SSH server** (an `-R` remote forward):
+    /// reachable per the server's own network and `GatewayPorts` policy, never
+    /// from the agent or the desktop directly. Only the forward *target* is
+    /// resolved from the tunnel host (the agent).
+    SshServer,
 }
 
 /// Classify an agent-hosted listen socket's reachability from its bind host.
@@ -97,6 +108,10 @@ mod tests {
         assert_eq!(
             serde_json::to_value(ReachableFrom::AgentLan).unwrap(),
             serde_json::json!("agentLan")
+        );
+        assert_eq!(
+            serde_json::to_value(ReachableFrom::SshServer).unwrap(),
+            serde_json::json!("sshServer")
         );
     }
 }

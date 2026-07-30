@@ -570,31 +570,44 @@ impl TunnelManager {
 
     /// Start a tunnel hosted on a remote agent (S3, #2185).
     ///
-    /// The agent runs the SSH client and the listen socket; the desktop sends
-    /// only control over the agent RPC. This first slice forwards **local**
-    /// (`ssh -L`) tunnels on the agent; remote (`-R`) and dynamic (`-D`) agent
-    /// hosting are follow-ups, so they surface a clear, durable `Error` rather
-    /// than silently forwarding on the desktop. On success the agent-reported
-    /// `bound_address` / `reachable_from` are stored for the projection and the
-    /// tunnel rests `Connected`.
+    /// The agent runs the SSH client; the desktop sends only control over the
+    /// agent RPC. Forwards **local** (`ssh -L`) and **remote** (`ssh -R`)
+    /// tunnels on the agent — for `-L` the listen socket binds on the agent, for
+    /// `-R` the SSH server binds it and the target is resolved from the agent
+    /// (see the endpoint-semantics concept). Dynamic (`-D`) agent hosting is a
+    /// follow-up, so it surfaces a clear, durable `Error` rather than silently
+    /// forwarding on the desktop. On success the agent-reported `bound_address` /
+    /// `reachable_from` are stored for the projection and the tunnel rests
+    /// `Connected`.
     fn start_agent_tunnel(
         &self,
         tunnel_id: &str,
         config: &TunnelConfig,
         agent_id: &str,
     ) -> Result<(), TerminalError> {
-        // Only local forwarding runs on an agent today.
-        let local_config = match &config.tunnel_type {
-            TunnelType::Local(local) => local.clone(),
-            TunnelType::Remote(_) | TunnelType::Dynamic(_) => {
-                let mode = match &config.tunnel_type {
-                    TunnelType::Remote(_) => "remote (-R)",
-                    TunnelType::Dynamic(_) => "dynamic (-D)",
-                    TunnelType::Local(_) => unreachable!(),
-                };
+        // Build the agent's internally-tagged `TunnelForwardSpec` (a `mode`
+        // discriminator plus the flattened forward config). Local and remote run
+        // on an agent; dynamic does not yet.
+        let forward = match &config.tunnel_type {
+            TunnelType::Local(local) => {
+                let mut forward = serde_json::to_value(local).map_err(|e| {
+                    TerminalError::TunnelError(format!("Failed to serialize forward config: {}", e))
+                })?;
+                forward["mode"] = serde_json::json!("local");
+                forward
+            }
+            TunnelType::Remote(remote) => {
+                let mut forward = serde_json::to_value(remote).map_err(|e| {
+                    TerminalError::TunnelError(format!("Failed to serialize forward config: {}", e))
+                })?;
+                forward["mode"] = serde_json::json!("remote");
+                forward
+            }
+            TunnelType::Dynamic(_) => {
                 let message = format!(
-                    "agent-hosted {mode} forwarding is not yet supported (tunnel '{tunnel_id}'); \
-                     only local (-L) forwarding runs on an agent today"
+                    "agent-hosted dynamic (-D) forwarding is not yet supported (tunnel \
+                     '{tunnel_id}'); only local (-L) and remote (-R) forwarding run on an agent \
+                     today"
                 );
                 record_last_error(&self.last_errors, tunnel_id, message.clone());
                 self.emit_status(tunnel_id, TunnelStatus::Error, Some(message.clone()));
@@ -640,13 +653,9 @@ impl TunnelManager {
                 TerminalError::TunnelError("Agent manager is not available".to_string())
             })?;
 
-        // Build the tunnel.start request. `forward` is the agent's
-        // internally-tagged `TunnelForwardSpec::Local` shape: the local-forward
-        // config fields plus a `mode` discriminator.
-        let mut forward = serde_json::to_value(&local_config).map_err(|e| {
-            TerminalError::TunnelError(format!("Failed to serialize forward config: {}", e))
-        })?;
-        forward["mode"] = serde_json::json!("local");
+        // Send the tunnel.start request. `forward` is the agent's
+        // internally-tagged `TunnelForwardSpec` shape (built above): the
+        // forward-config fields plus a `mode` discriminator.
         let params = serde_json::json!({
             "tunnelId": tunnel_id,
             "sshConfig": ssh_config,

@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use termihub_core::connection::ConnectionTypeInfo;
-use termihub_core::tunnel::config::{LocalForwardConfig, TunnelStats};
+use termihub_core::tunnel::config::{LocalForwardConfig, RemoteForwardConfig, TunnelStats};
 use termihub_core::tunnel::ReachableFrom;
 // Used by shell/session modules on unix; re-exported for test access on all platforms.
 #[allow(unused_imports)]
@@ -690,16 +690,18 @@ pub struct UpdateAvailableNotification {
 
 /// Which forwarding mode an agent-hosted tunnel runs.
 ///
-/// Only **local** (`ssh -L`) is implemented in the first S3 slice; remote
-/// (`-R`) and dynamic (`-D`) agent hosting are tracked as follow-ups to #2185.
-/// Tagged so those variants can be added additively without breaking the
-/// existing shape.
+/// **Local** (`ssh -L`) and **remote** (`ssh -R`) are implemented; dynamic
+/// (`-D`) agent hosting is tracked as a follow-up to #2185. Tagged so further
+/// variants can be added additively without breaking the existing shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "camelCase")]
 pub enum TunnelForwardSpec {
     /// Local (`ssh -L`) forwarding: the listen socket binds on the agent and the
     /// target is resolved from the SSH server's network.
     Local(LocalForwardConfig),
+    /// Remote (`ssh -R`) forwarding: the SSH server binds the listen socket and
+    /// the target is resolved from the agent (the tunnel host).
+    Remote(RemoteForwardConfig),
 }
 
 /// Params for `tunnel.start`.
@@ -802,11 +804,49 @@ mod tests {
             serde_json::from_value(wire).expect("desktop tunnel.start shape must parse");
         assert_eq!(params.tunnel_id, "t-1");
         assert_eq!(params.ssh_config.host, "bastion.corp");
-        let TunnelForwardSpec::Local(forward) = &params.forward;
+        let TunnelForwardSpec::Local(forward) = &params.forward else {
+            panic!("expected a local forward spec");
+        };
         assert_eq!(forward.local_host, "127.0.0.1");
         assert_eq!(forward.local_port, 5432);
         assert_eq!(forward.remote_host, "db.internal");
         assert_eq!(forward.remote_port, 5432);
+    }
+
+    /// The desktop routes an agent-hosted `-R` tunnel as `forward.mode ==
+    /// "remote"` with the flattened remote-forward fields. Locks that wire shape
+    /// against desktop/agent drift (the `-R` twin of the local test above).
+    #[test]
+    fn tunnel_start_params_parse_the_remote_wire_shape() {
+        let wire = serde_json::json!({
+            "tunnelId": "t-r",
+            "sshConfig": {
+                "host": "bastion.corp",
+                "port": 22,
+                "username": "dev",
+                "authMethod": "password",
+                "password": "secret",
+                "keyPath": null,
+                "shell": null
+            },
+            "forward": {
+                "mode": "remote",
+                "remoteHost": "0.0.0.0",
+                "remotePort": 8080,
+                "localHost": "127.0.0.1",
+                "localPort": 3000
+            }
+        });
+        let params: TunnelStartParams =
+            serde_json::from_value(wire).expect("desktop remote tunnel.start shape must parse");
+        assert_eq!(params.tunnel_id, "t-r");
+        let TunnelForwardSpec::Remote(forward) = &params.forward else {
+            panic!("expected a remote forward spec");
+        };
+        assert_eq!(forward.remote_host, "0.0.0.0");
+        assert_eq!(forward.remote_port, 8080);
+        assert_eq!(forward.local_host, "127.0.0.1");
+        assert_eq!(forward.local_port, 3000);
     }
 
     #[test]

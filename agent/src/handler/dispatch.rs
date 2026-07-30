@@ -1444,6 +1444,10 @@ fn register_tunnel_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
                 .start_local(&p.tunnel_id, &p.ssh_config, forward)
                 .await
                 .map_err(|e| rpc_err(errors::TUNNEL_START_FAILED, e.to_string()))?,
+            TunnelForwardSpec::Remote(forward) => registry
+                .start_remote(&p.tunnel_id, &p.ssh_config, forward)
+                .await
+                .map_err(|e| rpc_err(errors::TUNNEL_START_FAILED, e.to_string()))?,
         };
 
         Ok::<_, ErrorObjectOwned>(
