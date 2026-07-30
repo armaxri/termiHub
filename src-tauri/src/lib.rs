@@ -290,8 +290,15 @@ pub fn run() {
         .manage(commands::connection_path::ProbeRegistry::default())
         .manage(commands::local_process::LocalProcessRegistry::default())
         // Stateless-UI projection substrate (#2149) — projector + intent
-        // dispatcher, wired beside the existing typed commands (strangler).
-        .manage(commands::projection::ProjectionState::new())
+        // dispatcher, wired beside the existing typed commands (strangler). In
+        // test-bridge mode, install the diagnostic region + `diag.*` routes so
+        // the projection-assertion harness (#2164) has a live region to drive;
+        // production launches get the empty Phase-1 registry.
+        .manage(if utils::test_bridge::is_test_bridge_enabled() {
+            commands::projection::ProjectionState::with_diagnostics()
+        } else {
+            commands::projection::ProjectionState::new()
+        })
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer);
 
