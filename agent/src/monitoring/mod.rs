@@ -598,7 +598,7 @@ mod tests {
         };
 
         let first = Box::new(FakeCollector { fail: fail.clone() }) as Box<dyn StatsCollector>;
-        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let cancel = CancellationToken::new();
 
         let handle = tokio::spawn(monitoring_task(
@@ -611,8 +611,15 @@ mod tests {
             cancel,
         ));
 
-        // Let the first collect(s) succeed → Live, then drop the stream.
-        tokio::time::sleep(Duration::from_millis(60)).await;
+        // Wait for a real sample — proof the loop reached `Live` — before dropping
+        // the stream, rather than a fixed sleep that flakes on a loaded runner
+        // where the first collect can miss a tight window (mirrors
+        // `monitoring_task_reconnects_and_resumes`). Only a genuine Live→Stale
+        // drop exercises the reconnect campaign this test asserts on.
+        let first_sample = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("first live sample before timeout");
+        assert!(first_sample.is_some(), "a live sample must be sent");
         fail.store(true, Ordering::SeqCst);
 
         // The task must terminate on its own (budget exhausted → Offline),
