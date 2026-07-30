@@ -280,9 +280,13 @@ fn single_empty_leaf() -> PanelNode {
     PanelNode::Leaf(create_leaf_panel())
 }
 
-/// A copy of `leaf` with `tab_id` removed; the active tab falls back to the
-/// first remaining tab when the removed tab was active.
+/// A copy of `leaf` with `tab_id` removed; when the removed tab was active, the
+/// active tab falls back **positionally** — the tab that shifts into the removed
+/// slot, or the new last tab. This matches the frontend `removeTabFromLeaf`
+/// reducer (`min(idx, len-1)`) exactly, so cutting a tab-moving mutation over to
+/// the store preserves which tab the source panel focuses (#2151 step 2).
 fn with_tab_removed(leaf: &LeafPanel, tab_id: &str) -> LeafPanel {
+    let removed_idx = leaf.tabs.iter().position(|t| t.id == tab_id);
     let tabs: Vec<Tab> = leaf
         .tabs
         .iter()
@@ -290,7 +294,13 @@ fn with_tab_removed(leaf: &LeafPanel, tab_id: &str) -> LeafPanel {
         .cloned()
         .collect();
     let active_tab_id = if leaf.active_tab_id.as_deref() == Some(tab_id) {
-        tabs.first().map(|t| t.id.clone())
+        match removed_idx {
+            Some(idx) if !tabs.is_empty() => {
+                let new_idx = idx.min(tabs.len() - 1);
+                Some(tabs[new_idx].id.clone())
+            }
+            _ => None,
+        }
     } else {
         leaf.active_tab_id.clone()
     };

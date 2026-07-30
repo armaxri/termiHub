@@ -260,6 +260,28 @@ fn move_tab_of_unknown_tab_is_rejected() {
 // ── closeTabStructure ────────────────────────────────────────────────────────
 
 #[test]
+fn removing_a_middle_active_tab_falls_back_positionally_like_the_frontend() {
+    // Parity with the frontend `removeTabFromLeaf` (`min(idx, len-1)`): removing
+    // the *middle* active tab focuses the tab that shifts into its slot, not the
+    // first tab. A single leaf `a` = [t1, t2(active), t3].
+    let store = LayoutStore::new();
+    let root = PanelNode::Leaf(LeafPanel {
+        id: "a".to_string(),
+        tabs: vec![tab("t1"), tab("t2"), tab("t3")],
+        active_tab_id: Some("t2".to_string()),
+    });
+    store.seed_for_test("C", root, Some("a".to_string()));
+    store.close_tab_structure("C", "t2").unwrap();
+
+    let a = find_leaf(&root_of(&store, "C"), "a").unwrap();
+    assert_eq!(
+        a.active_tab_id.as_deref(),
+        Some("t3"),
+        "positional fallback picks t3 (the tab now at the removed index), not t1"
+    );
+}
+
+#[test]
 fn close_tab_removes_one_tab_keeping_a_non_empty_leaf() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
