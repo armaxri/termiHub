@@ -30,6 +30,25 @@ vi.mock("@/services/lastSessionApi", () => ({
   clearLastSession: vi.fn(() => Promise.resolve()),
 }));
 
+// The restore-mode decision logic now lives in `core::restore_mode` and is
+// reached over IPC (#2200), so it is unavailable in this JS test environment.
+// These are store-orchestration tests; mock the (async) decision boundary with
+// deterministic outputs — the logic's correctness is proven by the Rust golden
+// vectors (`core/tests/restore_mode_golden.rs`). The `resolveRestoreMode` mock
+// mirrors the core guard so mode-driven branches stay input-driven.
+vi.mock("@/utils/restoreMode", () => ({
+  resolveRestoreMode: vi.fn(
+    async (s: { restoreLastSessionMode?: string; restoreLastSessionOnStartup?: boolean }) => {
+      const m = s.restoreLastSessionMode;
+      if (m === "never" || m === "ask" || m === "always") return m;
+      if (s.restoreLastSessionOnStartup === false) return "never";
+      return "ask";
+    }
+  ),
+  summarizeLastSession: vi.fn(async () => ({ tabCount: 0, tabs: [] })),
+  filterSessionBySelection: vi.fn(async (session: unknown) => session),
+}));
+
 vi.mock("@/components/ui", () => ({
   toast: {
     success: vi.fn(),
@@ -44,7 +63,10 @@ vi.mock("@/components/ui", () => ({
 import { useAppStore } from "./appStore";
 import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
 import { saveSettings } from "@/services/storage";
+import { summarizeLastSession } from "@/utils/restoreMode";
 import type { LastSession } from "@/types/lastSession";
+
+const mockSummarize = vi.mocked(summarizeLastSession);
 
 const mockSave = vi.mocked(saveLastSession);
 const mockLoad = vi.mocked(loadLastSession);
@@ -112,6 +134,10 @@ describe("startup restore mode", () => {
   describe("promptRestore", () => {
     it("raises the prompt when a session with tabs is stored", async () => {
       mockLoad.mockResolvedValue(storedSession);
+      mockSummarize.mockResolvedValueOnce({
+        tabCount: 1,
+        tabs: [{ title: "Shell A", typeLabel: "Local", target: { kind: "local" } }],
+      });
 
       await useAppStore.getState().promptRestore();
 

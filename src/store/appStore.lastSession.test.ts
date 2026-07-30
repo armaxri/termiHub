@@ -48,6 +48,24 @@ vi.mock("@/services/lastSessionApi", () => ({
   clearLastSession: vi.fn(() => Promise.resolve()),
 }));
 
+// The restore-mode decision logic now lives in `core::restore_mode`, reached
+// over IPC (#2200) and thus unavailable in this JS test. Mock the async decision
+// boundary; `resolveRestoreMode` mirrors the core guard so the mode-driven
+// save/skip branches stay input-driven. Parity with the retired TS logic is
+// proven by the Rust golden vectors (`core/tests/restore_mode_golden.rs`).
+vi.mock("@/utils/restoreMode", () => ({
+  resolveRestoreMode: vi.fn(
+    async (s: { restoreLastSessionMode?: string; restoreLastSessionOnStartup?: boolean }) => {
+      const m = s.restoreLastSessionMode;
+      if (m === "never" || m === "ask" || m === "always") return m;
+      if (s.restoreLastSessionOnStartup === false) return "never";
+      return "ask";
+    }
+  ),
+  summarizeLastSession: vi.fn(async () => ({ tabCount: 0, tabs: [] })),
+  filterSessionBySelection: vi.fn(async (session: unknown) => session),
+}));
+
 // Spy on the shared toast hub so restore-failure feedback (G3, #1146) is observable.
 vi.mock("@/components/ui", () => ({
   toast: {
