@@ -72,10 +72,36 @@ export interface TunnelStats {
   totalConnections: number;
 }
 
+/**
+ * Who can reach an agent-hosted tunnel's listen socket, as the agent classified
+ * its bind at runtime (mirrors the Rust `ReachableFrom` enum). `agentOnly` = a
+ * loopback bind reachable only from processes on the agent; `agentLan` = a
+ * widened bind reachable from the agent's network; `sshServer` = an `-R` remote
+ * forward whose listen socket lives on the SSH server.
+ */
+export type ReachableFrom = "agentOnly" | "agentLan" | "sshServer";
+
 /** Combined runtime state for a tunnel. */
 export interface TunnelState {
   tunnelId: string;
   status: TunnelStatus;
   error?: string;
   stats: TunnelStats;
+  /**
+   * For an agent-hosted tunnel: the id of the agent forwarding it, confirmed by
+   * the agent's report (S3, #2199). Absent for desktop-hosted tunnels. The UI
+   * resolves it to a human agent name for the vantage badge.
+   */
+  boundOn?: string;
+  /**
+   * For an agent-hosted tunnel: the `host:port` the listen socket actually bound
+   * (on the agent for -L/-D, on the SSH server for -R), reported by the agent.
+   * Absent for desktop-hosted tunnels (#2199).
+   */
+  boundAddress?: string;
+  /**
+   * For an agent-hosted tunnel: who can reach the listen socket, from the
+   * agent's runtime classification (#2199). Absent for desktop-hosted tunnels.
+   */
+  reachableFrom?: ReachableFrom;
 }

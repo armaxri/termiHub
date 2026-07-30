@@ -10,7 +10,13 @@
  * directly and the components stay thin renderers.
  */
 
-import type { PortValue, RunLocation, TunnelConfig, TunnelType } from "@/types/tunnel";
+import type {
+  PortValue,
+  ReachableFrom,
+  RunLocation,
+  TunnelConfig,
+  TunnelType,
+} from "@/types/tunnel";
 import { THIS_COMPUTER } from "@/types/tunnel";
 
 /** A tunnel's effective host, defaulting a missing field to This computer. */
@@ -170,4 +176,32 @@ export function tunnelReachabilityWarning(
       `localhost:${port === "" ? "?" : port} here will not reach it.`,
     bindHost,
   };
+}
+
+/**
+ * The runtime vantage note for a *running* agent-hosted tunnel, derived from the
+ * agent's reported {@link ReachableFrom} rather than the persisted host+bind
+ * heuristic (#2199). This is authoritative — it reflects the agent's actual bind
+ * classification, including the `-R` (`sshServer`) case the config-only
+ * {@link tunnelReachabilityWarning} cannot express and any loopback/widened
+ * outcome the agent settled on. Returns `null` when there is no report
+ * (desktop tunnels, or an agent tunnel that has not reported yet).
+ *
+ * `warn` marks the one case where the listen port is NOT reachable from this
+ * computer (`agentOnly` — a loopback bind on the agent), so the UI can badge it.
+ */
+export function reportedReachability(
+  reachableFrom: ReachableFrom | undefined,
+  agentName: string
+): { label: string; warn: boolean } | null {
+  switch (reachableFrom) {
+    case "agentOnly":
+      return { label: `reachable only on ${agentName}`, warn: true };
+    case "agentLan":
+      return { label: `reachable on ${agentName}'s network`, warn: false };
+    case "sshServer":
+      return { label: "reachable on the SSH server's network", warn: false };
+    default:
+      return null;
+  }
 }
