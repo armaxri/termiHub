@@ -136,17 +136,15 @@ const auto = (tabId: string) => useAppStore.getState().terminalAutoReconnect[tab
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 function makeSshTab(): string {
-  return useAppStore
-    .getState()
-    .addTab(
-      "web01",
-      "ssh",
-      {
-        type: "ssh",
-        config: { host: "web01.example.com", username: "deploy", resilientReconnect: true },
-      },
-      { contentType: "terminal", sessionId: "sess-1" }
-    );
+  return useAppStore.getState().addTab(
+    "web01",
+    "ssh",
+    {
+      type: "ssh",
+      config: { host: "web01.example.com", username: "deploy", resilientReconnect: true },
+    },
+    { contentType: "terminal", sessionId: "sess-1" }
+  );
 }
 
 describe("appStore — session-intents cut (#2203), flag on", () => {
