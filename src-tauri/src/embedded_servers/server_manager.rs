@@ -313,10 +313,7 @@ impl EmbeddedServerManager {
         agent_id: &str,
     ) -> Result<(), TerminalError> {
         // Reject a double-start on an agent.
-        if self
-            .lock_agent_servers()?
-            .contains_key(server_id)
-        {
+        if self.lock_agent_servers()?.contains_key(server_id) {
             return Err(TerminalError::EmbeddedServerError(format!(
                 "Server {server_id} is already running on an agent"
             )));
@@ -641,7 +638,10 @@ fn server_state_from_start_reply(server_id: &str, reply: &serde_json::Value) -> 
 /// Parse an agent `service.status` reply into a [`ServerState`], or `None` when
 /// the instance is not running on the agent (#2214). Pure, so the parse is
 /// unit-testable without an agent mock.
-fn server_state_from_status_reply(server_id: &str, reply: &serde_json::Value) -> Option<ServerState> {
+fn server_state_from_status_reply(
+    server_id: &str,
+    reply: &serde_json::Value,
+) -> Option<ServerState> {
     if reply["running"].as_bool() != Some(true) {
         return None;
     }
