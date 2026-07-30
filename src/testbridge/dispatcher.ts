@@ -1,4 +1,25 @@
+import type { IntentAck } from "@/services/transport";
+
+import type {
+  ProjectionDispatchRequest,
+  ProjectionRecordingState,
+} from "./projectionRecorder";
 import type { BridgeCommand, BridgeResponse } from "./protocol";
+
+/**
+ * The subset of {@link import("./projectionRecorder").ProjectionRecorder} the
+ * dispatcher drives. Injected (not imported concretely) so unit tests supply a
+ * fake transport-backed recorder and the live {@link import("./TestBridge").TestBridge}
+ * wires the real one — mirroring how `resizeWindow`/`screenshot` are injected.
+ */
+export interface ProjectionApi {
+  subscribe(region: string): Promise<ProjectionRecordingState>;
+  dispatch(request: ProjectionDispatchRequest): Promise<IntentAck>;
+  state(subscriptionId: string): ProjectionRecordingState;
+  dropNext(subscriptionId: string, count: number): void;
+  resync(subscriptionId: string): Promise<ProjectionRecordingState>;
+  unsubscribe(subscriptionId: string): void;
+}
 
 /**
  * Dependencies the {@link dispatchCommand} function resolves commands against.
@@ -57,6 +78,16 @@ export interface BridgeDeps {
    * {@link EmitEventCommand} for why it exists.
    */
   emitEvent: (event: string, payload: unknown) => Promise<void>;
+  /**
+   * Drive the projection substrate (#2149) for the assertion harness (#2164):
+   * subscribe to a region and record its pushed frames, dispatch intents, force
+   * a gap, resync. The live {@link import("./TestBridge").TestBridge} wires a
+   * {@link import("./projectionRecorder").ProjectionRecorder} over the real
+   * transport; unit tests supply a fake. Optional — absent outside the harness,
+   * so the `projection*` verbs then fail with a clear "not available" error
+   * rather than throw.
+   */
+  projection?: ProjectionApi;
 }
 
 /** Resolve an element by its `data-testid`, escaping the value for the selector. */
@@ -258,6 +289,10 @@ function resolvePath(state: Record<string, unknown>, path: string): unknown {
   }
   return current;
 }
+
+/** Error returned by every `projection*` verb when the recorder is not wired. */
+const PROJECTION_UNAVAILABLE =
+  "projection recorder is not available (test bridge not in projection mode)";
 
 const ok = (action: BridgeCommand["action"], value?: unknown): BridgeResponse =>
   value === undefined ? { ok: true, action } : { ok: true, action, value };
@@ -588,6 +623,71 @@ export async function dispatchCommand(
         return ok("emitEvent");
       } catch (error) {
         return fail("emitEvent", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case "projectionSubscribe": {
+      if (!deps.projection) return fail("projectionSubscribe", PROJECTION_UNAVAILABLE);
+      try {
+        return ok("projectionSubscribe", await deps.projection.subscribe(command.region));
+      } catch (error) {
+        return fail("projectionSubscribe", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case "projectionDispatch": {
+      if (!deps.projection) return fail("projectionDispatch", PROJECTION_UNAVAILABLE);
+      try {
+        const ack = await deps.projection.dispatch({
+          kind: command.kind,
+          payload: command.payload,
+          intentId: command.intentId,
+          clientId: command.clientId,
+        });
+        return ok("projectionDispatch", ack);
+      } catch (error) {
+        return fail("projectionDispatch", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case "projectionState": {
+      if (!deps.projection) return fail("projectionState", PROJECTION_UNAVAILABLE);
+      try {
+        return ok("projectionState", deps.projection.state(command.subscriptionId));
+      } catch (error) {
+        return fail("projectionState", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case "projectionDropNext": {
+      if (!deps.projection) return fail("projectionDropNext", PROJECTION_UNAVAILABLE);
+      try {
+        deps.projection.dropNext(command.subscriptionId, command.count);
+        return ok("projectionDropNext");
+      } catch (error) {
+        return fail("projectionDropNext", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case "projectionResync": {
+      if (!deps.projection) return fail("projectionResync", PROJECTION_UNAVAILABLE);
+      try {
+        return ok("projectionResync", await deps.projection.resync(command.subscriptionId));
+      } catch (error) {
+        return fail("projectionResync", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case "projectionUnsubscribe": {
+      if (!deps.projection) return fail("projectionUnsubscribe", PROJECTION_UNAVAILABLE);
+      try {
+        deps.projection.unsubscribe(command.subscriptionId);
+        return ok("projectionUnsubscribe");
+      } catch (error) {
+        return fail(
+          "projectionUnsubscribe",
+          error instanceof Error ? error.message : String(error)
+        );
       }
     }
 

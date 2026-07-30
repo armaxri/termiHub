@@ -5,6 +5,7 @@ import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
+import { ProjectionRecorder } from "./projectionRecorder";
 import { isTestBridgeEnabled, getTestBridgePort } from "./testMode";
 import { runBridgeWebSocketClient, type BridgeWebSocketClient } from "./wsClient";
 
@@ -34,6 +35,19 @@ type BridgeDispatch = (
  */
 let runnerClient: BridgeWebSocketClient | undefined;
 let latestDispatch: BridgeDispatch | undefined;
+
+/**
+ * The projection recorder is page-scoped like the runner socket, not per-mount:
+ * it holds live per-region subscriptions (Tauri channels + {@link ProjectionClient}
+ * caches) that a transient `TerminalView` remount must not tear down. Created
+ * lazily on first use so a run that never drives the substrate pays nothing.
+ */
+let projectionRecorder: ProjectionRecorder | undefined;
+
+function getProjectionRecorder(): ProjectionRecorder {
+  projectionRecorder ??= new ProjectionRecorder();
+  return projectionRecorder;
+}
 
 /**
  * Installs the in-app test bridge on `window` when test mode is active.
@@ -80,6 +94,19 @@ export function TestBridge() {
       emitEvent: async (event, payload) => {
         if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
         await emit(event, payload);
+      },
+      // Drive the projection substrate for the assertion harness (#2164) over the
+      // real transport + ProjectionClient cache. Lazily created and page-scoped
+      // so a remount never drops live subscriptions.
+      projection: {
+        subscribe: (region) => getProjectionRecorder().subscribe(region),
+        dispatch: (request) => getProjectionRecorder().dispatch(request),
+        state: (subscriptionId) => getProjectionRecorder().state(subscriptionId),
+        dropNext: (subscriptionId, count) =>
+          getProjectionRecorder().dropNext(subscriptionId, count),
+        resync: (subscriptionId) => getProjectionRecorder().resync(subscriptionId),
+        unsubscribe: (subscriptionId) =>
+          getProjectionRecorder().unsubscribe(subscriptionId),
       },
     };
 
