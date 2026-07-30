@@ -208,5 +208,9 @@ keyring = { version = "3", default-features = false, features = [
 # Property tests over the shadow LayoutStore's tree transitions (#2151); the
 # panel-tree algebra it drives is proptest-covered in `termihub-core` (#2143).
 proptest = "1"
+# Tauri's mock runtime (`tauri::test::mock_app`) for a live `Manager` whose
+# `manage`/`try_state` state machinery drives the tunnel-manager resolution
+# regression test (#2168) without launching the real Wry app.
+tauri = { version = "2", default-features = false, features = ["wry", "compression", "dynamic-acl", "test"] }
 temp-env = "0.3"
 tower = { version = "0.5", features = ["util"] }
