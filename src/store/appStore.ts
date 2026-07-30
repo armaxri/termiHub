@@ -269,6 +269,12 @@ import {
   edgeToSplit,
   markActiveLeaf,
 } from "@/utils/panelTree";
+import {
+  layoutIntentsEnabled,
+  logBridgeFallback,
+  moveTabPayload,
+  runLayoutIntent,
+} from "@/store/layoutBridge";
 
 export type SidebarView =
   | "connections"
@@ -4545,17 +4551,39 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }),
       })),
 
-    splitPanel: (direction) =>
-      set((state) => {
-        const dir = direction ?? "horizontal";
-        const targetId = state.activePanelId;
-        if (!targetId) return state;
+    splitPanel: (direction) => {
+      // Local reducer (the shipped path, and the fallback when the store cut is
+      // enabled). Kept verbatim so the flag-off behaviour is unchanged.
+      const applyLocal = () =>
+        set((state) => {
+          const dir = direction ?? "horizontal";
+          const targetId = state.activePanelId;
+          if (!targetId) return state;
 
-        const newLeaf = createLeafPanel();
-        let rootPanel = splitLeaf(state.rootPanel, targetId, newLeaf, dir, "after");
-        rootPanel = simplifyTree(rootPanel);
-        return { rootPanel, activePanelId: newLeaf.id };
-      }),
+          const newLeaf = createLeafPanel();
+          let rootPanel = splitLeaf(state.rootPanel, targetId, newLeaf, dir, "after");
+          rootPanel = simplifyTree(rootPanel);
+          return { rootPanel, activePanelId: newLeaf.id };
+        });
+
+      // Step-2 cut (#2151): route the structural split through the `layout.split`
+      // intent; the store mutates and the diff is reconciled back. On any failure
+      // fall back to the local reducer so layout never breaks.
+      if (!layoutIntentsEnabled()) return applyLocal();
+      const { rootPanel, activePanelId } = get();
+      if (!activePanelId) return applyLocal();
+      void runLayoutIntent(
+        "layout.split",
+        { panelId: activePanelId, direction: direction ?? "horizontal", position: "after" },
+        rootPanel,
+        activePanelId
+      )
+        .then((res) => set(res))
+        .catch((err) => {
+          logBridgeFallback("layout.split", err);
+          applyLocal();
+        });
+    },
 
     removePanel: (panelId) =>
       set((state) => {
@@ -4581,77 +4609,105 @@ export const useAppStore = create<AppState>((set, get, store) => {
         return { activePanelId: panelId, zoomedTabId: newZoomedTabId };
       }),
 
-    splitPanelWithTab: (tabId, fromPanelId, targetPanelId, edge) =>
-      set((state) => {
-        const splitInfo = edgeToSplit(edge);
+    splitPanelWithTab: (tabId, fromPanelId, targetPanelId, edge) => {
+      // Local reducer (shipped path + fallback), kept verbatim.
+      const applyLocal = () =>
+        set((state) => {
+          const splitInfo = edgeToSplit(edge);
 
-        // Center drop: move tab to existing panel
-        if (!splitInfo) {
+          // Center drop: move tab to existing panel
+          if (!splitInfo) {
+            const sourceLeaf = findLeaf(state.rootPanel, fromPanelId);
+            if (!sourceLeaf) return state;
+            const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
+            if (!tab) return state;
+
+            const movedTab: TerminalTab = { ...tab, panelId: targetPanelId, isActive: true };
+
+            let rootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
+              removeTabFromLeaf(leaf, tabId)
+            );
+            rootPanel = updateLeaf(rootPanel, targetPanelId, (leaf) => ({
+              ...leaf,
+              tabs: [...leaf.tabs.map((t) => ({ ...t, isActive: false })), movedTab],
+              activeTabId: movedTab.id,
+            }));
+
+            // Clean up empty source
+            const updatedSource = findLeaf(rootPanel, fromPanelId);
+            const allLeaves = getAllLeaves(rootPanel);
+            if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
+              const removed = removeLeaf(rootPanel, fromPanelId);
+              rootPanel = removed ? simplifyTree(removed) : rootPanel;
+            }
+
+            return { rootPanel, activePanelId: targetPanelId };
+          }
+
+          // Edge drop: create new panel via split
           const sourceLeaf = findLeaf(state.rootPanel, fromPanelId);
           if (!sourceLeaf) return state;
           const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
           if (!tab) return state;
 
-          const movedTab: TerminalTab = { ...tab, panelId: targetPanelId, isActive: true };
+          const newLeaf = createLeafPanel();
+          const movedTab: TerminalTab = { ...tab, panelId: newLeaf.id, isActive: true };
+          newLeaf.tabs = [movedTab];
+          newLeaf.activeTabId = movedTab.id;
 
+          // Remove tab from source
           let rootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
             removeTabFromLeaf(leaf, tabId)
           );
-          rootPanel = updateLeaf(rootPanel, targetPanelId, (leaf) => ({
-            ...leaf,
-            tabs: [...leaf.tabs.map((t) => ({ ...t, isActive: false })), movedTab],
-            activeTabId: movedTab.id,
-          }));
 
-          // Clean up empty source
-          const updatedSource = findLeaf(rootPanel, fromPanelId);
-          const allLeaves = getAllLeaves(rootPanel);
-          if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
-            const removed = removeLeaf(rootPanel, fromPanelId);
-            rootPanel = removed ? simplifyTree(removed) : rootPanel;
+          // Clean up empty source before splitting (unless source IS the target)
+          if (fromPanelId !== targetPanelId) {
+            const updatedSource = findLeaf(rootPanel, fromPanelId);
+            const allLeaves = getAllLeaves(rootPanel);
+            if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
+              const removed = removeLeaf(rootPanel, fromPanelId);
+              rootPanel = removed ? simplifyTree(removed) : rootPanel;
+            }
           }
 
-          return { rootPanel, activePanelId: targetPanelId };
-        }
+          // Split the target
+          rootPanel = splitLeaf(
+            rootPanel,
+            targetPanelId,
+            newLeaf,
+            splitInfo.direction,
+            splitInfo.position
+          );
+          rootPanel = simplifyTree(rootPanel);
 
-        // Edge drop: create new panel via split
-        const sourceLeaf = findLeaf(state.rootPanel, fromPanelId);
-        if (!sourceLeaf) return state;
-        const tab = sourceLeaf.tabs.find((t) => t.id === tabId);
-        if (!tab) return state;
+          return { rootPanel, activePanelId: newLeaf.id };
+        });
 
-        const newLeaf = createLeafPanel();
-        const movedTab: TerminalTab = { ...tab, panelId: newLeaf.id, isActive: true };
-        newLeaf.tabs = [movedTab];
-        newLeaf.activeTabId = movedTab.id;
+      // Step-2 cut (#2151): a tab-carrying drop maps to `layout.moveTab`
+      // (center = merge into the target stack, edge = split the target). The
+      // backend collapses an emptied self-drop source but the local reducer
+      // keeps it, so the single-tab self-edge-drop corner stays on the local
+      // path to preserve exact parity; everything else routes through the store.
+      if (!layoutIntentsEnabled()) return applyLocal();
+      const { rootPanel, activePanelId } = get();
+      const sourceLeaf = findLeaf(rootPanel, fromPanelId);
+      const selfEdgeSingleTab =
+        edge !== "center" && fromPanelId === targetPanelId && (sourceLeaf?.tabs.length ?? 0) <= 1;
+      if (!sourceLeaf || selfEdgeSingleTab) return applyLocal();
 
-        // Remove tab from source
-        let rootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
-          removeTabFromLeaf(leaf, tabId)
-        );
-
-        // Clean up empty source before splitting (unless source IS the target)
-        if (fromPanelId !== targetPanelId) {
-          const updatedSource = findLeaf(rootPanel, fromPanelId);
-          const allLeaves = getAllLeaves(rootPanel);
-          if (updatedSource && updatedSource.tabs.length === 0 && allLeaves.length > 1) {
-            const removed = removeLeaf(rootPanel, fromPanelId);
-            rootPanel = removed ? simplifyTree(removed) : rootPanel;
-          }
-        }
-
-        // Split the target
-        rootPanel = splitLeaf(
-          rootPanel,
-          targetPanelId,
-          newLeaf,
-          splitInfo.direction,
-          splitInfo.position
-        );
-        rootPanel = simplifyTree(rootPanel);
-
-        return { rootPanel, activePanelId: newLeaf.id };
-      }),
+      void runLayoutIntent(
+        "layout.moveTab",
+        moveTabPayload(tabId, targetPanelId, edge),
+        rootPanel,
+        activePanelId,
+        tabId
+      )
+        .then((res) => set(res))
+        .catch((err) => {
+          logBridgeFallback("layout.moveTab", err);
+          applyLocal();
+        });
+    },
 
     // Connections — initialized empty, loaded from backend on mount
     folders: [],

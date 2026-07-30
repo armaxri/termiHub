@@ -230,6 +230,28 @@ impl LayoutStore {
         Ok(())
     }
 
+    /// `layout.replace` — install a complete tree for a client, replacing any
+    /// existing one.
+    ///
+    /// This is the **seed-before-mutate** entry point the step-2 frontend bridge
+    /// uses to keep the store authoritative for structure while tab *creation*
+    /// still lives in `appStore` (partial projection). Because tabs enter the
+    /// app via session creation — not a layout intent — the store would
+    /// otherwise never learn about them; the bridge pushes its current
+    /// structural tree (in the minimal `{ id, sessionId, contentType }` tab
+    /// form) here immediately before dispatching a structural intent, so the
+    /// four transforms operate on the real tree and project a diff the frontend
+    /// can reconcile back. The active panel is repointed at a real leaf when the
+    /// supplied id is absent.
+    pub fn replace(&self, client_id: &str, root: PanelNode, active_panel_id: Option<String>) {
+        let mut state = LayoutState {
+            root,
+            active_panel_id,
+        };
+        fix_active(&mut state);
+        self.lock().insert(client_id.to_string(), state);
+    }
+
     /// Install a specific tree for a client — test-only seeding so intent tests
     /// can start from a populated layout without a tab-creating intent (tabs
     /// enter via session creation in `appStore`, out of this shadow's scope).
@@ -258,9 +280,13 @@ fn single_empty_leaf() -> PanelNode {
     PanelNode::Leaf(create_leaf_panel())
 }
 
-/// A copy of `leaf` with `tab_id` removed; the active tab falls back to the
-/// first remaining tab when the removed tab was active.
+/// A copy of `leaf` with `tab_id` removed; when the removed tab was active, the
+/// active tab falls back **positionally** — the tab that shifts into the removed
+/// slot, or the new last tab. This matches the frontend `removeTabFromLeaf`
+/// reducer (`min(idx, len-1)`) exactly, so cutting a tab-moving mutation over to
+/// the store preserves which tab the source panel focuses (#2151 step 2).
 fn with_tab_removed(leaf: &LeafPanel, tab_id: &str) -> LeafPanel {
+    let removed_idx = leaf.tabs.iter().position(|t| t.id == tab_id);
     let tabs: Vec<Tab> = leaf
         .tabs
         .iter()
@@ -268,7 +294,13 @@ fn with_tab_removed(leaf: &LeafPanel, tab_id: &str) -> LeafPanel {
         .cloned()
         .collect();
     let active_tab_id = if leaf.active_tab_id.as_deref() == Some(tab_id) {
-        tabs.first().map(|t| t.id.clone())
+        match removed_idx {
+            Some(idx) if !tabs.is_empty() => {
+                let new_idx = idx.min(tabs.len() - 1);
+                Some(tabs[new_idx].id.clone())
+            }
+            _ => None,
+        }
     } else {
         leaf.active_tab_id.clone()
     };

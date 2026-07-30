@@ -104,6 +104,42 @@ fn clients_are_isolated() {
 // ── split ────────────────────────────────────────────────────────────────────
 
 #[test]
+fn replace_installs_a_whole_tree_over_the_seeded_empty_leaf() {
+    let store = LayoutStore::new();
+    // A never-touched client seeds one empty leaf; replace overwrites it with the
+    // frontend's authoritative tree (the step-2 seed-before-mutate path).
+    store.replace("C", two_panel_tree(), Some("a".to_string()));
+
+    let root = root_of(&store, "C");
+    assert_eq!(count_tabs_in_tree(&root), 3, "the whole tree is installed");
+    assert_eq!(get_all_leaves(&root).len(), 2);
+    assert_eq!(active_of(&store, "C").as_deref(), Some("a"));
+
+    // A subsequent structural transform now operates on the installed tree.
+    store
+        .move_tab("C", "t1", "b", DropEdge::Center)
+        .expect("move on the replaced tree");
+    let root = root_of(&store, "C");
+    assert_eq!(
+        count_tabs_in_tree(&root),
+        3,
+        "no tabs lost across replace+move"
+    );
+}
+
+#[test]
+fn replace_with_an_absent_active_panel_repoints_to_a_real_leaf() {
+    let store = LayoutStore::new();
+    store.replace("C", two_panel_tree(), Some("ghost".to_string()));
+    let active = active_of(&store, "C").expect("active repointed");
+    let root = root_of(&store, "C");
+    assert!(
+        find_leaf(&root, &active).is_some(),
+        "active panel points at an existing leaf"
+    );
+}
+
+#[test]
 fn split_inserts_a_new_empty_focused_leaf_and_preserves_tab_count() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
@@ -222,6 +258,29 @@ fn move_tab_of_unknown_tab_is_rejected() {
 }
 
 // ── closeTabStructure ────────────────────────────────────────────────────────
+
+#[test]
+fn removing_a_middle_active_tab_falls_back_positionally_like_the_frontend() {
+    // Parity with the frontend `removeTabFromLeaf` (`min(idx, len-1)`): removing
+    // the *middle* active tab focuses the tab that shifts into its slot, not the
+    // first tab. A single leaf `a` = [t1, t2(active), t3].
+    let store = LayoutStore::new();
+    let root = PanelNode::Leaf(LeafPanel {
+        id: "a".to_string(),
+        tabs: vec![tab("t1"), tab("t2"), tab("t3")],
+        active_tab_id: Some("t2".to_string()),
+    });
+    store.seed_for_test("C", root, Some("a".to_string()));
+    store.close_tab_structure("C", "t2").unwrap();
+
+    let root = root_of(&store, "C");
+    let a = find_leaf(&root, "a").unwrap();
+    assert_eq!(
+        a.active_tab_id.as_deref(),
+        Some("t3"),
+        "positional fallback picks t3 (the tab now at the removed index), not t1"
+    );
+}
 
 #[test]
 fn close_tab_removes_one_tab_keeping_a_non_empty_leaf() {

@@ -27,6 +27,7 @@
 //! | `layout.merge`              | `{ sourcePanelId, targetPanelId }`       | move all tabs into the target, drop the source |
 //! | `layout.moveTab`            | `{ tabId, targetPanelId, edge }`         | move a tab (center = merge; edge = split)      |
 //! | `layout.closeTabStructure`  | `{ tabId }`                              | remove a tab; drop its leaf if left empty      |
+//! | `layout.replace`            | `{ root, activePanelId }`                | install a whole tree (the bridge's seed path)  |
 //!
 //! # Shadow mode
 //!
@@ -42,6 +43,8 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
+
+use termihub_core::layout::panel_tree::PanelNode;
 
 use crate::layout::store::{LayoutError, LayoutStore};
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
@@ -109,7 +112,7 @@ pub fn register_layout_intents(registry: &mut HandlerRegistry, app_handle: AppHa
         Ok(publish_layout(projector, &store, &intent.client_id))
     });
 
-    let handle = app_handle;
+    let handle = app_handle.clone();
     registry.route("layout.closeTabStructure", move |intent, projector| {
         let store = store_of(&handle)?;
         let tab_id = required_str(intent, "tabId")?;
@@ -118,6 +121,30 @@ pub fn register_layout_intents(registry: &mut HandlerRegistry, app_handle: AppHa
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &store, &intent.client_id))
     });
+
+    let handle = app_handle;
+    registry.route("layout.replace", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let (root, active_panel_id) = parse_replace(intent)?;
+        store.replace(&intent.client_id, root, active_panel_id);
+        Ok(publish_layout(projector, &store, &intent.client_id))
+    });
+}
+
+/// Parse a `layout.replace` payload `{ root: PanelNode, activePanelId? }`.
+fn parse_replace(intent: &Intent) -> Result<(PanelNode, Option<String>), (String, String)> {
+    let root_value = intent
+        .payload
+        .get("root")
+        .ok_or_else(|| ("bad_payload".to_string(), "missing 'root'".to_string()))?;
+    let root: PanelNode = serde_json::from_value(root_value.clone())
+        .map_err(|e| ("bad_payload".to_string(), format!("invalid 'root': {e}")))?;
+    let active_panel_id = intent
+        .payload
+        .get("activePanelId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    Ok((root, active_panel_id))
 }
 
 /// Resolve the managed layout store, or a rejectable error if it is absent.
