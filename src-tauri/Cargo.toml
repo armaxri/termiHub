@@ -65,6 +65,10 @@ sha2 = "0.10"
 # delimiter handling delegated to the maintained crate rather than hand-rolled.
 csv = "1"
 serde_json = { workspace = true }
+# RFC 6902 JSON-Patch: structural diff (produce) + apply for the stateless-UI
+# projection substrate (#2149). Library-backed per the repo's "prefer libraries"
+# rule rather than a hand-rolled differ; `diff()` emits only add/remove/replace.
+json-patch = "3"
 portable-pty = "0.8"
 russh = { workspace = true }
 russh-sftp = { workspace = true }
