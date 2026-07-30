@@ -1,5 +1,5 @@
 /**
- * Layout projection bridge — Phase 3 step 2 of the stateless-UI migration
+ * Layout projection bridge — Phase 3 steps 2–3 of the stateless-UI migration
  * (#2151, part of #2139).
  *
  * Step 1 landed a shadow, backend-authoritative `LayoutStore` served as the
@@ -8,8 +8,17 @@
  * the four structural mutations (split / move-tab / merge-a-tab / split-with-tab)
  * dispatch `layout.*` intents instead of editing `appStore.rootPanel` locally,
  * and the resulting projection diff is reconciled back into `appStore`'s
- * existing panel-tree shape so `SplitView` renders exactly as before (rendering
- * is cut over in step 3, the reducers removed in step 4).
+ * existing panel-tree shape so `SplitView` renders exactly as before.
+ *
+ * Step 3 cuts **rendering** over: the render helpers below
+ * ({@link viewMatchesTree}, {@link composeRenderTree}, {@link seedLayoutRegion})
+ * let {@link import("./useLayoutRenderTree").useLayoutRenderTree} source the
+ * renderer's panel/tab structure from the projected render-list (content still
+ * overlaid from `appStore` — partial projection). The two cuts are gated
+ * independently ({@link layoutIntentsEnabled} for mutations, off by default;
+ * {@link layoutRenderFromProjectionEnabled} for rendering, on by default) so the
+ * parity-safe render cut can ship live without the async mutation flip. The
+ * appStore panel-tree reducers are removed in step 4.
  *
  * # Seed-before-mutate
  *
@@ -27,10 +36,13 @@
  *
  * # Strangler safety
  *
- * The cut is gated by {@link layoutIntentsEnabled} — **off by default**, so the
- * shipped app keeps running on the untouched local reducers until step 3 flips
- * rendering over too. Even when enabled, any dispatch/reconcile failure falls
- * back to the local mutation, so a backend hiccup can never break layout.
+ * The mutation cut is gated by {@link layoutIntentsEnabled} — **off by default**,
+ * so the shipped app keeps running on the untouched local reducers. Even when
+ * enabled, any dispatch/reconcile failure falls back to the local mutation, so a
+ * backend hiccup can never break layout. The render cut
+ * ({@link layoutRenderFromProjectionEnabled}, on by default) is separately safe:
+ * it only composes from the projection when the view mirrors `appStore`'s tree,
+ * else falls back to that tree verbatim.
  */
 
 import {
@@ -72,10 +84,10 @@ interface MinimalSplit {
   sizes?: number[];
   lastActiveLeafId?: string;
 }
-type MinimalNode = MinimalLeaf | MinimalSplit;
+export type MinimalNode = MinimalLeaf | MinimalSplit;
 
 /** The `layout@<clientId>` region view model: tree + focused panel. */
-interface LayoutView {
+export interface LayoutView {
   root: MinimalNode;
   activePanelId: string | null;
 }
@@ -84,44 +96,88 @@ interface LayoutView {
 
 interface LayoutFlagWindow {
   __TERMIHUB_LAYOUT_INTENTS__?: boolean;
+  __TERMIHUB_LAYOUT_RENDER__?: boolean;
   localStorage?: Storage;
 }
 
 let flagOverride: boolean | null = null;
+let renderFlagOverride: boolean | null = null;
 
 /**
- * Programmatic override for the layout-intents flag (tests, and a runtime
- * toggle). `null` clears the override and falls back to the window/localStorage
- * signal, then to the default.
+ * Programmatic override for the layout-intents (mutation) flag (tests, and a
+ * runtime toggle). `null` clears the override and falls back to the
+ * window/localStorage signal, then to the default.
  */
 export function setLayoutIntentsEnabled(value: boolean | null): void {
   flagOverride = value;
 }
 
 /**
- * Whether structural layout mutations route through `layout.*` intents (step 2)
- * instead of mutating `appStore.rootPanel` locally.
- *
- * **Off by default.** Step 2 lands the machinery gated; step 3 (rendering cut)
- * flips the default on. Overridable at runtime for verification via
- * `window.__TERMIHUB_LAYOUT_INTENTS__` or `localStorage["termihub.layoutIntents"]`.
+ * Programmatic override for the render-from-projection flag (tests, runtime
+ * toggle). `null` clears it and falls back to the window/localStorage signal,
+ * then to the default.
  */
-export function layoutIntentsEnabled(): boolean {
-  if (flagOverride !== null) return flagOverride;
+export function setLayoutRenderFromProjectionEnabled(value: boolean | null): void {
+  renderFlagOverride = value;
+}
+
+/** Read a boolean feature signal from `window`/`localStorage`, else `dflt`. */
+function readFlag(
+  override: boolean | null,
+  windowKey: keyof LayoutFlagWindow,
+  storageKey: string,
+  dflt: boolean
+): boolean {
+  if (override !== null) return override;
   try {
     if (typeof window !== "undefined") {
       const w = window as unknown as LayoutFlagWindow;
-      if (typeof w.__TERMIHUB_LAYOUT_INTENTS__ === "boolean") {
-        return w.__TERMIHUB_LAYOUT_INTENTS__;
-      }
-      const ls = w.localStorage?.getItem("termihub.layoutIntents");
+      const wv = w[windowKey];
+      if (typeof wv === "boolean") return wv;
+      const ls = w.localStorage?.getItem(storageKey);
       if (ls === "true") return true;
       if (ls === "false") return false;
     }
   } catch {
     // A missing/blocked window or storage just means "use the default".
   }
-  return false;
+  return dflt;
+}
+
+/**
+ * Whether structural layout **mutations** route through `layout.*` intents
+ * (step 2) instead of editing `appStore.rootPanel` locally.
+ *
+ * **Off by default.** This makes the backend `LayoutStore` authoritative for
+ * mutations, which turns split/move/merge into asynchronous backend round-trips
+ * — a behavioural change that must be verified with a local GUI run before it
+ * ships on. It is intentionally decoupled from the render cut
+ * ({@link layoutRenderFromProjectionEnabled}), which is parity-safe on its own.
+ * Overridable at runtime via `window.__TERMIHUB_LAYOUT_INTENTS__` or
+ * `localStorage["termihub.layoutIntents"]`.
+ */
+export function layoutIntentsEnabled(): boolean {
+  return readFlag(flagOverride, "__TERMIHUB_LAYOUT_INTENTS__", "termihub.layoutIntents", false);
+}
+
+/**
+ * Whether the **renderer** sources its panel/tab structure from the projected
+ * `layout@<clientId>` render-list (step 3,
+ * {@link import("./useLayoutRenderTree").useLayoutRenderTree}) rather than from
+ * `appStore.rootPanel` directly.
+ *
+ * **On by default.** Parity-safe by construction: the renderer composes from the
+ * projection only when its view structurally mirrors `appStore`'s tree, and
+ * otherwise falls back to that tree verbatim — so the rendered output is always
+ * identical to the pre-cut renderer, and live xterm DOM is reparented (never
+ * remounted) because tab/panel ids are preserved. Independent of the mutation
+ * cut: the region is seeded from `appStore` whether mutations are local or
+ * intent-routed. Overridable for rollback / an A-B check (the renderer reads it
+ * at mount, so a flip takes effect on reload) via
+ * `window.__TERMIHUB_LAYOUT_RENDER__` or `localStorage["termihub.layoutRender"]`.
+ */
+export function layoutRenderFromProjectionEnabled(): boolean {
+  return readFlag(renderFlagOverride, "__TERMIHUB_LAYOUT_RENDER__", "termihub.layoutRender", true);
 }
 
 // ── Transport + region client (lazy, mirrors the tunnel slice) ─────────────────
@@ -340,4 +396,118 @@ export function moveTabPayload(
 export function logBridgeFallback(kind: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
   frontendLog("layout_bridge", `${kind} fell back to local mutation: ${message}`);
+}
+
+// ── Render-from-projection (step 3): compose structure ⊕ content, gate, seed ──
+//
+// Step 2 made `LayoutStore` authoritative for structural mutations and mirrored
+// the reconciled tree back into `appStore.rootPanel`. Step 3 cuts the renderer
+// itself over: `SplitView` sources its panel/tab **structure** from the
+// projected `layout@<clientId>` render-list and overlays per-tab **content**
+// (title, colour, session status, broadcast, zoom) from `appStore` — the
+// partial-projection seam (Decision #2). The composition reuses the tested
+// {@link reconcileNode}: the projection supplies the tree shape (leaf/split
+// nodes, tab order, active tab, split sizes, panel ids); `appStore`'s current
+// rich tabs supply the content, re-attached by id. Because the composed tree
+// carries the same `tab.id`/`panel.id`s, the live xterm DOM (registered by tab
+// id, adopted by the id-keyed `TerminalSlot`) is reparented, never remounted.
+//
+// **Strangler safety.** The renderer only composes from the projection when the
+// projected view is a *faithful structural mirror* of `appStore`'s tree
+// ({@link viewMatchesTree}); otherwise it falls back to `appStore.rootPanel`
+// verbatim. Tab create/close/reorder/activate are not yet layout intents
+// (deferred), so those edit `appStore` locally and momentarily desync the
+// region — the gate makes the renderer fall back rather than show a stale tree,
+// and {@link seedLayoutRegion} catches the region back up so composing resumes.
+// The gate guarantees the composed tree is structurally identical to
+// `appStore.rootPanel`, so rendering can never diverge from the pre-cut output.
+
+/** Deep structural equality over two minimal projected trees (order-independent
+ * on object keys; array order is significant, as it is user-visible tab/panel
+ * order). */
+export function minimalNodesEqual(a: MinimalNode, b: MinimalNode): boolean {
+  if (a.type !== b.type) return false;
+  if (a.id !== b.id) return false;
+  if (a.type === "leaf" && b.type === "leaf") {
+    if (a.activeTabId !== b.activeTabId) return false;
+    if (a.tabs.length !== b.tabs.length) return false;
+    return a.tabs.every((t, i) => {
+      const o = b.tabs[i];
+      return (
+        t.id === o.id &&
+        (t.sessionId ?? null) === (o.sessionId ?? null) &&
+        t.contentType === o.contentType
+      );
+    });
+  }
+  if (a.type === "split" && b.type === "split") {
+    if (a.direction !== b.direction) return false;
+    if ((a.lastActiveLeafId ?? null) !== (b.lastActiveLeafId ?? null)) return false;
+    if (!sizesEqual(a.sizes, b.sizes)) return false;
+    if (a.children.length !== b.children.length) return false;
+    return a.children.every((c, i) => minimalNodesEqual(c, b.children[i]));
+  }
+  return false;
+}
+
+/** Compare two optional split-size arrays exactly. */
+function sizesEqual(a: number[] | undefined, b: number[] | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return a.length === b.length && a.every((n, i) => n === b[i]);
+}
+
+/**
+ * Whether a projected `view` is a faithful structural mirror of `root` +
+ * `activePanelId` — the gate that decides if the renderer may source structure
+ * from the projection (true) or must fall back to `appStore` (false).
+ */
+export function viewMatchesTree(
+  view: LayoutView | null | undefined,
+  root: PanelNode,
+  activePanelId: string | null
+): boolean {
+  if (!view || !view.root) return false;
+  if ((view.activePanelId ?? null) !== (activePanelId ?? null)) return false;
+  return minimalNodesEqual(toMinimalNode(root), view.root);
+}
+
+/**
+ * Compose the rich render tree from a projected view: **structure** from
+ * `view.root`, **content** re-attached by tab id from `contentRoot`'s rich tabs.
+ * Throws (via {@link reconcileNode}) if the view references a tab absent from
+ * `contentRoot`; callers gate with {@link viewMatchesTree} first so this never
+ * throws on the happy path.
+ */
+export function composeRenderTree(view: LayoutView, contentRoot: PanelNode): PanelNode {
+  return reconcileNode(view.root, collectTabs(contentRoot));
+}
+
+/** Ensure the layout region client is subscribed; the renderer's entry point.
+ * `async` so a synchronous transport-construction failure (e.g. non-Tauri, no
+ * socket) surfaces as a rejection the caller can catch and fall back on. */
+export async function ensureLayoutRegionClient(): Promise<ProjectionClient> {
+  return ensureSubscribed();
+}
+
+/**
+ * Seed the layout region with a whole tree so the projection tracks
+ * `appStore`'s current structure (the render-side counterpart to the mutation
+ * bridge's seed-before-mutate). Idempotent server-side: replacing with the same
+ * tree yields no diff.
+ */
+export async function seedLayoutRegion(
+  root: PanelNode,
+  activePanelId: string | null
+): Promise<void> {
+  throwIfRejected(
+    await dispatch("layout.replace", { root: toMinimalNode(root), activePanelId }),
+    "replace"
+  );
+}
+
+/** Log a render-path fallback so the projection-cut recovery is visible. */
+export function logRenderFallback(err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  frontendLog("layout_bridge", `render fell back to appStore tree: ${message}`);
 }
