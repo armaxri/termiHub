@@ -51,7 +51,11 @@ pub fn initial_view() -> Value {
 ///   the rejected-ack path end to end.
 pub fn register_diagnostic_routes(registry: &mut HandlerRegistry) {
     registry.route("diag.increment", |intent, projector| {
-        let by = intent.payload.get("by").and_then(Value::as_i64).unwrap_or(1);
+        let by = intent
+            .payload
+            .get("by")
+            .and_then(Value::as_i64)
+            .unwrap_or(1);
         let mut view = projector.snapshot(DIAG_REGION).view;
         let current = view.get("count").and_then(Value::as_i64).unwrap_or(0);
         view["count"] = json!(current + by);
