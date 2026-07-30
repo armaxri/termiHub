@@ -4,6 +4,8 @@
 //! background tasks and stream results back via Tauri events. One-shot
 //! operations (DNS, WoL, open ports) return immediately.
 
+use std::sync::Arc;
+
 use tauri::{AppHandle, Emitter, State};
 
 use termihub_core::network::{
@@ -13,8 +15,42 @@ use termihub_core::network::{
 use termihub_core::service::ServiceInfo;
 
 use crate::network::http_monitor::{HttpMonitorConfig, HttpMonitorState};
-use crate::network::NetworkManager;
+use crate::network::{agent_tools, NetworkManager};
+use crate::run_location::{ResolvedLocation, RunLocation};
+use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
+
+/// Fetch the agent RPC client when a tool's run-location resolves to an agent
+/// (#2190). `Ok(None)` for a local run; an error when an agent is requested but
+/// no agent client is available.
+fn agent_client_for(
+    manager: &NetworkManager,
+    location: &ResolvedLocation,
+) -> Result<Option<Arc<dyn AgentRpcClient>>, TerminalError> {
+    match location {
+        ResolvedLocation::Local => Ok(None),
+        ResolvedLocation::Agent(_) => manager
+            .agent_rpc_client()
+            .map(Some)
+            .ok_or_else(|| TerminalError::NetworkError("agent manager is not available".into())),
+    }
+}
+
+/// Set (or clear) the run-location preference for a network tool (#2190).
+///
+/// Recording an agent routes that tool's next invocation to the agent's
+/// `network.*` methods; [`RunLocation::ThisComputer`] clears the preference
+/// (back to running on the desktop). The desktop-only HTTP monitor refuses an
+/// agent location. Backs the run-location selector UI (#2191) and is the hook
+/// for exercising agent-routed tools meanwhile.
+#[tauri::command]
+pub fn set_network_tool_run_location(
+    tool: String,
+    run_location: RunLocation,
+    manager: State<'_, NetworkManager>,
+) -> Result<(), TerminalError> {
+    manager.set_run_location(&tool, run_location)
+}
 
 // ── Port Scanner ─────────────────────────────────────────────────────────────
 
@@ -40,6 +76,12 @@ pub async fn network_port_scan(
     let targets = port_scan::parse_target_spec(&host)
         .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
 
+    // Route by run-location (#2190). A tool with no recorded preference resolves
+    // local and takes the existing desktop path; an agent preference proxies the
+    // scan to that agent's `network.port_scan` and re-emits the same events.
+    let location = manager.resolve_tool_location(agent_tools::tool::PORT_SCAN)?;
+    let agent_client = agent_client_for(&manager, &location)?;
+
     let (task_id, cancel) = manager.register_task();
 
     let app_clone = app.clone();
@@ -50,45 +92,58 @@ pub async fn network_port_scan(
         let app = app_clone;
         let tid = task_id_clone.clone();
 
-        let on_result = {
-            let app = app.clone();
-            let tid = tid.clone();
-            move |result: PortScanResult| {
-                let _ = app.emit(
-                    "network-scan-result",
-                    serde_json::json!({
-                        "taskId": tid,
-                        "host": result.host,
-                        "port": result.port,
-                        "state": result.state,
-                        "latencyMs": result.latency_ms,
-                    }),
-                );
+        match location {
+            ResolvedLocation::Agent(agent_id) => {
+                let params = agent_tools::port_scan_params(&host, &ports, timeout_ms, concurrency);
+                let client = agent_client.expect("agent client present for agent location");
+                let (app2, tid2) = (app.clone(), tid.clone());
+                let _ = tokio::task::spawn_blocking(move || {
+                    agent_tools::dispatch_port_scan(&client, &agent_id, &app2, &tid2, params);
+                })
+                .await;
             }
-        };
+            ResolvedLocation::Local => {
+                let on_result = {
+                    let app = app.clone();
+                    let tid = tid.clone();
+                    move |result: PortScanResult| {
+                        let _ = app.emit(
+                            "network-scan-result",
+                            serde_json::json!({
+                                "taskId": tid,
+                                "host": result.host,
+                                "port": result.port,
+                                "state": result.state,
+                                "latencyMs": result.latency_ms,
+                            }),
+                        );
+                    }
+                };
 
-        let summary = port_scan::scan_targets(
-            &targets,
-            &port_list,
-            timeout_ms.unwrap_or(2000),
-            concurrency.unwrap_or(100),
-            on_result,
-            cancel,
-        )
-        .await;
+                let summary = port_scan::scan_targets(
+                    &targets,
+                    &port_list,
+                    timeout_ms.unwrap_or(2000),
+                    concurrency.unwrap_or(100),
+                    on_result,
+                    cancel,
+                )
+                .await;
 
-        match summary {
-            Ok(s) => {
-                let _ = app.emit(
-                    "network-scan-complete",
-                    serde_json::json!({ "taskId": &tid, "summary": s }),
-                );
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "network-scan-error",
-                    serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
-                );
+                match summary {
+                    Ok(s) => {
+                        let _ = app.emit(
+                            "network-scan-complete",
+                            serde_json::json!({ "taskId": &tid, "summary": s }),
+                        );
+                    }
+                    Err(e) => {
+                        let _ = app.emit(
+                            "network-scan-error",
+                            serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
+                        );
+                    }
+                }
             }
         }
 
@@ -151,6 +206,12 @@ pub async fn network_ping_start(
     manager: State<'_, NetworkManager>,
     app: AppHandle,
 ) -> Result<String, TerminalError> {
+    // Route by run-location (#2190): a recorded agent preference proxies the ping
+    // to that agent's `network.ping` (a bounded, collect-and-return batch) and
+    // re-emits the same events; no preference keeps the existing desktop path.
+    let location = manager.resolve_tool_location(agent_tools::tool::PING)?;
+    let agent_client = agent_client_for(&manager, &location)?;
+
     let (task_id, cancel) = manager.register_task();
 
     let app_clone = app.clone();
@@ -162,35 +223,50 @@ pub async fn network_ping_start(
         let app = app_clone;
         let tid = task_id_clone.clone();
 
-        let on_result = {
-            let app = app.clone();
-            let tid = tid.clone();
-            move |result| {
-                let _ = app.emit(
-                    "network-ping-result",
-                    serde_json::json!({ "taskId": &tid, "result": result }),
-                );
+        match location {
+            ResolvedLocation::Agent(agent_id) => {
+                let params = agent_tools::ping_params(&host, interval_ms, count);
+                let client = agent_client.expect("agent client present for agent location");
+                let (app2, tid2) = (app.clone(), tid.clone());
+                let _ = tokio::task::spawn_blocking(move || {
+                    agent_tools::dispatch_ping(&client, &agent_id, &app2, &tid2, params);
+                })
+                .await;
             }
-        };
+            ResolvedLocation::Local => {
+                let on_result = {
+                    let app = app.clone();
+                    let tid = tid.clone();
+                    move |result| {
+                        let _ = app.emit(
+                            "network-ping-result",
+                            serde_json::json!({ "taskId": &tid, "result": result }),
+                        );
+                    }
+                };
 
-        let result =
-            ping::ping_stream(&host, interval_ms.unwrap_or(1000), count, on_result, cancel).await;
-        // Check cancellation *after* the stream ends so Stop is reported as
-        // canceled rather than completed (the token is set while it runs).
-        let canceled = cancel_clone.is_cancelled();
+                let result =
+                    ping::ping_stream(&host, interval_ms.unwrap_or(1000), count, on_result, cancel)
+                        .await;
+                // Check cancellation *after* the stream ends so Stop is reported
+                // as canceled rather than completed (the token is set while it
+                // runs).
+                let canceled = cancel_clone.is_cancelled();
 
-        match result {
-            Ok(stats) => {
-                let _ = app.emit(
-                    "network-ping-complete",
-                    serde_json::json!({ "taskId": &tid, "stats": stats, "canceled": canceled }),
-                );
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "network-ping-error",
-                    serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
-                );
+                match result {
+                    Ok(stats) => {
+                        let _ = app.emit(
+                            "network-ping-complete",
+                            serde_json::json!({ "taskId": &tid, "stats": stats, "canceled": canceled }),
+                        );
+                    }
+                    Err(e) => {
+                        let _ = app.emit(
+                            "network-ping-error",
+                            serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
+                        );
+                    }
+                }
             }
         }
 
@@ -364,17 +440,40 @@ mod tests {
 }
 
 /// Perform a DNS lookup and return the records immediately.
+///
+/// Routes by run-location (#2190): an agent preference proxies to the agent's
+/// `network.dns_lookup` (returning the same `DnsResult` shape); no preference
+/// resolves on the desktop as before.
 #[tauri::command]
 pub async fn network_dns_lookup(
     hostname: String,
     record_type: String,
     server: Option<String>,
+    manager: State<'_, NetworkManager>,
 ) -> Result<serde_json::Value, TerminalError> {
+    // Validate the record type locally so the error is identical regardless of
+    // where the lookup runs.
     let rtype = parse_record_type(&record_type)?;
-    let result = dns::dns_lookup(&hostname, rtype, server.as_deref())
-        .await
-        .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
-    serde_json::to_value(result).map_err(|e| TerminalError::NetworkError(e.to_string()))
+
+    match manager.resolve_tool_location(agent_tools::tool::DNS)? {
+        ResolvedLocation::Agent(agent_id) => {
+            let client = manager.agent_rpc_client().ok_or_else(|| {
+                TerminalError::NetworkError("agent manager is not available".into())
+            })?;
+            let params = agent_tools::dns_params(&hostname, &record_type, server.as_deref());
+            tokio::task::spawn_blocking(move || {
+                client.send_request(&agent_id, "network.dns_lookup", params)
+            })
+            .await
+            .map_err(|e| TerminalError::NetworkError(e.to_string()))?
+        }
+        ResolvedLocation::Local => {
+            let result = dns::dns_lookup(&hostname, rtype, server.as_deref())
+                .await
+                .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
+            serde_json::to_value(result).map_err(|e| TerminalError::NetworkError(e.to_string()))
+        }
+    }
 }
 
 // ── Open Ports ───────────────────────────────────────────────────────────────
@@ -401,6 +500,13 @@ pub async fn network_traceroute(
     manager: State<'_, NetworkManager>,
     app: AppHandle,
 ) -> Result<String, TerminalError> {
+    // Route by run-location (#2190): a recorded agent preference proxies the
+    // traceroute to that agent's `network.traceroute` (showing the agent's path
+    // to the target) and re-emits the same hop events; no preference keeps the
+    // existing desktop path.
+    let location = manager.resolve_tool_location(agent_tools::tool::TRACEROUTE)?;
+    let agent_client = agent_client_for(&manager, &location)?;
+
     let (task_id, cancel) = manager.register_task();
 
     let app_clone = app.clone();
@@ -411,31 +517,45 @@ pub async fn network_traceroute(
         let app = app_clone;
         let tid = task_id_clone.clone();
 
-        let on_hop = {
-            let app = app.clone();
-            let tid = tid.clone();
-            move |hop| {
-                let _ = app.emit(
-                    "network-traceroute-hop",
-                    serde_json::json!({ "taskId": &tid, "hop": hop }),
-                );
+        match location {
+            ResolvedLocation::Agent(agent_id) => {
+                let params = agent_tools::traceroute_params(&host, max_hops);
+                let client = agent_client.expect("agent client present for agent location");
+                let (app2, tid2) = (app.clone(), tid.clone());
+                let _ = tokio::task::spawn_blocking(move || {
+                    agent_tools::dispatch_traceroute(&client, &agent_id, &app2, &tid2, params);
+                })
+                .await;
             }
-        };
+            ResolvedLocation::Local => {
+                let on_hop = {
+                    let app = app.clone();
+                    let tid = tid.clone();
+                    move |hop| {
+                        let _ = app.emit(
+                            "network-traceroute-hop",
+                            serde_json::json!({ "taskId": &tid, "hop": hop }),
+                        );
+                    }
+                };
 
-        let result = traceroute::traceroute(&host, max_hops.unwrap_or(30), on_hop, cancel).await;
+                let result =
+                    traceroute::traceroute(&host, max_hops.unwrap_or(30), on_hop, cancel).await;
 
-        match result {
-            Ok(()) => {
-                let _ = app.emit(
-                    "network-traceroute-complete",
-                    serde_json::json!({ "taskId": &tid }),
-                );
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "network-traceroute-error",
-                    serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
-                );
+                match result {
+                    Ok(()) => {
+                        let _ = app.emit(
+                            "network-traceroute-complete",
+                            serde_json::json!({ "taskId": &tid }),
+                        );
+                    }
+                    Err(e) => {
+                        let _ = app.emit(
+                            "network-traceroute-error",
+                            serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
+                        );
+                    }
+                }
             }
         }
 
@@ -458,10 +578,30 @@ pub fn network_traceroute_cancel(
 // ── Wake-on-LAN ──────────────────────────────────────────────────────────────
 
 /// Send a Wake-on-LAN magic packet.
+///
+/// Routes by run-location (#2190): an agent preference sends the magic packet
+/// from the agent's LAN via `network.wol`; no preference sends it from the
+/// desktop as before.
 #[tauri::command]
-pub fn network_wol_send(mac: String, broadcast: String, port: u16) -> Result<(), TerminalError> {
-    wol::send_magic_packet(&mac, &broadcast, port)
-        .map_err(|e| TerminalError::NetworkError(e.to_string()))
+pub fn network_wol_send(
+    mac: String,
+    broadcast: String,
+    port: u16,
+    manager: State<'_, NetworkManager>,
+) -> Result<(), TerminalError> {
+    match manager.resolve_tool_location(agent_tools::tool::WOL)? {
+        ResolvedLocation::Agent(agent_id) => {
+            let client = manager.agent_rpc_client().ok_or_else(|| {
+                TerminalError::NetworkError("agent manager is not available".into())
+            })?;
+            let params = agent_tools::wol_params(&mac, &broadcast, port);
+            client
+                .send_request(&agent_id, "network.wol", params)
+                .map(|_| ())
+        }
+        ResolvedLocation::Local => wol::send_magic_packet(&mac, &broadcast, port)
+            .map_err(|e| TerminalError::NetworkError(e.to_string())),
+    }
 }
 
 /// List saved WoL devices.

@@ -4,6 +4,7 @@
 //! Manages running task lifetimes (port scans, ping sessions, traceroutes) and
 //! the persistent HTTP monitors.
 
+pub mod agent_tools;
 pub mod http_monitor;
 pub mod http_monitor_storage;
 pub mod wol_storage;
@@ -22,7 +23,8 @@ use http_monitor::{HttpMonitorConfig, HttpMonitorService, HttpMonitorState};
 use termihub_core::network::WolDevice;
 use termihub_core::service::{Service, ServiceInfo, ServiceRegistry};
 
-use crate::run_location::{ResolvedLocation, RunLocationResolver};
+use crate::run_location::{ResolvedLocation, RunLocation, RunLocationResolver};
+use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
 /// Tauri event forwarded to the frontend for each HTTP monitor check.
@@ -45,9 +47,16 @@ pub struct NetworkManager {
     /// Desktop-side registry of run-location-routable services. The HTTP monitor
     /// is registered here (discovery, schema, capabilities) as the S2 pilot.
     service_registry: ServiceRegistry,
-    /// Resolver deciding where a service runs (local vs agent). S1 default is
-    /// always local — the run-location selector UI arrives in a later S-phase.
+    /// Resolver deciding where a tool/service runs (local vs agent). Honours the
+    /// per-tool preference in `run_locations`; a tool with no recorded preference
+    /// resolves local, so users see no behaviour change (#2190).
     run_location: RunLocationResolver,
+    /// Per-tool run-location preference — which machine each network tool runs on
+    /// (#2190). Keyed by the tool-type keys in [`agent_tools::tool`]. In-memory
+    /// today; the selector UI that records a non-default choice is a later
+    /// S-phase (#2191). An absent entry means [`RunLocation::ThisComputer`], the
+    /// desktop default and today's behaviour.
+    run_locations: Mutex<HashMap<String, RunLocation>>,
     /// Saved Wake-on-LAN devices (persisted to disk).
     wol_devices: Mutex<Vec<WolDevice>>,
     /// App config directory for persistence.
@@ -64,6 +73,7 @@ impl NetworkManager {
             http_monitors: Mutex::new(HashMap::new()),
             service_registry: build_service_registry(),
             run_location: RunLocationResolver::new(),
+            run_locations: Mutex::new(HashMap::new()),
             wol_devices: Mutex::new(Vec::new()),
             config_dir: PathBuf::new(),
             app_handle: Arc::new(Mutex::new(None)),
@@ -74,6 +84,74 @@ impl NetworkManager {
     /// HTTP monitor). Backs future discovery / the run-location selector UI.
     pub fn available_services(&self) -> Vec<ServiceInfo> {
         self.service_registry.available_services()
+    }
+
+    // ── Run-location routing (#2190) ─────────────────────────────────────────
+
+    /// Set (or clear) the run-location preference for a network tool (#2190).
+    ///
+    /// [`RunLocation::ThisComputer`] clears the entry (back to the desktop
+    /// default); a [`RunLocation::Agent`] records which agent should run the tool
+    /// on its next invocation. This is the desktop-side preference the S1
+    /// resolver was designed around; the selector UI that calls it lands in a
+    /// later S-phase (#2191), and it is the test hook for the agent-routed path
+    /// meanwhile.
+    ///
+    /// A [`Locality::DesktopOnly`] tool (the HTTP monitor) refuses an agent
+    /// location up front, so a forbidden choice never reaches the resolver.
+    pub fn set_run_location(&self, tool: &str, location: RunLocation) -> Result<(), TerminalError> {
+        // Validate desktop-only tools reject an agent request immediately.
+        self.run_location
+            .resolve(tool, agent_tools::locality_for(tool), &location)
+            .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
+
+        let mut map = self
+            .run_locations
+            .lock()
+            .map_err(|_| TerminalError::InternalError("run-location lock poisoned".into()))?;
+        match location {
+            RunLocation::ThisComputer => {
+                map.remove(tool);
+            }
+            agent @ RunLocation::Agent(_) => {
+                map.insert(tool.to_string(), agent);
+            }
+        }
+        Ok(())
+    }
+
+    /// Read a tool's recorded run-location preference, defaulting to
+    /// [`RunLocation::ThisComputer`] when none is set (#2190).
+    fn requested_run_location(&self, tool: &str) -> RunLocation {
+        self.run_locations
+            .lock()
+            .ok()
+            .and_then(|map| map.get(tool).cloned())
+            .unwrap_or_default()
+    }
+
+    /// Resolve where a network tool should run from its recorded preference
+    /// (#2190). Defaults to [`ResolvedLocation::Local`] (no preference), and
+    /// refuses an agent for a [`Locality::DesktopOnly`] tool.
+    pub fn resolve_tool_location(&self, tool: &str) -> Result<ResolvedLocation, TerminalError> {
+        self.run_location
+            .resolve(
+                tool,
+                agent_tools::locality_for(tool),
+                &self.requested_run_location(tool),
+            )
+            .map_err(|e| TerminalError::NetworkError(e.to_string()))
+    }
+
+    /// The agent RPC client from Tauri managed state, if available (#2190).
+    ///
+    /// `None` before the app is fully set up (e.g. in unit tests without a live
+    /// Tauri app); the agent-routed path treats that as "agent unavailable".
+    pub fn agent_rpc_client(&self) -> Option<Arc<dyn AgentRpcClient>> {
+        use tauri::Manager;
+        let app = self.app_handle()?;
+        app.try_state::<Arc<dyn AgentRpcClient>>()
+            .map(|state| (*state).clone())
     }
 
     /// Initialise the manager with the app config directory and app handle.
@@ -169,13 +247,14 @@ impl NetworkManager {
     /// forwards them to the [`HTTP_MONITOR_CHECK_EVENT`] Tauri event so the
     /// frontend contract is unchanged.
     fn spawn_http_monitor(&self, config: HttpMonitorConfig) -> Result<String, TerminalError> {
-        match self.run_location.resolve_default() {
+        // The HTTP monitor is desktop-only (Open Design Decision #4): the agent
+        // has no HTTP-monitor method, so the resolver refuses an agent location
+        // for it and it always runs locally (#2190).
+        match self.resolve_tool_location(agent_tools::tool::HTTP_MONITOR)? {
             ResolvedLocation::Local => {}
             ResolvedLocation::Agent(agent) => {
-                // The run-location selector UI (which could request an agent) is
-                // a later S-phase; today the resolver always returns local.
                 return Err(TerminalError::InternalError(format!(
-                    "agent-hosted HTTP monitors are not yet supported (requested '{agent}')"
+                    "HTTP monitors are desktop-only and cannot run on an agent (requested '{agent}')"
                 )));
             }
         }
@@ -497,6 +576,81 @@ mod tests {
         assert!(monitor.capabilities.emits_events);
         // A network probe may run on an agent — not desktop-only.
         assert!(!monitor.capabilities.desktop_only);
+    }
+
+    // ── Run-location routing (#2190) ─────────────────────────────────────────
+
+    #[test]
+    fn tools_default_to_local_with_no_preference() {
+        let mgr = NetworkManager::new();
+        for t in [
+            agent_tools::tool::PING,
+            agent_tools::tool::TRACEROUTE,
+            agent_tools::tool::PORT_SCAN,
+            agent_tools::tool::DNS,
+            agent_tools::tool::WOL,
+            agent_tools::tool::HTTP_MONITOR,
+        ] {
+            assert_eq!(
+                mgr.resolve_tool_location(t).expect("resolve"),
+                ResolvedLocation::Local,
+                "{t} must default to local"
+            );
+        }
+    }
+
+    #[test]
+    fn recording_an_agent_routes_a_routable_tool_to_it() {
+        let mgr = NetworkManager::new();
+        mgr.set_run_location(
+            agent_tools::tool::PING,
+            RunLocation::Agent("build-box".into()),
+        )
+        .expect("set agent");
+        assert_eq!(
+            mgr.resolve_tool_location(agent_tools::tool::PING).unwrap(),
+            ResolvedLocation::Agent("build-box".into())
+        );
+        // Other tools are unaffected — the preference is per-tool.
+        assert_eq!(
+            mgr.resolve_tool_location(agent_tools::tool::DNS).unwrap(),
+            ResolvedLocation::Local
+        );
+    }
+
+    #[test]
+    fn this_computer_clears_a_recorded_preference() {
+        let mgr = NetworkManager::new();
+        mgr.set_run_location(
+            agent_tools::tool::TRACEROUTE,
+            RunLocation::Agent("a1".into()),
+        )
+        .expect("set agent");
+        mgr.set_run_location(agent_tools::tool::TRACEROUTE, RunLocation::ThisComputer)
+            .expect("clear");
+        assert_eq!(
+            mgr.resolve_tool_location(agent_tools::tool::TRACEROUTE)
+                .unwrap(),
+            ResolvedLocation::Local
+        );
+    }
+
+    #[test]
+    fn http_monitor_refuses_an_agent_location() {
+        let mgr = NetworkManager::new();
+        // Setting an agent location on the desktop-only HTTP monitor is rejected
+        // up front, so nothing that must stay local is ever offered an agent.
+        let err = mgr.set_run_location(
+            agent_tools::tool::HTTP_MONITOR,
+            RunLocation::Agent("a1".into()),
+        );
+        assert!(err.is_err(), "http monitor must refuse an agent location");
+        // And it still resolves local.
+        assert_eq!(
+            mgr.resolve_tool_location(agent_tools::tool::HTTP_MONITOR)
+                .unwrap(),
+            ResolvedLocation::Local
+        );
     }
 
     #[test]
