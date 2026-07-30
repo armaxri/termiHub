@@ -1,0 +1,975 @@
+<!doctype html>
+<!--
+  Design sub-concept: endpoint semantics for agent-hosted SSH tunnels
+  (parent concept: future/stateless-ui-agent-centric.html — Phase S3 · Tunnels
+  to agent; Open Design Decision #5). Settles what "local" and "remote" mean
+  when a tunnel runs on the remote agent instead of the desktop, and how the UI
+  surfaces the vantage point so a user is never confused about which machine a
+  port opens on. Design only; the gate on #2155's implementation, not an
+  implementation target on its own.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent-Hosted Tunnel Endpoint Semantics (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Copy only the symbols used. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-network" viewBox="0 0 24 24">
+        <rect x="16" y="16" width="6" height="6" rx="1" />
+        <rect x="2" y="16" width="6" height="6" rx="1" />
+        <rect x="9" y="2" width="6" height="6" rx="1" />
+        <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3" />
+        <path d="M12 12V8" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-arrows" viewBox="0 0 24 24">
+        <path d="M8 3 4 7l4 4" />
+        <path d="M4 7h16" />
+        <path d="m16 21 4-4-4-4" />
+        <path d="M20 17H4" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Agent-Hosted Tunnel Endpoint Semantics</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Future · design only</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/2155">#2155</a> ·
+            Part of <a href="https://github.com/armaxri/termiHub/issues/2139">#2139</a></span
+          >
+          <span><code>docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li>
+            <a href="#invariant">The Invariant — Endpoints Are Relative to the Tunnel Host</a>
+          </li>
+          <li><a href="#whatmoves">What Moves When the Host Is the Agent</a></li>
+          <li><a href="#trap">The Reachability Trap</a></li>
+          <li><a href="#ui">UI Interface — Surfacing the Vantage Point</a></li>
+          <li><a href="#examples">Worked Examples</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#defaults">Recommended Defaults</a></li>
+          <li><a href="#decisions">Open Design Decisions</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          The
+          <a href="stateless-ui-agent-centric.html">stateless-UI / agent-centric port</a> (umbrella
+          <a href="https://github.com/armaxri/termiHub/issues/2139">#2139</a>) lets every service
+          and network tool run on the remote <code>agent</code>, not only on the desktop, behind a
+          shared run-location trait. Its <strong>Phase S3</strong> (issue
+          <a href="https://github.com/armaxri/termiHub/issues/2155">#2155</a>) applies that to SSH
+          tunnels. The parent flagged one thing as unresolved before S3 can begin — its
+          <strong>Open Design Decision #5</strong>:
+        </p>
+        <blockquote>
+          <p>
+            <strong>Agent-hosted tunnel endpoint semantics.</strong> When a tunnel runs on an agent,
+            what do "local" and "remote" mean, and how is that surfaced without confusing users?
+          </p>
+        </blockquote>
+        <p>
+          This sub-concept settles that. Today the words "local" and "remote" quietly mean "the
+          desktop" and "the SSH server", because the desktop is the only machine that ever hosts a
+          tunnel. Once the agent can host one, that shorthand breaks: a "local" forward hosted on
+          the agent opens its listen port on the <em>agent's</em> loopback, which is
+          <em>not</em> the user's computer. Left unaddressed, a user would ask for a database on
+          <code>localhost:5432</code> and find nothing listening there. The design below keeps SSH's
+          own semantics unchanged and instead makes the <strong>vantage point</strong> — which
+          machine hosts the tunnel — explicit everywhere a tunnel is configured or listed.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Settled framing</th>
+                <th>What it means for S3</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <strong>SSH semantics are invariant; only the host machine moves</strong>
+                </td>
+                <td>
+                  "Local" and "remote" keep their exact SSH meaning — relative to the machine
+                  running the SSH client (the <em>tunnel host</em>). Agent hosting changes only
+                  <em>which</em> machine that is. No new forwarding mode, no relabelled flags.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>The vantage point is named, never implied</strong></td>
+                <td>
+                  A first-class <strong>Tunnel host</strong> field (<em>This computer</em> |
+                  <em>Agent «name»</em>) is shown in the editor, the sidebar, and the Open
+                  Connections panel. Human-facing endpoint copy names the concrete machine, not a
+                  bare adjective.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Loopback-on-agent is allowed but flagged</strong></td>
+                <td>
+                  An agent-hosted listener bound to loopback is reachable only from the agent. The
+                  UI warns (non-blocking) and offers an explicit "make reachable from this computer"
+                  remediation. It never silently rewrites the bind and never hard-blocks.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            Give a precise, host-relative definition of every tunnel endpoint (listen socket, SSH
+            server, forward target) that holds for both desktop and agent hosting.
+          </li>
+          <li>
+            Specify exactly what the UI shows so a user always knows
+            <strong>which machine a port opens on</strong> and <strong>who can reach it</strong>,
+            before and after starting.
+          </li>
+          <li>
+            Name and defuse the <strong>reachability trap</strong> (agent loopback ≠ my computer)
+            with a concrete, non-blocking remediation.
+          </li>
+          <li>
+            Give a <strong>recommended default</strong> for every fork so S3 (#2155) can start
+            immediately, while flagging the one genuinely product-defining UX choice for a
+            maintainer ruling.
+          </li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Implementing agent-hosted tunnels. That is #2155; this is its gate. Desktop tunnels are
+            unchanged and untouched.
+          </li>
+          <li>
+            Redesigning the tunnel feature. The three forwarding modes, the visual editor, and the
+            <a href="../implemented/ssh-tunneling.html">existing tunnel concept</a> stand; this adds
+            a host dimension to them.
+          </li>
+          <li>
+            The run-location routing mechanism itself — that is
+            <strong>S1 (<a href="https://github.com/armaxri/termiHub/issues/2148">#2148</a>)</strong
+            >, which this concept consumes rather than redefines.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── The Invariant ──────────────────────────────────────────── -->
+      <section>
+        <h2 id="invariant">
+          The Invariant — Endpoints Are Relative to the Tunnel Host
+          <a class="anchor" href="#invariant">#</a>
+        </h2>
+        <p>
+          Every SSH tunnel involves up to three machines. The words "local" and "remote" are
+          <strong
+            >defined by the SSH protocol relative to the machine running the SSH client</strong
+          >
+          — never relative to the person. We name that machine the <strong>tunnel host</strong> and
+          make it the anchor for all three endpoints:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Term</th>
+                <th>Definition (host-relative — this is the key move)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Tunnel host</strong> (the vantage point)</td>
+                <td>
+                  The machine running the SSH client that owns the tunnel —
+                  <em>the desktop today, the agent under S3</em>. "Local" always means
+                  <em>this machine's</em> network. Everything else is defined from here.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>SSH server</strong> (the "via" hop)</td>
+                <td>
+                  The SSH endpoint the tunnel connects through (<code>via</code> in the editor).
+                  Unchanged by who hosts — it is the far side of the SSH connection from the tunnel
+                  host.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Forward target</strong></td>
+                <td>
+                  The final <code>host:port</code> traffic is delivered to.
+                  <em>Which machine resolves it</em> depends on the mode, not on who hosts (see
+                  below).
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          With that anchor fixed, the three forwarding modes keep their exact meaning. The only
+          thing agent hosting changes is that "the tunnel host" is now the agent instead of the
+          desktop:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Mode</th>
+                <th>Listen socket lives on…</th>
+                <th>Forward target resolved from…</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Local</strong> (<code>-L</code>)</td>
+                <td>the <strong>tunnel host</strong></td>
+                <td>the <strong>SSH server</strong>'s network</td>
+              </tr>
+              <tr>
+                <td><strong>Remote</strong> (<code>-R</code>)</td>
+                <td>the <strong>SSH server</strong></td>
+                <td>the <strong>tunnel host</strong>'s network</td>
+              </tr>
+              <tr>
+                <td><strong>Dynamic / SOCKS</strong> (<code>-D</code>)</td>
+                <td>the <strong>tunnel host</strong></td>
+                <td>
+                  chosen per-connection by the SOCKS client; reached from the
+                  <strong>SSH server</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Read the table with "tunnel host = desktop" and it is exactly today's behaviour. Read it
+          with "tunnel host = agent" and it is S3 — no rule changed, only the substitution. This is
+          the whole trick:
+          <strong
+            >we do not redefine "local"/"remote"; we make the machine they are relative to a
+            visible, user-chosen value.</strong
+          >
+        </p>
+      </section>
+
+      <!-- ── What moves ─────────────────────────────────────────────── -->
+      <section>
+        <h2 id="whatmoves">
+          What Moves When the Host Is the Agent <a class="anchor" href="#whatmoves">#</a>
+        </h2>
+        <p>
+          Applying the substitution concretely, here is a side-by-side of an identical tunnel
+          definition hosted on the desktop versus the agent. The rows that
+          <strong>change meaning</strong>
+          are where user confusion lives — and are exactly what the UI must surface.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Local forward <code>-L 5432 → db.internal:5432</code></th>
+                <th>Host = <strong>desktop</strong> (today)</th>
+                <th>Host = <strong>agent «build-box»</strong> (S3)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Where the listen port opens</td>
+                <td><code>127.0.0.1:5432</code> on your computer</td>
+                <td>
+                  <code>127.0.0.1:5432</code> on <strong>build-box</strong> — <em>not</em> your
+                  computer
+                </td>
+              </tr>
+              <tr>
+                <td>Who can connect to it</td>
+                <td>apps on your computer (<code>localhost:5432</code> just works)</td>
+                <td>
+                  processes on build-box; your computer reaches it only if the bind is widened
+                </td>
+              </tr>
+              <tr>
+                <td><code>db.internal</code> is resolved from</td>
+                <td>the SSH server's network (unchanged)</td>
+                <td>the SSH server's network (unchanged)</td>
+              </tr>
+              <tr>
+                <td>Who pays the SSH-server round-trip latency</td>
+                <td>your desktop ↔ SSH server</td>
+                <td>build-box ↔ SSH server (often much closer — the point of agent hosting)</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The forward target's resolution does <strong>not</strong> move — a frequent source of the
+          opposite confusion. For a local forward, <code>db.internal</code> is always resolved by
+          the SSH server regardless of host. What moves is the <strong>listen side</strong>: on an
+          agent-hosted local/dynamic forward the port is on the agent, and on an agent-hosted
+          <em>remote</em> forward the traffic is delivered to a target reachable
+          <em>from the agent</em>, not from the desktop. Both are correct SSH; both surprise a user
+          who still pictures the desktop as "local". Naming the host fixes both.
+        </p>
+      </section>
+
+      <!-- ── The Reachability Trap ──────────────────────────────────── -->
+      <section>
+        <h2 id="trap">The Reachability Trap <a class="anchor" href="#trap">#</a></h2>
+        <p>
+          The single dangerous case is an
+          <strong>agent-hosted local or dynamic forward bound to loopback</strong>. Its listen
+          socket sits on the agent's <code>127.0.0.1</code>, so only processes
+          <em>on the agent</em> can use it — the user's desktop DB client pointed at
+          <code>localhost:5432</code> connects to nothing. This is not a bug; it is exactly what SSH
+          does. It is a <em>mental-model</em> failure: "local" no longer means "my laptop".
+        </p>
+        <p>
+          The design refuses to paper over it and refuses to forbid it (loopback-on-agent is the
+          right choice when the consumer is another agent-hosted service — e.g. an agent-hosted HTTP
+          monitor hitting an agent-hosted tunnel). Instead, when
+          <code>host = agent</code> <em>and</em> the bind address is loopback, the editor shows a
+          <strong>non-blocking warning with two explicit remediations</strong>:
+        </p>
+        <ul>
+          <li>
+            <strong>Widen the bind</strong> — change the listen address from
+            <code>127.0.0.1</code> to the agent's LAN address (or <code>0.0.0.0</code>), so the
+            desktop can reach it at <code>build-box:5432</code>. The port is then exposed on the
+            agent's network; the warning says so.
+          </li>
+          <li>
+            <strong>Chain a hop to this computer</strong> — flagged as an
+            <a href="#decisions">Open Design Decision</a> because it adds a second moving part. This
+            would auto-create a companion desktop-hosted local forward whose target is the agent's
+            port, restoring plain <code>localhost:5432</code> on the desktop at the cost of a hidden
+            second tunnel.
+          </li>
+        </ul>
+        <p>
+          The user may also just dismiss the warning — loopback-on-agent stays valid. The rule is:
+          <strong
+            >never let the port's location be a surprise, but never make the decision for the
+            user.</strong
+          >
+        </p>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">
+          UI Interface — Surfacing the Vantage Point <a class="anchor" href="#ui">#</a>
+        </h2>
+        <p>
+          Three surfaces gain a host dimension: the tunnel <strong>editor</strong> (choose the host,
+          see named endpoints), the tunnel <strong>sidebar</strong> (a per-row host badge), and the
+          <strong>Open Connections</strong> panel (same badge, for the kill/inspect view). Desktop
+          tunnels render exactly as today — the host row simply reads "This computer".
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — tunnel editor with the "Tunnel host" selector</h3>
+          <div class="mockup-note">
+            The run-location selector (from S1) applied to tunnels. Choosing an agent re-labels
+            every endpoint line to name the concrete machine and surfaces the reachability warning
+            inline.
+          </div>
+          <div class="app" style="height: 360px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Tunnels">
+                    <svg class="li"><use href="#i-arrows" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel" style="padding: 14px; display: block">
+                    <div style="font-weight: 600; margin-bottom: 10px">
+                      Edit tunnel — "db → localhost:5432" &nbsp;<span
+                        style="color: var(--text-secondary); font-weight: 400"
+                        >Local forwarding (-L)</span
+                      >
+                    </div>
+
+                    <!-- Tunnel host selector -->
+                    <div class="menu" style="width: 320px; margin-bottom: 14px">
+                      <div class="menu__title">Tunnel host</div>
+                      <div class="menu__row">
+                        <span class="radio"></span>
+                        <svg class="li"><use href="#i-monitor" /></svg> This computer
+                      </div>
+                      <div class="menu__row menu__row--selected">
+                        <span class="radio"></span>
+                        <svg class="li"><use href="#i-server" /></svg> Agent · build-box
+                      </div>
+                    </div>
+
+                    <!-- Named endpoint lines -->
+                    <div style="font-size: 12.5px; line-height: 1.9">
+                      <div>
+                        <span class="callout">A</span>
+                        <strong>Listens on</strong> agent <code>build-box</code> ·
+                        <code>127.0.0.1:5432</code>
+                      </div>
+                      <div><strong>Via</strong> SSH server <code>bastion.corp:22</code></div>
+                      <div>
+                        <strong>Forwards to</strong> <code>db.internal:5432</code>
+                        <span style="color: var(--text-secondary)"
+                          >(resolved from the SSH server)</span
+                        >
+                      </div>
+                    </div>
+
+                    <!-- Reachability warning -->
+                    <div
+                      class="status-bar__item status-bar__item--broadcast-warning"
+                      style="margin-top: 12px; align-items: flex-start"
+                    >
+                      <svg class="li"><use href="#i-alert" /></svg>
+                      <span class="callout">B</span>
+                      <span style="color: var(--text-primary)">
+                        This port opens on <strong>build-box</strong>, not your computer.
+                        <code>localhost:5432</code> here will not reach it.
+                        <a href="#">Widen bind</a> · <a href="#">Chain a hop to this computer</a>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">
+                  <svg class="li"><use href="#i-server" /></svg> host: agent build-box
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> Every endpoint line names the concrete machine and
+                its address — never a bare "local"/"remote" adjective.
+              </li>
+              <li>
+                <span class="callout">B</span> The reachability warning appears only for an
+                agent-hosted loopback listen; it is non-blocking and offers the two remediations.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — tunnel sidebar with per-row host badges</h3>
+          <div class="mockup-note">
+            A user scanning the list learns each tunnel's vantage point without opening the editor.
+            Desktop-hosted rows read "this computer"; agent-hosted rows name the agent.
+          </div>
+          <div class="app" style="height: 240px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Tunnels">
+                    <svg class="li"><use href="#i-arrows" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+              </nav>
+              <aside class="sidebar">
+                <div class="sidebar__header"><span class="sidebar__title">SSH Tunnels</span></div>
+                <div class="sidebar__content">
+                  <div class="connection-tree__item connection-tree__item--selected">
+                    <span class="state-dot state-dot--connected"></span> db → localhost:5432
+                    <span class="status-bar__item" style="margin-left: auto; padding: 0">
+                      <svg class="li"><use href="#i-server" /></svg> build-box
+                    </span>
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connected"></span> web dev-server (-R)
+                    <span class="status-bar__item" style="margin-left: auto; padding: 0">
+                      <svg class="li"><use href="#i-monitor" /></svg> this computer
+                    </span>
+                  </div>
+                  <div class="connection-tree__item">
+                    <span class="state-dot state-dot--connecting"></span> socks proxy (-D)
+                    <span class="status-bar__item" style="margin-left: auto; padding: 0">
+                      <svg class="li"><use href="#i-monitor" /></svg> this computer
+                    </span>
+                  </div>
+                </div>
+              </aside>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel">
+                    <div class="terminal">
+                      <span class="prompt">user@host $</span> <span class="cursor"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">3 tunnels · 1 on agent</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> The host badge (icon + machine name) rides every row
+                in the sidebar and the Open Connections panel, so the vantage point is legible at a
+                glance.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Worked Examples ────────────────────────────────────────── -->
+      <section>
+        <h2 id="examples">Worked Examples <a class="anchor" href="#examples">#</a></h2>
+
+        <h3>Example 1 — Agent-hosted local forward to an internal DB (the common case)</h3>
+        <p>
+          The agent <code>build-box</code> sits inside the corporate network, one hop from
+          <code>bastion.corp</code>; the user's laptop is remote. Hosting the
+          <code>-L</code> forward on the agent means the SSH hop is agent↔bastion (fast, in-network)
+          rather than laptop↔bastion. The listen port opens on <code>build-box:5432</code>. Because
+          the user wants to reach it from the laptop, they take the
+          <strong>Widen bind</strong> remediation: the bind becomes <code>0.0.0.0:5432</code> on the
+          agent, and the laptop's DB client connects to <code>build-box:5432</code>. The editor's
+          endpoint line and the sidebar badge both say <code>build-box</code>, so there is no
+          illusion that <code>localhost</code>
+          would work.
+        </p>
+
+        <h3>Example 2 — Agent-hosted remote forward exposing an agent-side service</h3>
+        <p>
+          A dev server runs on <code>build-box:3000</code>. An agent-hosted <code>-R</code> forward
+          binds a port <em>on the SSH server</em> and forwards back to a target resolved
+          <em>from the agent</em> — here <code>localhost:3000</code> meaning build-box's own 3000.
+          The endpoint copy makes the resolving machine explicit: "Forwards to
+          <code>localhost:3000</code> <em>as seen from build-box</em>". The desktop is not involved
+          in the data path at all; a user who assumed "-R exposes <em>my</em> laptop's port" is
+          corrected by the named endpoint before they start.
+        </p>
+
+        <h3>Example 3 — Agent-hosted loopback dynamic proxy (legitimately dismissed)</h3>
+        <p>
+          An agent-hosted SOCKS (<code>-D</code>) proxy is bound to <code>127.0.0.1:1080</code>
+          <em>on purpose</em>: its only consumer is an agent-hosted HTTP monitor, and loopback keeps
+          the proxy off the agent's LAN. The reachability warning fires, the user dismisses it, and
+          the tunnel stays loopback-bound. The design's job here is only to make the choice
+          <em>informed</em>, not to prevent it.
+        </p>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Agent-hosted local forward — the data path across two vantage points</span
+          >
+          <pre class="mermaid">
+flowchart LR
+    subgraph LAP["Your computer (desktop) — NOT the tunnel host"]
+        UI["termiHub UI<br/>(dispatches, renders)"]
+        CLIENT["DB client<br/>connects to build-box:5432"]
+    end
+    subgraph AGT["Agent build-box — the tunnel host ('local')"]
+        LISTEN["listen socket<br/>0.0.0.0:5432 (widened)"]
+        SSHC["SSH client (russh)"]
+    end
+    subgraph SRV["SSH server bastion.corp ('remote')"]
+        FWD["opens conn to target<br/>(target resolved here)"]
+    end
+    DB["db.internal:5432"]
+    UI -.->|"control only:<br/>start/stop over agent RPC"| SSHC
+    CLIENT -->|"TCP to build-box:5432"| LISTEN
+    LISTEN --> SSHC
+    SSHC -->|"SSH channel"| FWD
+    FWD -->|"TCP"| DB
+          </pre>
+        </div>
+        <p>
+          The dotted line is the only thing the desktop contributes:
+          <strong>control</strong> (start, stop, status), carried over the existing desktop↔agent
+          RPC. The <strong>data</strong> path — listen socket, SSH channel, target connection —
+          lives entirely on the agent-and-beyond side. That separation is precisely why the vantage
+          point must be labelled: the machine the user drives (desktop) is not the machine the port
+          lives on (agent).
+        </p>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+        <p>
+          Starting an agent-hosted tunnel routes through the
+          <strong>S1 run-location resolver</strong>
+          (<a href="https://github.com/armaxri/termiHub/issues/2148">#2148</a>) and the migrated
+          Phase-2 tunnel domain (<a href="https://github.com/armaxri/termiHub/issues/2150">#2150</a
+          >). The resolver picks the registry — local core or the agent proxy — from the tunnel's
+          chosen host; the endpoint semantics above decide what the resulting projection reports.
+        </p>
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Start an agent-hosted local forward — resolver routes to the agent, projection reports
+            the vantage point</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User (desktop UI)
+    participant R as Run-location resolver (S1)
+    participant A as Agent build-box
+    participant S as SSH server
+    U->>R: dispatch tunnel.start (host agent, mode L, bind 127.0.0.1)
+    Note over R: host is agent, so route to the agent proxy not the local registry
+    R->>A: tunnel.start over desktop-agent RPC
+    A->>A: bind listen socket on agent-local 127.0.0.1:5432
+    A->>S: open SSH connection (agent to bastion)
+    A-->>R: started, boundOn build-box, reachableFrom agent-only
+    R-->>U: projection diff, tunnel connected, host build-box, warn agent-loopback
+    Note over U: sidebar badge and editor line name build-box, warning offers remediations
+          </pre>
+        </div>
+        <div class="diagram">
+          <span class="diagram__caption">Bind-reachability state for an agent-hosted listener</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> DesktopHost : host is this computer
+    DesktopHost --> LocalhostWorks : desktop loopback, localhost just works
+    [*] --> AgentHost : host is agent
+    AgentHost --> AgentLoopback : bind 127.0.0.1, agent-only, warn
+    AgentHost --> AgentWidened : bind 0.0.0.0 or LAN, reachable at agent host
+    AgentLoopback --> AgentWidened : widen bind
+    AgentLoopback --> ChainedToDesktop : chain a hop, open decision
+    AgentLoopback --> AgentLoopback : dismissed, valid agent-side consumer
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the architecture at concept-creation time (July 2026); indicative, not binding.
+          This is <strong>design only</strong> — the code lands under #2155. The semantics here are
+          overwhelmingly a <strong>view-model + labelling</strong> change layered on the S1 resolver
+          and the Phase-2 tunnel domain; the SSH mechanics themselves are unchanged.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>src-tauri/src/tunnel/</code> / core tunnel service</td>
+                <td>
+                  A tunnel definition gains a <strong>host</strong> field (<code>ThisComputer</code>
+                  | <code>Agent(id)</code>), consumed by the S1 resolver to pick the local core
+                  registry or the agent proxy. The listen/target mechanics are the existing russh
+                  logic, run wherever the resolver routes it. Desktop path unchanged.
+                </td>
+              </tr>
+              <tr>
+                <td><code>agent/</code> tunnel backend</td>
+                <td>
+                  The agent already hosts SSH; S3 exposes the tunnel service over the agent RPC so
+                  the resolver can start/stop it there. Reports back <code>boundOn</code> (host
+                  name) and a <code>reachableFrom</code> classification (agent-only / agent-LAN /
+                  SSH server) for the projection.
+                </td>
+              </tr>
+              <tr>
+                <td>Tunnel projection view model (parent Phase-2 region)</td>
+                <td>
+                  <strong>New fields</strong> per tunnel: <code>host</code> (for the badge),
+                  <code>endpoints</code> (named machine + address per side), and
+                  <code>reachabilityWarning?</code>. The whole endpoint-labelling design is these
+                  fields; the UI is a pure renderer of them (aligned with the stateless-UI port).
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/components/TunnelEditor/</code>,
+                  <code>src/components/TunnelSidebar/</code>
+                </td>
+                <td>
+                  Add the <strong>Tunnel host</strong> selector (the S1 run-location control),
+                  render named endpoint lines from the view model, the per-row host badge, and the
+                  non-blocking reachability warning with its two remediations.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/OpenConnections/</code></td>
+                <td>
+                  Show the same host badge on tunnel rows so the inspect/kill view also states the
+                  vantage point.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Recommended Defaults ───────────────────────────────────── -->
+      <section>
+        <h2 id="defaults">Recommended Defaults <a class="anchor" href="#defaults">#</a></h2>
+        <p>
+          Each fork below has a recommended default so #2155 can begin immediately. The one
+          genuinely product-defining choice is escalated to
+          <a href="#decisions">Open Design Decisions</a>.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fork</th>
+                <th>Recommended default</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Meaning of "local"/"remote" under agent hosting</td>
+                <td>
+                  <strong>Keep SSH semantics; make the host explicit.</strong> "Local"/"remote" stay
+                  relative to the tunnel host; do not relabel the modes. Add a visible
+                  <em>Tunnel host</em> field instead.
+                </td>
+              </tr>
+              <tr>
+                <td>Human-facing endpoint copy</td>
+                <td>
+                  <strong>Name the concrete machine and address</strong> ("Listens on agent
+                  build-box · 127.0.0.1:5432"), never a bare adjective. Every listen line carries a
+                  "who can reach this" note.
+                </td>
+              </tr>
+              <tr>
+                <td>Default tunnel host for new tunnels</td>
+                <td>
+                  <strong>This computer</strong> — matches today exactly; agent hosting is opt-in
+                  (consistent with S2's "default run-location stays This computer").
+                </td>
+              </tr>
+              <tr>
+                <td>Default bind address for an agent-hosted local/dynamic forward</td>
+                <td>
+                  <strong>Loopback (<code>127.0.0.1</code>), safe by default</strong>, with the
+                  warning + remediation — do not auto-widen to the agent's LAN, which would silently
+                  expose a port.
+                </td>
+              </tr>
+              <tr>
+                <td>Loopback-on-agent listener</td>
+                <td>
+                  <strong>Allow, warn (non-blocking), never rewrite or hard-block.</strong> Offer
+                  "Widen bind" as the built-in remediation.
+                </td>
+              </tr>
+              <tr>
+                <td>Vantage badge on lists</td>
+                <td>
+                  <strong>Always shown</strong> on every tunnel row (sidebar + Open Connections),
+                  including "this computer" for desktop tunnels — consistency beats hiding the
+                  common case.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Open Design Decisions ──────────────────────────────────── -->
+      <section>
+        <h2 id="decisions">Open Design Decisions <a class="anchor" href="#decisions">#</a></h2>
+        <p>
+          The endpoint semantics and the vantage-surfacing design are <strong>settled</strong> above
+          and unblock #2155. These remaining choices are genuinely product-defining and want a
+          maintainer ruling — none blocks starting the SSH-mechanics and labelling work; they shape
+          only the remediation surface.
+        </p>
+        <ol>
+          <li>
+            <strong>Auto-chaining a desktop hop (the product-defining one).</strong> Should the
+            "Chain a hop to this computer" remediation exist — auto-creating a companion
+            desktop-hosted local forward so an agent-hosted loopback port appears at plain
+            <code>localhost</code> on the desktop? It restores the familiar mental model but hides a
+            second tunnel and doubles the moving parts (two lifecycles, two failure modes, a
+            dependency between them).
+            <em
+              >Recommendation: ship S3 without auto-chaining — offer only "Widen bind" first — and
+              revisit auto-chaining as a follow-up once agent tunnels have real usage.</em
+            >
+            Flagged because it is the one choice that changes what the product <em>does</em>, not
+            just what it <em>says</em>.
+          </li>
+          <li>
+            <strong>Terminology on the mode labels for non-SSH-native users.</strong> Keep the raw
+            SSH names ("Local / Remote / Dynamic forwarding") or add a plain-language subtitle
+            ("Open a port here → reach a service over there")?
+            <em
+              >Recommendation: keep the SSH names (desktop tunnels are unchanged and users know
+              them) and lean on the named endpoint lines for clarity, rather than renaming
+              modes.</em
+            >
+          </li>
+          <li>
+            <strong>Warn scope.</strong> Fire the reachability warning only for agent-hosted
+            loopback listens (proposed), or also when an agent-hosted forward's target is likely
+            desktop-relative (an easy <code>-R</code> mistake)?
+            <em
+              >Recommendation: start with the loopback-listen warning; add target-side hints as a
+              follow-up if usage shows the <code>-R</code> confusion is common.</em
+            >
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── Implementation Status ──────────────────────────────────── -->
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <p>
+          <strong>Not started — design only.</strong> This sub-concept exists to settle Open Design
+          Decision #5 and <strong>unblock #2155</strong> (S3 · agent-hosted tunnels). The endpoint
+          semantics and vantage-surfacing are settled here with recommended defaults, so S3
+          implementation can begin; the three <a href="#decisions">Open Design Decisions</a> refine
+          only the remediation surface and each has a recommended default. Depends on
+          <strong>S1 (<a href="https://github.com/armaxri/termiHub/issues/2148">#2148</a>)</strong>
+          run-location routing and the
+          <strong
+            >Phase-2 tunnel domain (<a href="https://github.com/armaxri/termiHub/issues/2150"
+              >#2150</a
+            >)</strong
+          >. Run <code>/sync-concept stateless-ui-agent-tunnel-endpoints</code> after agent tunnels
+          land to reconcile this document with the code.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept &lt;name&gt;</code>. Records the last commit at which
+            the concept and code were reconciled, plus open divergences. The concept is the source
+            of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (design only) · <strong>Status:</strong> not
+          implemented
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>Tunnel definition carries a <code>host</code> (This computer | Agent)</td>
+                <td>Absent — tunnels are desktop-only</td>
+                <td>Missing</td>
+                <td>Implement in S3 (#2155) via the S1 resolver, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Tunnel view model carries named endpoints + reachability warning</td>
+                <td>Absent</td>
+                <td>Missing</td>
+                <td>Implement with the Phase-2 tunnel projection region, then re-sync</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Editor/sidebar/Open-Connections show the vantage badge + host selector</td>
+                <td>Absent</td>
+                <td>Missing</td>
+                <td>Implement in S3 UI work, then re-sync</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>Desktop tunnels behave exactly as today</td>
+                <td>Present — desktop-hosted local/remote/dynamic forwards</td>
+                <td>Aligned</td>
+                <td>Keep unchanged; agent hosting is additive</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
