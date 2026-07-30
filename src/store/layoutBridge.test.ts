@@ -212,9 +212,9 @@ describe("layoutBridge — feature flags", () => {
     setLayoutRenderFromProjectionEnabled(null);
   });
 
-  it("mutation cut is off by default (async round-trip needs GUI verification)", () => {
+  it("mutation cut is on by default (#2184: GUI-verified parity-clean)", () => {
     setLayoutIntentsEnabled(null);
-    expect(layoutIntentsEnabled()).toBe(false);
+    expect(layoutIntentsEnabled()).toBe(true);
   });
 
   it("render cut is on by default (step 3: parity-safe by construction)", () => {
