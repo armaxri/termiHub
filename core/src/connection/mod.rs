@@ -16,6 +16,7 @@
 pub mod graphical;
 pub mod registry;
 pub mod schema;
+pub mod schema_defaults;
 pub mod validation;
 
 pub use graphical::{
