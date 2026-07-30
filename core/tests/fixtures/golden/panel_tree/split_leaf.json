@@ -1,0 +1,101 @@
+{
+  "operation": "splitLeaf",
+  "cases": [
+    {
+      "name": "wraps a leaf in a split container with the new leaf after",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "args": {
+        "targetId": "leaf-1",
+        "newLeaf": { "type": "leaf", "id": "new-leaf", "tabs": [], "activeTabId": null },
+        "direction": "horizontal",
+        "position": "after"
+      },
+      "expected": {
+        "type": "split",
+        "id": "__GENERATED__",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "new-leaf", "tabs": [], "activeTabId": null }
+        ]
+      }
+    },
+    {
+      "name": "inserts before when position is before",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "args": {
+        "targetId": "leaf-1",
+        "newLeaf": { "type": "leaf", "id": "new-leaf", "tabs": [], "activeTabId": null },
+        "direction": "vertical",
+        "position": "before"
+      },
+      "expected": {
+        "type": "split",
+        "id": "__GENERATED__",
+        "direction": "vertical",
+        "children": [
+          { "type": "leaf", "id": "new-leaf", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }
+        ]
+      }
+    },
+    {
+      "name": "inserts as a sibling when directions match",
+      "input": {
+        "type": "split",
+        "id": "split-1",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+        ]
+      },
+      "args": {
+        "targetId": "leaf-1",
+        "newLeaf": { "type": "leaf", "id": "new-leaf", "tabs": [], "activeTabId": null },
+        "direction": "horizontal",
+        "position": "after"
+      },
+      "expected": {
+        "type": "split",
+        "id": "split-1",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "new-leaf", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+        ]
+      }
+    },
+    {
+      "name": "halves target size when splitting as sibling in a sized split",
+      "input": {
+        "type": "split",
+        "id": "split-1",
+        "direction": "horizontal",
+        "sizes": [60, 40],
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+        ]
+      },
+      "args": {
+        "targetId": "leaf-1",
+        "newLeaf": { "type": "leaf", "id": "new-leaf", "tabs": [], "activeTabId": null },
+        "direction": "horizontal",
+        "position": "after"
+      },
+      "expected": {
+        "type": "split",
+        "id": "split-1",
+        "direction": "horizontal",
+        "sizes": [30, 30, 40],
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "new-leaf", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+        ]
+      }
+    }
+  ]
+}

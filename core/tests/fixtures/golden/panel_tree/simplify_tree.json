@@ -1,0 +1,50 @@
+{
+  "operation": "simplifyTree",
+  "cases": [
+    {
+      "name": "returns a leaf unchanged",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "expected": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }
+    },
+    {
+      "name": "flattens same-direction nesting",
+      "input": {
+        "type": "split",
+        "id": "outer",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          {
+            "type": "split",
+            "id": "inner",
+            "direction": "horizontal",
+            "children": [
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "type": "split",
+        "id": "outer",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+        ]
+      }
+    },
+    {
+      "name": "unwraps single-child containers",
+      "input": {
+        "type": "split",
+        "id": "split-1",
+        "direction": "horizontal",
+        "children": [{ "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }]
+      },
+      "expected": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }
+    }
+  ]
+}

@@ -1,0 +1,165 @@
+{
+  "operation": "findAdjacentLeaf",
+  "cases": [
+    {
+      "name": "single leaf has no neighbor",
+      "input": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+      "args": { "currentLeafId": "leaf-1", "direction": "right" },
+      "expected": null
+    },
+    {
+      "name": "navigates right in a horizontal split",
+      "input": {
+        "type": "split",
+        "id": "s",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+        ]
+      },
+      "args": { "currentLeafId": "leaf-1", "direction": "right" },
+      "expected": { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+    },
+    {
+      "name": "returns null at the left edge of a horizontal split",
+      "input": {
+        "type": "split",
+        "id": "s",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+        ]
+      },
+      "args": { "currentLeafId": "leaf-1", "direction": "left" },
+      "expected": null
+    },
+    {
+      "name": "returns null for up/down in a horizontal split",
+      "input": {
+        "type": "split",
+        "id": "s",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+        ]
+      },
+      "args": { "currentLeafId": "leaf-1", "direction": "up" },
+      "expected": null
+    },
+    {
+      "name": "enters a nested vertical split at its first child",
+      "input": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          {
+            "type": "split",
+            "id": "v",
+            "direction": "vertical",
+            "children": [
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+            ]
+          }
+        ]
+      },
+      "args": { "currentLeafId": "leaf-1", "direction": "right" },
+      "expected": { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+    },
+    {
+      "name": "exits a nested vertical split to the left neighbor",
+      "input": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          {
+            "type": "split",
+            "id": "v",
+            "direction": "vertical",
+            "children": [
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+            ]
+          }
+        ]
+      },
+      "args": { "currentLeafId": "leaf-3", "direction": "left" },
+      "expected": { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null }
+    },
+    {
+      "name": "enters a subtree at its last child",
+      "input": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "children": [
+          {
+            "type": "split",
+            "id": "v",
+            "direction": "vertical",
+            "children": [
+              { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+            ]
+          },
+          { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+        ]
+      },
+      "args": { "currentLeafId": "leaf-3", "direction": "left" },
+      "expected": { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+    },
+    {
+      "name": "prefers lastActiveLeafId when entering a subtree",
+      "input": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          {
+            "type": "split",
+            "id": "v",
+            "direction": "vertical",
+            "lastActiveLeafId": "leaf-3",
+            "children": [
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+            ]
+          }
+        ]
+      },
+      "args": { "currentLeafId": "leaf-1", "direction": "right" },
+      "expected": { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+    },
+    {
+      "name": "falls back to the edge when lastActiveLeafId is stale",
+      "input": {
+        "type": "split",
+        "id": "h",
+        "direction": "horizontal",
+        "children": [
+          { "type": "leaf", "id": "leaf-1", "tabs": [], "activeTabId": null },
+          {
+            "type": "split",
+            "id": "v",
+            "direction": "vertical",
+            "lastActiveLeafId": "removed-leaf",
+            "children": [
+              { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null },
+              { "type": "leaf", "id": "leaf-3", "tabs": [], "activeTabId": null }
+            ]
+          }
+        ]
+      },
+      "args": { "currentLeafId": "leaf-1", "direction": "right" },
+      "expected": { "type": "leaf", "id": "leaf-2", "tabs": [], "activeTabId": null }
+    }
+  ]
+}

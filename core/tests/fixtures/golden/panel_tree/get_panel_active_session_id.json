@@ -1,0 +1,53 @@
+{
+  "operation": "getPanelActiveSessionId",
+  "cases": [
+    {
+      "name": "returns the session of the panel's active terminal tab",
+      "input": {
+        "type": "leaf",
+        "id": "panel-1",
+        "activeTabId": "b",
+        "tabs": [
+          { "id": "a", "sessionId": "sess-a", "contentType": "terminal" },
+          { "id": "b", "sessionId": "sess-b", "contentType": "terminal" }
+        ]
+      },
+      "expected": "sess-b"
+    },
+    {
+      "name": "null when the active tab has no session yet",
+      "input": {
+        "type": "leaf",
+        "id": "panel-1",
+        "activeTabId": "a",
+        "tabs": [{ "id": "a", "sessionId": null, "contentType": "terminal" }]
+      },
+      "expected": null
+    },
+    {
+      "name": "null when the active tab is not a terminal",
+      "input": {
+        "type": "leaf",
+        "id": "panel-1",
+        "activeTabId": "a",
+        "tabs": [{ "id": "a", "sessionId": "sess-a", "contentType": "settings" }]
+      },
+      "expected": null
+    },
+    {
+      "name": "null for an empty panel",
+      "input": { "type": "leaf", "id": "panel-1", "tabs": [], "activeTabId": null },
+      "expected": null
+    },
+    {
+      "name": "null when activeTabId points to a missing tab",
+      "input": {
+        "type": "leaf",
+        "id": "panel-1",
+        "activeTabId": "gone",
+        "tabs": [{ "id": "a", "sessionId": "sess-a", "contentType": "terminal" }]
+      },
+      "expected": null
+    }
+  ]
+}
