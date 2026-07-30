@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_with_liveness as core_connect_cancellable_with_liveness;
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
@@ -1163,6 +1163,23 @@ enum ReconnectOutcome {
     Exhausted,
 }
 
+/// Resolve an app-managed `Arc<T>` from any Tauri [`Manager`].
+///
+/// Managed state is keyed by exact `TypeId`. `lib.rs` registers the tunnel
+/// manager as `app.manage(Arc::new(manager))`, so it lives under
+/// `TypeId::of::<Arc<TunnelManager>>()`. A bare `try_state::<TunnelManager>()`
+/// therefore never matches it and silently yields `None` — which had turned
+/// every reconnect attempt into a no-op `false`, so `reconnectOnDisconnect`
+/// (#1246) never actually reconnected (#2168). Always resolve the manager
+/// through this helper so the lookup type matches the registration.
+fn resolve_managed_arc<T, R>(manager: &impl Manager<R>) -> Option<Arc<T>>
+where
+    T: Send + Sync + 'static,
+    R: Runtime,
+{
+    manager.try_state::<Arc<T>>().map(|state| (*state).clone())
+}
+
 /// Capped exponential backoff: `base * 2^(attempt-1)`, clamped to `cap`.
 /// Saturating so a large attempt count cannot overflow (#1246).
 fn backoff_delay(attempt: u32, base: Duration, cap: Duration) -> Duration {
@@ -1262,11 +1279,12 @@ mod tests {
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::super::local_forward::ForwarderStats;
     use super::{
-        backoff_delay, clear_last_error, last_error_for, record_last_error, resting_status,
-        run_reconnect_loop, snapshot_active_stats, wait_forwarder_death, wait_session_death,
-        ActiveTunnel, ReconnectOutcome, TunnelStatsUpdate,
+        backoff_delay, clear_last_error, last_error_for, record_last_error, resolve_managed_arc,
+        resting_status, run_reconnect_loop, snapshot_active_stats, wait_forwarder_death,
+        wait_session_death, ActiveTunnel, ReconnectOutcome, TunnelStatsUpdate,
     };
     use crate::tunnel::config::TunnelStatus;
+    use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
     use tokio_util::sync::CancellationToken;
 
@@ -1780,6 +1798,59 @@ mod tests {
         .await;
         assert_eq!(outcome, ReconnectOutcome::Cancelled);
         assert_eq!(tries, 0, "Stop wins the race — no reconnect attempt runs");
+    }
+
+    /// #2168 regression: `lib.rs` registers the tunnel manager as
+    /// `app.manage(Arc::new(manager))`, and the reconnect-backoff loop resolves
+    /// it via [`resolve_managed_arc`]. Tauri keys managed state by exact
+    /// `TypeId`, so an `Arc<T>` registration is reachable **only** through an
+    /// `Arc<T>` lookup — the original bare `try_state::<TunnelManager>()`
+    /// silently returned `None`, turning every reconnect attempt into a no-op
+    /// `false`. A live mock `Manager` (the only way to exercise real Tauri state
+    /// resolution off the `Wry` app) locks the contract: the production resolver
+    /// sees the `Arc` registration and yields a real, callable handle, while the
+    /// bare-type lookup that caused the bug does not.
+    #[test]
+    fn resolve_managed_arc_matches_the_arc_registration() {
+        /// Stand-in for the managed manager. `attempt` mirrors a real
+        /// `attempt_reconnect` on the resolved handle — proving resolution
+        /// drives an actual call, not the no-op `false` of the missed lookup.
+        struct FakeManager {
+            reconnects: AtomicUsize,
+        }
+        impl FakeManager {
+            fn attempt(&self) -> bool {
+                self.reconnects.fetch_add(1, Ordering::SeqCst);
+                true
+            }
+        }
+
+        let app = tauri::test::mock_app();
+        let managed = Arc::new(FakeManager {
+            reconnects: AtomicUsize::new(0),
+        });
+        // Register exactly as `lib.rs` does for the tunnel manager.
+        app.manage(managed.clone());
+
+        // The production resolver matches the `Arc<T>` registration…
+        let resolved = resolve_managed_arc::<FakeManager, _>(app.handle())
+            .expect("Arc<T> registration must resolve through the Arc<T> lookup");
+        assert!(
+            Arc::ptr_eq(&managed, &resolved),
+            "resolver returns the very manager that was registered",
+        );
+
+        // …and drives a real call on it (the #2168 no-op path returned `false`
+        // without ever reaching the manager).
+        assert!(resolved.attempt());
+        assert_eq!(managed.reconnects.load(Ordering::SeqCst), 1);
+
+        // The original bare-type lookup can never match an `Arc<T>`
+        // registration — this is the exact miss that broke reconnect.
+        assert!(
+            app.try_state::<FakeManager>().is_none(),
+            "#2168: a bare `try_state::<TunnelManager>()` misses the Arc registration",
+        );
     }
 
     // --- GAP 6: live tunnel-stats emitter (#1248) --------------------------
