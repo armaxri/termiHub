@@ -14,7 +14,7 @@ use axum::{middleware, Router};
 use tower_http::services::ServeDir;
 
 use super::config::{AtomicServerStats, EmbeddedServerConfig};
-use super::server_manager::BindSignal;
+use super::service::BindSignal;
 
 /// State shared with middleware for connection tracking.
 #[derive(Clone)]

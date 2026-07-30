@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 
 use super::config::{AtomicServerStats, EmbeddedServerConfig};
-use super::server_manager::BindSignal;
+use super::service::BindSignal;
 
 // ─── TFTP opcodes (RFC 1350 §5) ──────────────────────────────────────────────
 
