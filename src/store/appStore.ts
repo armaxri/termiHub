@@ -268,6 +268,7 @@ import {
   simplifyTree,
   edgeToSplit,
   markActiveLeaf,
+  normalizeSizes,
 } from "@/utils/panelTree";
 import {
   layoutIntentsEnabled,
@@ -711,6 +712,7 @@ export interface AppState extends TunnelSlice, EmbeddedServersSlice, MacrosSlice
   splitPanel: (direction?: "horizontal" | "vertical") => void;
   removePanel: (panelId: string) => void;
   setActivePanel: (panelId: string) => void;
+  setPanelSizes: (splitId: string, sizes: number[]) => void;
   splitPanelWithTab: (
     tabId: string,
     fromPanelId: string,
@@ -2652,6 +2654,21 @@ function removeTabFromLeaf(leaf: LeafPanel, tabId: string): LeafPanel {
   return { ...leaf, tabs, activeTabId: null };
 }
 
+/**
+ * Return a copy of `root` with the split container `splitId`'s child `sizes`
+ * replaced (normalized to sum to 100). A structural no-op when the id is absent.
+ * The local twin of the Rust store's `set_split_sizes`, so the resize cut's
+ * fallback path stays parity-identical.
+ */
+function setSplitSizesInTree(root: PanelNode, splitId: string, sizes: number[]): PanelNode {
+  if (root.type === "leaf") return root;
+  const children = root.children.map((c) => setSplitSizesInTree(c, splitId, sizes));
+  if (root.id === splitId) {
+    return { ...root, children, sizes: normalizeSizes(sizes) };
+  }
+  return { ...root, children };
+}
+
 let groupCounter = 0;
 
 /** Generate a unique tab group ID. */
@@ -4541,15 +4558,37 @@ export const useAppStore = create<AppState>((set, get, store) => {
         return { rootPanel, activePanelId: toPanelId };
       }),
 
-    reorderTabs: (panelId, oldIndex, newIndex) =>
-      set((state) => ({
-        rootPanel: updateLeaf(state.rootPanel, panelId, (leaf) => {
-          const tabs = [...leaf.tabs];
-          const [moved] = tabs.splice(oldIndex, 1);
-          tabs.splice(newIndex, 0, moved);
-          return { ...leaf, tabs };
-        }),
-      })),
+    reorderTabs: (panelId, oldIndex, newIndex) => {
+      // Local reducer — the retained rollback/resilience fallback (see
+      // `splitPanel`). Reorders a tab within its leaf, leaving focus untouched.
+      const applyLocal = () =>
+        set((state) => ({
+          rootPanel: updateLeaf(state.rootPanel, panelId, (leaf) => {
+            const tabs = [...leaf.tabs];
+            const [moved] = tabs.splice(oldIndex, 1);
+            tabs.splice(newIndex, 0, moved);
+            return { ...leaf, tabs };
+          }),
+        }));
+
+      // Structural reorder cut (#2188): route through `layout.reorderTabs`; the
+      // backend LayoutStore reorders and reconcileNode writes the reconciled
+      // tree. Focus is unchanged, so only `rootPanel` is applied. Any failure
+      // falls back to the local reducer.
+      if (!layoutIntentsEnabled()) return applyLocal();
+      const { rootPanel, activePanelId } = get();
+      void runLayoutIntent(
+        "layout.reorderTabs",
+        { panelId, oldIndex, newIndex },
+        rootPanel,
+        activePanelId
+      )
+        .then((res) => set({ rootPanel: res.rootPanel }))
+        .catch((err) => {
+          logBridgeFallback("layout.reorderTabs", err);
+          applyLocal();
+        });
+    },
 
     splitPanel: (direction) => {
       // Local reducer. Since #2184 the intent path below is the default, so this
@@ -4590,29 +4629,88 @@ export const useAppStore = create<AppState>((set, get, store) => {
         });
     },
 
-    removePanel: (panelId) =>
-      set((state) => {
-        const allLeaves = getAllLeaves(state.rootPanel);
-        if (allLeaves.length <= 1) return state;
+    removePanel: (panelId) => {
+      // Local reducer — the retained rollback/resilience fallback. Drops a whole
+      // leaf panel and simplifies; repoints focus onto the first survivor when
+      // the removed panel held it.
+      const applyLocal = () =>
+        set((state) => {
+          const allLeaves = getAllLeaves(state.rootPanel);
+          if (allLeaves.length <= 1) return state;
 
-        const removed = removeLeaf(state.rootPanel, panelId);
-        if (!removed) return state;
-        const rootPanel = simplifyTree(removed);
-        const newLeaves = getAllLeaves(rootPanel);
-        const activePanelId =
-          state.activePanelId === panelId ? (newLeaves[0]?.id ?? null) : state.activePanelId;
-        return { rootPanel, activePanelId };
-      }),
+          const removed = removeLeaf(state.rootPanel, panelId);
+          if (!removed) return state;
+          const rootPanel = simplifyTree(removed);
+          const newLeaves = getAllLeaves(rootPanel);
+          const activePanelId =
+            state.activePanelId === panelId ? (newLeaves[0]?.id ?? null) : state.activePanelId;
+          return { rootPanel, activePanelId };
+        });
 
-    setActivePanel: (panelId) =>
-      set((state) => {
-        let newZoomedTabId = state.zoomedTabId;
-        if (state.zoomedTabId !== null) {
-          const newPanel = findLeaf(state.rootPanel, panelId);
-          newZoomedTabId = newPanel?.activeTabId ?? null;
-        }
-        return { activePanelId: panelId, zoomedTabId: newZoomedTabId };
-      }),
+      // Structural remove cut (#2188): route through `layout.removePanel` — a
+      // dedicated transform, since `merge` preserves the tabs and
+      // `closeTabStructure` is per-tab, so neither models "discard the whole
+      // panel". The sole-leaf case is a no-op both here and in the store. Any
+      // failure falls back to the local reducer.
+      if (!layoutIntentsEnabled()) return applyLocal();
+      const { rootPanel, activePanelId } = get();
+      if (getAllLeaves(rootPanel).length <= 1) return;
+      void runLayoutIntent("layout.removePanel", { panelId }, rootPanel, activePanelId)
+        .then((res) => set(res))
+        .catch((err) => {
+          logBridgeFallback("layout.removePanel", err);
+          applyLocal();
+        });
+    },
+
+    setActivePanel: (panelId) => {
+      // Local reducer — applied synchronously in every mode so focus stays
+      // instant (this is a hot path: every panel click and keyboard-nav step).
+      // Zoom-follow: when the zoom overlay shows a tab from the newly-focused
+      // panel, follow the switch to that panel's active tab.
+      const applyLocal = () =>
+        set((state) => {
+          let newZoomedTabId = state.zoomedTabId;
+          if (state.zoomedTabId !== null) {
+            const newPanel = findLeaf(state.rootPanel, panelId);
+            newZoomedTabId = newPanel?.activeTabId ?? null;
+          }
+          return { activePanelId: panelId, zoomedTabId: newZoomedTabId };
+        });
+
+      // Focus is projection state (`activePanelId`), so fold it into the layout
+      // region (#2188): apply locally for instant UX, then best-effort push the
+      // focus through `layout.setActivePanel` so the backend stays authoritative
+      // and the render-from-projection mirror keeps matching. The reconciled
+      // result is ignored — the local set already landed — and a failure is just
+      // logged (the projection catches up on the next seed).
+      applyLocal();
+      if (!layoutIntentsEnabled()) return;
+      const { rootPanel, activePanelId } = get();
+      void runLayoutIntent("layout.setActivePanel", { panelId }, rootPanel, activePanelId).catch(
+        (err) => logBridgeFallback("layout.setActivePanel", err)
+      );
+    },
+
+    setPanelSizes: (splitId, sizes) => {
+      // Local reducer — the retained rollback/resilience fallback. Persists a
+      // split's child percentage sizes so a resize-handle drag survives remounts
+      // and workspace save/restore.
+      const applyLocal = () =>
+        set((state) => ({ rootPanel: setSplitSizesInTree(state.rootPanel, splitId, sizes) }));
+
+      // Resize cut (#2188): route through `layout.resize`; the backend persists
+      // the normalized sizes and reconcileNode writes the reconciled tree. Only
+      // `rootPanel` changes. Any failure falls back to the local reducer.
+      if (!layoutIntentsEnabled()) return applyLocal();
+      const { rootPanel, activePanelId } = get();
+      void runLayoutIntent("layout.resize", { splitId, sizes }, rootPanel, activePanelId)
+        .then((res) => set({ rootPanel: res.rootPanel }))
+        .catch((err) => {
+          logBridgeFallback("layout.resize", err);
+          applyLocal();
+        });
+    },
 
     splitPanelWithTab: (tabId, fromPanelId, targetPanelId, edge) => {
       // Local reducer. As with splitPanel, since #2184 this is the retained
