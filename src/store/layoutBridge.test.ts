@@ -19,7 +19,6 @@ import {
   setLayoutIntentsEnabled,
   setLayoutRenderFromProjectionEnabled,
   toMinimalNode,
-  treeSignature,
   viewMatchesTree,
 } from "./layoutBridge";
 
@@ -204,12 +203,6 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
     expect(leafA.tabs[0].isActive).toBe(true);
     expect(leafA.tabs[0].panelId).toBe("a");
     expect(rich.sizes).toEqual([50, 50]);
-  });
-
-  it("treeSignature: stable for an unchanged tree, changes when structure changes", () => {
-    const a = treeSignature(tree(), "a");
-    expect(treeSignature(tree(), "a")).toBe(a);
-    expect(treeSignature(tree(), "b")).not.toBe(a);
   });
 });
 

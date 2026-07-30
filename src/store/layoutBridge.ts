@@ -172,7 +172,8 @@ export function layoutIntentsEnabled(): boolean {
  * identical to the pre-cut renderer, and live xterm DOM is reparented (never
  * remounted) because tab/panel ids are preserved. Independent of the mutation
  * cut: the region is seeded from `appStore` whether mutations are local or
- * intent-routed. Overridable for an instant rollback / A-B check via
+ * intent-routed. Overridable for rollback / an A-B check (the renderer reads it
+ * at mount, so a flip takes effect on reload) via
  * `window.__TERMIHUB_LAYOUT_RENDER__` or `localStorage["termihub.layoutRender"]`.
  */
 export function layoutRenderFromProjectionEnabled(): boolean {
@@ -503,16 +504,6 @@ export async function seedLayoutRegion(
     await dispatch("layout.replace", { root: toMinimalNode(root), activePanelId }),
     "replace"
   );
-}
-
-/** The `layout@<clientId>` region id (diagnostics/tests). */
-export function layoutRegionId(): string {
-  return region;
-}
-
-/** A stable structural signature of a tree + focus, for de-duping region seeds. */
-export function treeSignature(root: PanelNode, activePanelId: string | null): string {
-  return `${JSON.stringify(toMinimalNode(root))}|${activePanelId ?? ""}`;
 }
 
 /** Log a render-path fallback so the projection-cut recovery is visible. */

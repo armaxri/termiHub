@@ -39,8 +39,10 @@ import {
   type LayoutView,
   layoutRenderFromProjectionEnabled,
   logRenderFallback,
+  type MinimalNode,
+  minimalNodesEqual,
   seedLayoutRegion,
-  treeSignature,
+  toMinimalNode,
   viewMatchesTree,
 } from "@/store/layoutBridge";
 import type { ProjectionCacheState, ProjectionClient } from "@/services/transport";
@@ -62,7 +64,7 @@ export function useLayoutRenderTree(): PanelNode {
 
   const [regionState, setRegionState] = useState<ProjectionCacheState | null>(null);
   const clientRef = useRef<ProjectionClient | null>(null);
-  const lastSeededSig = useRef<string | null>(null);
+  const lastSeeded = useRef<{ root: MinimalNode; activePanelId: string | null } | null>(null);
 
   // Subscribe to the layout region while enabled; a transport that cannot
   // subscribe (non-Tauri without a socket) just leaves the renderer on the
@@ -91,13 +93,20 @@ export function useLayoutRenderTree(): PanelNode {
 
   // Keep the region a faithful mirror of appStore's structure. When the view is
   // not a mirror (initial single-leaf snapshot, or a local non-intent edit),
-  // seed it with the current tree so composing can resume. De-duped by
-  // signature so a settled tree is not reseeded on every render.
+  // seed it with the current tree so composing can resume. De-duped so a settled
+  // tree is not reseeded on every render.
   useEffect(() => {
     if (!enabled || !clientRef.current || matches) return;
-    const sig = treeSignature(storeRoot, storeActivePanelId);
-    if (sig === lastSeededSig.current) return;
-    lastSeededSig.current = sig;
+    const minimal = toMinimalNode(storeRoot);
+    const prev = lastSeeded.current;
+    if (
+      prev &&
+      prev.activePanelId === storeActivePanelId &&
+      minimalNodesEqual(prev.root, minimal)
+    ) {
+      return;
+    }
+    lastSeeded.current = { root: minimal, activePanelId: storeActivePanelId };
     seedLayoutRegion(storeRoot, storeActivePanelId).catch((err) => logRenderFallback(err));
     // `regionState` is a dep so the seed re-evaluates once the region snapshot
     // first arrives (which sets `clientRef` but may leave `matches` false).
