@@ -736,15 +736,13 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr");
         std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                if let Ok(mut s) = stream {
-                    use std::io::{Read, Write};
-                    let mut buf = [0u8; 1024];
-                    let _ = s.read(&mut buf);
-                    let _ = s.write_all(
-                        b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-                    );
-                }
+            for mut s in listener.incoming().flatten() {
+                use std::io::{Read, Write};
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
             }
         });
 
