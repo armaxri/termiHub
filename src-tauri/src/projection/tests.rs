@@ -448,6 +448,7 @@ fn ack_omits_absent_fields() {
 #[test]
 fn projection_frame_is_tagged_by_kind() {
     let snap = ProjectionFrame::Snapshot(SnapshotFrame {
+        kind: SnapshotKind::Snapshot,
         region: "tunnels".into(),
         version: 41,
         view: json!({ "tunnels": [] }),
@@ -458,6 +459,7 @@ fn projection_frame_is_tagged_by_kind() {
     assert_eq!(v["version"], json!(41));
 
     let diff = ProjectionFrame::Diff(DiffFrame {
+        kind: DiffKind::Diff,
         region: "tunnels".into(),
         base_version: 41,
         version: 42,

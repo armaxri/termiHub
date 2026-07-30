@@ -23,8 +23,8 @@ mod frame;
 mod region;
 
 pub use frame::{
-    DiffFrame, DiffOp, Intent, IntentAck, IntentErrorInfo, IntentStatus, ProducedRegion,
-    ProjectionFrame, SnapshotFrame,
+    DiffFrame, DiffKind, DiffOp, Intent, IntentAck, IntentErrorInfo, IntentStatus, ProducedRegion,
+    ProjectionFrame, SnapshotFrame, SnapshotKind,
 };
 pub use region::ProjectedStore;
 
@@ -144,6 +144,7 @@ impl RegionState {
 
     fn snapshot(&self, region: &str) -> SnapshotFrame {
         SnapshotFrame {
+            kind: SnapshotKind::Snapshot,
             region: region.to_string(),
             version: self.version,
             view: self.view.clone(),
@@ -252,6 +253,7 @@ impl Projector {
         state.view = new_view;
 
         let frame = ProjectionFrame::Diff(DiffFrame {
+            kind: DiffKind::Diff,
             region: region.to_string(),
             base_version,
             version,
