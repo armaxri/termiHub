@@ -27,6 +27,10 @@
 //! | `layout.merge`              | `{ sourcePanelId, targetPanelId }`       | move all tabs into the target, drop the source |
 //! | `layout.moveTab`            | `{ tabId, targetPanelId, edge }`         | move a tab (center = merge; edge = split)      |
 //! | `layout.closeTabStructure`  | `{ tabId }`                              | remove a tab; drop its leaf if left empty      |
+//! | `layout.removePanel`        | `{ panelId }`                            | drop a whole leaf panel, then simplify         |
+//! | `layout.reorderTabs`        | `{ panelId, oldIndex, newIndex }`        | reorder a tab within its leaf                   |
+//! | `layout.setActivePanel`     | `{ panelId }`                            | repoint the focused panel                       |
+//! | `layout.resize`             | `{ splitId, sizes }`                     | persist a split's child percentage sizes        |
 //! | `layout.replace`            | `{ root, activePanelId }`                | install a whole tree (the bridge's seed path)  |
 //!
 //! # Shadow mode
@@ -69,7 +73,7 @@ pub fn publish_layout(
     }
 }
 
-/// Register the four `layout.*` intents on a handler registry.
+/// Register the `layout.*` intents on a handler registry.
 ///
 /// Each route resolves the managed [`LayoutStore`] lazily (so it rejects
 /// gracefully rather than panicking if the store is somehow absent), mutates the
@@ -118,6 +122,49 @@ pub fn register_layout_intents(registry: &mut HandlerRegistry, app_handle: AppHa
         let tab_id = required_str(intent, "tabId")?;
         store
             .close_tab_structure(&intent.client_id, &tab_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &store, &intent.client_id))
+    });
+
+    let handle = app_handle.clone();
+    registry.route("layout.removePanel", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let panel_id = required_str(intent, "panelId")?;
+        store
+            .remove_panel(&intent.client_id, &panel_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &store, &intent.client_id))
+    });
+
+    let handle = app_handle.clone();
+    registry.route("layout.reorderTabs", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let panel_id = required_str(intent, "panelId")?;
+        let old_index = required_usize(intent, "oldIndex")?;
+        let new_index = required_usize(intent, "newIndex")?;
+        store
+            .reorder_tabs(&intent.client_id, &panel_id, old_index, new_index)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &store, &intent.client_id))
+    });
+
+    let handle = app_handle.clone();
+    registry.route("layout.setActivePanel", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let panel_id = required_str(intent, "panelId")?;
+        store
+            .set_active_panel(&intent.client_id, &panel_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &store, &intent.client_id))
+    });
+
+    let handle = app_handle.clone();
+    registry.route("layout.resize", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let split_id = required_str(intent, "splitId")?;
+        let sizes = required_sizes(intent, "sizes")?;
+        store
+            .resize(&intent.client_id, &split_id, sizes)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &store, &intent.client_id))
     });
@@ -173,6 +220,32 @@ fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> 
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
+}
+
+/// Extract a required non-negative integer field (e.g. a tab index).
+fn required_usize(intent: &Intent, key: &str) -> Result<usize, (String, String)> {
+    intent
+        .payload
+        .get(key)
+        .and_then(Value::as_u64)
+        .map(|n| n as usize)
+        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
+}
+
+/// Extract a required array of finite numbers (e.g. split `sizes`).
+fn required_sizes(intent: &Intent, key: &str) -> Result<Vec<f64>, (String, String)> {
+    let arr = intent
+        .payload
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))?;
+    arr.iter()
+        .map(|v| {
+            v.as_f64()
+                .filter(|n| n.is_finite())
+                .ok_or_else(|| ("bad_payload".to_string(), format!("invalid '{key}' entry")))
+        })
+        .collect()
 }
 
 /// Extract and deserialize a required enum field (e.g. `direction`, `edge`).

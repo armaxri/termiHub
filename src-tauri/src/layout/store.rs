@@ -16,8 +16,8 @@ use serde_json::{json, Value};
 
 use termihub_core::layout::panel_tree::{
     create_leaf_panel, edge_to_split, find_leaf, find_leaf_by_tab, generate_panel_id,
-    get_all_leaves, remove_leaf, simplify_tree, split_leaf, update_leaf, Direction, DropEdge,
-    LeafPanel, PanelNode, Position, Tab,
+    get_all_leaves, normalize_sizes, remove_leaf, simplify_tree, split_leaf, update_leaf,
+    Direction, DropEdge, LeafPanel, PanelNode, Position, SplitContainer, Tab,
 };
 
 /// A rejectable layout-intent failure. Maps to an intent ack `(code, message)`
@@ -37,6 +37,13 @@ pub enum LayoutError {
     /// `merge` was asked to merge a panel into itself.
     #[error("source and target panels are the same")]
     SamePanel,
+    /// A `reorderTabs` index fell outside the target leaf's tab range.
+    #[error("tab index out of range")]
+    IndexOutOfRange,
+    /// A `resize` supplied a size array whose length did not match the split's
+    /// child count.
+    #[error("size count does not match the split's children")]
+    SizeMismatch,
 }
 
 impl LayoutError {
@@ -45,7 +52,10 @@ impl LayoutError {
         match self {
             LayoutError::PanelNotFound(_) => "panel_not_found",
             LayoutError::TabNotFound(_) => "tab_not_found",
-            LayoutError::BadEdge | LayoutError::SamePanel => "bad_payload",
+            LayoutError::BadEdge
+            | LayoutError::SamePanel
+            | LayoutError::IndexOutOfRange
+            | LayoutError::SizeMismatch => "bad_payload",
         }
     }
 }
@@ -230,6 +240,102 @@ impl LayoutStore {
         Ok(())
     }
 
+    /// `layout.removePanel` — drop a whole leaf panel (and every tab it holds)
+    /// from the tree, then simplify and repoint focus. The structural half of the
+    /// close-panel action.
+    ///
+    /// Neither [`merge`](Self::merge) (which *preserves* the tabs by moving them
+    /// into a target) nor [`close_tab_structure`](Self::close_tab_structure)
+    /// (which removes a single tab) matches "discard the entire panel", so this is
+    /// its own transform over the shared `remove_leaf` algebra. Removing the sole
+    /// remaining leaf is a no-op — the app always keeps at least one panel —
+    /// mirroring the frontend `removePanel` reducer's `allLeaves.length <= 1`
+    /// guard, so the two paths stay parity-identical.
+    pub fn remove_panel(&self, client_id: &str, panel_id: &str) -> Result<(), LayoutError> {
+        let mut clients = self.lock();
+        let state = clients
+            .entry(client_id.to_string())
+            .or_insert_with(LayoutState::seeded);
+        if find_leaf(&state.root, panel_id).is_none() {
+            return Err(LayoutError::PanelNotFound(panel_id.to_string()));
+        }
+        if get_all_leaves(&state.root).len() <= 1 {
+            // Sole leaf: the frontend leaves the tree untouched; match it.
+            return Ok(());
+        }
+        let removed = remove_leaf(&state.root, panel_id).unwrap_or_else(single_empty_leaf);
+        state.root = simplify_tree(&removed);
+        // `fix_active` repoints focus onto the first surviving leaf when the
+        // removed panel held it — exactly the frontend `newLeaves[0]` fallback.
+        fix_active(state);
+        Ok(())
+    }
+
+    /// `layout.reorderTabs` — move a tab within a single leaf from `old_index` to
+    /// `new_index`, leaving the active tab and every other panel untouched (a
+    /// same-panel drag-reorder). Mirrors the frontend `reorderTabs` reducer.
+    pub fn reorder_tabs(
+        &self,
+        client_id: &str,
+        panel_id: &str,
+        old_index: usize,
+        new_index: usize,
+    ) -> Result<(), LayoutError> {
+        let mut clients = self.lock();
+        let state = clients
+            .entry(client_id.to_string())
+            .or_insert_with(LayoutState::seeded);
+        let leaf = find_leaf(&state.root, panel_id)
+            .ok_or_else(|| LayoutError::PanelNotFound(panel_id.to_string()))?;
+        let len = leaf.tabs.len();
+        if old_index >= len || new_index >= len {
+            return Err(LayoutError::IndexOutOfRange);
+        }
+        state.root = update_leaf(&state.root, panel_id, |leaf| {
+            with_tabs_reordered(leaf, old_index, new_index)
+        });
+        Ok(())
+    }
+
+    /// `layout.setActivePanel` — repoint the focused panel. Focus lives in the
+    /// projected view (`activePanelId`), so this makes the store authoritative for
+    /// it; zoom-follow stays a frontend concern under partial projection.
+    pub fn set_active_panel(&self, client_id: &str, panel_id: &str) -> Result<(), LayoutError> {
+        let mut clients = self.lock();
+        let state = clients
+            .entry(client_id.to_string())
+            .or_insert_with(LayoutState::seeded);
+        if find_leaf(&state.root, panel_id).is_none() {
+            return Err(LayoutError::PanelNotFound(panel_id.to_string()));
+        }
+        state.active_panel_id = Some(panel_id.to_string());
+        Ok(())
+    }
+
+    /// `layout.resize` — persist the child percentage `sizes` of the split
+    /// container `split_id` (normalized to sum to 100), so a user's drag of a
+    /// resize handle survives remounts and workspace save/restore. Rejects a size
+    /// array whose length does not match the split's child count.
+    pub fn resize(
+        &self,
+        client_id: &str,
+        split_id: &str,
+        sizes: Vec<f64>,
+    ) -> Result<(), LayoutError> {
+        let mut clients = self.lock();
+        let state = clients
+            .entry(client_id.to_string())
+            .or_insert_with(LayoutState::seeded);
+        let split = find_split(&state.root, split_id)
+            .ok_or_else(|| LayoutError::PanelNotFound(split_id.to_string()))?;
+        if sizes.len() != split.children.len() {
+            return Err(LayoutError::SizeMismatch);
+        }
+        let normalized = normalize_sizes(&sizes);
+        state.root = set_split_sizes(&state.root, split_id, &normalized);
+        Ok(())
+    }
+
     /// `layout.replace` — install a complete tree for a client, replacing any
     /// existing one.
     ///
@@ -336,6 +442,60 @@ fn with_tabs_appended(leaf: &LeafPanel, extra: &[Tab]) -> LeafPanel {
         id: leaf.id.clone(),
         tabs,
         active_tab_id,
+    }
+}
+
+/// A copy of `leaf` with the tab at `old_index` moved to `new_index`, preserving
+/// the active tab. Mirrors the frontend `reorderTabs` splice-out-then-splice-in;
+/// callers validate the indices against the tab count first.
+fn with_tabs_reordered(leaf: &LeafPanel, old_index: usize, new_index: usize) -> LeafPanel {
+    let mut tabs = leaf.tabs.clone();
+    let moved = tabs.remove(old_index);
+    tabs.insert(new_index.min(tabs.len()), moved);
+    LeafPanel {
+        id: leaf.id.clone(),
+        tabs,
+        active_tab_id: leaf.active_tab_id.clone(),
+    }
+}
+
+/// Find a split container by id anywhere in the tree.
+fn find_split<'a>(root: &'a PanelNode, split_id: &str) -> Option<&'a SplitContainer> {
+    match root {
+        PanelNode::Leaf(_) => None,
+        PanelNode::Split(split) => {
+            if split.id == split_id {
+                return Some(split);
+            }
+            split.children.iter().find_map(|c| find_split(c, split_id))
+        }
+    }
+}
+
+/// Return a copy of the tree with `split_id`'s `sizes` set to `sizes`. A no-op
+/// structural clone when the id is absent (callers validate existence first).
+fn set_split_sizes(root: &PanelNode, split_id: &str, sizes: &[f64]) -> PanelNode {
+    match root {
+        PanelNode::Leaf(leaf) => PanelNode::Leaf(leaf.clone()),
+        PanelNode::Split(split) => {
+            let children = split
+                .children
+                .iter()
+                .map(|c| set_split_sizes(c, split_id, sizes))
+                .collect();
+            let new_sizes = if split.id == split_id {
+                Some(sizes.to_vec())
+            } else {
+                split.sizes.clone()
+            };
+            PanelNode::Split(SplitContainer {
+                id: split.id.clone(),
+                direction: split.direction,
+                children,
+                sizes: new_sizes,
+                last_active_leaf_id: split.last_active_leaf_id.clone(),
+            })
+        }
     }
 }
 
