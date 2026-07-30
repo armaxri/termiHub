@@ -185,10 +185,6 @@ mod tests {
         assert!(!registry.stop("nope").await);
     }
 
-    // A full start requires a live SSH server, exercised by the local-container
-    // integration run rather than a unit test (per-PR CI has no SSH server).
-    // The forwarder's accept/relay path itself is unit-tested in
-    // `termihub_core::tunnel::local_forward`.
     #[test]
     fn loopback_forward_is_agent_only() {
         let forward = loopback_forward(15432);
@@ -196,5 +192,111 @@ mod tests {
             classify_reachability(&forward.local_host),
             ReachableFrom::AgentOnly
         );
+    }
+
+    /// Full end-to-end start against the `ssh-tunnel-target` container (port
+    /// 2207: internal HTTP on 8080, unreachable from the host). Drives the real
+    /// agent registry — `start_local` opens the SSH session, binds on the agent,
+    /// and forwards — then fetches HTTP through it and stops it. Skips gracefully
+    /// when the container is not running (per-PR CI has no SSH server), matching
+    /// the core integration-test convention.
+    #[tokio::test]
+    async fn start_local_forwards_http_over_ssh() {
+        use std::time::Duration;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpStream;
+
+        let port: u16 = std::env::var("TERMIHUB_TEST_SSH_TUNNEL_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2207);
+
+        // Runtime skip: the container must be up and accepting SSH.
+        if TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+            eprintln!("skipping: ssh-tunnel-target not reachable on 127.0.0.1:{port}");
+            return;
+        }
+
+        // Trust the local fixture host key (the container's key is not in this
+        // machine's known_hosts). Process-wide, set-once — mirrors the core
+        // integration-test harness's `trust_fixture_host_keys`.
+        {
+            use termihub_core::backends::ssh::host_key::{
+                set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+            };
+            struct TrustAll;
+            #[async_trait::async_trait]
+            impl HostKeyVerifier for TrustAll {
+                async fn verify(&self, _info: &HostKeyInfo) -> bool {
+                    true
+                }
+            }
+            let _ = set_host_key_verifier(Arc::new(TrustAll));
+        }
+
+        let ssh_config = SshConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "testuser".to_string(),
+            auth_method: "password".to_string(),
+            password: Some("testpass".to_string()),
+            ..Default::default()
+        };
+        let listen_port = {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .expect("bind ephemeral")
+                .local_addr()
+                .expect("local addr")
+                .port()
+        };
+        let forward = LocalForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: listen_port,
+            remote_host: "localhost".to_string(),
+            remote_port: 8080,
+        };
+
+        let registry = AgentTunnelRegistry::new();
+        let outcome = registry
+            .start_local("t-http", &ssh_config, &forward)
+            .await
+            .expect("agent-hosted local forward should start");
+        assert_eq!(outcome.reachable_from, ReachableFrom::AgentOnly);
+        assert_eq!(outcome.bound_address, format!("127.0.0.1:{listen_port}"));
+        assert_eq!(registry.active_count().await, 1);
+        assert!(registry.status("t-http").await.is_some());
+
+        // Fetch HTTP through the agent-hosted forward.
+        let mut client = TcpStream::connect(("127.0.0.1", listen_port))
+            .await
+            .expect("connect to the agent-bound port");
+        client
+            .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            .await
+            .expect("send request through agent tunnel");
+        client.shutdown().await.ok();
+        let mut response = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), client.read_to_end(&mut response))
+            .await
+            .expect("HTTP response before timeout")
+            .expect("read HTTP response");
+        assert!(
+            String::from_utf8_lossy(&response).starts_with("HTTP/"),
+            "expected HTTP response through the agent-hosted tunnel"
+        );
+
+        // Stopping removes the forward and frees the port.
+        assert!(registry.stop("t-http").await);
+        assert_eq!(registry.active_count().await, 0);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            match TcpStream::connect(("127.0.0.1", listen_port)).await {
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => break,
+                _ if tokio::time::Instant::now() >= deadline => {
+                    panic!("agent forward still accepting after stop")
+                }
+                _ => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
     }
 }

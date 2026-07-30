@@ -772,6 +772,54 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Locks the `tunnel.start` wire contract against desktop/agent drift
+    /// (#2185): the desktop builds this exact JSON — `forward` is the
+    /// internally-tagged `TunnelForwardSpec::Local` shape (a `mode` discriminator
+    /// plus the flattened local-forward fields). If either side changes the
+    /// shape, this parse fails.
+    #[test]
+    fn tunnel_start_params_parse_the_desktop_wire_shape() {
+        let wire = serde_json::json!({
+            "tunnelId": "t-1",
+            "sshConfig": {
+                "host": "bastion.corp",
+                "port": 22,
+                "username": "dev",
+                "authMethod": "password",
+                "password": "secret",
+                "keyPath": null,
+                "shell": null
+            },
+            "forward": {
+                "mode": "local",
+                "localHost": "127.0.0.1",
+                "localPort": 5432,
+                "remoteHost": "db.internal",
+                "remotePort": 5432
+            }
+        });
+        let params: TunnelStartParams =
+            serde_json::from_value(wire).expect("desktop tunnel.start shape must parse");
+        assert_eq!(params.tunnel_id, "t-1");
+        assert_eq!(params.ssh_config.host, "bastion.corp");
+        let TunnelForwardSpec::Local(forward) = &params.forward;
+        assert_eq!(forward.local_host, "127.0.0.1");
+        assert_eq!(forward.local_port, 5432);
+        assert_eq!(forward.remote_host, "db.internal");
+        assert_eq!(forward.remote_port, 5432);
+    }
+
+    #[test]
+    fn tunnel_start_result_serializes_camel_case() {
+        let result = TunnelStartResult {
+            bound_address: "127.0.0.1:5432".to_string(),
+            reachable_from: ReachableFrom::AgentOnly,
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(value["boundAddress"], "127.0.0.1:5432");
+        assert_eq!(value["reachableFrom"], "agentOnly");
+    }
+
     #[test]
     fn update_available_notification_serializes_camel_case() {
         let payload = UpdateAvailableNotification {
