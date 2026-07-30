@@ -8,16 +8,18 @@
 //! the *data* path — listen socket, SSH channel, target connection — lives
 //! entirely here.
 //!
-//! Implemented so far: **local** (`ssh -L`) and **remote** (`ssh -R`)
-//! forwarding. In both the agent opens its own SSH session to the tunnel's "via"
-//! server, reusing the shared core forward engines. For `-L` the agent binds the
-//! listen socket (loopback by default) and forwards to a target on the server's
-//! network. For `-R` the **SSH server** binds the listen socket (via
-//! `tcpip_forward`) and each incoming channel is relayed to a target resolved
-//! from the **agent** (the tunnel host) — SSH's semantics are invariant, only the
-//! tunnel host moves (see
-//! `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`). Dynamic
-//! (`-D`) agent hosting is tracked as a follow-up to #2185.
+//! Implemented: **local** (`ssh -L`), **remote** (`ssh -R`), and **dynamic**
+//! (`ssh -D`, SOCKS5) forwarding (#2185, #2198). In each the agent opens its own
+//! SSH session to the tunnel's "via" server, reusing the shared core forward
+//! engines. For `-L` the agent binds the listen socket (loopback by default) and
+//! forwards to a target on the server's network. For `-R` the **SSH server**
+//! binds the listen socket (via `tcpip_forward`) and each incoming channel is
+//! relayed to a target resolved from the **agent** (the tunnel host) — SSH's
+//! semantics are invariant, only the tunnel host moves. For `-D` the agent binds
+//! the SOCKS5 proxy listen socket (loopback by default) and each proxied
+//! connection's target — chosen by the SOCKS client — is reached from the SSH
+//! server's network (see
+//! `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,7 +28,10 @@ use anyhow::{Context, Result};
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::config::SshConfig;
-use termihub_core::tunnel::config::{LocalForwardConfig, RemoteForwardConfig, TunnelStats};
+use termihub_core::tunnel::config::{
+    DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats,
+};
+use termihub_core::tunnel::dynamic_forward::DynamicForwarder;
 use termihub_core::tunnel::local_forward::LocalForwarder;
 use termihub_core::tunnel::remote_forward::RemoteForwarder;
 use termihub_core::tunnel::{classify_reachability, ReachableFrom};
@@ -42,6 +47,9 @@ enum ActiveForwarder {
     /// A remote (`ssh -R`) forward; the SSH server binds the listen socket and
     /// the [`RemoteForwarder`] owns the SSH session it rides.
     Remote(RemoteForwarder),
+    /// A dynamic (`ssh -D`, SOCKS5) forward; the SOCKS proxy listen socket binds
+    /// on the agent.
+    Dynamic(DynamicForwarder),
 }
 
 impl ActiveForwarder {
@@ -49,6 +57,7 @@ impl ActiveForwarder {
         match self {
             ActiveForwarder::Local(f) => f.get_stats(),
             ActiveForwarder::Remote(f) => f.get_stats(),
+            ActiveForwarder::Dynamic(f) => f.get_stats(),
         }
     }
 }
@@ -210,6 +219,66 @@ impl AgentTunnelRegistry {
             RunningTunnel {
                 forwarder: ActiveForwarder::Remote(forwarder),
                 _session: None,
+                bound_address: bound_address.clone(),
+                reachable_from,
+            },
+        );
+
+        Ok(TunnelStartOutcome {
+            bound_address,
+            reachable_from,
+        })
+    }
+
+    /// Start a dynamic (`ssh -D`, SOCKS5) forward on this agent.
+    ///
+    /// Opens an SSH session to `ssh_config`'s server and binds the SOCKS5 proxy
+    /// listen socket on the agent per `forward.local_host:local_port` (loopback
+    /// by default). Each proxied connection's target is chosen by the SOCKS
+    /// client per-connection and resolved from the SSH server's network — the
+    /// agent is the tunnel host, so the listen socket moves onto it while the
+    /// per-connection target vantage stays on the server (see the
+    /// endpoint-semantics concept). The reported `reachable_from` is classified
+    /// from the bind host (loopback → [`ReachableFrom::AgentOnly`]), the same
+    /// loopback-safe default as `-L`. Fails if a tunnel with `tunnel_id` is
+    /// already running here, if the SSH connect fails, or if the bind fails
+    /// (e.g. address in use).
+    pub async fn start_dynamic(
+        &self,
+        tunnel_id: &str,
+        ssh_config: &SshConfig,
+        forward: &DynamicForwardConfig,
+    ) -> Result<TunnelStartOutcome> {
+        {
+            let tunnels = self.tunnels.lock().await;
+            if tunnels.contains_key(tunnel_id) {
+                anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
+            }
+        }
+
+        // The agent runs the SSH client — this is the hop that moves in-network
+        // (agent ↔ server) instead of desktop ↔ server.
+        let (session, _registry) = connect_and_authenticate(ssh_config)
+            .await
+            .context("agent SSH connect for tunnel failed")?;
+        let session = Arc::new(session);
+
+        let forwarder = DynamicForwarder::start(forward, Arc::clone(&session))
+            .context("failed to bind agent-hosted dynamic (SOCKS5) forwarder")?;
+
+        let bound_address = format!("{}:{}", forward.local_host, forward.local_port);
+        let reachable_from = classify_reachability(&forward.local_host);
+
+        let mut tunnels = self.tunnels.lock().await;
+        // Re-check under the write lock in case a concurrent start raced us.
+        if tunnels.contains_key(tunnel_id) {
+            anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
+        }
+        tunnels.insert(
+            tunnel_id.to_string(),
+            RunningTunnel {
+                forwarder: ActiveForwarder::Dynamic(forwarder),
+                _session: Some(session),
                 bound_address: bound_address.clone(),
                 reachable_from,
             },
@@ -545,5 +614,145 @@ mod tests {
         // Stopping removes the forward and the server tears down its listener.
         assert!(registry.stop("t-remote").await);
         assert_eq!(registry.active_count().await, 0);
+    }
+
+    /// Full end-to-end start of an agent-hosted **dynamic** (`-D`, SOCKS5)
+    /// forward against the `ssh-tunnel-target` container (port 2207: internal
+    /// HTTP on 8080, unreachable from the host). The SOCKS proxy listen socket
+    /// binds on the agent; the per-connection target is chosen by the SOCKS
+    /// client and reached from the SSH server:
+    ///
+    /// 1. `start_dynamic` opens the SSH session and binds the SOCKS5 proxy on an
+    ///    ephemeral agent loopback port.
+    /// 2. A SOCKS5 client negotiates no-auth and issues `CONNECT localhost:8080`
+    ///    — the container's internal HTTP server, resolved from the **server**.
+    /// 3. An HTTP request flows through the proxied channel and a response comes
+    ///    back, proving the agent-hosted SOCKS proxy reaches a server-only target.
+    ///
+    /// Skips gracefully when the container is not running (per-PR CI has no SSH
+    /// server), matching the local/remote tests above.
+    #[tokio::test]
+    async fn start_dynamic_socks_forwards_http_over_ssh() {
+        use std::time::Duration;
+        use termihub_core::tunnel::config::DynamicForwardConfig;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpStream;
+
+        let port: u16 = std::env::var("TERMIHUB_TEST_SSH_TUNNEL_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2207);
+
+        if TcpStream::connect(("127.0.0.1", port)).await.is_err() {
+            eprintln!("skipping: ssh-tunnel-target not reachable on 127.0.0.1:{port}");
+            return;
+        }
+
+        {
+            use termihub_core::backends::ssh::host_key::{
+                set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+            };
+            struct TrustAll;
+            #[async_trait::async_trait]
+            impl HostKeyVerifier for TrustAll {
+                async fn verify(&self, _info: &HostKeyInfo) -> bool {
+                    true
+                }
+            }
+            let _ = set_host_key_verifier(Arc::new(TrustAll));
+        }
+
+        let ssh_config = SshConfig {
+            host: "127.0.0.1".to_string(),
+            port,
+            username: "testuser".to_string(),
+            auth_method: "password".to_string(),
+            password: Some("testpass".to_string()),
+            ..Default::default()
+        };
+        let listen_port = {
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .expect("bind ephemeral")
+                .local_addr()
+                .expect("local addr")
+                .port()
+        };
+        let forward = DynamicForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: listen_port,
+        };
+
+        let registry = AgentTunnelRegistry::new();
+        let outcome = registry
+            .start_dynamic("t-socks", &ssh_config, &forward)
+            .await
+            .expect("agent-hosted dynamic forward should start");
+        assert_eq!(
+            outcome.reachable_from,
+            ReachableFrom::AgentOnly,
+            "a loopback SOCKS bind is reachable only from the agent"
+        );
+        assert_eq!(outcome.bound_address, format!("127.0.0.1:{listen_port}"));
+        assert_eq!(registry.active_count().await, 1);
+
+        // Drive an HTTP request through the SOCKS proxy: negotiate no-auth, then
+        // `CONNECT localhost:8080` (resolved from the SSH server) and speak HTTP.
+        let mut client = TcpStream::connect(("127.0.0.1", listen_port))
+            .await
+            .expect("connect to the agent-bound SOCKS port");
+        client
+            .write_all(&[0x05, 0x01, 0x00])
+            .await
+            .expect("send SOCKS5 no-auth greeting");
+        let mut method = [0u8; 2];
+        client
+            .read_exact(&mut method)
+            .await
+            .expect("read method selection");
+        assert_eq!(method, [0x05, 0x00], "server selects no-auth");
+
+        let host = b"localhost";
+        let mut req = vec![0x05, 0x01, 0x00, 0x03, host.len() as u8];
+        req.extend_from_slice(host);
+        req.extend_from_slice(&8080u16.to_be_bytes());
+        client
+            .write_all(&req)
+            .await
+            .expect("send SOCKS5 CONNECT localhost:8080");
+        let mut reply = [0u8; 10];
+        client
+            .read_exact(&mut reply)
+            .await
+            .expect("read SOCKS5 CONNECT reply");
+        assert_eq!(reply[1], 0x00, "CONNECT should succeed through the server");
+
+        client
+            .write_all(b"GET / HTTP/1.0\r\nHost: localhost\r\n\r\n")
+            .await
+            .expect("send HTTP request through the SOCKS tunnel");
+        client.shutdown().await.ok();
+        let mut response = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), client.read_to_end(&mut response))
+            .await
+            .expect("HTTP response before timeout")
+            .expect("read HTTP response");
+        assert!(
+            String::from_utf8_lossy(&response).starts_with("HTTP/"),
+            "expected an HTTP response proxied through the agent-hosted SOCKS tunnel"
+        );
+
+        // Stopping removes the forward and frees the SOCKS listen port.
+        assert!(registry.stop("t-socks").await);
+        assert_eq!(registry.active_count().await, 0);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            match TcpStream::connect(("127.0.0.1", listen_port)).await {
+                Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => break,
+                _ if tokio::time::Instant::now() >= deadline => {
+                    panic!("agent SOCKS forward still accepting after stop")
+                }
+                _ => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
     }
 }

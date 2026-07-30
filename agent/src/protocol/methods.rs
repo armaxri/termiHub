@@ -5,7 +5,9 @@
 use serde::{Deserialize, Serialize};
 use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use termihub_core::connection::ConnectionTypeInfo;
-use termihub_core::tunnel::config::{LocalForwardConfig, RemoteForwardConfig, TunnelStats};
+use termihub_core::tunnel::config::{
+    DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats,
+};
 use termihub_core::tunnel::ReachableFrom;
 // Used by shell/session modules on unix; re-exported for test access on all platforms.
 #[allow(unused_imports)]
@@ -690,9 +692,9 @@ pub struct UpdateAvailableNotification {
 
 /// Which forwarding mode an agent-hosted tunnel runs.
 ///
-/// **Local** (`ssh -L`) and **remote** (`ssh -R`) are implemented; dynamic
-/// (`-D`) agent hosting is tracked as a follow-up to #2185. Tagged so further
-/// variants can be added additively without breaking the existing shape.
+/// **Local** (`ssh -L`), **remote** (`ssh -R`), and **dynamic** (`ssh -D`,
+/// SOCKS5) are all implemented (#2185, #2198). Tagged so further variants can be
+/// added additively without breaking the existing shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "camelCase")]
 pub enum TunnelForwardSpec {
@@ -702,6 +704,10 @@ pub enum TunnelForwardSpec {
     /// Remote (`ssh -R`) forwarding: the SSH server binds the listen socket and
     /// the target is resolved from the agent (the tunnel host).
     Remote(RemoteForwardConfig),
+    /// Dynamic (`ssh -D`, SOCKS5) forwarding: the SOCKS proxy listen socket binds
+    /// on the agent (loopback by default) and each connection's target is chosen
+    /// by the SOCKS client and resolved from the SSH server's network.
+    Dynamic(DynamicForwardConfig),
 }
 
 /// Params for `tunnel.start`.
@@ -847,6 +853,39 @@ mod tests {
         assert_eq!(forward.remote_port, 8080);
         assert_eq!(forward.local_host, "127.0.0.1");
         assert_eq!(forward.local_port, 3000);
+    }
+
+    /// The desktop routes an agent-hosted `-D` tunnel as `forward.mode ==
+    /// "dynamic"` with the flattened dynamic-forward fields (just the SOCKS
+    /// listen bind). Locks that wire shape against desktop/agent drift (the `-D`
+    /// twin of the local/remote tests above, #2198).
+    #[test]
+    fn tunnel_start_params_parse_the_dynamic_wire_shape() {
+        let wire = serde_json::json!({
+            "tunnelId": "t-d",
+            "sshConfig": {
+                "host": "bastion.corp",
+                "port": 22,
+                "username": "dev",
+                "authMethod": "password",
+                "password": "secret",
+                "keyPath": null,
+                "shell": null
+            },
+            "forward": {
+                "mode": "dynamic",
+                "localHost": "127.0.0.1",
+                "localPort": 1080
+            }
+        });
+        let params: TunnelStartParams =
+            serde_json::from_value(wire).expect("desktop dynamic tunnel.start shape must parse");
+        assert_eq!(params.tunnel_id, "t-d");
+        let TunnelForwardSpec::Dynamic(forward) = &params.forward else {
+            panic!("expected a dynamic forward spec");
+        };
+        assert_eq!(forward.local_host, "127.0.0.1");
+        assert_eq!(forward.local_port, 1080);
     }
 
     #[test]

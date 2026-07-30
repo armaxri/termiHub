@@ -46,6 +46,23 @@ pub struct RemoteForwardConfig {
     pub local_port: u16,
 }
 
+/// Configuration for dynamic (SOCKS5) forwarding (ssh -D).
+///
+/// The listen socket binds a SOCKS5 proxy on the tunnel host
+/// (`local_host:local_port`); each proxied connection's target is chosen by the
+/// SOCKS client per-connection and reached from the SSH server's network. On an
+/// agent-hosted tunnel the "local" side is the agent — the SOCKS proxy listens
+/// on the agent (loopback by default) and targets are resolved from the SSH
+/// server. See `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DynamicForwardConfig {
+    /// Local address to bind the SOCKS5 proxy (e.g. "127.0.0.1").
+    pub local_host: String,
+    /// Local port for the SOCKS5 proxy.
+    pub local_port: u16,
+}
+
 /// Live traffic statistics for an active tunnel.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -91,6 +108,19 @@ mod tests {
         assert!(json.get("remoteHost").is_some());
         assert!(json.get("localPort").is_some());
         let back: RemoteForwardConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back, config);
+    }
+
+    #[test]
+    fn dynamic_forward_config_round_trips_camel_case() {
+        let config = DynamicForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: 1080,
+        };
+        let json = serde_json::to_value(&config).unwrap();
+        assert!(json.get("localHost").is_some());
+        assert!(json.get("localPort").is_some());
+        let back: DynamicForwardConfig = serde_json::from_value(json).unwrap();
         assert_eq!(back, config);
     }
 
