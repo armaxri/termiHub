@@ -152,7 +152,11 @@ mod tests {
         );
         // Desktop-only on "this computer" is fine too.
         assert_eq!(
-            r.resolve("credentials", Locality::DesktopOnly, &RunLocation::ThisComputer),
+            r.resolve(
+                "credentials",
+                Locality::DesktopOnly,
+                &RunLocation::ThisComputer
+            ),
             Ok(ResolvedLocation::Local)
         );
     }

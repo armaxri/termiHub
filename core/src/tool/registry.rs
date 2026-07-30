@@ -169,7 +169,15 @@ mod tests {
             .collect();
         assert_eq!(
             ids,
-            vec!["ping", "ping_sweep", "port_scan", "traceroute", "dns", "open_ports", "wol"]
+            vec![
+                "ping",
+                "ping_sweep",
+                "port_scan",
+                "traceroute",
+                "dns",
+                "open_ports",
+                "wol"
+            ]
         );
         assert!(registry.has_tool("ping"));
         assert!(!registry.has_tool("nope"));

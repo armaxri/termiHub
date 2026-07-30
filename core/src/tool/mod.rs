@@ -108,7 +108,10 @@ impl CollectingHost {
 
     /// Snapshot the events collected so far without draining them.
     pub fn events(&self) -> Vec<ToolEvent> {
-        self.events.lock().expect("tool host mutex poisoned").clone()
+        self.events
+            .lock()
+            .expect("tool host mutex poisoned")
+            .clone()
     }
 
     /// Drain and return all collected events.

@@ -1366,9 +1366,7 @@ fn register_tool_run(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Res
     module.register_async_method("tool.run", |params, ctx, _ext| async move {
         let registry = get_tool_registry(&ctx).await?;
 
-        let p: Value = params
-            .parse()
-            .map_err(|e| invalid_params("tool.run", e))?;
+        let p: Value = params.parse().map_err(|e| invalid_params("tool.run", e))?;
         let tool_id = p
             .get("toolId")
             .and_then(Value::as_str)
@@ -1382,7 +1380,12 @@ fn register_tool_run(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Res
         // is a later phase.
         let host = CollectingHost::new();
         let result = registry
-            .run(&tool_id, tool_params, host.clone(), CancellationToken::new())
+            .run(
+                &tool_id,
+                tool_params,
+                host.clone(),
+                CancellationToken::new(),
+            )
             .await
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
 
@@ -3414,14 +3417,12 @@ mod tests {
         init_handler(&handler).await;
 
         let result = dispatch(&handler, "tool.list", json!({}), 2).await;
-        let tools = result["result"]["tools"]
-            .as_array()
-            .expect("tools array");
-        let ids: Vec<&str> = tools
-            .iter()
-            .filter_map(|t| t["toolId"].as_str())
-            .collect();
-        assert!(ids.contains(&"ping"), "tool.list must include ping: {result}");
+        let tools = result["result"]["tools"].as_array().expect("tools array");
+        let ids: Vec<&str> = tools.iter().filter_map(|t| t["toolId"].as_str()).collect();
+        assert!(
+            ids.contains(&"ping"),
+            "tool.list must include ping: {result}"
+        );
         assert!(ids.contains(&"port_scan"));
         assert!(ids.contains(&"dns"));
         assert!(ids.contains(&"wol"));
@@ -3446,10 +3447,7 @@ mod tests {
             "expected open_ports list: {result}"
         );
         // One-shot tool: no streamed events.
-        assert_eq!(
-            result["result"]["events"].as_array().map(Vec::len),
-            Some(0)
-        );
+        assert_eq!(result["result"]["events"].as_array().map(Vec::len), Some(0));
     }
 
     #[tokio::test]
@@ -3488,7 +3486,8 @@ mod tests {
         for method in ["tool.list", "tool.run", "service.list"] {
             let result = dispatch(&handler, method, json!({}), 1).await;
             assert_eq!(
-                result["error"]["code"], errors::NOT_INITIALIZED,
+                result["error"]["code"],
+                errors::NOT_INITIALIZED,
                 "{method} must require initialize"
             );
         }

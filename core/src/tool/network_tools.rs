@@ -115,12 +115,11 @@ impl Tool for PortScanTool {
         cancel: CancellationToken,
     ) -> Result<Value, ToolError> {
         let p: PortScanParams = decode(self.tool_id(), params)?;
-        let port_list = port_scan::parse_port_spec(&p.ports).map_err(|e| {
-            ToolError::InvalidParams {
+        let port_list =
+            port_scan::parse_port_spec(&p.ports).map_err(|e| ToolError::InvalidParams {
                 tool: "port_scan".to_string(),
                 reason: e.to_string(),
-            }
-        })?;
+            })?;
         let sink = host.clone();
         let summary = port_scan::scan_ports(
             &p.host,
@@ -387,7 +386,10 @@ mod tests {
             "open_ports",
             "wol",
         ] {
-            assert!(ids.contains(&expected.to_string()), "missing tool {expected}");
+            assert!(
+                ids.contains(&expected.to_string()),
+                "missing tool {expected}"
+            );
         }
     }
 

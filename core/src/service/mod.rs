@@ -232,11 +232,17 @@ mod tests {
         let channel = EventChannel::new();
         // Emitting with no subscribers is a no-op.
         assert_eq!(channel.subscriber_count(), 0);
-        channel.emit(ServiceEvent::new("status", serde_json::json!({ "up": true })));
+        channel.emit(ServiceEvent::new(
+            "status",
+            serde_json::json!({ "up": true }),
+        ));
 
         let mut rx = channel.subscribe();
         assert_eq!(channel.subscriber_count(), 1);
-        channel.emit(ServiceEvent::new("stats", serde_json::json!({ "requests": 5 })));
+        channel.emit(ServiceEvent::new(
+            "stats",
+            serde_json::json!({ "requests": 5 }),
+        ));
 
         let event = rx.recv().await.expect("event must arrive");
         assert_eq!(event.kind, "stats");
