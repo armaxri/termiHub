@@ -26,6 +26,27 @@ if (typeof Element !== "undefined") {
     Element.prototype.scrollIntoView = () => {};
   }
 
+  // jsdom does not implement `window.matchMedia`. uPlot (the monitoring/latency
+  // charts) calls it at *module load* to pick a pixel ratio, and the theme
+  // engine reads `prefers-color-scheme` through it — so a test that mounts any
+  // chart-bearing UI (or the whole App shell) blows up on import without this.
+  // Return an inert, listener-shaped MediaQueryList so callers can subscribe
+  // without effect. Idempotent: only installed when jsdom lacks it, so tests
+  // that stub their own matchMedia (e.g. themes/engine.test.ts) still win.
+  if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
+    window.matchMedia = (query: string): MediaQueryList =>
+      ({
+        matches: false,
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList;
+  }
+
   // @tanstack/react-virtual resets its `isScrolling` flag either from the native
   // `scrollend` event (when the environment advertises `onscrollend` and the
   // virtualizer opts in via `useScrollendEvent`) or, as a fallback, from a 150ms
@@ -205,7 +226,9 @@ vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: vi.fn(() => ({
     label: "main",
     onFocusChanged: vi.fn(() => Promise.resolve(() => {})),
+    onCloseRequested: vi.fn(() => Promise.resolve(() => {})),
     setSize: vi.fn(() => Promise.resolve()),
+    destroy: vi.fn(() => Promise.resolve()),
   })),
   LogicalSize: class {
     constructor(

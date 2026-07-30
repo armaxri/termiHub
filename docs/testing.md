@@ -322,6 +322,25 @@ the coverage it _can_ run rather than failing on fixtures it cannot reach. This
 Docker-daemon boundary is the same one behind the [SSH-tunnel macOS
 carve-out](#ssh-tunnel-startstop-on-macos-manual-carve-out-933) and ADR-5.
 
+### Per-PR app-shell smoke (#2065)
+
+To give the merge gate _some_ app-boot coverage without the nightly lane's build
+cost, the frontend Vitest job runs a lightweight shell-mount smoke
+([`src/App.smoke.test.tsx`](../src/App.smoke.test.tsx)). It mounts the whole
+`App` component tree in jsdom against the default store state and asserts every
+top-level region (activity bar, terminal view, status bar, sidebar) renders and
+the `ErrorBoundary` did not trip. This catches a **broad boot/wiring break** — a
+bad import, a removed provider, a hook that throws on mount, a store selector
+that crashes on the initial state — on every PR, on all three OSes (it rides the
+existing `pnpm test` matrix). It runs in a fraction of a second: a single
+React-DOM `createRoot` mount, no app build, no Docker, all Tauri IPC stubbed in
+[`src/test/setup.ts`](../src/test/setup.ts). It deliberately asserts only the
+coarse shell (fast, non-flaky); backend hydration and deep behavior stay with
+the per-component tests and the nightly integration lane. The real per-platform
+boot under CSP (#2059,
+[`tests/system/tests/test_csp.py`](../tests/system/tests/test_csp.py)) remains a
+nightly integration check — the two are complementary, not a substitute.
+
 ### Windows Agent CI Coverage
 
 The remote agent (`agent/`) is built and tested on Windows via dedicated CI jobs:
