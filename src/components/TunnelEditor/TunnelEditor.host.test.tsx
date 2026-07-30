@@ -58,7 +58,7 @@ const ROOT_PANEL = {
 
 let container: HTMLDivElement;
 let root: Root;
-let saveTunnel: ReturnType<typeof vi.fn>;
+let saveTunnel: (config: TunnelConfig) => Promise<void>;
 
 function render(tunnelId: string | null) {
   act(() => {
@@ -140,8 +140,8 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     await act(async () => {
       save.click();
     });
-    expect(saveTunnel).toHaveBeenCalledTimes(1);
-    const saved = saveTunnel.mock.calls[0][0] as TunnelConfig;
+    expect(vi.mocked(saveTunnel)).toHaveBeenCalledTimes(1);
+    const saved = vi.mocked(saveTunnel).mock.calls[0][0];
     expect(saved.host).toEqual({ kind: "agent", agentId: "agent-1" });
   });
 });
