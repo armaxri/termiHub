@@ -35,7 +35,7 @@ class FakeBackend implements Transport {
     return { region: REGION, kind: "snapshot", version: this.version, view: { ...this.view } };
   }
 
-  async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
+  async subscribe(_region: string, onFrame: FrameHandler): Promise<Subscription> {
     const id = this.nextSub++;
     this.subscribers.set(id, onFrame);
     return {
@@ -67,7 +67,7 @@ class FakeBackend implements Transport {
     };
   }
 
-  async resync(region: string, have?: number): Promise<SnapshotFrame | null> {
+  async resync(_region: string, have?: number): Promise<SnapshotFrame | null> {
     if (have === this.version) return null;
     return this.snapshot();
   }
