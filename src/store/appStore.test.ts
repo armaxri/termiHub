@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // Mock service modules before importing the store
 vi.mock("@/services/storage", () => ({
@@ -34,6 +34,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore, _resetConnectionReloadSeq } from "./appStore";
+import { setLayoutIntentsEnabled } from "./layoutBridge";
 import type { LeafPanel } from "@/types/terminal";
 import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import * as api from "@/services/api";
@@ -51,6 +52,15 @@ describe("appStore", () => {
     useAppStore.setState(useAppStore.getInitialState());
     // Reset the reload sequencer so sequence numbers don't bleed between tests
     _resetConnectionReloadSeq();
+    // These specs assert panel-tree reducer results synchronously. The mutation
+    // cut (#2184) makes split/move async intent round-trips by default; here we
+    // exercise the retained local reducer (the resilience fallback) directly.
+    // The intent-routed path has its own coverage in appStore.layoutBridge.test.ts.
+    setLayoutIntentsEnabled(false);
+  });
+
+  afterEach(() => {
+    setLayoutIntentsEnabled(null);
   });
 
   describe("addTab", () => {

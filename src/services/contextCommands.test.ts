@@ -6,10 +6,11 @@
  * current context, and `run()` acts on that target (and is inert when none
  * applies). The same registry backs both the keyboard handler and the palette.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CONTEXT_COMMANDS } from "./contextCommands";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
+import { setLayoutIntentsEnabled } from "@/store/layoutBridge";
 
 /** Add a tab of the given content type and make it the active tab/panel. */
 function addActiveTab(contentType: "terminal" | "editor" = "terminal"): string {
@@ -30,6 +31,14 @@ function activeLeaf() {
 
 beforeEach(() => {
   useAppStore.setState({ ...useAppStore.getInitialState() });
+  // focus-panel sets up panels via a synchronous splitPanel; pin to the local
+  // reducer (retained resilience fallback) since the mutation cut (#2184) makes
+  // the intent path async by default.
+  setLayoutIntentsEnabled(false);
+});
+
+afterEach(() => {
+  setLayoutIntentsEnabled(null);
 });
 
 describe("CONTEXT_COMMANDS registry", () => {

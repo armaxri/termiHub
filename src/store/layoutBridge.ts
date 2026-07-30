@@ -36,10 +36,11 @@
  *
  * # Strangler safety
  *
- * The mutation cut is gated by {@link layoutIntentsEnabled} — **off by default**,
- * so the shipped app keeps running on the untouched local reducers. Even when
- * enabled, any dispatch/reconcile failure falls back to the local mutation, so a
- * backend hiccup can never break layout. The render cut
+ * The mutation cut is gated by {@link layoutIntentsEnabled} — **on by default**
+ * since #2184 (verified parity-clean in a live GUI run). Any dispatch/reconcile
+ * failure falls back to the local mutation, so a backend hiccup can never break
+ * layout, and the flag can be set to `"false"` to restore the pre-cut local
+ * reducers for rollback. The render cut
  * ({@link layoutRenderFromProjectionEnabled}, on by default) is separately safe:
  * it only composes from the projection when the view mirrors `appStore`'s tree,
  * else falls back to that tree verbatim.
@@ -148,16 +149,19 @@ function readFlag(
  * Whether structural layout **mutations** route through `layout.*` intents
  * (step 2) instead of editing `appStore.rootPanel` locally.
  *
- * **Off by default.** This makes the backend `LayoutStore` authoritative for
- * mutations, which turns split/move/merge into asynchronous backend round-trips
- * — a behavioural change that must be verified with a local GUI run before it
- * ships on. It is intentionally decoupled from the render cut
- * ({@link layoutRenderFromProjectionEnabled}), which is parity-safe on its own.
- * Overridable at runtime via `window.__TERMIHUB_LAYOUT_INTENTS__` or
- * `localStorage["termihub.layoutIntents"]`.
+ * **On by default** (#2184). The backend `LayoutStore` is authoritative for
+ * mutations: split/move/merge run as asynchronous backend round-trips, with the
+ * projected diff reconciled back into `appStore` by {@link reconcileNode}. The
+ * behavioural (timing) change was verified parity-clean in a live GUI run before
+ * flipping — split, drag-to-edge, drag-to-center, tab-move across panels, and
+ * merge, with live-terminal scrollback surviving every op. Any dispatch/reconcile
+ * failure still falls back to the local reducer, so a backend hiccup can never
+ * break layout. Overridable at runtime for rollback / tests via
+ * `window.__TERMIHUB_LAYOUT_INTENTS__` or `localStorage["termihub.layoutIntents"]`
+ * (set `"false"` to restore the pre-cut local-mutation path).
  */
 export function layoutIntentsEnabled(): boolean {
-  return readFlag(flagOverride, "__TERMIHUB_LAYOUT_INTENTS__", "termihub.layoutIntents", false);
+  return readFlag(flagOverride, "__TERMIHUB_LAYOUT_INTENTS__", "termihub.layoutIntents", true);
 }
 
 /**
