@@ -10,10 +10,17 @@ import type { PanelNode, TerminalTab } from "@/types/terminal";
 
 import {
   collectTabs,
+  composeRenderTree,
+  type LayoutView,
   layoutIntentsEnabled,
+  layoutRenderFromProjectionEnabled,
+  minimalNodesEqual,
   reconcileNode,
   setLayoutIntentsEnabled,
+  setLayoutRenderFromProjectionEnabled,
   toMinimalNode,
+  treeSignature,
+  viewMatchesTree,
 } from "./layoutBridge";
 
 function tab(id: string, extra: Partial<TerminalTab> = {}): TerminalTab {
@@ -129,18 +136,108 @@ describe("layoutBridge — tree mapping", () => {
   });
 });
 
-describe("layoutBridge — feature flag", () => {
-  afterEach(() => setLayoutIntentsEnabled(null));
+describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () => {
+  /** The projected (minimal) view of `tree()`, focused on panel `a`. */
+  function view(): LayoutView {
+    return { root: toMinimalNode(tree()), activePanelId: "a" };
+  }
 
-  it("is off by default", () => {
+  it("minimalNodesEqual: a tree equals its own minimal projection", () => {
+    expect(minimalNodesEqual(toMinimalNode(tree()), view().root)).toBe(true);
+  });
+
+  it("minimalNodesEqual: sensitive to tab order, active tab, sizes, and direction", () => {
+    const base = toMinimalNode(tree());
+    const reordered = toMinimalNode({
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      sizes: [50, 50],
+      children: [
+        { type: "leaf", id: "a", tabs: [tab("t2"), tab("t1")], activeTabId: "t1" },
+        { type: "leaf", id: "b", tabs: [tab("t3")], activeTabId: "t3" },
+      ],
+    });
+    expect(minimalNodesEqual(base, reordered)).toBe(false);
+
+    const otherActive = toMinimalNode({
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      sizes: [50, 50],
+      children: [
+        { type: "leaf", id: "a", tabs: [tab("t1"), tab("t2")], activeTabId: "t2" },
+        { type: "leaf", id: "b", tabs: [tab("t3")], activeTabId: "t3" },
+      ],
+    });
+    expect(minimalNodesEqual(base, otherActive)).toBe(false);
+  });
+
+  it("viewMatchesTree: true only when structure AND active panel align", () => {
+    expect(viewMatchesTree(view(), tree(), "a")).toBe(true);
+    // Active panel differs.
+    expect(viewMatchesTree(view(), tree(), "b")).toBe(false);
+    // A view missing a tab appStore still has (local add not yet in the region).
+    const stale: LayoutView = {
+      root: toMinimalNode({
+        type: "split",
+        id: "root",
+        direction: "horizontal",
+        sizes: [50, 50],
+        children: [
+          { type: "leaf", id: "a", tabs: [tab("t1")], activeTabId: "t1" },
+          { type: "leaf", id: "b", tabs: [tab("t3")], activeTabId: "t3" },
+        ],
+      }),
+      activePanelId: "a",
+    };
+    expect(viewMatchesTree(stale, tree(), "a")).toBe(false);
+    expect(viewMatchesTree(null, tree(), "a")).toBe(false);
+  });
+
+  it("composeRenderTree: structure from the view, rich content from appStore by id", () => {
+    const rich = composeRenderTree(view(), tree()) as Extract<PanelNode, { type: "split" }>;
+    const leafA = rich.children[0] as Extract<PanelNode, { type: "leaf" }>;
+    // Same structure as the source tree, with rich fields re-hydrated.
+    expect(leafA.tabs.map((t) => t.id)).toEqual(["t1", "t2"]);
+    expect(leafA.tabs[0].title).toBe("Tab t1");
+    expect(leafA.tabs[0].isActive).toBe(true);
+    expect(leafA.tabs[0].panelId).toBe("a");
+    expect(rich.sizes).toEqual([50, 50]);
+  });
+
+  it("treeSignature: stable for an unchanged tree, changes when structure changes", () => {
+    const a = treeSignature(tree(), "a");
+    expect(treeSignature(tree(), "a")).toBe(a);
+    expect(treeSignature(tree(), "b")).not.toBe(a);
+  });
+});
+
+describe("layoutBridge — feature flags", () => {
+  afterEach(() => {
+    setLayoutIntentsEnabled(null);
+    setLayoutRenderFromProjectionEnabled(null);
+  });
+
+  it("mutation cut is off by default (async round-trip needs GUI verification)", () => {
     setLayoutIntentsEnabled(null);
     expect(layoutIntentsEnabled()).toBe(false);
   });
 
-  it("honours a programmatic override", () => {
+  it("render cut is on by default (step 3: parity-safe by construction)", () => {
+    setLayoutRenderFromProjectionEnabled(null);
+    expect(layoutRenderFromProjectionEnabled()).toBe(true);
+  });
+
+  it("honours programmatic overrides on each flag independently", () => {
     setLayoutIntentsEnabled(true);
     expect(layoutIntentsEnabled()).toBe(true);
     setLayoutIntentsEnabled(false);
     expect(layoutIntentsEnabled()).toBe(false);
+
+    setLayoutRenderFromProjectionEnabled(false);
+    expect(layoutRenderFromProjectionEnabled()).toBe(false);
+    setLayoutRenderFromProjectionEnabled(true);
+    expect(layoutRenderFromProjectionEnabled()).toBe(true);
   });
 });
