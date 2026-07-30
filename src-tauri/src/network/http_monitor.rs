@@ -1,17 +1,48 @@
 //! Periodic HTTP monitor — checks a URL at a fixed interval and emits events.
 //!
 //! This is desktop-only (uses `reqwest`) and is not part of `termihub-core`.
+//!
+//! # S2 pilot — lifted onto the core `Service` trait (#2157)
+//!
+//! The monitor is the first existing service lifted onto
+//! [`termihub_core::service::Service`] (the S1 substrate from #2148). Its poll
+//! loop no longer pushes results through Tauri's [`Emitter`](tauri::Emitter);
+//! instead it emits [`ServiceEvent`]s on the core-owned
+//! [`EventChannel`], and the desktop host bridges that channel to the
+//! `network-http-monitor-check` Tauri event (see
+//! [`crate::network::NetworkManager`]). The service itself is therefore fully
+//! decoupled from `AppHandle` and testable in isolation via
+//! [`Service::subscribe_events`]. Behaviour is unchanged for the user.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter};
+use serde_json::Value;
+use termihub_core::connection::schema::{FieldType, SelectOption, SettingsField, SettingsGroup};
+use termihub_core::connection::SettingsSchema;
+use termihub_core::service::{
+    EventChannel, Service, ServiceCapabilities, ServiceError, ServiceEvent, ServiceEventReceiver,
+    ServiceStatus,
+};
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use uuid::Uuid;
+
+/// Machine-readable service id used in the [`ServiceRegistry`] and run-location
+/// routing.
+///
+/// [`ServiceRegistry`]: termihub_core::service::ServiceRegistry
+pub const SERVICE_ID: &str = "http_monitor";
+
+/// Human-readable service name.
+pub const DISPLAY_NAME: &str = "HTTP Monitor";
+
+/// Event kind emitted on the [`EventChannel`] for each completed check.
+pub const CHECK_EVENT_KIND: &str = "check";
 
 /// Minimum poll interval, in milliseconds.
 ///
@@ -62,15 +93,6 @@ pub struct HttpMonitorState {
     pub last_result: Option<HttpCheckResult>,
 }
 
-/// Handle to a running HTTP monitor background task.
-pub struct HttpMonitorHandle {
-    pub config: HttpMonitorConfig,
-    pub cancel: CancellationToken,
-    /// When set, the poll loop stays alive but skips the HTTP check (Pause).
-    pub paused: Arc<AtomicBool>,
-    pub last_result: std::sync::Arc<std::sync::Mutex<Option<HttpCheckResult>>>,
-}
-
 impl HttpMonitorConfig {
     /// Create a new config with a generated ID.
     ///
@@ -94,40 +116,286 @@ impl HttpMonitorConfig {
     }
 }
 
-/// Spawn a background task that periodically polls a URL.
+/// The HTTP monitor lifted onto the core [`Service`] trait.
 ///
-/// Emits `network-http-monitor-check` events on the app handle.
-/// Returns a [`HttpMonitorHandle`] that can be used to stop the task.
-pub fn start_monitor(config: HttpMonitorConfig, app: AppHandle) -> HttpMonitorHandle {
-    let cancel = CancellationToken::new();
-    let paused = Arc::new(AtomicBool::new(false));
-    let last_result = std::sync::Arc::new(std::sync::Mutex::new(None::<HttpCheckResult>));
+/// One instance drives one URL's poll loop. Created stopped; a call to
+/// [`start`](Service::start) with a JSON [`HttpMonitorConfig`] spawns the loop,
+/// which emits a [`CHECK_EVENT_KIND`] [`ServiceEvent`] (payload:
+/// [`HttpCheckResult`]) on the [`EventChannel`] after every check.
+///
+/// Beyond the trait lifecycle it keeps the monitor-specific
+/// [`pause`](Self::pause) / [`resume`](Self::resume) controls the desktop
+/// manager needs; these are not part of the generic [`Service`] surface.
+pub struct HttpMonitorService {
+    /// Config, set once the service is started. `None` before the first start.
+    config: Option<HttpMonitorConfig>,
+    /// Current lifecycle status.
+    status: ServiceStatus,
+    /// Cancellation token for the running poll loop (fresh on each start).
+    cancel: CancellationToken,
+    /// When set, the poll loop stays alive but skips the HTTP check (Pause).
+    paused: Arc<AtomicBool>,
+    /// Latest check result, shared with the poll loop.
+    last_result: Arc<Mutex<Option<HttpCheckResult>>>,
+    /// Core event channel the poll loop emits `check` events through.
+    events: EventChannel,
+}
 
-    let cancel_clone = cancel.clone();
-    let paused_clone = Arc::clone(&paused);
-    let config_clone = config.clone();
-    let last_result_clone = std::sync::Arc::clone(&last_result);
+impl HttpMonitorService {
+    /// Create a new, stopped HTTP monitor service.
+    pub fn new() -> Self {
+        Self {
+            config: None,
+            status: ServiceStatus::Stopped,
+            cancel: CancellationToken::new(),
+            paused: Arc::new(AtomicBool::new(false)),
+            last_result: Arc::new(Mutex::new(None)),
+            events: EventChannel::new(),
+        }
+    }
 
-    // Spawn on Tauri's managed runtime, not `tokio::spawn`: the
-    // `network_http_monitor_start` command is synchronous, so it runs on a thread
-    // with no Tokio reactor — `tokio::spawn` there panics ("no reactor running").
-    // `tauri::async_runtime::spawn` works from any thread (see #828, #982).
-    tauri::async_runtime::spawn(async move {
-        run_monitor(
-            config_clone,
-            app,
-            cancel_clone,
-            paused_clone,
-            last_result_clone,
-        )
-        .await;
-    });
+    /// The settings schema for the HTTP monitor form (keys match
+    /// [`HttpMonitorConfig`]'s camelCase fields).
+    fn schema() -> SettingsSchema {
+        SettingsSchema {
+            groups: vec![SettingsGroup {
+                key: "monitor".to_string(),
+                label: "HTTP Monitor".to_string(),
+                fields: vec![
+                    field("url", "URL", FieldType::Text, true, None),
+                    field(
+                        "intervalMs",
+                        "Interval (ms)",
+                        FieldType::Number {
+                            min: Some(MIN_INTERVAL_MS as f64),
+                            max: None,
+                        },
+                        true,
+                        Some(Value::from(30_000)),
+                    ),
+                    field(
+                        "method",
+                        "Method",
+                        FieldType::Select {
+                            options: ["GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"]
+                                .iter()
+                                .map(|m| SelectOption {
+                                    value: (*m).to_string(),
+                                    label: (*m).to_string(),
+                                })
+                                .collect(),
+                        },
+                        true,
+                        Some(Value::from("GET")),
+                    ),
+                    field(
+                        "expectedStatus",
+                        "Expected status",
+                        FieldType::Number {
+                            min: Some(100.0),
+                            max: Some(599.0),
+                        },
+                        true,
+                        Some(Value::from(200)),
+                    ),
+                    field(
+                        "timeoutMs",
+                        "Timeout (ms)",
+                        FieldType::Number {
+                            min: Some(1.0),
+                            max: None,
+                        },
+                        true,
+                        Some(Value::from(5_000)),
+                    ),
+                ],
+            }],
+        }
+    }
 
-    HttpMonitorHandle {
-        config,
-        cancel,
-        paused,
-        last_result,
+    /// Spawn (or re-spawn) the poll loop for `config`, replacing any prior run.
+    ///
+    /// Resets the cancellation token and pause flag, sets status to
+    /// [`ServiceStatus::Running`], and stores the config so [`resume`](Self::resume)
+    /// and [`state`](Self::state) can see it.
+    fn spawn_loop(&mut self, config: HttpMonitorConfig) {
+        // A fresh token so a previous stop's cancellation does not immediately
+        // kill the new loop.
+        self.cancel = CancellationToken::new();
+        self.paused.store(false, Ordering::SeqCst);
+        self.status = ServiceStatus::Running;
+        self.config = Some(config.clone());
+
+        let cancel = self.cancel.clone();
+        let paused = Arc::clone(&self.paused);
+        let last_result = Arc::clone(&self.last_result);
+        let events = self.events.clone();
+
+        // Spawn on Tauri's managed runtime, not `tokio::spawn`: some callers
+        // (synchronous Tauri commands) run on a thread with no Tokio reactor,
+        // where `tokio::spawn` panics ("no reactor running").
+        // `tauri::async_runtime::spawn` works from any thread (see #828, #982).
+        tauri::async_runtime::spawn(async move {
+            run_monitor(config, events, cancel, paused, last_result).await;
+        });
+    }
+
+    /// Start the poll loop for `config` (synchronous).
+    ///
+    /// The trait's async [`start`](Service::start) parses a JSON config and
+    /// delegates here; the desktop manager, running on a synchronous Tauri
+    /// command thread with no reactor, calls this directly.
+    pub fn start_with(&mut self, config: HttpMonitorConfig) {
+        self.spawn_loop(config);
+    }
+
+    /// Stop the poll loop but keep the config so the monitor stays listed and
+    /// can be resumed (synchronous counterpart of the trait's async
+    /// [`stop`](Service::stop)).
+    pub fn shutdown(&mut self) {
+        self.cancel.cancel();
+        self.paused.store(false, Ordering::SeqCst);
+        self.status = ServiceStatus::Stopped;
+    }
+
+    /// Pause the poll loop's body while keeping the loop alive (Resume is
+    /// instant). No-op when the monitor is not running.
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::SeqCst);
+    }
+
+    /// Resume the monitor.
+    ///
+    /// - A **running** (or paused) monitor simply clears its pause flag.
+    /// - A **stopped** monitor (loop cancelled but still listed) is re-spawned
+    ///   with the same config/id.
+    pub fn resume(&mut self) {
+        if self.is_running() {
+            self.paused.store(false, Ordering::SeqCst);
+        } else if let Some(config) = self.config.clone() {
+            self.spawn_loop(config);
+        }
+    }
+
+    /// Whether the poll loop is currently alive.
+    pub fn is_running(&self) -> bool {
+        self.status == ServiceStatus::Running && !self.cancel.is_cancelled()
+    }
+
+    /// Whether the running loop is currently paused.
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    /// The most recent check result, if any.
+    pub fn last_result(&self) -> Option<HttpCheckResult> {
+        self.last_result.lock().ok().and_then(|g| g.clone())
+    }
+
+    /// Test-only: construct a service in the `Running` state with `config` but
+    /// **without** spawning a real poll loop, so manager-level bookkeeping tests
+    /// (stop / remove / pause / list) need no Tokio/Tauri runtime or network.
+    #[cfg(test)]
+    pub(crate) fn test_running(config: HttpMonitorConfig) -> Self {
+        let mut svc = Self::new();
+        svc.config = Some(config);
+        svc.status = ServiceStatus::Running;
+        svc
+    }
+
+    /// Snapshot this monitor as an [`HttpMonitorState`] for listing.
+    ///
+    /// Returns `None` for a service that was never started (no config).
+    pub fn state(&self) -> Option<HttpMonitorState> {
+        let config = self.config.clone()?;
+        let running = self.is_running();
+        Some(HttpMonitorState {
+            config,
+            running,
+            // A stopped loop can't be paused; only report paused while alive.
+            paused: running && self.is_paused(),
+            last_result: self.last_result(),
+        })
+    }
+}
+
+impl Default for HttpMonitorService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Service for HttpMonitorService {
+    fn service_id(&self) -> &str {
+        SERVICE_ID
+    }
+
+    fn display_name(&self) -> &str {
+        DISPLAY_NAME
+    }
+
+    fn settings_schema(&self) -> SettingsSchema {
+        Self::schema()
+    }
+
+    fn capabilities(&self) -> ServiceCapabilities {
+        ServiceCapabilities {
+            configurable: true,
+            emits_events: true,
+            // A network probe is a natural fit for an agent run-location (probe
+            // from a remote vantage point); it is not in the permanent
+            // desktop-only set (credentials, spawn rendezvous, file watch,
+            // OS-window management).
+            desktop_only: false,
+        }
+    }
+
+    async fn start(&mut self, config: Value) -> Result<(), ServiceError> {
+        let config: HttpMonitorConfig = serde_json::from_value(config)
+            .map_err(|e| ServiceError::InvalidConfig(e.to_string()))?;
+        self.spawn_loop(config);
+        Ok(())
+    }
+
+    async fn stop(&mut self) -> Result<(), ServiceError> {
+        // Cancel the poll loop but keep the config so the monitor stays listed
+        // (as `running: false`) and can be resumed. `paused` is cleared so a
+        // later Resume starts clean.
+        self.shutdown();
+        Ok(())
+    }
+
+    fn status(&self) -> ServiceStatus {
+        self.status.clone()
+    }
+
+    fn subscribe_events(&self) -> ServiceEventReceiver {
+        self.events.subscribe()
+    }
+}
+
+/// Build a required/optional settings field with sensible defaults for the
+/// booleans we don't use here.
+fn field(
+    key: &str,
+    label: &str,
+    field_type: FieldType,
+    required: bool,
+    default: Option<Value>,
+) -> SettingsField {
+    SettingsField {
+        key: key.to_string(),
+        label: label.to_string(),
+        description: None,
+        help_text: None,
+        field_type,
+        required,
+        default,
+        placeholder: None,
+        supports_env_expansion: false,
+        supports_tilde_expansion: false,
+        visible_when: None,
     }
 }
 
@@ -174,12 +442,17 @@ fn build_client_outcome(
     }
 }
 
+/// The background poll loop for one monitor.
+///
+/// Emits a [`CHECK_EVENT_KIND`] [`ServiceEvent`] (payload: [`HttpCheckResult`])
+/// on `events` after every check — the host bridges that channel to its own
+/// emitter — and caches the latest result in `last_result`.
 async fn run_monitor(
     config: HttpMonitorConfig,
-    app: AppHandle,
+    events: EventChannel,
     cancel: CancellationToken,
     paused: Arc<AtomicBool>,
-    last_result: std::sync::Arc<std::sync::Mutex<Option<HttpCheckResult>>>,
+    last_result: Arc<Mutex<Option<HttpCheckResult>>>,
 ) {
     let build_result = Client::builder()
         .timeout(Duration::from_millis(config.timeout_ms))
@@ -194,7 +467,7 @@ async fn run_monitor(
                 monitor_id = %config.id,
                 "HTTP monitor: failed to build client — emitting failure result and stopping"
             );
-            let _ = app.emit("network-http-monitor-check", &result);
+            events.emit(ServiceEvent::new(CHECK_EVENT_KIND, &result));
             if let Ok(mut guard) = last_result.lock() {
                 *guard = Some(result);
             }
@@ -221,7 +494,7 @@ async fn run_monitor(
                 "HTTP monitor check complete"
             );
 
-            let _ = app.emit("network-http-monitor-check", &result);
+            events.emit(ServiceEvent::new(CHECK_EVENT_KIND, &result));
 
             if let Ok(mut guard) = last_result.lock() {
                 *guard = Some(result);
@@ -396,5 +669,169 @@ mod tests {
                 panic!("a successful build must map to Ready, not Failed")
             }
         }
+    }
+
+    // ── Service trait impl (#2157) ────────────────────────────────────────────
+
+    fn sample_config() -> HttpMonitorConfig {
+        HttpMonitorConfig::new(
+            "https://example.com".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        )
+    }
+
+    #[test]
+    fn service_metadata_and_capabilities() {
+        let svc = HttpMonitorService::new();
+        assert_eq!(svc.service_id(), SERVICE_ID);
+        assert_eq!(svc.display_name(), DISPLAY_NAME);
+
+        let caps = svc.capabilities();
+        assert!(caps.configurable);
+        assert!(caps.emits_events);
+        // A network probe may run on an agent — it is not desktop-only.
+        assert!(!caps.desktop_only);
+
+        // The schema exposes the config fields (camelCase keys).
+        let schema = svc.settings_schema();
+        let keys: Vec<String> = schema
+            .groups
+            .iter()
+            .flat_map(|g| g.fields.iter().map(|f| f.key.clone()))
+            .collect();
+        for expected in ["url", "intervalMs", "method", "expectedStatus", "timeoutMs"] {
+            assert!(
+                keys.contains(&expected.to_string()),
+                "missing field {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn new_service_is_stopped_with_no_config() {
+        let svc = HttpMonitorService::new();
+        assert_eq!(svc.status(), ServiceStatus::Stopped);
+        assert!(!svc.is_running());
+        // No config yet → nothing to list.
+        assert!(svc.state().is_none());
+    }
+
+    #[tokio::test]
+    async fn start_rejects_invalid_config() {
+        let mut svc = HttpMonitorService::new();
+        // Missing required fields → InvalidConfig, not a panic.
+        let err = svc.start(serde_json::json!({ "url": "x" })).await;
+        assert!(matches!(err, Err(ServiceError::InvalidConfig(_))));
+        assert_eq!(svc.status(), ServiceStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn start_runs_and_emits_check_events_through_event_channel() {
+        // Point the monitor at a fast local sink so a real check completes
+        // quickly; assert the result arrives on the core EventChannel (not a
+        // Tauri emitter).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                if let Ok(mut s) = stream {
+                    use std::io::{Read, Write};
+                    let mut buf = [0u8; 1024];
+                    let _ = s.read(&mut buf);
+                    let _ = s.write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                }
+            }
+        });
+
+        let mut cfg = sample_config();
+        cfg.url = format!("http://{addr}/");
+        cfg.interval_ms = MIN_INTERVAL_MS;
+        let cfg_id = cfg.id.clone();
+
+        let mut svc = HttpMonitorService::new();
+        let mut rx = svc.subscribe_events();
+        svc.start(serde_json::to_value(&cfg).unwrap())
+            .await
+            .expect("start");
+        assert_eq!(svc.status(), ServiceStatus::Running);
+        assert!(svc.is_running());
+
+        let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("a check event must arrive within 5s")
+            .expect("event channel delivers");
+        assert_eq!(event.kind, CHECK_EVENT_KIND);
+        let result: HttpCheckResult = serde_json::from_value(event.payload).unwrap();
+        assert_eq!(result.monitor_id, cfg_id);
+        assert_eq!(result.status_code, Some(200));
+        assert!(result.ok);
+
+        svc.stop().await.expect("stop");
+        assert_eq!(svc.status(), ServiceStatus::Stopped);
+        assert!(!svc.is_running());
+    }
+
+    #[tokio::test]
+    async fn stop_keeps_config_for_listing_and_resume() {
+        let mut svc = HttpMonitorService::new();
+        let cfg = sample_config();
+        let cfg_id = cfg.id.clone();
+        // Use a non-routable address so no real request completes during the test.
+        let mut cfg2 = cfg.clone();
+        cfg2.url = "http://127.0.0.1:1/".into();
+        svc.start(serde_json::to_value(&cfg2).unwrap())
+            .await
+            .expect("start");
+        svc.stop().await.expect("stop");
+
+        // Stopped keeps the monitor listed (config retained) as running:false.
+        let state = svc.state().expect("state after stop");
+        assert_eq!(state.config.id, cfg_id);
+        assert!(!state.running);
+        assert!(!state.paused);
+    }
+
+    #[tokio::test]
+    async fn pause_and_resume_toggle_the_flag_in_place() {
+        let mut svc = HttpMonitorService::new();
+        let mut cfg = sample_config();
+        cfg.url = "http://127.0.0.1:1/".into();
+        svc.start(serde_json::to_value(&cfg).unwrap())
+            .await
+            .expect("start");
+
+        assert!(!svc.is_paused());
+        svc.pause();
+        assert!(svc.is_paused());
+        assert!(svc.is_running(), "pause keeps the loop alive");
+        assert!(svc.state().unwrap().paused);
+
+        svc.resume();
+        assert!(!svc.is_paused());
+        assert!(svc.is_running());
+    }
+
+    #[tokio::test]
+    async fn resume_restarts_a_stopped_monitor_with_same_config() {
+        let mut svc = HttpMonitorService::new();
+        let mut cfg = sample_config();
+        cfg.url = "http://127.0.0.1:1/".into();
+        let cfg_id = cfg.id.clone();
+        svc.start(serde_json::to_value(&cfg).unwrap())
+            .await
+            .expect("start");
+        svc.stop().await.expect("stop");
+        assert!(!svc.is_running());
+
+        // Resuming a stopped monitor re-spawns the loop, reusing the same id.
+        svc.resume();
+        assert!(svc.is_running());
+        assert_eq!(svc.status(), ServiceStatus::Running);
+        assert_eq!(svc.state().unwrap().config.id, cfg_id);
     }
 }

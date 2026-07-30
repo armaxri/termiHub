@@ -10,18 +10,28 @@ pub mod wol_storage;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
+use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use uuid::Uuid;
 
-use http_monitor::{HttpMonitorConfig, HttpMonitorHandle, HttpMonitorState};
+use http_monitor::{HttpMonitorConfig, HttpMonitorService, HttpMonitorState};
 use termihub_core::network::WolDevice;
+use termihub_core::service::{Service, ServiceInfo, ServiceRegistry};
 
+use crate::run_location::{ResolvedLocation, RunLocationResolver};
 use crate::utils::errors::TerminalError;
+
+/// Tauri event forwarded to the frontend for each HTTP monitor check.
+///
+/// The [`HttpMonitorService`] itself emits on the core
+/// [`EventChannel`](termihub_core::service::EventChannel); the desktop host
+/// bridges that channel to this Tauri event so the frontend contract is
+/// unchanged (see [`NetworkManager::spawn_http_monitor`]).
+const HTTP_MONITOR_CHECK_EVENT: &str = "network-http-monitor-check";
 
 /// Central manager for all active network diagnostic tasks.
 ///
@@ -29,8 +39,15 @@ use crate::utils::errors::TerminalError;
 pub struct NetworkManager {
     /// Active scan / ping / traceroute tasks, keyed by task ID.
     active_tasks: Mutex<HashMap<String, CancellationToken>>,
-    /// Running HTTP monitors.
-    http_monitors: Mutex<HashMap<String, HttpMonitorHandle>>,
+    /// Running HTTP monitors, each an [`HttpMonitorService`] behind the core
+    /// [`Service`](termihub_core::service::Service) trait (#2157).
+    http_monitors: Mutex<HashMap<String, HttpMonitorService>>,
+    /// Desktop-side registry of run-location-routable services. The HTTP monitor
+    /// is registered here (discovery, schema, capabilities) as the S2 pilot.
+    service_registry: ServiceRegistry,
+    /// Resolver deciding where a service runs (local vs agent). S1 default is
+    /// always local — the run-location selector UI arrives in a later S-phase.
+    run_location: RunLocationResolver,
     /// Saved Wake-on-LAN devices (persisted to disk).
     wol_devices: Mutex<Vec<WolDevice>>,
     /// App config directory for persistence.
@@ -45,10 +62,18 @@ impl NetworkManager {
         Self {
             active_tasks: Mutex::new(HashMap::new()),
             http_monitors: Mutex::new(HashMap::new()),
+            service_registry: build_service_registry(),
+            run_location: RunLocationResolver::new(),
             wol_devices: Mutex::new(Vec::new()),
             config_dir: PathBuf::new(),
             app_handle: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// The services registered for run-location routing (currently just the
+    /// HTTP monitor). Backs future discovery / the run-location selector UI.
+    pub fn available_services(&self) -> Vec<ServiceInfo> {
+        self.service_registry.available_services()
     }
 
     /// Initialise the manager with the app config directory and app handle.
@@ -133,18 +158,41 @@ impl NetworkManager {
         self.spawn_http_monitor(config)
     }
 
-    /// Spawn the poll loop for a config and track its handle, **without**
+    /// Spawn the poll loop for a config and track its service, **without**
     /// touching disk. Used both by [`start_http_monitor`](Self::start_http_monitor)
     /// (after persisting) and by [`init`](Self::init) when auto-starting the
     /// persisted monitors on launch.
+    ///
+    /// The monitor's run-location is resolved through the [`RunLocationResolver`]
+    /// (S1 default: always local). The service emits check results on its core
+    /// [`EventChannel`](termihub_core::service::EventChannel); a bridge task
+    /// forwards them to the [`HTTP_MONITOR_CHECK_EVENT`] Tauri event so the
+    /// frontend contract is unchanged.
     fn spawn_http_monitor(&self, config: HttpMonitorConfig) -> Result<String, TerminalError> {
+        match self.run_location.resolve_default() {
+            ResolvedLocation::Local => {}
+            ResolvedLocation::Agent(agent) => {
+                // The run-location selector UI (which could request an agent) is
+                // a later S-phase; today the resolver always returns local.
+                return Err(TerminalError::InternalError(format!(
+                    "agent-hosted HTTP monitors are not yet supported (requested '{agent}')"
+                )));
+            }
+        }
+
         let app = self
             .app_handle()
             .ok_or_else(|| TerminalError::InternalError("app handle not available".into()))?;
         let id = config.id.clone();
-        let handle = http_monitor::start_monitor(config, app);
+
+        let mut service = HttpMonitorService::new();
+        // Subscribe before starting so the bridge cannot miss the first check.
+        let events = service.subscribe_events();
+        service.start_with(config);
+        spawn_event_bridge(app, events);
+
         if let Ok(mut monitors) = self.http_monitors.lock() {
-            monitors.insert(id.clone(), handle);
+            monitors.insert(id.clone(), service);
         }
         Ok(id)
     }
@@ -157,17 +205,16 @@ impl NetworkManager {
     /// (or the next launch) can bring it back. Use [`remove_http_monitor`] to
     /// truly delete it.
     pub fn stop_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
-        let monitors = self
+        let mut monitors = self
             .http_monitors
             .lock()
             .map_err(|_| TerminalError::InternalError("http monitor lock poisoned".into()))?;
-        match monitors.get(monitor_id) {
-            Some(handle) => {
-                // Cancel the poll loop but leave the handle in the map so the
-                // monitor stays listed as `running: false`. `paused` is cleared
-                // so a later Resume starts clean.
-                handle.cancel.cancel();
-                handle.paused.store(false, Ordering::SeqCst);
+        match monitors.get_mut(monitor_id) {
+            Some(service) => {
+                // Cancel the poll loop but leave the service in the map so the
+                // monitor stays listed as `running: false`. Its event channel
+                // stays open, so a later Resume keeps the same bridge task.
+                service.shutdown();
                 Ok(())
             }
             None => Err(TerminalError::NotFound(format!("monitor '{monitor_id}'"))),
@@ -184,8 +231,10 @@ impl NetworkManager {
             .lock()
             .map_err(|_| TerminalError::InternalError("http monitor lock poisoned".into()))?;
         match monitors.remove(monitor_id) {
-            Some(handle) => {
-                handle.cancel.cancel();
+            Some(mut service) => {
+                // Cancel the poll loop; dropping the service also drops its event
+                // channel sender, so the bridge task exits cleanly.
+                service.shutdown();
                 drop(monitors);
                 // Best-effort disk cleanup; a persistence error must not leave
                 // the handle re-inserted.
@@ -206,8 +255,8 @@ impl NetworkManager {
             .lock()
             .map_err(|_| TerminalError::InternalError("http monitor lock poisoned".into()))?;
         match monitors.get(monitor_id) {
-            Some(handle) => {
-                handle.paused.store(true, Ordering::SeqCst);
+            Some(service) => {
+                service.pause();
                 debug!(monitor_id, "Paused HTTP monitor");
                 Ok(())
             }
@@ -221,34 +270,21 @@ impl NetworkManager {
     /// - A **stopped** monitor (loop cancelled, but still listed) is re-spawned
     ///   with a fresh cancellation token, reusing the same config/id.
     pub fn resume_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
-        // Take the current handle so we can decide whether to un-pause in place
-        // or re-spawn a stopped loop. Clone the config first; drop the lock
-        // before re-spawning (spawn re-locks the map).
-        let stopped_config = {
-            let mut monitors = self
-                .http_monitors
-                .lock()
-                .map_err(|_| TerminalError::InternalError("http monitor lock poisoned".into()))?;
-            match monitors.get(monitor_id) {
-                Some(handle) if !handle.cancel.is_cancelled() => {
-                    // Alive (running or paused): clear the pause flag in place.
-                    handle.paused.store(false, Ordering::SeqCst);
-                    debug!(monitor_id, "Resumed paused HTTP monitor");
-                    None
-                }
-                Some(_) => {
-                    // Stopped: remove the dead handle and re-spawn below.
-                    monitors.remove(monitor_id).map(|h| h.config)
-                }
-                None => return Err(TerminalError::NotFound(format!("monitor '{monitor_id}'"))),
+        let mut monitors = self
+            .http_monitors
+            .lock()
+            .map_err(|_| TerminalError::InternalError("http monitor lock poisoned".into()))?;
+        match monitors.get_mut(monitor_id) {
+            Some(service) => {
+                // The service resumes in place: a paused loop clears its flag; a
+                // stopped loop is re-spawned on the same event channel, so the
+                // existing bridge task keeps forwarding without re-subscribing.
+                service.resume();
+                debug!(monitor_id, "Resumed HTTP monitor");
+                Ok(())
             }
-        };
-
-        if let Some(config) = stopped_config {
-            self.spawn_http_monitor(config)?;
-            debug!(monitor_id, "Restarted stopped HTTP monitor");
+            None => Err(TerminalError::NotFound(format!("monitor '{monitor_id}'"))),
         }
-        Ok(())
     }
 
     // ── HTTP Monitor persistence ────────────────────────────────────────────
@@ -304,8 +340,8 @@ impl NetworkManager {
             error!("http monitor lock poisoned during stop_all");
             return;
         };
-        for (id, handle) in monitors.drain() {
-            handle.cancel.cancel();
+        for (id, mut service) in monitors.drain() {
+            service.shutdown();
             debug!(monitor_id = %id, "Stopped HTTP monitor during teardown");
         }
     }
@@ -315,20 +351,7 @@ impl NetworkManager {
         let Ok(monitors) = self.http_monitors.lock() else {
             return Vec::new();
         };
-        monitors
-            .values()
-            .map(|h| {
-                let last_result = h.last_result.lock().ok().and_then(|g| g.clone());
-                let running = !h.cancel.is_cancelled();
-                HttpMonitorState {
-                    config: h.config.clone(),
-                    running,
-                    // A stopped loop can't be paused; only report paused while alive.
-                    paused: running && h.paused.load(Ordering::SeqCst),
-                    last_result,
-                }
-            })
-            .collect()
+        monitors.values().filter_map(|s| s.state()).collect()
     }
 
     // ── WoL Devices ─────────────────────────────────────────────────────────
@@ -376,17 +399,53 @@ impl Default for NetworkManager {
     }
 }
 
+/// Build the desktop [`ServiceRegistry`] with the run-location-routable services.
+///
+/// The HTTP monitor is the S2 pilot (#2157) — the first existing service lifted
+/// onto the core [`Service`](termihub_core::service::Service) trait.
+fn build_service_registry() -> ServiceRegistry {
+    let mut registry = ServiceRegistry::new();
+    registry.register(
+        http_monitor::SERVICE_ID,
+        http_monitor::DISPLAY_NAME,
+        "activity",
+        Box::new(|| Box::new(HttpMonitorService::new())),
+    );
+    registry
+}
+
+/// Bridge a monitor's core [`EventChannel`](termihub_core::service::EventChannel)
+/// to the desktop's Tauri emitter.
+///
+/// Forwards each `check` [`ServiceEvent`](termihub_core::service::ServiceEvent)
+/// as a [`HTTP_MONITOR_CHECK_EVENT`] Tauri event so the frontend receives the
+/// same `HttpCheckResult` payload as before the lift. The task ends when the
+/// service is dropped (channel closed).
+fn spawn_event_bridge(app: AppHandle, mut events: termihub_core::service::ServiceEventReceiver) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(event) if event.kind == http_monitor::CHECK_EVENT_KIND => {
+                    let _ = app.emit(HTTP_MONITOR_CHECK_EVENT, event.payload);
+                }
+                Ok(_) => {}
+                // Advisory events: a lagging bridge drops the oldest and keeps going.
+                Err(RecvError::Lagged(_)) => continue,
+                // All senders dropped (service removed) — nothing more to forward.
+                Err(RecvError::Closed) => break,
+            }
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http_monitor::HttpCheckResult;
 
-    use std::sync::atomic::AtomicBool;
-
-    /// Insert a bare monitor handle (no spawned task) so `stop_all_http_monitors`
-    /// can be exercised without a live Tauri `AppHandle`. Returns the id plus the
-    /// handle's cancellation token and `paused` flag so tests can assert on them.
-    fn insert_dummy_monitor(mgr: &NetworkManager) -> (String, CancellationToken, Arc<AtomicBool>) {
+    /// Insert a monitor service in the `Running` state (no real poll loop, so no
+    /// Tauri app or network needed) so manager bookkeeping can be exercised.
+    /// Returns the monitor id.
+    fn insert_dummy_monitor(mgr: &NetworkManager) -> String {
         let config = HttpMonitorConfig::new(
             "https://example.com".into(),
             30_000,
@@ -397,45 +456,47 @@ mod tests {
         insert_dummy_monitor_config(mgr, config)
     }
 
-    /// Insert a dummy handle for a specific config (so persistence + map stay in
-    /// sync in tests that also persist the config).
-    fn insert_dummy_monitor_config(
-        mgr: &NetworkManager,
-        config: HttpMonitorConfig,
-    ) -> (String, CancellationToken, Arc<AtomicBool>) {
+    /// Insert a running monitor service for a specific config (so persistence +
+    /// map stay in sync in tests that also persist the config).
+    fn insert_dummy_monitor_config(mgr: &NetworkManager, config: HttpMonitorConfig) -> String {
         let id = config.id.clone();
-        let cancel = CancellationToken::new();
-        let paused = Arc::new(AtomicBool::new(false));
-        let handle = HttpMonitorHandle {
-            config,
-            cancel: cancel.clone(),
-            paused: Arc::clone(&paused),
-            last_result: Arc::new(Mutex::new(None::<HttpCheckResult>)),
-        };
         mgr.http_monitors
             .lock()
             .expect("http monitor lock")
-            .insert(id.clone(), handle);
-        (id, cancel, paused)
+            .insert(id.clone(), HttpMonitorService::test_running(config));
+        id
     }
 
     #[test]
     fn stop_all_http_monitors_cancels_and_clears() {
         let mgr = NetworkManager::new();
-        let (_id1, token1, _p1) = insert_dummy_monitor(&mgr);
-        let (_id2, token2, _p2) = insert_dummy_monitor(&mgr);
+        let _id1 = insert_dummy_monitor(&mgr);
+        let _id2 = insert_dummy_monitor(&mgr);
 
-        assert_eq!(mgr.list_http_monitors().len(), 2);
-        assert!(!token1.is_cancelled());
-        assert!(!token2.is_cancelled());
+        let listed = mgr.list_http_monitors();
+        assert_eq!(listed.len(), 2);
+        assert!(listed.iter().all(|m| m.running));
 
         mgr.stop_all_http_monitors();
 
-        // Every monitor's cancellation token is fired...
-        assert!(token1.is_cancelled());
-        assert!(token2.is_cancelled());
-        // ...and the map is emptied so nothing lingers.
+        // Every monitor is stopped and drained so nothing lingers.
         assert!(mgr.list_http_monitors().is_empty());
+    }
+
+    #[test]
+    fn http_monitor_registered_in_service_registry() {
+        // The S2 pilot registers the HTTP monitor in the desktop ServiceRegistry
+        // with the run-location-routable capabilities.
+        let mgr = NetworkManager::new();
+        let services = mgr.available_services();
+        let monitor = services
+            .iter()
+            .find(|s| s.service_id == http_monitor::SERVICE_ID)
+            .expect("http_monitor must be registered");
+        assert_eq!(monitor.display_name, http_monitor::DISPLAY_NAME);
+        assert!(monitor.capabilities.emits_events);
+        // A network probe may run on an agent — not desktop-only.
+        assert!(!monitor.capabilities.desktop_only);
     }
 
     #[test]
@@ -537,14 +598,12 @@ mod tests {
             200,
             5_000,
         );
-        let (id, token, _paused) = insert_dummy_monitor_config(&mgr, cfg.clone());
+        let id = insert_dummy_monitor_config(&mgr, cfg.clone());
         mgr.persist_monitor_config(cfg).expect("persist");
 
         mgr.stop_http_monitor(&id).expect("stop");
 
-        // The poll loop is cancelled...
-        assert!(token.is_cancelled());
-        // ...but the monitor stays listed as not running...
+        // The poll loop is cancelled but the monitor stays listed as not running...
         let listed = mgr.list_http_monitors();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].config.id, id);
@@ -567,12 +626,11 @@ mod tests {
             200,
             5_000,
         );
-        let (id, token, _paused) = insert_dummy_monitor_config(&mgr, cfg.clone());
+        let id = insert_dummy_monitor_config(&mgr, cfg.clone());
         mgr.persist_monitor_config(cfg).expect("persist");
 
         mgr.remove_http_monitor(&id).expect("remove");
 
-        assert!(token.is_cancelled());
         assert!(mgr.list_http_monitors().is_empty());
         assert!(mgr.load_persisted_monitor_configs().is_empty());
     }
@@ -599,18 +657,18 @@ mod tests {
             200,
             5_000,
         );
-        let (id, token, paused) = insert_dummy_monitor_config(&mgr, cfg.clone());
+        let id = insert_dummy_monitor_config(&mgr, cfg.clone());
         mgr.persist_monitor_config(cfg).expect("persist");
 
-        assert!(!paused.load(Ordering::SeqCst));
+        // Initially running, not paused.
+        let listed = mgr.list_http_monitors();
+        assert!(listed[0].running);
+        assert!(!listed[0].paused);
 
         mgr.pause_http_monitor(&id).expect("pause");
 
-        // The poll body is suspended...
-        assert!(paused.load(Ordering::SeqCst));
-        // ...but the loop is not cancelled and the monitor is still listed as
-        // running and paused, with its config kept.
-        assert!(!token.is_cancelled());
+        // The poll body is suspended, but the loop is not cancelled and the
+        // monitor is still listed as running and paused, with its config kept.
         let listed = mgr.list_http_monitors();
         assert_eq!(listed.len(), 1);
         assert!(listed[0].running);
@@ -633,15 +691,14 @@ mod tests {
             5_000,
         );
         let cfg_id = cfg.id.clone();
-        let (id, _token, paused) = insert_dummy_monitor_config(&mgr, cfg.clone());
+        let id = insert_dummy_monitor_config(&mgr, cfg.clone());
         mgr.persist_monitor_config(cfg).expect("persist");
 
         mgr.pause_http_monitor(&id).expect("pause");
-        assert!(paused.load(Ordering::SeqCst));
+        assert!(mgr.list_http_monitors()[0].paused);
 
         mgr.resume_http_monitor(&id).expect("resume");
 
-        assert!(!paused.load(Ordering::SeqCst));
         let listed = mgr.list_http_monitors();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].config.id, cfg_id);
