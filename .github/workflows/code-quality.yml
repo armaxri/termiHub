@@ -205,7 +205,17 @@ jobs:
       - name: Run Rust tests
         run: cargo test --workspace --all-features
 
+      # Run coverage-gated tests once (Ubuntu) to enforce the vitest coverage
+      # floors from vitest.config.ts (#2066). Coverage is computed from the
+      # platform-independent TS sources, so gating on a single leg avoids
+      # per-platform coverage drift while still failing CI on a real drop. The
+      # other legs run the plain suite so every platform still exercises the tests.
+      - name: Run frontend tests with coverage
+        if: matrix.os == 'ubuntu-latest'
+        run: pnpm test:coverage
+
       - name: Run frontend tests
+        if: matrix.os != 'ubuntu-latest'
         run: pnpm test
 
   # Python system-test harness — fast "machinery" suite (issue #801).
