@@ -143,6 +143,7 @@ impl AgentServiceRegistry {
     }
 
     /// Number of currently-hosted instances.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub async fn active_count(&self) -> usize {
         self.running.lock().await.len()
     }

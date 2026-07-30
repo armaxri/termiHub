@@ -58,7 +58,6 @@ pub fn build_service_registry() -> ServiceRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::service::Service;
 
     #[test]
     fn registry_exposes_the_three_server_types() {

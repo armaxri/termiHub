@@ -38,9 +38,9 @@ use crate::protocol::methods::{
     FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
     MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
     NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
-    SessionAttachParams, SessionCloseParams, SessionCreateParams, SessionCreateResult,
     ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
-    ServiceStopParams, ServiceStopResult, SessionDetachParams, SessionGetBufferParams,
+    ServiceStopParams, ServiceStopResult, SessionAttachParams, SessionCloseParams,
+    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionGetBufferParams,
     SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
     SessionResizeParams, TunnelForwardSpec, TunnelStartParams, TunnelStartResult,
     TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
@@ -48,11 +48,11 @@ use crate::protocol::methods::{
 };
 use crate::registry_daemon::client::RegistryClient;
 use crate::registry_daemon::protocol::{BroadcastEnvelope, ClientRecord};
+use crate::service::AgentServiceRegistry;
 use crate::session::definitions::{Connection, ConnectionStoreApi, Folder};
 use crate::session::manager::{
     DeferredUpdateError, DeferredUpdateOutcome, SessionCreateError, SessionManagerApi, MAX_SESSIONS,
 };
-use crate::service::AgentServiceRegistry;
 use crate::tunnel::AgentTunnelRegistry;
 use crate::update::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 
@@ -3712,13 +3712,31 @@ mod tests {
             "agent-hosted HTTP server must accept connections"
         );
 
-        let status = dispatch(&handler, "service.status", json!({ "instanceId": "srv-1" }), 3).await;
+        let status = dispatch(
+            &handler,
+            "service.status",
+            json!({ "instanceId": "srv-1" }),
+            3,
+        )
+        .await;
         assert_eq!(status["result"]["running"], true, "{status}");
 
-        let stop = dispatch(&handler, "service.stop", json!({ "instanceId": "srv-1" }), 4).await;
+        let stop = dispatch(
+            &handler,
+            "service.stop",
+            json!({ "instanceId": "srv-1" }),
+            4,
+        )
+        .await;
         assert_eq!(stop["result"]["stopped"], true, "{stop}");
 
-        let after = dispatch(&handler, "service.status", json!({ "instanceId": "srv-1" }), 5).await;
+        let after = dispatch(
+            &handler,
+            "service.status",
+            json!({ "instanceId": "srv-1" }),
+            5,
+        )
+        .await;
         assert_eq!(after["result"]["running"], false, "{after}");
     }
 
@@ -3734,7 +3752,11 @@ mod tests {
             2,
         )
         .await;
-        assert_eq!(result["error"]["code"], errors::SERVICE_START_FAILED, "{result}");
+        assert_eq!(
+            result["error"]["code"],
+            errors::SERVICE_START_FAILED,
+            "{result}"
+        );
     }
 
     #[tokio::test]

@@ -205,19 +205,13 @@ impl EmbeddedServerService {
         match config.server_type {
             ServerType::Tftp => {
                 let socket = std::net::UdpSocket::bind(&addr).map_err(|e| {
-                    EmbeddedServerError::new(format!(
-                        "Port {} is already in use: {e}",
-                        config.port
-                    ))
+                    EmbeddedServerError::new(format!("Port {} is already in use: {e}", config.port))
                 })?;
                 drop(socket);
             }
             _ => {
                 let listener = std::net::TcpListener::bind(&addr).map_err(|e| {
-                    EmbeddedServerError::new(format!(
-                        "Port {} is already in use: {e}",
-                        config.port
-                    ))
+                    EmbeddedServerError::new(format!("Port {} is already in use: {e}", config.port))
                 })?;
                 drop(listener);
             }
@@ -613,8 +607,8 @@ pub fn auto_start_error_state(server_id: &str, error: &str) -> ServerState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
     use crate::service::ServiceEventReceiver;
+    use std::sync::mpsc;
 
     fn http_config(port: u16) -> EmbeddedServerConfig {
         EmbeddedServerConfig {
