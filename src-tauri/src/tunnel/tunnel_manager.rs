@@ -1521,7 +1521,6 @@ mod tests {
     use std::time::Duration;
 
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
-    use super::super::local_forward::ForwarderStats;
     use super::{
         backoff_delay, clear_last_error, last_error_for, record_last_error, resolve_managed_arc,
         resolve_tunnel_host, resting_status, run_reconnect_loop, snapshot_active_stats,
@@ -1532,6 +1531,7 @@ mod tests {
     use crate::tunnel::config::TunnelStatus;
     use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
+    use termihub_core::tunnel::local_forward::ForwarderStats;
     use tokio_util::sync::CancellationToken;
 
     /// Stand-in for a pooled `Arc<SshSession>` that records when the underlying
