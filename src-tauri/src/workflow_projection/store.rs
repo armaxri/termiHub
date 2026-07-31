@@ -18,13 +18,13 @@
 //! `workflow-run@<clientId>` region per client — mirroring `restore-cohort`,
 //! `broadcast`, and `layout`.
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative after the render + mutation cut (#2243)
 //!
-//! This step is deliberately **not authoritative**. The store exists, accepts
-//! `workflow.*` intents, and projects diffs, but nothing in the live UI
-//! subscribes to or renders a `workflow-run` region, and no frontend code
-//! dispatches `workflow.*` intents yet. The `appStore` run reducers, progress
-//! toast, and output panel remain authoritative.
+//! The shadow landed this store; the frontend render + mutation cut then made it
+//! authoritative — the UI renders the run status from the projected region and
+//! dispatches the `workflow.*` intents. The `appStore` run reducers are retained as
+//! the parity-safe fallback (removal is a later step), so the local path still runs
+//! and takes over on any dispatch failure.
 //!
 //! ## What stays frontend
 //!
