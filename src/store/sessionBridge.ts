@@ -21,20 +21,19 @@
  * `terminalAutoReconnect`) is keyed by tab id. So the bridge uses the tab id as
  * the region's opaque session key; the store treats it as an opaque string.
  *
- * # Strangler safety — flag-gated, off by default, local fallback retained
+ * # Strangler safety — flag-gated, on by default, local fallback retained
  *
- * The cut is gated by {@link sessionIntentsEnabled} — **off by default**. When
- * off, `appStore` drives the lifecycle exactly as it always has (the local
- * `setTimeout` reconnect loop included). When on, the transitions additionally
- * dispatch `session.*` intents and the backend timer drives the reconnect
- * schedule; the local path stays in place as the render source (this step) and
- * as a resilience fallback — any dispatch/subscription failure is logged and the
- * local behaviour continues, so a backend hiccup can never break connect or
- * reconnect. The flag flips to on (and is GUI-verified) in a later
- * coordinator-managed step, exactly as the layout mutation cut did (#2184).
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_SESSION_INTENTS__` or
- * `localStorage["termihub.sessionIntents"]`.
+ * The cut is gated by {@link sessionIntentsEnabled} — **on by default** (#2152
+ * Phase 4). When on, the transitions dispatch `session.*` intents and the backend
+ * timer drives the reconnect schedule; the local path stays in place as the render
+ * source and as a resilience fallback — any dispatch/subscription failure is
+ * logged and the local behaviour continues, so a backend hiccup can never break
+ * connect or reconnect. When off, `appStore` drives the lifecycle purely locally
+ * (the local `setTimeout` reconnect loop included) — the rollback / resilience
+ * path. The flip mirrors the layout mutation cut (#2184). Overridable at runtime
+ * for rollback / tests via `window.__TERMIHUB_SESSION_INTENTS__` or
+ * `localStorage["termihub.sessionIntents"]` (set `"false"` to restore the pre-cut
+ * local-mutation path).
  */
 
 import {
@@ -123,11 +122,16 @@ export function setSessionIntentsEnabled(value: boolean | null): void {
  * backend timer driver drive the reconnect loop — instead of `appStore` driving
  * the lifecycle purely locally.
  *
- * **Off by default.** The local path stays authoritative for rendering this step
- * and as a resilience fallback. Overridable at runtime via
+ * **On by default** (#2152 Phase 4). The backend `SessionLifecycleStore` is
+ * authoritative for status and the backend timer drives the reconnect schedule;
+ * the local path stays in place as the render source and as a resilience fallback
+ * (any dispatch/subscription failure falls back to the local lifecycle). The flip
+ * was taken on the automated tests — cut-vs-local parity plus deterministic
+ * backend-timer coverage plus the instant local fallback — mirroring the layout
+ * mutation cut (#2184). Overridable at runtime via
  * `window.__TERMIHUB_SESSION_INTENTS__` or
- * `localStorage["termihub.sessionIntents"]` (set `"true"` to opt in for a dev
- * build; `"false"` to force off).
+ * `localStorage["termihub.sessionIntents"]` (set `"false"` to restore the pre-cut
+ * local-mutation path; `"true"` to force on).
  */
 export function sessionIntentsEnabled(): boolean {
   if (flagOverride !== null) return flagOverride;
@@ -144,7 +148,7 @@ export function sessionIntentsEnabled(): boolean {
   } catch {
     // A missing/blocked window or storage just means "use the default".
   }
-  return false;
+  return true;
 }
 
 // ── Render-cut feature flag (step 3 #2204, on by default) ──────────────────────
