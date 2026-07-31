@@ -288,6 +288,7 @@ import { mirrorMonitorIntent } from "@/store/systemMonitorBridge";
 import { mirrorAgentIntent } from "@/store/agentsBridge";
 import { mirrorConnectionIntent } from "@/store/connectionsBridge";
 import { mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
+import { mirrorTransferIntent } from "@/store/transfersBridge";
 import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { mirrorBroadcastIntent } from "@/store/broadcastBridge";
 import {
@@ -6007,22 +6008,33 @@ export const useAppStore = create<AppState>((set, get, store) => {
         return { transferQueue: { ...state.transferQueue, [id]: { ...existing, ...patch } } };
       }),
 
-    removeTransfer: (id: string) =>
+    removeTransfer: (id: string) => {
       set((state) => {
         if (!(id in state.transferQueue)) return {};
         return { transferQueue: omitKey(state.transferQueue, id) };
-      }),
+      });
+      // Mutation cut (#2229): mirror the removal into the authoritative store.
+      // `transfer.remove` is idempotent server-side, so a removal of a row that
+      // was never present is a harmless no-op in both slices (parity holds).
+      mirrorTransferIntent("transfer.remove", { id });
+    },
 
-    clearCompleted: () =>
+    clearCompleted: () => {
       set((state) => ({
         transferQueue: Object.fromEntries(
           Object.entries(state.transferQueue).filter(([, t]) => t.state !== "completed")
         ),
-      })),
+      }));
+      mirrorTransferIntent("transfer.clearCompleted", {});
+    },
 
-    setTransferQueueMinimized: (minimized: boolean) => set({ transferQueueMinimized: minimized }),
+    setTransferQueueMinimized: (minimized: boolean) => {
+      set({ transferQueueMinimized: minimized });
+      mirrorTransferIntent("transfer.setMinimized", { minimized });
+    },
 
-    applyTransferProgressToQueue: (progress: TransferProgress) =>
+    applyTransferProgressToQueue: (progress: TransferProgress) => {
+      let applied = false;
       set((state) => {
         // Ignore transfers whose session was handed to another window (#1951) so
         // a moved-away queue row is not re-adopted from a broadcast event.
@@ -6031,10 +6043,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
         if (!windowOwnsTransferSession(state, progress.sessionId)) return {};
         const prev = state.transferQueue[progress.transferId];
         const entry = transferEntryFromProgress(progress, prev, Date.now());
+        applied = true;
         return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
-      }),
+      });
+      // Only mirror when the local reducer actually folded the event: the
+      // window-ownership gates (#1951 / #1964) are frontend presentation the
+      // backend store does not model, so dispatching for a released/unowned
+      // session would advance the shared region past this window's slice.
+      if (applied) mirrorTransferIntent("transfer.progress", { progress });
+    },
 
-    seedTransferQueue: (seed: TransferSeed) =>
+    seedTransferQueue: (seed: TransferSeed) => {
       set((state) => {
         // Idempotent: never overwrite a row an event already advanced (#1632).
         if (seed.id in state.transferQueue) return {};
@@ -6048,9 +6067,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
           transferQueue: { ...state.transferQueue, [entry.id]: entry },
           releasedTransferSessions,
         };
-      }),
+      });
+      // Mutation cut (#2229): mirror the seed. `transfer.seed` is idempotent
+      // server-side (it never overwrites an already-advanced row), so it stays a
+      // no-op in the region exactly when it is a no-op in `appStore`.
+      mirrorTransferIntent("transfer.seed", { seed });
+    },
 
-    reconcileTransferQueue: (snapshots: TransferSnapshot[]) =>
+    reconcileTransferQueue: (snapshots: TransferSnapshot[]) => {
       set((state) => {
         const now = Date.now();
         let next: Record<string, TransferEntry> | null = null;
@@ -6071,7 +6095,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           next[snap.transferId] = transferEntryFromSnapshot(snap, prev, now);
         }
         return next ? { transferQueue: next } : {};
-      }),
+      });
+      // Mutation cut (#2229): mirror the reconcile. `transfer.reconcile` applies
+      // the same conservative terminal-only settle over an already-mirrored
+      // region, so it settles exactly the rows the local reducer did.
+      mirrorTransferIntent("transfer.reconcile", { snapshots });
+    },
 
     retrySftp: async () => {
       const config = useAppStore.getState().sftpLastConfig;
