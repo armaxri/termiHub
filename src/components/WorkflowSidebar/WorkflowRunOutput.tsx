@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Loader2, CheckCircle2, XCircle, Ban, X, Square, Terminal } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
 import { Button, Tooltip } from "@/components/ui";
 import type { WorkflowRunOutputState } from "@/store/appStore";
 import "./WorkflowRunOutput.css";
@@ -45,7 +46,10 @@ function describeOutcome(run: WorkflowRunOutputState): string | null {
  * backend channel. Nothing renders when there is no run output to show.
  */
 export function WorkflowRunOutput() {
-  const run = useAppStore((s) => s.workflowRunOutput);
+  // Render cut (#2243): the panel's identity + status are sourced from the
+  // projected `workflow-run` region when it faithfully mirrors appStore, else from
+  // appStore verbatim; the streamed lines/exitCode/timedOut always stay frontend.
+  const { workflowRunOutput: run } = useProjectedWorkflowRun();
   const dismiss = useAppStore((s) => s.dismissWorkflowRunOutput);
   const cancelRun = useAppStore((s) => s.cancelWorkflowRun);
 

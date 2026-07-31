@@ -293,6 +293,13 @@ import {
   mirrorRestoreSettle,
   restoreRenderFromProjectionEnabled,
 } from "@/store/restoreCohortBridge";
+import {
+  mirrorWorkflowDismissOutput,
+  mirrorWorkflowOutputOpened,
+  mirrorWorkflowRunSettled,
+  mirrorWorkflowRunStarted,
+  mirrorWorkflowStepAdvanced,
+} from "@/store/workflowRunBridge";
 
 export type SidebarView =
   | "connections"
@@ -7953,6 +7960,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
             timedOut: false,
           },
         });
+        // Mutation + render cut (#2243): mirror the panel open (its status seam)
+        // to the store + region. The streamed lines/exitCode/timedOut stay
+        // frontend (#1865) — the store models only the panel's identity + status.
+        mirrorWorkflowOutputOpened({ workflowId, workflowName: workflow.name, program, args });
 
         // Reuse the exact streamed-output events #1857 already emits (keyed by
         // run id): each line lands in the LogViewer AND the inline surface.
@@ -8044,6 +8055,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // recreated lazily only if this run spawns a local process (#1865).
         workflowRunOutput: null,
       });
+      // Mutation + render cut (#2243): mirror the run start to the backend
+      // `WorkflowRunStore` and the render region. Off/failure falls back to the
+      // local reducers, which already ran above.
+      mirrorWorkflowRunStarted({
+        workflowId,
+        workflowName: workflow.name,
+        tabId: targetTabId,
+        total,
+      });
 
       const handle = runWorkflowSteps(
         workflow.steps,
@@ -8057,6 +8077,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
                 ? { workflowRun: { ...s.workflowRun, completed } }
                 : {}
             );
+            // Mutation + render cut (#2243): mirror the progress to the store +
+            // region (guarded server-side to the still-current run).
+            mirrorWorkflowStepAdvanced({ workflowId, tabId: targetTabId, completed });
             toast.loading(`Running workflow "${workflow.name}"…`, {
               id: toastId,
               description: `${completed} / ${stepTotal} steps`,
@@ -8085,6 +8108,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
               }
             : null,
         }));
+        // Mutation + render cut (#2243): mirror the run's terminal outcome to the
+        // store + region (settles the run and stamps the panel status). Only for
+        // the still-current run — matching the `activeWorkflowRun === handle` guard.
+        mirrorWorkflowRunSettled(
+          result.status,
+          result.status === "failed" ? result.error : undefined
+        );
       }
 
       if (result.status === "completed") {
@@ -8112,6 +8142,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     workflowRunOutput: null,
     dismissWorkflowRunOutput: () => {
       set({ workflowRunOutput: null });
+      // Mutation + render cut (#2243): mirror the dismissal to the store + region.
+      mirrorWorkflowDismissOutput();
     },
 
     localProcessPrompt: null,
