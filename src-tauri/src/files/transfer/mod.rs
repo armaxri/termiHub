@@ -23,9 +23,9 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use russh_sftp::client::SftpSession as RusshSftp;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
+use termihub_core::backends::ssh::SftpTransferChannel;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -291,13 +291,13 @@ enum CopyOutcome {
 
 /// Run a download (remote → local) on a dedicated SFTP channel.
 ///
-/// `sftp` is a freshly-opened SFTP session bound to its own channel, so this
-/// copy never touches the browsing session's `Mutex`. On cancel the partial
-/// local file is removed; on error a terminal `error` event is emitted. In all
-/// terminal cases the registry entry is dropped.
+/// `channel` is a freshly-opened dedicated [`SftpTransferChannel`] bound to its
+/// own SSH channel, so this copy never touches the browsing session's `Mutex`.
+/// On cancel the partial local file is removed; on error a terminal `error`
+/// event is emitted. In all terminal cases the registry entry is dropped.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_download(
-    sftp: RusshSftp,
+    channel: SftpTransferChannel,
     remote_path: String,
     local_path: String,
     ctx: TransferContext,
@@ -305,7 +305,7 @@ pub async fn run_download(
     registry: TransferRegistry,
     sink: ProgressSink,
 ) {
-    let outcome = download_inner(&sftp, &remote_path, &local_path, &ctx, &token, &sink).await;
+    let outcome = download_inner(&channel, &remote_path, &local_path, &ctx, &token, &sink).await;
     finish_transfer(outcome, &ctx, &registry, &sink, || {
         // Cleanup: remove the partial local file (best-effort).
         let _ = std::fs::remove_file(&local_path);
@@ -313,15 +313,15 @@ pub async fn run_download(
 }
 
 async fn download_inner(
-    sftp: &RusshSftp,
+    channel: &SftpTransferChannel,
     remote_path: &str,
     local_path: &str,
     ctx: &TransferContext,
     token: &CancellationToken,
     sink: &ProgressSink,
 ) -> Result<CopyOutcome, TerminalError> {
-    let mut remote = sftp
-        .open(remote_path)
+    let mut remote = channel
+        .open_read(remote_path)
         .await
         .map_err(|e| TerminalError::SshError(format!("open remote file: {e}")))?;
     let mut local = tokio::fs::File::create(local_path)
@@ -334,7 +334,7 @@ async fn download_inner(
 /// partial remote file is removed; on error a terminal `error` event is emitted.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_upload(
-    sftp: RusshSftp,
+    channel: SftpTransferChannel,
     local_path: String,
     remote_path: String,
     ctx: TransferContext,
@@ -342,21 +342,21 @@ pub async fn run_upload(
     registry: TransferRegistry,
     sink: ProgressSink,
 ) {
-    let outcome = upload_inner(&sftp, &local_path, &remote_path, &ctx, &token, &sink).await;
-    let sftp_for_cleanup = sftp;
+    let outcome = upload_inner(&channel, &local_path, &remote_path, &ctx, &token, &sink).await;
+    let channel_for_cleanup = channel;
     let remote_for_cleanup = remote_path.clone();
     // Remove the partial remote file on cancel/error (best-effort).
     let cleanup_needed = matches!(outcome, Ok(CopyOutcome::Cancelled { .. }) | Err(_));
     finish_transfer(outcome, &ctx, &registry, &sink, || {});
     if cleanup_needed {
-        if let Err(e) = sftp_for_cleanup.remove_file(&remote_for_cleanup).await {
+        if let Err(e) = channel_for_cleanup.remove_file(&remote_for_cleanup).await {
             debug!(error = %e, "could not remove partial remote upload (best-effort)");
         }
     }
 }
 
 async fn upload_inner(
-    sftp: &RusshSftp,
+    channel: &SftpTransferChannel,
     local_path: &str,
     remote_path: &str,
     ctx: &TransferContext,
@@ -366,8 +366,8 @@ async fn upload_inner(
     let mut local = tokio::fs::File::open(local_path)
         .await
         .map_err(|e| TerminalError::SshError(format!("open local file: {e}")))?;
-    let mut remote = sftp
-        .create(remote_path)
+    let mut remote = channel
+        .create_write(remote_path)
         .await
         .map_err(|e| TerminalError::SshError(format!("create remote file: {e}")))?;
     copy_chunked(&mut local, &mut remote, ctx, token, sink).await

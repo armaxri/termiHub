@@ -21,7 +21,7 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser};
+use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser, SftpTransferChannel};
 use termihub_core::config::SshConfig;
 use termihub_core::files::FileBrowser;
 use termihub_lib::files::sftp::{SftpManager, Writability};
@@ -154,9 +154,9 @@ async fn connect() -> (SftpManager, Arc<SftpFileBrowser>) {
     (manager, session)
 }
 
-/// Open a dedicated SFTP channel off `session` (mirrors the command layer),
-/// awaited directly on the async core browser.
-async fn open_dedicated(session: Arc<SftpFileBrowser>) -> russh_sftp::client::SftpSession {
+/// Open a dedicated [`SftpTransferChannel`] off `session` (mirrors the command
+/// layer), awaited directly on the async core browser.
+async fn open_dedicated(session: Arc<SftpFileBrowser>) -> SftpTransferChannel {
     session
         .open_dedicated_channel()
         .await

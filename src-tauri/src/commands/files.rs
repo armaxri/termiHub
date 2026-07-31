@@ -1,6 +1,8 @@
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
-use termihub_core::backends::ssh::{parse_ssh_settings, SftpAdvancedOps, SftpFileBrowser};
+use termihub_core::backends::ssh::{
+    parse_ssh_settings, SftpAdvancedOps, SftpFileBrowser, SftpTransferChannel,
+};
 use termihub_core::files::FileBrowser;
 use tracing::{debug, info};
 
@@ -108,14 +110,14 @@ pub async fn sftp_check_writable(
         .map_err(sftp_op_error)
 }
 
-/// Open a dedicated SFTP channel off `browser` and (for downloads) stat the
-/// remote size. Both are awaited directly on the async core browser — no
-/// `spawn_blocking` / `block_in_place` bridging is needed. Returns the dedicated
-/// session plus the known total size (`0` = indeterminate).
+/// Open a dedicated [`SftpTransferChannel`] off `browser` and (for downloads)
+/// stat the remote size. Both are awaited directly on the async core browser —
+/// no `spawn_blocking` / `block_in_place` bridging is needed. Returns the
+/// dedicated channel plus the known total size (`0` = indeterminate).
 async fn open_transfer_channel(
     browser: std::sync::Arc<SftpFileBrowser>,
     remote_path: Option<String>,
-) -> Result<(russh_sftp::client::SftpSession, u64), TerminalError> {
+) -> Result<(SftpTransferChannel, u64), TerminalError> {
     let dedicated = browser
         .open_dedicated_channel()
         .await
