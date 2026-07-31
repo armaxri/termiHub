@@ -5,6 +5,11 @@
 mod agents_projection;
 mod commands;
 mod connection;
+/// Shadow connections-tree authority (#2225, Phase 5 of #2139/#2153): the shared
+/// `connections` projection region + `connection.*` intents, wrapping the
+/// existing saved-connection authority (`crate::connection`). Registered and
+/// served but not yet driving the live UI — see [`connections_projection`].
+mod connections_projection;
 mod credential;
 mod embedded_servers;
 /// File-system access: local FS, SFTP sessions, and the cancellable transfer
@@ -714,6 +719,9 @@ pub fn run() {
                 // Shadow AgentsStore (#2226, Phase 5): the shared `agents` region
                 // + `agent.*` intents modeling the `appStore` agents slice (the
                 // ordered agent list + per-agent sessions/definitions/folders).
+                // Shadow ConnectionsStore (#2225, Phase 5): the shared
+                // `connections` region + `connection.*` intents, wrapping the
+                // existing saved-connection authority (`crate::connection`).
                 // Managed authoritative state that serves intents, but nothing in
                 // the live UI subscribes to or renders the region yet — a pure
                 // shadow foundation (later steps cut rendering, then mutations,
@@ -721,6 +729,11 @@ pub fn run() {
                 // managed.
                 app.manage(Arc::new(agents_projection::AgentsStore::new()));
                 agents_projection::projection::register_agent_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
+                app.manage(Arc::new(connections_projection::ConnectionsStore::new()));
+                connections_projection::projection::register_connection_intents(
                     &mut registry,
                     app.handle().clone(),
                 );
@@ -772,6 +785,17 @@ pub fn run() {
                 {
                     projection_state.projector.register_region(
                         agents_projection::projection::AGENTS_REGION,
+                        store.snapshot(),
+                    );
+                }
+                // Seed the shared `connections` region with the (empty) store
+                // baseline at version 0, so a subscriber attaches to a real region
+                // before the first `connection.*` intent (#2225).
+                if let Some(store) =
+                    app.handle().try_state::<Arc<connections_projection::ConnectionsStore>>()
+                {
+                    projection_state.projector.register_region(
+                        connections_projection::projection::CONNECTIONS_REGION,
                         store.snapshot(),
                     );
                 }
