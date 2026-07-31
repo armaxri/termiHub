@@ -23,7 +23,7 @@ pub use self::exec::{
     exec_probe_indicates_capability, probe_exec_capability, ssh_exec_with_stdin, SshExecOutput,
     EXEC_PROBE_MARKER,
 };
-pub use self::file_browser::SftpAdvancedOps;
+pub use self::file_browser::{SftpAdvancedOps, SftpFileBrowser};
 
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -45,7 +45,6 @@ use crate::session::shell::osc7_setup_command;
 use crate::session::ssh::validate_ssh_config;
 
 use self::connector::{RusshSshConnector, SshConnector};
-use self::file_browser::SftpFileBrowser;
 use self::monitoring::SshMonitoringProvider;
 
 /// Channel capacity for output data from the SSH reader thread.
