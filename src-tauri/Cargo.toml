@@ -58,6 +58,9 @@ tauri-plugin-fs = "2"
 notify-debouncer-full = "0.7"
 serde = { workspace = true }
 hex = "0.4"
+# Percent-decoding paths from the `plugin://` custom URI-scheme protocol (#2251),
+# so encoded characters in a request path resolve to the real on-disk filename.
+percent-encoding = "2"
 # SHA-256 hashing: agent-binary integrity verification (all platforms) and
 # Windows VcXsrv checksum validation.
 sha2 = "0.10"
@@ -185,9 +188,9 @@ x11rb = { version = "0.13", default-features = false }
 # and `cargo tree -i` clean off Linux.
 wayland-client = { version = "0.31", features = ["dlopen"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
-# Percent-encode staged temp paths into `file://` URIs for the served payloads —
-# the encode side of the sidecar reader's percent-decode. Linux-only here.
-percent-encoding = "2"
+# (`percent-encoding` — used here on Linux to encode staged temp paths into
+# `file://` URIs for the clipboard sidecar — is declared once in the top-level
+# `[dependencies]` so it is available on every platform, see #2251.)
 # Linux Secret Service backend. The `async-secret-service` backend talks to the
 # Secret Service over the pure-Rust `zbus` transport (no `libdbus-sys` C
 # dependency), so it compiles in CI without `libdbus-1-dev` and without a live

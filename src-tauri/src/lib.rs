@@ -46,6 +46,7 @@ mod macos_clipboard;
 mod macos_services;
 mod macros;
 mod network;
+mod plugin_protocol;
 /// Stateless-UI projection substrate (#2149): server-authoritative per-region
 /// versioned diff channels with multi-subscriber fan-out. Public so integration
 /// tests can drive the projector directly.
@@ -350,7 +351,14 @@ pub fn run() {
         // the tunnel manager exists to seed the `tunnels` region and serve the
         // `tunnel.*` intents. Wired beside the existing typed commands (strangler).
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
-        .manage(log_buffer);
+        .manage(log_buffer)
+        // App-controlled origin for installed plugin files (#2251): serves
+        // `<app-data>/plugins/<id>/<path>` over `plugin://localhost/<id>/<path>`
+        // (macOS/Linux) / `http://plugin.localhost/...` (Windows). Substrate for
+        // loading frontend plugin code without a `blob:` `script-src` allowance;
+        // the sandbox-worker loader switch + CSP change follow in #2251's next
+        // slice. Fails closed on any bad request (see `plugin_protocol`).
+        .register_uri_scheme_protocol(plugin_protocol::PLUGIN_URI_SCHEME, plugin_protocol::handle);
 
     // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into
     // the webview before boot so the in-app WebSocket client connects out to the
