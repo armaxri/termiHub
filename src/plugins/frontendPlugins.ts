@@ -3,38 +3,47 @@
  * widgets (#1998), now executed inside a least-privilege Web Worker sandbox
  * (#2136).
  *
- * On plugin activation this reads the plugin's declared JS entry point(s) via the
- * injected file reader (the `read_plugin_file` command in the app) and hands the
- * source to the sandbox host ({@link ./sandbox/pluginSandboxHost}), which runs it
- * inside a Worker with no DOM, no `window`, and no Tauri IPC. The worker wraps
- * each entry point so the plugin runs against its **own** per-plugin API instance
- * (bound to that plugin's id), so every register call it makes — synchronous or
- * from a later timer/promise/event callback — is attributed to that plugin and
- * cleanly removed on unload (#2020). On deactivation the plugin is unloaded from
- * the sandbox and its registrations are torn down.
+ * On plugin activation this hands the plugin's declared JS entry point(s) — as
+ * URLs on the app-controlled `plugin://` origin — to the sandbox host ({@link
+ * ./sandbox/pluginSandboxHost}), which `importScripts` them inside a Worker with
+ * no DOM, no `window`, and no Tauri IPC. The protocol serves those URLs in its
+ * wrapped mode, so each entry point arrives already enveloped in the per-plugin
+ * loader IIFE bound to that plugin's id — every register call it makes,
+ * synchronous or from a later timer/promise/event callback, is attributed to that
+ * plugin and cleanly removed on unload (#2020). On deactivation the plugin is
+ * unloaded from the sandbox and its registrations are torn down.
  *
- * This mirrors the theme loader's "enumerate active plugins → read declared
- * files → register into a runtime registry" shape (`src/store/appStore.ts` →
- * `loadActivePluginThemes`, `src/themes/pluginThemes.ts`). It stays free of any
- * Tauri import: file reading is injected, keeping the module unit-testable.
+ * The switch to `plugin://` (#2266) means this module no longer reads plugin files
+ * into strings: the bytes never touch the main thread, and — crucially — loading
+ * from the `plugin://` origin satisfies `script-src` directly, which is what let
+ * `blob:` leave `script-src`. A file that cannot be read now surfaces as an
+ * `importScripts` failure inside the worker (reported back as a `loadError`),
+ * rather than a read rejection here.
  *
- * Concept: `docs/concepts/implemented/plugin-system.html` (§8, §13). Frontend
- * plugin JS runs in a sandbox worker; `blob:` is still used *inside* the worker
- * to run plugin code, and its removal from `script-src` is a tracked follow-up.
+ * Concept: `docs/concepts/implemented/plugin-system.html` (§8, §13).
  */
 
-import type { InstalledPlugin, PluginFileReader } from "@/types/plugin";
+import type { InstalledPlugin } from "@/types/plugin";
+import { isWindows } from "@/utils/platform";
 import { loadPluginInSandbox, unloadPluginFromSandbox } from "./sandbox/pluginSandboxHost";
-
-/** A frontend entry point that failed to load, for surfacing/logging. */
-export interface FrontendPluginLoadError {
-  pluginId: string;
-  entryPoint: string;
-  message: string;
-}
 
 /** Ids of plugins whose frontend entry points are currently loaded in the sandbox. */
 const loadedPlugins = new Set<string>();
+
+/**
+ * Build the `plugin://` URL for a plugin's entry point, in the protocol's wrapped
+ * mode (`/load/<id>/<path>`). The origin form is platform-specific: `plugin://`
+ * (a custom scheme) on macOS/Linux, `http://plugin.localhost` on Windows — the two
+ * forms Tauri assigns and both listed in `script-src`. Each path segment is
+ * URI-encoded but the separators stay literal `/`, matching how the Rust handler
+ * splits the request path (#2251/#2266).
+ */
+export function pluginEntryUrl(pluginId: string, entryPoint: string): string {
+  const origin = isWindows() ? "http://plugin.localhost" : "plugin://localhost";
+  const id = encodeURIComponent(pluginId);
+  const path = entryPoint.split("/").filter(Boolean).map(encodeURIComponent).join("/");
+  return `${origin}/load/${id}/${path}`;
+}
 
 /**
  * The distinct JS entry points a plugin declares across its frontend extensions
@@ -56,39 +65,24 @@ export function hasFrontendExtension(plugin: InstalledPlugin): boolean {
 }
 
 /**
- * Load a single plugin's frontend entry point(s): read each JS file and hand the
- * sources to the sandbox worker to execute. A file that fails to read is
- * collected as an error rather than thrown, so one bad plugin never blocks the
- * rest. No-ops when the plugin is already loaded. When every entry point fails to
- * read, nothing is sent to the sandbox.
+ * Load a single plugin's frontend entry point(s): resolve each declared entry
+ * point to its `plugin://` URL and hand them to the sandbox worker to
+ * `importScripts` and execute. No-ops when the plugin is already loaded or
+ * declares no frontend entry point. A file that cannot be read no longer fails
+ * here — it surfaces as a `loadError` from the worker (the protocol returns 404
+ * and `importScripts` throws), so one bad plugin never blocks the rest.
  */
-export async function loadFrontendPlugin(
-  plugin: InstalledPlugin,
-  readFile: PluginFileReader
-): Promise<FrontendPluginLoadError[]> {
+export function loadFrontendPlugin(plugin: InstalledPlugin): void {
   const pluginId = plugin.manifest.id;
-  if (loadedPlugins.has(pluginId)) return [];
+  if (loadedPlugins.has(pluginId)) return;
 
-  const codes: string[] = [];
-  const errors: FrontendPluginLoadError[] = [];
-  for (const entryPoint of frontendEntryPoints(plugin)) {
-    try {
-      const bytes = await readFile(pluginId, entryPoint);
-      codes.push(new TextDecoder().decode(bytes));
-    } catch (err) {
-      errors.push({
-        pluginId,
-        entryPoint,
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-
-  if (codes.length > 0) {
-    loadPluginInSandbox(pluginId, codes);
+  const entryUrls = frontendEntryPoints(plugin).map((entryPoint) =>
+    pluginEntryUrl(pluginId, entryPoint)
+  );
+  if (entryUrls.length > 0) {
+    loadPluginInSandbox(pluginId, entryUrls);
     loadedPlugins.add(pluginId);
   }
-  return errors;
 }
 
 /**
@@ -104,9 +98,9 @@ export function unloadFrontendPlugin(pluginId: string): void {
 /**
  * Reconcile the sandboxed frontend plugins against the current plugin list: load
  * every *active* plugin that declares a frontend extension and is not yet loaded,
- * and unload every previously-loaded plugin that is no longer active. Returns any
- * load errors, for logging by the caller. This is the single entry point the
- * store calls on every plugin refresh (install/enable/disable).
+ * and unload every previously-loaded plugin that is no longer active. This is the
+ * single entry point the store calls on every plugin refresh
+ * (install/enable/disable).
  *
  * `enabled` is the experimental frontend-plugin opt-in (#2048). Frontend plugins
  * execute untrusted JS, so for v0.1.0 their execution is gated behind an
@@ -114,11 +108,7 @@ export function unloadFrontendPlugin(pluginId: string): void {
  * unloads any already-loaded plugin — toggling the setting off therefore tears
  * the sandbox down live.
  */
-export async function reconcileFrontendPlugins(
-  plugins: InstalledPlugin[],
-  readFile: PluginFileReader,
-  enabled = true
-): Promise<FrontendPluginLoadError[]> {
+export function reconcileFrontendPlugins(plugins: InstalledPlugin[], enabled = true): void {
   const activeIds = new Set(
     enabled
       ? plugins
@@ -131,19 +121,17 @@ export async function reconcileFrontendPlugins(
     if (!activeIds.has(pluginId)) unloadFrontendPlugin(pluginId);
   }
 
-  if (!enabled) return [];
+  if (!enabled) return;
 
-  const errors: FrontendPluginLoadError[] = [];
   for (const plugin of plugins) {
     if (
       plugin.state === "active" &&
       hasFrontendExtension(plugin) &&
       !loadedPlugins.has(plugin.manifest.id)
     ) {
-      errors.push(...(await loadFrontendPlugin(plugin, readFile)));
+      loadFrontendPlugin(plugin);
     }
   }
-  return errors;
 }
 
 /** Ids of the plugins whose frontend entry points are currently loaded (testing/introspection). */

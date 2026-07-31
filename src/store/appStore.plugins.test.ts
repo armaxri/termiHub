@@ -11,10 +11,19 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Toast hub — assert feedback without real DOM toasts. Declared via vi.hoisted
 // so the (hoisted) vi.mock factory can reference them at init time.
-const { toastSuccess, toastError, toastLoading } = vi.hoisted(() => ({
-  toastSuccess: vi.fn(),
-  toastError: vi.fn(),
-  toastLoading: vi.fn(() => "toast-id"),
+const { toastSuccess, toastError, toastLoading, loadPluginInSandbox, unloadPluginFromSandbox } =
+  vi.hoisted(() => ({
+    toastSuccess: vi.fn(),
+    toastError: vi.fn(),
+    toastLoading: vi.fn(() => "toast-id"),
+    // Mock the sandbox host so the frontend-plugin reconcile is observable without
+    // spinning up a real Web Worker (#2266).
+    loadPluginInSandbox: vi.fn(),
+    unloadPluginFromSandbox: vi.fn(),
+  }));
+vi.mock("@/plugins/sandbox/pluginSandboxHost", () => ({
+  loadPluginInSandbox,
+  unloadPluginFromSandbox,
 }));
 vi.mock("@/components/ui", () => ({
   toast: {
@@ -205,23 +214,19 @@ describe("appStore — plugins (#1993)", () => {
   });
 
   // Frontend-plugin execution is gated behind the experimental opt-in (#2048):
-  // loadPlugins must read `settings.frontendPluginsEnabled` and only read/inject
-  // plugin JS when it is on.
+  // loadPlugins must read `settings.frontendPluginsEnabled` and only load plugin
+  // JS into the sandbox when it is on.
   it("loadPlugins does not execute frontend plugins while the experimental gate is off (#2048)", async () => {
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock");
-    vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
     vi.mocked(apiListPlugins).mockResolvedValueOnce([frontendPlugin("fe")]);
 
     // Default settings leave frontendPluginsEnabled unset (off).
     await useAppStore.getState().loadPlugins();
 
-    expect(readPluginFile).not.toHaveBeenCalled();
+    expect(loadPluginInSandbox).not.toHaveBeenCalled();
     resetLoadedFrontendPlugins();
   });
 
   it("loadPlugins executes frontend plugins once the experimental gate is on (#2048)", async () => {
-    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock");
-    vi.spyOn(URL, "revokeObjectURL").mockReturnValue(undefined);
     vi.mocked(apiListPlugins).mockResolvedValueOnce([frontendPlugin("fe")]);
     useAppStore.setState({
       settings: { ...useAppStore.getState().settings, frontendPluginsEnabled: true },
@@ -229,7 +234,11 @@ describe("appStore — plugins (#1993)", () => {
 
     await useAppStore.getState().loadPlugins();
 
-    expect(readPluginFile).toHaveBeenCalledWith("fe", "frontend/index.js");
+    // The plugin's entry point is handed to the sandbox as its `plugin://` URL
+    // (wrapped mode), which the worker importScripts — no `blob:` (#2266).
+    expect(loadPluginInSandbox).toHaveBeenCalledWith("fe", [
+      "plugin://localhost/load/fe/frontend/index.js",
+    ]);
     resetLoadedFrontendPlugins();
   });
 

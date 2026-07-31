@@ -100,16 +100,20 @@ export interface WidgetNode {
 
 // ─── Messages: host → worker ─────────────────────────────────────────────────
 
-/** Load a plugin's entry-point source(s) into the sandbox and run them. */
+/** Load a plugin's entry point(s) into the sandbox and run them. */
 export interface LoadMessage {
   t: "load";
   pluginId: string;
   /**
-   * The plugin's raw entry-point JS, one string per distinct entry point (the
-   * host reads them via Tauri IPC). A plugin declaring both a parser and a widget
-   * from one file yields a single entry; two files yield two, run in order.
+   * The plugin's entry-point URLs on the app-controlled `plugin://` origin — one
+   * per distinct entry point — which the worker `importScripts` in order. Each URL
+   * targets the protocol's wrapped mode (`/load/<id>/<path>`), so the served body
+   * already carries the per-plugin loader IIFE (#2020/#2266); the worker no longer
+   * builds a `blob:` URL, which is what let `blob:` leave `script-src`. A plugin
+   * declaring both a parser and a widget from one file yields a single URL; two
+   * files yield two, run in order.
    */
-  codes: string[];
+  entryUrls: string[];
 }
 
 /** Unload a plugin: dispose its widgets and drop its parsers inside the sandbox. */
@@ -213,23 +217,7 @@ export type WorkerToHostMessage =
   | LoadErrorMessage
   | LogMessage;
 
-/**
- * Wrap a plugin's entry-point source so it runs against its own per-plugin API
- * instance. The plugin body executes inside a function whose `termihub`
- * parameter is the instance bound to `pluginId` (via the
- * `__termihubMakePluginApi` bridge the worker installs on its global). That
- * local `termihub` shadows the shared global, so every register call — sync or
- * from a later timer/promise/event callback — is attributed to this plugin
- * regardless of load timing (#2020). The plugin id is JSON-encoded, so it is
- * safely quoted into the wrapper.
- *
- * The bridge lookup falls back to the shared global `termihub` if the bridge is
- * somehow absent, so evaluating the wrapper can never throw before the plugin
- * body runs.
- */
-export function wrapPluginSource(pluginId: string, code: string): string {
-  const api = `(self.__termihubMakePluginApi ? self.__termihubMakePluginApi(${JSON.stringify(
-    pluginId
-  )}) : self.termihub)`;
-  return `(function (termihub) {\n${code}\n})(${api});`;
-}
+// The per-plugin loader IIFE that used to be built here (`wrapPluginSource`, #2020)
+// now lives server-side in the `plugin://` protocol's wrapped mode
+// (`src-tauri/src/plugin_protocol.rs`), so the worker can `importScripts` an
+// already-wrapped entry point without a `blob:` URL (#2266).

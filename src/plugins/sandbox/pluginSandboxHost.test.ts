@@ -66,10 +66,12 @@ const enc = (s: string) => new TextEncoder().encode(s);
 const dec = (b: Uint8Array) => new TextDecoder().decode(b);
 
 describe("worker lifecycle", () => {
-  it("creates the worker on first load and posts the code", () => {
-    loadPluginInSandbox("p", ["/*a*/"]);
+  it("creates the worker on first load and posts the entry URLs", () => {
+    loadPluginInSandbox("p", ["plugin://localhost/load/p/frontend/index.js"]);
     expect(sandboxLoadedCount()).toBe(1);
-    expect(fake.postsOfType("load")).toEqual([{ t: "load", pluginId: "p", codes: ["/*a*/"] }]);
+    expect(fake.postsOfType("load")).toEqual([
+      { t: "load", pluginId: "p", entryUrls: ["plugin://localhost/load/p/frontend/index.js"] },
+    ]);
   });
 
   it("terminates the worker once the last plugin unloads", () => {
