@@ -12,12 +12,6 @@ use super::CredentialStore;
 /// a unique keychain entry.
 const SERVICE_NAME: &str = "termiHub";
 
-/// All credential types termiHub stores. Used by
-/// [`OsKeychainStore::remove_all_for_connection`] because OS credential stores
-/// cannot be portably enumerated through the `keyring` crate.
-const ALL_CREDENTIAL_TYPES: [CredentialType; 2] =
-    [CredentialType::Password, CredentialType::KeyPassphrase];
-
 /// Credential store backed by the native OS credential store via the
 /// [`keyring`](https://crates.io/crates/keyring) crate.
 ///
@@ -101,7 +95,9 @@ impl CredentialStore for OsKeychainStore {
     fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
         // OS credential stores cannot be enumerated portably through `keyring`,
         // so we delete every known credential type for the connection instead.
-        for credential_type in ALL_CREDENTIAL_TYPES {
+        // The list is `CredentialType::ALL` so it cannot drift out of date when
+        // a new variant is added and leave a secret orphaned here (#2305).
+        for credential_type in CredentialType::ALL {
             let key = CredentialKey::new(connection_id, credential_type);
             self.remove(&key)?;
         }
@@ -211,6 +207,29 @@ mod tests {
 
         assert_eq!(store.get(&pw).unwrap(), None);
         assert_eq!(store.get(&kp).unwrap(), None);
+    }
+
+    #[test]
+    fn remove_all_for_connection_removes_sudo_password() {
+        // Regression (#2305): deleting a connection must also delete its stored
+        // sudo password. The OS store cannot be enumerated, so it deletes a
+        // fixed list of credential types — that list previously omitted
+        // SudoPassword, leaving the secret orphaned in the OS keychain forever.
+        let _guard = with_mock();
+        let store = OsKeychainStore::new();
+        let pw = CredentialKey::new("conn-sudo", CredentialType::Password);
+        let kp = CredentialKey::new("conn-sudo", CredentialType::KeyPassphrase);
+        let sudo = CredentialKey::new("conn-sudo", CredentialType::SudoPassword);
+
+        store.set(&pw, "pass").unwrap();
+        store.set(&kp, "phrase").unwrap();
+        store.set(&sudo, "elevated-secret").unwrap();
+
+        store.remove_all_for_connection("conn-sudo").unwrap();
+
+        assert_eq!(store.get(&pw).unwrap(), None);
+        assert_eq!(store.get(&kp).unwrap(), None);
+        assert_eq!(store.get(&sudo).unwrap(), None);
     }
 
     #[test]

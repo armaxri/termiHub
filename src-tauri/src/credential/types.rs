@@ -23,6 +23,23 @@ impl fmt::Display for CredentialType {
     }
 }
 
+impl CredentialType {
+    /// Every credential type termiHub can store, in a single authoritative list.
+    ///
+    /// Backends that cannot enumerate their contents (the OS keychain — the
+    /// native stores expose no portable listing API) must iterate this list to
+    /// act on *all* of a connection's secrets, e.g. deleting them when the
+    /// connection is removed. Keeping the list here — rather than duplicated at
+    /// each such call site — stops it from silently drifting out of date when a
+    /// new variant is added; the `all_lists_every_credential_type` guard test
+    /// forces every new variant to be added here.
+    pub const ALL: [CredentialType; 3] = [
+        CredentialType::Password,
+        CredentialType::KeyPassphrase,
+        CredentialType::SudoPassword,
+    ];
+}
+
 /// Identifies a specific credential by connection and type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialKey {
@@ -141,6 +158,29 @@ mod tests {
     #[test]
     fn credential_type_display_password() {
         assert_eq!(CredentialType::Password.to_string(), "password");
+    }
+
+    #[test]
+    fn all_lists_every_credential_type() {
+        // Compile guard: this exhaustive match fails to compile when a new
+        // `CredentialType` variant is added, forcing it to be listed in
+        // `CredentialType::ALL` too. Stores that cannot enumerate their contents
+        // (the OS keychain) rely on ALL being complete to delete every secret
+        // for a connection (#2305).
+        for ct in CredentialType::ALL {
+            match ct {
+                CredentialType::Password
+                | CredentialType::KeyPassphrase
+                | CredentialType::SudoPassword => {}
+            }
+        }
+        assert_eq!(CredentialType::ALL.len(), 3);
+        // No duplicates.
+        for (i, a) in CredentialType::ALL.iter().enumerate() {
+            for b in &CredentialType::ALL[i + 1..] {
+                assert_ne!(a, b, "duplicate credential type in ALL");
+            }
+        }
     }
 
     #[test]
