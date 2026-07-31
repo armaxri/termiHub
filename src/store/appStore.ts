@@ -24,7 +24,6 @@ import {
   SessionCloseConfirmRequest,
   BroadcastScope,
 } from "@/types/terminal";
-import type { HttpMonitorState } from "@/types/network";
 import {
   SavedConnection,
   ConnectionFolder,
@@ -162,6 +161,7 @@ import { createPluginsSlice, PluginsSlice } from "./slices/pluginsSlice";
 import { createSessionHistorySlice, SessionHistorySlice } from "./slices/sessionHistorySlice";
 import { createZoomSlice, ZoomSlice } from "./slices/zoomSlice";
 import { createCommandPaletteSlice, CommandPaletteSlice } from "./slices/commandPaletteSlice";
+import { createHttpMonitorsSlice, HttpMonitorsSlice } from "./slices/httpMonitorsSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 import {
@@ -465,7 +465,8 @@ export interface AppState
     PluginsSlice,
     SessionHistorySlice,
     ZoomSlice,
-    CommandPaletteSlice {
+    CommandPaletteSlice,
+    HttpMonitorsSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -651,8 +652,6 @@ export interface AppState
     prefillHost?: string,
     connectionId?: string
   ) => void;
-  httpMonitors: HttpMonitorState[];
-  setHttpMonitors: (monitors: HttpMonitorState[]) => void;
   /**
    * Open (or focus) an editor tab for a file.
    *
@@ -2890,6 +2889,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createSessionHistorySlice(set, get, store),
     ...createZoomSlice(set, get, store),
     ...createCommandPaletteSlice(set, get, store),
+    ...createHttpMonitorsSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -2897,9 +2897,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Platform default shell — updated by loadFromBackend()
     defaultShell: "bash",
 
-    // Network monitors (populated by NetworkToolsSidebar on open)
-    httpMonitors: [],
-    setHttpMonitors: (monitors) => set({ httpMonitors: monitors }),
+    // Network monitors (httpMonitors + setHttpMonitors) provided by
+    // createHttpMonitorsSlice (extracted under #2077 via #2300).
 
     // Sidebar
     sidebarView: "connections",
