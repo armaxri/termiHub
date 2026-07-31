@@ -14,6 +14,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
 import { countLiveSessions } from "@/utils/tabLiveSession";
@@ -271,7 +272,9 @@ export function TerminalView() {
   const macroRecordingStepCount = useAppStore((s) => s.macroRecordingSteps.length);
   const saveRecordedMacro = useAppStore((s) => s.saveRecordedMacro);
   const discardRecordedMacro = useAppStore((s) => s.discardRecordedMacro);
-  const broadcastActive = useAppStore((s) => s.broadcastActive);
+  // Render cut (#2242): the toolbar's active/pressed state is sourced from the
+  // projected broadcast region when it mirrors appStore, else appStore verbatim.
+  const broadcastActive = useProjectedBroadcast().active;
   const stopBroadcast = useAppStore((s) => s.stopBroadcast);
   const macros = useAppStore((s) => s.macros);
   const macroPlayback = useAppStore((s) => s.macroPlayback);

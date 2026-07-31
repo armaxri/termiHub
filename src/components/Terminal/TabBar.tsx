@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
 import type { WindowInfo } from "@/types/window";
 import { listWindows } from "@/services/api";
@@ -45,9 +46,11 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const terminalDisconnectErrors = useAppStore((s) => s.terminalDisconnectErrors);
   const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
   // Broadcast participation (#1957): the badge shows on every tab in the target
-  // set, active or not, so participation is visible at a glance.
-  const broadcastActive = useAppStore((s) => s.broadcastActive);
-  const broadcastTargetTabIds = useAppStore((s) => s.broadcastTargetTabIds);
+  // set, active or not, so participation is visible at a glance. Render cut
+  // (#2242): sourced from the projected broadcast region (falls back to appStore).
+  const broadcast = useProjectedBroadcast();
+  const broadcastActive = broadcast.active;
+  const broadcastTargetTabIds = broadcast.targetTabIds;
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard, openTerminalInEditor } =
     useTerminalRegistry();
 
