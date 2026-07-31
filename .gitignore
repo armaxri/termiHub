@@ -28,10 +28,16 @@ tests/reports/*
 .claude/*
 !.claude/CLAUDE.md
 !.claude/settings.json
+# graft integration helpers are shared tooling; personal helpers stay local.
+!.claude/helpers
+.claude/helpers/*
+!.claude/helpers/graft-hooks.cjs
+!.claude/helpers/graft-statusline.cjs
 # Project skills are shared; personal skills under .claude/skills/ stay local.
 !.claude/skills
 .claude/skills/*
 !.claude/skills/sync-concept
+!.claude/skills/graft
 # Project agents are shared; personal agents under .claude/agents/ stay local.
 !.claude/agents
 .claude/agents/*
@@ -86,3 +92,7 @@ tests/system/test-inventory.json
 
 # Generated when the host-loader round-trip test builds its cdylib fixture (#1995)
 core/tests/fixtures/test-plugin/Cargo.lock
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+# Anchored to repo root so it does not also ignore .claude/skills/graft/.
+/graft/
