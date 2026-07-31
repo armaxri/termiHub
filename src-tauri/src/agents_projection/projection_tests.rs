@@ -17,9 +17,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 
 use crate::agents_projection::projection::{publish_agents, AGENTS_REGION};
-use crate::agents_projection::store::{
-    AgentDefinition, AgentFolder, AgentSession, AgentsStore,
-};
+use crate::agents_projection::store::{AgentDefinition, AgentFolder, AgentSession, AgentsStore};
 use crate::projection::{
     apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
     ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
@@ -33,7 +31,11 @@ fn seeded_store() -> Arc<AgentsStore> {
     let store = Arc::new(AgentsStore::new());
     store.add("a1", "Agent One", json!({ "host": "h1" }), json!({}));
     store.add("a2", "Agent Two", json!({ "host": "h2" }), json!({}));
-    store.set_status("a2", crate::agents_projection::store::AgentConnectionState::Connected, None);
+    store.set_status(
+        "a2",
+        crate::agents_projection::store::AgentConnectionState::Connected,
+        None,
+    );
     store
 }
 
@@ -206,8 +208,14 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
     assert_eq!(snap_a.region, "agents");
     assert_eq!(snap_a.view["agents"][0]["id"], json!("a1"));
-    assert_eq!(snap_a.view["agents"][0]["connectionState"], json!("disconnected"));
-    assert_eq!(snap_a.view["agents"][1]["connectionState"], json!("connected"));
+    assert_eq!(
+        snap_a.view["agents"][0]["connectionState"],
+        json!("disconnected")
+    );
+    assert_eq!(
+        snap_a.view["agents"][1]["connectionState"],
+        json!("connected")
+    );
 }
 
 #[test]
@@ -245,8 +253,15 @@ fn an_agent_intent_produces_one_diff_fanned_to_two_subscribers() {
     assert_eq!(diffs_a[0].version, 1);
 
     cache_a.apply(&diffs_a[0]);
-    assert_eq!(cache_a.view, store.snapshot(), "cache converges on authority");
-    assert_eq!(cache_a.view["agents"][0]["connectionState"], json!("connecting"));
+    assert_eq!(
+        cache_a.view,
+        store.snapshot(),
+        "cache converges on authority"
+    );
+    assert_eq!(
+        cache_a.view["agents"][0]["connectionState"],
+        json!("connecting")
+    );
 }
 
 #[test]
@@ -282,7 +297,12 @@ fn a_full_agent_lifecycle_advances_monotonically_and_converges() {
         ("agent.remove", json!({ "id": "a3" })),
     ] {
         let ack = dispatcher.dispatch(intent(kind_payload.0, kind_payload.1));
-        assert_eq!(ack.status, IntentStatus::Accepted, "{} accepted", kind_payload.0);
+        assert_eq!(
+            ack.status,
+            IntentStatus::Accepted,
+            "{} accepted",
+            kind_payload.0
+        );
     }
 
     let diffs = sink.diffs();
@@ -353,9 +373,16 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     assert_eq!(projector.subscriber_count(AGENTS_REGION), 2);
 
     dead.alive.store(false, Ordering::SeqCst);
-    dispatcher.dispatch(intent("agent.status", json!({ "id": "a1", "state": "connecting" })));
+    dispatcher.dispatch(intent(
+        "agent.status",
+        json!({ "id": "a1", "state": "connecting" }),
+    ));
 
-    assert_eq!(live.diffs().len(), 1, "the live subscriber still gets the diff");
+    assert_eq!(
+        live.diffs().len(),
+        1,
+        "the live subscriber still gets the diff"
+    );
     assert_eq!(
         projector.subscriber_count(AGENTS_REGION),
         1,

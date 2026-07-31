@@ -305,8 +305,7 @@ fn required_state(intent: &Intent) -> Result<AgentConnectionState, (String, Stri
         .payload
         .get("state")
         .ok_or_else(|| bad_payload("missing 'state'"))?;
-    serde_json::from_value(value.clone())
-        .map_err(|e| bad_payload(&format!("invalid state: {e}")))
+    serde_json::from_value(value.clone()).map_err(|e| bad_payload(&format!("invalid state: {e}")))
 }
 
 /// Parse the required `definition` object as an [`AgentDefinition`].
@@ -325,8 +324,7 @@ fn required_folder(intent: &Intent) -> Result<AgentFolder, (String, String)> {
         .payload
         .get("folder")
         .ok_or_else(|| bad_payload("missing 'folder'"))?;
-    serde_json::from_value(value.clone())
-        .map_err(|e| bad_payload(&format!("invalid folder: {e}")))
+    serde_json::from_value(value.clone()).map_err(|e| bad_payload(&format!("invalid folder: {e}")))
 }
 
 /// Parse a required array field as a typed list (used for `agent.refresh`'s
@@ -339,8 +337,7 @@ fn required_list<T: serde::de::DeserializeOwned>(
         .payload
         .get(key)
         .ok_or_else(|| bad_payload(&format!("missing '{key}'")))?;
-    serde_json::from_value(value.clone())
-        .map_err(|e| bad_payload(&format!("invalid {key}: {e}")))
+    serde_json::from_value(value.clone()).map_err(|e| bad_payload(&format!("invalid {key}: {e}")))
 }
 
 #[cfg(test)]

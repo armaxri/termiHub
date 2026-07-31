@@ -264,12 +264,7 @@ impl AgentsStore {
     /// exactly as `setAgentConnectionState`: record the error on `disconnected`
     /// (falling back to the stored one), clear it on `connecting`/`connected`, and
     /// leave it untouched otherwise. A no-op for an unknown id.
-    pub fn set_status(
-        &self,
-        id: &str,
-        state: AgentConnectionState,
-        error: Option<String>,
-    ) {
+    pub fn set_status(&self, id: &str, state: AgentConnectionState, error: Option<String>) {
         let mut inner = self.lock();
         if let Some(agent) = inner.agent_mut(id) {
             let next_error = match state {
@@ -381,7 +376,11 @@ impl AgentsStore {
         if inner.agent_mut(id).is_none() {
             return;
         }
-        inner.folders.entry(id.to_string()).or_default().push(folder);
+        inner
+            .folders
+            .entry(id.to_string())
+            .or_default()
+            .push(folder);
     }
 
     /// `agent.updateFolder` — replace an existing folder by id

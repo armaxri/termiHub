@@ -6,9 +6,7 @@
 
 use serde_json::json;
 
-use super::{
-    AgentConnectionState, AgentDefinition, AgentFolder, AgentSession, AgentsStore,
-};
+use super::{AgentConnectionState, AgentDefinition, AgentFolder, AgentSession, AgentsStore};
 
 /// A deterministic agent config blob.
 fn config(host: &str) -> serde_json::Value {
@@ -100,7 +98,12 @@ fn update_replaces_config_fields_but_preserves_live_status() {
     store.set_capabilities("a1", json!({ "maxSessions": 4 }));
     store.toggle_expanded("a1");
 
-    store.update("a1", "Renamed", config("h2"), json!({ "autoReconnect": false }));
+    store.update(
+        "a1",
+        "Renamed",
+        config("h2"),
+        json!({ "autoReconnect": false }),
+    );
 
     let agent = store.get("a1").unwrap();
     assert_eq!(agent.name, "Renamed");
@@ -118,7 +121,10 @@ fn apply_settings_updates_only_settings() {
     store.add("a1", "One", config("h1"), settings());
     store.apply_settings("a1", json!({ "autoReconnect": false, "extra": 1 }));
     let agent = store.get("a1").unwrap();
-    assert_eq!(agent.agent_settings, json!({ "autoReconnect": false, "extra": 1 }));
+    assert_eq!(
+        agent.agent_settings,
+        json!({ "autoReconnect": false, "extra": 1 })
+    );
     assert_eq!(agent.name, "One");
 }
 
@@ -126,7 +132,12 @@ fn apply_settings_updates_only_settings() {
 fn remove_drops_the_agent_and_all_its_substate() {
     let store = AgentsStore::new();
     store.add("a1", "One", config("h1"), settings());
-    store.refresh("a1", vec![session("s1")], vec![definition("d1", None)], vec![folder("f1")]);
+    store.refresh(
+        "a1",
+        vec![session("s1")],
+        vec![definition("d1", None)],
+        vec![folder("f1")],
+    );
 
     store.remove("a1");
     assert!(store.get("a1").is_none());
@@ -157,7 +168,11 @@ fn status_tracks_last_error_like_the_frontend() {
     store.add("a1", "One", config("h1"), settings());
 
     // disconnected records the error.
-    store.set_status("a1", AgentConnectionState::Disconnected, Some("boom".into()));
+    store.set_status(
+        "a1",
+        AgentConnectionState::Disconnected,
+        Some("boom".into()),
+    );
     assert_eq!(store.get("a1").unwrap().last_error.as_deref(), Some("boom"));
 
     // reconnecting leaves the stored error untouched.
@@ -173,7 +188,11 @@ fn status_tracks_last_error_like_the_frontend() {
     assert_eq!(store.get("a1").unwrap().last_error, None);
 
     // connected clears any error too.
-    store.set_status("a1", AgentConnectionState::Disconnected, Some("again".into()));
+    store.set_status(
+        "a1",
+        AgentConnectionState::Disconnected,
+        Some("again".into()),
+    );
     store.set_status("a1", AgentConnectionState::Connected, None);
     assert_eq!(store.get("a1").unwrap().last_error, None);
     assert_eq!(
@@ -187,7 +206,12 @@ fn disconnect_forces_disconnected_and_clears_live_but_keeps_definitions() {
     let store = AgentsStore::new();
     store.add("a1", "One", config("h1"), settings());
     store.set_status("a1", AgentConnectionState::Connected, None);
-    store.refresh("a1", vec![session("s1")], vec![definition("d1", None)], vec![folder("f1")]);
+    store.refresh(
+        "a1",
+        vec![session("s1")],
+        vec![definition("d1", None)],
+        vec![folder("f1")],
+    );
 
     store.disconnect("a1");
     let agent = store.get("a1").unwrap();
@@ -220,7 +244,14 @@ fn save_definition_upserts_and_update_replaces() {
     let mut updated = definition("d2", None);
     updated.persistent = true;
     store.update_definition("a1", updated);
-    assert!(store.definitions_of("a1").iter().find(|d| d.id == "d2").unwrap().persistent);
+    assert!(
+        store
+            .definitions_of("a1")
+            .iter()
+            .find(|d| d.id == "d2")
+            .unwrap()
+            .persistent
+    );
 }
 
 #[test]
@@ -234,7 +265,11 @@ fn delete_folder_removes_it_and_reparents_child_definitions() {
     store.delete_folder("a1", "f1");
     assert!(store.folders_of("a1").is_empty());
     // The child definition is reparented to the root (folderId → None).
-    let d1 = store.definitions_of("a1").into_iter().find(|d| d.id == "d1").unwrap();
+    let d1 = store
+        .definitions_of("a1")
+        .into_iter()
+        .find(|d| d.id == "d1")
+        .unwrap();
     assert_eq!(d1.folder_id, None);
 }
 
@@ -260,7 +295,12 @@ fn transitions_on_an_unknown_agent_are_no_ops() {
     store.set_status("ghost", AgentConnectionState::Connected, None);
     store.set_capabilities("ghost", json!({}));
     store.disconnect("ghost");
-    store.refresh("ghost", vec![session("s1")], vec![definition("d1", None)], vec![folder("f1")]);
+    store.refresh(
+        "ghost",
+        vec![session("s1")],
+        vec![definition("d1", None)],
+        vec![folder("f1")],
+    );
     store.clear_sessions("ghost");
     store.save_definition("ghost", definition("d1", None));
     store.create_folder("ghost", folder("f1"));
