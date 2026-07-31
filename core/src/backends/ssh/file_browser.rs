@@ -298,8 +298,8 @@ impl FileBrowser for SftpFileBrowser {
 ///
 /// It is deliberately a *separate* trait rather than methods on [`FileBrowser`]:
 /// backends without an SSH exec channel (local, docker, FTP) cannot offer these,
-/// and folding them into the shared trait is part of the wider
-/// `FileBrowser`/`FileBackend` reconciliation tracked on #2104.
+/// so they stay off the shared capability trait (`FileBrowser`, onto which the
+/// former `FileBackend` was converged in #2104).
 #[async_trait::async_trait]
 pub trait SftpAdvancedOps: Send {
     /// Authoritatively probe whether the connecting user can write `remote_path`.
