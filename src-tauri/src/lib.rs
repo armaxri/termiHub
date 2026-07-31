@@ -1,5 +1,10 @@
 mod commands;
 mod connection;
+/// Shadow connections-tree authority (#2225, Phase 5 of #2139/#2153): the shared
+/// `connections` projection region + `connection.*` intents, wrapping the
+/// existing saved-connection authority (`crate::connection`). Registered and
+/// served but not yet driving the live UI — see [`connections_projection`].
+mod connections_projection;
 mod credential;
 mod embedded_servers;
 /// File-system access: local FS, SFTP sessions, and the cancellable transfer
@@ -706,6 +711,19 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
+                // Shadow ConnectionsStore (#2225, Phase 5): the shared
+                // `connections` region + `connection.*` intents, wrapping the
+                // existing saved-connection authority (`crate::connection`).
+                // Managed authoritative state that serves intents, but nothing in
+                // the live UI subscribes to or renders the region yet — a pure
+                // shadow foundation (later steps cut rendering, then mutations,
+                // over to it). The shared region is seeded below once the store is
+                // managed.
+                app.manage(Arc::new(connections_projection::ConnectionsStore::new()));
+                connections_projection::projection::register_connection_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
                 // Test-bridge-only: add the diagnostic region's `diag.*` routes so
                 // the projection-assertion harness (#2164) has a self-contained
                 // region to drive. Never registered in production launches. See
@@ -743,6 +761,17 @@ pub fn run() {
                 {
                     projection_state.projector.register_region(
                         system_monitor_projection::projection::SYSTEM_MONITORS_REGION,
+                        store.snapshot(),
+                    );
+                }
+                // Seed the shared `connections` region with the (empty) store
+                // baseline at version 0, so a subscriber attaches to a real region
+                // before the first `connection.*` intent (#2225).
+                if let Some(store) =
+                    app.handle().try_state::<Arc<connections_projection::ConnectionsStore>>()
+                {
+                    projection_state.projector.register_region(
+                        connections_projection::projection::CONNECTIONS_REGION,
                         store.snapshot(),
                     );
                 }
