@@ -212,3 +212,7 @@ proptest = "1"
 # regression test (#2168) without launching the real Wry app.
 tauri = { version = "2", default-features = false, features = ["wry", "compression", "dynamic-acl", "test"] }
 temp-env = "0.3"
+# Serialize the Docker-backed elevated-save tests that share one root-owned
+# fixture file so they no longer clobber each other under parallel `cargo test`
+# (#2238). Same `#[serial(group)]` convention already used in `core/tests`.
+serial_test = "3"
