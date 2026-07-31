@@ -31,7 +31,14 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
-import { transformOutput, notifySessionStart, notifySessionEnd } from "@/plugins/pluginRuntime";
+import {
+  sandboxHasParsers,
+  sandboxSessionPending,
+  enqueueSandboxTransform,
+  sandboxNotifySessionStart,
+  sandboxNotifySessionEnd,
+  discardSandboxSession,
+} from "@/plugins/sandbox/pluginSandboxHost";
 import { resolveLineEnding } from "@/utils/lineEndings";
 import { getAllLeaves } from "@/utils/panelTree";
 import { toast } from "@/components/ui";
@@ -763,20 +770,36 @@ export function Terminal({
           terminalDispatcher.clearPendingOutput(sessionId);
         }
 
-        // Notify frontend-plugin protocol parsers that this session started
-        // (#1998), so a parser can reset any per-session state before output
-        // begins flowing.
-        notifySessionStart(sessionId);
+        // Notify sandboxed frontend-plugin protocol parsers that this session
+        // started (#1998), so a parser can reset any per-session state before
+        // output begins flowing.
+        sandboxNotifySessionStart(sessionId);
 
-        // Subscribe to output events via singleton dispatcher (O(1) routing)
-        const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
-          // Run active frontend-plugin protocol parsers over the chunk (#1998).
-          // A no-op fast path when none are registered, and byte-exact when none
-          // transform, so the common no-plugin case is untouched.
-          outputBuffer.push(transformOutput(data, sessionId));
+        // Enqueue an output chunk for the RAF-batched write, in arrival order.
+        const scheduleFlush = () => {
           if (rafId === null) {
             rafId = requestAnimationFrame(flushOutput);
           }
+        };
+
+        // Subscribe to output events via singleton dispatcher (O(1) routing)
+        const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
+          // Frontend-plugin protocol parsers now run in a sandbox worker (#2136),
+          // so applying them is asynchronous. FAST PATH: when no parser is
+          // registered (the default-off common case) and this session has no
+          // in-flight sandbox work, push the raw bytes synchronously — byte-exact,
+          // identical to the pre-sandbox path. Otherwise route the chunk through
+          // the sandbox host, which returns the (possibly transformed) bytes in
+          // arrival order via the callback.
+          if (!sandboxHasParsers() && !sandboxSessionPending(sessionId)) {
+            outputBuffer.push(data);
+            scheduleFlush();
+            return;
+          }
+          enqueueSandboxTransform(sessionId, data, (out) => {
+            outputBuffer.push(out);
+            scheduleFlush();
+          });
         });
 
         // Subscribe to exit events via singleton dispatcher
@@ -797,8 +820,8 @@ export function Terminal({
           const exitLabel =
             exitCode === null ? "[Process exited]" : `[Process exited with code ${exitCode}]`;
           xterm.writeln(`\r\n\x1b[90m${exitLabel}\x1b[0m`);
-          // Notify frontend-plugin protocol parsers the session ended (#1998).
-          notifySessionEnd(sessionId);
+          // Notify sandboxed frontend-plugin protocol parsers the session ended (#1998).
+          sandboxNotifySessionEnd(sessionId);
           sessionIdRef.current = null;
           unregisterSession(tabId);
           store.setTerminalExited(tabId, { code: exitCode, reason });
@@ -889,12 +912,16 @@ export function Terminal({
             rafId = null;
           }
           flushOutput();
+          // Drop any still-in-flight sandbox transforms for this session — the
+          // tab is going away, so losing a few final transformed chunks is
+          // acceptable and avoids awaiting the worker in a sync cleanup (#2136).
+          discardSandboxSession(sessionId);
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
           if (sessionIdRef.current) {
             // Session torn down while still live (tab closed/reconnecting) —
             // the exit handler never fired, so notify parsers here (#1998).
-            notifySessionEnd(sessionId);
+            sandboxNotifySessionEnd(sessionId);
             // Defer the close so that React StrictMode's rapid unmount→remount
             // can cancel it before the backend session is destroyed.
             const sid = sessionIdRef.current;

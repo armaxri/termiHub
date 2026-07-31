@@ -1,33 +1,24 @@
 /**
- * Tests for the plugin status-bar widget host (#1998): a registered widget's
- * `render()` DOM mounts into the correct side, disabling the plugin unmounts it
- * and calls `dispose()` exactly once, and a widget whose `render()` throws is
- * isolated without breaking the status bar.
+ * Tests for the plugin status-bar widget host (#1998, sandboxed #2136): a widget
+ * descriptor pushed into the store materialises into DOM on the matching side,
+ * removing it unmounts the host, and the descriptor is rebuilt through the
+ * allowlist (never innerHTML).
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
 import {
-  ensureTermiHubApi,
-  makePluginApi,
-  unregisterPlugin,
-  clearRegistry,
-  type StatusBarWidget,
-} from "@/plugins/pluginRuntime";
-
-vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
+  upsertStatusBarWidget,
+  removeStatusBarWidget,
+  clearStatusBarWidgets,
+} from "@/plugins/sandbox/statusBarWidgetStore";
 
 let container: HTMLDivElement;
 let root: Root;
 
-function registerWidgetAs(pluginId: string, widget: StatusBarWidget): void {
-  makePluginApi(pluginId).registerStatusBarWidget(widget);
-}
-
 beforeEach(() => {
-  clearRegistry();
-  ensureTermiHubApi();
+  clearStatusBarWidgets();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -39,74 +30,38 @@ afterEach(() => {
 });
 
 describe("PluginStatusBarWidgets", () => {
-  it("mounts a registered widget's DOM into the matching side", () => {
-    const el = document.createElement("span");
-    el.textContent = "42%";
-    el.setAttribute("data-plugin-el", "cpu");
-    registerWidgetAs("p", {
-      id: "cpu",
-      position: "left",
-      render: () => el,
-      dispose: () => {},
-    });
-
+  it("materialises a widget descriptor into the matching side", () => {
+    upsertStatusBarWidget("p:cpu", "left", "cpu", { tag: "span", text: "42%" });
     act(() => root.render(<PluginStatusBarWidgets position="left" />));
 
     const host = container.querySelector('[data-testid="plugin-widget-cpu"]');
     expect(host).not.toBeNull();
-    expect(host?.querySelector('[data-plugin-el="cpu"]')?.textContent).toBe("42%");
+    expect(host?.textContent).toBe("42%");
   });
 
   it("does not render a widget registered for the other side", () => {
-    registerWidgetAs("p", {
-      id: "cpu",
-      position: "right",
-      render: () => document.createElement("span"),
-      dispose: () => {},
-    });
+    upsertStatusBarWidget("p:cpu", "right", "cpu", { tag: "span" });
     act(() => root.render(<PluginStatusBarWidgets position="left" />));
     expect(container.querySelector('[data-testid="plugin-widget-cpu"]')).toBeNull();
   });
 
-  it("disposes the widget exactly once when its plugin is disabled", () => {
-    const dispose = vi.fn();
-    registerWidgetAs("p", {
-      id: "cpu",
-      position: "left",
-      render: () => document.createElement("span"),
-      dispose,
-    });
+  it("unmounts the host when the widget is removed", () => {
+    upsertStatusBarWidget("p:cpu", "left", "cpu", { tag: "span", text: "x" });
     act(() => root.render(<PluginStatusBarWidgets position="left" />));
     expect(container.querySelector('[data-testid="plugin-widget-cpu"]')).not.toBeNull();
 
-    // Disabling the plugin drops it from the registry; the host unmounts.
-    act(() => unregisterPlugin("p"));
-
-    expect(dispose).toHaveBeenCalledTimes(1);
+    act(() => removeStatusBarWidget("p:cpu"));
     expect(container.querySelector('[data-testid="plugin-widget-cpu"]')).toBeNull();
   });
 
-  it("isolates a widget whose render() throws without breaking the bar", () => {
-    registerWidgetAs("bad", {
-      id: "bad",
-      position: "left",
-      render: () => {
-        throw new Error("boom");
-      },
-      dispose: () => {},
+  it("never injects descriptor text as HTML", () => {
+    upsertStatusBarWidget("p:x", "left", "x", {
+      tag: "span",
+      text: "<img src=x onerror=alert(1)>",
     });
-    const good = document.createElement("span");
-    good.setAttribute("data-plugin-el", "good");
-    registerWidgetAs("good", {
-      id: "good",
-      position: "left",
-      render: () => good,
-      dispose: () => {},
-    });
-
-    expect(() => act(() => root.render(<PluginStatusBarWidgets position="left" />))).not.toThrow();
-
-    // The good widget still mounts alongside the broken one's (empty) host.
-    expect(container.querySelector('[data-plugin-el="good"]')).not.toBeNull();
+    act(() => root.render(<PluginStatusBarWidgets position="left" />));
+    const host = container.querySelector('[data-testid="plugin-widget-x"]');
+    expect(host?.querySelector("img")).toBeNull();
+    expect(host?.textContent).toBe("<img src=x onerror=alert(1)>");
   });
 });

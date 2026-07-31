@@ -1,19 +1,20 @@
 /**
- * Tests for the frontend plugin loader (#1998): reading a plugin's JS entry
- * point, injecting it as a tagged inline `<script>`, unloading (script removal +
- * unregistration), and reconciling the loaded set against the active plugin
- * list.
- *
- * The injected `<script>` runs in the WebView and registers through
- * `window.termihub` in the real app. The vitest jsdom environment evaluates
- * inline scripts in a VM context that does not share `window` with the test
- * module, so these tests use side-effect-free source and assert on the loader's
- * DOM effects and bookkeeping; the registration that a script performs is
- * exercised directly (via `setLoadingPlugin` + `window.termihub`) here and in
- * `pluginRuntime.test.ts`.
+ * Tests for the frontend plugin loader (#1998, sandboxed #2136): reading a
+ * plugin's JS entry point(s), handing the source to the sandbox host, unloading,
+ * and reconciling the loaded set against the active plugin list. Plugin code no
+ * longer runs in the main document — it runs in the sandbox worker — so these
+ * tests mock the sandbox host and assert the loader drives it correctly.
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { InstalledPlugin, PluginState } from "@/types/plugin";
+
+const loadPluginInSandbox = vi.fn();
+const unloadPluginFromSandbox = vi.fn();
+vi.mock("./sandbox/pluginSandboxHost", () => ({
+  loadPluginInSandbox: (...args: unknown[]) => loadPluginInSandbox(...args),
+  unloadPluginFromSandbox: (...args: unknown[]) => unloadPluginFromSandbox(...args),
+}));
+
 import {
   loadFrontendPlugin,
   unloadFrontendPlugin,
@@ -23,15 +24,6 @@ import {
   loadedFrontendPluginIds,
   resetLoadedFrontendPlugins,
 } from "./frontendPlugins";
-import {
-  clearRegistry,
-  ensureTermiHubApi,
-  makePluginApi,
-  getStatusBarWidgets,
-  type StatusBarWidget,
-} from "./pluginRuntime";
-
-vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
 /** Build an installed plugin with the given frontend extensions. */
 function plugin(
@@ -62,52 +54,16 @@ const parserPlugin = (id: string, state: PluginState = "active", entry = "fronte
     protocolParser: { name: id, description: "d", entryPoint: entry },
   });
 
-/** Side-effect-free valid JS source (a comment) so jsdom's script eval is a no-op. */
 const SRC = "/* plugin entry point */";
 
 /** A file reader returning {@link SRC} for any path. */
 const reader = () => vi.fn(async () => new TextEncoder().encode(SRC));
 
-/** Register a widget attributed to `pluginId`, as its injected script would. */
-function registerWidgetAs(pluginId: string, widget: StatusBarWidget): void {
-  makePluginApi(pluginId).registerStatusBarWidget(widget);
-}
-
-/**
- * Injected plugin scripts load from a blob URL (not an inline body) so they run
- * under the app's restrictive CSP (#2048). jsdom implements neither
- * `URL.createObjectURL` nor `Blob.text()`, so we spy the `Blob` constructor to
- * capture the exact wrapped source each script is built from and stub the object
- * URL helpers.
- */
-let blobParts: BlobPart[][];
-
 beforeEach(() => {
-  clearRegistry();
-  ensureTermiHubApi();
   resetLoadedFrontendPlugins();
-  document.head.querySelectorAll("script[data-termihub-plugin]").forEach((s) => s.remove());
-
-  blobParts = [];
-  // A regular (non-arrow) function so it is usable as a constructor for
-  // `new Blob(...)`; it records the parts and returns a lightweight stand-in.
-  vi.spyOn(globalThis, "Blob").mockImplementation(function (this: unknown, parts?: BlobPart[]) {
-    blobParts.push(parts ?? []);
-    return { size: 0, type: "text/javascript" } as unknown as Blob;
-  } as unknown as typeof Blob);
-  let counter = 0;
-  vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:mock/${counter++}`);
-  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+  loadPluginInSandbox.mockClear();
+  unloadPluginFromSandbox.mockClear();
 });
-
-afterEach(() => {
-  vi.restoreAllMocks();
-});
-
-/** The wrapped source string of the nth injected plugin script (blob-captured). */
-function injectedSource(index = 0): string {
-  return String(blobParts[index]?.[0] ?? "");
-}
 
 describe("frontendEntryPoints / hasFrontendExtension", () => {
   it("collects and dedupes entry points across frontend extensions", () => {
@@ -135,38 +91,25 @@ describe("frontendEntryPoints / hasFrontendExtension", () => {
 });
 
 describe("loadFrontendPlugin", () => {
-  it("reads the entry point and injects a tagged blob-URL script", async () => {
+  it("reads the entry point and loads its source into the sandbox", async () => {
     const read = reader();
     const errors = await loadFrontendPlugin(parserPlugin("p"), read);
 
     expect(errors).toEqual([]);
     expect(read).toHaveBeenCalledWith("p", "frontend/index.js");
-    const script = document.head.querySelector<HTMLScriptElement>(
-      'script[data-termihub-plugin="p"]'
-    );
-    expect(script).not.toBeNull();
-    // The script loads from a blob URL rather than an inline body so it runs
-    // under the restrictive CSP (`script-src 'self' blob:`, no unsafe-inline) (#2048).
-    expect(script?.src).toMatch(/^blob:/);
-    expect(script?.textContent).toBe("");
-    // The blob's source is wrapped so the plugin runs against its own per-plugin
-    // API instance, bound to its id (#2020) — the original source is preserved.
-    const source = injectedSource();
-    expect(source).toContain(SRC);
-    expect(source).toContain('window.__termihubMakePluginApi("p")');
-    expect(source).toMatch(/^\(function \(termihub\) \{/);
+    expect(loadPluginInSandbox).toHaveBeenCalledWith("p", [SRC]);
     expect(loadedFrontendPluginIds()).toEqual(["p"]);
   });
 
-  it("does not re-inject an already-loaded plugin", async () => {
+  it("does not re-load an already-loaded plugin", async () => {
     const read = reader();
     await loadFrontendPlugin(parserPlugin("p"), read);
     await loadFrontendPlugin(parserPlugin("p"), read);
-    expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(1);
+    expect(loadPluginInSandbox).toHaveBeenCalledTimes(1);
     expect(read).toHaveBeenCalledTimes(1);
   });
 
-  it("collects a read failure as an error rather than throwing", async () => {
+  it("collects a read failure as an error and does not load", async () => {
     const read = vi.fn(async () => {
       throw new Error("no such file");
     });
@@ -174,35 +117,31 @@ describe("loadFrontendPlugin", () => {
     expect(errors).toEqual([
       { pluginId: "p", entryPoint: "frontend/index.js", message: "no such file" },
     ]);
+    expect(loadPluginInSandbox).not.toHaveBeenCalled();
+    expect(loadedFrontendPluginIds()).toEqual([]);
   });
 
-  it("injects one script per distinct entry point", async () => {
+  it("passes one source per distinct entry point", async () => {
     const p = plugin("p", "active", {
       protocolParser: { name: "p", description: "d", entryPoint: "parser.js" },
       statusBarWidget: { entryPoint: "widget.js", position: "right" },
     });
     await loadFrontendPlugin(p, reader());
-    expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(2);
+    expect(loadPluginInSandbox).toHaveBeenCalledWith("p", [SRC, SRC]);
   });
 });
 
 describe("unloadFrontendPlugin", () => {
-  it("removes injected scripts and unregisters the plugin's widgets", async () => {
+  it("unloads the plugin from the sandbox and forgets it", async () => {
     await loadFrontendPlugin(parserPlugin("p"), reader());
-    // Simulate the widget the plugin's entry point would have registered.
-    registerWidgetAs("p", {
-      id: "w",
-      position: "left",
-      render: () => document.createElement("span"),
-      dispose: () => {},
-    });
-    expect(getStatusBarWidgets("left")).toHaveLength(1);
-
     unloadFrontendPlugin("p");
-
-    expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(0);
-    expect(getStatusBarWidgets("left")).toHaveLength(0);
+    expect(unloadPluginFromSandbox).toHaveBeenCalledWith("p");
     expect(loadedFrontendPluginIds()).toEqual([]);
+  });
+
+  it("is a no-op for a plugin that is not loaded", () => {
+    unloadFrontendPlugin("nope");
+    expect(unloadPluginFromSandbox).not.toHaveBeenCalled();
   });
 });
 
@@ -223,7 +162,7 @@ describe("reconcileFrontendPlugins", () => {
 
     await reconcileFrontendPlugins([parserPlugin("p", "disabled")], reader());
     expect(loadedFrontendPluginIds()).toEqual([]);
-    expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(0);
+    expect(unloadPluginFromSandbox).toHaveBeenCalledWith("p");
   });
 
   it("is idempotent across repeated reconciles of the same set", async () => {
@@ -231,29 +170,28 @@ describe("reconcileFrontendPlugins", () => {
     const read = reader();
     await reconcileFrontendPlugins(plugins, read);
     await reconcileFrontendPlugins(plugins, read);
-    expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(1);
+    expect(loadPluginInSandbox).toHaveBeenCalledTimes(1);
     expect(read).toHaveBeenCalledTimes(1);
   });
 
-  // Experimental frontend-plugin gate (#2048): the `enabled` flag is the
-  // default-off opt-in for executing frontend plugin JS.
+  // Experimental frontend-plugin gate (#2048): the default-off opt-in.
   it("loads nothing when the experimental gate is disabled", async () => {
     const read = reader();
     const errors = await reconcileFrontendPlugins([parserPlugin("p", "active")], read, false);
     expect(errors).toEqual([]);
     expect(read).not.toHaveBeenCalled();
     expect(loadedFrontendPluginIds()).toEqual([]);
-    expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(0);
+    expect(loadPluginInSandbox).not.toHaveBeenCalled();
   });
 
-  it("unloads already-injected plugins when the gate is toggled off", async () => {
+  it("unloads already-loaded plugins when the gate is toggled off", async () => {
     const read = reader();
     await reconcileFrontendPlugins([parserPlugin("p", "active")], read, true);
     expect(loadedFrontendPluginIds()).toEqual(["p"]);
 
     await reconcileFrontendPlugins([parserPlugin("p", "active")], read, false);
     expect(loadedFrontendPluginIds()).toEqual([]);
-    expect(document.head.querySelectorAll('script[data-termihub-plugin="p"]')).toHaveLength(0);
+    expect(unloadPluginFromSandbox).toHaveBeenCalledWith("p");
   });
 
   it("loads active plugins again when the gate is toggled back on", async () => {

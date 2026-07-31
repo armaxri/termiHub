@@ -2,21 +2,22 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import {
   getStatusBarWidgets,
   subscribeStatusBarWidgets,
-  type StatusBarWidget,
-} from "@/plugins/pluginRuntime";
+  type StatusBarWidgetEntry,
+} from "@/plugins/sandbox/statusBarWidgetStore";
+import { buildWidgetDom } from "@/plugins/sandbox/widgetNode";
 import type { WidgetPosition } from "@/types/plugin";
-import { frontendLog } from "@/utils/frontendLog";
 
 /**
  * Renders the status-bar widgets registered by active frontend plugins into one
- * side of the status bar (#1998, concept §8).
+ * side of the status bar (#1998, concept §8), now sandboxed (#2136).
  *
- * The widget registry lives in {@link @/plugins/pluginRuntime}; this component
- * subscribes to it via `useSyncExternalStore` so a plugin enabling/disabling at
- * runtime mounts or unmounts its widgets without a store round-trip. Each widget
- * owns its DOM (`render()` → an `HTMLElement`); a plugin being disabled drops it
- * from the registry, which unmounts its host here and is where `dispose()` runs
- * — so a widget is disposed exactly once, cleanly.
+ * Widget `render()` runs inside the sandbox worker, which posts a declarative
+ * {@link StatusBarWidgetEntry.node} descriptor. This component subscribes to the
+ * main-thread snapshot store via `useSyncExternalStore` — so a plugin
+ * enabling/disabling at runtime mounts or unmounts its widgets without a store
+ * round-trip — and materialises each descriptor into real DOM on the main thread
+ * ({@link buildWidgetDom}, strictly allowlisted). A plugin being disabled removes
+ * its descriptor, which unmounts its host here; `dispose()` runs in the worker.
  */
 export function PluginStatusBarWidgets({ position }: { position: WidgetPosition }) {
   const widgets = useSyncExternalStore(subscribeStatusBarWidgets, () =>
@@ -25,54 +26,37 @@ export function PluginStatusBarWidgets({ position }: { position: WidgetPosition 
 
   return (
     <>
-      {widgets.map(({ key, widget }) => (
-        <PluginWidgetHost key={key} widget={widget} />
+      {widgets.map((entry) => (
+        <PluginWidgetHost key={entry.key} entry={entry} />
       ))}
     </>
   );
 }
 
 /**
- * Host for a single plugin status-bar widget: mounts the plugin's `render()`
- * DOM on mount and calls `dispose()` on unmount. Both calls cross into
- * plugin-provided code, so both are wrapped — a throwing widget is logged and
- * isolated, never allowed to break the status bar (concept "Error Handling").
+ * Host for a single plugin status-bar widget: materialises the descriptor the
+ * sandbox produced and mounts it, replacing the DOM whenever the descriptor
+ * changes. The descriptor crosses a trust boundary, so it is rebuilt through the
+ * allowlisted {@link buildWidgetDom} — never `innerHTML` — so plugin content can
+ * never inject executable markup into the host page.
  */
-function PluginWidgetHost({ widget }: { widget: StatusBarWidget }) {
+function PluginWidgetHost({ entry }: { entry: StatusBarWidgetEntry }) {
   const hostRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
-
-    let el: HTMLElement | null = null;
-    try {
-      el = widget.render();
-      if (el) host.appendChild(el);
-    } catch (err) {
-      frontendLog(
-        "plugin_runtime",
-        `Status-bar widget "${widget.id}" render() threw: ${err instanceof Error ? err.message : String(err)}`
-      );
-    }
-
+    const el = buildWidgetDom(entry.node);
+    host.appendChild(el);
     return () => {
-      try {
-        widget.dispose();
-      } catch (err) {
-        frontendLog(
-          "plugin_runtime",
-          `Status-bar widget "${widget.id}" dispose() threw: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-      if (el && el.parentNode === host) host.removeChild(el);
+      if (el.parentNode === host) host.removeChild(el);
     };
-  }, [widget]);
+  }, [entry.node]);
 
   return (
     <span
       className="status-bar__item status-bar__plugin-widget"
-      data-testid={`plugin-widget-${widget.id}`}
+      data-testid={`plugin-widget-${entry.widgetId}`}
       ref={hostRef}
     />
   );
