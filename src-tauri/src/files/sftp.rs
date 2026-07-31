@@ -458,14 +458,19 @@ mod tests {
         });
         assert!(handle.join().is_err(), "poisoning thread should panic");
 
-        // A raw `.lock().unwrap()` would panic here; the helper must not.
-        let result = lock_sessions(&sessions);
+        // A raw `.lock().unwrap()` would panic here; the helper must not. The
+        // Ok variant holds a `MutexGuard` that is not `Debug`, so match by hand
+        // rather than `unwrap_err()`.
+        let err = match lock_sessions(&sessions) {
+            Ok(_) => panic!("poisoned lock should return a recoverable error, got Ok"),
+            Err(e) => e,
+        };
         assert!(
-            matches!(result, Err(TerminalError::SftpError(_))),
-            "poisoned lock should return a recoverable SftpError, got {result:?}"
+            matches!(err, TerminalError::SftpError(_)),
+            "poisoned lock should return a recoverable SftpError"
         );
         // The failure is an SFTP-session error, not a generic SSH error (#2094).
-        let rendered = result.unwrap_err().to_string();
+        let rendered = err.to_string();
         assert!(
             rendered.starts_with("SFTP error:"),
             "SFTP session errors must carry the SFTP label, got {rendered:?}"

@@ -102,7 +102,10 @@ pub async fn sftp_check_writable(
 ) -> Result<Writability, TerminalError> {
     debug!(session_id, "SFTP check writable");
     let browser = manager.get_session(&session_id)?;
-    browser.check_writable(&remote_path).await.map_err(sftp_op_error)
+    browser
+        .check_writable(&remote_path)
+        .await
+        .map_err(sftp_op_error)
 }
 
 /// Open a dedicated SFTP channel off `browser` and (for downloads) stat the
@@ -408,7 +411,10 @@ pub async fn sftp_read_file_content(
     manager: State<'_, SftpManager>,
 ) -> Result<String, TerminalError> {
     let browser = manager.get_session(&session_id)?;
-    let data = browser.read_file(&remote_path).await.map_err(sftp_op_error)?;
+    let data = browser
+        .read_file(&remote_path)
+        .await
+        .map_err(sftp_op_error)?;
     String::from_utf8(data)
         .map_err(|e| TerminalError::SftpError(format!("read failed: invalid UTF-8: {e}")))
 }
