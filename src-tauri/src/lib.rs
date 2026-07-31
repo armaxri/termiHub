@@ -79,6 +79,13 @@ mod window;
 /// into local apps with delayed rendering (`CF_HDROP`, #1814). Windows-only.
 #[cfg(windows)]
 mod windows_clipboard;
+/// Shadow workflow-run authority (#2243, Phase 4 step 5c of #2139, part of
+/// #2206 / #2152): the client-scoped `workflow-run@<clientId>` projection region
+/// + `workflow.*` intents modeling the `appStore` workflow-run state machine
+/// (in-flight run progress + the dismissible local-process output panel, #1852 /
+/// #1865). Registered and served but not yet driving the live UI — see
+/// [`workflow_projection`].
+mod workflow_projection;
 mod workflows;
 mod workspace;
 
@@ -744,6 +751,23 @@ pub fn run() {
                 // lazily on a client's first `broadcast.*` intent.
                 app.manage(Arc::new(broadcast_projection::BroadcastStore::new()));
                 broadcast_projection::projection::register_broadcast_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
+                // Shadow WorkflowRunStore (#2243, Phase 4 step 5c, part of
+                // #2206): the client-scoped `workflow-run@<clientId>` region +
+                // `workflow.*` intents modeling the in-flight workflow-run state
+                // machine (run step-progress + the dismissible local-process
+                // output panel, #1852 / #1865). Managed authoritative state that
+                // serves intents, but nothing in the live UI subscribes to or
+                // renders the region yet — a pure shadow foundation (later steps
+                // cut rendering, then the mutations, over to it, keeping the
+                // appStore reducers as the parity-safe fallback). No client
+                // region is seeded here: like layout, restore-cohort, and
+                // broadcast, workflow-run regions are client-scoped and created
+                // lazily on a client's first `workflow.*` intent.
+                app.manage(Arc::new(workflow_projection::WorkflowRunStore::new()));
+                workflow_projection::projection::register_workflow_intents(
                     &mut registry,
                     app.handle().clone(),
                 );
