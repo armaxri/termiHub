@@ -147,6 +147,93 @@ impl Pane {
     }
 }
 
+/// The idle-baseline root path a pane defaults to (mirrors [`Pane::default`]).
+fn root_path() -> String {
+    "/".to_string()
+}
+
+/// The active-pane field of a whole-client [`ClientView`] seed, mirroring the
+/// frontend `fileBrowserMode` string (`"none"` is the absence of an active pane).
+/// Deserialize-only twin of the `mode` string [`ClientState::to_view`] emits.
+#[derive(Deserialize, Clone, Copy, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ModeView {
+    /// No browser pane active (frontend `"none"`).
+    #[default]
+    None,
+    Local,
+    Sftp,
+    Session,
+}
+
+impl ModeView {
+    fn to_kind(self) -> Option<FileBrowserKind> {
+        match self {
+            ModeView::None => None,
+            ModeView::Local => Some(FileBrowserKind::Local),
+            ModeView::Sftp => Some(FileBrowserKind::Sftp),
+            ModeView::Session => Some(FileBrowserKind::Session),
+        }
+    }
+}
+
+/// One pane of a whole-client [`ClientView`] seed — a deserialize-only twin of
+/// the `{ path, entries, loading, error }` object [`Pane::to_view`] emits.
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct PaneView {
+    #[serde(default = "root_path")]
+    pub path: String,
+    #[serde(default)]
+    pub entries: Vec<FileEntry>,
+    #[serde(default)]
+    pub loading: bool,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl Default for PaneView {
+    fn default() -> Self {
+        Self {
+            path: root_path(),
+            entries: Vec::new(),
+            loading: false,
+            error: None,
+        }
+    }
+}
+
+impl PaneView {
+    fn into_pane(self) -> Pane {
+        Pane {
+            path: self.path,
+            entries: self.entries,
+            loading: self.loading,
+            error: self.error,
+        }
+    }
+}
+
+/// A caller-supplied whole-client browser view for the render-cut seed
+/// (`fileBrowser.replace`) — the deserialize-only twin of the `{ mode, local,
+/// sftp, session, clipboard }` view model [`ClientState::to_view`] emits. Any
+/// field absent defaults to the idle baseline, so a seed that clears the view is
+/// expressible; a present-but-malformed field is a `bad_payload` rejection.
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientView {
+    #[serde(default)]
+    pub mode: ModeView,
+    #[serde(default)]
+    pub local: PaneView,
+    #[serde(default)]
+    pub sftp: PaneView,
+    #[serde(default)]
+    pub session: PaneView,
+    #[serde(default)]
+    pub clipboard: Option<Clipboard>,
+}
+
 /// One client's file-browser view.
 #[derive(Clone, Debug, Default)]
 struct ClientState {
@@ -301,6 +388,24 @@ impl FileBrowserStore {
     pub fn set_clipboard(&self, client_id: &str, clipboard: Option<Clipboard>) {
         let mut clients = self.lock();
         clients.entry(client_id.to_string()).or_default().clipboard = clipboard;
+    }
+
+    /// `fileBrowser.replace` — overwrite a client's whole browser view (active
+    /// pane, the three panes, clipboard) with a caller-supplied snapshot. The
+    /// frontend render-cut mirror (#2228) uses this whole-slice seed to keep the
+    /// client's `file-browser@<clientId>` region a faithful copy of `appStore`'s
+    /// file-browser UI-state slice while `appStore` stays authoritative (the
+    /// mutation cut is a later step) — the analog of the connections bridge's
+    /// `connection.replace` / agents bridge's `agent.replace` seed. Idempotent
+    /// server-side: replacing with identical content yields no diff.
+    pub fn replace(&self, client_id: &str, view: ClientView) {
+        let mut clients = self.lock();
+        let state = clients.entry(client_id.to_string()).or_default();
+        state.mode = view.mode.to_kind();
+        state.local = view.local.into_pane();
+        state.sftp = view.sftp.into_pane();
+        state.session = view.session.into_pane();
+        state.clipboard = view.clipboard;
     }
 
     /// Read a pane's `(path, entry_count, loading)` (test/diagnostics helper).
