@@ -3,11 +3,14 @@
 /// (the ordered agent list + per-agent sessions/definitions/folders). Registered
 /// and served but not yet driving the live UI — see [`agents_projection`].
 mod agents_projection;
-/// Shadow broadcast-membership authority (#2242, Phase 4 step 5b of #2139, part
-/// of #2206 / #2152): the client-scoped `broadcast@<clientId>` projection region
-/// + `broadcast.*` intents modeling the `appStore` broadcast-input membership
-/// slice (which tabs receive mirrored input, #1955 / #1956 / #1958). Registered
-/// and served but not yet driving the live UI — see [`broadcast_projection`].
+/// Broadcast-membership authority (#2242, Phase 4 step 5b of #2139, part of
+/// #2206 / #2152): the client-scoped `broadcast@<clientId>` projection region +
+/// `broadcast.*` intents modeling the `appStore` broadcast-input membership slice
+/// (which tabs receive mirrored input, #1955 / #1956 / #1958). Now drives the
+/// live UI — the frontend renders the broadcast UI from the region and routes the
+/// membership actions through the intents (render + mutation cut, both on by
+/// default), with the `appStore` reducers retained as the parity-safe fallback —
+/// see [`broadcast_projection`].
 mod broadcast_projection;
 mod commands;
 mod connection;
@@ -738,15 +741,15 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
-                // Shadow BroadcastStore (#2242, Phase 4 step 5b, part of #2206):
-                // the client-scoped `broadcast@<clientId>` region + `broadcast.*`
+                // BroadcastStore (#2242, Phase 4 step 5b, part of #2206): the
+                // client-scoped `broadcast@<clientId>` region + `broadcast.*`
                 // intents modeling the broadcast-input membership slice (which
-                // tabs receive mirrored input, #1955 / #1956 / #1958). Managed
-                // authoritative state that serves intents, but nothing in the
-                // live UI subscribes to or renders the region yet — a pure shadow
-                // foundation (later steps cut rendering, then the mutations, over
-                // to it, keeping the appStore reducers as the parity-safe
-                // fallback). No client region is seeded here: like layout and
+                // tabs receive mirrored input, #1955 / #1956 / #1958). The live
+                // UI now renders the broadcast UI from the region (kept a mirror
+                // of appStore via `broadcast.replace`) and routes the membership
+                // actions through the intents (render + mutation cut, both on by
+                // default), with the appStore reducers retained as the parity-safe
+                // fallback. No client region is seeded here: like layout and
                 // restore-cohort, broadcast regions are client-scoped and created
                 // lazily on a client's first `broadcast.*` intent.
                 app.manage(Arc::new(broadcast_projection::BroadcastStore::new()));

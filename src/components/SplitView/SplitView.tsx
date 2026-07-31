@@ -33,6 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { useLayoutRenderTree } from "@/store/useLayoutRenderTree";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab, isWindowEmpty, normalizeSizes } from "@/utils/panelTree";
@@ -640,9 +641,12 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   // terminal it currently shows (its active tab) is in the broadcast set; the
   // source panel additionally glows. Keyed off the visible tab so the ring
   // tracks what the user actually sees, not an inactive participant behind it.
-  const broadcastActive = useAppStore((s) => s.broadcastActive);
-  const broadcastSourceTabId = useAppStore((s) => s.broadcastSourceTabId);
-  const broadcastTargetTabIds = useAppStore((s) => s.broadcastTargetTabIds);
+  // Render cut (#2242): active/source/membership sourced from the projected
+  // broadcast region when it mirrors appStore, else appStore verbatim.
+  const broadcast = useProjectedBroadcast();
+  const broadcastActive = broadcast.active;
+  const broadcastSourceTabId = broadcast.sourceTabId;
+  const broadcastTargetTabIds = broadcast.targetTabIds;
   const panelBroadcastClass = broadcastPanelClass(panel.activeTabId, {
     broadcastActive,
     broadcastSourceTabId,

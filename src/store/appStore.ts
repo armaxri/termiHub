@@ -286,6 +286,7 @@ import {
 } from "@/store/sessionBridge";
 import { mirrorMonitorIntent } from "@/store/systemMonitorBridge";
 import { mirrorAgentIntent } from "@/store/agentsBridge";
+import { mirrorBroadcastIntent } from "@/store/broadcastBridge";
 import {
   expectProjectedRestoreSettlement,
   mirrorRestoreBegin,
@@ -7661,6 +7662,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // The source is just another target — keeping the fan-out loop uniform.
         broadcastTargetTabIds: new Set<string>([sourceTabId, ...targetTabIds]),
       });
+      // Mutation cut (#2242): mirror the start into the authoritative region. The
+      // store reproduces `{source} ∪ targets` from the same args, so pass the raw
+      // resolved targets (not the source-prefixed set). A no-op / logged fallback
+      // when the flag is off or the transport is unavailable — the local slice
+      // above already applied.
+      mirrorBroadcastIntent("broadcast.start", { scope, sourceTabId, targetTabIds });
     },
 
     stopBroadcast: () => {
@@ -7669,6 +7676,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
         broadcastSourceTabId: null,
         broadcastTargetTabIds: new Set<string>(),
       });
+      // Mutation cut (#2242): leave broadcast in the region too (scope/lastScope
+      // retained by the store for the keyboard toggle, exactly as the slice).
+      mirrorBroadcastIntent("broadcast.stop", {});
     },
 
     toggleBroadcast: () => {
@@ -7695,21 +7705,29 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     addBroadcastTarget: (tabId) => {
+      // Read-then-set so the mirror fires only on a real change (a no-op add must
+      // not dispatch a redundant intent), matching the store's pure set-insert.
+      if (get().broadcastTargetTabIds.has(tabId)) return;
       set((state) => {
         if (state.broadcastTargetTabIds.has(tabId)) return {};
         const next = new Set(state.broadcastTargetTabIds);
         next.add(tabId);
         return { broadcastTargetTabIds: next };
       });
+      // Mutation cut (#2242): mirror the membership add into the region.
+      mirrorBroadcastIntent("broadcast.addTarget", { tabId });
     },
 
     removeBroadcastTarget: (tabId) => {
+      if (!get().broadcastTargetTabIds.has(tabId)) return;
       set((state) => {
         if (!state.broadcastTargetTabIds.has(tabId)) return {};
         const next = new Set(state.broadcastTargetTabIds);
         next.delete(tabId);
         return { broadcastTargetTabIds: next };
       });
+      // Mutation cut (#2242): mirror the membership removal into the region.
+      mirrorBroadcastIntent("broadcast.removeTarget", { tabId });
     },
 
     isBroadcastTarget: (tabId) => get().broadcastTargetTabIds.has(tabId),
@@ -7751,6 +7769,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Skip the update (and its re-render) when membership is unchanged.
       if (next.size === prev.size && [...next].every((id) => prev.has(id))) return;
       set({ broadcastTargetTabIds: next });
+      // Mutation cut (#2242): the store owns no bulk-set intent, so reconcile the
+      // region to the recomputed membership via granular add/remove intents for the
+      // delta (mirroring the connected-terminal refresh at the fan-out seam).
+      for (const id of next) {
+        if (!prev.has(id)) mirrorBroadcastIntent("broadcast.addTarget", { tabId: id });
+      }
+      for (const id of prev) {
+        if (!next.has(id)) mirrorBroadcastIntent("broadcast.removeTarget", { tabId: id });
+      }
     },
 
     // Workflows (#1852)

@@ -161,6 +161,49 @@ fn status_and_targets_helpers_reflect_state() {
 }
 
 #[test]
+fn replace_overwrites_the_whole_slice_verbatim() {
+    let store = BroadcastStore::new();
+    store.start(C, BroadcastScope::All, "src", &ids(&["t1"]));
+    // The render-cut mirror sets every field verbatim — no source-prepend/de-dup,
+    // because the appStore set it mirrors is already canonical.
+    store.replace(
+        C,
+        true,
+        Some("s2".to_string()),
+        BroadcastScope::Custom,
+        ids(&["s2", "a", "b"]),
+        BroadcastScope::Panel,
+    );
+    let view = store.snapshot(C);
+    assert_eq!(view["active"], json!(true));
+    assert_eq!(view["sourceTabId"], json!("s2"));
+    assert_eq!(view["scope"], json!("custom"));
+    assert_eq!(view["lastScope"], json!("panel"));
+    assert_eq!(view["targetTabIds"], json!(["s2", "a", "b"]));
+}
+
+#[test]
+fn replace_can_mirror_the_idle_baseline() {
+    let store = BroadcastStore::new();
+    store.start(C, BroadcastScope::Panel, "src", &ids(&["t1", "t2"]));
+    // Mirroring an inactive appStore slice (e.g. after a local stop) clears the
+    // source/targets but retains the remembered scope, exactly like the slice.
+    store.replace(
+        C,
+        false,
+        None,
+        BroadcastScope::Panel,
+        Vec::new(),
+        BroadcastScope::Panel,
+    );
+    let view = store.snapshot(C);
+    assert_eq!(view["active"], json!(false));
+    assert_eq!(view["sourceTabId"], Value::Null);
+    assert_eq!(view["targetTabIds"], json!([]));
+    assert_eq!(view["lastScope"], json!("panel"));
+}
+
+#[test]
 fn membership_is_isolated_per_client() {
     let store = BroadcastStore::new();
     store.start("a", BroadcastScope::All, "a-src", &ids(&["a1"]));
