@@ -4,7 +4,7 @@ use crate::config::expand_tilde_only;
 use crate::errors::FileError;
 
 use super::utils::{chrono_from_epoch, normalize_path_separators, normalize_platform_path};
-use super::{FileBackend, FileEntry};
+use super::FileEntry;
 
 /// List directory contents, filtering out `.` and `..`.
 ///
@@ -151,101 +151,14 @@ fn read_symlink(file_type: Option<std::fs::FileType>, path: &Path) -> (bool, Opt
     }
 }
 
-/// File backend that operates on the local filesystem.
+/// [`FileBrowser`](super::browser::FileBrowser) capability for the local
+/// filesystem.
 ///
-/// All blocking I/O is wrapped in `tokio::task::spawn_blocking` to avoid
-/// stalling the async runtime.
-pub struct LocalFileBackend;
-
-impl Default for LocalFileBackend {
-    fn default() -> Self {
-        Self
-    }
-}
-
-impl LocalFileBackend {
-    /// Create a new `LocalFileBackend`.
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait::async_trait]
-impl FileBackend for LocalFileBackend {
-    async fn list(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
-        let path = path.to_string();
-        tokio::task::spawn_blocking(move || {
-            list_dir_sync(&path).map_err(|e| map_io_error(e, &path))
-        })
-        .await
-        .map_err(|e| FileError::OperationFailed(e.to_string()))?
-    }
-
-    async fn read(&self, path: &str) -> Result<Vec<u8>, FileError> {
-        let path = path.to_string();
-        tokio::task::spawn_blocking(move || {
-            std::fs::read(&path).map_err(|e| map_io_error(e, &path))
-        })
-        .await
-        .map_err(|e| FileError::OperationFailed(e.to_string()))?
-    }
-
-    async fn write(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
-        let path = path.to_string();
-        let data = data.to_vec();
-        tokio::task::spawn_blocking(move || {
-            std::fs::write(&path, &data).map_err(|e| map_io_error(e, &path))
-        })
-        .await
-        .map_err(|e| FileError::OperationFailed(e.to_string()))?
-    }
-
-    async fn delete(&self, path: &str, is_directory: bool) -> Result<(), FileError> {
-        let path = path.to_string();
-        tokio::task::spawn_blocking(move || {
-            if is_directory {
-                std::fs::remove_dir_all(&path).map_err(|e| map_io_error(e, &path))
-            } else {
-                std::fs::remove_file(&path).map_err(|e| map_io_error(e, &path))
-            }
-        })
-        .await
-        .map_err(|e| FileError::OperationFailed(e.to_string()))?
-    }
-
-    async fn rename(&self, old_path: &str, new_path: &str) -> Result<(), FileError> {
-        let old = old_path.to_string();
-        let new = new_path.to_string();
-        tokio::task::spawn_blocking(move || {
-            std::fs::rename(&old, &new).map_err(|e| map_io_error(e, &old))
-        })
-        .await
-        .map_err(|e| FileError::OperationFailed(e.to_string()))?
-    }
-
-    async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
-        let path = path.to_string();
-        tokio::task::spawn_blocking(move || stat_sync(&path))
-            .await
-            .map_err(|e| FileError::OperationFailed(e.to_string()))?
-    }
-
-    async fn mkdir(&self, path: &str) -> Result<(), FileError> {
-        let path = path.to_string();
-        tokio::task::spawn_blocking(move || {
-            std::fs::create_dir_all(&path).map_err(|e| map_io_error(e, &path))
-        })
-        .await
-        .map_err(|e| FileError::OperationFailed(e.to_string()))?
-    }
-}
-
-/// [`FileBrowser`] capability for the local filesystem.
-///
-/// A thin wrapper around the local filesystem operations that implements the
-/// `FileBrowser` capability interface (used by `ConnectionType::file_browser()`).
-/// Using a separate struct avoids method ambiguity with `LocalFileBackend`
-/// which implements the `FileBackend` trait.
+/// A thin wrapper around the local filesystem operations (`list_dir_sync` /
+/// `stat_sync`, blocking I/O offloaded to `spawn_blocking`) that implements the
+/// `FileBrowser` capability returned by `ConnectionType::file_browser()`. It is
+/// the single local-filesystem file capability across desktop and agent (#2104);
+/// each method expands a leading `~` so callers can pass `~`-relative paths.
 pub struct LocalFileBrowser;
 
 impl LocalFileBrowser {
@@ -447,160 +360,6 @@ mod tests {
         assert!(!entries[0].path.contains('\\'));
     }
 
-    // ── FileBackend async tests ──────────────────────────────────────
-
-    #[tokio::test]
-    async fn backend_list_empty_dir() {
-        let dir = tempfile::tempdir().unwrap();
-        let backend = LocalFileBackend::new();
-        let entries = backend.list(dir.path().to_str().unwrap()).await.unwrap();
-        assert!(entries.is_empty());
-    }
-
-    #[tokio::test]
-    async fn backend_list_dir_returns_entries() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("hello.txt"), "world").unwrap();
-        std::fs::create_dir(dir.path().join("subdir")).unwrap();
-
-        let backend = LocalFileBackend::new();
-        let entries = backend.list(dir.path().to_str().unwrap()).await.unwrap();
-        assert_eq!(entries.len(), 2);
-
-        let file = entries.iter().find(|e| e.name == "hello.txt").unwrap();
-        assert!(!file.is_directory);
-        assert_eq!(file.size, 5);
-        #[cfg(unix)]
-        assert!(file.permissions.is_some());
-        #[cfg(not(unix))]
-        assert!(file.permissions.is_none());
-
-        let dir_entry = entries.iter().find(|e| e.name == "subdir").unwrap();
-        assert!(dir_entry.is_directory);
-    }
-
-    #[tokio::test]
-    async fn backend_list_nonexistent_dir() {
-        let backend = LocalFileBackend::new();
-        let result = backend.list("/nonexistent/path/abc123").await;
-        assert!(matches!(result, Err(FileError::NotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn backend_read_write_round_trip() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("test.bin");
-        let path_str = file_path.to_str().unwrap();
-
-        let backend = LocalFileBackend::new();
-        let data = b"hello, world!";
-        backend.write(path_str, data).await.unwrap();
-
-        let read_data = backend.read(path_str).await.unwrap();
-        assert_eq!(read_data, data);
-    }
-
-    #[tokio::test]
-    async fn backend_read_nonexistent_file() {
-        let backend = LocalFileBackend::new();
-        let result = backend.read("/nonexistent/file.txt").await;
-        assert!(matches!(result, Err(FileError::NotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn backend_delete_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("to_delete.txt");
-        std::fs::write(&file_path, "delete me").unwrap();
-
-        let backend = LocalFileBackend::new();
-        backend
-            .delete(file_path.to_str().unwrap(), false)
-            .await
-            .unwrap();
-        assert!(!file_path.exists());
-    }
-
-    #[tokio::test]
-    async fn backend_delete_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let sub = dir.path().join("to_delete_dir");
-        std::fs::create_dir(&sub).unwrap();
-        std::fs::write(sub.join("inner.txt"), "inner").unwrap();
-
-        let backend = LocalFileBackend::new();
-        backend.delete(sub.to_str().unwrap(), true).await.unwrap();
-        assert!(!sub.exists());
-    }
-
-    #[tokio::test]
-    async fn backend_rename_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let old = dir.path().join("old.txt");
-        let new = dir.path().join("new.txt");
-        std::fs::write(&old, "content").unwrap();
-
-        let backend = LocalFileBackend::new();
-        backend
-            .rename(old.to_str().unwrap(), new.to_str().unwrap())
-            .await
-            .unwrap();
-        assert!(!old.exists());
-        assert!(new.exists());
-        assert_eq!(std::fs::read_to_string(&new).unwrap(), "content");
-    }
-
-    #[tokio::test]
-    async fn backend_stat_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let file_path = dir.path().join("stat_test.txt");
-        std::fs::write(&file_path, "hello").unwrap();
-
-        let backend = LocalFileBackend::new();
-        let result = backend.stat(file_path.to_str().unwrap()).await.unwrap();
-        assert_eq!(result.name, "stat_test.txt");
-        assert!(!result.is_directory);
-        assert_eq!(result.size, 5);
-        #[cfg(unix)]
-        assert!(result.permissions.is_some());
-        #[cfg(not(unix))]
-        assert!(result.permissions.is_none());
-        assert!(!result.modified.is_empty());
-    }
-
-    #[tokio::test]
-    async fn backend_stat_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let sub = dir.path().join("test_dir");
-        std::fs::create_dir(&sub).unwrap();
-
-        let backend = LocalFileBackend::new();
-        let result = backend.stat(sub.to_str().unwrap()).await.unwrap();
-        assert_eq!(result.name, "test_dir");
-        assert!(result.is_directory);
-    }
-
-    #[tokio::test]
-    async fn backend_stat_nonexistent() {
-        let backend = LocalFileBackend::new();
-        let result = backend.stat("/nonexistent/path").await;
-        assert!(matches!(result, Err(FileError::NotFound(_))));
-    }
-
-    #[tokio::test]
-    async fn backend_trait_object_safety() {
-        let backend: Box<dyn FileBackend> = Box::new(LocalFileBackend::new());
-        let dir = tempfile::tempdir().unwrap();
-        let entries = backend.list(dir.path().to_str().unwrap()).await.unwrap();
-        assert!(entries.is_empty());
-    }
-
-    #[test]
-    fn backend_is_send_and_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<LocalFileBackend>();
-    }
-
     // ── LocalFileBrowser (FileBrowser) tests ─────────────────────────
     //
     // `LocalFileBrowser` is the single local-filesystem capability behind
@@ -617,7 +376,10 @@ mod tests {
         std::fs::create_dir(dir.path().join("sub")).unwrap();
 
         let browser = LocalFileBrowser::new();
-        let entries = browser.list_dir(dir.path().to_str().unwrap()).await.unwrap();
+        let entries = browser
+            .list_dir(dir.path().to_str().unwrap())
+            .await
+            .unwrap();
         assert_eq!(entries.len(), 2);
         // Directories sort first (inherited from `list_dir_sync`).
         assert!(entries[0].is_directory);
@@ -652,7 +414,10 @@ mod tests {
     async fn browser_list_tilde_expands_to_home_dir() {
         let home = std::env::var("HOME").expect("HOME must be set");
         let browser = LocalFileBrowser::new();
-        let entries = browser.list_dir("~").await.expect("listing '~' should work");
+        let entries = browser
+            .list_dir("~")
+            .await
+            .expect("listing '~' should work");
         for entry in entries {
             assert!(
                 entry.path.starts_with(&home),
@@ -669,7 +434,10 @@ mod tests {
         let home = std::env::var("HOME").expect("HOME must be set");
         let browser = LocalFileBrowser::new();
         let entry = browser.stat("~").await.expect("stat of '~' should work");
-        assert_eq!(entry.path, home, "stat path should be the expanded home dir");
+        assert_eq!(
+            entry.path, home,
+            "stat path should be the expanded home dir"
+        );
         assert!(entry.is_directory);
     }
 

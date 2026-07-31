@@ -1,9 +1,10 @@
 //! Async file browsing capability trait for connection types.
 //!
-//! Unlike [`FileBackend`](super::FileBackend) (which requires `Send + Sync`
-//! and has a slightly different API surface), `FileBrowser` is the capability
-//! interface returned by
-//! [`ConnectionType::file_browser()`](crate::connection::ConnectionType::file_browser).
+//! `FileBrowser` is the single file-capability interface returned by
+//! [`ConnectionType::file_browser()`](crate::connection::ConnectionType::file_browser)
+//! and implemented by every backend (local, WSL, FTP, Docker, SFTP, and the
+//! desktop remote proxy). It is also the agent's file backend — the former,
+//! near-duplicate `FileBackend` trait was retired in favour of it (#2104).
 
 use crate::errors::FileError;
 use crate::files::FileEntry;
@@ -14,8 +15,12 @@ use crate::files::FileEntry;
 /// `Some(&dyn FileBrowser)` from
 /// [`ConnectionType::file_browser()`](crate::connection::ConnectionType::file_browser).
 ///
-/// This trait differs from [`FileBackend`](super::FileBackend) in method
-/// naming and the `delete` signature (no `is_directory` parameter).
+/// The bound is `Send` (not `Send + Sync`): implementations are moved into a
+/// single owning task (e.g. boxed as `Box<dyn FileBrowser>` in the agent
+/// dispatch, or held behind an `Arc` per SFTP session) and never shared by
+/// reference across threads, so `Send` alone keeps the async command futures
+/// `Send` without forcing every backend to be `Sync`. `delete` takes no
+/// `is_directory` flag — it self-detects a directory via `stat`.
 #[async_trait::async_trait]
 pub trait FileBrowser: Send {
     /// List directory contents at the given path.

@@ -23,7 +23,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::client_registry::ConnectionRegistry;
 use crate::files::FileError;
-use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use crate::monitoring::MonitoringManagerApi;
 use crate::network;
 use crate::protocol::errors;
@@ -55,6 +54,7 @@ use crate::session::manager::{
 };
 use crate::tunnel::AgentTunnelRegistry;
 use crate::update::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
+use termihub_core::files::{FileBrowser, LocalFileBrowser};
 
 /// The agent's protocol version.
 ///
