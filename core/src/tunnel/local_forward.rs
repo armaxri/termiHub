@@ -22,6 +22,11 @@ use super::config::{LocalForwardConfig, TunnelStats};
 pub struct LocalForwarder {
     task_handle: Option<tokio::task::JoinHandle<()>>,
     stats: Arc<ForwarderStats>,
+    /// The address the listener actually bound. When `config.local_port` is `0`
+    /// the OS assigns an ephemeral port; this reads it back so callers (and
+    /// tests) can connect to the real port instead of racily re-binding a probed
+    /// one (#2280).
+    local_addr: std::net::SocketAddr,
     /// Fires when the accept loop exits (bind lost / listener error), so the
     /// tunnel supervisor can observe forwarder death and drive the tunnel to
     /// `Error` instead of leaving it green-forever (#1243, GAP 2). Taken once by
@@ -106,6 +111,7 @@ impl LocalForwarder {
         let std_listener = std::net::TcpListener::bind(&addr)?;
         std_listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(std_listener)?;
+        let local_addr = listener.local_addr()?;
 
         let stats = Arc::new(ForwarderStats::new());
         let stats_clone = Arc::clone(&stats);
@@ -126,8 +132,18 @@ impl LocalForwarder {
         Ok(Self {
             task_handle: Some(task_handle),
             stats,
+            local_addr,
             death: Some(death_rx),
         })
+    }
+
+    /// The address the listener actually bound.
+    ///
+    /// Equals `config.local_host:config.local_port` for a fixed request; when
+    /// port `0` was requested the OS picked an ephemeral port and this returns
+    /// the real one (#2280).
+    pub fn local_addr(&self) -> std::net::SocketAddr {
+        self.local_addr
     }
 
     /// Take the forwarder-death receiver (once) for the tunnel supervisor.
@@ -222,20 +238,14 @@ mod tests {
     use super::super::config::LocalForwardConfig;
     use super::*;
 
-    /// Reserve an ephemeral loopback port, then release it so the forwarder can
-    /// bind it. A small TOCTOU window exists but is harmless for a unit test.
-    fn free_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("bind ephemeral")
-            .local_addr()
-            .expect("local addr")
-            .port()
-    }
-
-    fn config_for(port: u16) -> LocalForwardConfig {
+    /// A config that binds an ephemeral loopback port. Passing port `0` lets the
+    /// OS assign a free port the forwarder keeps, so the test reads the real port
+    /// back via [`LocalForwarder::local_addr`] instead of racily re-binding a
+    /// probed one (#2280).
+    fn ephemeral_config() -> LocalForwardConfig {
         LocalForwardConfig {
             local_host: "127.0.0.1".to_string(),
-            local_port: port,
+            local_port: 0,
             remote_host: "db.internal".to_string(),
             remote_port: 5432,
         }
@@ -261,13 +271,12 @@ mod tests {
 
     #[tokio::test]
     async fn relays_bytes_bidirectionally_and_records_stats() {
-        let port = free_port();
         let opener = EchoChannelOpener::new();
         let targets = opener.targets_handle();
-        let forwarder =
-            LocalForwarder::start_with_opener(&config_for(port), opener).expect("start forwarder");
+        let forwarder = LocalForwarder::start_with_opener(&ephemeral_config(), opener)
+            .expect("start forwarder");
 
-        let mut client = TcpStream::connect(("127.0.0.1", port))
+        let mut client = TcpStream::connect(forwarder.local_addr())
             .await
             .expect("connect to local forward");
         client.write_all(b"hello world").await.expect("write");
@@ -294,13 +303,13 @@ mod tests {
 
     #[tokio::test]
     async fn teardown_closes_the_listener() {
-        let port = free_port();
         let forwarder =
-            LocalForwarder::start_with_opener(&config_for(port), EchoChannelOpener::new())
+            LocalForwarder::start_with_opener(&ephemeral_config(), EchoChannelOpener::new())
                 .expect("start forwarder");
+        let addr = forwarder.local_addr();
 
         // Sanity: the port accepts while running.
-        TcpStream::connect(("127.0.0.1", port))
+        TcpStream::connect(addr)
             .await
             .expect("connect while active");
 
@@ -309,7 +318,7 @@ mod tests {
         // The listener should stop accepting shortly after teardown.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         loop {
-            match TcpStream::connect(("127.0.0.1", port)).await {
+            match TcpStream::connect(addr).await {
                 Err(e) if e.kind() == io::ErrorKind::ConnectionRefused => break,
                 _ if tokio::time::Instant::now() >= deadline => {
                     panic!("listener still accepting after teardown");
@@ -321,12 +330,11 @@ mod tests {
 
     #[tokio::test]
     async fn channel_open_failure_counts_connection_but_relays_nothing() {
-        let port = free_port();
         let forwarder =
-            LocalForwarder::start_with_opener(&config_for(port), EchoChannelOpener::failing())
+            LocalForwarder::start_with_opener(&ephemeral_config(), EchoChannelOpener::failing())
                 .expect("start forwarder");
 
-        let mut client = TcpStream::connect(("127.0.0.1", port))
+        let mut client = TcpStream::connect(forwarder.local_addr())
             .await
             .expect("connect to local forward");
         // The relay bails out when the channel fails to open, so the connection
