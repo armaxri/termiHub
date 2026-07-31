@@ -142,6 +142,63 @@ export function agentRenderFromProjectionEnabled(): boolean {
   return true;
 }
 
+// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
+
+let mutationFlagOverride: boolean | null = null;
+
+interface AgentMutationFlagWindow {
+  __TERMIHUB_AGENT_INTENTS__?: boolean;
+  localStorage?: Storage;
+}
+
+/**
+ * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
+ * `null` clears the override and falls back to the window/localStorage signal,
+ * then to the default (on).
+ */
+export function setAgentIntentsEnabled(value: boolean | null): void {
+  mutationFlagOverride = value;
+}
+
+/**
+ * Whether the agent lifecycle actions (add/update/applySettings/remove/reorder/
+ * toggleExpanded/connect/disconnect/shutdown/status/setCapabilities/refresh/
+ * clearSessions and the definition/folder CRUD) dispatch granular `agent.*`
+ * intents so the backend {@link import("../../src-tauri/src/agents_projection/store").AgentsStore}
+ * is authoritative — instead of only the render-cut {@link seedAgentsRegion}
+ * `agent.replace` mirror driving the region.
+ *
+ * **On by default** (#2226 mutation cut). When on, each action mirrors its
+ * transition through an `agent.*` intent (via {@link mirrorAgentIntent}), and the
+ * render-cut hook ({@link import("./useProjectedAgents").useProjectedAgents})
+ * reflects the region back into the UI. The local `appStore` reducer path stays in
+ * place as the render source and as a resilience / rollback fallback — any dispatch
+ * failure is logged and the local mutation continues, so a backend hiccup can never
+ * break the agent sidebar (the reducer removal is a later step). When off,
+ * `appStore` drives the slice purely locally (the pre-cut path). The flip was taken
+ * on the automated parity tests plus the instant local fallback, mirroring the
+ * monitor mutation cut (#2224). Overridable at runtime for rollback / tests via
+ * `window.__TERMIHUB_AGENT_INTENTS__` or `localStorage["termihub.agentIntents"]`
+ * (set `"false"` to restore the pre-cut local-mutation path; `"true"` to force on).
+ */
+export function agentIntentsEnabled(): boolean {
+  if (mutationFlagOverride !== null) return mutationFlagOverride;
+  try {
+    if (typeof window !== "undefined") {
+      const w = window as unknown as AgentMutationFlagWindow;
+      if (typeof w.__TERMIHUB_AGENT_INTENTS__ === "boolean") {
+        return w.__TERMIHUB_AGENT_INTENTS__;
+      }
+      const ls = w.localStorage?.getItem("termihub.agentIntents");
+      if (ls === "true") return true;
+      if (ls === "false") return false;
+    }
+  } catch {
+    // A missing/blocked window or storage just means "use the default".
+  }
+  return true;
+}
+
 // ── Transport + shared region client (lazy, mirrors the monitor slice) ─────────
 
 let transportInstance: Transport | null = null;
@@ -292,6 +349,65 @@ export function seedAgentsRegion(
     // A synchronous transport-construction failure (non-Tauri, no socket).
     lastSeededSignature = null;
     return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ── Mutation cut: granular agent.* intent dispatch ────────────────────────────
+
+/**
+ * The granular `agent.*` intent kinds the mutation cut dispatches (twins of the
+ * Rust routes). Excludes `agent.replace`, which is the render-cut whole-slice
+ * mirror ({@link seedAgentsRegion}); the mutation cut drives the region through
+ * these per-transition intents instead so the store becomes authoritative.
+ */
+export type AgentIntentKind =
+  | "agent.add"
+  | "agent.update"
+  | "agent.applySettings"
+  | "agent.remove"
+  | "agent.reorder"
+  | "agent.toggleExpanded"
+  | "agent.status"
+  | "agent.setCapabilities"
+  | "agent.disconnect"
+  | "agent.refresh"
+  | "agent.clearSessions"
+  | "agent.saveDefinition"
+  | "agent.updateDefinition"
+  | "agent.deleteDefinition"
+  | "agent.createFolder"
+  | "agent.updateFolder"
+  | "agent.deleteFolder";
+
+/** Dispatch a granular `agent.*` intent, resolving with the ack (parity tests). */
+export function dispatchAgentIntent(
+  kind: AgentIntentKind,
+  payload: Record<string, unknown>
+): Promise<IntentAck> {
+  return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
+}
+
+/**
+ * Fire a granular `agent.*` intent to keep the backend store authoritative,
+ * swallowing and logging any failure so the local `appStore` mutation path is
+ * never disrupted by a bridge hiccup (the resilience fallback). A no-op when the
+ * mutation cut is disabled ({@link agentIntentsEnabled} off — the rollback path).
+ * Never throws — a synchronous transport-construction failure (non-Tauri, no
+ * socket) is caught and logged, leaving the UI on the local slice. The twin of the
+ * monitor bridge's {@link import("./systemMonitorBridge").mirrorMonitorIntent}.
+ */
+export function mirrorAgentIntent(kind: AgentIntentKind, payload: Record<string, unknown>): void {
+  if (!agentIntentsEnabled()) return;
+  try {
+    void dispatchAgentIntent(kind, payload)
+      .then((ack) => {
+        if (ack.status === "rejected") {
+          logAgentBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+        }
+      })
+      .catch((err) => logAgentBridgeFallback(kind, err));
+  } catch (err) {
+    logAgentBridgeFallback(kind, err);
   }
 }
 

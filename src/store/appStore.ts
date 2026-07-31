@@ -285,6 +285,7 @@ import {
   type SessionIntentKind,
 } from "@/store/sessionBridge";
 import { mirrorMonitorIntent } from "@/store/systemMonitorBridge";
+import { mirrorAgentIntent } from "@/store/agentsBridge";
 
 export type SidebarView =
   | "connections"
@@ -6608,6 +6609,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     addRemoteAgent: (agent) => {
       set((state) => ({ remoteAgents: [...state.remoteAgents, agent] }));
+      // Mutation cut (#2226): append the agent to the authoritative region. A
+      // no-op / logged fallback when the flag is off or the transport is
+      // unavailable — the local slice above already applied.
+      mirrorAgentIntent("agent.add", {
+        id: agent.id,
+        name: agent.name,
+        config: agent.config,
+        agentSettings: agent.agentSettings,
+      });
       persistAgent({
         id: agent.id,
         name: agent.name,
@@ -6628,6 +6638,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set((state) => ({
         remoteAgents: state.remoteAgents.map((a) => (a.id === agent.id ? agent : a)),
       }));
+      // Mutation cut (#2226): update the persisted fields in the region.
+      mirrorAgentIntent("agent.update", {
+        id: agent.id,
+        name: agent.name,
+        config: agent.config,
+        agentSettings: agent.agentSettings,
+      });
       persistAgent({
         id: agent.id,
         name: agent.name,
@@ -6651,6 +6668,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         agents.splice(newIndex, 0, moved);
         return { remoteAgents: agents };
       });
+      // Mutation cut (#2226): reorder the agent in the region.
+      mirrorAgentIntent("agent.reorder", { oldIndex, newIndex });
       const agentIds = get().remoteAgents.map((a) => a.id);
       persistAgentOrder(agentIds).catch((err) => {
         frontendLog(
@@ -6682,6 +6701,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
           Object.entries(s.agentFolders).filter(([k]) => k !== agentId)
         ),
       }));
+      // Mutation cut (#2226): drop the agent and all of its sub-state from the
+      // region (the store's `remove` clears sessions/definitions/folders too).
+      mirrorAgentIntent("agent.remove", { id: agentId });
       removeAgent(agentId).catch((err) => {
         frontendLog(
           "app_store",
@@ -6699,6 +6721,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
           a.id === agentId ? { ...a, isExpanded: !a.isExpanded } : a
         ),
       }));
+      // Mutation cut (#2226): flip the sidebar expansion in the region.
+      mirrorAgentIntent("agent.toggleExpanded", { id: agentId });
     },
 
     connectRemoteAgent: async (agentId, password) => {
@@ -6714,6 +6738,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // "connecting" up front and "connected"/"disconnected" on the outcome),
       // so an optimistic write here could clobber a fast drop → "reconnecting"
       // event that arrives before this promise settles.
+      // The agent's expansion before this connect: connect force-expands the
+      // sidebar entry, so the region only needs a toggle when it was collapsed.
+      const wasExpanded = agent.isExpanded;
       try {
         const config: RemoteAgentConfig = { ...agent.config };
         if (password && config.authMethod === "password") {
@@ -6728,6 +6755,16 @@ export const useAppStore = create<AppState>((set, get, store) => {
             a.id === agentId ? { ...a, capabilities: result.capabilities, isExpanded: true } : a
           ),
         }));
+
+        // Mutation cut (#2226): mirror the capabilities and the force-expand into
+        // the region. `connectionState` stays a single-writer field driven by the
+        // `agent-state-change` event (`setAgentConnectionState` → `agent.status`),
+        // so it is deliberately not written here.
+        mirrorAgentIntent("agent.setCapabilities", {
+          id: agentId,
+          capabilities: result.capabilities,
+        });
+        if (!wasExpanded) mirrorAgentIntent("agent.toggleExpanded", { id: agentId });
 
         // The session/definition refresh is owned by the "connected" event
         // (`setAgentConnectionState`), so it runs exactly once per connect and
@@ -6762,6 +6799,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
         agentSessions: { ...s.agentSessions, [agentId]: [] },
         agentFolders: { ...s.agentFolders, [agentId]: [] },
       }));
+      // Mutation cut (#2226): force the region entry to disconnected and clear its
+      // live sessions/folders (the store's `disconnect` does exactly this).
+      mirrorAgentIntent("agent.disconnect", { id: agentId });
     },
 
     shutdownRemoteAgent: async (agentId) => {
@@ -6776,6 +6816,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
         agentSessions: { ...s.agentSessions, [agentId]: [] },
         agentFolders: { ...s.agentFolders, [agentId]: [] },
       }));
+      // Mutation cut (#2226): as with disconnect, force the region entry to
+      // disconnected and clear its live sessions/folders.
+      mirrorAgentIntent("agent.disconnect", { id: agentId });
       return detached;
     },
 
@@ -6798,6 +6841,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
         ),
       }));
 
+      // Mutation cut (#2226): set the connection state in the region. This is the
+      // single writer for `connectionState` (G4/#1234); the store's `set_status`
+      // tracks `lastError` with the same rules as `nextLastError` above.
+      mirrorAgentIntent("agent.status", { id: agentId, state: connectionState, error });
+
       // The refresh of sessions/definitions is owned by the transition INTO
       // "connected" — this is the single, de-duped refresh per connect (G4).
       // Guarding on the previous state keeps a redundant/duplicate "connected"
@@ -6813,6 +6861,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set((s) => ({
         agentSessions: { ...s.agentSessions, [agentId]: [] },
       }));
+      // Mutation cut (#2226): empty the region's live-session list for the agent.
+      mirrorAgentIntent("agent.clearSessions", { id: agentId });
     },
 
     setAgentCapabilities: (agentId, capabilities) => {
@@ -6821,6 +6871,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
           a.id === agentId ? { ...a, capabilities } : a
         ),
       }));
+      // Mutation cut (#2226): record the negotiated capabilities in the region.
+      mirrorAgentIntent("agent.setCapabilities", { id: agentId, capabilities });
     },
 
     updateAgentSettings: async (agentId, settings) => {
@@ -6830,6 +6882,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
           a.id === agentId ? { ...a, agentSettings: settings } : a
         ),
       }));
+      // Mutation cut (#2226): apply just the settings in the region.
+      mirrorAgentIntent("agent.applySettings", { id: agentId, agentSettings: settings });
     },
 
     refreshAgentSessions: async (agentId) => {
@@ -6843,6 +6897,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
           agentDefinitions: { ...s.agentDefinitions, [agentId]: connectionsData.connections },
           agentFolders: { ...s.agentFolders, [agentId]: connectionsData.folders },
         }));
+        // Mutation cut (#2226): replace the agent's live sessions plus its saved
+        // definitions and folders in the region in one shot (the once-per-connect
+        // refresh set).
+        mirrorAgentIntent("agent.refresh", {
+          id: agentId,
+          sessions,
+          definitions: connectionsData.connections,
+          folders: connectionsData.folders,
+        });
       } catch (err) {
         frontendLog(
           "app_store",
@@ -6866,6 +6929,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
             ],
           },
         }));
+        // Mutation cut (#2226): upsert the saved definition in the region.
+        mirrorAgentIntent("agent.saveDefinition", { id: agentId, definition: saved });
       } catch (err) {
         frontendLog(
           "app_store",
@@ -6902,6 +6967,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
             [agentId]: (s.agentDefinitions[agentId] ?? []).filter((d) => d.id !== definitionId),
           },
         }));
+        // Mutation cut (#2226): remove the definition from the region.
+        mirrorAgentIntent("agent.deleteDefinition", { id: agentId, definitionId });
       } catch (err) {
         frontendLog(
           "app_store",
@@ -6924,6 +6991,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
             ),
           },
         }));
+        // Mutation cut (#2226): replace the definition by id in the region.
+        mirrorAgentIntent("agent.updateDefinition", { id: agentId, definition: updated });
       } catch (err) {
         frontendLog(
           "app_store",
@@ -6954,6 +7023,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
             [agentId]: [...(s.agentFolders[agentId] ?? []), folder],
           },
         }));
+        // Mutation cut (#2226): append the folder to the region.
+        mirrorAgentIntent("agent.createFolder", { id: agentId, folder });
         toast.success(`Created folder ${folder.name}`);
       } catch (err) {
         frontendLog(
@@ -6978,6 +7049,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
             ),
           },
         }));
+        // Mutation cut (#2226): replace the folder by id in the region.
+        mirrorAgentIntent("agent.updateFolder", { id: agentId, folder: updated });
         if (isRename) toast.success(`Renamed folder to ${updated.name}`);
       } catch (err) {
         frontendLog(
@@ -7008,6 +7081,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
             ),
           },
         }));
+        // Mutation cut (#2226): remove the folder and reparent its child
+        // definitions to the root (the store's `delete_folder` does both).
+        mirrorAgentIntent("agent.deleteFolder", { id: agentId, folderId });
       } catch (err) {
         frontendLog(
           "app_store",
@@ -7029,6 +7105,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Fire-and-forget: persist expansion state on agent
       const folder = (get().agentFolders[agentId] ?? []).find((f) => f.id === folderId);
       if (folder) {
+        // Mutation cut (#2226): replace the folder (with its flipped expansion) in
+        // the region.
+        mirrorAgentIntent("agent.updateFolder", { id: agentId, folder });
         apiUpdateAgentFolder(agentId, { id: folderId, is_expanded: folder.isExpanded }).catch(
           () => {}
         );
