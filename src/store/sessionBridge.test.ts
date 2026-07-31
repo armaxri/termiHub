@@ -117,14 +117,14 @@ afterEach(() => {
 });
 
 describe("sessionIntentsEnabled flag", () => {
-  it("defaults off and honours the programmatic override", () => {
-    expect(sessionIntentsEnabled()).toBe(false);
-    setSessionIntentsEnabled(true);
+  it("defaults on and honours the programmatic override", () => {
     expect(sessionIntentsEnabled()).toBe(true);
     setSessionIntentsEnabled(false);
     expect(sessionIntentsEnabled()).toBe(false);
+    setSessionIntentsEnabled(true);
+    expect(sessionIntentsEnabled()).toBe(true);
     setSessionIntentsEnabled(null);
-    expect(sessionIntentsEnabled()).toBe(false);
+    expect(sessionIntentsEnabled()).toBe(true);
   });
 });
 

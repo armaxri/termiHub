@@ -56,6 +56,7 @@ import { useAppStore } from "./appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { DEFAULT_BACKOFF } from "@/utils/reconnectBackoff";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
+import { setSessionIntentsEnabled } from "./sessionBridge";
 
 function findTab(tabId: string) {
   const state = useAppStore.getState();
@@ -93,9 +94,15 @@ describe("appStore — agentless auto-reconnect (#1962)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.useFakeTimers();
+    // Pin the local `setTimeout` reconnect loop: these tests assert the local
+    // reducer/timer path, which stays as the resilience fallback after the
+    // session mutation cut flipped on by default (#2152). The intent path keeps
+    // its own coverage in sessionBridge/appStore.sessionBridge tests.
+    setSessionIntentsEnabled(false);
   });
 
   afterEach(() => {
+    setSessionIntentsEnabled(null);
     vi.clearAllTimers();
     vi.useRealTimers();
   });
@@ -259,6 +266,10 @@ describe("appStore — on-reconnect command (#1978)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.useFakeTimers();
+    // Pin the local `setTimeout` reconnect loop — see the note above. The local
+    // reducer/timer path is the resilience fallback after the session mutation
+    // cut flipped on by default (#2152).
+    setSessionIntentsEnabled(false);
     injected = [];
     registerTerminalInputInjector((tabId, data) => {
       injected.push({ tabId, data });
@@ -267,6 +278,7 @@ describe("appStore — on-reconnect command (#1978)", () => {
   });
 
   afterEach(() => {
+    setSessionIntentsEnabled(null);
     registerTerminalInputInjector(null);
     vi.clearAllTimers();
     vi.useRealTimers();
