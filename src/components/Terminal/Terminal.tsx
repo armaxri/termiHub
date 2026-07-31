@@ -696,12 +696,27 @@ export function Terminal({
         let lastSentCols = ptyCols;
         let lastSentRows = ptyRows;
 
-        // Output batching: buffer chunks and flush in a single RAF callback
+        // Output batching: buffer chunks and flush in a single RAF callback.
         const outputBuffer: Uint8Array[] = [];
         let rafId: number | null = null;
+        // Fallback timer paired with the RAF (#2136): when a plugin protocol
+        // parser is active, transformed output is pushed to the buffer from a
+        // Worker `message` turn, and a `requestAnimationFrame` armed in that turn
+        // is not always serviced by the WebView (no paint is scheduled for an
+        // unfocused window), so the buffer would never flush. A plain timer fires
+        // regardless of paint scheduling; whichever runs first flushes and clears
+        // the other. The no-plugin fast path still flushes on the very next RAF.
+        let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
         const flushOutput = () => {
-          rafId = null;
+          if (rafId !== null) {
+            cancelAnimationFrame(rafId);
+            rafId = null;
+          }
+          if (flushTimer !== null) {
+            clearTimeout(flushTimer);
+            flushTimer = null;
+          }
           if (outputBuffer.length === 0) return;
 
           // xterm.js 6's SmoothScrollableElement updates its scroll range
@@ -775,10 +790,15 @@ export function Terminal({
         // output begins flowing.
         sandboxNotifySessionStart(sessionId);
 
-        // Enqueue an output chunk for the RAF-batched write, in arrival order.
+        // Schedule a batched flush on the next animation frame, with a timer
+        // fallback so output still flushes when RAF is starved (#2136 — see the
+        // note on `flushTimer`). Both are cleared in flushOutput.
         const scheduleFlush = () => {
           if (rafId === null) {
             rafId = requestAnimationFrame(flushOutput);
+          }
+          if (flushTimer === null) {
+            flushTimer = setTimeout(flushOutput, 16);
           }
         };
 
