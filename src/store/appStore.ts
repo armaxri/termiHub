@@ -287,6 +287,7 @@ import {
 import { mirrorMonitorIntent } from "@/store/systemMonitorBridge";
 import { mirrorAgentIntent } from "@/store/agentsBridge";
 import { mirrorConnectionIntent } from "@/store/connectionsBridge";
+import { mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
 import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { mirrorBroadcastIntent } from "@/store/broadcastBridge";
 import {
@@ -6097,6 +6098,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (!sessionId) return;
       const seq = ++_sftpListSeq;
       set({ sftpStatus: "listing", sftpError: null });
+      // Browser-view mirror (#2228): the SFTP list flags map to the pane's
+      // loadStarted/loadSucceeded/loadFailed; the session model (sftpStatus,
+      // session ids) stays appStore-driven (#2236).
+      mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "sftp" });
       try {
         const entries = await sftpListDir(sessionId, path);
         // Ignore a stale response: a newer navigate/refresh superseded this one.
@@ -6105,6 +6110,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           return;
         }
         set({ fileEntries: entries, currentPath: path, sftpStatus: "connected" });
+        mirrorFileBrowserIntent("fileBrowser.loadSucceeded", { pane: "sftp", path, entries });
       } catch (err) {
         if (seq !== _sftpListSeq) return;
         const message = err instanceof Error ? err.message : String(err);
@@ -6127,6 +6133,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
               }
             : {}),
         }));
+        mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "sftp", error: message });
       }
     },
 
@@ -6135,6 +6142,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (!sftpSessionId) return;
       const seq = ++_sftpListSeq;
       set({ sftpStatus: "listing", sftpError: null });
+      mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "sftp" });
       try {
         const entries = await sftpListDir(sftpSessionId, currentPath);
         // Ignore a stale response: a newer navigate/refresh superseded this one.
@@ -6143,6 +6151,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
           return;
         }
         set({ fileEntries: entries, sftpStatus: "connected" });
+        mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
+          pane: "sftp",
+          path: currentPath,
+          entries,
+        });
       } catch (err) {
         if (seq !== _sftpListSeq) return;
         const message = err instanceof Error ? err.message : String(err);
@@ -6165,6 +6178,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
               }
             : {}),
         }));
+        mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "sftp", error: message });
       }
     },
 
@@ -7263,6 +7277,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         normalizedPath = normalizedPath + "/";
       }
       set({ localFileLoading: true, localFileError: null });
+      mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "local" });
       try {
         const entries = await localListDir(normalizedPath);
         set({
@@ -7270,25 +7285,34 @@ export const useAppStore = create<AppState>((set, get, store) => {
           localCurrentPath: normalizedPath,
           localFileLoading: false,
         });
-      } catch (err) {
-        set({
-          localFileLoading: false,
-          localFileError: err instanceof Error ? err.message : String(err),
+        mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
+          pane: "local",
+          path: normalizedPath,
+          entries,
         });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        set({ localFileLoading: false, localFileError: message });
+        mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
       }
     },
 
     refreshLocal: async () => {
       const { localCurrentPath } = useAppStore.getState();
       set({ localFileLoading: true, localFileError: null });
+      mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "local" });
       try {
         const entries = await localListDir(localCurrentPath);
         set({ localFileEntries: entries, localFileLoading: false });
-      } catch (err) {
-        set({
-          localFileLoading: false,
-          localFileError: err instanceof Error ? err.message : String(err),
+        mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
+          pane: "local",
+          path: localCurrentPath,
+          entries,
         });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        set({ localFileLoading: false, localFileError: message });
+        mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
       }
     },
 
@@ -7302,6 +7326,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     navigateSession: async (sessionId: string, path: string) => {
       set({ sessionFileLoading: true, sessionFileError: null });
+      mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
       try {
         const entries = await sessionListFiles(sessionId, path);
         set({
@@ -7309,11 +7334,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
           sessionCurrentPath: path,
           sessionFileLoading: false,
         });
-      } catch (err) {
-        set({
-          sessionFileLoading: false,
-          sessionFileError: err instanceof Error ? err.message : String(err),
+        mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
+          pane: "session",
+          path,
+          entries,
         });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        set({ sessionFileLoading: false, sessionFileError: message });
+        mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
       }
     },
 
@@ -7321,24 +7350,35 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const { sessionFileBrowserId, sessionCurrentPath } = useAppStore.getState();
       if (!sessionFileBrowserId) return;
       set({ sessionFileLoading: true, sessionFileError: null });
+      mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
       try {
         const entries = await sessionListFiles(sessionFileBrowserId, sessionCurrentPath);
         set({ sessionFileEntries: entries, sessionFileLoading: false });
-      } catch (err) {
-        set({
-          sessionFileLoading: false,
-          sessionFileError: err instanceof Error ? err.message : String(err),
+        mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
+          pane: "session",
+          path: sessionCurrentPath,
+          entries,
         });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        set({ sessionFileLoading: false, sessionFileError: message });
+        mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
       }
     },
 
     // File browser mode
     fileBrowserMode: "none",
-    setFileBrowserMode: (mode) => set({ fileBrowserMode: mode }),
+    setFileBrowserMode: (mode) => {
+      set({ fileBrowserMode: mode });
+      mirrorFileBrowserIntent("fileBrowser.setMode", { mode });
+    },
 
     // File clipboard (copy/cut)
     fileClipboard: null,
-    setFileClipboard: (clipboard) => set({ fileClipboard: clipboard }),
+    setFileClipboard: (clipboard) => {
+      set({ fileClipboard: clipboard });
+      mirrorFileBrowserIntent("fileBrowser.setClipboard", { clipboard });
+    },
 
     // VS Code availability
     vscodeAvailable: false,
