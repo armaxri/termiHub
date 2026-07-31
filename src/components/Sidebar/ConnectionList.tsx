@@ -38,6 +38,7 @@ import {
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { SavedConnection, ConnectionFolder, InventoryHost } from "@/types/connection";
 import { type AgentDefinitionInfo, importInventoryHosts } from "@/services/api";
 import { toast } from "@/components/ui";
@@ -620,8 +621,10 @@ export function ConnectionList() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
-  const folders = useAppStore((s) => s.folders);
-  const allConnections = useAppStore((s) => s.connections);
+  // The saved-connection / folder inventory, sourced from the projected
+  // `connections` region when it faithfully mirrors `appStore`, else `appStore`
+  // verbatim (#2225 render cut).
+  const { folders, connections: allConnections } = useProjectedConnections();
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   // The ordered remote-agent list + per-agent saved-definition map, sourced from
   // the projected `agents` region when it faithfully mirrors `appStore`, else
