@@ -109,6 +109,68 @@ export function settingsRenderFromProjectionEnabled(): boolean {
   return true;
 }
 
+// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
+
+let mutationFlagOverride: boolean | null = null;
+
+interface SettingsMutationFlagWindow {
+  __TERMIHUB_SETTINGS_INTENTS__?: boolean;
+  localStorage?: Storage;
+}
+
+/**
+ * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
+ * `null` clears the override and falls back to the window/localStorage signal,
+ * then to the default (on).
+ */
+export function setSettingsIntentsEnabled(value: boolean | null): void {
+  mutationFlagOverride = value;
+}
+
+/**
+ * Whether the settings mutations (`updateSettings` whole-document save,
+ * `updateShellIntegration`'s targeted field write, and the update-skip
+ * refreshes) dispatch `settings.*` intents so the backend
+ * {@link import("../../src-tauri/src/settings_projection/store").SettingsStore}
+ * becomes authoritative — instead of only the render-cut {@link seedSettingsRegion}
+ * `settings.replace` mirror driving the region.
+ *
+ * **On by default** (#2227 mutation cut). When on, each setter mirrors its
+ * transition through a `settings.*` intent (via {@link mirrorSettingsIntent}) — a
+ * whole-document `settings.replace` for `updateSettings`, a `settings.patch` for
+ * the shell-integration field write — and the render-cut hook
+ * ({@link import("./useProjectedSettings").useProjectedSettings}) reflects the
+ * region back into the Settings UI. The local `appStore` reducer path stays in
+ * place as the render source and as a resilience / rollback fallback — any dispatch
+ * failure is logged and the local mutation continues, so a backend hiccup can never
+ * break the Settings screen (the reducer removal is a later step). The persistence
+ * side-effect (`saveSettings` / `save_shell_integration_settings`) is untouched:
+ * the intent is dispatched alongside it, not in place of it. When off, `appStore`
+ * drives the slice purely locally (the pre-cut path). The flip was taken on the
+ * automated parity tests plus the instant local fallback, mirroring the connections
+ * (#2225) and agents (#2226) mutation cuts. Overridable at runtime for rollback /
+ * tests via `window.__TERMIHUB_SETTINGS_INTENTS__` or
+ * `localStorage["termihub.settingsIntents"]` (set `"false"` to restore the pre-cut
+ * local-mutation path; `"true"` to force on).
+ */
+export function settingsIntentsEnabled(): boolean {
+  if (mutationFlagOverride !== null) return mutationFlagOverride;
+  try {
+    if (typeof window !== "undefined") {
+      const w = window as unknown as SettingsMutationFlagWindow;
+      if (typeof w.__TERMIHUB_SETTINGS_INTENTS__ === "boolean") {
+        return w.__TERMIHUB_SETTINGS_INTENTS__;
+      }
+      const ls = w.localStorage?.getItem("termihub.settingsIntents");
+      if (ls === "true") return true;
+      if (ls === "false") return false;
+    }
+  } catch {
+    // A missing/blocked window or storage just means "use the default".
+  }
+  return true;
+}
+
 // ── Transport + shared region client (lazy, mirrors the monitor slice) ─────────
 
 let transportInstance: Transport | null = null;
@@ -250,6 +312,58 @@ export function seedSettingsRegion(settings: AppSettings): Promise<void> {
     // A synchronous transport-construction failure (non-Tauri, no socket).
     lastSeededSignature = null;
     return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ── Mutation cut: settings.* intent dispatch ──────────────────────────────────
+
+/**
+ * The `settings.*` intent kinds the mutation cut dispatches (twins of the Rust
+ * routes on the {@link import("../../src-tauri/src/settings_projection/store").SettingsStore}):
+ * `settings.replace` overwrites the whole document (the `updateSettings` /
+ * update-refresh whole-document save), `settings.patch` shallow-merges a partial
+ * document (the shell-integration field write), and `settings.reset` restores the
+ * default baseline. Unlike the connection/agent cuts — where `*.replace` is the
+ * render-cut whole-slice mirror only — the settings document is opaque and edited
+ * by whole-document save, so `settings.replace` is itself the authoritative
+ * mutation for `updateSettings`; {@link seedSettingsRegion} uses the same kind for
+ * the (independent) render-cut mirror.
+ */
+export type SettingsIntentKind = "settings.replace" | "settings.patch" | "settings.reset";
+
+/** Dispatch a `settings.*` intent, resolving with the ack (parity tests). */
+export function dispatchSettingsIntent(
+  kind: SettingsIntentKind,
+  payload: Record<string, unknown>
+): Promise<IntentAck> {
+  return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
+}
+
+/**
+ * Fire a `settings.*` intent to keep the backend store authoritative, swallowing
+ * and logging any failure so the local `appStore` mutation path is never disrupted
+ * by a bridge hiccup (the resilience fallback). A no-op when the mutation cut is
+ * disabled ({@link settingsIntentsEnabled} off — the rollback path). Never throws —
+ * a synchronous transport-construction failure (non-Tauri, no socket) is caught and
+ * logged, leaving the UI on the local slice. The twin of the connections bridge's
+ * {@link import("./connectionsBridge").mirrorConnectionIntent} and the agents
+ * bridge's {@link import("./agentsBridge").mirrorAgentIntent}.
+ */
+export function mirrorSettingsIntent(
+  kind: SettingsIntentKind,
+  payload: Record<string, unknown>
+): void {
+  if (!settingsIntentsEnabled()) return;
+  try {
+    void dispatchSettingsIntent(kind, payload)
+      .then((ack) => {
+        if (ack.status === "rejected") {
+          logSettingsBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+        }
+      })
+      .catch((err) => logSettingsBridgeFallback(kind, err));
+  } catch (err) {
+    logSettingsBridgeFallback(kind, err);
   }
 }
 
