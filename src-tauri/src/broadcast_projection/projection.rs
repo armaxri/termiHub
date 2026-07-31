@@ -34,6 +34,14 @@
 //! | `broadcast.toggle`        | `{ scope?, sourceTabId?, targetTabIds?: [id] }`     | active → stop; idle + source → start            |
 //! | `broadcast.addTarget`     | `{ tabId }`                                          | add a tab to the target set                     |
 //! | `broadcast.removeTarget`  | `{ tabId }`                                          | remove a tab from the target set                |
+//! | `broadcast.replace`       | `{ active, sourceTabId, scope, targetTabIds, lastScope }` | overwrite the whole slice (render mirror) |
+//!
+//! `broadcast.replace` is the render-cut whole-state mirror (twin of
+//! `monitor.replace`): the frontend keeps the region a faithful copy of its
+//! `appStore` broadcast slice through it while the reducers stay authoritative,
+//! so the UI can render from the projection with byte parity. The per-transition
+//! `start`/`stop`/`toggle`/`addTarget`/`removeTarget` intents are the mutation
+//! cut, which makes this store authoritative.
 //!
 //! Three frontend concerns need no dedicated intent because they read the
 //! projected set rather than mutate it: `isBroadcastTarget` is a membership read
@@ -42,14 +50,18 @@
 //! re-derives membership from the scope + tab tree (frontend) and reconciles the
 //! delta via `broadcast.addTarget` / `broadcast.removeTarget`.
 //!
-//! # Shadow mode
+//! # Render + mutation cut
 //!
-//! Registered and fully served, but **not** driving the live UI: no frontend
-//! subscribes to `broadcast@<clientId>` or dispatches `broadcast.*` yet, so these
-//! intents mutate only the shadow store and project to regions nobody renders.
-//! The `appStore` broadcast reducers remain authoritative. Per the substrate
-//! contract the result of an intent is never returned inline — it always arrives
-//! as a projection diff on the client's region.
+//! Now driving the live UI (PR for #2242, following the #2254 shadow): the
+//! frontend subscribes to `broadcast@<clientId>`, seeds it with `broadcast.replace`
+//! to keep it a faithful mirror of `appStore`, renders the broadcast UI from it
+//! (render cut, on by default), and routes the membership actions through the
+//! per-transition `broadcast.*` intents (mutation cut, on by default) so this
+//! store is authoritative. The `appStore` broadcast reducers remain in place as
+//! the parity-safe fallback (the render gate falls back when the region has not
+//! caught up; each mirrored intent is best-effort). Per the substrate contract the
+//! result of an intent is never returned inline — it always arrives as a
+//! projection diff on the client's region.
 
 use std::sync::Arc;
 
@@ -91,10 +103,32 @@ pub fn register_broadcast_intents(registry: &mut HandlerRegistry, app_handle: Ap
     let handle = app_handle.clone();
     registry.route("broadcast.start", move |intent, projector| {
         let store = store_of(&handle)?;
-        let scope = required_scope(intent)?;
+        let scope = required_scope(intent, "scope")?;
         let source = required_str(intent, "sourceTabId")?;
         let targets = required_str_array(intent, "targetTabIds")?;
         store.start(&intent.client_id, scope, &source, &targets);
+        Ok(publish_broadcast(projector, &store, &intent.client_id))
+    });
+
+    let handle = app_handle.clone();
+    registry.route("broadcast.replace", move |intent, projector| {
+        // The render-cut whole-state mirror of the frontend `appStore` slice: set
+        // every field verbatim (no source-prepend/de-dup — the mirrored set is
+        // already canonical).
+        let store = store_of(&handle)?;
+        let active = required_bool(intent, "active")?;
+        let source = optional_str(intent, "sourceTabId");
+        let scope = required_scope(intent, "scope")?;
+        let targets = required_str_array(intent, "targetTabIds")?;
+        let last_scope = required_scope(intent, "lastScope")?;
+        store.replace(
+            &intent.client_id,
+            active,
+            source,
+            scope,
+            targets,
+            last_scope,
+        );
         Ok(publish_broadcast(projector, &store, &intent.client_id))
     });
 
@@ -110,7 +144,7 @@ pub fn register_broadcast_intents(registry: &mut HandlerRegistry, app_handle: Ap
         let store = store_of(&handle)?;
         // The start branch's payload is optional: it is read only when idle, and
         // the frontend resolves scope/source/targets from the live tab tree.
-        let scope = optional_scope(intent)?.unwrap_or_default();
+        let scope = optional_scope(intent, "scope")?.unwrap_or_default();
         let source = optional_str(intent, "sourceTabId");
         let targets = optional_str_array(intent, "targetTabIds")?;
         store.toggle(&intent.client_id, scope, source.as_deref(), &targets);
@@ -160,30 +194,39 @@ fn parse_scope(value: &str) -> Result<BroadcastScope, (String, String)> {
     }
 }
 
-/// Parse the required `scope` field into a [`BroadcastScope`].
-fn required_scope(intent: &Intent) -> Result<BroadcastScope, (String, String)> {
+/// Parse a required scope field (`key`) into a [`BroadcastScope`].
+fn required_scope(intent: &Intent, key: &str) -> Result<BroadcastScope, (String, String)> {
     let value = intent
         .payload
-        .get("scope")
+        .get(key)
         .and_then(Value::as_str)
-        .ok_or_else(|| ("bad_payload".to_string(), "missing 'scope'".to_string()))?;
+        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))?;
     parse_scope(value)
 }
 
-/// Parse an optional `scope` field; absent → `None`, present-but-invalid → error.
-fn optional_scope(intent: &Intent) -> Result<Option<BroadcastScope>, (String, String)> {
-    match intent.payload.get("scope") {
+/// Parse an optional scope field (`key`); absent → `None`, present-but-invalid → error.
+fn optional_scope(intent: &Intent, key: &str) -> Result<Option<BroadcastScope>, (String, String)> {
+    match intent.payload.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(value) => {
             let s = value.as_str().ok_or_else(|| {
                 (
                     "bad_payload".to_string(),
-                    "invalid 'scope' (not a string)".to_string(),
+                    format!("invalid '{key}' (not a string)"),
                 )
             })?;
             parse_scope(s).map(Some)
         }
     }
+}
+
+/// Extract a required boolean field from an intent payload.
+fn required_bool(intent: &Intent, key: &str) -> Result<bool, (String, String)> {
+    intent
+        .payload
+        .get(key)
+        .and_then(Value::as_bool)
+        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
 }
 
 /// Extract a required string field from an intent payload.

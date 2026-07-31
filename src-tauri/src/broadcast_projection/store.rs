@@ -25,15 +25,19 @@
 //! `session-lifecycle` region (a session's status is a property of the shared
 //! session).
 //!
-//! # Shadow mode — zero user-facing change
+//! # Render + mutation cut — parity-safe, reducers retained
 //!
-//! This step is deliberately **not authoritative**. The store exists, accepts
-//! `broadcast.*` intents, and projects diffs, but nothing in the live UI
-//! subscribes to or renders a `broadcast` region, and no frontend code
-//! dispatches `broadcast.*` intents yet. The existing `appStore` broadcast
-//! reducers remain authoritative. Later steps cut rendering, then the mutations,
-//! over to it (keeping the reducers as the parity-safe fallback, per the #2205
-//! reframe).
+//! The shadow landed first (PR #2254); this step cuts the live UI over to the
+//! store. The frontend now (a) keeps the `broadcast@<clientId>` region a faithful
+//! mirror of `appStore` via [`replace`](BroadcastStore::replace) and **renders**
+//! the broadcast UI from the region when it mirrors `appStore` (render cut, on by
+//! default), and (b) routes the membership actions through the granular
+//! `broadcast.*` intents so **this store is authoritative** (mutation cut, on by
+//! default). The `appStore` broadcast reducers stay in place as the parity-safe
+//! fallback — the render gate falls back to `appStore` when the region has not
+//! caught up, and each mirrored intent is best-effort so a transport hiccup never
+//! disrupts the local mutation (per the #2205 reframe). The reducer removal is a
+//! later step.
 //!
 //! ## What stays frontend
 //!
@@ -204,6 +208,33 @@ impl BroadcastStore {
         state.active = false;
         state.source_tab_id = None;
         state.target_tab_ids = Vec::new();
+    }
+
+    /// `broadcast.replace` — overwrite this client's whole membership slice from a
+    /// frontend snapshot of the `appStore` broadcast state. This is the render-cut
+    /// mirror (the twin of `monitor.replace`): while the `appStore` reducers stay
+    /// authoritative it keeps the `broadcast@<clientId>` region a faithful copy of
+    /// the frontend slice, so the UI can render from the projection with byte
+    /// parity. Unlike [`start`](BroadcastStore::start) it is a **verbatim
+    /// whole-state set** — it does not prepend the source or de-duplicate, because
+    /// the `appStore` `broadcastTargetTabIds` set it mirrors is already canonical
+    /// (source-first, de-duped by the reducers).
+    pub fn replace(
+        &self,
+        client_id: &str,
+        active: bool,
+        source_tab_id: Option<String>,
+        scope: BroadcastScope,
+        target_tab_ids: Vec<String>,
+        last_scope: BroadcastScope,
+    ) {
+        let mut clients = self.lock();
+        let state = clients.entry(client_id.to_string()).or_default();
+        state.active = active;
+        state.source_tab_id = source_tab_id;
+        state.scope = scope;
+        state.target_tab_ids = target_tab_ids;
+        state.last_scope = last_scope;
     }
 
     /// `broadcast.toggle` — the pure decision of `appStore.toggleBroadcast`

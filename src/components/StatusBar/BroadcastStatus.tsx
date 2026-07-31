@@ -1,5 +1,6 @@
 import { Radio } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { Tooltip } from "@/components/ui";
 
 /**
@@ -17,12 +18,15 @@ import { Tooltip } from "@/components/ui";
  * uncluttered.
  */
 export function BroadcastStatus() {
-  const broadcastActive = useAppStore((s) => s.broadcastActive);
-  // Total participating tabs (includes the source). Set size is a stable number,
-  // so the selector re-renders only when the target set actually changes.
-  const totalTargets = useAppStore((s) => s.broadcastTargetTabIds.size);
-  // Connected subset — recomputed from the live tab/session state on every store
-  // change; returning a number keeps re-renders limited to real count changes.
+  // Render cut (#2242): active + membership sourced from the projected broadcast
+  // region when it mirrors appStore, else appStore verbatim.
+  const broadcast = useProjectedBroadcast();
+  const broadcastActive = broadcast.active;
+  // Total participating tabs (includes the source).
+  const totalTargets = broadcast.targetTabIds.size;
+  // Connected subset — the connected-terminal fan-out filter stays on appStore
+  // (it needs the live tab/session state); returning a number keeps re-renders
+  // limited to real count changes.
   const connectedTargets = useAppStore((s) =>
     s.broadcastActive ? s.getBroadcastTargetTabIds().length : 0
   );
