@@ -180,10 +180,12 @@ mod tests {
     //
     // The three tests share the one root-owned fixture file, so they must not
     // run concurrently against the same container (they clobber each other's
-    // before/after expectations); run them with `--test-threads=1` until the
-    // per-test fixture isolation tracked in #2238 lands.
+    // before/after expectations). They are serialized in-source with
+    // `#[serial(elevated_save)]` (#2238), which keeps them parallel-safe under
+    // the default `cargo test` regardless of the outer `--test-threads` setting.
     use crate::utils::remote_exec::run_remote_command;
     use crate::utils::ssh_auth::connect_and_authenticate;
+    use serial_test::serial;
     use termihub_core::backends::ssh::handler::SshSession;
     use termihub_core::backends::ssh::SftpAdvancedOps;
 
@@ -282,6 +284,7 @@ mod tests {
     /// Correct password → `Success`: the root-owned file is rewritten, its
     /// owner/mode are preserved, and no temp upload leaks.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial(elevated_save)]
     async fn elevated_save_success_rewrites_root_file_over_real_ssh() {
         let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
         if !ssh_port_reachable(port) {
@@ -343,6 +346,7 @@ mod tests {
     /// Wrong password → `IncorrectPassword`: the file is untouched and the temp
     /// upload is cleaned up.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial(elevated_save)]
     async fn elevated_save_wrong_password_leaves_file_untouched() {
         let port = env_port("TERMIHUB_TEST_SSH_SUDO_PORT", DEFAULT_SSH_SUDO_PORT);
         if !ssh_port_reachable(port) {
@@ -396,6 +400,7 @@ mod tests {
     /// No sudo installed → `Other`: the file is untouched and the temp upload is
     /// cleaned up.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[serial(elevated_save)]
     async fn elevated_save_without_sudo_returns_other() {
         let port = env_port("TERMIHUB_TEST_SSH_NOSUDO_PORT", DEFAULT_SSH_NOSUDO_PORT);
         if !ssh_port_reachable(port) {
