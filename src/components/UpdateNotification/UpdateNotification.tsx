@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { X, Shield, RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { Button } from "@/components/ui";
 import { useDesktopVersion } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
@@ -20,7 +21,7 @@ export function UpdateNotification() {
   const updateNotificationDismissed = useAppStore((s) => s.updateNotificationDismissed);
   const dismissUpdateNotification = useAppStore((s) => s.dismissUpdateNotification);
   const skipUpdate = useAppStore((s) => s.skipUpdate);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
 
   const [showNotes, setShowNotes] = useState(false);
   const runningVersion = useDesktopVersion();

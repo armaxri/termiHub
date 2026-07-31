@@ -25,6 +25,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore, SidebarView } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { OpenConnectionsModal } from "@/components/OpenConnections/OpenConnectionsModal";
 import { Tooltip } from "@/components/ui";
@@ -95,7 +96,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
   const setExportDialogOpen = useAppStore((s) => s.setExportDialogOpen);
   const setImportDialog = useAppStore((s) => s.setImportDialog);
   const toggleActivityBarView = useAppStore((s) => s.toggleActivityBarView);
-  const showRecentSessions = useAppStore((s) => s.settings.showRecentSessions);
+  const showRecentSessions = useProjectedSettings().showRecentSessions;
   const experimental = useExperimentalFeatures();
 
   const handleExport = useCallback(() => {

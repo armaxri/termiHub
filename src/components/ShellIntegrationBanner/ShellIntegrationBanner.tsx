@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { FolderOpen } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { frontendLog } from "@/utils/frontendLog";
 import type { ShellIntegrationStatus } from "@/types/connection";
 import { Button, toast } from "@/components/ui";
@@ -17,7 +18,7 @@ import "./ShellIntegrationBanner.css";
  * Modelled on {@link TerminalViewModeBanner}.
  */
 export function ShellIntegrationBanner() {
-  const storedSi = useAppStore((s) => s.settings.shellIntegration);
+  const storedSi = useProjectedSettings().shellIntegration;
   const updateShellIntegration = useAppStore((s) => s.updateShellIntegration);
   const si = storedSi ?? defaultShellIntegrationSettings();
   // The banner can never show once dismissed or registered, so it need not even

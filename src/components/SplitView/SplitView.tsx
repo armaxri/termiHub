@@ -33,6 +33,7 @@ import {
   X,
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { useLayoutRenderTree } from "@/store/useLayoutRenderTree";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
@@ -633,7 +634,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const terminalAutoRetryCount = useAppStore((s) => s.terminalAutoRetryCount);
   const terminalWaitingForAgent = useAppStore((s) => s.terminalWaitingForAgent);
   const terminalReattaching = useAppStore((s) => s.terminalReattaching);
-  const rightClickBehavior = useAppStore((s) => s.settings.rightClickBehavior);
+  const rightClickBehavior = useProjectedSettings().rightClickBehavior;
   const useQuickAction =
     rightClickBehavior === "quickAction" || (!rightClickBehavior && isWindows());
 

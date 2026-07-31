@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Pencil, Plus, Trash2 } from "lucide-react";
-import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { TerminalOptions, LineEnding } from "@/types/terminal";
 import type { ConnectionHighlightingOverride, HighlightRule } from "@/types/syntaxHighlighting";
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
@@ -82,7 +82,7 @@ type AdditionalRuleEditorState = { mode: "new" } | { mode: "edit"; id: string } 
  * patterns for this connection but never remove global rules.
  */
 function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSettingsProps) {
-  const globalSettings = useAppStore((s) => s.settings);
+  const globalSettings = useProjectedSettings();
   const [editor, setEditor] = useState<AdditionalRuleEditorState>(null);
 
   const rules = options.syntaxHighlighting?.additionalRules ?? [];
@@ -211,7 +211,7 @@ function ConnectionAdditionalRules({ options, onChange }: ConnectionTerminalSett
 }
 
 export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerminalSettingsProps) {
-  const globalSettings = useAppStore((s) => s.settings);
+  const globalSettings = useProjectedSettings();
 
   const globalFontFamily =
     globalSettings.fontFamily || "MesloLGS Nerd Font Mono, Cascadia Code, ...";

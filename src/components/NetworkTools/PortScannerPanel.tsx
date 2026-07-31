@@ -17,6 +17,7 @@ import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { estimateScanProbes } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 
 /** Probe count above which the scanner warns before starting. */
 const LARGE_SCAN_THRESHOLD = 1000;
@@ -47,8 +48,8 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
 
   // Persisted "warn before a large scan" preference. Defaults to true when
   // unset; the dialog's opt-out flips it off, re-enabled from General settings.
-  const warnLargeScan = useAppStore((s) => s.settings.warnLargePortScan);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
+  const warnLargeScan = settings.warnLargePortScan;
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const hostRef = useAutofocusSelect<HTMLInputElement>();

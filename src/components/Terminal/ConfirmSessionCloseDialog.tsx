@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { showReopenToast } from "@/utils/reopenTab";
 
 /**
@@ -22,7 +23,7 @@ export function ConfirmSessionCloseDialog() {
   const setRequest = useAppStore((s) => s.setPendingSessionCloseConfirm);
   const closeTab = useAppStore((s) => s.closeTab);
   const removePanel = useAppStore((s) => s.removePanel);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
   // Local, deferred checkbox state — committed only on confirm, discarded on cancel.
   const [dontAsk, setDontAsk] = useState(false);

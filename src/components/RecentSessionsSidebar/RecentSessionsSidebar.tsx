@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { Button, ConfirmDialog, Input, Tooltip, toast } from "@/components/ui";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -34,7 +35,7 @@ function entryMatches(entry: SessionHistoryEntry, query: string): boolean {
 export function RecentSessionsSidebar() {
   const history = useAppStore((s) => s.sessionHistory);
   const folders = useAppStore((s) => s.folders);
-  const defaultUser = useAppStore((s) => s.settings.defaultUser);
+  const defaultUser = useProjectedSettings().defaultUser;
   const addConnection = useAppStore((s) => s.addConnection);
   const pinHistoryEntry = useAppStore((s) => s.pinHistoryEntry);
   const removeHistoryEntry = useAppStore((s) => s.removeHistoryEntry);
