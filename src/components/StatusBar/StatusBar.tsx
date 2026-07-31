@@ -19,7 +19,8 @@ import {
   Infinity as InfinityIcon,
   Puzzle,
 } from "lucide-react";
-import { useAppStore, getActiveTab, monitorKeyForTab, selectMonitor } from "@/store/appStore";
+import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
+import { useProjectedMonitors } from "@/store/useProjectedMonitors";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { frontendLog } from "@/utils/frontendLog";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
@@ -531,7 +532,12 @@ function MonitoringStatus() {
   // Switching tabs just changes which entry we show — other hosts keep
   // monitoring independently.
   const activeMonitorKey = useAppStore((s) => monitorKeyForTab(getActiveTab(s)));
-  const activeMonitor = useAppStore((s) => selectMonitor(s, monitorKeyForTab(getActiveTab(s))));
+  // The active tab's monitor entry, sourced from the projected `system-monitors`
+  // region when it faithfully mirrors `appStore`, else `appStore` verbatim
+  // (#2224 render cut). Picking the active key stays a per-client (presentation)
+  // concern under partial projection.
+  const { monitors: projectedMonitors } = useProjectedMonitors();
+  const activeMonitor = activeMonitorKey ? (projectedMonitors[activeMonitorKey] ?? null) : null;
   const monitoringConnected = !!activeMonitor?.monitorSessionId;
   const monitoringHost = activeMonitor?.host ?? null;
   const monitoringStats = activeMonitor?.stats ?? null;

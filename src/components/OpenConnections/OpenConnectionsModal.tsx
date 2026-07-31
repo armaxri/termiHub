@@ -36,6 +36,7 @@ import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
 import { MONITORING_INTERVAL_OPTIONS, DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedMonitors } from "@/store/useProjectedMonitors";
 import { getAllLeaves } from "@/utils/panelTree";
 import {
   listLocalSessions,
@@ -106,8 +107,10 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   // Every monitored host with a live backend subscription (#1231, audit gap G6);
-  // each renders its own killable row. Derived from the keyed `monitors` map.
-  const monitors = useAppStore((s) => s.monitors);
+  // each renders its own killable row. Derived from the keyed `monitors` map,
+  // sourced from the projected `system-monitors` region when it faithfully
+  // mirrors `appStore`, else `appStore` verbatim (#2224 render cut).
+  const { monitors } = useProjectedMonitors();
   const openMonitors = useMemo(
     () => Object.values(monitors).filter((m) => m.monitorSessionId !== null),
     [monitors]
