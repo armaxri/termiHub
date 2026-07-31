@@ -1,0 +1,314 @@
+//! Projection-contract tests for the shared `settings` region (#2227), reusing
+//! the substrate harness (#2164): an in-memory [`ProjectionSink`] and a client
+//! cache that applies diffs. The routes here drive a real [`SettingsStore`]
+//! directly (the production `register_settings_intents` resolves the same store
+//! from the Tauri `AppHandle`; that thin wiring is integration-verified via a
+//! local `./scripts/dev.sh` run) through the identical parse → mutate → publish
+//! path.
+//!
+//! Asserted: subscribe → snapshot (identical to every subscriber), an accepted
+//! intent → exactly one coalesced diff fanned to every subscriber with monotonic
+//! versions, rejection paths advance nothing, a no-op intent advances nothing, a
+//! dead subscriber is reaped, and the client cache converges on the store's
+//! authority across a replace → patch → reset lifecycle.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use serde_json::{json, Map, Value};
+
+use crate::projection::{
+    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
+    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+};
+use crate::settings_projection::projection::{publish_settings, SETTINGS_REGION};
+use crate::settings_projection::store::SettingsStore;
+
+// ── Fixtures ─────────────────────────────────────────────────────────────────
+
+/// The production `settings.*` routes, bound to an injected store instead of
+/// resolving one from an `AppHandle` — the exact parse → mutate → publish path
+/// `register_settings_intents` runs. Each closure mirrors the production route so
+/// the test drives real logic, not a stand-in.
+fn registry_for(store: Arc<SettingsStore>) -> HandlerRegistry {
+    let mut registry = HandlerRegistry::new();
+
+    let s = store.clone();
+    registry.route("settings.replace", move |intent, projector| {
+        s.replace(required_object(intent, "settings")?);
+        Ok(publish_settings(projector, &s))
+    });
+    let s = store.clone();
+    registry.route("settings.patch", move |intent, projector| {
+        s.patch(required_object(intent, "patch")?);
+        Ok(publish_settings(projector, &s))
+    });
+    let s = store;
+    registry.route("settings.reset", move |_intent, projector| {
+        s.reset();
+        Ok(publish_settings(projector, &s))
+    });
+
+    registry
+}
+
+/// The route-side object parse — the rejection path shared by replace/patch.
+fn required_object(intent: &Intent, key: &str) -> Result<Map<String, Value>, (String, String)> {
+    match intent.payload.get(key) {
+        Some(Value::Object(map)) => Ok(map.clone()),
+        Some(_) => Err((
+            "bad_payload".to_string(),
+            format!("'{key}' must be an object"),
+        )),
+        None => Err(("bad_payload".to_string(), format!("missing '{key}'"))),
+    }
+}
+
+/// An in-memory sink recording delivered frames; can be killed to simulate a
+/// dead subscriber (mirrors the substrate/agents/session test double).
+struct VecSink {
+    frames: Mutex<Vec<ProjectionFrame>>,
+    alive: AtomicBool,
+}
+
+impl VecSink {
+    fn new() -> Self {
+        Self {
+            frames: Mutex::new(Vec::new()),
+            alive: AtomicBool::new(true),
+        }
+    }
+
+    fn diffs(&self) -> Vec<DiffFrame> {
+        self.frames
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|f| match f {
+                ProjectionFrame::Diff(d) => Some(d.clone()),
+                ProjectionFrame::Snapshot(_) => None,
+            })
+            .collect()
+    }
+}
+
+impl ProjectionSink for VecSink {
+    fn deliver(&self, frame: &ProjectionFrame) -> Result<(), ProjectionError> {
+        if !self.alive.load(Ordering::SeqCst) {
+            return Err(ProjectionError::SinkClosed("killed".into()));
+        }
+        self.frames.lock().unwrap().push(frame.clone());
+        Ok(())
+    }
+}
+
+/// A minimal client cache mirroring the TypeScript `ProjectionClient`.
+struct ClientCache {
+    version: u64,
+    view: Value,
+}
+
+impl ClientCache {
+    fn from_snapshot(s: &SnapshotFrame) -> Self {
+        Self {
+            version: s.version,
+            view: s.view.clone(),
+        }
+    }
+
+    fn apply(&mut self, diff: &DiffFrame) {
+        assert_eq!(diff.base_version, self.version, "diff must fit the cache");
+        apply_ops(&mut self.view, &diff.ops).expect("diff applies cleanly");
+        self.version = diff.version;
+    }
+}
+
+fn intent(kind: &str, payload: Value) -> Intent {
+    Intent {
+        intent_id: format!("01J-{kind}"),
+        kind: kind.to_string(),
+        payload,
+        client_id: "client-1".to_string(),
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn subscribe_returns_the_default_snapshot_identically_to_every_subscriber() {
+    let store = Arc::new(SettingsStore::new());
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SETTINGS_REGION, store.snapshot());
+
+    let snap_a = projector.subscribe(SETTINGS_REGION, "sub-a", "A", Arc::new(VecSink::new()));
+    let snap_b = projector.subscribe(SETTINGS_REGION, "sub-b", "B", Arc::new(VecSink::new()));
+
+    assert_eq!(snap_a.version, 0);
+    assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
+    assert_eq!(snap_a.region, "settings");
+    assert_eq!(snap_a.view["version"], json!("1"));
+    assert_eq!(snap_a.view["powerMonitoringEnabled"], json!(true));
+}
+
+#[test]
+fn a_settings_intent_produces_one_diff_fanned_to_two_subscribers() {
+    let store = Arc::new(SettingsStore::new());
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SETTINGS_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink_a = Arc::new(VecSink::new());
+    let sink_b = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SETTINGS_REGION, "sub-a", "A", sink_a.clone());
+    projector.subscribe(SETTINGS_REGION, "sub-b", "B", sink_b.clone());
+    let mut cache_a = ClientCache::from_snapshot(&snap);
+
+    let ack = dispatcher.dispatch(intent(
+        "settings.patch",
+        json!({ "patch": { "theme": "light", "fontSize": 16 } }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    assert_eq!(
+        ack.produced,
+        Some(vec![crate::projection::ProducedRegion {
+            region: SETTINGS_REGION.to_string(),
+            version: 1,
+        }])
+    );
+
+    let diffs_a = sink_a.diffs();
+    let diffs_b = sink_b.diffs();
+    assert_eq!(diffs_a.len(), 1, "exactly one diff to A");
+    assert_eq!(diffs_b.len(), 1, "exactly one diff to B");
+    assert_eq!(diffs_a[0], diffs_b[0], "identical diff to every subscriber");
+    assert_eq!(diffs_a[0].base_version, 0);
+    assert_eq!(diffs_a[0].version, 1);
+
+    cache_a.apply(&diffs_a[0]);
+    assert_eq!(
+        cache_a.view,
+        store.snapshot(),
+        "cache converges on authority"
+    );
+    assert_eq!(cache_a.view["theme"], json!("light"));
+    assert_eq!(cache_a.view["fontSize"], json!(16));
+}
+
+#[test]
+fn a_full_settings_lifecycle_advances_monotonically_and_converges() {
+    let store = Arc::new(SettingsStore::new());
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SETTINGS_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SETTINGS_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    // replace (whole save) → patch a field → patch another → reset. Each
+    // accepted intent that changes the view = one diff.
+    for kind_payload in [
+        (
+            "settings.replace",
+            json!({ "settings": { "version": "1", "theme": "dark", "fontSize": 12 } }),
+        ),
+        ("settings.patch", json!({ "patch": { "fontSize": 18 } })),
+        (
+            "settings.patch",
+            json!({ "patch": { "cursorBlink": true } }),
+        ),
+        ("settings.reset", json!({})),
+    ] {
+        let ack = dispatcher.dispatch(intent(kind_payload.0, kind_payload.1));
+        assert_eq!(
+            ack.status,
+            IntentStatus::Accepted,
+            "{} accepted",
+            kind_payload.0
+        );
+    }
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 4, "one diff per view-changing intent");
+    for diff in &diffs {
+        cache.apply(diff);
+    }
+    assert_eq!(cache.version, 4);
+    assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
+    // reset returned the document to the default baseline.
+    assert_eq!(cache.view, SettingsStore::new().snapshot());
+}
+
+#[test]
+fn an_intent_missing_its_object_is_rejected_without_advancing() {
+    let store = Arc::new(SettingsStore::new());
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SETTINGS_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(SETTINGS_REGION, "sub", "A", sink.clone());
+
+    // Missing `patch` field.
+    let ack = dispatcher.dispatch(intent("settings.patch", json!({})));
+    assert_eq!(ack.status, IntentStatus::Rejected);
+    assert_eq!(ack.error.unwrap().code, "bad_payload");
+    // Non-object `settings` field.
+    let ack2 = dispatcher.dispatch(intent("settings.replace", json!({ "settings": "nope" })));
+    assert_eq!(ack2.status, IntentStatus::Rejected);
+    assert_eq!(ack2.error.unwrap().code, "bad_payload");
+
+    assert_eq!(sink.diffs().len(), 0);
+    assert_eq!(projector.region_version(SETTINGS_REGION), Some(0));
+}
+
+#[test]
+fn a_no_op_intent_advances_nothing() {
+    // A patch that sets keys to their current values leaves the view unchanged,
+    // so the projector coalesces it to no diff and no version bump.
+    let store = Arc::new(SettingsStore::new());
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SETTINGS_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(SETTINGS_REGION, "sub", "A", sink.clone());
+
+    let ack = dispatcher.dispatch(intent(
+        "settings.patch",
+        json!({ "patch": { "powerMonitoringEnabled": true } }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    assert_eq!(ack.produced, Some(vec![]), "no region advanced");
+    assert_eq!(sink.diffs().len(), 0);
+    assert_eq!(projector.region_version(SETTINGS_REGION), Some(0));
+}
+
+#[test]
+fn a_dead_subscriber_is_reaped_on_publish() {
+    let store = Arc::new(SettingsStore::new());
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SETTINGS_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let live = Arc::new(VecSink::new());
+    let dead = Arc::new(VecSink::new());
+    projector.subscribe(SETTINGS_REGION, "live", "A", live.clone());
+    projector.subscribe(SETTINGS_REGION, "dead", "B", dead.clone());
+    assert_eq!(projector.subscriber_count(SETTINGS_REGION), 2);
+
+    dead.alive.store(false, Ordering::SeqCst);
+    dispatcher.dispatch(intent(
+        "settings.patch",
+        json!({ "patch": { "theme": "light" } }),
+    ));
+
+    assert_eq!(
+        live.diffs().len(),
+        1,
+        "the live subscriber still gets the diff"
+    );
+    assert_eq!(
+        projector.subscriber_count(SETTINGS_REGION),
+        1,
+        "the dead subscriber was reaped"
+    );
+}
