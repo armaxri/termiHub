@@ -64,14 +64,18 @@ const SETTINGS_FILE_NAME: &str = "plugin-settings.json";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PluginState {
-    /// Extracted and enabled, but not yet loaded into a running host. This is
-    /// the resting state for an enabled plugin in this foundation layer, which
-    /// does no loading — a later host issue promotes it to [`Active`].
+    /// Extracted and enabled, but not (yet) loaded into a running host — the
+    /// resting state before load, and the state an enabled plugin reports when
+    /// no host is wired (e.g. the management layer in isolation). Once a host
+    /// loads it, it advances to [`Active`].
     ///
     /// [`Active`]: PluginState::Active
     Installed,
-    /// Loaded and running. Only a later plugin-host issue can produce this; the
-    /// management layer never assigns it on its own.
+    /// Loaded and running: the lifecycle host has activated the plugin (a backend
+    /// library, or a frontend-only theme/JS plugin) and its extension points are
+    /// live. The management layer promotes an enabled, compatible plugin to this
+    /// once the host reports it active
+    /// ([`PluginLifecycleHook::is_active`]) — #2234.
     Active,
     /// The user has turned the plugin off; it stays extracted but is not loaded.
     Disabled,
@@ -120,6 +124,18 @@ pub trait PluginLifecycleHook: Send + Sync {
     /// Called before a plugin's directory is removed (the "shutdown hook").
     fn on_uninstall(&self, _id: &str) -> Result<(), String> {
         Ok(())
+    }
+    /// Whether the plugin `id` is currently loaded and running in the host.
+    ///
+    /// This is the seam through which the management layer learns that an
+    /// enabled, compatible plugin has actually been activated, so it can promote
+    /// it from [`PluginState::Installed`] to [`PluginState::Active`] (#2234). The
+    /// default (no host wired) reports `false`, so an enabled plugin rests at
+    /// `Installed`; the [`HostLifecycleHook`](super::host::HostLifecycleHook)
+    /// reports `true` once [`on_enable`](Self::on_enable) has loaded it,
+    /// including for frontend-only plugins that register no backend library.
+    fn is_active(&self, _id: &str) -> bool {
+        false
     }
 }
 
@@ -438,9 +454,12 @@ impl PluginManager {
         self.write_state_store(&state)?;
 
         let mut plugin = self.installed_plugin_from(manifest, &state, &dest);
-        if let Err(msg) = self.hook.on_enable(&plugin) {
-            plugin.state = PluginState::Error;
-            plugin.error_message = Some(msg);
+        match self.hook.on_enable(&plugin) {
+            Ok(()) => self.reflect_activation(&mut plugin),
+            Err(msg) => {
+                plugin.state = PluginState::Error;
+                plugin.error_message = Some(msg);
+            }
         }
         Ok(plugin)
     }
@@ -550,7 +569,8 @@ impl PluginManager {
     /// next launch or an explicit re-enable.
     ///
     /// Returns every plugin it attempted to load, each with its state reflecting
-    /// the outcome ([`PluginState::Installed`] on success,
+    /// the outcome ([`PluginState::Active`] once the host has loaded it —
+    /// [`PluginState::Installed`] if no host is wired — and
     /// [`PluginState::Error`] on failure), so the caller can notify the user of
     /// any that failed.
     pub fn load_enabled_plugins(&self) -> Result<Vec<InstalledPlugin>, PluginManagerError> {
@@ -565,9 +585,12 @@ impl PluginManager {
             if plugin.state != PluginState::Installed {
                 continue;
             }
-            if let Err(msg) = self.hook.on_enable(&plugin) {
-                plugin.state = PluginState::Error;
-                plugin.error_message = Some(msg);
+            match self.hook.on_enable(&plugin) {
+                Ok(()) => self.reflect_activation(&mut plugin),
+                Err(msg) => {
+                    plugin.state = PluginState::Error;
+                    plugin.error_message = Some(msg);
+                }
             }
             attempted.push(plugin);
         }
@@ -602,9 +625,13 @@ impl PluginManager {
             } else {
                 self.hook.on_disable(id)
             };
-            if let Err(msg) = hook_result {
-                plugin.state = PluginState::Error;
-                plugin.error_message = Some(msg);
+            match hook_result {
+                Ok(()) if enabled => self.reflect_activation(&mut plugin),
+                Ok(()) => {}
+                Err(msg) => {
+                    plugin.state = PluginState::Error;
+                    plugin.error_message = Some(msg);
+                }
             }
         }
         Ok(plugin)
@@ -669,8 +696,20 @@ impl PluginManager {
         self.root.join(id)
     }
 
-    /// Build an [`InstalledPlugin`], deriving its state from API compatibility
-    /// and the persisted enabled flag.
+    /// Promote a just-enabled plugin to [`PluginState::Active`] if the lifecycle
+    /// host now reports it loaded (#2234). Called after a successful `on_enable`;
+    /// a no-op when the plugin is not resting at [`PluginState::Installed`] or no
+    /// host is wired (the default hook reports every plugin inactive, so the
+    /// management layer alone rests an enabled plugin at `Installed`).
+    fn reflect_activation(&self, plugin: &mut InstalledPlugin) {
+        if plugin.state == PluginState::Installed && self.hook.is_active(&plugin.manifest.id) {
+            plugin.state = PluginState::Active;
+        }
+    }
+
+    /// Build an [`InstalledPlugin`], deriving its state from API compatibility,
+    /// the persisted enabled flag, and — for an enabled, compatible plugin —
+    /// whether the lifecycle host reports it active (#2234).
     fn installed_plugin_from(
         &self,
         manifest: PluginManifest,
@@ -686,9 +725,15 @@ impl PluginManager {
         let plugin_state = if manifest.api_compatibility() == ApiCompatibility::Incompatible {
             PluginState::Incompatible
         } else if enabled {
-            // Enabled but not loaded — this layer does no loading, so an enabled
-            // plugin rests at `installed` until a host promotes it to `active`.
-            PluginState::Installed
+            // Enabled and compatible: `active` once the host has actually loaded
+            // it (a backend library, or a frontend-only theme/JS plugin), else
+            // `installed` — the resting state before load, or when no host is
+            // wired (#2234).
+            if self.hook.is_active(&manifest.id) {
+                PluginState::Active
+            } else {
+                PluginState::Installed
+            }
         } else {
             PluginState::Disabled
         };
@@ -1683,6 +1728,11 @@ mod tests {
                     .push(plugin.manifest.id.clone());
                 Ok(())
             }
+            // Simulate a real host: a plugin whose load succeeded is now active,
+            // so the manager promotes it to `Active` (#2234).
+            fn is_active(&self, id: &str) -> bool {
+                self.enabled.lock().unwrap().iter().any(|i| i == id)
+            }
         }
 
         let tmp = TempDir::new().unwrap();
@@ -1717,21 +1767,32 @@ mod tests {
         );
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].manifest.id, "keep-on");
-        assert_eq!(loaded[0].state, PluginState::Installed);
+        // A successful host load promotes the plugin to `Active` (#2234) — it is
+        // no longer left at `Installed`.
+        assert_eq!(loaded[0].state, PluginState::Active);
         assert!(loaded[0].error_message.is_none());
     }
 
     #[test]
     fn load_enabled_plugins_surfaces_a_failure_as_error_without_aborting() {
         // Fails to load one specific plugin; every other load succeeds.
-        struct FailFor(&'static str);
+        // Stateful like the real host: a plugin is only active once its load
+        // actually succeeded, so `is_active` is false until `on_enable` ran (the
+        // failing one never becomes active).
+        struct FailFor {
+            fail: &'static str,
+            active: Mutex<Vec<String>>,
+        }
         impl PluginLifecycleHook for FailFor {
             fn on_enable(&self, plugin: &InstalledPlugin) -> Result<(), String> {
-                if plugin.manifest.id == self.0 {
-                    Err("boom".into())
-                } else {
-                    Ok(())
+                if plugin.manifest.id == self.fail {
+                    return Err("boom".into());
                 }
+                self.active.lock().unwrap().push(plugin.manifest.id.clone());
+                Ok(())
+            }
+            fn is_active(&self, id: &str) -> bool {
+                self.active.lock().unwrap().iter().any(|i| i == id)
             }
         }
 
@@ -1746,7 +1807,13 @@ mod tests {
             }
         }
 
-        let mgr2 = PluginManager::with_hook(&root, Arc::new(FailFor("broken")));
+        let mgr2 = PluginManager::with_hook(
+            &root,
+            Arc::new(FailFor {
+                fail: "broken",
+                active: Mutex::new(Vec::new()),
+            }),
+        );
         let loaded = mgr2.load_enabled_plugins().unwrap();
 
         // Both enabled+compatible plugins were attempted; the failing one surfaces
@@ -1755,7 +1822,7 @@ mod tests {
         assert_eq!(broken.state, PluginState::Error);
         assert_eq!(broken.error_message.as_deref(), Some("boom"));
         let healthy = loaded.iter().find(|p| p.manifest.id == "healthy").unwrap();
-        assert_eq!(healthy.state, PluginState::Installed);
+        assert_eq!(healthy.state, PluginState::Active);
         assert!(healthy.error_message.is_none());
     }
 

@@ -34,7 +34,7 @@
 //!
 //! [`PluginConnectionType`]: super::connection::PluginConnectionType
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -410,6 +410,13 @@ pub struct PluginHost {
     root: PathBuf,
     registry: Arc<Mutex<ConnectionTypeRegistry>>,
     loaded: Mutex<HashMap<String, HostEntry>>,
+    /// Ids the host has successfully activated, so the management layer can
+    /// promote them to [`PluginState::Active`](super::PluginState). This is a
+    /// superset of [`loaded`](Self::loaded): a **frontend-only** plugin (theme /
+    /// JS parser / widget, no `terminalBackend` library) is active once its
+    /// [`load`](Self::load) succeeds even though it registers no connection type,
+    /// so it is tracked here but not in `loaded`.
+    active: Mutex<HashSet<String>>,
     /// Per-plugin error-recovery counters (concept "Error recovery state
     /// machine"). Keyed by plugin id; created lazily on first failure.
     recovery: Mutex<HashMap<String, RestartTracker>>,
@@ -426,6 +433,7 @@ impl PluginHost {
             root: plugins_root.into(),
             registry,
             loaded: Mutex::new(HashMap::new()),
+            active: Mutex::new(HashSet::new()),
             recovery: Mutex::new(HashMap::new()),
         }
     }
@@ -436,13 +444,30 @@ impl PluginHost {
         &self.registry
     }
 
-    /// Whether a plugin id is currently loaded.
+    /// Whether a plugin id currently has a loaded **backend library**. A
+    /// frontend-only plugin (no `terminalBackend`) is never "loaded" in this
+    /// sense even when active — use [`is_active`](Self::is_active) for the
+    /// activation state the management layer promotes on.
     #[must_use]
     pub fn is_loaded(&self, id: &str) -> bool {
         self.loaded
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .contains_key(id)
+    }
+
+    /// Whether a plugin id is currently **active** — its [`load`](Self::load)
+    /// succeeded and it has not since been unloaded. Unlike
+    /// [`is_loaded`](Self::is_loaded) this is `true` for a frontend-only plugin
+    /// (theme / JS, no backend library) too. The management layer queries this
+    /// to promote an enabled, compatible plugin to
+    /// [`PluginState::Active`](super::PluginState).
+    #[must_use]
+    pub fn is_active(&self, id: &str) -> bool {
+        self.active
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(id)
     }
 
     /// Load a plugin's backend and register its connection type.
@@ -466,6 +491,14 @@ impl PluginHost {
         permissions.check_consistency(&plugin.manifest.extensions)?;
 
         let Some(backend) = plugin.manifest.extensions.terminal_backend.as_ref() else {
+            // Frontend-only plugin (theme / JS parser / widget): there is no
+            // native library to open, but activation still succeeded — the
+            // frontend loaders pick it up once its state is `Active`. Record it
+            // as active so the management layer promotes it (#2234).
+            self.active
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(plugin.manifest.id.clone());
             return Ok(());
         };
 
@@ -542,6 +575,10 @@ impl PluginHost {
                     library,
                 },
             );
+        self.active
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(plugin.manifest.id.clone());
         // A clean (re)load means the plugin is healthy again: reset any prior
         // recovery counter so a future, unrelated failure gets a full budget.
         self.clear_recovery(&plugin.manifest.id);
@@ -552,6 +589,10 @@ impl PluginHost {
     /// reference to the library. The library unmaps once every session created
     /// from it has also been dropped. A no-op if the id is not loaded.
     pub fn unload(&self, id: &str) {
+        self.active
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(id);
         let entry = self
             .loaded
             .lock()
@@ -632,6 +673,10 @@ impl super::manager::PluginLifecycleHook for HostLifecycleHook {
     fn on_disable(&self, id: &str) -> Result<(), String> {
         self.host.unload(id);
         Ok(())
+    }
+
+    fn is_active(&self, id: &str) -> bool {
+        self.host.is_active(id)
     }
 
     fn on_uninstall(&self, id: &str) -> Result<(), String> {
