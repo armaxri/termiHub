@@ -41,6 +41,13 @@ mod network;
 /// versioned diff channels with multi-subscriber fan-out. Public so integration
 /// tests can drive the projector directly.
 pub mod projection;
+/// Shadow restore-cohort authority (#2206, Phase 4 step 5 of #2139): the
+/// client-scoped `restore-cohort@<clientId>` projection region + `restore.*`
+/// intents, modelling the startup restore/launch cohort aggregation (#1146 /
+/// #1227) on top of the ported restore-decision engine (`termihub_core::restore_mode`,
+/// #2145). Registered and served but not yet driving the live UI — see
+/// [`restore_cohort_projection`].
+mod restore_cohort_projection;
 pub mod run_location;
 mod session;
 mod session_history;
@@ -700,6 +707,21 @@ pub fn run() {
                 // region is seeded below once the store is managed.
                 app.manage(Arc::new(session_projection::SessionLifecycleStore::new()));
                 session_projection::projection::register_session_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
+                // Shadow RestoreCohortStore (#2206, Phase 4 step 5): the
+                // client-scoped `restore-cohort@<clientId>` region + `restore.*`
+                // intents modelling the startup restore/launch cohort aggregation
+                // (#1146 / #1227). Managed authoritative state that serves intents,
+                // but nothing in the live UI subscribes to or renders the region
+                // yet — a pure shadow foundation (later steps cut rendering, then
+                // the mutations, over to it, keeping the appStore reducers as the
+                // parity-safe fallback). No client region is seeded here: like
+                // layout, restore-cohort regions are client-scoped and created
+                // lazily on a client's first `restore.*` intent.
+                app.manage(Arc::new(restore_cohort_projection::RestoreCohortStore::new()));
+                restore_cohort_projection::projection::register_restore_intents(
                     &mut registry,
                     app.handle().clone(),
                 );
