@@ -55,6 +55,15 @@ describe("production CSP (tauri.conf.json)", () => {
     expect(prod["object-src"]).toEqual(["'none'"]);
     expect(prod["frame-src"]).toEqual(["'none'"]);
   });
+
+  it("keeps the Worker sandbox substrate (worker-src / child-src 'self' blob:) available", () => {
+    // Frontend plugins execute in a Web Worker loaded from 'self', running plugin
+    // code from a blob URL inside the worker (#2136). This locks that substrate so
+    // a later CSP tidy-up cannot silently remove it. `blob:` in `script-src`
+    // stays for now — dropping it is the deferred final step of #2136.
+    expect(prod["worker-src"]).toEqual(["'self'", "blob:"]);
+    expect(prod["child-src"]).toEqual(["'self'", "blob:"]);
+  });
 });
 
 describe("test-build CSP overlay (tauri.test.conf.json)", () => {
