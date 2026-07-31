@@ -286,6 +286,7 @@ import {
 } from "@/store/sessionBridge";
 import { mirrorMonitorIntent } from "@/store/systemMonitorBridge";
 import { mirrorAgentIntent } from "@/store/agentsBridge";
+import { mirrorConnectionIntent } from "@/store/connectionsBridge";
 import { mirrorBroadcastIntent } from "@/store/broadcastBridge";
 import {
   expectProjectedRestoreSettlement,
@@ -5416,6 +5417,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }
         return { folders };
       });
+      mirrorConnectionIntent("connection.toggleFolder", { folderId });
     },
 
     reloadConnectionsFromBackend: () => {
@@ -5479,6 +5481,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     addConnection: (connection) => {
       set((state) => ({ connections: [...state.connections, connection] }));
+      mirrorConnectionIntent("connection.add", { connection });
       frontendLog("connection_sync", `addConnection: persisting ${connection.id}`);
       persistConnection(stripPassword(connection))
         .then((persistedId) => {
@@ -5500,6 +5503,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
     bulkAddConnections: (newConnections) => {
       if (newConnections.length === 0) return;
       set((state) => ({ connections: [...state.connections, ...newConnections] }));
+      for (const connection of newConnections) {
+        mirrorConnectionIntent("connection.add", { connection });
+      }
       frontendLog(
         "connection_sync",
         `bulkAddConnections: persisting ${newConnections.length} connections`
@@ -5532,6 +5538,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set((state) => ({
         connections: state.connections.map((c) => (c.id === connection.id ? connection : c)),
       }));
+      mirrorConnectionIntent("connection.update", { connection });
       frontendLog("connection_sync", `updateConnection: persisting ${connection.id}`);
       persistConnection(stripPassword(connection))
         .then((persistedId) => {
@@ -5558,6 +5565,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set((state) => ({
         connections: state.connections.filter((c) => c.id !== connectionId),
       }));
+      mirrorConnectionIntent("connection.remove", { connectionId });
       removeConnection(connectionId, conn?.sourceFile)
         .then(() => {
           frontendLog("connection_sync", `deleteConnection: backend confirmed, reloading`);
@@ -5585,6 +5593,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set((state) => ({
         connections: state.connections.filter((c) => !idSet.has(c.id)),
       }));
+      for (const c of toDelete) {
+        mirrorConnectionIntent("connection.remove", { connectionId: c.id });
+      }
       Promise.all(toDelete.map((c) => removeConnection(c.id, c.sourceFile)))
         .then(() => {
           frontendLog("connection_sync", `bulkDeleteConnections: backend confirmed, reloading`);
@@ -5606,6 +5617,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     addFolder: (folder) => {
       set((state) => ({ folders: [...state.folders, folder] }));
+      mirrorConnectionIntent("connection.addFolder", { folder });
       frontendLog("connection_sync", `addFolder: persisting ${folder.id}`);
       persistFolder(folder)
         .then(() => applyConnectionReload())
@@ -5635,6 +5647,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
         return { folders, connections };
       });
+      mirrorConnectionIntent("connection.removeFolder", { folderId });
       frontendLog("connection_sync", `deleteFolder: removing ${folderId}`);
       removeFolder(folderId)
         .then(() => applyConnectionReload())
@@ -5659,6 +5672,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         name: `Copy of ${original.name}`,
       };
       set((s) => ({ connections: [...s.connections, duplicate] }));
+      mirrorConnectionIntent("connection.add", { connection: duplicate });
       frontendLog("connection_sync", `duplicateConnection: persisting copy of ${connectionId}`);
       persistConnection(stripPassword(duplicate))
         .then(() => applyConnectionReload())
@@ -5699,6 +5713,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set((state) => ({
         connections: state.connections.map((c) => (c.id === connectionId ? { ...c, folderId } : c)),
       }));
+      mirrorConnectionIntent("connection.move", { connectionId, folderId });
 
       // Persist to backend, then reload to sync any dedup renames
       // (e.g., when moving a connection into a folder with a same-named sibling)
@@ -5726,6 +5741,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set((state) => ({
         connections: state.connections.map((c) => (idSet.has(c.id) ? { ...c, folderId } : c)),
       }));
+      for (const connectionId of connectionIds) {
+        mirrorConnectionIntent("connection.move", { connectionId, folderId });
+      }
 
       // Persist all connections in parallel, then reload once
       const moved = get().connections.filter((c) => idSet.has(c.id));
