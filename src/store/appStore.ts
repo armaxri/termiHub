@@ -5697,6 +5697,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         set((state) => ({
           connections: state.connections.map((c) => (c.id === connectionId ? updated : c)),
         }));
+        mirrorConnectionIntent("connection.update", { connection: updated });
       } catch (err) {
         frontendLog(
           "app_store",

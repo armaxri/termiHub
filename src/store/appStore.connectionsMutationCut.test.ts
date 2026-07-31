@@ -51,6 +51,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { moveConnectionToFile as apiMoveConnectionToFile } from "@/services/storage";
 import { setConnectionIntentsEnabled, setConnectionTransportForTest } from "./connectionsBridge";
 import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 import type {
@@ -331,6 +332,27 @@ describe("connections mutation cut — cut-vs-local parity (flag on)", () => {
     expectParity();
     expect(transport.regionView().connections.every((c) => c.folderId === "work")).toBe(true);
     expect(transport.kinds().filter((k) => k === "connection.move")).toHaveLength(2);
+  });
+
+  it("moveConnectionToFile replaces the connection by id (external-file move)", async () => {
+    // Seed the slice + region directly so the async action's await is not raced by
+    // an addConnection reload flushing mid-flight.
+    const conn = makeConnection("a");
+    useAppStore.setState({ connections: [conn], folders: [] });
+    transport.dispatch({
+      intentId: "seed",
+      kind: "connection.add",
+      payload: { connection: conn },
+      clientId: "seed",
+    });
+    const updated = { ...conn, sourceFile: "extra.json" };
+    vi.mocked(apiMoveConnectionToFile).mockResolvedValue(updated as never);
+
+    await useAppStore.getState().moveConnectionToFile("a", "extra.json");
+
+    expectParity();
+    expect(transport.regionView().connections[0].sourceFile).toBe("extra.json");
+    expect(transport.kinds()).toContain("connection.update");
   });
 
   it("deleteFolder removes the folder, re-homing children to root and reparenting subfolders", () => {
