@@ -158,7 +158,10 @@ describe("useProjectedMonitors", () => {
   it("flag off: returns the appStore slice and dispatches nothing", async () => {
     setMonitorRenderFromProjectionEnabled(false);
     const s = stats("host-a", 12);
-    useAppStore.setState({ monitors: { s1: entry("s1", "host-a", s) }, monitoringStatsCache: { s1: s } });
+    useAppStore.setState({
+      monitors: { s1: entry("s1", "host-a", s) },
+      monitoringStatsCache: { s1: s },
+    });
 
     const hook = renderHook();
     await flush();

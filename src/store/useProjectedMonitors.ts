@@ -85,9 +85,7 @@ export function useProjectedMonitors(): SystemMonitorsView {
   // `seedMonitorsRegion` so a settled slice is not re-seeded on every render.
   useEffect(() => {
     if (!enabled || matches || view === undefined) return;
-    seedMonitorsRegion(monitors, statsCache).catch((err) =>
-      logMonitorBridgeFallback("seed", err)
-    );
+    seedMonitorsRegion(monitors, statsCache).catch((err) => logMonitorBridgeFallback("seed", err));
   }, [enabled, matches, view, monitors, statsCache]);
 
   return useMemo(() => {
