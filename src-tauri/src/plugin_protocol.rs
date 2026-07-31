@@ -263,7 +263,12 @@ mod tests {
 
     #[test]
     fn parse_splits_id_and_relative() {
-        assert_parse("/demo/frontend/index.js", "demo", "frontend/index.js", false);
+        assert_parse(
+            "/demo/frontend/index.js",
+            "demo",
+            "frontend/index.js",
+            false,
+        );
     }
 
     #[test]

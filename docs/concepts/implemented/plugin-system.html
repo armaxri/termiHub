@@ -2593,11 +2593,13 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
             byte-exact), and status-bar widgets are described declaratively (<code>render()</code>
             returns a serialisable node, not a live element) and materialised by the host through a
             strict tag/attribute allowlist — never <code>innerHTML</code>. Plugin code is loaded into
-            the worker from a <code>blob:</code> URL (still permitted by <code>script-src 'self'
-            blob:</code>, now confined to the worker); dropping <code>blob:</code> from
-            <code>script-src</code> entirely is a tracked follow-up. Earlier versions injected plugin
-            JS as a <code>&lt;script&gt;</code> into the main document (weak, shared-context
-            isolation); that gap is now closed.
+            the worker by <code>importScripts</code>-ing it from the app-controlled
+            <code>plugin://</code> origin (#2251/#2266): the plugin protocol serves each entry point
+            already wrapped in its per-plugin loader IIFE, so no <code>blob:</code> URL is built and
+            <code>script-src</code> no longer permits <code>blob:</code> at all
+            (<code>script-src 'self' plugin://localhost http://plugin.localhost</code>). Earlier
+            versions injected plugin JS as a <code>&lt;script&gt;</code> into the main document (weak,
+            shared-context isolation); that gap is now closed.
           </li>
           <li>
             <strong>File system access</strong>: Plugins requesting <code>filesystem</code>

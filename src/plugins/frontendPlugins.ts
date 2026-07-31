@@ -41,11 +41,7 @@ const loadedPlugins = new Set<string>();
 export function pluginEntryUrl(pluginId: string, entryPoint: string): string {
   const origin = isWindows() ? "http://plugin.localhost" : "plugin://localhost";
   const id = encodeURIComponent(pluginId);
-  const path = entryPoint
-    .split("/")
-    .filter(Boolean)
-    .map(encodeURIComponent)
-    .join("/");
+  const path = entryPoint.split("/").filter(Boolean).map(encodeURIComponent).join("/");
   return `${origin}/load/${id}/${path}`;
 }
 
