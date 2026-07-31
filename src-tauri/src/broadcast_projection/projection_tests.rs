@@ -80,7 +80,10 @@ fn registry_for(store: Arc<BroadcastStore>) -> HandlerRegistry {
     registry
 }
 
-fn scope_field(intent: &Intent, required: bool) -> Result<Option<BroadcastScope>, (String, String)> {
+fn scope_field(
+    intent: &Intent,
+    required: bool,
+) -> Result<Option<BroadcastScope>, (String, String)> {
     match intent.payload.get("scope").and_then(Value::as_str) {
         Some("all") => Ok(Some(BroadcastScope::All)),
         Some("panel") => Ok(Some(BroadcastScope::Panel)),
@@ -276,7 +279,11 @@ fn a_full_session_advances_monotonically_and_converges() {
         cache.apply(diff);
     }
     assert_eq!(cache.version, 4);
-    assert_eq!(cache.view, store.snapshot("A"), "cache converges on authority");
+    assert_eq!(
+        cache.view,
+        store.snapshot("A"),
+        "cache converges on authority"
+    );
     assert_eq!(cache.view["active"], json!(false));
     assert_eq!(cache.view["targetTabIds"], json!([]));
     // stop retains the scope from the start for the keyboard toggle.
@@ -405,7 +412,11 @@ fn a_dead_subscriber_is_reaped_on_publish() {
         json!({ "scope": "all", "sourceTabId": "src", "targetTabIds": [] }),
     ));
 
-    assert_eq!(live.diffs().len(), 1, "the live subscriber still gets the diff");
+    assert_eq!(
+        live.diffs().len(),
+        1,
+        "the live subscriber still gets the diff"
+    );
     assert_eq!(
         projector.subscriber_count(&region),
         1,

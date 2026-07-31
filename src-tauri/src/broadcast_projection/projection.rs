@@ -176,7 +176,10 @@ fn optional_scope(intent: &Intent) -> Result<Option<BroadcastScope>, (String, St
         None | Some(Value::Null) => Ok(None),
         Some(value) => {
             let s = value.as_str().ok_or_else(|| {
-                ("bad_payload".to_string(), "invalid 'scope' (not a string)".to_string())
+                (
+                    "bad_payload".to_string(),
+                    "invalid 'scope' (not a string)".to_string(),
+                )
             })?;
             parse_scope(s).map(Some)
         }
@@ -219,7 +222,10 @@ fn optional_str_array(intent: &Intent, key: &str) -> Result<Vec<String>, (String
         None | Some(Value::Null) => Ok(Vec::new()),
         Some(value) => {
             let arr = value.as_array().ok_or_else(|| {
-                ("bad_payload".to_string(), format!("invalid '{key}' (not an array)"))
+                (
+                    "bad_payload".to_string(),
+                    format!("invalid '{key}' (not an array)"),
+                )
             })?;
             collect_str_array(arr, key)
         }

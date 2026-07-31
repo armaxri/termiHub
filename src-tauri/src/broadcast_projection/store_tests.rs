@@ -41,8 +41,16 @@ fn start_dedups_a_source_that_reappears_in_the_targets() {
     let store = BroadcastStore::new();
     // resolveBroadcastTargetTabIds returns every terminal in the group including
     // the source, so the source commonly appears again in `targetTabIds`.
-    store.start(C, BroadcastScope::Panel, "src", &ids(&["t1", "src", "t2", "t1"]));
-    assert_eq!(store.snapshot(C)["targetTabIds"], json!(["src", "t1", "t2"]));
+    store.start(
+        C,
+        BroadcastScope::Panel,
+        "src",
+        &ids(&["t1", "src", "t2", "t1"]),
+    );
+    assert_eq!(
+        store.snapshot(C)["targetTabIds"],
+        json!(["src", "t1", "t2"])
+    );
     assert_eq!(store.snapshot(C)["scope"], json!("panel"));
 }
 
@@ -74,10 +82,16 @@ fn add_target_appends_when_absent_and_is_a_no_op_when_present() {
     let store = BroadcastStore::new();
     store.start(C, BroadcastScope::All, "src", &ids(&["t1"]));
     store.add_target(C, "t2");
-    assert_eq!(store.snapshot(C)["targetTabIds"], json!(["src", "t1", "t2"]));
+    assert_eq!(
+        store.snapshot(C)["targetTabIds"],
+        json!(["src", "t1", "t2"])
+    );
     // Adding an existing target changes nothing.
     store.add_target(C, "t1");
-    assert_eq!(store.snapshot(C)["targetTabIds"], json!(["src", "t1", "t2"]));
+    assert_eq!(
+        store.snapshot(C)["targetTabIds"],
+        json!(["src", "t1", "t2"])
+    );
 }
 
 #[test]
