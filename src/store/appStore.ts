@@ -38,7 +38,6 @@ import {
   LayoutConfig,
   DEFAULT_LAYOUT,
   LAYOUT_PRESETS,
-  RecoveryWarning,
   PersistentRunState,
   PersistentSessionEntry,
   ShellIntegrationSettings,
@@ -162,6 +161,7 @@ import { createSessionHistorySlice, SessionHistorySlice } from "./slices/session
 import { createZoomSlice, ZoomSlice } from "./slices/zoomSlice";
 import { createCommandPaletteSlice, CommandPaletteSlice } from "./slices/commandPaletteSlice";
 import { createHttpMonitorsSlice, HttpMonitorsSlice } from "./slices/httpMonitorsSlice";
+import { createDialogsSlice, DialogsSlice } from "./slices/dialogsSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 import {
@@ -466,7 +466,8 @@ export interface AppState
     SessionHistorySlice,
     ZoomSlice,
     CommandPaletteSlice,
-    HttpMonitorsSlice {
+    HttpMonitorsSlice,
+    DialogsSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -906,27 +907,10 @@ export interface AppState
   sessionHighlighting: Record<string, boolean>;
   setSessionHighlighting: (sessionId: string, enabled: boolean | undefined) => void;
 
-  // Large paste confirmation
-  largePasteDialog: { open: boolean; charCount: number; onConfirm: (() => void) | null };
-  showLargePasteDialog: (charCount: number, onConfirm: () => void) => void;
-  closeLargePasteDialog: () => void;
-
-  // Open-saved-file-in-tab confirmation
-  openSavedFileDialog: { open: boolean; filePath: string };
-  showOpenSavedFileDialog: (filePath: string) => void;
-  closeOpenSavedFileDialog: () => void;
-
-  // Export/Import dialogs
-  exportDialogOpen: boolean;
-  setExportDialogOpen: (open: boolean) => void;
-  importDialogOpen: boolean;
-  importFileContent: string | undefined;
-  setImportDialog: (open: boolean, content?: string) => void;
-
-  // Recovery warnings from corrupt config files
-  recoveryWarnings: RecoveryWarning[];
-  recoveryDialogOpen: boolean;
-  setRecoveryDialogOpen: (open: boolean) => void;
+  // Dialogs — large-paste / open-saved-file / export-import / recovery-warning
+  // open/close flags provided by DialogsSlice (extracted under #2077 via #2300).
+  // loadFromBackend still populates recoveryWarnings/recoveryDialogOpen via the
+  // shared set.
 
   loadFromBackend: () => Promise<void>;
   /**
@@ -2890,6 +2874,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createZoomSlice(set, get, store),
     ...createCommandPaletteSlice(set, get, store),
     ...createHttpMonitorsSlice(set, get, store),
+    ...createDialogsSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -5017,29 +5002,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
           : { sessionHighlighting: { ...s.sessionHighlighting, [sessionId]: enabled } }
       ),
 
-    // Large paste confirmation
-    largePasteDialog: { open: false, charCount: 0, onConfirm: null },
-    showLargePasteDialog: (charCount, onConfirm) =>
-      set({ largePasteDialog: { open: true, charCount, onConfirm } }),
-    closeLargePasteDialog: () =>
-      set({ largePasteDialog: { open: false, charCount: 0, onConfirm: null } }),
-
-    // Open-saved-file-in-tab confirmation
-    openSavedFileDialog: { open: false, filePath: "" },
-    showOpenSavedFileDialog: (filePath) => set({ openSavedFileDialog: { open: true, filePath } }),
-    closeOpenSavedFileDialog: () => set({ openSavedFileDialog: { open: false, filePath: "" } }),
-
-    // Export/Import dialogs
-    exportDialogOpen: false,
-    setExportDialogOpen: (open) => set({ exportDialogOpen: open }),
-    importDialogOpen: false,
-    importFileContent: undefined,
-    setImportDialog: (open, content) => set({ importDialogOpen: open, importFileContent: content }),
-
-    // Recovery warnings from corrupt config files
-    recoveryWarnings: [],
-    recoveryDialogOpen: false,
-    setRecoveryDialogOpen: (open) => set({ recoveryDialogOpen: open }),
+    // Dialogs — large-paste / open-saved-file / export-import / recovery-warning
+    // open/close flags provided by createDialogsSlice (extracted under #2077 via
+    // #2300).
 
     updateLayoutConfig: (partial) => {
       const updated = { ...get().layoutConfig, ...partial };
