@@ -88,6 +88,23 @@ pub struct TerminalOptions {
     /// Per-connection line-ending override ("cr", "lf", or "crlf").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_ending: Option<String>,
+    /// Per-connection terminal line-height multiplier (may be fractional).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f64>,
+    /// When `true`, this connection's session output is logged to a file on
+    /// connect (#1960).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_to_file: Option<bool>,
+    /// When logging to a file, prefix each line with a timestamp (#1960).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_timestamps: Option<bool>,
+    /// Per-connection syntax-highlighting override (epic #1696).
+    ///
+    /// Stored opaquely as JSON — the backend never introspects it, so it
+    /// follows the [`crate::terminal::backend::ConnectionConfig::settings`]
+    /// precedent rather than duplicating the frontend's nested schema in Rust.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub syntax_highlighting: Option<serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
