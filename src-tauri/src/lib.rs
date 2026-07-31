@@ -21,6 +21,12 @@ mod connection;
 mod connections_projection;
 mod credential;
 mod embedded_servers;
+/// Shadow file-browser view authority (#2228, Phase 5 of #2139/#2153): the
+/// client-scoped `file-browser@<clientId>` region + `fileBrowser.*` intents
+/// modeling the file-browser UI state (`appStore` browser panes, active mode,
+/// clipboard). Registered and served but not yet driving the live UI — a pure
+/// shadow foundation. See [`file_browser_projection`].
+mod file_browser_projection;
 /// File-system access: local FS, SFTP sessions, and the cancellable transfer
 /// subsystem (public so integration tests can drive `SftpManager` /
 /// `TransferRegistry` directly — issue #1245).
@@ -786,6 +792,27 @@ pub fn run() {
                 // lazily on a client's first `workflow.*` intent.
                 app.manage(Arc::new(workflow_projection::WorkflowRunStore::new()));
                 workflow_projection::projection::register_workflow_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
+                // Shadow FileBrowserStore (#2228, Phase 5, part of #2153): the
+                // client-scoped `file-browser@<clientId>` region +
+                // `fileBrowser.*` intents modeling the file-browser UI *view*
+                // state (the local/sftp/session browser panes — each cwd +
+                // listing — the active `fileBrowserMode`, and the copy/cut
+                // `fileClipboard`). Only the browser view: the backend
+                // SFTP/session *session* model (sessions, connect status,
+                // transfers) stays out of scope (#2236). Managed authoritative
+                // state that serves intents, but nothing in the live UI
+                // subscribes to or renders the region yet — a pure shadow
+                // foundation (later steps cut rendering, then the mutations,
+                // over to it, keeping the appStore reducers as the parity-safe
+                // fallback). No client region is seeded here: like layout,
+                // broadcast, and workflow-run, file-browser regions are
+                // client-scoped and created lazily on a client's first
+                // `fileBrowser.*` intent.
+                app.manage(Arc::new(file_browser_projection::FileBrowserStore::new()));
+                file_browser_projection::projection::register_file_browser_intents(
                     &mut registry,
                     app.handle().clone(),
                 );
