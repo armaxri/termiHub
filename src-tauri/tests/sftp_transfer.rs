@@ -21,8 +21,10 @@ use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser};
 use termihub_core::config::SshConfig;
-use termihub_lib::files::sftp::{lock_session, SftpManager, SftpSession, Writability};
+use termihub_core::files::FileBrowser;
+use termihub_lib::files::sftp::{SftpManager, Writability};
 use termihub_lib::files::transfer::{
     run_download, ProgressSink, TransferContext, TransferDirection, TransferPhase,
     TransferProgress, TransferRegistry,
@@ -55,7 +57,7 @@ fn is_port_reachable(port: u16) -> bool {
 /// fixture containers, so these desktop SFTP integration tests connect
 /// deterministically under the strict default host-key policy (#1969, #2032).
 ///
-/// `SftpSession::new` goes through the same strict host-key path as the rest of
+/// Opening a session goes through the same strict host-key path as the rest of
 /// the app: with no verifier registered it trusts only keys already recorded in
 /// the runner's `~/.ssh/known_hosts` and refuses everything else with "Unknown
 /// server key". CI runners (and any freshly-(re)built fixture image) never have
@@ -138,14 +140,13 @@ impl RecordingSink {
 }
 
 /// Open a session against the container and return the manager (kept alive) and
-/// the session Arc.
-async fn connect() -> (SftpManager, Arc<Mutex<SftpSession>>) {
+/// the session's core SFTP browser.
+async fn connect() -> (SftpManager, Arc<SftpFileBrowser>) {
     let manager = SftpManager::new();
     let config = stress_config(sftp_stress_port());
-    let mgr = manager.clone();
-    let session_id = tokio::task::spawn_blocking(move || mgr.open_session(&config))
+    let session_id = manager
+        .open_session(&config)
         .await
-        .expect("join")
         .expect("SFTP session should open");
     let session = manager
         .get_session(&session_id)
@@ -153,19 +154,13 @@ async fn connect() -> (SftpManager, Arc<Mutex<SftpSession>>) {
     (manager, session)
 }
 
-/// Open a dedicated SFTP channel off `session` (mirrors the command layer):
-/// lock briefly and drive the async open under `block_in_place` so the std
-/// guard never spans an `.await`.
-async fn open_dedicated(session: Arc<Mutex<SftpSession>>) -> russh_sftp::client::SftpSession {
-    tokio::task::spawn_blocking(move || {
-        let guard = lock_session(&session).expect("lock");
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async { guard.open_dedicated_sftp().await })
-        })
-    })
-    .await
-    .expect("join")
-    .expect("dedicated SFTP channel should open")
+/// Open a dedicated SFTP channel off `session` (mirrors the command layer),
+/// awaited directly on the async core browser.
+async fn open_dedicated(session: Arc<SftpFileBrowser>) -> russh_sftp::client::SftpSession {
+    session
+        .open_dedicated_channel()
+        .await
+        .expect("dedicated SFTP channel should open")
 }
 
 /// Cancel-mid-transfer: the partial local file is removed and the terminal
@@ -258,20 +253,21 @@ async fn check_writable_distinguishes_owner_from_root_owned() {
         uuid::Uuid::new_v4()
     );
     let user_writable = {
-        let session = session.clone();
-        let user_path = user_path.clone();
-        tokio::task::spawn_blocking(move || {
-            let guard = lock_session(&session)?;
-            guard.write_file_content(&user_path, "probe-content")?;
-            let writability = guard.check_writable(&user_path);
-            // Content must survive the probe unchanged (no truncate/write).
-            let content = guard.read_file_content(&user_path)?;
-            let _ = guard.remove_file(&user_path);
-            writability.map(|w| (w, content))
-        })
-        .await
-        .expect("join")
-        .expect("probe on a user-owned file should not error")
+        session
+            .write_file(&user_path, b"probe-content")
+            .await
+            .expect("writing the user-owned probe file should succeed");
+        let writability = session
+            .check_writable(&user_path)
+            .await
+            .expect("probe on a user-owned file should not error");
+        // Content must survive the probe unchanged (no truncate/write).
+        let content = session
+            .read_file(&user_path)
+            .await
+            .expect("reading the probe file back should succeed");
+        let _ = session.delete(&user_path).await;
+        (writability, String::from_utf8(content).expect("utf-8"))
     };
     assert_eq!(
         user_writable.0,
@@ -284,13 +280,10 @@ async fn check_writable_distinguishes_owner_from_root_owned() {
     );
 
     // A root-owned file the user cannot write (mode 644, owned by root).
-    let root_writability = {
-        let session = session.clone();
-        tokio::task::spawn_blocking(move || lock_session(&session)?.check_writable("/etc/hostname"))
-            .await
-            .expect("join")
-            .expect("probe on a root-owned file should not error")
-    };
+    let root_writability = session
+        .check_writable("/etc/hostname")
+        .await
+        .expect("probe on a root-owned file should not error");
     assert_eq!(
         root_writability,
         Writability::ReadOnly,
@@ -347,14 +340,11 @@ async fn browsing_stays_live_during_transfer() {
 
     // While it runs, a directory listing on the browsing session must complete
     // promptly (the copy does not hold the session mutex).
-    let list_session = session.clone();
     let start = Instant::now();
-    let entries = tokio::task::spawn_blocking(move || {
-        lock_session(&list_session)?.list_dir("/home/testuser/sftp-test/large-files")
-    })
-    .await
-    .expect("join")
-    .expect("list_dir on the browsing session should succeed during a transfer");
+    let entries = session
+        .list_dir("/home/testuser/sftp-test/large-files")
+        .await
+        .expect("list_dir on the browsing session should succeed during a transfer");
     let elapsed = start.elapsed();
 
     assert!(

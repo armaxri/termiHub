@@ -13,7 +13,7 @@ mod connections_projection;
 mod credential;
 mod embedded_servers;
 /// File-system access: local FS, SFTP sessions, and the cancellable transfer
-/// subsystem (public so integration tests can drive `SftpSession` /
+/// subsystem (public so integration tests can drive `SftpManager` /
 /// `TransferRegistry` directly — issue #1245).
 pub mod files;
 /// Shadow `LayoutStore` (#2151, Phase 3 step 1 of #2139): the client-scoped
