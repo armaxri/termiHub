@@ -1,4 +1,4 @@
-import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 
 /**
  * Returns whether experimental features are enabled.
@@ -11,5 +11,5 @@ import { useAppStore } from "@/store/appStore";
  * if (!experimental) return null;
  */
 export function useExperimentalFeatures(): boolean {
-  return useAppStore((s) => s.settings.experimentalFeaturesEnabled ?? false);
+  return useProjectedSettings().experimentalFeaturesEnabled ?? false;
 }

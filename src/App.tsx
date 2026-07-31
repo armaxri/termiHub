@@ -39,6 +39,7 @@ import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useReportWindowTabCount } from "@/hooks/useReportWindowTabCount";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { getCliWorkspace } from "@/services/workspaceApi";
 import { resolveRestoreMode } from "@/utils/restoreMode";
 import { MAIN_WINDOW_LABEL } from "@/types/window";
@@ -61,7 +62,7 @@ function App() {
   useReportWindowTabCount();
   const loadFromBackend = useAppStore((s) => s.loadFromBackend);
   const checkForUpdates = useAppStore((s) => s.checkForUpdates);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const layoutConfig = useAppStore((s) => s.layoutConfig);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const { sidebarWidth, handleProps, isResizing } = useSidebarResize(layoutConfig.sidebarPosition);

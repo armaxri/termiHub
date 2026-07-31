@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ConfirmDialog } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 
 /**
  * One-time notice shown before closing a tab that is attached to a persistent
@@ -21,7 +22,7 @@ export function ConfirmDetachTabDialog() {
   const request = useAppStore((s) => s.pendingAttachedTabCloseConfirm);
   const setRequest = useAppStore((s) => s.setPendingAttachedTabCloseConfirm);
   const closeTab = useAppStore((s) => s.closeTab);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
   // Local, deferred checkbox state — committed only on confirm, discarded on cancel.
   const [dontShow, setDontShow] = useState(false);

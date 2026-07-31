@@ -20,6 +20,7 @@ import {
   Puzzle,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { frontendLog } from "@/utils/frontendLog";
@@ -324,7 +325,7 @@ function HighlightingIndicator() {
   });
   const tabId = activeTab?.id ?? null;
   const sessionId = activeTab?.sessionId ?? null;
-  const globalConfig = useAppStore((s) => s.settings.syntaxHighlighting);
+  const globalConfig = useProjectedSettings().syntaxHighlighting;
   const perConnection = useAppStore((s) =>
     tabId ? s.tabTerminalOptions[tabId]?.syntaxHighlighting : undefined
   );
@@ -514,7 +515,7 @@ function AgentUpdatesIndicator() {
  * Shows a connection picker when disconnected, and compact stats when connected.
  */
 function MonitoringStatus() {
-  const globalMonitoringEnabled = useAppStore((s) => s.settings.powerMonitoringEnabled);
+  const globalMonitoringEnabled = useProjectedSettings().powerMonitoringEnabled;
   const disconnectMonitoring = useAppStore((s) => s.disconnectMonitoring);
   const setMonitoringPaused = useAppStore((s) => s.setMonitoringPaused);
   const setMonitoringInterval = useAppStore((s) => s.setMonitoringInterval);

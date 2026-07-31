@@ -23,6 +23,7 @@ import {
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { getXtermTheme } from "@/themes";
 import {
   processKeyEvent,
@@ -1520,13 +1521,14 @@ export function Terminal({
   }, [horizontalScrolling, tabId]);
 
   // React to settings changes on live terminals (per-tab overrides take precedence)
-  const theme = useAppStore((s) => s.settings.theme);
-  const fontFamily = useAppStore((s) => s.settings.fontFamily);
-  const fontSize = useAppStore((s) => s.settings.fontSize);
-  const cursorBlink = useAppStore((s) => s.settings.cursorBlink);
-  const cursorStyle = useAppStore((s) => s.settings.cursorStyle);
-  const scrollbackBuffer = useAppStore((s) => s.settings.scrollbackBuffer);
-  const screenReaderMode = useAppStore((s) => s.settings.screenReaderMode);
+  const projectedSettings = useProjectedSettings();
+  const theme = projectedSettings.theme;
+  const fontFamily = projectedSettings.fontFamily;
+  const fontSize = projectedSettings.fontSize;
+  const cursorBlink = projectedSettings.cursorBlink;
+  const cursorStyle = projectedSettings.cursorStyle;
+  const scrollbackBuffer = projectedSettings.scrollbackBuffer;
+  const screenReaderMode = projectedSettings.screenReaderMode;
   const tabTermOpts = useAppStore((s) => s.tabTerminalOptions[tabId]);
 
   useEffect(() => {
@@ -1569,7 +1571,7 @@ export function Terminal({
   // the per-session toggle changes on a live terminal. `applyHighlighting`
   // resolves all three from the store, so re-running it on any of these keeps the
   // engine in sync — including toggling it off live, which drops all decorations.
-  const globalHighlighting = useAppStore((s) => s.settings.syntaxHighlighting);
+  const globalHighlighting = projectedSettings.syntaxHighlighting;
   const sessionHighlightingOverride = useAppStore((s) =>
     existingSessionId ? s.sessionHighlighting[existingSessionId] : undefined
   );
@@ -1588,7 +1590,7 @@ export function Terminal({
 
   // Keep the backend's per-session line ending in sync when the global default
   // or this connection's override changes while the terminal is open.
-  const defaultLineEnding = useAppStore((s) => s.settings.defaultLineEnding);
+  const defaultLineEnding = projectedSettings.defaultLineEnding;
   useEffect(() => {
     const sessionId = sessionIdRef.current;
     if (sessionId) void pushLineEnding(tabId, sessionId);

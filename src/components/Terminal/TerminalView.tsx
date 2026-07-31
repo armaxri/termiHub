@@ -14,6 +14,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
@@ -263,7 +264,7 @@ export function TerminalView() {
   const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
   const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
-  const confirmCloseLiveSession = useAppStore((s) => s.settings.confirmCloseLiveSession);
+  const confirmCloseLiveSession = useProjectedSettings().confirmCloseLiveSession;
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const sidebarCollapsed = useAppStore((s) => s.sidebarCollapsed);
   const macroRecording = useAppStore((s) => s.macroRecording);

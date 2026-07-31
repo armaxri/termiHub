@@ -37,6 +37,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { Button, Tooltip, Progress, Input, toast } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
@@ -565,7 +566,7 @@ function useFileBrowserSync() {
   const connections = useAppStore((s) => s.connections);
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
-  const globalFileBrowserEnabled = useAppStore((s) => s.settings.fileBrowserEnabled);
+  const globalFileBrowserEnabled = useProjectedSettings().fileBrowserEnabled;
 
   // Derive mode from active tab
   const activeTab = useAppStore((s) => getActiveTab(s));

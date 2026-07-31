@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import {
   ConnectionConfig,
   ExternalAgentFile,
@@ -209,7 +210,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const agentDefinitions = useAppStore((s) => s.agentDefinitions);
   const saveAgentDef = useAppStore((s) => s.saveAgentDef);
   const updateAgentDef = useAppStore((s) => s.updateAgentDef);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);

@@ -18,6 +18,7 @@ import { Button, toast } from "@/components/ui";
 import { save } from "@tauri-apps/plugin-dialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { resolveLanguage } from "@/utils/languageMapping";
 import { getBasename } from "@/utils/formatters";
 import { suggestedSaveCopyPath } from "@/utils/saveCopyPath";
@@ -144,14 +145,15 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const setEditorStatus = useAppStore((s) => s.setEditorStatus);
   const setEditorActions = useAppStore((s) => s.setEditorActions);
-  const fileLanguageMappings = useAppStore((s) => s.settings.fileLanguageMappings);
+  const projectedSettings = useProjectedSettings();
+  const fileLanguageMappings = projectedSettings.fileLanguageMappings;
   const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
   const setPendingCloseRequest = useAppStore((s) => s.setPendingCloseRequest);
   const closeTab = useAppStore((s) => s.closeTab);
   const renameTab = useAppStore((s) => s.renameTab);
   // Subscribe to the theme setting so we re-derive the Monaco theme when the
   // user explicitly switches between dark / light / system in the settings.
-  const themeSetting = useAppStore((s) => s.settings.theme);
+  const themeSetting = projectedSettings.theme;
   // Host label (`user@host:port`) of the editor's SFTP session — names the host
   // in the sudo prompt and keys the (optional) credential-store entry. The
   // credential store treats this string as an opaque namespace, and a sudo

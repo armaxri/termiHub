@@ -17,6 +17,7 @@ import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { countHosts } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 
 /** Host count above which the sweep warns before starting. */
 const LARGE_SWEEP_THRESHOLD = 1024;
@@ -53,8 +54,8 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
 
   // Persisted "warn before a large sweep" preference. Defaults to true when
   // unset; the dialog's opt-out flips it off, re-enabled from General settings.
-  const warnLargeSweep = useAppStore((s) => s.settings.warnLargePingSweep);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
+  const warnLargeSweep = settings.warnLargePingSweep;
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const hostRef = useAutofocusSelect<HTMLInputElement>();
