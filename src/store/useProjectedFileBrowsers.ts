@@ -153,9 +153,7 @@ export function useProjectedFileBrowsers(): FileBrowsersView {
   // `seedFileBrowsersRegion` so a settled slice is not re-seeded on every render.
   useEffect(() => {
     if (!enabled || matches || view === undefined) return;
-    seedFileBrowsersRegion(slice).catch((err) =>
-      logFileBrowsersBridgeFallback("seed", err)
-    );
+    seedFileBrowsersRegion(slice).catch((err) => logFileBrowsersBridgeFallback("seed", err));
   }, [enabled, matches, view, slice]);
 
   return useMemo(() => {
