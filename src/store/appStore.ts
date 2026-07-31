@@ -287,6 +287,7 @@ import {
 import { mirrorMonitorIntent } from "@/store/systemMonitorBridge";
 import { mirrorAgentIntent } from "@/store/agentsBridge";
 import { mirrorConnectionIntent } from "@/store/connectionsBridge";
+import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { mirrorBroadcastIntent } from "@/store/broadcastBridge";
 import {
   expectProjectedRestoreSettlement,
@@ -5307,6 +5308,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const oldSettings = get().settings;
         await persistSettings(newSettings);
         set({ settings: newSettings, savedSettings: newSettings });
+        // Mutation cut (#2227): make the backend SettingsStore authoritative by
+        // mirroring the whole-document save as a settings.replace intent. Persist
+        // above is untouched; the render-cut hook reflects the region back.
+        mirrorSettingsIntent("settings.replace", { settings: newSettings });
 
         // Re-apply when the selection changes or when the active custom theme's
         // colors were edited (the customThemes array reference changes on save).
@@ -5368,11 +5373,16 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const prevSi = get().settings.shellIntegration;
       const optimistic = { ...get().settings, shellIntegration: nextSi };
       set({ settings: optimistic, savedSettings: optimistic });
+      // Mutation cut (#2227): the shell-integration write is a targeted field
+      // patch, so mirror it as a settings.patch (shallow-merge) rather than a
+      // whole-document replace — keeping a concurrent general-settings edit intact.
+      mirrorSettingsIntent("settings.patch", { shellIntegration: nextSi });
       try {
         return await saveShellIntegrationSettings(nextSi);
       } catch (err) {
         const rolledBack = { ...get().settings, shellIntegration: prevSi };
         set({ settings: rolledBack, savedSettings: rolledBack });
+        mirrorSettingsIntent("settings.patch", { shellIntegration: prevSi });
         throw err;
       }
     },
@@ -8847,6 +8857,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           savedSettings: updatedSettings,
           updateNotificationDismissed: true,
         });
+        mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
       } catch (err) {
         frontendLog("update", `Failed to skip version: ${err}`);
       }
@@ -8856,6 +8867,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         await apiClearSkippedVersion();
         const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
         set({ settings: updatedSettings, savedSettings: updatedSettings });
+        mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
       } catch (err) {
         frontendLog("update", `Failed to clear skipped version: ${err}`);
       }
