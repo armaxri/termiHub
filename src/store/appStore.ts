@@ -161,6 +161,7 @@ import { createMacrosSlice, MacrosSlice } from "./slices/macrosSlice";
 import { createPluginsSlice, PluginsSlice } from "./slices/pluginsSlice";
 import { createSessionHistorySlice, SessionHistorySlice } from "./slices/sessionHistorySlice";
 import { createZoomSlice, ZoomSlice } from "./slices/zoomSlice";
+import { createCommandPaletteSlice, CommandPaletteSlice } from "./slices/commandPaletteSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 import {
@@ -463,7 +464,8 @@ export interface AppState
     MacrosSlice,
     PluginsSlice,
     SessionHistorySlice,
-    ZoomSlice {
+    ZoomSlice,
+    CommandPaletteSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -872,18 +874,9 @@ export interface AppState
   applyLayoutPreset: (preset: "default" | "focus" | "zen") => void;
   toggleActivityBarView: (view: SidebarView) => void;
 
-  // Shortcuts overlay
-  shortcutsOverlayOpen: boolean;
-  setShortcutsOverlayOpen: (open: boolean) => void;
-
-  // Command palette (Cmd/Ctrl+P) — fuzzy-find commands + saved connections
-  commandPaletteOpen: boolean;
-  setCommandPaletteOpen: (open: boolean) => void;
-
-  // Standalone overlay views (updates, about) — opened from the settings menu
-  overlayView: "updates" | "about" | null;
-  openOverlayView: (view: "updates" | "about") => void;
-  closeOverlayView: () => void;
+  // Shortcuts overlay + command palette + standalone overlay views (updates,
+  // about) — runtime-only open/close flags provided by CommandPaletteSlice
+  // (extracted under #2077 via #2300).
 
   // Panel zoom overlay (runtime-only) — temporarily expand the active terminal tab to full view
   zoomedTabId: string | null;
@@ -2896,6 +2889,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createPluginsSlice(set, get, store),
     ...createSessionHistorySlice(set, get, store),
     ...createZoomSlice(set, get, store),
+    ...createCommandPaletteSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -4977,17 +4971,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     setLayoutDialogOpen: (open) => set({ layoutDialogOpen: open }),
 
-    // Shortcuts overlay
-    shortcutsOverlayOpen: false,
-    setShortcutsOverlayOpen: (open) => set({ shortcutsOverlayOpen: open }),
-
-    commandPaletteOpen: false,
-    setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
-
-    // Standalone overlay views
-    overlayView: null,
-    openOverlayView: (view) => set({ overlayView: view }),
-    closeOverlayView: () => set({ overlayView: null }),
+    // Shortcuts overlay + command palette + standalone overlay views provided
+    // by createCommandPaletteSlice (extracted under #2077 via #2300).
 
     // Panel zoom overlay
     zoomedTabId: null,
