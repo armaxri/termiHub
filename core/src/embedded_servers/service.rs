@@ -794,14 +794,12 @@ mod tests {
 
     #[tokio::test]
     async fn start_runs_and_emits_status_through_event_channel() {
-        // An ephemeral port the HTTP server can bind.
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-
+        // Port 0 lets the OS assign a free ephemeral port at bind time; the
+        // server keeps the socket it binds, so there is no fixed-port collision
+        // on a busy CI runner (#2223).
         let mut svc = EmbeddedServerService::new(ServerType::Http);
         let mut rx = svc.subscribe_events();
-        let cfg = http_config(port);
+        let cfg = http_config(0);
         svc.start(serde_json::to_value(&cfg).unwrap())
             .await
             .expect("start should succeed");
