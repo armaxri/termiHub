@@ -87,6 +87,12 @@ mod spawn;
 /// [`system_monitor_projection`].
 mod system_monitor_projection;
 mod terminal;
+/// Shadow transfer-queue authority (#2229, Phase 5 of #2139 / #2153): the shared
+/// `transfers` projection region + `transfer.*` intents modeling the `appStore`
+/// Transfer Queue slice (per-transfer queue-row lifecycle + panel-minimized
+/// flag). Registered and served but not yet driving the live UI — a pure shadow
+/// foundation. See [`transfers_projection`].
+mod transfers_projection;
 mod tunnel;
 mod utils;
 /// Multi-window foundation (#1900): window creation/labelling, the
@@ -863,6 +869,20 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
+                // Shadow TransferStore (#2229, Phase 5): the shared `transfers`
+                // region + `transfer.*` intents modeling the `appStore` Transfer
+                // Queue slice (per-transfer queue-row lifecycle + the
+                // panel-minimized flag), mirroring the frontend `TransferEntry`
+                // folds. Managed authoritative state that serves intents, but
+                // nothing in the live UI subscribes to or renders the region yet —
+                // a pure shadow foundation (later steps cut rendering, then
+                // mutations, over to it). The shared region is seeded below once
+                // the store is managed.
+                app.manage(Arc::new(transfers_projection::TransferStore::new()));
+                transfers_projection::projection::register_transfer_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
                 // Test-bridge-only: add the diagnostic region's `diag.*` routes so
                 // the projection-assertion harness (#2164) has a self-contained
                 // region to drive. Never registered in production launches. See
@@ -933,6 +953,17 @@ pub fn run() {
                 {
                     projection_state.projector.register_region(
                         settings_projection::projection::SETTINGS_REGION,
+                        store.snapshot(),
+                    );
+                }
+                // Seed the shared `transfers` region with the (empty) store
+                // baseline at version 0, so a subscriber attaches to a real region
+                // before the first `transfer.*` intent (#2229).
+                if let Some(store) =
+                    app.handle().try_state::<Arc<transfers_projection::TransferStore>>()
+                {
+                    projection_state.projector.register_region(
+                        transfers_projection::projection::TRANSFERS_REGION,
                         store.snapshot(),
                     );
                 }
