@@ -22,8 +22,8 @@ use termihub_core::tool::{CollectingHost, ToolRegistry};
 use tokio_util::sync::CancellationToken;
 
 use crate::client_registry::ConnectionRegistry;
-use crate::files::local::LocalFileBackend;
-use crate::files::{FileBackend, FileError};
+use crate::files::FileError;
+use termihub_core::files::{FileBrowser, LocalFileBrowser};
 use crate::monitoring::MonitoringManagerApi;
 use crate::network;
 use crate::protocol::errors;
@@ -1042,19 +1042,26 @@ fn register_connections_folders_delete(
 
 // ── connection.files.* ────────────────────────────────────────────
 
-async fn resolve_file_backend(
+/// Resolve the [`FileBrowser`] capability for a `connection.files.*` request.
+///
+/// Returns the single core [`LocalFileBrowser`] for local sessions/connections
+/// (and for the no-connection default). Other backends are not yet browsable
+/// from the agent. Converged onto `FileBrowser`, the one file-capability trait
+/// across core, desktop and agent — the near-duplicate `FileBackend` is retired
+/// (#2104).
+async fn resolve_file_browser(
     session_manager: &Arc<dyn SessionManagerApi>,
     connection_store: &Arc<dyn ConnectionStoreApi>,
     connection_id: Option<String>,
-) -> Result<Box<dyn FileBackend>, ErrorObjectOwned> {
+) -> Result<Box<dyn FileBrowser>, ErrorObjectOwned> {
     let id = match connection_id {
-        None => return Ok(Box::new(LocalFileBackend::new())),
+        None => return Ok(Box::new(LocalFileBrowser::new())),
         Some(id) => id,
     };
 
     if let Some(type_id) = session_manager.get_session_type_id(&id).await {
         return match normalize_type_id(&type_id) {
-            "local" => Ok(Box::new(LocalFileBackend::new())),
+            "local" => Ok(Box::new(LocalFileBrowser::new())),
             other => Err(rpc_err(
                 errors::FILE_BROWSING_NOT_SUPPORTED,
                 format!("File browsing is not yet supported for '{other}' sessions"),
@@ -1070,7 +1077,7 @@ async fn resolve_file_backend(
     })?;
 
     match connection.session_type.as_str() {
-        "local" | "shell" => Ok(Box::new(LocalFileBackend::new())),
+        "local" | "shell" => Ok(Box::new(LocalFileBrowser::new())),
         other => Err(rpc_err(
             errors::FILE_BROWSING_NOT_SUPPORTED,
             format!("File browsing is not yet supported for '{other}' connections"),
@@ -1086,11 +1093,11 @@ fn register_files_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             .parse()
             .map_err(|e| invalid_params("connection.files.list", e))?;
 
-        let backend =
-            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+        let browser =
+            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
-        backend
-            .list(&p.path)
+        browser
+            .list_dir(&p.path)
             .await
             .map(|entries| serde_json::to_value(FilesListResult { entries }).unwrap())
             .map_err(map_file_error)
@@ -1106,10 +1113,10 @@ fn register_files_read(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             .parse()
             .map_err(|e| invalid_params("connection.files.read", e))?;
 
-        let backend =
-            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+        let browser =
+            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
-        let data = backend.read(&p.path).await.map_err(map_file_error)?;
+        let data = browser.read_file(&p.path).await.map_err(map_file_error)?;
         let b64 = base64::engine::general_purpose::STANDARD;
         let size = data.len() as u64;
         Ok::<_, ErrorObjectOwned>(
@@ -1136,11 +1143,11 @@ fn register_files_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
             .decode(&p.data)
             .map_err(|e| rpc_err(errors::INVALID_PARAMS, format!("Invalid base64 data: {e}")))?;
 
-        let backend =
-            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+        let browser =
+            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
-        backend
-            .write(&p.path, &data)
+        browser
+            .write_file(&p.path, &data)
             .await
             .map_err(map_file_error)?;
         Ok::<_, ErrorObjectOwned>(json!({}))
@@ -1156,13 +1163,14 @@ fn register_files_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
             .parse()
             .map_err(|e| invalid_params("connection.files.delete", e))?;
 
-        let backend =
-            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+        let browser =
+            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
-        backend
-            .delete(&p.path, p.is_directory)
-            .await
-            .map_err(map_file_error)?;
+        // `FileBrowser::delete` self-detects a directory via `stat`, so the
+        // wire-level `is_directory` hint (kept for protocol compatibility) is
+        // advisory and no longer passed — mirroring the desktop `sftp_delete`.
+        let _ = p.is_directory;
+        browser.delete(&p.path).await.map_err(map_file_error)?;
         Ok::<_, ErrorObjectOwned>(json!({}))
     })?;
     Ok(())
@@ -1176,10 +1184,10 @@ fn register_files_rename(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
             .parse()
             .map_err(|e| invalid_params("connection.files.rename", e))?;
 
-        let backend =
-            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+        let browser =
+            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
-        backend
+        browser
             .rename(&p.old_path, &p.new_path)
             .await
             .map_err(map_file_error)?;
@@ -1196,10 +1204,10 @@ fn register_files_stat(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             .parse()
             .map_err(|e| invalid_params("connection.files.stat", e))?;
 
-        let backend =
-            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+        let browser =
+            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
-        let result = backend.stat(&p.path).await.map_err(map_file_error)?;
+        let result = browser.stat(&p.path).await.map_err(map_file_error)?;
         Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).unwrap())
     })?;
     Ok(())
@@ -1213,10 +1221,10 @@ fn register_files_mkdir(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
             .parse()
             .map_err(|e| invalid_params("connection.files.mkdir", e))?;
 
-        let backend =
-            resolve_file_backend(&session_manager, &connection_store, p.connection_id).await?;
+        let browser =
+            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
-        backend.mkdir(&p.path).await.map_err(map_file_error)?;
+        browser.mkdir(&p.path).await.map_err(map_file_error)?;
         Ok::<_, ErrorObjectOwned>(json!({}))
     })?;
     Ok(())
