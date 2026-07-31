@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { Toggle } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 
@@ -19,8 +20,8 @@ import { SettingsField } from "./SettingsField";
  * down live.
  */
 export function FrontendPluginGateSettings() {
-  const enabled = useAppStore((s) => s.settings.frontendPluginsEnabled ?? false);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
+  const enabled = settings.frontendPluginsEnabled ?? false;
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const handleToggle = useCallback(

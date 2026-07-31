@@ -4,6 +4,7 @@ import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { frontendLog } from "@/utils/frontendLog";
 import { getPlatform } from "@/utils/platform";
 import type {
@@ -49,7 +50,7 @@ const LINUX_MANAGERS: {
  * install toggles.
  */
 export function ShellIntegrationSettings() {
-  const storedSi = useAppStore((s) => s.settings.shellIntegration);
+  const storedSi = useProjectedSettings().shellIntegration;
   const connections = useAppStore((s) => s.connections);
   const updateShellIntegration = useAppStore((s) => s.updateShellIntegration);
 

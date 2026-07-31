@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { applyTheme } from "@/themes/engine";
 import { AppSettings } from "@/types/connection";
 import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
@@ -66,7 +67,7 @@ interface SettingsPanelProps {
  * Two-panel settings layout with categorized navigation, search, and version footer.
  */
 export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);

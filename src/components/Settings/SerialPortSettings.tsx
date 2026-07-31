@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { SerialPortScanPrefix } from "@/types/connection";
 import { Button, Toggle, Tooltip } from "@/components/ui";
 
@@ -13,7 +14,7 @@ interface SerialPortSettingsProps {
  * Built-in prefixes can be toggled on/off. User-added prefixes can also be deleted.
  */
 export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
   const [newPrefix, setNewPrefix] = useState("");
   const [addError, setAddError] = useState("");
