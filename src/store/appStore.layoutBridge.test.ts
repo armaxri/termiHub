@@ -9,6 +9,7 @@
  * rejected intent falls back to it.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { flushMacrotask } from "@/test/flushAsync";
 
 import type { LeafPanel, PanelNode } from "@/types/terminal";
 import {
@@ -258,8 +259,8 @@ function seedTree(): PanelNode {
 
 async function flush() {
   // Let the fire-and-forget bridge promise chain settle.
-  await new Promise((r) => setTimeout(r, 0));
-  await new Promise((r) => setTimeout(r, 0));
+  await flushMacrotask();
+  await flushMacrotask();
 }
 
 describe("appStore layout bridge — splitPanel cut (#2151)", () => {

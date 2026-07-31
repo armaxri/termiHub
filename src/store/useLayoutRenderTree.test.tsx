@@ -8,6 +8,7 @@
  * tree rather than render a stale structure.
  */
 import { act } from "react";
+import { flushMacrotask } from "@/test/flushAsync";
 import { createRoot, type Root } from "react-dom/client";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -146,8 +147,8 @@ async function mount() {
   });
   // Let the async subscribe + seed + onChange settle.
   await act(async () => {
-    await new Promise((r) => setTimeout(r, 0));
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
+    await flushMacrotask();
   });
 }
 

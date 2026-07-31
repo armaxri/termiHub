@@ -3,6 +3,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { flushAsync } from "@/test/flushAsync";
 import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
@@ -33,25 +34,6 @@ vi.mock("@/services/api", async (importOriginal) => {
 });
 
 const mockedInvoke = vi.mocked(invoke);
-
-/**
- * Flush pending microtasks (Promise callbacks) inside act().
- *
- * Uses `setImmediate` rather than `setTimeout(…, 0)` so the wait does not depend
- * on the OS timer subsystem. A `setTimeout` macrotask must wait for a real
- * wall-clock timer to fire; on a starved Windows CI runner (coarse ~15ms timer
- * granularity, further delayed under load) that callback can be deferred long
- * enough to trip the 15s per-test timeout — the intermittent
- * `FileBrowser.test.tsx` flake tracked in #2282. `setImmediate` instead resolves
- * on the next event-loop check phase, after microtasks and any due timer
- * callbacks, without waiting on the wall clock — so the flush stays deterministic
- * regardless of how loaded the runner is.
- */
-async function flushAsync() {
-  await act(async () => {
-    await new Promise((r) => setImmediate(r));
-  });
-}
 
 let container: HTMLDivElement;
 let root: Root;

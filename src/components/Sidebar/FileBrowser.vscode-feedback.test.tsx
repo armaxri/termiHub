@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
+import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
@@ -74,12 +75,6 @@ vi.mock("@/services/api", async (importOriginal) => {
 });
 
 const mockedInvoke = vi.mocked(invoke);
-
-async function flushAsync() {
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 0));
-  });
-}
 
 let container: HTMLDivElement;
 let root: Root;

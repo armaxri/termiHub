@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
+import { flushMacrotask } from "@/test/flushAsync";
 import React from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
@@ -1549,7 +1550,7 @@ describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
   async function flush() {
     await act(async () => {
       for (let i = 0; i < 6; i++) await Promise.resolve();
-      await new Promise((r) => setTimeout(r, 0));
+      await flushMacrotask();
     });
   }
 
