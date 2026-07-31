@@ -7,6 +7,7 @@
  * visible fields count — a required field hidden by `visibleWhen` must not block.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { flushMacrotask } from "@/test/flushAsync";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type { SettingsSchema } from "@/types/schema";
@@ -21,7 +22,7 @@ let root: Root;
 async function flush() {
   await act(async () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
   });
 }
 

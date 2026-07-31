@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { flushMacrotask } from "@/test/flushAsync";
 import { invoke } from "@tauri-apps/api/core";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -496,7 +497,7 @@ describe("api service", () => {
     // listener (it does so after a dynamic import), then emit `payload`.
     const fireWhenListening = async (payload: unknown) => {
       for (let i = 0; i < 50 && !transferListener; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await flushMacrotask();
       }
       if (!transferListener) throw new Error("transfer listener never registered");
       transferListener({ payload });

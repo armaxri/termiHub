@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { flushMacrotask as flush } from "@/test/flushAsync";
 
 // Same lightweight service mocks the auto-reconnect suite uses: the loop never
 // calls the backend directly, so these only satisfy module import.
@@ -133,7 +134,6 @@ class FakeTransport implements Transport {
 }
 
 const auto = (tabId: string) => useAppStore.getState().terminalAutoReconnect[tabId];
-const flush = () => new Promise((r) => setTimeout(r, 0));
 
 function makeSshTab(): string {
   return useAppStore.getState().addTab(

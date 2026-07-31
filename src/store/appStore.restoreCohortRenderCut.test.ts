@@ -16,6 +16,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { flushMacrotask } from "@/test/flushAsync";
 
 const toastSuccess = vi.fn((_m: unknown, _o?: unknown) => undefined);
 const toastError = vi.fn((_m: unknown, _o?: unknown) => undefined);
@@ -274,7 +275,7 @@ function restoredTabIds(): string[] {
 /** Let the subscribe/dispatch promise chain settle so projection diffs land. */
 async function settleAsync(): Promise<void> {
   for (let i = 0; i < 8; i++) await Promise.resolve();
-  await new Promise((r) => setTimeout(r, 0));
+  await flushMacrotask();
   for (let i = 0; i < 4; i++) await Promise.resolve();
 }
 

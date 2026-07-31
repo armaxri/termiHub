@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
+import { flushAsync as flush } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
@@ -42,12 +43,6 @@ const mockedOpenUrl = vi.mocked(openUrl);
 
 let container: HTMLDivElement;
 let root: Root;
-
-async function flush() {
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 0));
-  });
-}
 
 function byTestId(id: string): HTMLButtonElement | null {
   return container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);

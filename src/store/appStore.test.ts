@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { flushMacrotask as flushPromises } from "@/test/flushAsync";
 
 // Mock service modules before importing the store
 vi.mock("@/services/storage", () => ({
@@ -40,11 +41,6 @@ import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import * as api from "@/services/api";
 import * as storage from "@/services/storage";
 import type { AgentDefinitionInfo } from "@/services/api";
-
-/** Flush all pending microtasks so `void promise` side-effects settle. */
-function flushPromises(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
 
 describe("appStore", () => {
   beforeEach(() => {

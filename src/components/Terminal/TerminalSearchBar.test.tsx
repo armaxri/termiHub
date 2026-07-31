@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
+import { flushAsync as flush } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { withTooltip } from "@/test/tooltip";
@@ -30,12 +31,6 @@ const TAB_ID = "tab-1";
 
 let container: HTMLDivElement;
 let root: Root;
-
-async function flush() {
-  await act(async () => {
-    await new Promise((r) => setTimeout(r, 0));
-  });
-}
 
 function buttonByLabel(label: string): HTMLButtonElement {
   const el = container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`);

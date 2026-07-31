@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { flushMacrotask as flush } from "@/test/flushAsync";
 
 import type {
   DiffFrame,
@@ -14,9 +15,6 @@ import type {
 import { ProjectionRecorder } from "./projectionRecorder";
 
 const REGION = "diag.counter";
-
-/** Let a fire-and-forget `ProjectionClient.resync()` settle before asserting. */
-const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 /**
  * A tiny in-memory stand-in for the backend projector, mirroring the substrate's
