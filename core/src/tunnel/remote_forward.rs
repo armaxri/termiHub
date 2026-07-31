@@ -220,12 +220,11 @@ mod tests {
         addr
     }
 
-    fn free_local_addr() -> String {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-        let addr = listener.local_addr().expect("addr");
-        // Drop the listener so the port is free (nothing listening -> refused).
-        addr.to_string()
-    }
+    /// A loopback address that can never be connected to. Port `0` is not a
+    /// connectable target, so `TcpStream::connect` fails immediately on every
+    /// platform — deterministic, with no bind-then-drop probe that could race a
+    /// busy CI runner (#2280).
+    const UNREACHABLE_LOCAL_ADDR: &str = "127.0.0.1:0";
 
     #[tokio::test]
     async fn relays_channel_to_local_target_and_records_stats() {
@@ -261,14 +260,13 @@ mod tests {
 
     #[tokio::test]
     async fn relay_to_unreachable_local_target_is_a_no_op() {
-        let addr = free_local_addr(); // nothing is listening here
         let stats = Arc::new(ForwarderStats::new());
         let (channel_stream, _peer) = tokio::io::duplex(1024);
 
         // Should return promptly without panicking and without recording bytes.
         tokio::time::timeout(
             Duration::from_secs(3),
-            relay_to_local(channel_stream, &addr, &stats),
+            relay_to_local(channel_stream, UNREACHABLE_LOCAL_ADDR, &stats),
         )
         .await
         .expect("relay returns on connect failure");
