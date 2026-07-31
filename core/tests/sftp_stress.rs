@@ -9,10 +9,22 @@
 //!
 //! Requires: `docker compose -f tests/docker/docker-compose.yml --profile stress up -d`
 //! Skips gracefully if containers are not running.
+//!
+//! **IMPORTANT**: All of these tests share the single `sftp-stress` container
+//! and its one pre-populated filesystem — the upload round-trip mutates a file
+//! under the shared test root, and the directory-listing assertions
+//! (SFTP-STRESS-05/08/14) are sensitive to concurrent activity on that same
+//! remote state. Run in parallel against the one container they flake, and pass
+//! cleanly with `--test-threads=1`. Because 15 of the 16 tests read fixed
+//! fixture paths, per-test subdirectory isolation is not practical, so the suite
+//! is serialized in-source with `#[serial(sftp_stress)]` (mirroring
+//! `network_resilience.rs`), which keeps it parallel-safe regardless of
+//! `--test-threads`.
 
 mod common;
 
 use common::{port_sftp_stress, require_docker};
+use serial_test::serial;
 use termihub_core::backends::ssh::Ssh;
 use termihub_core::connection::ConnectionType;
 
@@ -37,6 +49,7 @@ async fn connect_sftp() -> Ssh {
 // ── SFTP-STRESS-01: Download 1 MB file ──────────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_01_download_1mb() {
     require_docker!(port_sftp_stress());
 
@@ -61,6 +74,7 @@ async fn sftp_stress_01_download_1mb() {
 // ── SFTP-STRESS-02: Download 10 MB file ─────────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_02_download_10mb() {
     require_docker!(port_sftp_stress());
 
@@ -85,6 +99,7 @@ async fn sftp_stress_02_download_10mb() {
 // ── SFTP-STRESS-03: Download 100 MB file ────────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_03_download_100mb() {
     require_docker!(port_sftp_stress());
 
@@ -109,6 +124,7 @@ async fn sftp_stress_03_download_100mb() {
 // ── SFTP-STRESS-04: Upload and verify round-trip ────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_04_upload_roundtrip() {
     require_docker!(port_sftp_stress());
 
@@ -151,6 +167,7 @@ async fn sftp_stress_04_upload_roundtrip() {
 // ── SFTP-STRESS-05: List 1000-entry directory ───────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_05_list_wide_directory() {
     require_docker!(port_sftp_stress());
 
@@ -175,6 +192,7 @@ async fn sftp_stress_05_list_wide_directory() {
 // ── SFTP-STRESS-06: Navigate 50-level deep tree ─────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_06_deep_tree() {
     require_docker!(port_sftp_stress());
 
@@ -205,6 +223,7 @@ async fn sftp_stress_06_deep_tree() {
 // ── SFTP-STRESS-07: Follow valid file symlink ───────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_07_valid_file_symlink() {
     require_docker!(port_sftp_stress());
 
@@ -227,6 +246,7 @@ async fn sftp_stress_07_valid_file_symlink() {
 // ── SFTP-STRESS-08: Follow valid directory symlink ──────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_08_valid_dir_symlink() {
     require_docker!(port_sftp_stress());
 
@@ -249,6 +269,7 @@ async fn sftp_stress_08_valid_dir_symlink() {
 // ── SFTP-STRESS-09: Broken symlink ──────────────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_09_broken_symlink() {
     require_docker!(port_sftp_stress());
 
@@ -270,6 +291,7 @@ async fn sftp_stress_09_broken_symlink() {
 // ── SFTP-STRESS-10: Circular symlinks ───────────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_10_circular_symlinks() {
     require_docker!(port_sftp_stress());
 
@@ -292,6 +314,7 @@ async fn sftp_stress_10_circular_symlinks() {
 // ── SFTP-STRESS-11: Unicode filename ────────────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_11_unicode_filename() {
     require_docker!(port_sftp_stress());
 
@@ -314,6 +337,7 @@ async fn sftp_stress_11_unicode_filename() {
 // ── SFTP-STRESS-12: Filename with spaces ────────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_12_filename_with_spaces() {
     require_docker!(port_sftp_stress());
 
@@ -336,6 +360,7 @@ async fn sftp_stress_12_filename_with_spaces() {
 // ── SFTP-STRESS-13: 200-char filename ───────────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_13_long_filename() {
     require_docker!(port_sftp_stress());
 
@@ -362,6 +387,7 @@ async fn sftp_stress_13_long_filename() {
 // ── SFTP-STRESS-14: Hidden files (.dotfiles) ────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_14_hidden_dotfiles() {
     require_docker!(port_sftp_stress());
 
@@ -386,6 +412,7 @@ async fn sftp_stress_14_hidden_dotfiles() {
 // ── SFTP-STRESS-15: Permission 000 file ─────────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_15_permission_000_file() {
     require_docker!(port_sftp_stress());
 
@@ -407,6 +434,7 @@ async fn sftp_stress_15_permission_000_file() {
 // ── SFTP-STRESS-16: Permission 000 directory ────────────────────────
 
 #[tokio::test]
+#[serial(sftp_stress)]
 async fn sftp_stress_16_permission_000_directory() {
     require_docker!(port_sftp_stress());
 
