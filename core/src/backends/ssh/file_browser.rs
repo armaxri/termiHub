@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use russh_sftp::client::fs::File;
 use russh_sftp::client::SftpSession;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
@@ -84,22 +85,25 @@ impl SftpFileBrowser {
     }
 
     /// Open a **dedicated** SFTP channel on a fresh channel off the same
-    /// authenticated SSH connection.
+    /// authenticated SSH connection, wrapped in an [`SftpTransferChannel`].
     ///
-    /// Used by the cancellable transfer subsystem (#1245): the returned session
-    /// owns its own channel, so a chunked copy can run on it without holding this
-    /// browser's lock — keeping directory listing / navigation live on the
-    /// browsing channel during a transfer. Pushed into core so the desktop
-    /// `SftpSession` no longer forks it (#2104, issue-body item 1).
-    pub async fn open_dedicated_channel(&self) -> Result<SftpSession, FileError> {
+    /// Used by the cancellable transfer subsystem (#1245): the returned channel
+    /// owns its own SSH channel, so a chunked copy can run on it without holding
+    /// this browser's lock — keeping directory listing / navigation live on the
+    /// browsing channel during a transfer. Returning the [`SftpTransferChannel`]
+    /// wrapper (rather than the raw russh session) keeps the russh-sftp types
+    /// encapsulated in core, so the desktop transfer subsystem drives the core
+    /// API rather than russh directly (#2104 item 1, #2236 item 2).
+    pub async fn open_dedicated_channel(&self) -> Result<SftpTransferChannel, FileError> {
         Self::ensure_connected(&self.state, &self.config).await?;
         let guard = self.state.lock().await;
         let state = guard
             .as_ref()
             .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
-        sftp::open_sftp_subsystem(&state.session)
+        let sftp = sftp::open_sftp_subsystem(&state.session)
             .await
-            .map_err(|e| FileError::OperationFailed(e.to_string()))
+            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+        Ok(SftpTransferChannel { sftp })
     }
 
     /// Best-effort size (in bytes) of a remote file via SFTP `stat`.
@@ -151,6 +155,56 @@ impl SftpFileBrowser {
         });
 
         Ok(())
+    }
+}
+
+/// A dedicated SFTP channel for a single background file transfer (#1245, #2236).
+///
+/// Wraps a russh SFTP session bound to its **own** SSH channel, so a chunked,
+/// cancellable copy runs on it without holding the browsing session's lock —
+/// keeping directory listing / navigation live during a transfer. Obtained via
+/// [`SftpFileBrowser::open_dedicated_channel`].
+///
+/// Keeping the raw russh-sftp types encapsulated behind this wrapper means the
+/// desktop transfer subsystem streams through the core API (`open_read` /
+/// `create_write` / `remove_file`) rather than manipulating `russh_sftp` types
+/// directly (#2236 item 2). The returned file handles implement
+/// [`AsyncRead`](tokio::io::AsyncRead) / [`AsyncWrite`](tokio::io::AsyncWrite),
+/// so the caller drives the chunked copy loop without naming a russh type.
+pub struct SftpTransferChannel {
+    sftp: SftpSession,
+}
+
+impl SftpTransferChannel {
+    /// Open an existing remote file for streaming reads (the download source).
+    ///
+    /// The returned handle implements [`AsyncRead`](tokio::io::AsyncRead), so the
+    /// caller reads it in chunks without touching russh directly.
+    pub async fn open_read(&self, path: &str) -> Result<File, FileError> {
+        self.sftp
+            .open(path)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("open remote file failed: {e}")))
+    }
+
+    /// Create (truncating) a remote file for streaming writes (the upload
+    /// destination).
+    ///
+    /// The returned handle implements [`AsyncWrite`](tokio::io::AsyncWrite), so
+    /// the caller writes it in chunks without touching russh directly.
+    pub async fn create_write(&self, path: &str) -> Result<File, FileError> {
+        self.sftp
+            .create(path)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("create remote file failed: {e}")))
+    }
+
+    /// Remove a remote file — used to clean up a partial upload on cancel/error.
+    pub async fn remove_file(&self, path: &str) -> Result<(), FileError> {
+        self.sftp
+            .remove_file(path)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("remove remote file failed: {e}")))
     }
 }
 
@@ -406,5 +460,14 @@ mod tests {
     fn sftp_file_browser_implements_advanced_ops() {
         fn _assert_impl<T: SftpAdvancedOps>() {}
         _assert_impl::<SftpFileBrowser>();
+    }
+
+    /// The dedicated transfer channel must be `Send` so the desktop transfer
+    /// subsystem can move it into a background copy task
+    /// (`tauri::async_runtime::spawn`), holding it across `.await` points while a
+    /// chunked copy runs on its own channel (#1245, #2236).
+    #[test]
+    fn sftp_transfer_channel_is_send() {
+        _assert_send::<SftpTransferChannel>();
     }
 }
