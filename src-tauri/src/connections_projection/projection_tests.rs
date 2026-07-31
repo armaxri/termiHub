@@ -104,13 +104,31 @@ fn registry_for(store: Arc<ConnectionsStore>) -> HandlerRegistry {
         s.remove_folder(&required_str(intent, "folderId")?);
         Ok(publish_connections(projector, &s))
     });
-    let s = store;
+    let s = store.clone();
     registry.route("connection.toggleFolder", move |intent, projector| {
         s.toggle_folder(&required_str(intent, "folderId")?);
         Ok(publish_connections(projector, &s))
     });
+    let s = store;
+    registry.route("connection.replace", move |intent, projector| {
+        let folders: Vec<ConnectionFolder> = optional_typed(intent, "folders")?;
+        let connections: Vec<SavedConnection> = optional_typed(intent, "connections")?;
+        s.replace(folders, connections);
+        Ok(publish_connections(projector, &s))
+    });
 
     registry
+}
+
+fn optional_typed<T: serde::de::DeserializeOwned + Default>(
+    intent: &Intent,
+    key: &str,
+) -> Result<T, (String, String)> {
+    match intent.payload.get(key) {
+        None | Some(Value::Null) => Ok(T::default()),
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|e| ("bad_payload".to_string(), format!("invalid {key}: {e}"))),
+    }
 }
 
 fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
@@ -323,6 +341,61 @@ fn a_full_tree_lifecycle_advances_monotonically_and_converges() {
     );
     assert_eq!(cache.view["connections"][0]["folderId"], json!(null));
     assert_eq!(cache.view["connections"][1]["folderId"], json!(null));
+}
+
+#[test]
+fn a_replace_intent_mirrors_the_whole_slice_in_one_diff() {
+    // The render-cut seed: `connection.replace` overwrites both arrays, producing
+    // exactly one diff a subscriber's cache converges on — the parity substrate for
+    // rendering the tree from the region.
+    let store = seeded_store();
+    let projector = Arc::new(Projector::new());
+    projector.register_region(CONNECTIONS_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(CONNECTIONS_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    let ack = dispatcher.dispatch(intent(
+        "connection.replace",
+        json!({
+            "folders": [folder("New", "New", None, false)],
+            "connections": [connection("New/A", "A", Some("New"))],
+        }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "the whole-slice mirror is one diff");
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view, store.snapshot(), "cache mirrors the replaced slice");
+    assert_eq!(cache.view["folders"][0]["id"], json!("New"));
+    assert_eq!(cache.view["connections"][0]["id"], json!("New/A"));
+}
+
+#[test]
+fn a_replace_intent_with_identical_content_advances_nothing() {
+    // Idempotent server-side: re-seeding with the current content coalesces to no
+    // diff — so a settled mirror does not churn the region.
+    let store = seeded_store();
+    let projector = Arc::new(Projector::new());
+    projector.register_region(CONNECTIONS_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(CONNECTIONS_REGION, "sub", "A", sink.clone());
+
+    let ack = dispatcher.dispatch(intent(
+        "connection.replace",
+        json!({
+            "folders": [folder("Work", "Work", None, true)],
+            "connections": [connection("Work/A", "A", Some("Work"))],
+        }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    assert_eq!(ack.produced, Some(vec![]), "no region advanced");
+    assert_eq!(sink.diffs().len(), 0);
+    assert_eq!(projector.region_version(CONNECTIONS_REGION), Some(0));
 }
 
 #[test]

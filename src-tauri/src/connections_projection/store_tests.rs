@@ -227,6 +227,38 @@ fn remove_folder_is_idempotent() {
 }
 
 #[test]
+fn replace_overwrites_the_whole_slice() {
+    let store = ConnectionsStore::new();
+    store.add_folder(folder("Old", "Old", None, true));
+    store.add_connection(connection("Old/A", "A", Some("Old")));
+
+    store.replace(
+        vec![folder("New", "New", None, false)],
+        vec![connection("New/B", "B", Some("New"))],
+    );
+
+    assert!(store.folder("Old").is_none(), "old folder is gone");
+    assert!(store.connection("Old/A").is_none(), "old connection is gone");
+    assert_eq!(store.folder_count(), 1);
+    assert_eq!(store.connection_count(), 1);
+    assert!(!store.folder("New").unwrap().is_expanded);
+    assert_eq!(store.connection("New/B").unwrap().name, "B");
+}
+
+#[test]
+fn replace_with_empty_arrays_clears_the_tree() {
+    let store = ConnectionsStore::new();
+    store.add_folder(folder("Work", "Work", None, true));
+    store.add_connection(connection("Work/A", "A", Some("Work")));
+
+    store.replace(Vec::new(), Vec::new());
+
+    assert_eq!(store.folder_count(), 0);
+    assert_eq!(store.connection_count(), 0);
+    assert_eq!(store.snapshot(), json!({ "folders": [], "connections": [] }));
+}
+
+#[test]
 fn snapshot_serialises_the_full_view_model() {
     let store = ConnectionsStore::new();
     store.add_folder(folder("Work", "Work", None, true));

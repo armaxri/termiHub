@@ -28,6 +28,13 @@
 //! | `connection.addFolder`      | `{ folder }`                     | append a folder                              |
 //! | `connection.removeFolder`   | `{ folderId }`                   | remove a folder, re-homing its children      |
 //! | `connection.toggleFolder`   | `{ folderId }`                   | flip a folder's `isExpanded`                 |
+//! | `connection.replace`        | `{ folders?, connections? }`     | overwrite the whole slice (render-cut mirror)|
+//!
+//! `connection.replace` is the whole-slice seed the frontend render cut (#2225)
+//! uses to keep the shared `connections` region a faithful copy of `appStore`'s
+//! connections slice while `appStore` stays authoritative — the analog of the
+//! agents bridge's `agent.replace`. The per-transition intents above drive the
+//! store once the mutation cut lands (a later step).
 //!
 //! Ordering is array position, matching the on-disk `children` order; there is no
 //! standalone reorder transition in the `appStore` today, so none is shadowed. If
@@ -120,10 +127,18 @@ pub fn register_connection_intents(registry: &mut HandlerRegistry, app_handle: A
         Ok(publish_connections(projector, &store))
     });
 
-    let handle = app_handle;
+    let handle = app_handle.clone();
     registry.route("connection.toggleFolder", move |intent, projector| {
         let store = store_of(&handle)?;
         store.toggle_folder(&required_str(intent, "folderId")?);
+        Ok(publish_connections(projector, &store))
+    });
+
+    let handle = app_handle;
+    registry.route("connection.replace", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let (folders, connections) = required_replace(intent)?;
+        store.replace(folders, connections);
         Ok(publish_connections(projector, &store))
     });
 }
@@ -184,6 +199,37 @@ fn required_folder(intent: &Intent) -> Result<ConnectionFolder, (String, String)
         .ok_or_else(|| ("bad_payload".to_string(), "missing 'folder'".to_string()))?;
     serde_json::from_value(value.clone())
         .map_err(|e| ("bad_payload".to_string(), format!("invalid folder: {e}")))
+}
+
+/// Parse a `connection.replace` payload into the whole-slice snapshot the
+/// render-cut mirror carries: `{ folders: [ConnectionFolder], connections:
+/// [SavedConnection] }` — the shape of [`ConnectionsStore::snapshot`]. Any field
+/// absent or `null` is treated as an empty array, so a mirror that clears the
+/// whole tree is expressible; a present-but-malformed field is a `bad_payload`
+/// rejection that advances nothing.
+#[allow(clippy::type_complexity)]
+fn required_replace(
+    intent: &Intent,
+) -> Result<(Vec<ConnectionFolder>, Vec<SavedConnection>), (String, String)> {
+    Ok((
+        optional_typed(intent, "folders")?,
+        optional_typed(intent, "connections")?,
+    ))
+}
+
+/// Parse an optional typed field, treating an absent or `null` value as the
+/// type's default (an empty list). Lets a mirror that clears a whole array be
+/// expressed by omitting the field; a present-but-malformed field is a
+/// `bad_payload` rejection.
+fn optional_typed<T: serde::de::DeserializeOwned + Default>(
+    intent: &Intent,
+    key: &str,
+) -> Result<T, (String, String)> {
+    match intent.payload.get(key) {
+        None | Some(Value::Null) => Ok(T::default()),
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|e| ("bad_payload".to_string(), format!("invalid {key}: {e}"))),
+    }
 }
 
 #[cfg(test)]
