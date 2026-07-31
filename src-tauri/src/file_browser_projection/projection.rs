@@ -70,7 +70,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::file_browser_projection::store::{
-    Clipboard, ClientView, FileBrowserKind, FileBrowserStore, FileEntry,
+    ClientView, Clipboard, FileBrowserKind, FileBrowserStore, FileEntry,
 };
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 

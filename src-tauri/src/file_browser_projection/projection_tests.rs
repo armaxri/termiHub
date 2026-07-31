@@ -309,7 +309,11 @@ fn a_replace_seed_produces_one_diff_that_converges_on_the_whole_view() {
     let diffs = sink.diffs();
     assert_eq!(diffs.len(), 1, "the whole-slice seed is one coalesced diff");
     cache.apply(&diffs[0]);
-    assert_eq!(cache.view, store.snapshot("A"), "cache converges on authority");
+    assert_eq!(
+        cache.view,
+        store.snapshot("A"),
+        "cache converges on authority"
+    );
     assert_eq!(cache.view["mode"], json!("sftp"));
     assert_eq!(cache.view["local"]["entries"][0]["name"], json!("a"));
     assert_eq!(cache.view["sftp"]["path"], json!("/var"));
@@ -328,7 +332,11 @@ fn a_replace_seed_produces_one_diff_that_converges_on_the_whole_view() {
         }),
     ));
     assert_eq!(ack2.status, IntentStatus::Accepted);
-    assert_eq!(ack2.produced, Some(vec![]), "an identical re-seed is a no-op");
+    assert_eq!(
+        ack2.produced,
+        Some(vec![]),
+        "an identical re-seed is a no-op"
+    );
     assert_eq!(sink.diffs().len(), 1, "no second diff");
 }
 

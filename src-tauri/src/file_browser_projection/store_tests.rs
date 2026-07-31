@@ -189,7 +189,12 @@ fn replace_overwrites_the_whole_view_from_a_seed() {
     let store = FileBrowserStore::new();
     // Pre-existing state that the whole-slice seed must overwrite, not merge.
     store.set_mode(C, Some(FileBrowserKind::Session));
-    store.load_succeeded(C, FileBrowserKind::Session, "/old", vec![entry("stale", false)]);
+    store.load_succeeded(
+        C,
+        FileBrowserKind::Session,
+        "/old",
+        vec![entry("stale", false)],
+    );
 
     let view: ClientView = serde_json::from_value(json!({
         "mode": "sftp",
