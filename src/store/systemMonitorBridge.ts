@@ -108,6 +108,63 @@ export function monitorRenderFromProjectionEnabled(): boolean {
   return true;
 }
 
+// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
+
+let mutationFlagOverride: boolean | null = null;
+
+interface MonitorMutationFlagWindow {
+  __TERMIHUB_MONITOR_INTENTS__?: boolean;
+  localStorage?: Storage;
+}
+
+/**
+ * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
+ * `null` clears the override and falls back to the window/localStorage signal,
+ * then to the default (on).
+ */
+export function setMonitorIntentsEnabled(value: boolean | null): void {
+  mutationFlagOverride = value;
+}
+
+/**
+ * Whether the monitor lifecycle actions (`connectMonitoring` /
+ * `disconnectMonitoring` / `setMonitoringPaused` / `setMonitoringInterval` /
+ * `clearMonitoringError` / `cancelMonitoring`) dispatch granular `monitor.*`
+ * intents so the backend {@link SystemMonitorStore} is authoritative — instead of
+ * only the render-cut {@link seedMonitorsRegion} `monitor.replace` mirror driving
+ * the region.
+ *
+ * **On by default** (#2224 mutation cut). When on, each action mirrors its
+ * transition through a `monitor.*` intent (via {@link mirrorMonitorIntent}), and
+ * the render-cut hook ({@link import("./useProjectedMonitors").useProjectedMonitors})
+ * reflects the region back into the UI. The local `appStore` reducer path stays in
+ * place as the render source and as a resilience / rollback fallback — any
+ * dispatch failure is logged and the local mutation continues, so a backend hiccup
+ * can never break monitoring (the reducer removal is a later step). When off,
+ * `appStore` drives the slice purely locally (the pre-cut path). The flip was taken
+ * on the automated parity tests plus the instant local fallback, mirroring the
+ * session mutation cut (#2233). Overridable at runtime for rollback / tests via
+ * `window.__TERMIHUB_MONITOR_INTENTS__` or `localStorage["termihub.monitorIntents"]`
+ * (set `"false"` to restore the pre-cut local-mutation path; `"true"` to force on).
+ */
+export function monitorIntentsEnabled(): boolean {
+  if (mutationFlagOverride !== null) return mutationFlagOverride;
+  try {
+    if (typeof window !== "undefined") {
+      const w = window as unknown as MonitorMutationFlagWindow;
+      if (typeof w.__TERMIHUB_MONITOR_INTENTS__ === "boolean") {
+        return w.__TERMIHUB_MONITOR_INTENTS__;
+      }
+      const ls = w.localStorage?.getItem("termihub.monitorIntents");
+      if (ls === "true") return true;
+      if (ls === "false") return false;
+    }
+  } catch {
+    // A missing/blocked window or storage just means "use the default".
+  }
+  return true;
+}
+
 // ── Transport + shared region client (lazy, mirrors the session slice) ─────────
 
 let transportInstance: Transport | null = null;
@@ -250,6 +307,60 @@ export function seedMonitorsRegion(
     // A synchronous transport-construction failure (non-Tauri, no socket).
     lastSeededSignature = null;
     return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ── Mutation cut: granular monitor.* intent dispatch (mutation cut) ────────────
+
+/**
+ * The granular `monitor.*` intent kinds the mutation cut dispatches (twins of the
+ * Rust routes). Excludes `monitor.replace`, which is the render-cut whole-map
+ * mirror ({@link seedMonitorsRegion}); the mutation cut drives the region through
+ * these per-transition intents instead so the store becomes authoritative.
+ */
+export type MonitorIntentKind =
+  | "monitor.open"
+  | "monitor.opened"
+  | "monitor.openFailed"
+  | "monitor.stats"
+  | "monitor.status"
+  | "monitor.setPaused"
+  | "monitor.setInterval"
+  | "monitor.clearError"
+  | "monitor.close";
+
+/** Dispatch a granular `monitor.*` intent, resolving with the ack (parity tests). */
+export function dispatchMonitorIntent(
+  kind: MonitorIntentKind,
+  payload: Record<string, unknown>
+): Promise<IntentAck> {
+  return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
+}
+
+/**
+ * Fire a granular `monitor.*` intent to keep the backend store authoritative,
+ * swallowing and logging any failure so the local `appStore` mutation path is
+ * never disrupted by a bridge hiccup (the resilience fallback). A no-op when the
+ * mutation cut is disabled ({@link monitorIntentsEnabled} off — the rollback path).
+ * Never throws — a synchronous transport-construction failure (non-Tauri, no
+ * socket) is caught and logged, leaving the UI on the local slice. The twin of the
+ * session bridge's {@link import("./sessionBridge").mirrorSessionIntent}.
+ */
+export function mirrorMonitorIntent(
+  kind: MonitorIntentKind,
+  payload: Record<string, unknown>
+): void {
+  if (!monitorIntentsEnabled()) return;
+  try {
+    void dispatchMonitorIntent(kind, payload)
+      .then((ack) => {
+        if (ack.status === "rejected") {
+          logMonitorBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+        }
+      })
+      .catch((err) => logMonitorBridgeFallback(kind, err));
+  } catch (err) {
+    logMonitorBridgeFallback(kind, err);
   }
 }
 
