@@ -160,6 +160,7 @@ import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embed
 import { createMacrosSlice, MacrosSlice } from "./slices/macrosSlice";
 import { createPluginsSlice, PluginsSlice } from "./slices/pluginsSlice";
 import { createSessionHistorySlice, SessionHistorySlice } from "./slices/sessionHistorySlice";
+import { createZoomSlice, ZoomSlice } from "./slices/zoomSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 import {
@@ -456,7 +457,13 @@ export interface AgentUpdatePending {
 const AGENT_UPDATE_RECONNECT_BUFFER_SECS = 3;
 
 export interface AppState
-  extends TunnelSlice, EmbeddedServersSlice, MacrosSlice, PluginsSlice, SessionHistorySlice {
+  extends
+    TunnelSlice,
+    EmbeddedServersSlice,
+    MacrosSlice,
+    PluginsSlice,
+    SessionHistorySlice,
+    ZoomSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -888,11 +895,8 @@ export interface AppState
   chordPending: string | null;
   setChordPending: (pending: string | null) => void;
 
-  // Zoom (runtime-only, not persisted) — scale factor for webview zoom
-  zoomLevel: number;
-  zoomIn: () => void;
-  zoomOut: () => void;
-  zoomReset: () => void;
+  // Zoom (runtime-only) — scale factor + in/out/reset provided by ZoomSlice
+  // (extracted under #2077 via #2300).
 
   // Terminal search (runtime-only)
   terminalSearchVisible: Record<string, boolean>;
@@ -2891,6 +2895,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createMacrosSlice(set, get, store),
     ...createPluginsSlice(set, get, store),
     ...createSessionHistorySlice(set, get, store),
+    ...createZoomSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -5004,13 +5009,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     chordPending: null,
     setChordPending: (pending) => set({ chordPending: pending }),
 
-    // Zoom (runtime-only, not persisted) — scale factor for webview zoom
-    zoomLevel: 1.0,
-    zoomIn: () =>
-      set((s) => ({ zoomLevel: Math.min(parseFloat((s.zoomLevel * 1.1).toFixed(2)), 3.0) })),
-    zoomOut: () =>
-      set((s) => ({ zoomLevel: Math.max(parseFloat((s.zoomLevel / 1.1).toFixed(2)), 0.5) })),
-    zoomReset: () => set({ zoomLevel: 1.0 }),
+    // Zoom (runtime-only) — scale factor + in/out/reset provided by
+    // createZoomSlice (extracted under #2077 via #2300).
 
     // Terminal search (runtime-only)
     terminalSearchVisible: {},
