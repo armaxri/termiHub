@@ -113,9 +113,28 @@ fn registry_for(store: Arc<SystemMonitorStore>) -> HandlerRegistry {
         s.set_paused(&required_key(intent)?, paused);
         Ok(publish_monitors(projector, &s))
     });
-    let s = store;
+    let s = store.clone();
     registry.route("monitor.close", move |intent, projector| {
         s.close(&required_key(intent)?);
+        Ok(publish_monitors(projector, &s))
+    });
+    let s = store;
+    registry.route("monitor.replace", move |intent, projector| {
+        let monitors = match intent.payload.get("monitors") {
+            None | Some(Value::Null) => std::collections::HashMap::new(),
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|e| ("bad_payload".to_string(), format!("invalid monitors: {e}")))?,
+        };
+        let stats_cache = match intent.payload.get("statsCache") {
+            None | Some(Value::Null) => std::collections::HashMap::new(),
+            Some(value) => serde_json::from_value(value.clone()).map_err(|e| {
+                (
+                    "bad_payload".to_string(),
+                    format!("invalid statsCache: {e}"),
+                )
+            })?,
+        };
+        s.replace(monitors, stats_cache);
         Ok(publish_monitors(projector, &s))
     });
 
@@ -316,6 +335,45 @@ fn a_full_monitor_lifecycle_advances_monotonically_and_converges() {
         cache.view["statsCache"]["s1"]["cpuUsagePercent"],
         json!(34.0)
     );
+}
+
+#[test]
+fn replace_mirrors_a_whole_snapshot_in_one_diff_and_converges() {
+    // The render-cut mirror (#2224): a `monitor.replace` carrying `appStore`'s
+    // whole monitoring slice overwrites the region in a single diff, and the
+    // client cache converges on that snapshot.
+    let store = seeded_store(); // s1 connecting, s2 live
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SYSTEM_MONITORS_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    // Build the mirror payload from an independent store, exactly as the frontend
+    // seed serialises `appStore` (a fresh monitor `s3`, no s1/s2).
+    let source = Arc::new(SystemMonitorStore::new());
+    source.open("s3", Some("host-c".to_string()), None);
+    source.opened("s3");
+    source.stats("s3", stats("host-c", 7.0));
+    let view = source.snapshot();
+
+    let ack = dispatcher.dispatch(intent(
+        "monitor.replace",
+        json!({ "monitors": view["monitors"], "statsCache": view["statsCache"] }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one coalesced diff for the whole replace");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view,
+        source.snapshot(),
+        "the region now faithfully mirrors the source snapshot"
+    );
+    assert_eq!(cache.view["monitors"].get("s1"), None, "prior entries gone");
+    assert_eq!(cache.view["monitors"]["s3"]["status"], json!("live"));
 }
 
 #[test]

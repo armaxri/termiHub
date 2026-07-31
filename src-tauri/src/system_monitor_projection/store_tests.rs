@@ -164,6 +164,51 @@ fn set_interval_and_status_and_clear_error() {
 }
 
 #[test]
+fn replace_overwrites_the_whole_map_and_cache() {
+    let store = SystemMonitorStore::new();
+    // Prime some existing state that `replace` must fully overwrite.
+    store.open("old", Some("gone".to_string()), None);
+    store.stats("old", sample("gone", 99.0));
+
+    // A snapshot mirroring `appStore`: build it by driving a second store, then
+    // hand its serialised view straight back through `replace`.
+    let source = SystemMonitorStore::new();
+    source.open("s1", Some("host-a".to_string()), None);
+    source.opened("s1");
+    source.stats("s1", sample("host-a", 42.0));
+    let view = source.snapshot();
+
+    let monitors = serde_json::from_value(view["monitors"].clone()).unwrap();
+    let stats_cache = serde_json::from_value(view["statsCache"].clone()).unwrap();
+    store.replace(monitors, stats_cache);
+
+    // The old entry is gone; the mirrored one is present and byte-identical to
+    // the source's projection.
+    assert!(store.get("old").is_none(), "replace drops prior entries");
+    assert_eq!(
+        store.snapshot(),
+        source.snapshot(),
+        "replace makes the store a faithful copy of the source"
+    );
+}
+
+#[test]
+fn replace_with_empty_maps_clears_everything() {
+    let store = SystemMonitorStore::new();
+    store.open("s1", None, None);
+    store.stats("s1", sample("host-a", 1.0));
+
+    store.replace(
+        std::collections::HashMap::new(),
+        std::collections::HashMap::new(),
+    );
+    assert_eq!(
+        store.snapshot(),
+        json!({ "monitors": {}, "statsCache": {} })
+    );
+}
+
+#[test]
 fn transitions_on_an_unknown_key_are_no_ops() {
     let store = SystemMonitorStore::new();
     // None of these should panic or create an entry.

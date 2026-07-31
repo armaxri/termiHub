@@ -19,14 +19,14 @@
 //! monitor the status bar renders (the active tab) is layout/presentation and
 //! stays a frontend concern under partial projection.
 //!
-//! # Shadow mode — zero user-facing change
+//! # Render cut — zero user-facing change
 //!
-//! This step is deliberately **not** authoritative. The store exists, accepts
-//! `monitor.*` intents, and projects diffs, but nothing in the live UI subscribes
-//! to or renders the `system-monitors` region, and no frontend code dispatches
-//! `monitor.*` intents yet. The existing `appStore` monitoring slice remains
-//! authoritative. Later steps cut rendering, then mutation, over to the region,
-//! then remove the `appStore` state.
+//! The store is **not yet authoritative**: the status bar and Open Connections now
+//! render from the `system-monitors` region, but `appStore` still owns the state
+//! and the frontend keeps the region a faithful mirror of it via the whole-map
+//! [`SystemMonitorStore::replace`] (`monitor.replace`) seed, rendering from the
+//! region only when it deep-equals `appStore`. Later steps cut mutation over to
+//! the region, then remove the `appStore` state.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};
@@ -234,6 +234,22 @@ impl SystemMonitorStore {
     /// `disconnectMonitoring`, which keeps the cache). Idempotent.
     pub fn close(&self, key: &str) {
         self.lock().monitors.remove(key);
+    }
+
+    /// `monitor.replace` — overwrite the whole monitor map and stats cache with a
+    /// caller-supplied snapshot. Used by the frontend render-cut mirror (#2224) to
+    /// keep the shared region a faithful copy of `appStore`'s monitoring slice
+    /// while `appStore` remains authoritative (the mutation cut is a later step) —
+    /// the analog of the layout bridge's `layout.replace` seed. Idempotent
+    /// server-side: replacing with the same content yields no diff.
+    pub fn replace(
+        &self,
+        monitors: HashMap<String, MonitorEntry>,
+        stats_cache: HashMap<String, SystemStats>,
+    ) {
+        let mut inner = self.lock();
+        inner.monitors = monitors;
+        inner.stats_cache = stats_cache;
     }
 
     /// Read one monitor entry (test / diagnostics helper).

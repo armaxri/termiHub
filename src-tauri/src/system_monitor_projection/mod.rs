@@ -11,14 +11,15 @@
 //! ([`crate::tunnel::projection`]) and the session-lifecycle shadow
 //! ([`crate::session_projection`]).
 //!
-//! # Shadow mode — zero user-facing change
+//! # Render cut — zero user-facing change
 //!
-//! This step is deliberately **not** authoritative. The store exists, accepts
-//! intents, and projects diffs, but nothing in the live UI subscribes to or
-//! renders the `system-monitors` region, and no frontend code dispatches
-//! `monitor.*` intents yet. The existing `appStore` monitoring slice and the
-//! status-bar / Open-Connections rendering are untouched. Later steps cut
-//! rendering, then mutation, over to the region, then remove the `appStore` state.
+//! The store is **not yet authoritative**: the status bar and Open Connections now
+//! render from the `system-monitors` region, but `appStore` still owns the state
+//! and the frontend keeps the region a faithful mirror of it via `monitor.replace`
+//! (rendering from the region only when it deep-equals `appStore`, else falling
+//! back to `appStore`). The granular `monitor.*` transitions stay served for the
+//! later mutation cut, which makes the store authoritative before the `appStore`
+//! state is finally removed. Parity-safe at every step.
 
 pub mod projection;
 pub mod store;
