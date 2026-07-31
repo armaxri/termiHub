@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.5.0
+**Version**: 0.6.0
 **Status**: Draft
-**Issue**: #17, #360, #1349
+**Issue**: #17, #360, #1349, #2185
 
 ---
 
@@ -264,19 +264,24 @@ The desktop sends its supported protocol version in the `initialize` request. Th
 
 ### Compatibility Matrix
 
-| Desktop Version | Agent Version | Compatible?                                         |
-| --------------- | ------------- | --------------------------------------------------- |
-| 0.5.0           | 0.5.0         | Yes                                                 |
-| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)   |
-| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)           |
-| 0.4.0           | 0.4.0         | Yes                                                 |
-| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)     |
-| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)             |
-| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent) |
-| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                    |
-| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)          |
-| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                |
-| 1.0.0           | 0.4.0         | No (major mismatch)                                 |
+| Desktop Version | Agent Version | Compatible?                                                                          |
+| --------------- | ------------- | ------------------------------------------------------------------------------------ |
+| 0.6.0           | 0.6.0         | Yes                                                                                  |
+| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path) |
+| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                            |
+| 0.5.0           | 0.5.0         | Yes                                                                                  |
+| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                    |
+| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                            |
+| 0.4.0           | 0.4.0         | Yes                                                                                  |
+| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                      |
+| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                              |
+| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                  |
+| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                     |
+| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                           |
+| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                 |
+| 1.0.0           | 0.4.0         | No (major mismatch)                                                                  |
+
+**0.6.0 (additive, minor)** — adds agent-hosted tunnel forwarding: the [`tunnel.start`](#tunnelstart) / [`tunnel.stop`](#tunnelstop) / [`tunnel.status`](#tunnelstatus) methods (#2185, #2198). The agent runs the SSH client and the listen socket; the desktop keeps only lifecycle control. Backwards compatible in both directions: a pre-0.6.0 agent simply lacks the methods, so a `tunnel.start` call returns [`-32601` Method not found](#standard-json-rpc-errors) and the desktop surfaces the existing "not supported" path (hosting the tunnel locally as before); a pre-0.6.0 desktop never calls them.
 
 **0.5.0 (additive, minor)** — adds the ssh-agent relay: the [`agent.forward.data`](#agentforwarddata) / [`agent.forward.close`](#agentforwardclose) methods and the [`agent.forward.open`](#agentforwardopen) / [`agent.forward.data`](#agentforwarddata-notification) / [`agent.forward.close`](#agentforwardclose-notification) notifications (#1727). Backwards compatible in both directions: a 0.4.0 agent simply never opens a relay stream (SSH agent forwarding then falls back to the #1719 host-local model), and a 0.4.0 desktop ignores the notifications, so the forwarded channel is dropped as a graceful no-op — the same behaviour as no local agent.
 
@@ -1675,6 +1680,172 @@ Stop periodic monitoring for a host.
 
 ---
 
+### Agent-hosted tunnels (`tunnel.*`)
+
+The `tunnel.*` methods run an SSH tunnel **on the agent** instead of on the desktop (S3, #2185). The agent opens its own SSH client and binds the listen socket; the desktop keeps only lifecycle control — start, stop, and status — over this RPC. These methods are additive in protocol **0.6.0**: a pre-0.6.0 agent lacks them, so a `tunnel.start` call returns [`-32601` Method not found](#standard-json-rpc-errors), the desktop surfaces the existing "not supported" path, and the tunnel is hosted locally as before.
+
+```mermaid
+flowchart LR
+  Desktop["Desktop<br/>(tunnel.* control only)"] -->|"start / stop / status RPC"| Agent["Agent (tunnel host)<br/>SSH client + listen socket<br/>for local / dynamic"]
+  Agent ==>|SSH| Server["SSH server<br/>listen socket for remote (-R)"]
+```
+
+Endpoint semantics follow [`docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`](concepts/future/stateless-ui-agent-tunnel-endpoints.html). The bind is **loopback-safe** — it is never silently widened, so the result reports where the socket actually ended up rather than assuming loopback. Each `tunnel.start` (and a running `tunnel.status`) returns a `reachableFrom` classification:
+
+| `reachableFrom` | Meaning                                                                                                                                                                                                                                       |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentOnly`     | Loopback bind on the agent (`127.0.0.0/8`, `::1`, or `localhost`) — only processes on the agent can connect.                                                                                                                                  |
+| `agentLan`      | Widened bind (a concrete address or the wildcard `0.0.0.0` / `::`) — reachable from the agent's LAN at the agent's address.                                                                                                                   |
+| `sshServer`     | The listen socket lives on the **SSH server** (a `remote` / `-R` forward) — reachable per the server's own network and `GatewayPorts` policy, never from the agent or desktop directly. Only the forward _target_ is resolved from the agent. |
+
+For **local** (`ssh -L`) and **dynamic** (`ssh -D`, SOCKS5) forwards the listen socket binds on the agent, so `reachableFrom` is classified from the bind host (loopback → `agentOnly`, otherwise `agentLan`). For **remote** (`ssh -R`) forwards the socket binds on the SSH server, so `reachableFrom` is always `sshServer`.
+
+### `tunnel.start`
+
+Open an agent-hosted tunnel. The agent opens the SSH connection described by `sshConfig` (already resolved desktop-side, including any inline jump-host chain) and binds the forwarder described by `forward`. The `forward` object is **internally tagged** by a `mode` discriminator (`local` / `remote` / `dynamic`); its remaining fields are the flattened forward config for that mode.
+
+**Request (local, `ssh -L`):**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tunnel.start",
+  "params": {
+    "tunnelId": "tun-1730000000000-a1b2",
+    "sshConfig": {
+      "host": "bastion.corp",
+      "port": 22,
+      "username": "dev",
+      "authMethod": "password",
+      "password": "secret"
+    },
+    "forward": {
+      "mode": "local",
+      "localHost": "127.0.0.1",
+      "localPort": 5432,
+      "remoteHost": "db.internal",
+      "remotePort": 5432
+    }
+  },
+  "id": 40
+}
+```
+
+For a **remote** (`ssh -R`) forward, `forward` is `{ "mode": "remote", "remoteHost", "remotePort", "localHost", "localPort" }` — the SSH server binds `remoteHost:remotePort`, and each incoming connection is forwarded to `localHost:localPort` resolved from the agent. For a **dynamic** (`ssh -D`, SOCKS5) forward, `forward` is just the SOCKS listen bind: `{ "mode": "dynamic", "localHost", "localPort" }`.
+
+| Param                | Type      | Description                                                                                 |
+| -------------------- | --------- | ------------------------------------------------------------------------------------------- |
+| `tunnelId`           | `string`  | Desktop's tunnel id; the key for later `tunnel.stop` / `tunnel.status`                      |
+| `sshConfig`          | `object`  | The SSH connection the agent opens to the "via" server (resolved desktop-side)              |
+| `forward`            | `object`  | The forward spec; `mode` = `local` / `remote` / `dynamic` plus that mode's config fields    |
+| `forward.localHost`  | `string`  | `local` / `dynamic`: bind host on the agent. `remote`: forward target host (from the agent) |
+| `forward.localPort`  | `integer` | `local` / `dynamic`: bind port on the agent. `remote`: forward target port                  |
+| `forward.remoteHost` | `string`  | `local`: forward target host (from the SSH server). `remote`: bind host on the SSH server   |
+| `forward.remotePort` | `integer` | `local`: forward target port (from the SSH server). `remote`: bind port on the SSH server   |
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "boundAddress": "127.0.0.1:5432",
+    "reachableFrom": "agentOnly"
+  },
+  "id": 40
+}
+```
+
+| Result Field    | Type     | Description                                                                                                    |
+| --------------- | -------- | -------------------------------------------------------------------------------------------------------------- |
+| `boundAddress`  | `string` | The `host:port` the listen socket bound (on the agent for `local` / `dynamic`, on the SSH server for `remote`) |
+| `reachableFrom` | `string` | `agentOnly` / `agentLan` / `sshServer` — who can reach the listen socket (see the table above)                 |
+
+**Errors:**
+
+- `-32017` Tunnel start failed (SSH connect or bind error)
+- `-32602` Invalid params (malformed `forward` or missing `sshConfig`)
+
+---
+
+### `tunnel.stop`
+
+Stop an agent-hosted tunnel by its desktop `tunnelId`. Idempotent — stopping an unknown tunnel is not an error; `stopped` is simply `false`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tunnel.stop",
+  "params": { "tunnelId": "tun-1730000000000-a1b2" },
+  "id": 41
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": { "stopped": true },
+  "id": 41
+}
+```
+
+| Result Field | Type      | Description                                                 |
+| ------------ | --------- | ----------------------------------------------------------- |
+| `stopped`    | `boolean` | Whether a running tunnel with that id was found and stopped |
+
+---
+
+### `tunnel.status`
+
+Report whether an agent-hosted tunnel is currently forwarding, with live traffic counters. Reading the status of an unknown or stopped tunnel is not an error — it returns `running: false` with the other fields omitted.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tunnel.status",
+  "params": { "tunnelId": "tun-1730000000000-a1b2" },
+  "id": 42
+}
+```
+
+**Response (running):**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "running": true,
+    "stats": {
+      "bytesSent": 4096,
+      "bytesReceived": 8192,
+      "activeConnections": 1,
+      "totalConnections": 3
+    },
+    "boundAddress": "127.0.0.1:5432",
+    "reachableFrom": "agentOnly"
+  },
+  "id": 42
+}
+```
+
+| Result Field              | Type      | Description                                                                 |
+| ------------------------- | --------- | --------------------------------------------------------------------------- |
+| `running`                 | `boolean` | Whether the tunnel is currently forwarding on this agent                    |
+| `stats.bytesSent`         | `integer` | Total bytes sent through the tunnel (present only when running)             |
+| `stats.bytesReceived`     | `integer` | Total bytes received through the tunnel (present only when running)         |
+| `stats.activeConnections` | `integer` | Currently active connections through the tunnel (present only when running) |
+| `stats.totalConnections`  | `integer` | Total connections since the tunnel started (present only when running)      |
+| `boundAddress`            | `string`  | The `host:port` the listen socket bound (present only when running)         |
+| `reachableFrom`           | `string`  | `agentOnly` / `agentLan` / `sshServer` (present only when running)          |
+
+---
+
 ## Notifications
 
 Notifications are messages from the agent to the desktop with **no `id` field**. The desktop MUST NOT send a response.
@@ -1960,6 +2131,7 @@ For serial sessions:
 | `-32014` | Monitoring error            | A monitoring operation failed (collection error, SSH failure, etc.)                  |
 | `-32015` | Shutdown error              | An error occurred during agent shutdown                                              |
 | `-32016` | Deferred update failed      | A deferred agent update failed to apply (binary swap / re-exec, or non-Unix)         |
+| `-32017` | Tunnel start failed         | An agent-hosted SSH tunnel failed to start (SSH connect or bind error)               |
 
 ---
 
