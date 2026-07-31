@@ -31,16 +31,21 @@
 //! | `monitor.setInterval`  | `{ key, intervalMs }`         | change refresh cadence (#1233)           |
 //! | `monitor.clearError`   | `{ key }`                     | dismiss the error banner                 |
 //! | `monitor.close`        | `{ key }`                     | disconnect and drop the entry            |
+//! | `monitor.replace`      | `{ monitors, statsCache }`    | overwrite the whole map (render mirror)  |
 //!
-//! # Shadow mode
+//! # Render cut (#2224 step 2)
 //!
-//! Registered and fully served, but **not** driving the live UI: no frontend
-//! subscribes to `system-monitors` or dispatches `monitor.*` yet, so these
-//! intents mutate only the shadow store and project to a region nobody renders.
-//! The `appStore` monitoring slice remains authoritative. Per the substrate
+//! The status bar and Open Connections now **render** monitor stats/status from
+//! this region (`useProjectedMonitors`), but `appStore` remains **authoritative**
+//! — the mutation cut is a later step. To keep the render cut parity-safe, the
+//! frontend keeps the region a faithful copy of `appStore` via `monitor.replace`
+//! (the whole-map mirror) and only renders from the region when it deep-equals
+//! `appStore`, falling back to `appStore` otherwise. The granular `monitor.*`
+//! transitions stay served for the eventual mutation cut. Per the substrate
 //! contract the result of an intent is never returned inline — it always arrives
 //! as a projection diff on the `system-monitors` region.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -49,7 +54,7 @@ use tauri::{AppHandle, Manager};
 use termihub_core::monitoring::{MonitorStatus, SystemStats};
 
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
-use crate::system_monitor_projection::store::SystemMonitorStore;
+use crate::system_monitor_projection::store::{MonitorEntry, SystemMonitorStore};
 
 /// The projection region id for the system-monitor domain (shared, per Open
 /// Design Decision #4).
@@ -143,11 +148,19 @@ pub fn register_monitor_intents(registry: &mut HandlerRegistry, app_handle: AppH
         Ok(publish_monitors(projector, &store))
     });
 
-    let handle = app_handle;
+    let handle = app_handle.clone();
     registry.route("monitor.close", move |intent, projector| {
         let store = store_of(&handle)?;
         let key = required_str(intent, "key")?;
         store.close(&key);
+        Ok(publish_monitors(projector, &store))
+    });
+
+    let handle = app_handle;
+    registry.route("monitor.replace", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let (monitors, stats_cache) = required_replace(intent)?;
+        store.replace(monitors, stats_cache);
         Ok(publish_monitors(projector, &store))
     });
 }
@@ -215,6 +228,32 @@ fn required_stats(intent: &Intent) -> Result<SystemStats, (String, String)> {
         .ok_or_else(|| ("bad_payload".to_string(), "missing 'stats'".to_string()))?;
     serde_json::from_value(value.clone())
         .map_err(|e| ("bad_payload".to_string(), format!("invalid stats: {e}")))
+}
+
+/// Parse a `monitor.replace` payload into the whole-map snapshot the render-cut
+/// mirror carries: `{ monitors: { <key>: MonitorEntry }, statsCache: { <key>:
+/// SystemStats } }`. Either field absent is treated as an empty map, so a mirror
+/// that clears all monitors is expressible; a present-but-malformed field is a
+/// `bad_payload` rejection that advances nothing.
+#[allow(clippy::type_complexity)]
+fn required_replace(
+    intent: &Intent,
+) -> Result<(HashMap<String, MonitorEntry>, HashMap<String, SystemStats>), (String, String)> {
+    let monitors = match intent.payload.get("monitors") {
+        None | Some(Value::Null) => HashMap::new(),
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|e| ("bad_payload".to_string(), format!("invalid monitors: {e}")))?,
+    };
+    let stats_cache = match intent.payload.get("statsCache") {
+        None | Some(Value::Null) => HashMap::new(),
+        Some(value) => serde_json::from_value(value.clone()).map_err(|e| {
+            (
+                "bad_payload".to_string(),
+                format!("invalid statsCache: {e}"),
+            )
+        })?,
+    };
+    Ok((monitors, stats_cache))
 }
 
 /// Parse the required `status` field as a [`MonitorStatus`].
