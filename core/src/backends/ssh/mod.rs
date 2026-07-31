@@ -23,6 +23,7 @@ pub use self::exec::{
     exec_probe_indicates_capability, probe_exec_capability, ssh_exec_with_stdin, SshExecOutput,
     EXEC_PROBE_MARKER,
 };
+pub use self::file_browser::SftpAdvancedOps;
 
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};

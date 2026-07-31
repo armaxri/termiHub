@@ -16,10 +16,14 @@ use crate::files::{FileBrowser, FileEntry};
 use super::handler::SshSession;
 use super::jump_host::{connect_target, GatewayHold};
 use super::sftp;
+use super::sftp_ops::{self, ElevatedWriteResult, Writability};
 
 /// State of a connected SFTP session.
 struct SftpState {
-    _session: SshSession,
+    /// The SSH session carrying this SFTP channel. Kept alive for the session
+    /// lifetime, and used as the exec channel for the privilege-elevated write
+    /// path exposed via [`SftpAdvancedOps`].
+    session: SshSession,
     /// Pooled gateway hold for a jump-host connection (`None` when direct); kept
     /// alive so the bastion session carrying this SFTP session stays open (#939).
     _gateway: Option<GatewayHold>,
@@ -64,7 +68,7 @@ impl SftpFileBrowser {
             .map_err(|e| FileError::OperationFailed(e.to_string()))?;
 
         *guard = Some(SftpState {
-            _session: session,
+            session,
             _gateway: gateway,
             sftp,
         });
@@ -201,5 +205,129 @@ impl FileBrowser for SftpFileBrowser {
         sftp::stat(&state.sftp, path)
             .await
             .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))
+    }
+}
+
+/// Advanced SFTP capabilities that complement [`FileBrowser`].
+///
+/// [`FileBrowser`] covers the portable file operations every backend shares
+/// (list/read/write/delete/rename/stat/mkdir). This companion trait exposes the
+/// three SSH-specific SFTP capabilities that historically lived only on the
+/// desktop `SftpSession` (#2075/#2104): the authoritative writability probe, the
+/// privilege-elevated (`sudo`) write, and `realpath`/canonicalize. Both the core
+/// [`SftpFileBrowser`] and the desktop `SftpSession` delegate to the single
+/// implementation in [`sftp_ops`], so the security-sensitive logic can never
+/// drift between them.
+///
+/// It is deliberately a *separate* trait rather than methods on [`FileBrowser`]:
+/// backends without an SSH exec channel (local, docker, FTP) cannot offer these,
+/// and folding them into the shared trait is part of the wider
+/// `FileBrowser`/`FileBackend` reconciliation tracked on #2104.
+#[async_trait::async_trait]
+pub trait SftpAdvancedOps: Send {
+    /// Authoritatively probe whether the connecting user can write `remote_path`.
+    ///
+    /// Opens the **existing** file for writing (`OpenFlags::WRITE` only — no
+    /// `CREATE`/`TRUNCATE`/`APPEND`) so its contents are never modified. This
+    /// catches the owner-mismatch case the cheap permission hint cannot. The
+    /// probe itself never hard-errors (a `PERMISSION_DENIED` maps to
+    /// [`Writability::ReadOnly`], any other error to [`Writability::Unknown`]);
+    /// the [`Result`] only surfaces a failure to open the SFTP session.
+    async fn check_writable(&self, remote_path: &str) -> Result<Writability, FileError>;
+
+    /// Resolve a remote path to its canonical absolute form via SFTP realpath.
+    ///
+    /// Passing `"."` yields the session's home directory, avoiding the fragile
+    /// `/home/<user>` guess that breaks on non-Linux layouts (audit GAP C2,
+    /// #1143).
+    async fn realpath(&self, path: &str) -> Result<String, FileError>;
+
+    /// Write `content` to `remote_path` with `sudo`-elevated privileges (#1328).
+    ///
+    /// SFTP-uploads the buffer to a termiHub-generated `/tmp/termihub-<uuid>`,
+    /// then `sudo -S -p ''` runs a fixed `/bin/sh` script that rewrites the
+    /// destination in place (preserving owner/mode/ACLs), classified into an
+    /// [`ElevatedWriteResult`]. The destination path is POSIX-quoted and passed
+    /// as a positional argument, so a hostile remote path cannot inject shell
+    /// commands; the password is only ever sent on stdin and is **never** logged.
+    async fn write_file_content_elevated(
+        &self,
+        remote_path: &str,
+        content: &str,
+        sudo_password: &str,
+    ) -> Result<ElevatedWriteResult, FileError>;
+}
+
+#[async_trait::async_trait]
+impl SftpAdvancedOps for SftpFileBrowser {
+    async fn check_writable(&self, remote_path: &str) -> Result<Writability, FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+
+        Ok(sftp_ops::check_writable(&state.sftp, remote_path).await)
+    }
+
+    async fn realpath(&self, path: &str) -> Result<String, FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+
+        sftp_ops::realpath(&state.sftp, path).await
+    }
+
+    async fn write_file_content_elevated(
+        &self,
+        remote_path: &str,
+        content: &str,
+        sudo_password: &str,
+    ) -> Result<ElevatedWriteResult, FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+
+        sftp_ops::write_file_content_elevated(
+            &state.session,
+            &state.sftp,
+            remote_path,
+            content,
+            sudo_password,
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The companion trait must stay object-safe and `Send` so it can be held
+    // behind a `Box<dyn SftpAdvancedOps>` and driven across `.await` points,
+    // mirroring `FileBrowser`.
+    fn _assert_object_safe(_: &dyn SftpAdvancedOps) {}
+    fn _assert_send<T: Send>() {}
+
+    /// `SftpAdvancedOps` is object-safe and `Send`.
+    #[test]
+    fn sftp_advanced_ops_is_send() {
+        _assert_send::<Box<dyn SftpAdvancedOps>>();
+    }
+
+    /// The core `SftpFileBrowser` implements the companion trait, so the elevated
+    /// write / writability / realpath capabilities are reachable through the core
+    /// path — not only the desktop `SftpSession` (#2104). This is a compile-time
+    /// assertion; the delegated logic itself is unit-tested in
+    /// [`super::sftp_ops`] and exercised end-to-end by the SFTP integration
+    /// suite (`core/tests/sftp_stress.rs`).
+    #[test]
+    fn sftp_file_browser_implements_advanced_ops() {
+        fn _assert_impl<T: SftpAdvancedOps>() {}
+        _assert_impl::<SftpFileBrowser>();
     }
 }
