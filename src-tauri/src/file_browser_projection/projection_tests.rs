@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 
-use super::{optional_str, parse_clipboard, parse_entries, parse_mode, parse_pane, required_str};
+use super::{
+    optional_str, parse_clipboard, parse_entries, parse_mode, parse_pane, parse_view, required_str,
+};
 use crate::file_browser_projection::projection::{file_browser_region, publish_file_browser};
 use crate::file_browser_projection::store::FileBrowserStore;
 use crate::projection::{
@@ -68,9 +70,15 @@ fn registry_for(store: Arc<FileBrowserStore>) -> HandlerRegistry {
         Ok(publish_file_browser(projector, &s, &intent.client_id))
     });
 
-    let s = store;
+    let s = store.clone();
     registry.route("fileBrowser.setClipboard", move |intent, projector| {
         s.set_clipboard(&intent.client_id, parse_clipboard(intent)?);
+        Ok(publish_file_browser(projector, &s, &intent.client_id))
+    });
+
+    let s = store;
+    registry.route("fileBrowser.replace", move |intent, projector| {
+        s.replace(&intent.client_id, parse_view(intent)?);
         Ok(publish_file_browser(projector, &s, &intent.client_id))
     });
 
@@ -270,6 +278,66 @@ fn a_full_browsing_session_advances_monotonically_and_converges() {
     assert_eq!(cache.view["local"]["entries"], json!([]));
     assert_eq!(cache.view["clipboard"]["operation"], json!("copy"));
     assert_eq!(cache.view["mode"], json!("local"));
+}
+
+#[test]
+fn a_replace_seed_produces_one_diff_that_converges_on_the_whole_view() {
+    let store = Arc::new(FileBrowserStore::new());
+    let region = file_browser_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(&region, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    // The render-cut mirror seeds the whole slice in a single intent.
+    let ack = dispatcher.dispatch(intent(
+        "fileBrowser.replace",
+        "A",
+        json!({
+            "mode": "sftp",
+            "local": { "path": "/home", "entries": [entry_json("a", false)], "loading": false, "error": null },
+            "sftp": { "path": "/var", "entries": [entry_json("log", true)], "loading": true, "error": null },
+            "session": { "path": "/", "entries": [], "loading": false, "error": null },
+            "clipboard": null,
+        }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "the whole-slice seed is one coalesced diff");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view,
+        store.snapshot("A"),
+        "cache converges on authority"
+    );
+    assert_eq!(cache.view["mode"], json!("sftp"));
+    assert_eq!(cache.view["local"]["entries"][0]["name"], json!("a"));
+    assert_eq!(cache.view["sftp"]["path"], json!("/var"));
+    assert_eq!(cache.view["sftp"]["loading"], json!(true));
+
+    // Re-seeding with identical content is idempotent — no second diff.
+    let ack2 = dispatcher.dispatch(intent(
+        "fileBrowser.replace",
+        "A",
+        json!({
+            "mode": "sftp",
+            "local": { "path": "/home", "entries": [entry_json("a", false)], "loading": false, "error": null },
+            "sftp": { "path": "/var", "entries": [entry_json("log", true)], "loading": true, "error": null },
+            "session": { "path": "/", "entries": [], "loading": false, "error": null },
+            "clipboard": null,
+        }),
+    ));
+    assert_eq!(ack2.status, IntentStatus::Accepted);
+    assert_eq!(
+        ack2.produced,
+        Some(vec![]),
+        "an identical re-seed is a no-op"
+    );
+    assert_eq!(sink.diffs().len(), 1, "no second diff");
 }
 
 #[test]

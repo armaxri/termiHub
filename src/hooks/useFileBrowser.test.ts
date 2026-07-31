@@ -101,6 +101,7 @@ vi.mock("./useSessionFileSystem", () => ({
 }));
 
 import { useAppStore } from "@/store/appStore";
+import type { FileEntry } from "@/types/connection";
 import { useFileBrowser } from "./useFileBrowser";
 
 // Test the routing logic by calling the hook with the store in different modes.
@@ -179,8 +180,16 @@ describe("useFileBrowser hook (mode routing)", () => {
     expect(result!.isConnected).toBe(false);
   });
 
+  // After the #2228 render cut the per-pane render fields (listing, cwd, loading,
+  // error) are sourced from the projected file-browser region — which, with no
+  // transport in this unit env, falls back to `appStore` verbatim. So the mode
+  // routing is asserted against the `appStore` per-mode slice; the file *actions*
+  // and `isConnected` still come from the per-mode hooks (mocked above).
+  const listing = (name: string) =>
+    [{ name, path: `/${name}`, isDirectory: false }] as unknown as FileEntry[];
+
   it('returns mode "local" with local file entries', () => {
-    useAppStore.setState({ fileBrowserMode: "local" });
+    useAppStore.setState({ fileBrowserMode: "local", localFileEntries: listing("local-file.txt") });
     let result: ReturnType<typeof useFileBrowser> | undefined;
 
     act(() => {
@@ -189,10 +198,12 @@ describe("useFileBrowser hook (mode routing)", () => {
 
     expect(result!.mode).toBe("local");
     expect(result!.fileEntries[0].name).toBe("local-file.txt");
+    // The actions/isConnected still come from the per-mode hook.
+    expect(result!.isConnected).toBe(true);
   });
 
   it('returns mode "sftp" with SFTP file entries', () => {
-    useAppStore.setState({ fileBrowserMode: "sftp" });
+    useAppStore.setState({ fileBrowserMode: "sftp", fileEntries: listing("sftp-file.txt") });
     let result: ReturnType<typeof useFileBrowser> | undefined;
 
     act(() => {
@@ -201,10 +212,14 @@ describe("useFileBrowser hook (mode routing)", () => {
 
     expect(result!.mode).toBe("sftp");
     expect(result!.fileEntries[0].name).toBe("sftp-file.txt");
+    expect(result!.isConnected).toBe(true);
   });
 
   it('returns mode "session" with session file entries', () => {
-    useAppStore.setState({ fileBrowserMode: "session" });
+    useAppStore.setState({
+      fileBrowserMode: "session",
+      sessionFileEntries: listing("session-file.txt"),
+    });
     let result: ReturnType<typeof useFileBrowser> | undefined;
 
     act(() => {
@@ -213,5 +228,6 @@ describe("useFileBrowser hook (mode routing)", () => {
 
     expect(result!.mode).toBe("session");
     expect(result!.fileEntries[0].name).toBe("session-file.txt");
+    expect(result!.isConnected).toBe(true);
   });
 });

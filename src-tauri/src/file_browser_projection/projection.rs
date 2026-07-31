@@ -38,6 +38,13 @@
 //! | `fileBrowser.loadFailed`    | `{ pane, error? }`                     | clear loading, record the error, keep last listing  |
 //! | `fileBrowser.reset`         | `{ pane }`                             | reset the pane to the idle baseline (`/`, empty)    |
 //! | `fileBrowser.setClipboard`  | `{ clipboard }` (`null` clears)        | set / clear the copy-cut clipboard                  |
+//! | `fileBrowser.replace`       | `{ mode?, local?, sftp?, session?, clipboard? }` | overwrite the whole client view (render-cut mirror) |
+//!
+//! `fileBrowser.replace` is the whole-slice seed the frontend render cut (#2228)
+//! uses to keep the client's region a faithful copy of `appStore`'s file-browser
+//! UI-state slice while `appStore` stays authoritative — the analog of the
+//! connections bridge's `connection.replace`. The per-transition intents above
+//! drive the store for the (later) mutation cut.
 //!
 //! `pane` is the concrete browser being acted on (`local` / `sftp` / `session`);
 //! `mode` is which pane is *active* and additionally accepts `"none"`. The
@@ -63,7 +70,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::file_browser_projection::store::{
-    Clipboard, FileBrowserKind, FileBrowserStore, FileEntry,
+    ClientView, Clipboard, FileBrowserKind, FileBrowserStore, FileEntry,
 };
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 
@@ -139,11 +146,19 @@ pub fn register_file_browser_intents(registry: &mut HandlerRegistry, app_handle:
         Ok(publish_file_browser(projector, &store, &intent.client_id))
     });
 
-    let handle = app_handle;
+    let handle = app_handle.clone();
     registry.route("fileBrowser.setClipboard", move |intent, projector| {
         let store = store_of(&handle)?;
         let clipboard = parse_clipboard(intent)?;
         store.set_clipboard(&intent.client_id, clipboard);
+        Ok(publish_file_browser(projector, &store, &intent.client_id))
+    });
+
+    let handle = app_handle;
+    registry.route("fileBrowser.replace", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let view = parse_view(intent)?;
+        store.replace(&intent.client_id, view);
         Ok(publish_file_browser(projector, &store, &intent.client_id))
     });
 }
@@ -195,6 +210,16 @@ fn parse_entries(intent: &Intent) -> Result<Vec<FileEntry>, (String, String)> {
         .ok_or_else(|| ("bad_payload".to_string(), "missing 'entries'".to_string()))?;
     serde_json::from_value(value.clone())
         .map_err(|e| ("bad_payload".to_string(), format!("invalid 'entries': {e}")))
+}
+
+/// Parse a `fileBrowser.replace` payload into a whole-client [`ClientView`] — the
+/// render-cut mirror's snapshot of `appStore`'s file-browser slice (`{ mode,
+/// local, sftp, session, clipboard }`, the shape of the region view model). Any
+/// field absent defaults to the idle baseline; a present-but-malformed field is a
+/// `bad_payload` rejection that advances nothing.
+fn parse_view(intent: &Intent) -> Result<ClientView, (String, String)> {
+    serde_json::from_value(intent.payload.clone())
+        .map_err(|e| ("bad_payload".to_string(), format!("invalid view: {e}")))
 }
 
 /// Parse the `clipboard` field into an optional [`Clipboard`]; a missing or

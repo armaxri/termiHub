@@ -38,6 +38,7 @@ import {
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
+import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import { Button, Tooltip, Progress, Input, toast } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
@@ -914,7 +915,9 @@ export function FileBrowser() {
   const transfers = useAppStore((s) => s.transfers);
   const cancelTransfer = useAppStore((s) => s.cancelTransfer);
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
-  const fileClipboard = useAppStore((s) => s.fileClipboard);
+  // Render cut (#2228): the copy-cut clipboard is sourced from the projected
+  // client-scoped file-browser region (mirror-gated, falls back to appStore).
+  const fileClipboard = useProjectedFileBrowsers().clipboard;
   const quickShareServer = useAppStore((s) => s.quickShareServer);
   const setSidebarView = useAppStore((s) => s.setSidebarView);
   const [newDirName, setNewDirName] = useState<string | null>(null);
