@@ -1,3 +1,8 @@
+/// Shadow agents authority (#2226, Phase 5 of #2139): the shared `agents`
+/// projection region + `agent.*` intents modeling the `appStore` agents slice
+/// (the ordered agent list + per-agent sessions/definitions/folders). Registered
+/// and served but not yet driving the live UI — see [`agents_projection`].
+mod agents_projection;
 mod commands;
 mod connection;
 /// Shadow connections-tree authority (#2225, Phase 5 of #2139/#2153): the shared
@@ -711,6 +716,9 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
+                // Shadow AgentsStore (#2226, Phase 5): the shared `agents` region
+                // + `agent.*` intents modeling the `appStore` agents slice (the
+                // ordered agent list + per-agent sessions/definitions/folders).
                 // Shadow ConnectionsStore (#2225, Phase 5): the shared
                 // `connections` region + `connection.*` intents, wrapping the
                 // existing saved-connection authority (`crate::connection`).
@@ -719,6 +727,11 @@ pub fn run() {
                 // shadow foundation (later steps cut rendering, then mutations,
                 // over to it). The shared region is seeded below once the store is
                 // managed.
+                app.manage(Arc::new(agents_projection::AgentsStore::new()));
+                agents_projection::projection::register_agent_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
                 app.manage(Arc::new(connections_projection::ConnectionsStore::new()));
                 connections_projection::projection::register_connection_intents(
                     &mut registry,
@@ -761,6 +774,17 @@ pub fn run() {
                 {
                     projection_state.projector.register_region(
                         system_monitor_projection::projection::SYSTEM_MONITORS_REGION,
+                        store.snapshot(),
+                    );
+                }
+                // Seed the shared `agents` region with the (empty) store baseline
+                // at version 0, so a subscriber attaches to a real region before
+                // the first `agent.*` intent (#2226).
+                if let Some(store) =
+                    app.handle().try_state::<Arc<agents_projection::AgentsStore>>()
+                {
+                    projection_state.projector.register_region(
+                        agents_projection::projection::AGENTS_REGION,
                         store.snapshot(),
                     );
                 }
