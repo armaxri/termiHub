@@ -1260,4 +1260,63 @@ mod tests {
             Some("0.2.0")
         );
     }
+
+    #[test]
+    fn dropped_frontend_keys_survive_save_load() {
+        // Regression for #2261: confirmCloseAttachedTab, warnLargePortScan,
+        // warnLargePingSweep and screenReaderMode existed only in the frontend
+        // AppSettings, so save_settings silently dropped them when deserializing
+        // into the backend struct — flipping an opt-out off did not survive a
+        // restart. This guards the actual persistence path (save→reload the file)
+        // against future frontend/backend AppSettings drift.
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        // Each opt-out / toggle flipped away from its default.
+        let incoming = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "confirmCloseAttachedTab": false,
+            "warnLargePortScan": false,
+            "warnLargePingSweep": false,
+            "screenReaderMode": true
+        }"#;
+        let settings: AppSettings = serde_json::from_str(incoming).unwrap();
+        storage.save(&settings).unwrap();
+
+        // Read the persisted file back as raw JSON: every key must have survived
+        // the deserialize→serialize round-trip that save_settings performs.
+        let persisted = std::fs::read_to_string(&storage.file_path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&persisted).unwrap();
+        assert_eq!(value["confirmCloseAttachedTab"], serde_json::json!(false));
+        assert_eq!(value["warnLargePortScan"], serde_json::json!(false));
+        assert_eq!(value["warnLargePingSweep"], serde_json::json!(false));
+        assert_eq!(value["screenReaderMode"], serde_json::json!(true));
+
+        // And they must reload into the typed struct with the flipped values.
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert!(!reloaded.confirm_close_attached_tab);
+        assert!(!reloaded.warn_large_port_scan);
+        assert!(!reloaded.warn_large_ping_sweep);
+        assert_eq!(reloaded.screen_reader_mode, Some(true));
+    }
+
+    #[test]
+    fn dropped_frontend_keys_defaults() {
+        // The three confirm/warn opt-outs default on (true); the screen-reader
+        // toggle is an absent-means-off Option (frontend default false).
+        let settings = AppSettings::default();
+        assert!(settings.confirm_close_attached_tab);
+        assert!(settings.warn_large_port_scan);
+        assert!(settings.warn_large_ping_sweep);
+        assert!(settings.screen_reader_mode.is_none());
+
+        // A legacy file without any of the keys loads with those same defaults.
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let legacy: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(legacy.confirm_close_attached_tab);
+        assert!(legacy.warn_large_port_scan);
+        assert!(legacy.warn_large_ping_sweep);
+        assert!(legacy.screen_reader_mode.is_none());
+    }
 }
