@@ -29,6 +29,11 @@ use super::local_forward::ForwarderStats;
 pub struct DynamicForwarder {
     task_handle: Option<tokio::task::JoinHandle<()>>,
     stats: Arc<ForwarderStats>,
+    /// The address the listener actually bound. When `config.local_port` is `0`
+    /// the OS assigns an ephemeral port; this reads it back so callers (and
+    /// tests) can connect to the real port instead of racily re-binding a probed
+    /// one (#2280).
+    local_addr: std::net::SocketAddr,
     /// Fires when the accept loop exits, so the tunnel supervisor can observe
     /// forwarder death and drive the tunnel to `Error` (#1243, GAP 2).
     death: Option<tokio::sync::oneshot::Receiver<()>>,
@@ -67,6 +72,7 @@ impl DynamicForwarder {
         let std_listener = std::net::TcpListener::bind(&addr)?;
         std_listener.set_nonblocking(true)?;
         let listener = tokio::net::TcpListener::from_std(std_listener)?;
+        let local_addr = listener.local_addr()?;
 
         let stats = Arc::new(ForwarderStats::new());
         let stats_clone = Arc::clone(&stats);
@@ -81,8 +87,18 @@ impl DynamicForwarder {
         Ok(Self {
             task_handle: Some(task_handle),
             stats,
+            local_addr,
             death: Some(death_rx),
         })
+    }
+
+    /// The address the SOCKS listener actually bound.
+    ///
+    /// Equals `config.local_host:config.local_port` for a fixed request; when
+    /// port `0` was requested the OS picked an ephemeral port and this returns
+    /// the real one (#2280).
+    pub fn local_addr(&self) -> std::net::SocketAddr {
+        self.local_addr
     }
 
     /// Get current tunnel statistics.
@@ -271,18 +287,14 @@ mod tests {
     use super::super::config::DynamicForwardConfig;
     use super::*;
 
-    fn free_port() -> u16 {
-        std::net::TcpListener::bind("127.0.0.1:0")
-            .expect("bind ephemeral")
-            .local_addr()
-            .expect("local addr")
-            .port()
-    }
-
-    fn config_for(port: u16) -> DynamicForwardConfig {
+    /// A config that binds an ephemeral loopback port. Passing port `0` lets the
+    /// OS assign a free port the forwarder keeps, so the test reads the real port
+    /// back via [`DynamicForwarder::local_addr`] instead of racily re-binding a
+    /// probed one (#2280).
+    fn ephemeral_config() -> DynamicForwardConfig {
         DynamicForwardConfig {
             local_host: "127.0.0.1".to_string(),
-            local_port: port,
+            local_port: 0,
         }
     }
 
@@ -291,11 +303,10 @@ mod tests {
     async fn start_and_connect(
         opener: EchoChannelOpener,
     ) -> (DynamicForwarder, TcpStream, Arc<Mutex<Vec<(String, u16)>>>) {
-        let port = free_port();
         let targets = opener.targets_handle();
-        let forwarder = DynamicForwarder::start_with_opener(&config_for(port), opener)
+        let forwarder = DynamicForwarder::start_with_opener(&ephemeral_config(), opener)
             .expect("start forwarder");
-        let client = TcpStream::connect(("127.0.0.1", port))
+        let client = TcpStream::connect(forwarder.local_addr())
             .await
             .expect("connect to socks proxy");
         (forwarder, client, targets)
@@ -478,11 +489,11 @@ mod tests {
 
     #[tokio::test]
     async fn teardown_closes_the_listener() {
-        let port = free_port();
         let forwarder =
-            DynamicForwarder::start_with_opener(&config_for(port), EchoChannelOpener::new())
+            DynamicForwarder::start_with_opener(&ephemeral_config(), EchoChannelOpener::new())
                 .expect("start forwarder");
-        TcpStream::connect(("127.0.0.1", port))
+        let addr = forwarder.local_addr();
+        TcpStream::connect(addr)
             .await
             .expect("connect while active");
 
@@ -490,7 +501,7 @@ mod tests {
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         loop {
-            match TcpStream::connect(("127.0.0.1", port)).await {
+            match TcpStream::connect(addr).await {
                 Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => break,
                 _ if tokio::time::Instant::now() >= deadline => {
                     panic!("listener still accepting after teardown");
