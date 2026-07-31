@@ -135,6 +135,64 @@ export function connectionRenderFromProjectionEnabled(): boolean {
   return true;
 }
 
+// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
+
+let mutationFlagOverride: boolean | null = null;
+
+interface ConnectionMutationFlagWindow {
+  __TERMIHUB_CONNECTION_INTENTS__?: boolean;
+  localStorage?: Storage;
+}
+
+/**
+ * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
+ * `null` clears the override and falls back to the window/localStorage signal,
+ * then to the default (on).
+ */
+export function setConnectionIntentsEnabled(value: boolean | null): void {
+  mutationFlagOverride = value;
+}
+
+/**
+ * Whether the connection-tree lifecycle actions (add/update/remove/move the saved
+ * connections, and add/remove/toggle folders) dispatch granular `connection.*`
+ * intents so the backend {@link import("../../src-tauri/src/connections_projection/store").ConnectionsStore}
+ * is authoritative — instead of only the render-cut {@link seedConnectionsRegion}
+ * `connection.replace` mirror driving the region.
+ *
+ * **On by default** (#2225 mutation cut). When on, each action mirrors its
+ * transition through a `connection.*` intent (via {@link mirrorConnectionIntent}),
+ * and the render-cut hook
+ * ({@link import("./useProjectedConnections").useProjectedConnections}) reflects
+ * the region back into the UI. The local `appStore` reducer path stays in place as
+ * the render source and as a resilience / rollback fallback — any dispatch failure
+ * is logged and the local mutation continues, so a backend hiccup can never break
+ * the connection tree (the reducer removal is a later step). When off, `appStore`
+ * drives the slice purely locally (the pre-cut path). The flip was taken on the
+ * automated parity tests plus the instant local fallback, mirroring the agents
+ * mutation cut (#2226). Overridable at runtime for rollback / tests via
+ * `window.__TERMIHUB_CONNECTION_INTENTS__` or
+ * `localStorage["termihub.connectionIntents"]` (set `"false"` to restore the
+ * pre-cut local-mutation path; `"true"` to force on).
+ */
+export function connectionIntentsEnabled(): boolean {
+  if (mutationFlagOverride !== null) return mutationFlagOverride;
+  try {
+    if (typeof window !== "undefined") {
+      const w = window as unknown as ConnectionMutationFlagWindow;
+      if (typeof w.__TERMIHUB_CONNECTION_INTENTS__ === "boolean") {
+        return w.__TERMIHUB_CONNECTION_INTENTS__;
+      }
+      const ls = w.localStorage?.getItem("termihub.connectionIntents");
+      if (ls === "true") return true;
+      if (ls === "false") return false;
+    }
+  } catch {
+    // A missing/blocked window or storage just means "use the default".
+  }
+  return true;
+}
+
 // ── Transport + shared region client (lazy, mirrors the agents slice) ──────────
 
 let transportInstance: Transport | null = null;
@@ -277,6 +335,59 @@ export function seedConnectionsRegion(
     // A synchronous transport-construction failure (non-Tauri, no socket).
     lastSeededSignature = null;
     return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ── Mutation cut: granular connection.* intent dispatch ───────────────────────
+
+/**
+ * The granular `connection.*` intent kinds the mutation cut dispatches (twins of
+ * the Rust routes). Excludes `connection.replace`, which is the render-cut
+ * whole-slice mirror ({@link seedConnectionsRegion}); the mutation cut drives the
+ * region through these per-transition intents instead so the store becomes
+ * authoritative.
+ */
+export type ConnectionIntentKind =
+  | "connection.add"
+  | "connection.update"
+  | "connection.remove"
+  | "connection.move"
+  | "connection.addFolder"
+  | "connection.removeFolder"
+  | "connection.toggleFolder";
+
+/** Dispatch a granular `connection.*` intent, resolving with the ack (parity tests). */
+export function dispatchConnectionIntent(
+  kind: ConnectionIntentKind,
+  payload: Record<string, unknown>
+): Promise<IntentAck> {
+  return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
+}
+
+/**
+ * Fire a granular `connection.*` intent to keep the backend store authoritative,
+ * swallowing and logging any failure so the local `appStore` mutation path is
+ * never disrupted by a bridge hiccup (the resilience fallback). A no-op when the
+ * mutation cut is disabled ({@link connectionIntentsEnabled} off — the rollback
+ * path). Never throws — a synchronous transport-construction failure (non-Tauri,
+ * no socket) is caught and logged, leaving the UI on the local slice. The twin of
+ * the agents bridge's {@link import("./agentsBridge").mirrorAgentIntent}.
+ */
+export function mirrorConnectionIntent(
+  kind: ConnectionIntentKind,
+  payload: Record<string, unknown>
+): void {
+  if (!connectionIntentsEnabled()) return;
+  try {
+    void dispatchConnectionIntent(kind, payload)
+      .then((ack) => {
+        if (ack.status === "rejected") {
+          logConnectionBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+        }
+      })
+      .catch((err) => logConnectionBridgeFallback(kind, err));
+  } catch (err) {
+    logConnectionBridgeFallback(kind, err);
   }
 }
 
