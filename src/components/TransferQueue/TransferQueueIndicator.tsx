@@ -1,6 +1,7 @@
 import { ArrowDownUp } from "lucide-react";
 import { Tooltip } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { isTerminalTransferState } from "@/types/transfer";
 
 /**
@@ -11,8 +12,9 @@ import { isTerminalTransferState } from "@/types/transfer";
  * total when all rows are terminal) and re-expands the panel on click.
  */
 export function TransferQueueIndicator() {
-  const transferQueue = useAppStore((s) => s.transferQueue);
-  const minimized = useAppStore((s) => s.transferQueueMinimized);
+  // Render from the projected `transfers` region (parity-safe: it mirrors
+  // `appStore` and falls back to it verbatim — #2229 render cut).
+  const { queue: transferQueue, minimized } = useProjectedTransfers();
   const setMinimized = useAppStore((s) => s.setTransferQueueMinimized);
 
   const entries = Object.values(transferQueue);
