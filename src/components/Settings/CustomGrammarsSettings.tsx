@@ -3,6 +3,7 @@ import { FileCode, Trash2 } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { registerCustomGrammars } from "@/utils/monacoCustomLanguages";
 import type { CustomLanguageGrammar } from "@/types/connection";
 import { Button, Tooltip } from "@/components/ui";
@@ -42,7 +43,7 @@ interface ImportDraft {
  * the original file being present after import.
  */
 export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettingsProps) {
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const [draft, setDraft] = useState<ImportDraft | null>(null);

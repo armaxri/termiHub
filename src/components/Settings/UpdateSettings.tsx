@@ -2,6 +2,7 @@ import { useState } from "react";
 import { RefreshCw, Loader2 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { setUpdateAutoCheck } from "@/services/api";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
@@ -27,7 +28,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
   const updateInfo = useAppStore((s) => s.updateInfo);
   const checkForUpdates = useAppStore((s) => s.checkForUpdates);
   const clearSkippedUpdateVersion = useAppStore((s) => s.clearSkippedUpdateVersion);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const [savingAutoCheck, setSavingAutoCheck] = useState(false);

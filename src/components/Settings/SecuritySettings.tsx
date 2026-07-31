@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
 import { Shield, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { CredentialStorageMode } from "@/types/credential";
 import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
@@ -73,7 +74,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
   const loadCredentialStoreStatus = useAppStore((s) => s.loadCredentialStoreStatus);
   const requestUnlock = useAppStore((s) => s.requestUnlock);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const [switching, setSwitching] = useState(false);

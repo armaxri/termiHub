@@ -1,6 +1,7 @@
 import { useState, useMemo, useCallback } from "react";
 import { PackagePlus, PackageMinus, Search } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { ALL_LANGUAGE_PACKAGES, BUILTIN_PACKAGE_IDS } from "@/utils/monacoLanguagePackages";
 import { registerAdditionalLanguagePackages } from "@/utils/monacoCustomLanguages";
 import { Button, Tooltip } from "@/components/ui";
@@ -18,7 +19,7 @@ interface LanguagePackagesSettingsProps {
  * be removed.
  */
 export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSettingsProps) {
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const [searchQuery, setSearchQuery] = useState("");

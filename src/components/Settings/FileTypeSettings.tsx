@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useMemo } from "react";
 import { Plus, Trash2, RotateCcw, Copy } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { BUILT_IN_FILENAME_MAPPINGS, BUILT_IN_EXTENSION_MAPPINGS } from "@/utils/languageMapping";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import { Button, Tooltip } from "@/components/ui";
@@ -39,7 +40,7 @@ interface FileTypeSettingsProps {
  * User overrides take precedence over the built-in defaults.
  */
 export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
 
   const userMappings = useMemo(

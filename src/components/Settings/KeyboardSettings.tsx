@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { RotateCcw, Download, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { KeyCombo, KeyBinding, ShortcutCategory } from "@/types/keybindings";
 import {
   getDefaultBindings,
@@ -42,7 +43,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   const [recordingAction, setRecordingAction] = useState<string | null>(null);
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
   const updateSettings = useAppStore((s) => s.updateSettings);
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
 
   // Force re-render when overrides change
   const [, forceRender] = useState(0);

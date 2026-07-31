@@ -3,6 +3,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { FilePlus2, Plus, Trash2, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { ExternalFileConfig } from "@/types/connection";
 import { Button, Toggle, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
@@ -12,7 +13,7 @@ import { SettingsField } from "./SettingsField";
  * External connection file management, extracted from SettingsPanel.
  */
 export function ExternalFilesSettings() {
-  const settings = useAppStore((s) => s.settings);
+  const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
   const reloadExternalConnections = useAppStore((s) => s.reloadExternalConnections);
   const [reloading, setReloading] = useState(false);
