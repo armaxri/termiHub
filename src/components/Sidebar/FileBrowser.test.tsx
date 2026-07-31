@@ -34,10 +34,22 @@ vi.mock("@/services/api", async (importOriginal) => {
 
 const mockedInvoke = vi.mocked(invoke);
 
-/** Flush pending microtasks (Promise callbacks) inside act(). */
+/**
+ * Flush pending microtasks (Promise callbacks) inside act().
+ *
+ * Uses `setImmediate` rather than `setTimeout(…, 0)` so the wait does not depend
+ * on the OS timer subsystem. A `setTimeout` macrotask must wait for a real
+ * wall-clock timer to fire; on a starved Windows CI runner (coarse ~15ms timer
+ * granularity, further delayed under load) that callback can be deferred long
+ * enough to trip the 15s per-test timeout — the intermittent
+ * `FileBrowser.test.tsx` flake tracked in #2282. `setImmediate` instead resolves
+ * on the next event-loop check phase, after microtasks and any due timer
+ * callbacks, without waiting on the wall clock — so the flush stays deterministic
+ * regardless of how loaded the runner is.
+ */
 async function flushAsync() {
   await act(async () => {
-    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setImmediate(r));
   });
 }
 
