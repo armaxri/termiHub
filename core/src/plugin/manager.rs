@@ -1826,6 +1826,83 @@ mod tests {
         assert!(healthy.error_message.is_none());
     }
 
+    /// End-to-end through the **real** [`HostLifecycleHook`]/[`PluginHost`]: a
+    /// frontend-only plugin (theme, no `terminalBackend` library) installed and
+    /// enabled must reach `Active`, and `get`/`list` — the frontend's source of
+    /// truth — must report it, so the theme/JS loaders that gate on `active`
+    /// actually pick it up (#2234). Disable/re-enable round-trips the state.
+    #[test]
+    fn real_host_activates_a_frontend_only_plugin() {
+        use crate::connection::ConnectionTypeRegistry;
+        use crate::plugin::{HostLifecycleHook, PluginHost};
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("plugins");
+        let host = Arc::new(PluginHost::new(
+            root.clone(),
+            Arc::new(Mutex::new(ConnectionTypeRegistry::new())),
+        ));
+        let mgr =
+            PluginManager::with_hook(&root, Arc::new(HostLifecycleHook::new(Arc::clone(&host))));
+
+        let pkg_dir = TempDir::new().unwrap();
+        let pkg = make_package(pkg_dir.path(), &manifest_json("themer", "1.0"), &[]);
+        let installed = mgr.install(&pkg, true, false).unwrap();
+
+        // Install enables + loads: the plugin is Active, and the list()/get() the
+        // frontend reads report Active too — not stuck at Installed.
+        assert_eq!(installed.state, PluginState::Active);
+        assert_eq!(mgr.get("themer").unwrap().state, PluginState::Active);
+        assert_eq!(mgr.list().unwrap()[0].state, PluginState::Active);
+        // Active without a backend library (frontend-only).
+        assert!(host.is_active("themer"));
+        assert!(!host.is_loaded("themer"));
+
+        // Disable tears it down; re-enable brings it back to Active.
+        assert_eq!(mgr.disable("themer").unwrap().state, PluginState::Disabled);
+        assert!(!host.is_active("themer"));
+        assert_eq!(mgr.get("themer").unwrap().state, PluginState::Disabled);
+
+        assert_eq!(mgr.enable("themer").unwrap().state, PluginState::Active);
+        assert!(host.is_active("themer"));
+        assert_eq!(mgr.get("themer").unwrap().state, PluginState::Active);
+    }
+
+    /// The startup path through the real host: a plugin persisted as enabled in a
+    /// previous session (installed with no host, so left at `Installed`) is
+    /// promoted to `Active` when `load_enabled_plugins` drives the host at boot.
+    #[test]
+    fn real_host_activates_enabled_plugins_at_startup() {
+        use crate::connection::ConnectionTypeRegistry;
+        use crate::plugin::{HostLifecycleHook, PluginHost};
+
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("plugins");
+
+        // Session 1: install with a plain manager (no host) — nothing loads, so
+        // the plugin persists as enabled-but-not-active.
+        {
+            let mgr = PluginManager::new(&root);
+            let pkg_dir = TempDir::new().unwrap();
+            let pkg = make_package(pkg_dir.path(), &manifest_json("persisted", "1.0"), &[]);
+            mgr.install(&pkg, true, false).unwrap();
+            assert_eq!(mgr.get("persisted").unwrap().state, PluginState::Installed);
+        }
+
+        // Session 2 (restart): a real host loads already-enabled plugins at
+        // startup, which promotes the persisted plugin to Active.
+        let host = Arc::new(PluginHost::new(
+            root.clone(),
+            Arc::new(Mutex::new(ConnectionTypeRegistry::new())),
+        ));
+        let mgr =
+            PluginManager::with_hook(&root, Arc::new(HostLifecycleHook::new(Arc::clone(&host))));
+        let loaded = mgr.load_enabled_plugins().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].state, PluginState::Active);
+        assert_eq!(mgr.get("persisted").unwrap().state, PluginState::Active);
+    }
+
     #[test]
     fn reconcile_leaves_compatible_plugins_enabled() {
         let (mgr, tmp) = manager();
