@@ -108,7 +108,10 @@ impl SftpFileBrowser {
     /// `total == 0` as indeterminate and shows a spinner rather than a
     /// percentage. Never errors, mirroring the previous desktop behavior.
     pub async fn remote_size(&self, path: &str) -> u64 {
-        if Self::ensure_connected(&self.state, &self.config).await.is_err() {
+        if Self::ensure_connected(&self.state, &self.config)
+            .await
+            .is_err()
+        {
             return 0;
         }
         let guard = self.state.lock().await;

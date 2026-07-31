@@ -6,7 +6,7 @@ use russh_sftp::client::SftpSession as RusshSftp;
 use tracing::{debug, info};
 
 use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser};
-use termihub_core::files::FileEntry;
+use termihub_core::files::{FileBrowser, FileEntry};
 
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
@@ -143,7 +143,11 @@ impl SftpSession {
     /// Download a remote file to a local path. Returns bytes written.
     pub fn read_file(&self, remote_path: &str, local_path: &str) -> Result<u64, TerminalError> {
         block_on_sftp(async {
-            let data = self.browser.read_file(remote_path).await.map_err(sftp_op_error)?;
+            let data = self
+                .browser
+                .read_file(remote_path)
+                .await
+                .map_err(sftp_op_error)?;
             tokio::fs::write(local_path, &data)
                 .await
                 .map_err(|e| TerminalError::SftpError(format!("write local file: {e}")))?;
@@ -183,7 +187,11 @@ impl SftpSession {
     /// Read a remote file's contents as a UTF-8 string.
     pub fn read_file_content(&self, remote_path: &str) -> Result<String, TerminalError> {
         block_on_sftp(async {
-            let data = self.browser.read_file(remote_path).await.map_err(sftp_op_error)?;
+            let data = self
+                .browser
+                .read_file(remote_path)
+                .await
+                .map_err(sftp_op_error)?;
             String::from_utf8(data)
                 .map_err(|e| TerminalError::SftpError(format!("read failed: invalid UTF-8: {e}")))
         })
@@ -382,6 +390,33 @@ mod tests {
             .is_some()
     }
 
+    /// Trust the loopback fixture host keys before connecting.
+    ///
+    /// The strict default host-key policy (#1969) trusts only a key already in
+    /// the runner's `~/.ssh/known_hosts`, so a freshly-built fixture container is
+    /// otherwise refused with "Unknown server key" (#2105). These loopback
+    /// fixtures are trusted unconditionally, mirroring
+    /// `sftp_transfer.rs::trust_fixture_host_keys` and core's
+    /// `common::trust_fixture_host_keys`. The verifier is process-global and
+    /// first-registration-wins, so calling it per test is a harmless no-op after
+    /// the first.
+    fn trust_fixture_host_keys() {
+        use termihub_core::backends::ssh::host_key::{
+            set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+        };
+
+        struct TrustLocalFixtures;
+
+        #[async_trait::async_trait]
+        impl HostKeyVerifier for TrustLocalFixtures {
+            async fn verify(&self, _info: &HostKeyInfo) -> bool {
+                true
+            }
+        }
+
+        let _ = set_host_key_verifier(Arc::new(TrustLocalFixtures));
+    }
+
     /// Password-auth config for a fixture container on `127.0.0.1:port`.
     fn testuser_config(port: u16, password: &str) -> SshConfig {
         SshConfig {
@@ -417,6 +452,8 @@ mod tests {
             );
             return;
         }
+
+        trust_fixture_host_keys();
 
         let result = tokio::task::spawn_blocking(move || {
             let config = testuser_config(port, "testpass");
@@ -479,6 +516,8 @@ mod tests {
             return;
         }
 
+        trust_fixture_host_keys();
+
         let result = tokio::task::spawn_blocking(move || {
             let config = testuser_config(port, "testpass");
             let verify = connect_and_authenticate(&config)?;
@@ -528,6 +567,8 @@ mod tests {
             );
             return;
         }
+
+        trust_fixture_host_keys();
 
         let result = tokio::task::spawn_blocking(move || {
             let config = testuser_config(port, "testpass");
