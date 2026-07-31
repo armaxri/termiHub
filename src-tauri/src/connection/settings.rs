@@ -154,6 +154,12 @@ pub struct AppSettings {
     pub cursor_style: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor_blink: Option<bool>,
+    /// Enable xterm's screen-reader mode (#2071). `None`/`Some(false)` keeps it
+    /// off (the frontend default) — it is an opt-in accessibility aid. Owned by
+    /// the frontend `AppSettings.screenReaderMode`; the backend only persists it
+    /// so the toggle survives a restart (#2261).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub screen_reader_mode: Option<bool>,
     #[serde(default = "default_true")]
     pub power_monitoring_enabled: bool,
     #[serde(default = "default_true")]
@@ -170,11 +176,31 @@ pub struct AppSettings {
     /// opt-out survives a restart (#1735).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confirm_close_live_session: Option<bool>,
+    /// Show a one-time notice when closing a tab attached to a persistent
+    /// background session, reassuring the user that the session keeps running.
+    /// The notice's "Don't show again" opt-out flips this to `false`. Defaults to
+    /// `true`. Owned by the frontend `AppSettings.confirmCloseAttachedTab`; the
+    /// backend only persists it so the opt-out survives a restart (#2261).
+    #[serde(default = "default_true")]
+    pub confirm_close_attached_tab: bool,
     /// When true (default), saving terminal content to a file shows a dialog
     /// offering to open the saved file in a Monaco editor tab. When false, the
     /// file is saved silently and no dialog or editor tab is opened.
     #[serde(default = "default_true")]
     pub ask_open_saved_file_in_tab: bool,
+    /// Show a warning before starting a Port Scanner scan whose estimated probe
+    /// count is very large. The warning's "Don't warn again" opt-out flips this
+    /// to `false`. Defaults to `true`. Owned by the frontend
+    /// `AppSettings.warnLargePortScan`; persisted here so it survives a restart
+    /// (#2261).
+    #[serde(default = "default_true")]
+    pub warn_large_port_scan: bool,
+    /// Show a warning before starting a Ping Sweep across a very large number of
+    /// hosts. The warning's "Don't warn again" opt-out flips this to `false`.
+    /// Defaults to `true`. Owned by the frontend `AppSettings.warnLargePingSweep`;
+    /// persisted here so it survives a restart (#2261).
+    #[serde(default = "default_true")]
+    pub warn_large_ping_sweep: bool,
     /// Default value for Shell Integration toggle in new SSH connections.
     #[serde(default = "default_true")]
     pub default_shell_integration: bool,
@@ -315,11 +341,15 @@ impl Default for AppSettings {
             scrollback_buffer: None,
             cursor_style: None,
             cursor_blink: None,
+            screen_reader_mode: None,
             power_monitoring_enabled: true,
             file_browser_enabled: true,
             confirm_close_tab_on_shortcut: true,
             confirm_close_live_session: None,
+            confirm_close_attached_tab: true,
             ask_open_saved_file_in_tab: true,
+            warn_large_port_scan: true,
+            warn_large_ping_sweep: true,
             default_shell_integration: true,
             default_x11_forwarding: true,
             provide_x_server_automatically: None,
@@ -1259,5 +1289,64 @@ mod tests {
             deserialized.updates.skipped_version.as_deref(),
             Some("0.2.0")
         );
+    }
+
+    #[test]
+    fn dropped_frontend_keys_survive_save_load() {
+        // Regression for #2261: confirmCloseAttachedTab, warnLargePortScan,
+        // warnLargePingSweep and screenReaderMode existed only in the frontend
+        // AppSettings, so save_settings silently dropped them when deserializing
+        // into the backend struct — flipping an opt-out off did not survive a
+        // restart. This guards the actual persistence path (save→reload the file)
+        // against future frontend/backend AppSettings drift.
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        // Each opt-out / toggle flipped away from its default.
+        let incoming = r#"{
+            "version": "1",
+            "externalConnectionFiles": [],
+            "confirmCloseAttachedTab": false,
+            "warnLargePortScan": false,
+            "warnLargePingSweep": false,
+            "screenReaderMode": true
+        }"#;
+        let settings: AppSettings = serde_json::from_str(incoming).unwrap();
+        storage.save(&settings).unwrap();
+
+        // Read the persisted file back as raw JSON: every key must have survived
+        // the deserialize→serialize round-trip that save_settings performs.
+        let persisted = std::fs::read_to_string(&storage.file_path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&persisted).unwrap();
+        assert_eq!(value["confirmCloseAttachedTab"], serde_json::json!(false));
+        assert_eq!(value["warnLargePortScan"], serde_json::json!(false));
+        assert_eq!(value["warnLargePingSweep"], serde_json::json!(false));
+        assert_eq!(value["screenReaderMode"], serde_json::json!(true));
+
+        // And they must reload into the typed struct with the flipped values.
+        let reloaded = storage.load_with_recovery().unwrap().data;
+        assert!(!reloaded.confirm_close_attached_tab);
+        assert!(!reloaded.warn_large_port_scan);
+        assert!(!reloaded.warn_large_ping_sweep);
+        assert_eq!(reloaded.screen_reader_mode, Some(true));
+    }
+
+    #[test]
+    fn dropped_frontend_keys_defaults() {
+        // The three confirm/warn opt-outs default on (true); the screen-reader
+        // toggle is an absent-means-off Option (frontend default false).
+        let settings = AppSettings::default();
+        assert!(settings.confirm_close_attached_tab);
+        assert!(settings.warn_large_port_scan);
+        assert!(settings.warn_large_ping_sweep);
+        assert!(settings.screen_reader_mode.is_none());
+
+        // A legacy file without any of the keys loads with those same defaults.
+        let json = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let legacy: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(legacy.confirm_close_attached_tab);
+        assert!(legacy.warn_large_port_scan);
+        assert!(legacy.warn_large_ping_sweep);
+        assert!(legacy.screen_reader_mode.is_none());
     }
 }
