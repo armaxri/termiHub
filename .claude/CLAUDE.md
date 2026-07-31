@@ -152,7 +152,7 @@ core/src/                     # Shared Rust core library (termihub-core)
   config/                     # ShellConfig, SshConfig, DockerConfig, SerialConfig, PtySize
   connection/                 # Connection types and traits
   errors.rs                   # CoreError, SessionError, FileError
-  files/                      # FileBackend trait, LocalFileBackend, FileEntry, utilities
+  files/                      # FileBrowser trait, LocalFileBrowser, FileEntry, utilities
   monitoring/                 # SystemStats, CpuCounters, StatsCollector trait, parsers
   output/                     # OutputCoalescer, screen-clear detection
   protocol/                   # JSON-RPC message types and error codes
