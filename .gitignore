@@ -94,5 +94,10 @@ tests/system/test-inventory.json
 core/tests/fixtures/test-plugin/Cargo.lock
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
-# Anchored to repo root so it does not also ignore .claude/skills/graft/.
-/graft/
+# NOTE: keep this pattern exactly `graft/` (unanchored). `graft build` re-appends
+# this literal line on every run when it's absent; anchoring it to /graft/ makes
+# graft think it's missing and re-append, dirtying the tree each build.
+graft/
+# The unanchored pattern above also matches the *tracked* skill dir at
+# .claude/skills/graft/ — re-admit it so the graft skill stays under version control.
+!.claude/skills/graft/
