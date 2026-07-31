@@ -70,14 +70,50 @@ fn registry_for(store: Arc<BroadcastStore>) -> HandlerRegistry {
         Ok(publish_broadcast(projector, &s, &intent.client_id))
     });
 
-    let s = store;
+    let s = store.clone();
     registry.route("broadcast.removeTarget", move |intent, projector| {
         let tab_id = str_field(intent, "tabId")?;
         s.remove_target(&intent.client_id, &tab_id);
         Ok(publish_broadcast(projector, &s, &intent.client_id))
     });
 
+    let s = store;
+    registry.route("broadcast.replace", move |intent, projector| {
+        let active = intent
+            .payload
+            .get("active")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| ("bad_payload".to_string(), "missing 'active'".to_string()))?;
+        let source = intent
+            .payload
+            .get("sourceTabId")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let scope = scope_field(intent, true)?.unwrap_or_default();
+        let targets = str_array(intent, "targetTabIds")?;
+        let last_scope = last_scope_field(intent)?;
+        s.replace(
+            &intent.client_id,
+            active,
+            source,
+            scope,
+            targets,
+            last_scope,
+        );
+        Ok(publish_broadcast(projector, &s, &intent.client_id))
+    });
+
     registry
+}
+
+fn last_scope_field(intent: &Intent) -> Result<BroadcastScope, (String, String)> {
+    match intent.payload.get("lastScope").and_then(Value::as_str) {
+        Some("all") => Ok(BroadcastScope::All),
+        Some("panel") => Ok(BroadcastScope::Panel),
+        Some("custom") => Ok(BroadcastScope::Custom),
+        Some(_) => Err(("bad_payload".to_string(), "invalid 'lastScope'".to_string())),
+        None => Err(("bad_payload".to_string(), "missing 'lastScope'".to_string())),
+    }
 }
 
 fn scope_field(
@@ -389,6 +425,44 @@ fn toggle_off_then_on_round_trips_through_the_region() {
     }
     assert_eq!(cache.view, store.snapshot("A"), "cache converges");
     assert_eq!(cache.view["active"], json!(false));
+}
+
+#[test]
+fn a_replace_mirror_overwrites_the_region_verbatim_and_converges() {
+    // The render-cut mirror: a `broadcast.replace` sets the whole slice from the
+    // frontend snapshot, and the client cache converges on it byte-for-byte.
+    let store = Arc::new(BroadcastStore::new());
+    let region = broadcast_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(&region, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    let ack = dispatcher.dispatch(intent(
+        "broadcast.replace",
+        "A",
+        json!({
+            "active": true,
+            "sourceTabId": "s2",
+            "scope": "custom",
+            "targetTabIds": ["s2", "a", "b"],
+            "lastScope": "panel",
+        }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff for the whole-state mirror");
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view, store.snapshot("A"), "cache converges on mirror");
+    assert_eq!(cache.view["active"], json!(true));
+    assert_eq!(cache.view["sourceTabId"], json!("s2"));
+    assert_eq!(cache.view["scope"], json!("custom"));
+    assert_eq!(cache.view["lastScope"], json!("panel"));
+    // Verbatim: no source-prepend/de-dup, unlike start.
+    assert_eq!(cache.view["targetTabIds"], json!(["s2", "a", "b"]));
 }
 
 #[test]
