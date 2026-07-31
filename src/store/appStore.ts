@@ -284,6 +284,7 @@ import {
   sessionIntentsEnabled,
   type SessionIntentKind,
 } from "@/store/sessionBridge";
+import { mirrorMonitorIntent } from "@/store/systemMonitorBridge";
 
 export type SidebarView =
   | "connections"
@@ -7196,12 +7197,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
     sessionCapabilities: {},
     remoteDesktopResolutions: {},
 
-    clearMonitoringError: (key) =>
+    clearMonitoringError: (key) => {
+      const entry = useAppStore.getState().monitors[key];
+      if (!entry || entry.error === null) return;
       set((state) => {
-        const entry = state.monitors[key];
-        if (!entry || entry.error === null) return {};
-        return { monitors: { ...state.monitors, [key]: { ...entry, error: null } } };
-      }),
+        const current = state.monitors[key];
+        if (!current || current.error === null) return {};
+        return { monitors: { ...state.monitors, [key]: { ...current, error: null } } };
+      });
+      // Mutation cut (#2224): dismiss the error in the authoritative region too.
+      mirrorMonitorIntent("monitor.clearError", { key });
+    },
 
     setSessionCapabilities: (sessionId, caps) =>
       set((state) => ({
@@ -7252,6 +7258,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
         status: "connecting",
         intervalMs,
       });
+      // Mutation cut (#2224): mirror the connect start into the authoritative
+      // `system-monitors` region. A no-op / logged fallback when the flag is off
+      // or the transport is unavailable — the local slice above already applied.
+      mirrorMonitorIntent("monitor.open", { key, host: host ?? key, intervalMs });
 
       try {
         // Attach the stats listener; it filters by sessionId and folds fresh
@@ -7269,6 +7279,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
               monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
             };
           });
+          mirrorMonitorIntent("monitor.stats", { key, stats });
         });
         _monitoringStatsUnlisten.set(key, statsUnlisten);
 
@@ -7282,11 +7293,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
             if (!entry) return {};
             return { monitors: { ...state.monitors, [key]: { ...entry, status } } };
           });
+          mirrorMonitorIntent("monitor.status", { key, status });
         });
         _monitoringStatusUnlisten.set(key, statusUnlisten);
 
         await sessionMonitoringOpen(key, intervalMs);
         upsertMonitor(key, { monitorSessionId: key, loading: false, status: "live" });
+        mirrorMonitorIntent("monitor.opened", { key });
       } catch (err) {
         // The stats/status listeners are attached before the open that may throw
         // here. Detach them so a failed open never leaks a dangling Tauri
@@ -7294,12 +7307,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // not clean it up either). See audit gap G5.
         frontendLog("monitoring", "detaching monitoring listeners after failed open");
         detachMonitorListeners(key);
+        const errorMessage = err instanceof Error ? err.message : String(err);
         upsertMonitor(key, {
           monitorSessionId: null,
           loading: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage,
           status: null,
         });
+        mirrorMonitorIntent("monitor.openFailed", { key, error: errorMessage });
       }
     },
 
@@ -7332,6 +7347,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }
         return { monitors: nextMonitors, monitoringStatsCache: nextCache };
       });
+
+      // Mutation cut (#2224): drop each entry from the authoritative region. The
+      // store's `close` retains the stats cache (as the local teardown does), and
+      // the cache already tracks the last stats via `monitor.stats`, so the region
+      // stays a faithful mirror of `appStore`.
+      for (const k of keys) mirrorMonitorIntent("monitor.close", { key: k });
     },
 
     setMonitoringPaused: async (key, paused) => {
@@ -7341,6 +7362,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // authoritative `status`, but the flag gates the local UI (neutral badge +
       // dimmed stats) immediately (#1233).
       upsertMonitor(key, { paused, status: paused ? "paused" : "live" });
+      // Mutation cut (#2224): mirror the optimistic pause into the region.
+      mirrorMonitorIntent("monitor.setPaused", { key, paused });
       if (entry.monitorSessionId) {
         try {
           await sessionMonitoringSetPaused(entry.monitorSessionId, paused);
@@ -7348,6 +7371,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           frontendLog("monitoring", `set paused failed for ${key}: ${err}`);
           // Roll back the optimistic flag so the UI reflects reality.
           upsertMonitor(key, { paused: !paused });
+          mirrorMonitorIntent("monitor.setPaused", { key, paused: !paused });
           throw err;
         }
       }
@@ -7357,6 +7381,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const entry = useAppStore.getState().monitors[key];
       if (!entry) return;
       upsertMonitor(key, { intervalMs });
+      // Mutation cut (#2224): mirror the new cadence into the region.
+      mirrorMonitorIntent("monitor.setInterval", { key, intervalMs });
       if (entry.monitorSessionId) {
         try {
           await sessionMonitoringSetInterval(entry.monitorSessionId, intervalMs);
