@@ -282,7 +282,9 @@ async fn already_enabled_plugin_is_loaded_at_startup_without_a_toggle() {
     conn.disconnect().await.unwrap();
 
     // The broken plugin surfaced as Error, but startup carried on and the healthy
-    // one still loaded.
+    // one still loaded — and, being enabled and successfully loaded by the wired
+    // host, it is promoted to `Active` (the state the frontend loaders gate on),
+    // not left resting at `Installed` (#2234).
     let broken = loaded
         .iter()
         .find(|p| p.manifest.id == "broken")
@@ -290,7 +292,7 @@ async fn already_enabled_plugin_is_loaded_at_startup_without_a_toggle() {
     assert_eq!(broken.state, PluginState::Error);
     assert!(broken.error_message.is_some());
     let echo = loaded.iter().find(|p| p.manifest.id == "echo").unwrap();
-    assert_eq!(echo.state, PluginState::Installed);
+    assert_eq!(echo.state, PluginState::Active);
     assert!(echo.error_message.is_none());
 }
 
