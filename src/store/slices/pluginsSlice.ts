@@ -154,22 +154,14 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       setRegisteredPluginThemes(pluginThemes);
       set({ plugins, pluginBackendTypes: derivePluginBackendTypes(plugins), pluginThemes });
       // Load/unload frontend JS plugins — protocol parsers + status-bar
-      // widgets (#1998). Reconciles the injected scripts against the active
-      // set; individual load failures are logged and skipped. Frontend-plugin
-      // execution is gated behind the experimental opt-in (#2048): when it is
-      // off, reconcile loads nothing and unloads anything already injected.
+      // widgets (#1998). Reconciles the sandbox against the active set: each
+      // plugin's entry point is `importScripts`-ed from the `plugin://` origin,
+      // so a load failure now surfaces as a `loadError` inside the worker (#2266)
+      // rather than here. Frontend-plugin execution is gated behind the
+      // experimental opt-in (#2048): when it is off, reconcile loads nothing and
+      // unloads anything already loaded.
       const frontendEnabled = get().settings.frontendPluginsEnabled ?? false;
-      const frontendErrors = await reconcileFrontendPlugins(
-        plugins,
-        readPluginFile,
-        frontendEnabled
-      );
-      for (const err of frontendErrors) {
-        frontendLog(
-          "app_store",
-          `Skipped frontend plugin ${err.pluginId} (${err.entryPoint}): ${err.message}`
-        );
-      }
+      reconcileFrontendPlugins(plugins, frontendEnabled);
       // Re-apply the active theme: a just-registered plugin theme now takes
       // effect, and a theme whose plugin was disabled/uninstalled falls back
       // to the default (concept edge case).

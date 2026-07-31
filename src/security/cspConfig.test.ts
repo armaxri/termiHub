@@ -44,6 +44,23 @@ describe("production CSP (tauri.conf.json)", () => {
     expect(prod["script-src"]).not.toContain("'unsafe-eval'");
   });
 
+  it("no longer allows blob: in script-src — plugin code loads from plugin:// (#2266)", () => {
+    // The sandbox worker used to `importScripts` a `blob:` URL; it now loads each
+    // plugin entry point from the app-controlled `plugin://` origin (served
+    // already-wrapped by the protocol handler), so `blob:` must not remain a
+    // script source. It stays in worker-src/child-src for Monaco/xterm.
+    expect(prod["script-src"]).not.toContain("blob:");
+  });
+
+  it("allows the plugin origin(s) in script-src, in both platform forms (#2266)", () => {
+    // Tauri assigns the custom scheme a different webview origin per platform:
+    // `plugin://localhost` (macOS/iOS/Linux) and `http://plugin.localhost`
+    // (Windows/Android). Both must be listed so the worker's importScripts is
+    // allowed on every platform.
+    expect(prod["script-src"]).toContain("plugin://localhost");
+    expect(prod["script-src"]).toContain("http://plugin.localhost");
+  });
+
   it("allows no WebSocket (ws://) origin in connect-src — the bridge allowance is test-only (#2059)", () => {
     expect(prod["connect-src"]).toBeDefined();
     expect(prod["connect-src"].some((s) => s.startsWith("ws://") || s.startsWith("wss://"))).toBe(
@@ -57,10 +74,10 @@ describe("production CSP (tauri.conf.json)", () => {
   });
 
   it("keeps the Worker sandbox substrate (worker-src / child-src 'self' blob:) available", () => {
-    // Frontend plugins execute in a Web Worker loaded from 'self', running plugin
-    // code from a blob URL inside the worker (#2136). This locks that substrate so
-    // a later CSP tidy-up cannot silently remove it. `blob:` in `script-src`
-    // stays for now — dropping it is the deferred final step of #2136.
+    // Frontend plugins execute in a Web Worker loaded from 'self' (#2136); the
+    // worker itself, and Monaco/xterm's blob workers, still need `blob:` here. This
+    // locks that substrate so a later CSP tidy-up cannot silently remove it —
+    // independently of `script-src`, which no longer carries `blob:` (#2266).
     expect(prod["worker-src"]).toEqual(["'self'", "blob:"]);
     expect(prod["child-src"]).toEqual(["'self'", "blob:"]);
   });

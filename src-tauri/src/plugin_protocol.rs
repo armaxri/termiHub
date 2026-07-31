@@ -4,20 +4,29 @@
 //!
 //! # Why this exists
 //!
-//! Frontend plugin JS runs inside a least-privilege Web Worker (#2136). Today the
-//! worker executes each plugin by turning its source into a `blob:` URL and
-//! `importScripts`-ing that — which only works because `script-src` still allows
-//! `blob:`. To drop `blob:` from `script-src`, plugin code has to load from a URL
-//! whose origin already satisfies `script-src`. This protocol provides exactly
-//! that origin: `plugin://localhost/<id>/<relative-path>` (macOS/iOS/Linux) /
+//! Frontend plugin JS runs inside a least-privilege Web Worker (#2136). The worker
+//! executes each plugin by `importScripts`-ing it from this origin, so plugin code
+//! loads from a URL whose origin already satisfies `script-src` — no `blob:`
+//! allowance is needed there any more (#2266). This protocol provides that origin:
+//! `plugin://localhost/<id>/<relative-path>` (macOS/iOS/Linux) /
 //! `http://plugin.localhost/<id>/<relative-path>` (Windows/Android) reads
 //! `<app-data>/plugins/<id>/<relative-path>` and returns its bytes.
 //!
-//! This module is the **substrate only**: registering the scheme and serving the
-//! bytes safely. Switching the sandbox worker's loader onto it, adding the origin
-//! to `script-src`, and finally removing `blob:` are the follow-up slice — until
-//! then this origin is not listed in the CSP, so the webview cannot yet reach it
-//! (the handler is nonetheless fully exercised by the unit tests below).
+//! # Two serving modes
+//!
+//! - **Raw** (`/<id>/<relative>`) returns the file bytes unchanged — for assets a
+//!   plugin references directly (themes, images, worklets).
+//! - **Wrapped** (`/load/<id>/<relative>`) returns a JS entry point already wrapped
+//!   in the per-plugin IIFE that binds `self.__termihubMakePluginApi("<id>")`
+//!   (#2020). This wrapping used to live in the worker (`wrapPluginSource` in TS),
+//!   but building the wrapped string there required a `blob:` URL; moving it
+//!   server-side is what lets `blob:` leave `script-src` (#2266). The wrap is a
+//!   pure prepend/append around the untouched body — exactly what the TS wrapper
+//!   did — so the plugin's own source is never rewritten, only enveloped.
+//!
+//! `load` is a **reserved leading segment**: a raw request whose plugin id is
+//! literally `load` is not reachable, which is acceptable because the raw mode has
+//! no consumer that could name a plugin `load` and request it un-wrapped.
 //!
 //! # Path safety
 //!
@@ -40,8 +49,20 @@ use termihub_core::plugin::{PluginManager, PluginManagerError};
 /// account for when it adds the origin to `script-src`.
 pub const PLUGIN_URI_SCHEME: &str = "plugin";
 
-/// Split a request path (`/<id>/<relative...>`) into the plugin id and the
-/// relative path within that plugin's directory.
+/// The reserved leading path segment that selects the wrapped serving mode.
+const WRAP_SEGMENT: &str = "load";
+
+/// A parsed protocol request: which plugin file to read, and whether to wrap it in
+/// the per-plugin loader IIFE (#2020/#2266).
+struct PluginRequest {
+    id: String,
+    relative: String,
+    /// `true` for a `/load/<id>/<relative>` request — serve the wrapped entry point.
+    wrap: bool,
+}
+
+/// Split a request path into the plugin id, the relative path within that plugin's
+/// directory, and whether the wrapped (`/load/...`) mode was requested.
 ///
 /// Returns `None` when there is no id segment or no relative path (a bare
 /// `plugin://localhost/` or `plugin://localhost/<id>` has nothing to serve). Both
@@ -49,9 +70,22 @@ pub const PLUGIN_URI_SCHEME: &str = "plugin";
 /// decoding is rejected. Traversal is *not* checked here — that is
 /// [`PluginManager::read_file`]'s job, so there is a single source of truth for
 /// containment.
-fn parse_request_path(path: &str) -> Option<(String, String)> {
+fn parse_request_path(path: &str) -> Option<PluginRequest> {
     let trimmed = path.trim_start_matches('/');
-    let (id_enc, rest_enc) = trimmed.split_once('/')?;
+    // A leading `load/` segment selects the wrapped mode; the remainder is the
+    // usual `<id>/<relative>`.
+    let (rest, wrap) = match trimmed.strip_prefix(WRAP_SEGMENT) {
+        Some(after) => match after.strip_prefix('/') {
+            Some(inner) => (inner, true),
+            // `/load` with no trailing slash is a raw request for a plugin whose id
+            // happens to be `load` — but that id is unreachable by design, and a
+            // bare `/load` has no relative path anyway, so it falls through to the
+            // raw split below, which rejects it.
+            None => (trimmed, false),
+        },
+        None => (trimmed, false),
+    };
+    let (id_enc, rest_enc) = rest.split_once('/')?;
     if id_enc.is_empty() || rest_enc.is_empty() {
         return None;
     }
@@ -63,7 +97,33 @@ fn parse_request_path(path: &str) -> Option<(String, String)> {
     if id.is_empty() || relative.is_empty() {
         return None;
     }
-    Some((id, relative))
+    Some(PluginRequest { id, relative, wrap })
+}
+
+/// Wrap a plugin entry point's bytes in the per-plugin loader IIFE (#2020) so the
+/// worker runs it against its **own** `termihub` API instance bound to `id`. This
+/// is the server-side move of the former `wrapPluginSource` TS helper (#2266): the
+/// body is placed unchanged inside the function, with a prefix/suffix around it, so
+/// every register call it makes — sync or from a later timer/promise/event
+/// callback — is attributed to this plugin regardless of load timing.
+///
+/// The output must stay byte-for-byte compatible with the TS wrapper the worker
+/// used to build, so the id is JSON-encoded exactly as `JSON.stringify` would, and
+/// the bridge lookup falls back to the shared global `termihub` when the bridge is
+/// somehow absent.
+fn wrap_plugin_source(id: &str, body: &[u8]) -> Vec<u8> {
+    // `id` is a validated slug (`[a-z0-9-]`), so this never escapes; using
+    // `serde_json` keeps it identical to the TS `JSON.stringify(pluginId)`.
+    let id_json = serde_json::to_string(id).unwrap_or_else(|_| format!("\"{id}\""));
+    let prefix = b"(function (termihub) {\n";
+    let suffix = format!(
+        "\n}})((self.__termihubMakePluginApi ? self.__termihubMakePluginApi({id_json}) : self.termihub));"
+    );
+    let mut out = Vec::with_capacity(prefix.len() + body.len() + suffix.len());
+    out.extend_from_slice(prefix);
+    out.extend_from_slice(body);
+    out.extend_from_slice(suffix.as_bytes());
+    out
 }
 
 /// Best-effort `Content-Type` for a served asset, by file extension. Plugin
@@ -119,16 +179,23 @@ fn empty(status: StatusCode) -> Response<Cow<'static, [u8]>> {
 /// empty error response. This is the testable core of the protocol, independent
 /// of Tauri's request/response plumbing.
 pub fn serve(manager: &PluginManager, uri_path: &str) -> Response<Cow<'static, [u8]>> {
-    let Some((id, relative)) = parse_request_path(uri_path) else {
+    let Some(req) = parse_request_path(uri_path) else {
         return empty(StatusCode::BAD_REQUEST);
     };
 
-    match manager.read_file(&id, &relative) {
-        Ok(bytes) => Response::builder()
-            .status(StatusCode::OK)
-            .header(CONTENT_TYPE, content_type_for(&relative))
-            .body(Cow::Owned(bytes))
-            .unwrap_or_else(|_| empty(StatusCode::INTERNAL_SERVER_ERROR)),
+    match manager.read_file(&req.id, &req.relative) {
+        Ok(bytes) => {
+            let body = if req.wrap {
+                wrap_plugin_source(&req.id, &bytes)
+            } else {
+                bytes
+            };
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, content_type_for(&req.relative))
+                .body(Cow::Owned(body))
+                .unwrap_or_else(|_| empty(StatusCode::INTERNAL_SERVER_ERROR))
+        }
         Err(err) => empty(status_for_error(&err)),
     }
 }
@@ -186,29 +253,50 @@ mod tests {
         resp.body().as_ref()
     }
 
+    /// Assert a parse yields the expected id, relative path and wrap flag.
+    fn assert_parse(path: &str, id: &str, relative: &str, wrap: bool) {
+        let req = parse_request_path(path).expect("request should parse");
+        assert_eq!(req.id, id);
+        assert_eq!(req.relative, relative);
+        assert_eq!(req.wrap, wrap);
+    }
+
     #[test]
     fn parse_splits_id_and_relative() {
-        assert_eq!(
-            parse_request_path("/demo/frontend/index.js"),
-            Some(("demo".into(), "frontend/index.js".into()))
+        assert_parse("/demo/frontend/index.js", "demo", "frontend/index.js", false);
+    }
+
+    #[test]
+    fn parse_load_prefix_selects_wrapped_mode() {
+        assert_parse(
+            "/load/demo/frontend/index.js",
+            "demo",
+            "frontend/index.js",
+            true,
         );
     }
 
     #[test]
     fn parse_percent_decodes_segments() {
         // A space encoded in the path decodes back to the real filename.
-        assert_eq!(
-            parse_request_path("/demo/frontend/my%20file.js"),
-            Some(("demo".into(), "frontend/my file.js".into()))
+        assert_parse(
+            "/demo/frontend/my%20file.js",
+            "demo",
+            "frontend/my file.js",
+            false,
         );
     }
 
     #[test]
     fn parse_rejects_missing_relative_or_id() {
-        assert_eq!(parse_request_path("/"), None);
-        assert_eq!(parse_request_path("/demo"), None);
-        assert_eq!(parse_request_path("/demo/"), None);
-        assert_eq!(parse_request_path("//index.js"), None);
+        assert!(parse_request_path("/").is_none());
+        assert!(parse_request_path("/demo").is_none());
+        assert!(parse_request_path("/demo/").is_none());
+        assert!(parse_request_path("//index.js").is_none());
+        // `/load` and `/load/<id>` (no relative) have nothing to serve.
+        assert!(parse_request_path("/load").is_none());
+        assert!(parse_request_path("/load/demo").is_none());
+        assert!(parse_request_path("/load/demo/").is_none());
     }
 
     #[test]
@@ -226,6 +314,26 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(resp.headers().get(CONTENT_TYPE).unwrap(), "text/javascript");
         assert_eq!(body_bytes(&resp), b"self.termihub = self.termihub;");
+    }
+
+    #[test]
+    fn serve_wrapped_mode_envelopes_the_entry_point() {
+        let (_tmp, manager) = manager_with_demo_plugin();
+        let resp = serve(&manager, "/load/demo/frontend/index.js");
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(resp.headers().get(CONTENT_TYPE).unwrap(), "text/javascript");
+        // Byte-for-byte identical to the former TS `wrapPluginSource("demo", body)`.
+        let expected = b"(function (termihub) {\nself.termihub = self.termihub;\n})((self.__termihubMakePluginApi ? self.__termihubMakePluginApi(\"demo\") : self.termihub));";
+        assert_eq!(body_bytes(&resp), expected);
+    }
+
+    #[test]
+    fn wrap_plugin_source_matches_ts_wrapper_shape() {
+        // Mirrors `wrapPluginSource` in `src/plugins/sandbox/protocol.ts` before the
+        // logic moved here: `(function (termihub) {\n<body>\n})(<api>);`.
+        let out = wrap_plugin_source("my-plugin", b"registerX();");
+        let expected = "(function (termihub) {\nregisterX();\n})((self.__termihubMakePluginApi ? self.__termihubMakePluginApi(\"my-plugin\") : self.termihub));";
+        assert_eq!(String::from_utf8(out).unwrap(), expected);
     }
 
     #[test]

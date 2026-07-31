@@ -354,10 +354,10 @@ pub fn run() {
         .manage(log_buffer)
         // App-controlled origin for installed plugin files (#2251): serves
         // `<app-data>/plugins/<id>/<path>` over `plugin://localhost/<id>/<path>`
-        // (macOS/Linux) / `http://plugin.localhost/...` (Windows). Substrate for
-        // loading frontend plugin code without a `blob:` `script-src` allowance;
-        // the sandbox-worker loader switch + CSP change follow in #2251's next
-        // slice. Fails closed on any bad request (see `plugin_protocol`).
+        // (macOS/Linux) / `http://plugin.localhost/...` (Windows), plus the wrapped
+        // `/load/<id>/<path>` entry-point mode the sandbox worker `importScripts`.
+        // This is what lets frontend plugin code load without a `blob:` `script-src`
+        // allowance (#2266). Fails closed on any bad request (see `plugin_protocol`).
         .register_uri_scheme_protocol(plugin_protocol::PLUGIN_URI_SCHEME, plugin_protocol::handle);
 
     // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into

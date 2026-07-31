@@ -6,9 +6,11 @@
  * plugin code loaded here cannot reach the host app, the document, or the
  * backend. The worker installs the per-plugin registration API on its own global
  * ({@link ./pluginRuntimeCore.ensureTermiHubApi}), then, for each plugin the host
- * sends, wraps the entry-point source and runs it via a `blob:`-URL
- * `importScripts` — the same CSP-compatible mechanism (`script-src 'self'
- * blob:`) the old main-document loader used, now confined to the worker.
+ * sends, `importScripts` its entry point from the app-controlled `plugin://`
+ * origin (the wrapped `/load/<id>/<path>` mode — the protocol serves it already
+ * enveloped in the per-plugin loader IIFE, #2020/#2266). Loading from that origin
+ * satisfies `script-src` directly, so the worker no longer builds a `blob:` URL
+ * and `blob:` could leave `script-src`.
  *
  * All communication is over `postMessage` per {@link ./protocol}:
  * - plugin registrations become `widgetUpsert` / `parsersActive` messages;
@@ -28,7 +30,6 @@ import {
   transformChunk,
   unregisterPlugin,
 } from "./pluginRuntimeCore";
-import { wrapPluginSource } from "./protocol";
 import type { HostToWorkerMessage, TermiHubPluginAPI, WorkerToHostMessage } from "./protocol";
 
 /** The worker global, typed enough to install the plugin API and post messages. */
@@ -71,19 +72,18 @@ subscribeParsersActive((active) => post({ t: "parsersActive", active }));
 onFrontendLog((entry) => post({ t: "log", message: `${entry.target}: ${entry.message}` }));
 
 /**
- * Run a plugin's entry point inside the sandbox. The source is wrapped so it
- * receives its own per-plugin API instance (#2020) and loaded from a blob URL —
- * creating the URL already requires script execution, so it is not an injection
- * vector, and `script-src 'self' blob:` runs it under the enforced CSP. A syntax
- * or top-level runtime error is reported to the host, never thrown out of the
- * message handler.
+ * Run a plugin's entry point(s) inside the sandbox by `importScripts`-ing each
+ * URL on the app-controlled `plugin://` origin. The protocol serves the wrapped
+ * mode (`/load/<id>/<path>`), so the fetched body already carries the per-plugin
+ * loader IIFE that binds this plugin's own API instance (#2020/#2266) — no `blob:`
+ * URL and no client-side wrapping. Loading from that origin satisfies `script-src`
+ * directly. A failed fetch (missing file → the protocol's 404), syntax error, or
+ * top-level runtime error is reported to the host, never thrown out of the message
+ * handler.
  */
-function loadPlugin(pluginId: string, codes: string[]): void {
-  for (const code of codes) {
-    const wrapped = wrapPluginSource(pluginId, code);
-    let url: string | undefined;
+function loadPlugin(pluginId: string, entryUrls: string[]): void {
+  for (const url of entryUrls) {
     try {
-      url = URL.createObjectURL(new Blob([wrapped], { type: "text/javascript" }));
       (self as unknown as { importScripts(...urls: string[]): void }).importScripts(url);
     } catch (err) {
       post({
@@ -91,8 +91,6 @@ function loadPlugin(pluginId: string, codes: string[]): void {
         pluginId,
         message: err instanceof Error ? err.message : String(err),
       });
-    } finally {
-      if (url) URL.revokeObjectURL(url);
     }
   }
 }
@@ -101,7 +99,7 @@ ctx.addEventListener("message", (e: MessageEvent<HostToWorkerMessage>) => {
   const msg = e.data;
   switch (msg.t) {
     case "load":
-      loadPlugin(msg.pluginId, msg.codes);
+      loadPlugin(msg.pluginId, msg.entryUrls);
       break;
     case "unload":
       unregisterPlugin(msg.pluginId);

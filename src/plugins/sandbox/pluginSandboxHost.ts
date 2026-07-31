@@ -190,11 +190,15 @@ function onWatchdog(): void {
 
 // ─── Host → worker: plugin lifecycle ─────────────────────────────────────────
 
-/** Load a plugin's entry-point source(s) into the sandbox and run them. */
-export function loadPluginInSandbox(pluginId: string, codes: string[]): void {
+/**
+ * Load a plugin's entry point(s) into the sandbox and run them. `entryUrls` are
+ * the plugin's entry points on the app-controlled `plugin://` origin, which the
+ * worker `importScripts` in order (#2266).
+ */
+export function loadPluginInSandbox(pluginId: string, entryUrls: string[]): void {
   ensureWorker();
   loadedPlugins.add(pluginId);
-  post({ t: "load", pluginId, codes });
+  post({ t: "load", pluginId, entryUrls });
 }
 
 /** Unload a plugin from the sandbox; terminates the worker once none remain. */
