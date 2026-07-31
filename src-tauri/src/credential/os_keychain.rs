@@ -12,12 +12,6 @@ use super::CredentialStore;
 /// a unique keychain entry.
 const SERVICE_NAME: &str = "termiHub";
 
-/// All credential types termiHub stores. Used by
-/// [`OsKeychainStore::remove_all_for_connection`] because OS credential stores
-/// cannot be portably enumerated through the `keyring` crate.
-const ALL_CREDENTIAL_TYPES: [CredentialType; 2] =
-    [CredentialType::Password, CredentialType::KeyPassphrase];
-
 /// Credential store backed by the native OS credential store via the
 /// [`keyring`](https://crates.io/crates/keyring) crate.
 ///
@@ -101,7 +95,9 @@ impl CredentialStore for OsKeychainStore {
     fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
         // OS credential stores cannot be enumerated portably through `keyring`,
         // so we delete every known credential type for the connection instead.
-        for credential_type in ALL_CREDENTIAL_TYPES {
+        // The list is `CredentialType::ALL` so it cannot drift out of date when
+        // a new variant is added and leave a secret orphaned here (#2305).
+        for credential_type in CredentialType::ALL {
             let key = CredentialKey::new(connection_id, credential_type);
             self.remove(&key)?;
         }
