@@ -133,6 +133,65 @@ export function transferRenderFromProjectionEnabled(): boolean {
   return true;
 }
 
+// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
+
+let mutationFlagOverride: boolean | null = null;
+
+interface TransferMutationFlagWindow {
+  __TERMIHUB_TRANSFER_INTENTS__?: boolean;
+  localStorage?: Storage;
+}
+
+/**
+ * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
+ * `null` clears the override and falls back to the window/localStorage signal,
+ * then to the default (on).
+ */
+export function setTransferIntentsEnabled(value: boolean | null): void {
+  mutationFlagOverride = value;
+}
+
+/**
+ * Whether the Transfer Queue mutations (seed/progress/reconcile a queue row,
+ * remove a row, clear completed, collapse/expand the panel) dispatch granular
+ * `transfer.*` intents so the backend
+ * {@link import("../../src-tauri/src/transfers_projection/store").TransferStore} is
+ * authoritative — instead of only the render-cut {@link seedTransfersRegion}
+ * `transfer.replace` mirror driving the region.
+ *
+ * **On by default** (#2229 mutation cut, the final Phase-5 domain). When on, each
+ * queue action mirrors its transition through a `transfer.*` intent (via
+ * {@link mirrorTransferIntent}), and the render-cut hook
+ * ({@link import("./useProjectedTransfers").useProjectedTransfers}) reflects the
+ * region back into the UI. The local `appStore` reducer path stays in place as the
+ * render source and as a resilience / rollback fallback — any dispatch failure is
+ * logged and the local mutation continues, so a backend hiccup can never break the
+ * transfer queue (the reducer removal is a later step). When off, `appStore` drives
+ * the slice purely locally (the pre-cut path). The flip was taken on the automated
+ * parity tests plus the instant local fallback, mirroring the connections mutation
+ * cut (#2225). Overridable at runtime for rollback / tests via
+ * `window.__TERMIHUB_TRANSFER_INTENTS__` or
+ * `localStorage["termihub.transferIntents"]` (set `"false"` to restore the pre-cut
+ * local-mutation path; `"true"` to force on).
+ */
+export function transferIntentsEnabled(): boolean {
+  if (mutationFlagOverride !== null) return mutationFlagOverride;
+  try {
+    if (typeof window !== "undefined") {
+      const w = window as unknown as TransferMutationFlagWindow;
+      if (typeof w.__TERMIHUB_TRANSFER_INTENTS__ === "boolean") {
+        return w.__TERMIHUB_TRANSFER_INTENTS__;
+      }
+      const ls = w.localStorage?.getItem("termihub.transferIntents");
+      if (ls === "true") return true;
+      if (ls === "false") return false;
+    }
+  } catch {
+    // A missing/blocked window or storage just means "use the default".
+  }
+  return true;
+}
+
 // ── Transport + shared region client (lazy, mirrors the connections slice) ─────
 
 let transportInstance: Transport | null = null;
@@ -275,6 +334,57 @@ export function seedTransfersRegion(
     // A synchronous transport-construction failure (non-Tauri, no socket).
     lastSeededSignature = null;
     return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ── Mutation cut: granular transfer.* intent dispatch ─────────────────────────
+
+/**
+ * The granular `transfer.*` intent kinds the mutation cut dispatches (twins of the
+ * Rust routes). Excludes `transfer.replace`, which is the render-cut whole-slice
+ * mirror ({@link seedTransfersRegion}); the mutation cut drives the region through
+ * these per-transition intents instead so the store becomes authoritative.
+ */
+export type TransferIntentKind =
+  | "transfer.seed"
+  | "transfer.progress"
+  | "transfer.reconcile"
+  | "transfer.remove"
+  | "transfer.clearCompleted"
+  | "transfer.setMinimized";
+
+/** Dispatch a granular `transfer.*` intent, resolving with the ack (parity tests). */
+export function dispatchTransferIntent(
+  kind: TransferIntentKind,
+  payload: Record<string, unknown>
+): Promise<IntentAck> {
+  return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
+}
+
+/**
+ * Fire a granular `transfer.*` intent to keep the backend store authoritative,
+ * swallowing and logging any failure so the local `appStore` mutation path is
+ * never disrupted by a bridge hiccup (the resilience fallback). A no-op when the
+ * mutation cut is disabled ({@link transferIntentsEnabled} off — the rollback
+ * path). Never throws — a synchronous transport-construction failure (non-Tauri,
+ * no socket) is caught and logged, leaving the UI on the local slice. The twin of
+ * the connections bridge's {@link import("./connectionsBridge").mirrorConnectionIntent}.
+ */
+export function mirrorTransferIntent(
+  kind: TransferIntentKind,
+  payload: Record<string, unknown>
+): void {
+  if (!transferIntentsEnabled()) return;
+  try {
+    void dispatchTransferIntent(kind, payload)
+      .then((ack) => {
+        if (ack.status === "rejected") {
+          logTransferBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+        }
+      })
+      .catch((err) => logTransferBridgeFallback(kind, err));
+  } catch (err) {
+    logTransferBridgeFallback(kind, err);
   }
 }
 
