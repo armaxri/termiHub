@@ -369,7 +369,11 @@ fn a_replace_intent_mirrors_the_whole_slice_in_one_diff() {
     let diffs = sink.diffs();
     assert_eq!(diffs.len(), 1, "the whole-slice mirror is one diff");
     cache.apply(&diffs[0]);
-    assert_eq!(cache.view, store.snapshot(), "cache mirrors the replaced slice");
+    assert_eq!(
+        cache.view,
+        store.snapshot(),
+        "cache mirrors the replaced slice"
+    );
     assert_eq!(cache.view["folders"][0]["id"], json!("New"));
     assert_eq!(cache.view["connections"][0]["id"], json!("New/A"));
 }

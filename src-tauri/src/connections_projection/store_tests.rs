@@ -238,7 +238,10 @@ fn replace_overwrites_the_whole_slice() {
     );
 
     assert!(store.folder("Old").is_none(), "old folder is gone");
-    assert!(store.connection("Old/A").is_none(), "old connection is gone");
+    assert!(
+        store.connection("Old/A").is_none(),
+        "old connection is gone"
+    );
     assert_eq!(store.folder_count(), 1);
     assert_eq!(store.connection_count(), 1);
     assert!(!store.folder("New").unwrap().is_expanded);
@@ -255,7 +258,10 @@ fn replace_with_empty_arrays_clears_the_tree() {
 
     assert_eq!(store.folder_count(), 0);
     assert_eq!(store.connection_count(), 0);
-    assert_eq!(store.snapshot(), json!({ "folders": [], "connections": [] }));
+    assert_eq!(
+        store.snapshot(),
+        json!({ "folders": [], "connections": [] })
+    );
 }
 
 #[test]
