@@ -4,6 +4,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
 import { Button, Input, toast, Tooltip } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -71,7 +72,9 @@ export function WorkflowSidebar() {
   const importWorkflows = useAppStore((s) => s.importWorkflows);
   const runWorkflow = useAppStore((s) => s.runWorkflow);
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
-  const workflowRun = useAppStore((s) => s.workflowRun);
+  // Render cut (#2243): the per-workflow "running" badge reads run progress from
+  // the projected `workflow-run` region when it mirrors appStore, else appStore.
+  const { workflowRun } = useProjectedWorkflowRun();
 
   const [query, setQuery] = useState("");
   // The workflow being edited: an existing one (isNew=false) or a fresh draft.
