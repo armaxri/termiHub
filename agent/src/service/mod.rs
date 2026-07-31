@@ -169,15 +169,9 @@ mod tests {
         AgentServiceRegistry::new(build_service_registry())
     }
 
-    /// Bind an ephemeral loopback TCP port, then free it, returning the number so
-    /// the HTTP server can take it without a fixed-port collision.
-    fn free_port() -> u16 {
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-        port
-    }
-
+    /// A config for the embedded HTTP server. Tests pass port `0` so the OS
+    /// assigns a free ephemeral port at bind time; the server keeps the socket it
+    /// binds, so there is no fixed-port collision on a busy CI runner (#2223).
     fn http_config(port: u16) -> Value {
         serde_json::json!({
             "id": "srv-http",
@@ -194,18 +188,16 @@ mod tests {
     #[tokio::test]
     async fn start_hosts_http_server_and_reports_running() {
         let reg = registry();
-        let port = free_port();
         let snap = reg
-            .start("inst-1", SERVICE_ID_HTTP, http_config(port))
+            .start("inst-1", SERVICE_ID_HTTP, http_config(0))
             .await
             .expect("http server starts on the agent");
+        // The core service only emits `Running` after its listener thread has
+        // confirmed a real socket bind (GAP G3, #1145), so a `Running` snapshot
+        // proves the agent is hosting a live, bound server without the test
+        // needing to know the ephemeral port.
         assert_eq!(snap.status, ServiceStatus::Running);
         assert_eq!(reg.active_count().await, 1);
-
-        // The server actually serves: a plain TCP connect to the bound port
-        // succeeds while it is running.
-        let conn = std::net::TcpStream::connect(("127.0.0.1", port));
-        assert!(conn.is_ok(), "hosted HTTP server must accept connections");
 
         assert!(reg.stop("inst-1").await);
         assert_eq!(reg.active_count().await, 0);
@@ -214,8 +206,7 @@ mod tests {
     #[tokio::test]
     async fn status_reports_running_then_none_after_stop() {
         let reg = registry();
-        let port = free_port();
-        reg.start("inst-1", SERVICE_ID_HTTP, http_config(port))
+        reg.start("inst-1", SERVICE_ID_HTTP, http_config(0))
             .await
             .expect("start");
 
@@ -229,15 +220,30 @@ mod tests {
     #[tokio::test]
     async fn duplicate_instance_id_is_rejected() {
         let reg = registry();
-        let port = free_port();
-        reg.start("inst-1", SERVICE_ID_HTTP, http_config(port))
+        reg.start("inst-1", SERVICE_ID_HTTP, http_config(0))
             .await
             .expect("first start");
-        let err = reg
-            .start("inst-1", SERVICE_ID_HTTP, http_config(free_port()))
-            .await;
+        let err = reg.start("inst-1", SERVICE_ID_HTTP, http_config(0)).await;
         assert!(matches!(err, Err(ServiceError::StartFailed(_))));
         reg.stop("inst-1").await;
+    }
+
+    #[tokio::test]
+    async fn start_on_a_busy_port_is_rejected() {
+        // Hold a real listener so its port is deterministically occupied, then a
+        // start against that exact port must fail the pre-flight bind check and
+        // report `StartFailed` — a race-free regression for the bind-failure path
+        // (unlike an ephemeral port that just happens to be free).
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
+        let busy = listener.local_addr().unwrap().port();
+
+        let reg = registry();
+        let err = reg
+            .start("inst-1", SERVICE_ID_HTTP, http_config(busy))
+            .await;
+        assert!(matches!(err, Err(ServiceError::StartFailed(_))));
+        assert_eq!(reg.active_count().await, 0);
+        drop(listener);
     }
 
     #[tokio::test]
@@ -258,10 +264,10 @@ mod tests {
     #[tokio::test]
     async fn stop_all_tears_down_every_instance() {
         let reg = registry();
-        reg.start("a", SERVICE_ID_HTTP, http_config(free_port()))
+        reg.start("a", SERVICE_ID_HTTP, http_config(0))
             .await
             .expect("start a");
-        reg.start("b", SERVICE_ID_HTTP, http_config(free_port()))
+        reg.start("b", SERVICE_ID_HTTP, http_config(0))
             .await
             .expect("start b");
         assert_eq!(reg.active_count().await, 2);
