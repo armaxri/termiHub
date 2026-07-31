@@ -37,11 +37,7 @@ function connection(id: string, folderId: string | null = null): SavedConnection
 }
 
 /** A deterministic folder, optionally nested under a parent. */
-function folder(
-  id: string,
-  parentId: string | null = null,
-  isExpanded = true
-): ConnectionFolder {
+function folder(id: string, parentId: string | null = null, isExpanded = true): ConnectionFolder {
   return { id, name: `F ${id}`, parentId, isExpanded };
 }
 
