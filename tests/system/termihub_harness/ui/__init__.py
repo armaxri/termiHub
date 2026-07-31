@@ -25,6 +25,7 @@ Mixin → concern:
 - :class:`SettingsUi`        — the Settings editor
 - :class:`ManualUi`          — operator prompts for guided-manual tests (#914)
 - :class:`NetworkToolsUi`    — the Network Tools sidebar + diagnostic panels
+- :class:`PluginsUi`         — seed a frontend plugin on disk + the frontend gate
 - :class:`AgentUi`           — remote-agent create / connect / error dialog / setup
 - :class:`WorkflowUi`        — workflow-automation editor + sidebar (author / run)
 
@@ -57,6 +58,7 @@ from .lookups import (
 from .monitoring import MonitoringUi
 from .network_tools import NetworkToolsUi
 from .passwordprompt import PasswordPromptUi
+from .plugins import PluginsUi
 from .settings import SettingsUi
 from .shell_fs import ShellFsUi
 from .sftp import SftpUi
@@ -84,6 +86,7 @@ __all__ = [
     "SettingsUi",
     "ManualUi",
     "NetworkToolsUi",
+    "PluginsUi",
     "EmbeddedServicesUi",
     "ShellFsUi",
     "WorkflowUi",
