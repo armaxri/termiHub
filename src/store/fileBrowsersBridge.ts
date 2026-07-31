@@ -159,6 +159,74 @@ export function fileBrowsersRenderFromProjectionEnabled(): boolean {
   return true;
 }
 
+// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
+
+let mutationFlagOverride: boolean | null = null;
+
+interface FileBrowsersMutationFlagWindow {
+  __TERMIHUB_FILE_BROWSERS_INTENTS__?: boolean;
+  localStorage?: Storage;
+}
+
+/**
+ * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
+ * `null` clears the override and falls back to the window/localStorage signal,
+ * then to the default (on).
+ */
+export function setFileBrowsersIntentsEnabled(value: boolean | null): void {
+  mutationFlagOverride = value;
+}
+
+/**
+ * Whether the file-browser UI-state actions (set the active pane, a pane's
+ * directory-list start / success / failure, and the copy-cut clipboard) dispatch
+ * granular `fileBrowser.*` intents so the client-scoped backend
+ * {@link import("../../src-tauri/src/file_browser_projection/store").FileBrowserStore}
+ * is authoritative — instead of only the render-cut {@link seedFileBrowsersRegion}
+ * `fileBrowser.replace` whole-slice mirror driving the region.
+ *
+ * **On by default** (#2228 mutation cut). When on, each action mirrors its
+ * transition through a `fileBrowser.*` intent (via {@link mirrorFileBrowserIntent}),
+ * and the render-cut hook
+ * ({@link import("./useProjectedFileBrowsers").useProjectedFileBrowsers}) reflects
+ * the region back into the UI. The local `appStore` reducer path stays in place as
+ * the render source and as a resilience / rollback fallback — any dispatch failure
+ * is logged and the local mutation continues, so a backend hiccup can never break
+ * the file browser (the reducer removal is a later step). When off, `appStore`
+ * drives the slice purely locally (the pre-cut path). The flip was taken on the
+ * automated parity tests plus the instant local fallback, mirroring the
+ * connections (#2225) and agents (#2226) mutation cuts.
+ *
+ * Scope note (#2236): the SFTP list operations (`navigateSftp` / `refreshSftp`)
+ * mirror only the browser *view* fields (path / listing / list flags); the SFTP
+ * *session* model (connect status, live session ids, transfers) and the
+ * connect / disconnect / session-death pane resets stay `appStore`-driven and are
+ * carried into the region by the render-cut `fileBrowser.replace` mirror, pending
+ * the entry-point/session-model decision (#2236).
+ *
+ * Overridable at runtime for rollback / tests via
+ * `window.__TERMIHUB_FILE_BROWSERS_INTENTS__` or
+ * `localStorage["termihub.fileBrowsersIntents"]` (set `"false"` to restore the
+ * pre-cut local-mutation path; `"true"` to force on).
+ */
+export function fileBrowsersIntentsEnabled(): boolean {
+  if (mutationFlagOverride !== null) return mutationFlagOverride;
+  try {
+    if (typeof window !== "undefined") {
+      const w = window as unknown as FileBrowsersMutationFlagWindow;
+      if (typeof w.__TERMIHUB_FILE_BROWSERS_INTENTS__ === "boolean") {
+        return w.__TERMIHUB_FILE_BROWSERS_INTENTS__;
+      }
+      const ls = w.localStorage?.getItem("termihub.fileBrowsersIntents");
+      if (ls === "true") return true;
+      if (ls === "false") return false;
+    }
+  } catch {
+    // A missing/blocked window or storage just means "use the default".
+  }
+  return true;
+}
+
 // ── Transport + client-scoped region client (lazy, mirrors the broadcast slice) ─
 
 let transportInstance: Transport | null = null;
@@ -326,6 +394,65 @@ export function seedFileBrowsersRegion(view: FileBrowsersView): Promise<void> {
     // A synchronous transport-construction failure (non-Tauri, no socket).
     lastSeededSignature = null;
     return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ── Mutation cut: granular fileBrowser.* intent dispatch ──────────────────────
+
+/**
+ * The concrete browser pane a `fileBrowser.*` load/reset intent targets. Unlike
+ * {@link FileBrowserMode}, `"none"` is not a pane — it is the *absence* of an
+ * active pane, expressed only through `fileBrowser.setMode`.
+ */
+export type FileBrowserPane = "local" | "sftp" | "session";
+
+/**
+ * The granular `fileBrowser.*` intent kinds the mutation cut dispatches (twins of
+ * the Rust routes). Excludes `fileBrowser.replace`, which is the render-cut
+ * whole-slice mirror ({@link seedFileBrowsersRegion}); the mutation cut drives the
+ * region through these per-transition intents instead so the store becomes
+ * authoritative.
+ */
+export type FileBrowserIntentKind =
+  | "fileBrowser.setMode"
+  | "fileBrowser.loadStarted"
+  | "fileBrowser.loadSucceeded"
+  | "fileBrowser.loadFailed"
+  | "fileBrowser.setClipboard";
+
+/** Dispatch a granular `fileBrowser.*` intent, resolving with the ack (parity tests). */
+export function dispatchFileBrowserIntent(
+  kind: FileBrowserIntentKind,
+  payload: Record<string, unknown>
+): Promise<IntentAck> {
+  return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
+}
+
+/**
+ * Fire a granular `fileBrowser.*` intent to keep the client's backend store
+ * authoritative, swallowing and logging any failure so the local `appStore`
+ * mutation path is never disrupted by a bridge hiccup (the resilience fallback). A
+ * no-op when the mutation cut is disabled ({@link fileBrowsersIntentsEnabled} off —
+ * the rollback path). Never throws — a synchronous transport-construction failure
+ * (non-Tauri, no socket) is caught and logged, leaving the UI on the local slice.
+ * The twin of the connections bridge's
+ * {@link import("./connectionsBridge").mirrorConnectionIntent}.
+ */
+export function mirrorFileBrowserIntent(
+  kind: FileBrowserIntentKind,
+  payload: Record<string, unknown>
+): void {
+  if (!fileBrowsersIntentsEnabled()) return;
+  try {
+    void dispatchFileBrowserIntent(kind, payload)
+      .then((ack) => {
+        if (ack.status === "rejected") {
+          logFileBrowsersBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+        }
+      })
+      .catch((err) => logFileBrowsersBridgeFallback(kind, err));
+  } catch (err) {
+    logFileBrowsersBridgeFallback(kind, err);
   }
 }
 
