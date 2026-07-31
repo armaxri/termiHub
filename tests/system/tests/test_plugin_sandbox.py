@@ -52,10 +52,12 @@ class TestFrontendPluginBaseline(PluginsUi, SettingsUi, TerminalUi, SystemTest):
         )
 
     def test_enabling_the_gate_renders_the_widget_with_zero_csp_violations(self):
-        # Persist the gate on and restart: startup loadPlugins injects the active
-        # plugin's JS from a blob URL. A rendered widget proves the script executed
-        # (its render() built DOM the status bar mounted); the CSP sink proves the
-        # blob-injected script + that DOM did not trip the enforced policy.
+        # Persist the gate on and restart: startup loadPlugins loads the active
+        # plugin's JS into the sandbox worker (#2136), which runs it from a blob URL
+        # inside the worker. A rendered widget proves the script executed (its
+        # render() produced a descriptor the host materialised into the status-bar
+        # span); the CSP sink proves the worker + blob load + that DOM did not trip
+        # the enforced policy.
         self.enable_frontend_plugins_via_restart()
 
         self.wait(

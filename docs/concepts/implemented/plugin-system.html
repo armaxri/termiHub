@@ -2584,9 +2584,20 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
             validation, permission prompts, and clear warnings for unsigned plugins.
           </li>
           <li>
-            <strong>JavaScript plugin isolation</strong>: Frontend plugins share the WebView
-            context. They can access the DOM but should only interact through the registered API. A
-            future improvement could use Web Workers or iframes for stronger isolation.
+            <strong>JavaScript plugin isolation</strong>: Frontend plugin JS executes in a
+            least-privilege <strong>Web Worker sandbox</strong> (#2136), not the main WebView
+            document. Inside the worker there is no DOM, no <code>window</code>, and no Tauri IPC, so
+            plugin code cannot reach the host app, the document, or the backend. The host and worker
+            communicate only over <code>postMessage</code>: protocol parsers run over terminal output
+            through an ordered asynchronous pipeline (the no-plugin path stays synchronous and
+            byte-exact), and status-bar widgets are described declaratively (<code>render()</code>
+            returns a serialisable node, not a live element) and materialised by the host through a
+            strict tag/attribute allowlist — never <code>innerHTML</code>. Plugin code is loaded into
+            the worker from a <code>blob:</code> URL (still permitted by <code>script-src 'self'
+            blob:</code>, now confined to the worker); dropping <code>blob:</code> from
+            <code>script-src</code> entirely is a tracked follow-up. Earlier versions injected plugin
+            JS as a <code>&lt;script&gt;</code> into the main document (weak, shared-context
+            isolation); that gap is now closed.
           </li>
           <li>
             <strong>File system access</strong>: Plugins requesting <code>filesystem</code>

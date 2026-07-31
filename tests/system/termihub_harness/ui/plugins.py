@@ -86,12 +86,14 @@ _MANIFEST = {
     },
 }
 
-#: The fixture's ``frontend/index.js``. The loader wraps this source in
-#: ``(function (termihub) { … })(<per-plugin api>)`` (``frontendPlugins.ts``), so
-#: ``termihub`` here is this plugin's own API instance. The parser replaces every
-#: PARSER_INPUT_TOKEN with PARSER_OUTPUT_TOKEN (returning ``null`` — pass-through —
-#: for chunks that do not contain it, the fast path). The widget renders a plain
-#: span; it touches only the DOM node it creates and never reaches for IPC.
+#: The fixture's ``frontend/index.js``. The sandbox worker wraps this source in
+#: ``(function (termihub) { … })(<per-plugin api>)`` (``pluginSandboxWorker.ts``),
+#: so ``termihub`` here is this plugin's own API instance. The parser replaces
+#: every PARSER_INPUT_TOKEN with PARSER_OUTPUT_TOKEN (returning ``null`` —
+#: pass-through — for chunks that do not contain it, the fast path). The plugin
+#: runs inside a Web Worker (#2136): there is no ``document``, so the widget's
+#: ``render()`` returns a declarative node descriptor (``{tag, text}``) that the
+#: host materialises into the status-bar span — not a live element.
 _FRONTEND_JS = f"""\
 termihub.registerProtocolParser({{
   id: "sandbox-probe-parser",
@@ -106,9 +108,7 @@ termihub.registerStatusBarWidget({{
   id: "{SANDBOX_WIDGET_ID}",
   position: "right",
   render: function () {{
-    var el = document.createElement("span");
-    el.textContent = "sandbox-probe-ok";
-    return el;
+    return {{ tag: "span", text: "sandbox-probe-ok" }};
   }},
   dispose: function () {{}},
 }});
