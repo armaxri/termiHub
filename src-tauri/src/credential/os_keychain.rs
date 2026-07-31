@@ -214,6 +214,29 @@ mod tests {
     }
 
     #[test]
+    fn remove_all_for_connection_removes_sudo_password() {
+        // Regression (#2305): deleting a connection must also delete its stored
+        // sudo password. The OS store cannot be enumerated, so it deletes a
+        // fixed list of credential types — that list previously omitted
+        // SudoPassword, leaving the secret orphaned in the OS keychain forever.
+        let _guard = with_mock();
+        let store = OsKeychainStore::new();
+        let pw = CredentialKey::new("conn-sudo", CredentialType::Password);
+        let kp = CredentialKey::new("conn-sudo", CredentialType::KeyPassphrase);
+        let sudo = CredentialKey::new("conn-sudo", CredentialType::SudoPassword);
+
+        store.set(&pw, "pass").unwrap();
+        store.set(&kp, "phrase").unwrap();
+        store.set(&sudo, "elevated-secret").unwrap();
+
+        store.remove_all_for_connection("conn-sudo").unwrap();
+
+        assert_eq!(store.get(&pw).unwrap(), None);
+        assert_eq!(store.get(&kp).unwrap(), None);
+        assert_eq!(store.get(&sudo).unwrap(), None);
+    }
+
+    #[test]
     fn status_is_always_unlocked() {
         let _guard = with_mock();
         let store = OsKeychainStore::new();
