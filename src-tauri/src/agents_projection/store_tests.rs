@@ -330,3 +330,64 @@ fn the_snapshot_preserves_agent_order() {
         .collect();
     assert_eq!(ids, vec!["a2", "a1"]);
 }
+
+#[test]
+fn replace_overwrites_the_whole_slice_with_a_snapshot() {
+    // Build a populated source store the render-cut mirror would copy from.
+    let source = AgentsStore::new();
+    source.add("a1", "One", config("h1"), settings());
+    source.add("a2", "Two", config("h2"), settings());
+    source.set_status("a1", AgentConnectionState::Connected, None);
+    source.refresh(
+        "a1",
+        vec![session("s1")],
+        vec![definition("d1", Some("f1"))],
+        vec![folder("f1")],
+    );
+    let snapshot = source.snapshot();
+
+    // Deserialize the source view back into the typed slice the replace carries.
+    let agents: Vec<super::AgentEntry> =
+        serde_json::from_value(snapshot["agents"].clone()).unwrap();
+    let sessions = serde_json::from_value(snapshot["sessions"].clone()).unwrap();
+    let definitions = serde_json::from_value(snapshot["definitions"].clone()).unwrap();
+    let folders = serde_json::from_value(snapshot["folders"].clone()).unwrap();
+
+    // Prime a target with unrelated state that replace must fully overwrite.
+    let target = AgentsStore::new();
+    target.add("old", "Stale", config("old"), settings());
+    target.refresh("old", vec![session("x")], vec![], vec![]);
+
+    target.replace(agents, sessions, definitions, folders);
+
+    assert!(target.get("old").is_none(), "replace drops prior agents");
+    assert_eq!(
+        target.snapshot(),
+        source.snapshot(),
+        "replace makes the store a faithful copy of the source slice"
+    );
+}
+
+#[test]
+fn replace_with_empty_maps_clears_everything() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    store.refresh(
+        "a1",
+        vec![session("s1")],
+        vec![definition("d1", None)],
+        vec![],
+    );
+
+    store.replace(
+        Vec::new(),
+        Default::default(),
+        Default::default(),
+        Default::default(),
+    );
+
+    assert_eq!(
+        store.snapshot(),
+        json!({ "agents": [], "sessions": {}, "definitions": {}, "folders": {} })
+    );
+}

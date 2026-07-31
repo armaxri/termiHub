@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { SavedConnection, ConnectionFolder, InventoryHost } from "@/types/connection";
 import { type AgentDefinitionInfo, importInventoryHosts } from "@/services/api";
 import { toast } from "@/components/ui";
@@ -622,7 +623,10 @@ export function ConnectionList() {
   const folders = useAppStore((s) => s.folders);
   const allConnections = useAppStore((s) => s.connections);
   const connectionTypes = useAppStore((s) => s.connectionTypes);
-  const remoteAgents = useAppStore((s) => s.remoteAgents);
+  // The ordered remote-agent list + per-agent saved-definition map, sourced from
+  // the projected `agents` region when it faithfully mirrors `appStore`, else
+  // `appStore` verbatim (#2226 render cut).
+  const { remoteAgents, agentDefinitions } = useProjectedAgents();
   const experimental = useExperimentalFeatures();
 
   // Gate experimental (graphical remote-desktop) connections out of the sidebar
@@ -648,7 +652,6 @@ export function ConnectionList() {
   const reorderRemoteAgents = useAppStore((s) => s.reorderRemoteAgents);
   const moveAgentDefToFolder = useAppStore((s) => s.moveAgentDefToFolder);
   const bulkMoveAgentDefsToFolder = useAppStore((s) => s.bulkMoveAgentDefsToFolder);
-  const agentDefinitions = useAppStore((s) => s.agentDefinitions);
 
   const pointerSensor = useSensor(PointerSensor, {
     activationConstraint: { distance: 8 },

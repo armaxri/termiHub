@@ -39,6 +39,7 @@ import {
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Button, Tooltip, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
 import {
@@ -688,9 +689,17 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
   const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
   const addTab = useAppStore((s) => s.addTab);
-  const agentSessions = useAppStore((s) => s.agentSessions[agent.id]) ?? EMPTY_SESSIONS;
-  const agentDefinitions = useAppStore((s) => s.agentDefinitions[agent.id]) ?? EMPTY_DEFINITIONS;
-  const agentFolders = useAppStore((s) => s.agentFolders[agent.id]) ?? EMPTY_FOLDERS;
+  // This agent's live sessions, saved definitions and folders, sourced from the
+  // projected `agents` region when it faithfully mirrors `appStore`, else
+  // `appStore` verbatim (#2226 render cut).
+  const {
+    agentSessions: projectedSessions,
+    agentDefinitions: projectedDefinitions,
+    agentFolders: projectedFolders,
+  } = useProjectedAgents();
+  const agentSessions = projectedSessions[agent.id] ?? EMPTY_SESSIONS;
+  const agentDefinitions = projectedDefinitions[agent.id] ?? EMPTY_DEFINITIONS;
+  const agentFolders = projectedFolders[agent.id] ?? EMPTY_FOLDERS;
   const refreshAgentSessions = useAppStore((s) => s.refreshAgentSessions);
   const createAgentFolder = useAppStore((s) => s.createAgentFolder);
   const openAgentDefinitionEditorTab = useAppStore((s) => s.openAgentDefinitionEditorTab);

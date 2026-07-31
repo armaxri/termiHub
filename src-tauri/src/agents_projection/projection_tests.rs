@@ -94,9 +94,36 @@ fn registry_for(store: Arc<AgentsStore>) -> HandlerRegistry {
         s.disconnect(&required_str(intent, "id")?);
         Ok(publish_agents(projector, &s))
     });
-    let s = store;
+    let s = store.clone();
     registry.route("agent.remove", move |intent, projector| {
         s.remove(&required_str(intent, "id")?);
+        Ok(publish_agents(projector, &s))
+    });
+    let s = store;
+    registry.route("agent.replace", move |intent, projector| {
+        let agents =
+            serde_json::from_value(intent.payload.get("agents").cloned().unwrap_or(json!([])))
+                .map_err(|e| ("bad_payload".to_string(), format!("invalid agents: {e}")))?;
+        let sessions =
+            serde_json::from_value(intent.payload.get("sessions").cloned().unwrap_or(json!({})))
+                .map_err(|e| ("bad_payload".to_string(), format!("invalid sessions: {e}")))?;
+        let definitions = serde_json::from_value(
+            intent
+                .payload
+                .get("definitions")
+                .cloned()
+                .unwrap_or(json!({})),
+        )
+        .map_err(|e| {
+            (
+                "bad_payload".to_string(),
+                format!("invalid definitions: {e}"),
+            )
+        })?;
+        let folders =
+            serde_json::from_value(intent.payload.get("folders").cloned().unwrap_or(json!({})))
+                .map_err(|e| ("bad_payload".to_string(), format!("invalid folders: {e}")))?;
+        s.replace(agents, sessions, definitions, folders);
         Ok(publish_agents(projector, &s))
     });
 
@@ -388,4 +415,48 @@ fn a_dead_subscriber_is_reaped_on_publish() {
         1,
         "the dead subscriber was reaped"
     );
+}
+
+#[test]
+fn replace_mirrors_a_whole_snapshot_in_one_diff_and_converges() {
+    // The render-cut mirror (#2226): an `agent.replace` carrying `appStore`'s
+    // whole agents slice converges the region on it in a single coalesced diff.
+    let store = seeded_store();
+    let projector = Arc::new(Projector::new());
+    projector.register_region(AGENTS_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(AGENTS_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    let ack = dispatcher.dispatch(intent(
+        "agent.replace",
+        json!({
+            "agents": [{
+                "id": "a1",
+                "name": "Only",
+                "config": { "host": "h1" },
+                "agentSettings": {},
+                "isExpanded": true,
+                "connectionState": "connected"
+            }],
+            "sessions": { "a1": [{ "sessionId": "s1", "title": "t", "type": "shell", "status": "running", "attached": true }] },
+            "definitions": { "a1": [{ "id": "d1", "name": "def", "sessionType": "shell", "config": {}, "persistent": false, "folderId": null }] },
+            "folders": { "a1": [{ "id": "f1", "name": "F", "parentId": null, "isExpanded": true }] }
+        }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one coalesced diff for the whole replace");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view,
+        store.snapshot(),
+        "cache converges on the mirror"
+    );
+    assert_eq!(cache.view["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(cache.view["agents"][0]["name"], json!("Only"));
+    assert!(store.get("a2").is_none(), "replace dropped the prior agent");
 }

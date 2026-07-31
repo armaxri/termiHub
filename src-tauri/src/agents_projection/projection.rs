@@ -44,6 +44,7 @@
 //! | `agent.createFolder`      | `{ id, folder }`                             | append a folder                      |
 //! | `agent.updateFolder`      | `{ id, folder }`                             | replace a folder by id               |
 //! | `agent.deleteFolder`      | `{ id, folderId }`                           | remove a folder + reparent defs      |
+//! | `agent.replace`           | `{ agents, sessions, definitions, folders }` | overwrite the whole slice (mirror)   |
 //!
 //! # Shadow mode
 //!
@@ -54,13 +55,14 @@
 //! an intent is never returned inline — it always arrives as a projection diff on
 //! the `agents` region.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::agents_projection::store::{
-    AgentConnectionState, AgentDefinition, AgentFolder, AgentsStore,
+    AgentConnectionState, AgentDefinition, AgentEntry, AgentFolder, AgentSession, AgentsStore,
 };
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 
@@ -235,13 +237,21 @@ pub fn register_agent_intents(registry: &mut HandlerRegistry, app_handle: AppHan
         Ok(publish_agents(projector, &store))
     });
 
-    let handle = app_handle;
+    let handle = app_handle.clone();
     registry.route("agent.deleteFolder", move |intent, projector| {
         let store = store_of(&handle)?;
         store.delete_folder(
             &required_str(intent, "id")?,
             &required_str(intent, "folderId")?,
         );
+        Ok(publish_agents(projector, &store))
+    });
+
+    let handle = app_handle;
+    registry.route("agent.replace", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let (agents, sessions, definitions, folders) = required_replace(intent)?;
+        store.replace(agents, sessions, definitions, folders);
         Ok(publish_agents(projector, &store))
     });
 }
@@ -338,6 +348,45 @@ fn required_list<T: serde::de::DeserializeOwned>(
         .get(key)
         .ok_or_else(|| bad_payload(&format!("missing '{key}'")))?;
     serde_json::from_value(value.clone()).map_err(|e| bad_payload(&format!("invalid {key}: {e}")))
+}
+
+/// Parse an optional typed field, treating an absent or `null` value as the type's
+/// default (an empty list/map). Lets a mirror that clears a whole sub-slice be
+/// expressed by omitting the field; a present-but-malformed field is a
+/// `bad_payload` rejection that advances nothing.
+fn optional_typed<T: serde::de::DeserializeOwned + Default>(
+    intent: &Intent,
+    key: &str,
+) -> Result<T, (String, String)> {
+    match intent.payload.get(key) {
+        None | Some(Value::Null) => Ok(T::default()),
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|e| bad_payload(&format!("invalid {key}: {e}"))),
+    }
+}
+
+/// Parse an `agent.replace` payload into the whole-slice snapshot the render-cut
+/// mirror carries: `{ agents: [AgentEntry], sessions: {…}, definitions: {…},
+/// folders: {…} }` — the shape of [`AgentsStore::snapshot`]. Any field absent is
+/// treated as empty, so a mirror that clears all agents is expressible.
+#[allow(clippy::type_complexity)]
+fn required_replace(
+    intent: &Intent,
+) -> Result<
+    (
+        Vec<AgentEntry>,
+        HashMap<String, Vec<AgentSession>>,
+        HashMap<String, Vec<AgentDefinition>>,
+        HashMap<String, Vec<AgentFolder>>,
+    ),
+    (String, String),
+> {
+    Ok((
+        optional_typed(intent, "agents")?,
+        optional_typed(intent, "sessions")?,
+        optional_typed(intent, "definitions")?,
+        optional_typed(intent, "folders")?,
+    ))
 }
 
 #[cfg(test)]

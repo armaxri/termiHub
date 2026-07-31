@@ -411,6 +411,29 @@ impl AgentsStore {
         }
     }
 
+    // ── Whole-region mirror (render-cut seed) ─────────────────────────────────
+
+    /// `agent.replace` — overwrite the whole agents slice (the ordered agent list
+    /// plus the per-agent sessions/definitions/folders maps) with a
+    /// caller-supplied snapshot. Used by the frontend render-cut mirror (#2226) to
+    /// keep the shared `agents` region a faithful copy of `appStore`'s agents slice
+    /// while `appStore` remains authoritative (the mutation cut is a later step) —
+    /// the analog of the system-monitor bridge's `monitor.replace` seed. Idempotent
+    /// server-side: replacing with the same content yields no diff.
+    pub fn replace(
+        &self,
+        agents: Vec<AgentEntry>,
+        sessions: HashMap<String, Vec<AgentSession>>,
+        definitions: HashMap<String, Vec<AgentDefinition>>,
+        folders: HashMap<String, Vec<AgentFolder>>,
+    ) {
+        let mut inner = self.lock();
+        inner.agents = agents;
+        inner.sessions = sessions;
+        inner.definitions = definitions;
+        inner.folders = folders;
+    }
+
     /// Read one agent entry (test / diagnostics helper).
     #[cfg(test)]
     pub fn get(&self, id: &str) -> Option<AgentEntry> {

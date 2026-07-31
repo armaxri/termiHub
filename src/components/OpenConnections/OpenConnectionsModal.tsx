@@ -36,6 +36,7 @@ import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
 import { MONITORING_INTERVAL_OPTIONS, DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
 import { getAllLeaves } from "@/utils/panelTree";
 import {
@@ -86,7 +87,9 @@ interface ProxySessionsState {
  * user kill individual connections or entire sections at once.
  */
 export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModalProps) {
-  const remoteAgents = useAppStore((s) => s.remoteAgents);
+  // The ordered remote-agent list, sourced from the projected `agents` region when
+  // it faithfully mirrors `appStore`, else `appStore` verbatim (#2226 render cut).
+  const { remoteAgents } = useProjectedAgents();
   const desktopVersion = useDesktopVersion();
   // How many native windows are open. The owning-window badge/focus affordance
   // (#1926) is shown only with >1 window, so single-window users see no change —
