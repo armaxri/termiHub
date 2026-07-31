@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use crate::config::expand_tilde_only;
 use crate::errors::FileError;
 
 use super::utils::{chrono_from_epoch, normalize_path_separators, normalize_platform_path};
@@ -263,7 +264,7 @@ impl Default for LocalFileBrowser {
 #[async_trait::async_trait]
 impl super::browser::FileBrowser for LocalFileBrowser {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
-        let path = path.to_string();
+        let path = expand_tilde_only(path);
         tokio::task::spawn_blocking(move || {
             list_dir_sync(&path).map_err(|e| map_io_error(e, &path))
         })
@@ -272,7 +273,7 @@ impl super::browser::FileBrowser for LocalFileBrowser {
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
-        let path = path.to_string();
+        let path = expand_tilde_only(path);
         tokio::task::spawn_blocking(move || {
             std::fs::read(&path).map_err(|e| map_io_error(e, &path))
         })
@@ -281,7 +282,7 @@ impl super::browser::FileBrowser for LocalFileBrowser {
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
-        let path = path.to_string();
+        let path = expand_tilde_only(path);
         let data = data.to_vec();
         tokio::task::spawn_blocking(move || {
             std::fs::write(&path, &data).map_err(|e| map_io_error(e, &path))
@@ -291,8 +292,10 @@ impl super::browser::FileBrowser for LocalFileBrowser {
     }
 
     async fn delete(&self, path: &str) -> Result<(), FileError> {
-        let entry = super::browser::FileBrowser::stat(self, path).await?;
-        let path = path.to_string();
+        let path = expand_tilde_only(path);
+        // `stat` re-expands the (already absolute) path idempotently, then the
+        // directory flag it reports picks `remove_dir_all` vs `remove_file`.
+        let entry = super::browser::FileBrowser::stat(self, &path).await?;
         tokio::task::spawn_blocking(move || {
             if entry.is_directory {
                 std::fs::remove_dir_all(&path).map_err(|e| map_io_error(e, &path))
@@ -305,8 +308,8 @@ impl super::browser::FileBrowser for LocalFileBrowser {
     }
 
     async fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
-        let old = from.to_string();
-        let new = to.to_string();
+        let old = expand_tilde_only(from);
+        let new = expand_tilde_only(to);
         tokio::task::spawn_blocking(move || {
             std::fs::rename(&old, &new).map_err(|e| map_io_error(e, &old))
         })
@@ -315,14 +318,14 @@ impl super::browser::FileBrowser for LocalFileBrowser {
     }
 
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
-        let path = path.to_string();
+        let path = expand_tilde_only(path);
         tokio::task::spawn_blocking(move || stat_sync(&path))
             .await
             .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
 
     async fn mkdir(&self, path: &str) -> Result<(), FileError> {
-        let path = path.to_string();
+        let path = expand_tilde_only(path);
         tokio::task::spawn_blocking(move || {
             std::fs::create_dir_all(&path).map_err(|e| map_io_error(e, &path))
         })
@@ -596,5 +599,84 @@ mod tests {
     fn backend_is_send_and_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<LocalFileBackend>();
+    }
+
+    // ── LocalFileBrowser (FileBrowser) tests ─────────────────────────
+    //
+    // `LocalFileBrowser` is the single local-filesystem capability behind
+    // `ConnectionType::file_browser()` for both desktop and agent (#2104). These
+    // exercise the browser directly, including the leading-`~` expansion it must
+    // provide so the agent's file commands keep resolving `~` after the parallel
+    // agent `LocalFileBackend` was retired.
+    use super::super::browser::FileBrowser;
+
+    #[tokio::test]
+    async fn browser_list_and_stat_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "hi").unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+
+        let browser = LocalFileBrowser::new();
+        let entries = browser.list_dir(dir.path().to_str().unwrap()).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        // Directories sort first (inherited from `list_dir_sync`).
+        assert!(entries[0].is_directory);
+        assert_eq!(entries[0].name, "sub");
+
+        let stat = browser
+            .stat(dir.path().join("a.txt").to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(stat.name, "a.txt");
+        assert_eq!(stat.size, 2);
+    }
+
+    #[tokio::test]
+    async fn browser_read_write_delete_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f.bin");
+        let path = file.to_str().unwrap();
+
+        let browser = LocalFileBrowser::new();
+        browser.write_file(path, b"payload").await.unwrap();
+        assert_eq!(browser.read_file(path).await.unwrap(), b"payload");
+
+        // `delete` self-detects the entry kind via `stat` (no `is_directory`
+        // flag), the behaviour the retired `FileBackend::delete` took a hint for.
+        browser.delete(path).await.unwrap();
+        assert!(!file.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn browser_list_tilde_expands_to_home_dir() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        let browser = LocalFileBrowser::new();
+        let entries = browser.list_dir("~").await.expect("listing '~' should work");
+        for entry in entries {
+            assert!(
+                entry.path.starts_with(&home),
+                "entry path '{}' does not start with HOME '{}'",
+                entry.path,
+                home
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn browser_stat_tilde_expands_to_home_dir() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        let browser = LocalFileBrowser::new();
+        let entry = browser.stat("~").await.expect("stat of '~' should work");
+        assert_eq!(entry.path, home, "stat path should be the expanded home dir");
+        assert!(entry.is_directory);
+    }
+
+    #[test]
+    fn browser_is_send() {
+        fn assert_send<T: Send>() {}
+        assert_send::<Box<dyn FileBrowser>>();
+        assert_send::<LocalFileBrowser>();
     }
 }
