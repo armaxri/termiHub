@@ -34,16 +34,90 @@ struct SftpState {
 ///
 /// The SFTP session is opened lazily on first use and reused for
 /// subsequent operations. The session is dropped on disconnect.
-pub(crate) struct SftpFileBrowser {
+///
+/// This is the single SFTP implementation shared by the core
+/// [`ConnectionType::file_browser()`](crate::connection::ConnectionType::file_browser)
+/// path and the desktop file-browser/transfer command layer, whose `SftpSession`
+/// wraps one of these (#2104). It reaches jump-host targets through their pooled
+/// gateway via [`connect_target`] (#939).
+pub struct SftpFileBrowser {
     config: SshConfig,
     state: Arc<Mutex<Option<SftpState>>>,
 }
 
 impl SftpFileBrowser {
-    pub(crate) fn new(config: SshConfig) -> Self {
+    pub fn new(config: SshConfig) -> Self {
         Self {
             config,
             state: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Eagerly open the SFTP session, surfacing any connection/auth failure now
+    /// rather than on the first operation.
+    ///
+    /// The browser otherwise connects lazily; callers that need an "open fails
+    /// loudly" contract (e.g. the desktop `sftp_open` command, which returns a
+    /// session id only once the connection succeeds) call this right after
+    /// [`new`](Self::new).
+    pub async fn connect(&self) -> Result<(), FileError> {
+        Self::ensure_connected(&self.state, &self.config).await
+    }
+
+    /// Report whether an exec (command) channel can be opened and used on the
+    /// SSH connection backing this SFTP session.
+    ///
+    /// Runs the shared [`probe_exec_capability`](super::exec::probe_exec_capability)
+    /// marker probe over an exec channel: a normal SSH+shell connection echoes it
+    /// (`true`); an SFTP-only / relayed connection (e.g. `ForceCommand
+    /// internal-sftp`) cannot run the command (`false`). Lets the file editor know
+    /// whether privilege-elevated writes — which need a shell to run `sudo` — are
+    /// possible. Pushed into core so the desktop `SftpSession` no longer forks it
+    /// (#2104, issue-body item 1).
+    pub async fn has_exec_capability(&self) -> Result<bool, FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+        Ok(super::exec::probe_exec_capability(&state.session).await)
+    }
+
+    /// Open a **dedicated** SFTP channel on a fresh channel off the same
+    /// authenticated SSH connection.
+    ///
+    /// Used by the cancellable transfer subsystem (#1245): the returned session
+    /// owns its own channel, so a chunked copy can run on it without holding this
+    /// browser's lock — keeping directory listing / navigation live on the
+    /// browsing channel during a transfer. Pushed into core so the desktop
+    /// `SftpSession` no longer forks it (#2104, issue-body item 1).
+    pub async fn open_dedicated_channel(&self) -> Result<SftpSession, FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+        sftp::open_sftp_subsystem(&state.session)
+            .await
+            .map_err(|e| FileError::OperationFailed(e.to_string()))
+    }
+
+    /// Best-effort size (in bytes) of a remote file via SFTP `stat`.
+    ///
+    /// Returns `0` when the size is unavailable — the transfer UI treats
+    /// `total == 0` as indeterminate and shows a spinner rather than a
+    /// percentage. Never errors, mirroring the previous desktop behavior.
+    pub async fn remote_size(&self, path: &str) -> u64 {
+        if Self::ensure_connected(&self.state, &self.config).await.is_err() {
+            return 0;
+        }
+        let guard = self.state.lock().await;
+        let Some(state) = guard.as_ref() else {
+            return 0;
+        };
+        match state.sftp.metadata(path).await {
+            Ok(meta) => meta.size.unwrap_or(0),
+            Err(_) => 0,
         }
     }
 

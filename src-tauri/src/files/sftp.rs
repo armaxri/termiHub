@@ -1,17 +1,15 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use russh_sftp::client::SftpSession as RusshSftp;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info};
 
-use termihub_core::backends::ssh::handler::SshSession;
-use termihub_core::backends::ssh::{probe_exec_capability, sftp, sftp_ops};
+use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser};
 use termihub_core::files::FileEntry;
 
 use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
-use crate::utils::ssh_auth::connect_and_authenticate;
 
 /// The privilege-elevated write outcome and the writability verdict now live in
 /// [`termihub_core::backends::ssh::sftp_ops`] so a single implementation backs
@@ -19,15 +17,28 @@ use crate::utils::ssh_auth::connect_and_authenticate;
 /// here so the desktop command layer and its callers keep their import paths.
 pub use termihub_core::backends::ssh::sftp_ops::{ElevatedWriteResult, Writability};
 
-/// Map a core [`FileError`](termihub_core::errors::FileError) from an
-/// `sftp_ops` operation to the desktop [`TerminalError::SftpError`], preserving
-/// the operation-specific message (`realpath failed: …`, etc.) rather than
-/// double-wrapping it behind the generic "Operation failed:" prefix.
+/// Map a core [`FileError`](termihub_core::errors::FileError) from an SFTP
+/// operation to the desktop [`TerminalError::SftpError`], preserving the
+/// operation-specific message (`readdir failed: …`, `realpath failed: …`, etc.)
+/// rather than double-wrapping it behind the generic "Operation failed:" prefix.
 fn sftp_op_error(err: termihub_core::errors::FileError) -> TerminalError {
     match err {
         termihub_core::errors::FileError::OperationFailed(msg) => TerminalError::SftpError(msg),
         other => TerminalError::SftpError(other.to_string()),
     }
+}
+
+/// Drive an async core [`SftpFileBrowser`] operation to completion from the
+/// synchronous `SftpSession` API.
+///
+/// The desktop SFTP command layer is synchronous (each Tauri command runs the
+/// blocking session methods on a `spawn_blocking` thread while holding the
+/// session mutex), so it bridges into the fully-async core browser via
+/// `block_in_place` + `Handle::current().block_on`. Both require a multi-threaded
+/// Tokio runtime worker context on the calling thread — always satisfied here
+/// because callers are inside `spawn_blocking` (#828).
+fn block_on_sftp<F: Future>(fut: F) -> F::Output {
+    tokio::task::block_in_place(|| tokio::runtime::Handle::current().block_on(fut))
 }
 
 /// Lock a mutex, mapping a poisoned lock to a recoverable [`TerminalError`]
@@ -59,47 +70,46 @@ fn drain_sessions<V>(sessions: &Mutex<HashMap<String, V>>) -> usize {
     count
 }
 
-/// SFTP session backed by a dedicated SSH connection.
+/// SFTP session for the desktop file-browser/transfer command layer.
 ///
-/// The canonical implementation is now
-/// [`termihub_core::backends::ssh::SftpFileBrowser`](termihub_core::backends::ssh).
-/// This struct is kept for the legacy SFTP command API used by the desktop file browser.
+/// This is a thin **synchronous adapter** around the single core SFTP
+/// implementation, [`SftpFileBrowser`](termihub_core::backends::ssh::SftpFileBrowser):
+/// every operation delegates to the core browser (which owns the russh-sftp
+/// session and all operation logic), so the desktop no longer maintains a
+/// parallel SFTP implementation (#2104). Because it goes through the core browser
+/// it reaches jump-host targets through their pooled gateway (#939) — the direct
+/// `connect_and_authenticate` path it used before ignored `proxy_jump`.
+///
+/// The adapter exists only to keep the synchronous, session-id-keyed command API
+/// (`SftpManager` + the `sftp_*` Tauri commands) working; migrating that surface
+/// onto the async `FileBrowser`/`ConnectionType` path is tracked as a follow-up.
 pub struct SftpSession {
-    session: SshSession,
-    sftp: RusshSftp,
+    browser: SftpFileBrowser,
 }
 
 impl SftpSession {
     /// Open a new SFTP session to the given SSH host.
+    ///
+    /// Eagerly connects (jump-host aware, via the core browser) so `sftp_open`
+    /// fails loudly on a bad host / auth here rather than deferring the error to
+    /// the first listing.
     pub fn new(config: &SshConfig) -> Result<Self, TerminalError> {
         info!(host = %config.host, port = config.port, "Opening SFTP connection");
-        let session = connect_and_authenticate(config)?;
-
-        let sftp = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                sftp::open_sftp_subsystem(&session)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(e.to_string()))
-            })
-        })?;
-
-        Ok(Self { session, sftp })
+        let browser = SftpFileBrowser::new(config.clone());
+        block_on_sftp(browser.connect()).map_err(sftp_op_error)?;
+        Ok(Self { browser })
     }
 
     /// Report whether an exec (command) channel can be opened and used on the
-    /// retained SSH connection.
+    /// SSH connection backing this SFTP session.
     ///
-    /// Runs a tiny probe that echoes a known marker back over an exec channel.
-    /// A normal SSH+shell connection echoes it (`true`); an SFTP-only or
-    /// relayed connection (e.g. `ForceCommand internal-sftp`) cannot run the
-    /// command, so the marker never appears (`false`). Lets the file editor
-    /// know whether privilege-elevated writes — which need a shell to run
-    /// `sudo` — are possible for this connection.
+    /// A normal SSH+shell connection can run the probe (`true`); an SFTP-only or
+    /// relayed connection (e.g. `ForceCommand internal-sftp`) cannot (`false`).
+    /// Lets the file editor know whether privilege-elevated writes — which need a
+    /// shell to run `sudo` — are possible for this connection. A dropped
+    /// connection maps to `false`.
     pub fn has_exec_capability(&self) -> bool {
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(async { probe_exec_capability(&self.session).await })
-        })
+        block_on_sftp(self.browser.has_exec_capability()).unwrap_or(false)
     }
 
     /// Open a **dedicated** SFTP session on a fresh channel off the same
@@ -110,9 +120,10 @@ impl SftpSession {
     /// without holding this session's `Mutex` — keeping directory listing /
     /// navigation live on the browsing channel during a transfer.
     pub async fn open_dedicated_sftp(&self) -> Result<RusshSftp, TerminalError> {
-        sftp::open_sftp_subsystem(&self.session)
+        self.browser
+            .open_dedicated_channel()
             .await
-            .map_err(|e| TerminalError::SftpError(e.to_string()))
+            .map_err(sftp_op_error)
     }
 
     /// Best-effort size (in bytes) of a remote file via SFTP `stat`.
@@ -120,135 +131,61 @@ impl SftpSession {
     /// Returns `0` when the size is unavailable — the UI treats `total == 0` as
     /// indeterminate and shows a spinner rather than a percentage.
     pub async fn remote_size(&self, remote_path: &str) -> u64 {
-        match self.sftp.metadata(remote_path).await {
-            Ok(meta) => meta.size.unwrap_or(0),
-            Err(_) => 0,
-        }
+        self.browser.remote_size(remote_path).await
     }
 
     /// List directory contents, filtering out `.` and `..`.
     pub fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, TerminalError> {
         debug!(path, "SFTP listing directory");
-        let path = path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                sftp::list_dir(&self.sftp, &path)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("readdir failed: {e}")))
-            })
-        })
+        block_on_sftp(self.browser.list_dir(path)).map_err(sftp_op_error)
     }
 
     /// Download a remote file to a local path. Returns bytes written.
     pub fn read_file(&self, remote_path: &str, local_path: &str) -> Result<u64, TerminalError> {
-        let remote_path = remote_path.to_string();
-        let local_path = local_path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let mut remote = self
-                    .sftp
-                    .open(&remote_path)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("open remote file: {e}")))?;
-
-                let mut data = Vec::new();
-                remote
-                    .read_to_end(&mut data)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("read failed: {e}")))?;
-
-                tokio::fs::write(&local_path, &data)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("write local file: {e}")))?;
-
-                Ok::<u64, TerminalError>(data.len() as u64)
-            })
+        block_on_sftp(async {
+            let data = self.browser.read_file(remote_path).await.map_err(sftp_op_error)?;
+            tokio::fs::write(local_path, &data)
+                .await
+                .map_err(|e| TerminalError::SftpError(format!("write local file: {e}")))?;
+            Ok::<u64, TerminalError>(data.len() as u64)
         })
     }
 
     /// Upload a local file to a remote path. Returns bytes written.
     pub fn write_file(&self, local_path: &str, remote_path: &str) -> Result<u64, TerminalError> {
-        let local_path = local_path.to_string();
-        let remote_path = remote_path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let data = tokio::fs::read(&local_path)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("open local file: {e}")))?;
-
-                let mut remote =
-                    self.sftp.create(&remote_path).await.map_err(|e| {
-                        TerminalError::SftpError(format!("create remote file: {e}"))
-                    })?;
-
-                remote
-                    .write_all(&data)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("write failed: {e}")))?;
-
-                Ok::<u64, TerminalError>(data.len() as u64)
-            })
+        block_on_sftp(async {
+            let data = tokio::fs::read(local_path)
+                .await
+                .map_err(|e| TerminalError::SftpError(format!("open local file: {e}")))?;
+            self.browser
+                .write_file(remote_path, &data)
+                .await
+                .map_err(sftp_op_error)?;
+            Ok::<u64, TerminalError>(data.len() as u64)
         })
     }
 
     /// Create a directory on the remote host.
     pub fn mkdir(&self, path: &str) -> Result<(), TerminalError> {
-        let path = path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                self.sftp
-                    .create_dir(&path)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("mkdir failed: {e}")))
-            })
-        })
+        block_on_sftp(self.browser.mkdir(path)).map_err(sftp_op_error)
     }
 
     /// Remove a file on the remote host.
     pub fn remove_file(&self, path: &str) -> Result<(), TerminalError> {
-        let path = path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                self.sftp
-                    .remove_file(&path)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("unlink failed: {e}")))
-            })
-        })
+        block_on_sftp(self.browser.delete(path)).map_err(sftp_op_error)
     }
 
     /// Remove an empty directory on the remote host.
     pub fn remove_dir(&self, path: &str) -> Result<(), TerminalError> {
-        let path = path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                self.sftp
-                    .remove_dir(&path)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("rmdir failed: {e}")))
-            })
-        })
+        block_on_sftp(self.browser.delete(path)).map_err(sftp_op_error)
     }
 
     /// Read a remote file's contents as a UTF-8 string.
     pub fn read_file_content(&self, remote_path: &str) -> Result<String, TerminalError> {
-        let remote_path = remote_path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let mut remote = self
-                    .sftp
-                    .open(&remote_path)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("open remote file: {e}")))?;
-
-                let mut content = String::new();
-                remote
-                    .read_to_string(&mut content)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("read failed: {e}")))?;
-
-                Ok::<String, TerminalError>(content)
-            })
+        block_on_sftp(async {
+            let data = self.browser.read_file(remote_path).await.map_err(sftp_op_error)?;
+            String::from_utf8(data)
+                .map_err(|e| TerminalError::SftpError(format!("read failed: invalid UTF-8: {e}")))
         })
     }
 
@@ -263,115 +200,62 @@ impl SftpSession {
 
     /// Rename a file or directory on the remote host.
     pub fn rename(&self, old_path: &str, new_path: &str) -> Result<(), TerminalError> {
-        let old_path = old_path.to_string();
-        let new_path = new_path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                self.sftp
-                    .rename(&old_path, &new_path)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("rename failed: {e}")))
-            })
-        })
+        block_on_sftp(self.browser.rename(old_path, new_path)).map_err(sftp_op_error)
     }
 
     /// Get metadata for a single file or directory.
-    #[allow(dead_code)]
     pub fn stat(&self, path: &str) -> Result<FileEntry, TerminalError> {
-        let path = path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                sftp::stat(&self.sftp, &path)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("stat failed: {e}")))
-            })
-        })
+        block_on_sftp(self.browser.stat(path)).map_err(sftp_op_error)
     }
 
     /// Authoritatively probe whether the connecting user can write `remote_path`.
     ///
-    /// Delegates to [`sftp_ops::check_writable`], the single core implementation
-    /// (#2104): opens the **existing** file for writing with `OpenFlags::WRITE`
-    /// only — no `CREATE`/`TRUNCATE`/`APPEND` — so the file's contents are never
-    /// modified, and never returns a hard error for the ambiguous case (a
-    /// `PERMISSION_DENIED` maps to [`Writability::ReadOnly`], any other error to
-    /// [`Writability::Unknown`]).
+    /// Delegates to the core [`SftpAdvancedOps::check_writable`] companion-trait
+    /// implementation (#2104): opens the **existing** file for writing with
+    /// `OpenFlags::WRITE` only — no `CREATE`/`TRUNCATE`/`APPEND` — so the file's
+    /// contents are never modified, and never returns a hard error for the
+    /// ambiguous case (a `PERMISSION_DENIED` maps to [`Writability::ReadOnly`],
+    /// any other error to [`Writability::Unknown`]).
     pub fn check_writable(&self, remote_path: &str) -> Result<Writability, TerminalError> {
-        let remote_path = remote_path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current()
-                .block_on(async { Ok(sftp_ops::check_writable(&self.sftp, &remote_path).await) })
-        })
+        block_on_sftp(self.browser.check_writable(remote_path)).map_err(sftp_op_error)
     }
 
     /// Resolve a remote path to its canonical absolute form via SFTP realpath.
     ///
-    /// Delegates to [`sftp_ops::realpath`] (#2104). Passing `"."` yields the
-    /// session's home directory, avoiding the fragile `/home/<user>` guess that
-    /// breaks on non-Linux layouts (audit GAP C2, issue #1143).
+    /// Delegates to the core [`SftpAdvancedOps::realpath`] companion-trait
+    /// implementation (#2104). Passing `"."` yields the session's home directory,
+    /// avoiding the fragile `/home/<user>` guess that breaks on non-Linux layouts
+    /// (audit GAP C2, issue #1143).
     pub fn realpath(&self, path: &str) -> Result<String, TerminalError> {
-        let path = path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                sftp_ops::realpath(&self.sftp, &path)
-                    .await
-                    .map_err(sftp_op_error)
-            })
-        })
+        block_on_sftp(self.browser.realpath(path)).map_err(sftp_op_error)
     }
 
     /// Write raw bytes to a remote file, creating or overwriting it.
-    #[allow(dead_code)]
     pub fn write_bytes(&self, remote_path: &str, data: &[u8]) -> Result<(), TerminalError> {
-        let data = data.to_vec();
-        let remote_path = remote_path.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                let mut remote =
-                    self.sftp.create(&remote_path).await.map_err(|e| {
-                        TerminalError::SftpError(format!("create remote file: {e}"))
-                    })?;
-
-                remote
-                    .write_all(&data)
-                    .await
-                    .map_err(|e| TerminalError::SftpError(format!("write failed: {e}")))
-            })
-        })
+        block_on_sftp(self.browser.write_file(remote_path, data)).map_err(sftp_op_error)
     }
 
     /// Write `content` to `remote_path` with `sudo`-elevated privileges (#1328).
     ///
-    /// Delegates to [`sftp_ops::write_file_content_elevated`], the single core
-    /// implementation (#2104): SFTP-upload the buffer to a termiHub-generated
-    /// `/tmp/termihub-<uuid>`, then `sudo -S -p ''` a fixed `/bin/sh` script
-    /// (`cat "$1" > "$2" && rm -f "$1"`) that rewrites the destination in place
-    /// (preserving owner/mode/ACLs), classified into an [`ElevatedWriteResult`].
-    /// The destination path is POSIX-quoted and passed as a positional argument,
-    /// so a hostile remote path cannot inject shell commands; the password is
-    /// only ever sent on stdin and is **never** logged.
+    /// Delegates to the core [`SftpAdvancedOps::write_file_content_elevated`]
+    /// companion-trait implementation (#2104): SFTP-upload the buffer to a
+    /// termiHub-generated `/tmp/termihub-<uuid>`, then `sudo -S -p ''` a fixed
+    /// `/bin/sh` script (`cat "$1" > "$2" && rm -f "$1"`) that rewrites the
+    /// destination in place (preserving owner/mode/ACLs), classified into an
+    /// [`ElevatedWriteResult`]. The destination path is POSIX-quoted and passed as
+    /// a positional argument, so a hostile remote path cannot inject shell
+    /// commands; the password is only ever sent on stdin and is **never** logged.
     pub fn write_file_content_elevated(
         &self,
         remote_path: &str,
         content: &str,
         sudo_password: &str,
     ) -> Result<ElevatedWriteResult, TerminalError> {
-        let remote_path = remote_path.to_string();
-        let content = content.to_string();
-        let sudo_password = sudo_password.to_string();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                sftp_ops::write_file_content_elevated(
-                    &self.session,
-                    &self.sftp,
-                    &remote_path,
-                    &content,
-                    &sudo_password,
-                )
-                .await
-                .map_err(sftp_op_error)
-            })
-        })
+        block_on_sftp(
+            self.browser
+                .write_file_content_elevated(remote_path, content, sudo_password),
+        )
+        .map_err(sftp_op_error)
     }
 }
 
@@ -471,6 +355,8 @@ mod tests {
     // to verify contents/owner/mode and to confirm no `/tmp/termihub-*` temp
     // leaked — never the elevated write path itself.
     use crate::utils::remote_exec::run_remote_command;
+    use crate::utils::ssh_auth::connect_and_authenticate;
+    use termihub_core::backends::ssh::handler::SshSession;
 
     /// Root-owned file the fixtures ship (see `tests/docker/ssh-sudo`).
     const ELEVATED_TARGET: &str = "/etc/termihub-elevated-target.txt";
