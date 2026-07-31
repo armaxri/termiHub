@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { ArrowDownUp, Minus } from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { frontendLog } from "@/utils/frontendLog";
 import { transferPause, transferResume, transferCancel, transferRetry } from "@/services/api";
 import { isTerminalTransferState, type TransferEntry } from "@/types/transfer";
@@ -31,8 +32,9 @@ function summarize(entries: TransferEntry[]): string {
  * surfaced by the status-bar `TransferQueueIndicator` instead.
  */
 export function TransferQueue() {
-  const transferQueue = useAppStore((s) => s.transferQueue);
-  const minimized = useAppStore((s) => s.transferQueueMinimized);
+  // Render from the projected `transfers` region (parity-safe: it mirrors
+  // `appStore` and falls back to it verbatim — #2229 render cut).
+  const { queue: transferQueue, minimized } = useProjectedTransfers();
   const removeTransfer = useAppStore((s) => s.removeTransfer);
   const clearCompleted = useAppStore((s) => s.clearCompleted);
   const setMinimized = useAppStore((s) => s.setTransferQueueMinimized);
