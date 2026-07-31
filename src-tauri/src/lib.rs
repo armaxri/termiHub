@@ -65,6 +65,13 @@ mod session_history;
 /// the ported auto-reconnect engine (#2144). Registered and served but not yet
 /// driving the live UI — see [`session_projection`].
 mod session_projection;
+/// Shadow app-settings authority (#2227, Phase 5 of #2139/#2153): the shared
+/// `settings` projection region + `settings.*` intents modeling the `appStore`
+/// `AppSettings` document (the persisted user-preferences slice behind
+/// `updateSettings` / `saveSettings`), held as an opaque JSON document.
+/// Registered and served but not yet driving the live UI — see
+/// [`settings_projection`].
+mod settings_projection;
 mod spawn;
 /// Shadow system-monitor authority (#2224, Phase 5 of #2139): the shared
 /// `system-monitors` projection region + `monitor.*` intents, built on the
@@ -808,6 +815,19 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
+                // Shadow SettingsStore (#2227, Phase 5): the shared `settings`
+                // region + `settings.*` intents modeling the `appStore`
+                // `AppSettings` document (the persisted user-preferences slice),
+                // held opaquely as JSON. Managed authoritative state that serves
+                // intents, but nothing in the live UI subscribes to or renders the
+                // region yet — a pure shadow foundation (later steps cut rendering,
+                // then mutations, over to it). The shared region is seeded below
+                // once the store is managed.
+                app.manage(Arc::new(settings_projection::SettingsStore::new()));
+                settings_projection::projection::register_settings_intents(
+                    &mut registry,
+                    app.handle().clone(),
+                );
                 // Test-bridge-only: add the diagnostic region's `diag.*` routes so
                 // the projection-assertion harness (#2164) has a self-contained
                 // region to drive. Never registered in production launches. See
@@ -867,6 +887,17 @@ pub fn run() {
                 {
                     projection_state.projector.register_region(
                         connections_projection::projection::CONNECTIONS_REGION,
+                        store.snapshot(),
+                    );
+                }
+                // Seed the shared `settings` region with the default settings
+                // document at version 0, so a subscriber attaches to a real region
+                // before the first `settings.*` intent (#2227).
+                if let Some(store) =
+                    app.handle().try_state::<Arc<settings_projection::SettingsStore>>()
+                {
+                    projection_state.projector.register_region(
+                        settings_projection::projection::SETTINGS_REGION,
                         store.snapshot(),
                     );
                 }
