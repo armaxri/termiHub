@@ -121,7 +121,14 @@ pub fn register_broadcast_intents(registry: &mut HandlerRegistry, app_handle: Ap
         let scope = required_scope(intent, "scope")?;
         let targets = required_str_array(intent, "targetTabIds")?;
         let last_scope = required_scope(intent, "lastScope")?;
-        store.replace(&intent.client_id, active, source, scope, targets, last_scope);
+        store.replace(
+            &intent.client_id,
+            active,
+            source,
+            scope,
+            targets,
+            last_scope,
+        );
         Ok(publish_broadcast(projector, &store, &intent.client_id))
     });
 
