@@ -61,16 +61,6 @@ import {
   reloadExternalConnections as apiReloadExternalConnections,
   getRecoveryWarnings,
 } from "@/services/storage";
-import {
-  getSessionHistory,
-  recordSession as apiRecordSession,
-  setHistoryEntryPinned as apiSetHistoryEntryPinned,
-  markHistoryEntryPromoted as apiMarkHistoryEntryPromoted,
-  removeHistoryEntry as apiRemoveHistoryEntry,
-  clearSessionHistory as apiClearSessionHistory,
-} from "@/services/sessionHistoryApi";
-import { SessionHistoryEntry } from "@/types/sessionHistory";
-import { sessionHistoryTitle } from "@/utils/sessionHistoryTitle";
 import { deriveTabStatus, type TabStatusMaps } from "@/utils/tabStatus";
 import {
   sftpOpen,
@@ -169,6 +159,7 @@ import { createTunnelSlice, TunnelSlice } from "./slices/tunnelSlice";
 import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embedded-serversSlice";
 import { createMacrosSlice, MacrosSlice } from "./slices/macrosSlice";
 import { createPluginsSlice, PluginsSlice } from "./slices/pluginsSlice";
+import { createSessionHistorySlice, SessionHistorySlice } from "./slices/sessionHistorySlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 import {
@@ -428,21 +419,6 @@ function stripPassword(connection: SavedConnection): SavedConnection {
   return connection;
 }
 
-/** Config keys that hold secrets and must never be written to session history. */
-const HISTORY_SECRET_KEYS = ["password", "passphrase", "keyPassphrase"];
-
-/**
- * Return a copy of a connection config with all secret fields removed, for
- * safe storage in the session history (which never holds credentials).
- */
-function stripHistorySecrets(config: ConnectionConfig): ConnectionConfig {
-  const inner = { ...(config.config as Record<string, unknown>) };
-  for (const key of HISTORY_SECRET_KEYS) {
-    delete inner[key];
-  }
-  return { type: config.type, config: inner };
-}
-
 /**
  * A staged/available update reported by a connected agent via its
  * `agent.update_available` notification (#1352). Recorded per agent id so the
@@ -479,7 +455,8 @@ export interface AgentUpdatePending {
  */
 const AGENT_UPDATE_RECONNECT_BUFFER_SECS = 3;
 
-export interface AppState extends TunnelSlice, EmbeddedServersSlice, MacrosSlice, PluginsSlice {
+export interface AppState
+  extends TunnelSlice, EmbeddedServersSlice, MacrosSlice, PluginsSlice, SessionHistorySlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -983,24 +960,8 @@ export interface AppState extends TunnelSlice, EmbeddedServersSlice, MacrosSlice
   addConnection: (connection: SavedConnection) => void;
   bulkAddConnections: (connections: SavedConnection[]) => void;
 
-  // --- Session history (#1883) ---
-  /** Recorded session history, ordered pinned-first then most-recently-used. */
-  sessionHistory: SessionHistoryEntry[];
-  /** Load session history from the backend. */
-  loadSessionHistory: () => Promise<void>;
-  /**
-   * Record a session open in history (deduplicated + evicted in the backend).
-   * A no-op when `sessionHistoryEnabled` is off. Failures are logged, not thrown.
-   */
-  recordSession: (connectionType: string, config: ConnectionConfig) => Promise<void>;
-  /** Pin or unpin a history entry. */
-  pinHistoryEntry: (dedupKey: string, pinned: boolean) => Promise<void>;
-  /** Mark a history entry as promoted to a saved connection. */
-  markHistoryPromoted: (dedupKey: string) => Promise<void>;
-  /** Remove a single history entry. */
-  removeHistoryEntry: (dedupKey: string) => Promise<void>;
-  /** Clear all session history. */
-  clearSessionHistory: () => Promise<void>;
+  // Session history — data + load/record/pin/promote/remove/clear live in
+  // SessionHistorySlice (#1883, extracted under #2077).
   updateConnection: (connection: SavedConnection) => void;
   deleteConnection: (connectionId: string) => void;
   bulkDeleteConnections: (connectionIds: string[]) => void;
@@ -2929,6 +2890,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createEmbeddedServersSlice(set, get, store),
     ...createMacrosSlice(set, get, store),
     ...createPluginsSlice(set, get, store),
+    ...createSessionHistorySlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -5437,59 +5399,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       void applyConnectionReload();
     },
 
-    // --- Session history (#1883) ---
-    sessionHistory: [],
-
-    loadSessionHistory: async () => {
-      try {
-        const entries = await getSessionHistory();
-        set({ sessionHistory: entries });
-      } catch (err) {
-        frontendLog(
-          "session_history",
-          `Failed to load session history: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    },
-
-    recordSession: async (connectionType, config) => {
-      const settings = get().settings;
-      if (settings.sessionHistoryEnabled === false) return;
-      // Privacy: passwords/passphrases are NEVER written to history, regardless
-      // of the connection's savePassword flag (they live in the credential store).
-      const safeConfig = stripHistorySecrets(config);
-      const title = sessionHistoryTitle(connectionType, safeConfig);
-      const limit = settings.sessionHistoryLimit ?? 50;
-      try {
-        const entries = await apiRecordSession(connectionType, safeConfig, title, limit);
-        set({ sessionHistory: entries });
-      } catch (err) {
-        frontendLog(
-          "session_history",
-          `Failed to record session: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    },
-
-    pinHistoryEntry: async (dedupKey, pinned) => {
-      const entries = await apiSetHistoryEntryPinned(dedupKey, pinned);
-      set({ sessionHistory: entries });
-    },
-
-    markHistoryPromoted: async (dedupKey) => {
-      const entries = await apiMarkHistoryEntryPromoted(dedupKey);
-      set({ sessionHistory: entries });
-    },
-
-    removeHistoryEntry: async (dedupKey) => {
-      const entries = await apiRemoveHistoryEntry(dedupKey);
-      set({ sessionHistory: entries });
-    },
-
-    clearSessionHistory: async () => {
-      const entries = await apiClearSessionHistory();
-      set({ sessionHistory: entries });
-    },
+    // Session history (#1883) — data + load/record/pin/promote/remove/clear
+    // provided by createSessionHistorySlice (extracted under #2077).
 
     addConnection: (connection) => {
       set((state) => ({ connections: [...state.connections, connection] }));
