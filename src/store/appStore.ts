@@ -287,6 +287,12 @@ import {
 import { mirrorMonitorIntent } from "@/store/systemMonitorBridge";
 import { mirrorAgentIntent } from "@/store/agentsBridge";
 import { mirrorBroadcastIntent } from "@/store/broadcastBridge";
+import {
+  expectProjectedRestoreSettlement,
+  mirrorRestoreBegin,
+  mirrorRestoreSettle,
+  restoreRenderFromProjectionEnabled,
+} from "@/store/restoreCohortBridge";
 
 export type SidebarView =
   | "connections"
@@ -2029,6 +2035,39 @@ function collectRestoreCohort(groups: TabGroup[]): {
   const pendingTabIds = tabs.filter((t) => t.contentType === "terminal").map((t) => t.id);
   const preFailedCount = tabs.filter((t) => t.contentType === "agent-error").length;
   return { pendingTabIds, preFailedCount };
+}
+
+/**
+ * The aggregate restore/launch summary toast — the render surface of the
+ * restore-cohort machine (#1146 / #1227). Extracted so the local reducer path and
+ * the projection-driven render cut ({@link restoreCohortBridge}) fire byte-identical
+ * feedback: a success toast when every tab connected, otherwise the partial-failure
+ * info toast carrying the one-tap bulk "Reconnect failed tabs" action (persisted
+ * while offered so it is not lost to auto-dismiss). `retryTabIds` is the live
+ * terminal tabs still available to retry; `onReconnect` re-drives them.
+ */
+function raiseRestoreSummary(
+  summary: { total: number; restored: number; failed: number; toastId?: string | number },
+  retryTabIds: string[],
+  onReconnect: () => void
+): void {
+  const { total, restored, failed, toastId } = summary;
+  if (failed === 0) {
+    // Resolve the pending bulk-retry toast in place when present.
+    toast.success(`Restored ${total} ${total === 1 ? "tab" : "tabs"}`, { id: toastId });
+    return;
+  }
+  // No toast.warning primitive — use info for the partial-failure case. Offer a
+  // one-tap bulk retry when there are reconnectable failed tabs.
+  const action =
+    retryTabIds.length > 0 ? { label: "Reconnect failed tabs", onClick: onReconnect } : undefined;
+  toast.info(`Restored ${restored} of ${total} tabs — ${failed} could not reconnect`, {
+    id: toastId,
+    action,
+    // Persist while a bulk retry is offered so the action is not lost to
+    // auto-dismiss (matches the "recoverable" feedback pillar).
+    duration: action ? Infinity : undefined,
+  });
 }
 
 /**
@@ -6364,10 +6403,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
         failedRestoreTabIds: [],
       });
       // A cohort with no live tabs to wait on (e.g. all agent-error) settles now.
+      // Settle locally first so the projected-render summary is registered before
+      // the mirror dispatch (a synchronous transport failure then fires it now).
       if (pending.size === 0) get().settleRestoreCohort();
+      // Mutation + render cut (#2241): mirror the cohort to the backend
+      // `RestoreCohortStore` and the render region. Off/failure falls back to the
+      // local reducers, which already ran above.
+      mirrorRestoreBegin({ pendingTabIds, preFailedCount, toastId });
     },
     settleRestoreTab: (tabId, outcome) => {
       const cohort = get().restoreCohort;
+      // Ignore a tab that is not pending in the current cohort (mirrors the store):
+      // dispatch no intent for a stray/duplicate settle.
       if (!cohort || !cohort.pending.has(tabId)) return;
       const pending = new Set(cohort.pending);
       pending.delete(tabId);
@@ -6376,12 +6423,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const failedTabIds = new Set(cohort.failedTabIds);
       if (outcome === "failed") failedTabIds.add(tabId);
       set({ restoreCohort: { ...cohort, pending, failed, failedTabIds } });
+      // Settle locally first so the projected-render summary is registered before
+      // the mirror dispatch (see beginRestoreCohort).
       if (pending.size === 0) get().settleRestoreCohort();
+      // Mutation + render cut (#2241): mirror the settle to the store + region.
+      mirrorRestoreSettle({ tabId, outcome });
     },
     settleRestoreCohort: () => {
       const cohort = get().restoreCohort;
       if (!cohort) return;
-      // Restrict the retry set to tabs that still exist as live terminal tabs.
+      // Restrict the retry set to tabs that still exist as live terminal tabs (a
+      // frontend concern — it needs the tab registry; the store keeps the raw set).
       const liveTerminalIds = new Set(
         collectLiveTabs(get())
           .filter((t) => t.contentType === "terminal")
@@ -6397,23 +6449,24 @@ export const useAppStore = create<AppState>((set, get, store) => {
         "workspace_restore",
         `restore cohort settled: ${restored}/${total} connected, ${failed} failed`
       );
-      if (failed === 0) {
-        // Resolve the pending bulk-retry toast in place when present.
-        toast.success(`Restored ${total} ${total === 1 ? "tab" : "tabs"}`, { id: toastId });
-      } else {
-        // No toast.warning primitive — use info for the partial-failure case.
-        // Offer a one-tap bulk retry when there are reconnectable failed tabs.
-        const action =
-          retryTabIds.length > 0
-            ? { label: "Reconnect failed tabs", onClick: () => get().reconnectFailedRestoreTabs() }
-            : undefined;
-        toast.info(`Restored ${restored} of ${total} tabs — ${failed} could not reconnect`, {
-          id: toastId,
-          action,
-          // Persist while a bulk retry is offered so the action is not lost to
-          // auto-dismiss (matches the "recoverable" feedback pillar).
-          duration: action ? Infinity : undefined,
+      const summary = { total, restored, failed, toastId };
+      const fire = () =>
+        raiseRestoreSummary(summary, retryTabIds, () => get().reconnectFailedRestoreTabs());
+      if (restoreRenderFromProjectionEnabled()) {
+        // Render cut (#2241): fire the summary toast once per new projected
+        // settlement `seq` — the fired content is this gate-validated local summary.
+        // The upcoming begin/settle mirror dispatch drives the region; if it fails,
+        // the fallback fires this same closure, so the toast is never lost. The raw
+        // failed set is the gate baseline (the store keeps the retry set unfiltered).
+        expectProjectedRestoreSettlement(fire, {
+          total,
+          restored,
+          failed,
+          retryTabIds: [...cohort.failedTabIds],
         });
+      } else {
+        // Pre-cut path: fire straight from the local reducer.
+        fire();
       }
     },
     reconnectFailedRestoreTabs: () => {
