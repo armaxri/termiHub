@@ -3,7 +3,7 @@ import {
   MAX_PATTERN_LENGTH,
   buildRuleSource,
   hasNestedQuantifier,
-  exceedsAdversarialBudget,
+  hasSuperLinearBacktracking,
   validateHighlightPattern,
 } from "./regexSafety";
 
@@ -54,31 +54,32 @@ describe("hasNestedQuantifier", () => {
   });
 });
 
-describe("exceedsAdversarialBudget", () => {
-  it("returns true for a catastrophic overlapping-alternation pattern", () => {
-    // (a|a)+ is not a nested-quantifier shape but backtracks exponentially.
-    expect(exceedsAdversarialBudget("(a|a)+$", "g")).toBe(true);
+describe("hasSuperLinearBacktracking", () => {
+  it("flags overlapping-alternation ReDoS the structural check misses", () => {
+    // (a|a)+ is not a nested-quantifier shape but backtracks super-linearly.
+    // Detection is static (automaton-based), so it never depends on machine speed.
+    expect(hasSuperLinearBacktracking("(a|a)+$", "g")).toBe(true);
+    expect(hasSuperLinearBacktracking("(a|ab)+$", "g")).toBe(true);
+    expect(hasSuperLinearBacktracking("(x+x+)+y", "g")).toBe(true);
   });
 
   it("returns false for a normal linear pattern", () => {
-    expect(exceedsAdversarialBudget("\\berror\\b", "g")).toBe(false);
-    expect(exceedsAdversarialBudget("(?:https?)://\\S+", "g")).toBe(false);
+    expect(hasSuperLinearBacktracking("\\berror\\b", "g")).toBe(false);
+    expect(hasSuperLinearBacktracking("(?:https?)://\\S+", "g")).toBe(false);
+    expect(hasSuperLinearBacktracking("(a|b)+", "g")).toBe(false);
+    expect(hasSuperLinearBacktracking("\\b(?:TODO|FIXME)\\b", "g")).toBe(false);
   });
 
-  it("uses the injected clock to decide (deterministic budget check)", () => {
-    let t = 0;
-    // Clock jumps 100ms on the first read after start -> over a 30ms budget.
-    const fakeNow = (): number => {
-      const v = t;
-      t += 100;
-      return v;
-    };
-    expect(exceedsAdversarialBudget("abc", "g", 30, fakeNow)).toBe(true);
+  it("is deterministic across repeated calls (no timing dependence)", () => {
+    // The same verdict every time, regardless of how fast the machine runs it.
+    for (let i = 0; i < 5; i++) {
+      expect(hasSuperLinearBacktracking("(a|a)+$", "g")).toBe(true);
+      expect(hasSuperLinearBacktracking("\\berror\\b", "g")).toBe(false);
+    }
   });
 
-  it("stays under budget when the injected clock does not advance", () => {
-    const frozenNow = (): number => 5;
-    expect(exceedsAdversarialBudget("abc", "g", 30, frozenNow)).toBe(false);
+  it("defers (returns false) for an uncompilable source", () => {
+    expect(hasSuperLinearBacktracking("(unclosed", "g")).toBe(false);
   });
 });
 
@@ -119,9 +120,18 @@ describe("validateHighlightPattern", () => {
     if (!result.valid) expect(result.reason).toMatch(/backtracking|nested/i);
   });
 
-  it("rejects an overlapping-alternation ReDoS pattern via the empirical backstop", () => {
+  it("rejects an overlapping-alternation ReDoS pattern via static analysis", () => {
+    // Deterministic: caught by scslre's automaton analysis, not a wall-clock
+    // threshold, so the verdict does not depend on runner speed (#2262).
     const result = validateHighlightPattern("(a|a)+$");
     expect(result.valid).toBe(false);
-    if (!result.valid) expect(result.reason).toMatch(/backtracking|redos|slow/i);
+    if (!result.valid) expect(result.reason).toMatch(/backtracking|redos/i);
+  });
+
+  it("gives the same verdict on repeated runs (no timing flake)", () => {
+    for (let i = 0; i < 5; i++) {
+      expect(validateHighlightPattern("(a|a)+$").valid).toBe(false);
+      expect(validateHighlightPattern("\\b(?:TODO|FIXME)\\b").valid).toBe(true);
+    }
   });
 });

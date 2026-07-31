@@ -7,7 +7,9 @@
  * render loop and can freeze the terminal, so user input is validated *before*
  * it is ever saved or applied.
  *
- * The validation is layered defence:
+ * The validation is layered defence, and every layer is **deterministic** — the
+ * verdict depends only on the pattern's structure, never on wall-clock time, so it
+ * cannot flake with runner speed:
  *   1. **Length cap** — patterns over {@link MAX_PATTERN_LENGTH} chars are rejected
  *      outright (long sources are both hard to reason about and a cheap DoS vector).
  *   2. **Compile check** — the pattern (with the same wrapping the engine applies)
@@ -15,24 +17,22 @@
  *   3. **Structural check** — deterministic detection of nested unbounded
  *      quantifiers (the `(a+)+` / `(a*)*` star-height-2 shapes that drive the vast
  *      majority of ReDoS), rejected instantly without ever executing the pattern.
- *   4. **Empirical backstop** — the compiled pattern is run against a small battery
- *      of adversarial inputs with a wall-clock budget; anything that blows the
- *      budget (e.g. overlapping-alternation shapes the structural check misses) is
- *      rejected. The separation between a safe pattern (microseconds) and a
- *      catastrophic one (many milliseconds and up) is many orders of magnitude, so
- *      this stays deterministic in practice.
+ *   4. **Static super-linear analysis** — the compiled pattern is analysed by
+ *      {@link https://github.com/RunDevelopment/scslre | scslre}, a finite-automaton
+ *      ReDoS analyzer, which statically detects the overlapping-alternation and
+ *      ambiguity shapes the structural check misses (e.g. `(a|a)+$`). It never runs
+ *      the pattern, so — unlike the wall-clock backstop it replaced (#2262) — the
+ *      result is identical on a slow or a fast machine.
  *
  * The engine additionally caps per-line length and self-disables a rule that
  * exceeds a per-line time budget at runtime (see `findMatchesGuarded`), but this
  * save-time gate is the primary protection: a bad pattern should never reach the
  * engine in the first place.
  */
+import { analyse } from "scslre";
 
 /** Maximum accepted pattern source length, in characters. */
 export const MAX_PATTERN_LENGTH = 500;
-
-/** Wall-clock budget (ms) for the empirical adversarial run across all probes. */
-export const ADVERSARIAL_BUDGET_MS = 30;
 
 /** Options describing how the pattern will be compiled by the engine. */
 export interface PatternValidationOptions {
@@ -169,66 +169,33 @@ export function hasNestedQuantifier(source: string): boolean {
 }
 
 /**
- * Runs a compiled pattern against a battery of adversarial inputs and reports
- * whether the total wall-clock time exceeds `budgetMs`. Catches ReDoS shapes the
- * structural check misses (e.g. overlapping alternation `(a|a)+`).
+ * Statically detects patterns with super-linear (polynomial or exponential)
+ * worst-case matching — the ReDoS shapes the structural {@link hasNestedQuantifier}
+ * check misses, most notably overlapping alternation such as `(a|a)+$`.
  *
- * The probes are built from characters that appear in the pattern so that the
- * pattern actually engages with them, each a long run followed by a
- * non-matching sentinel that forces maximal backtracking.
+ * Delegates to {@link https://github.com/RunDevelopment/scslre | scslre}, which
+ * builds a finite automaton from the pattern and reports whether any repetition is
+ * ambiguous enough to backtrack super-linearly. This is a pure structural analysis:
+ * the pattern is **never executed**, so the verdict is deterministic regardless of
+ * machine speed (the reason this replaced the old wall-clock backstop — #2262).
+ *
+ * Returns `false` (defers to the caller) when the pattern cannot be compiled or the
+ * analyzer throws — compile errors are surfaced separately by the caller.
  */
-export function exceedsAdversarialBudget(
-  source: string,
-  flags: string,
-  budgetMs = ADVERSARIAL_BUDGET_MS,
-  nowFn: () => number = defaultNow
-): boolean {
+export function hasSuperLinearBacktracking(source: string, flags: string): boolean {
   let regex: RegExp;
   try {
     regex = new RegExp(source, flags);
   } catch {
     return false; // compile errors are handled elsewhere
   }
-
-  const probes = buildAdversarialInputs(source);
-  const start = nowFn();
-  for (const input of probes) {
-    regex.lastIndex = 0;
-    // A single exec cannot be interrupted; the input lengths are chosen so a
-    // catastrophic pattern clearly overruns the budget while a safe one stays in
-    // the microsecond range.
-    regex.test(input);
-    if (nowFn() - start > budgetMs) return true;
+  try {
+    return analyse(regex).reports.length > 0;
+  } catch {
+    // A pattern the analyzer cannot model is treated as "not proven dangerous"
+    // here; the structural check and length cap remain in force.
+    return false;
   }
-  return false;
-}
-
-/** Characters worth stress-testing, seeded from the pattern's own literals. */
-function adversarialAlphabet(source: string): string[] {
-  const chars = new Set<string>();
-  for (const ch of source) {
-    if (/[a-zA-Z0-9]/.test(ch)) chars.add(ch);
-  }
-  // Always include a couple of generic characters so `.`/class-only patterns are
-  // still exercised.
-  chars.add("a");
-  chars.add("0");
-  return [...chars].slice(0, 4);
-}
-
-/** Adversarial inputs: long single-char runs plus a failing sentinel. */
-function buildAdversarialInputs(source: string): string[] {
-  const inputs: string[] = [];
-  // ~20 repeats is deliberately modest: an exponential pattern still overruns the
-  // budget by an order of magnitude (hundreds of ms) yet the worst-case single
-  // exec stays bounded (~2^20 steps), so the validator never hangs. A linear
-  // pattern stays sub-millisecond.
-  const runLength = 20;
-  for (const ch of adversarialAlphabet(source)) {
-    inputs.push(ch.repeat(runLength) + "!");
-    inputs.push(ch.repeat(runLength) + " ");
-  }
-  return inputs;
 }
 
 /**
@@ -237,7 +204,8 @@ function buildAdversarialInputs(source: string): string[] {
  * with a user-facing message otherwise.
  *
  * Checks, in order: non-empty, length cap, compiles, no nested unbounded
- * quantifiers, and not empirically catastrophic on adversarial input.
+ * quantifiers, and no statically-detected super-linear backtracking. Every check
+ * is deterministic — the result never depends on how fast the machine is.
  */
 export function validateHighlightPattern(
   pattern: string,
@@ -268,10 +236,10 @@ export function validateHighlightPattern(
     };
   }
 
-  if (exceedsAdversarialBudget(source, flags)) {
+  if (hasSuperLinearBacktracking(source, flags)) {
     return {
       valid: false,
-      reason: "Pattern is too slow on adversarial input (possible ReDoS).",
+      reason: "Pattern may cause catastrophic backtracking (possible ReDoS).",
     };
   }
 
@@ -284,10 +252,4 @@ function describeError(err: unknown): string {
     return err.message.replace(/^Invalid regular expression:[^:]*:\s*/, "");
   }
   return String(err);
-}
-
-function defaultNow(): number {
-  return typeof performance !== "undefined" && typeof performance.now === "function"
-    ? performance.now()
-    : Date.now();
 }
