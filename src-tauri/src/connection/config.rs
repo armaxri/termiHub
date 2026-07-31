@@ -447,6 +447,52 @@ mod tests {
     }
 
     #[test]
+    fn terminal_options_round_trip_preserves_all_frontend_fields() {
+        // Regression for #2309: the frontend `TerminalOptions` (src/types/terminal.ts)
+        // carries fields the Rust struct must not drop on the save/load round-trip —
+        // otherwise a user's per-connection log-to-file (#1960), line-height and
+        // syntax-highlighting (#1696) overrides silently vanish on the next restart.
+        let json = serde_json::json!({
+            "horizontalScrolling": true,
+            "color": "#123456",
+            "fontFamily": "Fira Code",
+            "fontSize": 14,
+            "lineHeight": 1.25,
+            "scrollbackBuffer": 5000,
+            "cursorStyle": "bar",
+            "cursorBlink": true,
+            "lineEnding": "crlf",
+            "logToFile": true,
+            "logTimestamps": true,
+            "syntaxHighlighting": {
+                "override": "custom",
+                "additionalRules": [{ "name": "TODO", "enabled": true }]
+            }
+        });
+
+        // Deserialize into the Rust struct, then serialize back — this mirrors what
+        // happens when the connection is persisted and reloaded.
+        let opts: TerminalOptions = serde_json::from_value(json.clone()).unwrap();
+        let round_tripped = serde_json::to_value(&opts).unwrap();
+
+        for key in [
+            "lineHeight",
+            "logToFile",
+            "logTimestamps",
+            "syntaxHighlighting",
+        ] {
+            assert_eq!(
+                round_tripped.get(key),
+                json.get(key),
+                "field {key} was dropped or altered during the round-trip",
+            );
+        }
+        // The already-modelled fields must survive too.
+        assert_eq!(round_tripped.get("cursorStyle"), json.get("cursorStyle"));
+        assert_eq!(round_tripped.get("lineEnding"), json.get("lineEnding"));
+    }
+
+    #[test]
     fn folder_json_shape_has_type_tag() {
         let node = ConnectionTreeNode::Folder {
             name: "Work".to_string(),
