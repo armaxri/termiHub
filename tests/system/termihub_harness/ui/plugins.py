@@ -165,7 +165,7 @@ class PluginsUi(HarnessMixin):
         The write runs while the app is down, so the relaunch scans the plugins
         root, loads the enabled+compatible frontend plugin, and (post-#2234)
         promotes it to ``active``. The frontend-plugin gate is still off, so no
-        plugin JS executes yet — :meth:`enable_frontend_plugin_gate` does that.
+        plugin JS executes yet — :meth:`enable_frontend_plugins_via_restart` does that.
         """
         self.restart_app(between=self.write_sandbox_plugin)
 
@@ -192,28 +192,53 @@ class PluginsUi(HarnessMixin):
         except BridgeError:
             return False
 
-    def _set_frontend_plugin_gate(self, enabled: bool) -> None:
+    def write_gate_setting(self, enabled: bool) -> None:
+        """Set ``frontendPluginsEnabled`` in the on-disk ``settings.json``.
+
+        Read-modify-write so any settings the app already persisted are preserved
+        (``AppSettings`` is ``#[serde(default)]`` — a partial document loads with
+        defaults for everything else). Intended to run in the restart down-window.
+        """
+        path = self.config_dir / "settings.json"
+        data: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data = loaded
+            except (OSError, ValueError):
+                data = {}
+        data.setdefault("version", "1")
+        data["frontendPluginsEnabled"] = enabled
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+    def enable_frontend_plugins_via_restart(self) -> None:
+        """Restart with the gate persisted **on** so the plugin loads at startup.
+
+        Enabling through the persisted setting (rather than the live Settings
+        toggle) is the deterministic production path — startup ``loadPlugins``
+        reads ``frontendPluginsEnabled`` and injects each active frontend plugin's
+        JS — and it leaves the app on its default view, so a terminal opened next
+        renders normally (a terminal opened while the Settings editor tab is active
+        never focuses). The seeded plugin dir persists across the restart.
+        """
+        self.restart_app(between=lambda: self.write_gate_setting(True))
+
+    def disable_frontend_plugin_gate(self) -> None:
+        """Turn the gate off **live** via the Settings UI; injected scripts are
+        torn down without a restart (the reconcile-teardown path).
+
+        The plugin's status-bar widget lives in the always-visible status bar, so
+        this needs no terminal — safe to drive from the Settings editor tab.
+        """
         self.open_settings_category("plugins")
         self.wait(
             lambda: self.driver.exists(GATE_TOGGLE_TESTID),
             what="the frontend-plugin gate toggle",
         )
-        if self.frontend_plugin_gate_enabled() != enabled:
+        if self.frontend_plugin_gate_enabled():
             self.driver.click(GATE_TOGGLE_TESTID)
         self.wait(
-            lambda: self.frontend_plugin_gate_enabled() == enabled,
-            what=f"the frontend-plugin gate to be {'on' if enabled else 'off'}",
+            lambda: not self.frontend_plugin_gate_enabled(),
+            what="the frontend-plugin gate to turn off",
         )
-
-    def enable_frontend_plugin_gate(self) -> None:
-        """Turn the experimental frontend-plugin gate on via the Settings UI.
-
-        Flipping the gate re-runs ``loadPlugins`` → ``reconcileFrontendPlugins``,
-        which injects each active frontend plugin's JS — the real user action that
-        starts frontend plugin execution.
-        """
-        self._set_frontend_plugin_gate(True)
-
-    def disable_frontend_plugin_gate(self) -> None:
-        """Turn the gate off; injected plugin scripts are torn down live."""
-        self._set_frontend_plugin_gate(False)

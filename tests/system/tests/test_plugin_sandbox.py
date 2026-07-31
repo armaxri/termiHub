@@ -2,22 +2,21 @@
 
 This is the regression baseline for the plugin-sandbox work: it proves, in a
 production-shaped build with the CSP enforced, that an **enabled frontend plugin
-actually runs** — its protocol parser transforms terminal output and its
-status-bar widget renders — and that doing so trips **zero** CSP violations.
+actually runs** — its status-bar widget renders and its protocol parser
+transforms terminal output — and that doing so trips **zero** CSP violations.
 That baseline could not be established before #2234 (no plugin ever reached
 ``active`` in a real build); with activation landed, it can, and it is the net
 that lets the later PRs move frontend plugin execution into a Worker sandbox and
 drop ``blob:`` from ``script-src`` without silently breaking the feature.
 
 The suite seeds a real plugin (a parser + a status-bar widget from one
-``frontend/index.js``) onto disk in the app's isolated config dir, restarts so
-the manager activates it, then drives the experimental frontend-plugin gate
-(``frontendPluginsEnabled``, default-off) exactly as a user would — proving the
-gate is what starts (and stops) execution.
+``frontend/index.js``) onto disk in the app's isolated config dir, confirms it
+reaches ``active`` while the experimental gate (``frontendPluginsEnabled``,
+default-off) keeps it dormant, then enables the gate and asserts the widget
+renders with zero CSP violations and the parser rewrites terminal output.
 
 Runs on the integration legs only (real built app; not per-PR CI), like
-``test_csp.py`` — the CSP is only enforced in a production WebView build, so the
-"plugin JS runs with zero CSP violations" claim is only meaningful here. The
+``test_csp.py`` — the CSP is only enforced in a production WebView build. The
 test build re-adds only the loopback ``ws://`` bridge allowance via
 ``src-tauri/tauri.test.conf.json``; ``script-src`` still carries the production
 policy.
@@ -34,7 +33,7 @@ CSP_SINK = "csp-violations"
 
 
 class TestFrontendPluginBaseline(PluginsUi, SettingsUi, TerminalUi, SystemTest):
-    def test_seeded_plugin_activates_but_stays_dormant_while_gated(self):
+    def test_seeded_plugin_reaches_active_but_dormant_while_gated_off(self):
         # Seed the plugin on disk and restart so the manager scans it. Post-#2234
         # an enabled, compatible frontend-only plugin reaches `active`.
         self.seed_sandbox_plugin()
@@ -43,38 +42,27 @@ class TestFrontendPluginBaseline(PluginsUi, SettingsUi, TerminalUi, SystemTest):
             what="the seeded plugin to reach the active state",
         )
 
-        # The experimental gate is default-off, so no plugin JS is injected yet:
-        # the widget never mounts and the parser never registers. This is the
-        # dormant baseline the gate must flip.
+        # The gate is default-off, so no plugin JS is injected: the widget never
+        # mounts and the parser is never registered. Active-but-dormant is the
+        # state the gate must flip.
         assert not self.frontend_plugin_gate_enabled()
         assert not self.driver.exists(self.SANDBOX_WIDGET_TESTID), (
             "the plugin widget rendered while the frontend-plugin gate was off — "
             "plugin JS executed without the opt-in"
         )
 
-    def test_enabling_the_gate_executes_the_parser_and_renders_the_widget(self):
-        # Flipping the gate re-runs reconcile, which injects the plugin's JS. Both
-        # extension points come from one entry point, so a rendered widget proves
-        # the script executed; a transformed line proves the parser is live.
-        self.enable_frontend_plugin_gate()
+    def test_enabling_the_gate_renders_the_widget_with_zero_csp_violations(self):
+        # Persist the gate on and restart: startup loadPlugins injects the active
+        # plugin's JS from a blob URL. A rendered widget proves the script executed
+        # (its render() built DOM the status bar mounted); the CSP sink proves the
+        # blob-injected script + that DOM did not trip the enforced policy.
+        self.enable_frontend_plugins_via_restart()
 
         self.wait(
             lambda: self.driver.exists(self.SANDBOX_WIDGET_TESTID),
             what="the plugin status-bar widget to render",
         )
 
-        self.ensure_terminal()
-        # The shell echoes the command and its output; the parser rewrites the
-        # sentinel wherever it appears, so the transformed token proves transform()
-        # ran over real terminal output.
-        self.run_command(f"echo {self.PARSER_INPUT_TOKEN}")
-        output = self.wait_for_output(self.PARSER_OUTPUT_TOKEN)
-        assert self.PARSER_OUTPUT_TOKEN in output
-
-    def test_no_csp_violations_with_the_frontend_plugin_active(self):
-        # The plugin JS loads from a blob URL and its widget mounts DOM into the
-        # main document; neither may trip the enforced CSP. The reporter's sink is
-        # installed before React mounts, so its presence also confirms the app booted.
         assert self.driver.exists(CSP_SINK), (
             "CSP violation sink missing — the frontend did not boot, or the "
             "reporter was removed from main.tsx"
@@ -86,9 +74,20 @@ class TestFrontendPluginBaseline(PluginsUi, SettingsUi, TerminalUi, SystemTest):
             f"active:\n{details}"
         )
 
-    def test_disabling_the_gate_tears_down_plugin_execution(self):
-        # Turning the gate back off unloads the injected script and unregisters the
-        # plugin's extensions, so the widget unmounts — execution is fully reversible.
+    def test_enabled_parser_transforms_terminal_output(self):
+        # With the gate on (previous test), the parser is registered. Open a
+        # terminal and run a command carrying the sentinel: the shell echoes the
+        # command and its output, and the parser rewrites the sentinel wherever it
+        # appears, so the transformed token proves transform() ran over real
+        # terminal output.
+        self.ensure_terminal()
+        self.run_command(f"echo {self.PARSER_INPUT_TOKEN}")
+        output = self.wait_for_output(self.PARSER_OUTPUT_TOKEN)
+        assert self.PARSER_OUTPUT_TOKEN in output
+
+    def test_disabling_the_gate_unmounts_the_widget(self):
+        # Turning the gate back off live unloads the injected script and unregisters
+        # the plugin's extensions, so the widget unmounts — execution is reversible.
         self.disable_frontend_plugin_gate()
         self.wait(
             lambda: not self.driver.exists(self.SANDBOX_WIDGET_TESTID),
