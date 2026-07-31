@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.6.0
+**Version**: 0.7.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185
+**Issue**: #17, #360, #1349, #2185, #2192
 
 ---
 
@@ -264,22 +264,27 @@ The desktop sends its supported protocol version in the `initialize` request. Th
 
 ### Compatibility Matrix
 
-| Desktop Version | Agent Version | Compatible?                                                                          |
-| --------------- | ------------- | ------------------------------------------------------------------------------------ |
-| 0.6.0           | 0.6.0         | Yes                                                                                  |
-| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path) |
-| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                            |
-| 0.5.0           | 0.5.0         | Yes                                                                                  |
-| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                    |
-| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                            |
-| 0.4.0           | 0.4.0         | Yes                                                                                  |
-| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                      |
-| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                              |
-| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                  |
-| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                     |
-| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                           |
-| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                 |
-| 1.0.0           | 0.4.0         | No (major mismatch)                                                                  |
+| Desktop Version | Agent Version | Compatible?                                                                              |
+| --------------- | ------------- | ---------------------------------------------------------------------------------------- |
+| 0.7.0           | 0.7.0         | Yes                                                                                      |
+| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop) |
+| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                |
+| 0.6.0           | 0.6.0         | Yes                                                                                      |
+| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)     |
+| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                |
+| 0.5.0           | 0.5.0         | Yes                                                                                      |
+| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                        |
+| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                |
+| 0.4.0           | 0.4.0         | Yes                                                                                      |
+| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                          |
+| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                  |
+| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                      |
+| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                         |
+| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                               |
+| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                     |
+| 1.0.0           | 0.4.0         | No (major mismatch)                                                                      |
+
+**0.7.0 (additive, minor)** — adds agent-hosted embedded servers: the [`service.start`](#servicestart) / [`service.stop`](#servicestop) / [`service.status`](#servicestatus) lifecycle methods (#2192), alongside the read-only [`service.list`](#servicelist) discovery method carried over from the Service/Tool substrate (#2148). The agent hosts the HTTP/FTP/TFTP listen socket; the desktop keeps only lifecycle control. Backwards compatible in both directions: a pre-0.7.0 agent simply lacks the methods, so a `service.start` call returns [`-32601` Method not found](#standard-json-rpc-errors) and the desktop surfaces the existing "not supported" path (hosting the embedded server locally on the desktop as before); a pre-0.7.0 desktop never calls them.
 
 **0.6.0 (additive, minor)** — adds agent-hosted tunnel forwarding: the [`tunnel.start`](#tunnelstart) / [`tunnel.stop`](#tunnelstop) / [`tunnel.status`](#tunnelstatus) methods (#2185, #2198). The agent runs the SSH client and the listen socket; the desktop keeps only lifecycle control. Backwards compatible in both directions: a pre-0.6.0 agent simply lacks the methods, so a `tunnel.start` call returns [`-32601` Method not found](#standard-json-rpc-errors) and the desktop surfaces the existing "not supported" path (hosting the tunnel locally as before); a pre-0.6.0 desktop never calls them.
 
@@ -1846,6 +1851,205 @@ Report whether an agent-hosted tunnel is currently forwarding, with live traffic
 
 ---
 
+### Agent-hosted embedded servers (`service.*`)
+
+The `service.*` methods run an embedded server (HTTP / FTP / TFTP) **on the agent** instead of on the desktop (#2192). The agent creates the server from its `ServiceRegistry` by `serviceId` and binds the listen socket on the agent host; the desktop keeps only lifecycle control — start, stop, and status — over this RPC. The lifecycle methods are additive in protocol **0.7.0**: a pre-0.7.0 agent lacks them, so a `service.start` call returns [`-32601` Method not found](#standard-json-rpc-errors), and the desktop surfaces the existing "not supported" path (hosting the embedded server locally on the desktop as before).
+
+```mermaid
+flowchart LR
+  Desktop["Desktop<br/>(service.* control only)"] -->|"start / stop / status RPC"| Agent["Agent (embedded-server host)<br/>HTTP / FTP / TFTP listen socket"]
+  Agent -->|serves| Clients["LAN clients<br/>(per the agent's network)"]
+```
+
+A server type is identified by a `serviceId` (`"http_server"`, `"ftp_server"`, or `"tftp_server"`); a single running instance is keyed by a desktop-chosen `instanceId`, which is the handle for later `service.stop` / `service.status`. The opaque `config` passed to `service.start` is the server's `EmbeddedServerConfig` JSON, mirroring the desktop-hosted embedded-server settings — the agent forwards it to the service factory unchanged.
+
+The `status` field is the service's lifecycle state, internally tagged by a `state` discriminator with an optional `detail`:
+
+| `status.state` | Meaning                                                          |
+| -------------- | ---------------------------------------------------------------- |
+| `stopped`      | Not running.                                                     |
+| `starting`     | A start is in progress.                                          |
+| `running`      | Running normally.                                                |
+| `stopping`     | A stop is in progress.                                           |
+| `failed`       | Terminated abnormally; `detail` carries a human-readable reason. |
+
+The `state` field, when present, is the latest status payload streamed on the service's event channel (the server's `ServerState` JSON) — omitted until the service has emitted at least one event.
+
+### `service.list`
+
+List the embedded-server types the agent can host — the read-only discovery method from the Service/Tool substrate (#2148). Takes no parameters.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "service.list",
+  "params": {},
+  "id": 50
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "services": [
+      {
+        "serviceId": "http_server",
+        "displayName": "HTTP Server",
+        "icon": "globe",
+        "schema": { "groups": [] },
+        "capabilities": {
+          "configurable": true,
+          "emitsEvents": true,
+          "desktopOnly": false
+        }
+      }
+    ]
+  },
+  "id": 50
+}
+```
+
+| Result Field                | Type            | Description                                                    |
+| --------------------------- | --------------- | -------------------------------------------------------------- |
+| `services`                  | `ServiceInfo[]` | The server types available to host                             |
+| `services[].serviceId`      | `string`        | Machine-readable service type id (e.g. `"http_server"`)        |
+| `services[].displayName`    | `string`        | Human-readable display name                                    |
+| `services[].icon`           | `string`        | Icon identifier for the UI                                     |
+| `services[].schema`         | `object`        | Settings schema for dynamic form generation                    |
+| `services[].capabilities`   | `object`        | Declared capabilities of the service type                      |
+| `capabilities.configurable` | `boolean`       | Whether the service takes configuration (non-empty schema)     |
+| `capabilities.emitsEvents`  | `boolean`       | Whether the service emits status/stats events                  |
+| `capabilities.desktopOnly`  | `boolean`       | Whether the service is permanently desktop-only (never hosted) |
+
+---
+
+### `service.start`
+
+Start an embedded server on the agent. The agent creates the `serviceId` server type from its registry, starts it under the desktop-chosen `instanceId`, and binds its listen socket on the agent host. A duplicate `instanceId` or an unknown `serviceId` fails with [`-32018` Service start failed](#application-errors).
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "service.start",
+  "params": {
+    "instanceId": "srv-1730000000000-a1b2",
+    "serviceId": "http_server",
+    "config": {
+      "port": 8080,
+      "root": "/srv/www",
+      "bindAddress": "0.0.0.0"
+    }
+  },
+  "id": 51
+}
+```
+
+| Param        | Type     | Description                                                                          |
+| ------------ | -------- | ------------------------------------------------------------------------------------ |
+| `instanceId` | `string` | Desktop's instance id; the key for later `service.stop` / `service.status`           |
+| `serviceId`  | `string` | Which registered server type to start (`http_server` / `ftp_server` / `tftp_server`) |
+| `config`     | `object` | The server's `EmbeddedServerConfig` JSON, forwarded to the factory unchanged         |
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "status": { "state": "running" },
+    "state": { "port": 8080, "running": true }
+  },
+  "id": 51
+}
+```
+
+| Result Field | Type      | Description                                                                            |
+| ------------ | --------- | -------------------------------------------------------------------------------------- |
+| `status`     | `object`  | The service's lifecycle status once started (`state` discriminator, optional `detail`) |
+| `state`      | `object?` | The latest status payload streamed on the event channel (the `ServerState`), if any    |
+
+**Errors:**
+
+- `-32018` Service start failed (bad config, port bind failure, unknown `serviceId`, or duplicate `instanceId`)
+- `-32602` Invalid params (malformed request)
+
+---
+
+### `service.stop`
+
+Stop an agent-hosted embedded server by its desktop `instanceId`. Idempotent — stopping an unknown instance is not an error; `stopped` is simply `false`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "service.stop",
+  "params": { "instanceId": "srv-1730000000000-a1b2" },
+  "id": 52
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": { "stopped": true },
+  "id": 52
+}
+```
+
+| Result Field | Type      | Description                                                   |
+| ------------ | --------- | ------------------------------------------------------------- |
+| `stopped`    | `boolean` | Whether a running instance with that id was found and stopped |
+
+---
+
+### `service.status`
+
+Report whether an agent-hosted embedded server is currently running. Reading the status of an unknown or stopped instance is not an error — it returns `running: false` with the other fields omitted.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "service.status",
+  "params": { "instanceId": "srv-1730000000000-a1b2" },
+  "id": 53
+}
+```
+
+**Response (running):**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "running": true,
+    "status": { "state": "running" },
+    "state": { "port": 8080, "running": true }
+  },
+  "id": 53
+}
+```
+
+| Result Field | Type      | Description                                                                                                                            |
+| ------------ | --------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `running`    | `boolean` | Whether the instance is currently hosted on this agent                                                                                 |
+| `status`     | `object?` | The service's lifecycle status (present only when running)                                                                             |
+| `state`      | `object?` | The latest status payload streamed on the event channel (present only when running, and only once at least one event has been emitted) |
+
+---
+
 ## Notifications
 
 Notifications are messages from the agent to the desktop with **no `id` field**. The desktop MUST NOT send a response.
@@ -2113,25 +2317,26 @@ For serial sessions:
 
 ### Application Errors
 
-| Code     | Message                     | Description                                                                          |
-| -------- | --------------------------- | ------------------------------------------------------------------------------------ |
-| `-32001` | Session not found           | No session with the given ID                                                         |
-| `-32002` | Version not supported       | Protocol version mismatch                                                            |
-| `-32003` | Session creation failed     | Could not create the session (e.g., shell binary not found, serial port open failed) |
-| `-32004` | Session limit reached       | Agent has reached `max_sessions`                                                     |
-| `-32005` | Invalid configuration       | Invalid config values (e.g., invalid baud rate, negative cols/rows)                  |
-| `-32006` | Session not running         | Session exists but has exited                                                        |
-| `-32007` | Not initialized             | Agent has not been initialized yet (must call `initialize` first)                    |
-| `-32008` | Connection not found        | No connection with the given ID                                                      |
-| `-32009` | Folder not found            | No folder with the given ID                                                          |
-| `-32010` | File not found              | The file or directory was not found                                                  |
-| `-32011` | Permission denied           | Permission denied for the requested file operation                                   |
-| `-32012` | File operation failed       | A file operation failed (I/O error, docker exec failure, etc.)                       |
-| `-32013` | File browsing not supported | File browsing is not supported for this connection type (e.g., serial)               |
-| `-32014` | Monitoring error            | A monitoring operation failed (collection error, SSH failure, etc.)                  |
-| `-32015` | Shutdown error              | An error occurred during agent shutdown                                              |
-| `-32016` | Deferred update failed      | A deferred agent update failed to apply (binary swap / re-exec, or non-Unix)         |
-| `-32017` | Tunnel start failed         | An agent-hosted SSH tunnel failed to start (SSH connect or bind error)               |
+| Code     | Message                     | Description                                                                              |
+| -------- | --------------------------- | ---------------------------------------------------------------------------------------- |
+| `-32001` | Session not found           | No session with the given ID                                                             |
+| `-32002` | Version not supported       | Protocol version mismatch                                                                |
+| `-32003` | Session creation failed     | Could not create the session (e.g., shell binary not found, serial port open failed)     |
+| `-32004` | Session limit reached       | Agent has reached `max_sessions`                                                         |
+| `-32005` | Invalid configuration       | Invalid config values (e.g., invalid baud rate, negative cols/rows)                      |
+| `-32006` | Session not running         | Session exists but has exited                                                            |
+| `-32007` | Not initialized             | Agent has not been initialized yet (must call `initialize` first)                        |
+| `-32008` | Connection not found        | No connection with the given ID                                                          |
+| `-32009` | Folder not found            | No folder with the given ID                                                              |
+| `-32010` | File not found              | The file or directory was not found                                                      |
+| `-32011` | Permission denied           | Permission denied for the requested file operation                                       |
+| `-32012` | File operation failed       | A file operation failed (I/O error, docker exec failure, etc.)                           |
+| `-32013` | File browsing not supported | File browsing is not supported for this connection type (e.g., serial)                   |
+| `-32014` | Monitoring error            | A monitoring operation failed (collection error, SSH failure, etc.)                      |
+| `-32015` | Shutdown error              | An error occurred during agent shutdown                                                  |
+| `-32016` | Deferred update failed      | A deferred agent update failed to apply (binary swap / re-exec, or non-Unix)             |
+| `-32017` | Tunnel start failed         | An agent-hosted SSH tunnel failed to start (SSH connect or bind error)                   |
+| `-32018` | Service start failed        | An agent-hosted embedded server failed to start (bad config, port bind, or unknown type) |
 
 ---
 
