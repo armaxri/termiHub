@@ -61,33 +61,61 @@ pub fn build_ssh_args(config: &SshConfig) -> Vec<String> {
 
 /// Validate SSH config before attempting a connection.
 ///
-/// Checks:
+/// Checks, for the target **and every `proxy_jump` hop** (#2337):
 /// - `host` is not empty
 /// - `username` is not empty
 /// - When `auth_method` is `"key"`, `key_path` must be present and non-empty
+///
+/// Each jump-host hop is TCP-connected and authenticated exactly like the target
+/// (see [`connect_gateway_chain`](crate::backends::ssh::jump_host::connect_gateway_chain)),
+/// so a misconfigured bastion is held to the same bar here — rejected up front
+/// with a hop-identifying error instead of failing with a confusing low-level
+/// connect/auth error mid-chain, or (for a `key` hop with no key) silently
+/// falling back to `~/.ssh/id_rsa` in the auth path.
 pub fn validate_ssh_config(config: &SshConfig) -> Result<(), SessionError> {
+    // Target: `None` context keeps the original error messages byte-stable.
+    validate_connection_identity(config, None)?;
+
+    for (idx, hop) in config.proxy_jump.iter().enumerate() {
+        let label = format!("jump host {} ({}:{})", idx + 1, hop.host, hop.port);
+        validate_connection_identity(&hop.to_ssh_config(), Some(&label))?;
+    }
+
+    Ok(())
+}
+
+/// Validate the host / username / key-path of a single SSH connection identity —
+/// the target (`context == None`) or one jump-host hop (`context == Some(label)`,
+/// which prefixes each error so the user sees which hop is at fault). Shared by
+/// [`validate_ssh_config`] so a hop is held to the same bar as the target.
+fn validate_connection_identity(
+    config: &SshConfig,
+    context: Option<&str>,
+) -> Result<(), SessionError> {
+    let err = |msg: &str| {
+        let message = match context {
+            Some(label) => format!("{label}: {msg}"),
+            None => msg.to_string(),
+        };
+        SessionError::InvalidConfig(message)
+    };
+
     if config.host.trim().is_empty() {
-        return Err(SessionError::InvalidConfig(
-            "SSH host must not be empty".to_string(),
-        ));
+        return Err(err("SSH host must not be empty"));
     }
 
     if config.username.trim().is_empty() {
-        return Err(SessionError::InvalidConfig(
-            "SSH username must not be empty".to_string(),
-        ));
+        return Err(err("SSH username must not be empty"));
     }
 
     if config.auth_method == "key" {
         match &config.key_path {
             None => {
-                return Err(SessionError::InvalidConfig(
-                    "SSH key path is required when auth method is \"key\"".to_string(),
-                ));
+                return Err(err("SSH key path is required when auth method is \"key\""));
             }
             Some(path) if path.trim().is_empty() => {
-                return Err(SessionError::InvalidConfig(
-                    "SSH key path must not be empty when auth method is \"key\"".to_string(),
+                return Err(err(
+                    "SSH key path must not be empty when auth method is \"key\"",
                 ));
             }
             Some(_) => {}
