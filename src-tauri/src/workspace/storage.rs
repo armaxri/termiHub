@@ -4,10 +4,10 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::atomic::write_atomic;
 use super::config::WorkspaceStore;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::fs::write_atomic;
 
 const FILE_NAME: &str = "workspaces.json";
 
