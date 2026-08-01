@@ -366,4 +366,104 @@ mod tests {
         let err = validate_ssh_config(&config).unwrap_err();
         assert!(err.to_string().contains("key path"));
     }
+
+    // -----------------------------------------------------------------------
+    // validate_ssh_config — proxy_jump hops (#2337)
+    // -----------------------------------------------------------------------
+
+    use crate::config::JumpHostConfig;
+
+    /// A minimal, valid jump-host hop for building chains in the tests below.
+    fn jump_hop(host: &str, username: &str, auth_method: &str) -> JumpHostConfig {
+        JumpHostConfig {
+            host: host.into(),
+            port: 22,
+            username: username.into(),
+            auth_method: auth_method.into(),
+            ..Default::default()
+        }
+    }
+
+    fn target_with_hops(hops: Vec<JumpHostConfig>) -> SshConfig {
+        SshConfig {
+            host: "target.example.com".into(),
+            username: "admin".into(),
+            auth_method: "agent".into(),
+            proxy_jump: hops,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn validate_accepts_valid_single_hop() {
+        let config = target_with_hops(vec![jump_hop("bastion", "jump", "agent")]);
+        assert!(validate_ssh_config(&config).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_valid_multi_hop_chain() {
+        let config = target_with_hops(vec![
+            jump_hop("edge", "u", "agent"),
+            JumpHostConfig {
+                key_path: Some("/home/u/.ssh/id_ed25519".into()),
+                ..jump_hop("bastion", "u", "key")
+            },
+        ]);
+        assert!(validate_ssh_config(&config).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_hop_with_empty_host() {
+        let config = target_with_hops(vec![jump_hop("", "jump", "agent")]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("host"), "unexpected: {err}");
+        assert!(err.contains("jump host 1"), "should name the hop: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_hop_with_whitespace_username() {
+        let config = target_with_hops(vec![jump_hop("bastion", "   ", "agent")]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("username"), "unexpected: {err}");
+        assert!(err.contains("jump host 1"), "should name the hop: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_key_auth_hop_without_key_path() {
+        // The security-adjacent case: a key-auth hop with no key selected would
+        // otherwise silently fall back to ~/.ssh/id_rsa in auth.rs.
+        let config = target_with_hops(vec![jump_hop("bastion", "jump", "key")]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("key path"), "unexpected: {err}");
+        assert!(err.contains("jump host 1"), "should name the hop: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_key_auth_hop_with_empty_key_path() {
+        let config = target_with_hops(vec![JumpHostConfig {
+            key_path: Some("  ".into()),
+            ..jump_hop("bastion", "jump", "key")
+        }]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("key path"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn validate_names_the_offending_hop_in_a_chain() {
+        // First hop is fine; the second is invalid — the error must point at hop 2.
+        let config = target_with_hops(vec![
+            jump_hop("edge", "u", "agent"),
+            jump_hop("", "u", "agent"),
+        ]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("jump host 2"), "should name hop 2: {err}");
+    }
+
+    #[test]
+    fn validate_still_accepts_direct_target_without_hops() {
+        // A regression guard: adding hop validation must not change the
+        // no-jump-host path.
+        let config = target_with_hops(vec![]);
+        assert!(validate_ssh_config(&config).is_ok());
+    }
 }
