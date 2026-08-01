@@ -163,4 +163,35 @@ mod tests {
         assert!(!d.feed(b"world"));
         assert!(d.feed(b"\x1b[2J"));
     }
+
+    #[test]
+    fn detects_ris_full_reset() {
+        // ESC c (RIS) resets the terminal, clearing the visible screen.
+        assert!(feed_once(b"\x1bc"));
+    }
+
+    #[test]
+    fn detects_ris_embedded_in_data() {
+        assert!(feed_once(b"before \x1bc after"));
+    }
+
+    #[test]
+    fn detects_ris_split_across_chunks() {
+        let mut d = ScreenClearDetector::new();
+        assert!(!d.feed(b"\x1b"));
+        assert!(d.feed(b"c"));
+    }
+
+    #[test]
+    fn no_match_on_esc_with_intermediate() {
+        // ESC ( B designates the ASCII charset — an ESC sequence with an
+        // intermediate byte, not a reset. It must not count as a clear.
+        assert!(!feed_once(b"\x1b(B"));
+    }
+
+    #[test]
+    fn no_match_on_plain_lowercase_c() {
+        // A bare 'c' with no preceding ESC is ordinary output, not RIS.
+        assert!(!feed_once(b"c"));
+    }
 }
