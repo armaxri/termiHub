@@ -27,7 +27,7 @@ pub async fn run_stdio_loop(
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
 
     let registry = Arc::new(build_registry());
-    let session_manager = Arc::new(SessionManager::new(notification_tx.clone(), registry));
+    let session_manager = SessionManager::new(notification_tx.clone(), registry).into_arc();
     let connection_store = Arc::new(ConnectionStore::new(ConnectionStore::default_path()));
     let update_tx = notification_tx.clone();
     let test_update_tx = notification_tx.clone();

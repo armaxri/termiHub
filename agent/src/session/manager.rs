@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::Duration;
 
 use chrono::Utc;
@@ -359,6 +359,17 @@ pub struct SessionManager {
     /// over the JSON-RPC transport (#1727). Shared with the dispatch handlers so
     /// desktop-supplied reply bytes route back to the right forwarded stream.
     agent_forward: Arc<AgentForwardRelay>,
+    /// Weak self-reference, set once the manager is wrapped in its owning `Arc`
+    /// via [`SessionManager::into_arc`].
+    ///
+    /// Lets a per-session output-forwarder task reach back into the manager when
+    /// its backend exits on its own, so the deferred self-update auto-apply hook
+    /// fires on a natural last-session exit — not only on an explicit
+    /// [`close`](SessionManager::close) (#2378). Unset (an empty [`Weak`]) when
+    /// the manager was not wrapped through `into_arc` (e.g. some unit tests); the
+    /// forwarder then simply skips the hook and lazy reconciliation on the read
+    /// paths still settles the session.
+    self_ref: OnceLock<Weak<SessionManager>>,
 }
 
 impl SessionManager {
@@ -441,7 +452,22 @@ impl SessionManager {
             update_applier,
             persistent_buffer_size: Arc::new(AtomicUsize::new(DEFAULT_PERSISTENT_BUFFER_SIZE)),
             agent_forward,
+            self_ref: OnceLock::new(),
         }
+    }
+
+    /// Wrap the manager in its owning [`Arc`], recording a [`Weak`] self-reference
+    /// so per-session output-forwarders can reach back into the manager.
+    ///
+    /// Production entry points (`io::tcp`, `io::stdio`) construct the manager
+    /// through this instead of a bare `Arc::new`, which is what lets a naturally
+    /// exiting last session trigger the deferred self-update auto-apply (#2378).
+    pub fn into_arc(self) -> Arc<Self> {
+        let arc = Arc::new(self);
+        // `set` only fails if already initialised, which cannot happen for a
+        // freshly wrapped value — ignore the returned `Weak` in that case.
+        let _ = arc.self_ref.set(Arc::downgrade(&arc));
+        arc
     }
 
     /// Create a new session.
@@ -645,6 +671,7 @@ impl SessionManager {
             session_id.to_string(),
             self.notification_tx.clone(),
             alive.clone(),
+            self.self_ref.get().cloned().unwrap_or_default(),
         );
 
         info!("In-process connection for session {session_id} (type={type_id})");
@@ -677,23 +704,13 @@ impl SessionManager {
     /// Disconnects the backend before removing the session.
     /// Returns `true` if the session was found and removed.
     pub async fn close(&self, session_id: &str) -> bool {
-        let reached_zero = {
+        {
             let mut sessions = self.sessions.lock().await;
             match sessions.remove(session_id) {
-                Some(mut info) => {
-                    close_backend(&mut info.backend).await;
-                    // Compute the remaining running count while we still hold the
-                    // lock so the "reached zero" decision can't race a concurrent
-                    // create/close.
-                    sessions
-                        .values()
-                        .filter(|s| s.status == SessionStatus::Running)
-                        .count()
-                        == 0
-                }
+                Some(mut info) => close_backend(&mut info.backend).await,
                 None => return false,
             }
-        };
+        }
 
         // Tear down any ssh-agent relay this session held (#1727).
         self.agent_forward.stop_listener(session_id).await;
@@ -705,15 +722,37 @@ impl SessionManager {
         }
 
         // Deferred-update hook: when the last session disconnects and an update
-        // is pending, apply it now (persistent daemon sessions are unaffected —
-        // there are none left running here).
-        if reached_zero {
+        // is pending, apply it now. Shared with the natural-exit path (#2378)
+        // so an explicit close and a self-terminating last session behave alike.
+        self.apply_deferred_update_if_idle().await;
+
+        true
+    }
+
+    /// Apply a staged deferred self-update when no active session remains.
+    ///
+    /// Settles any naturally-exited sessions to [`SessionStatus::Exited`] first
+    /// (#2369) so the "is the agent idle?" decision reflects reality, then — when
+    /// no `Running` session is left — applies the pending update (a no-op when
+    /// none is staged). Shared by the explicit-close path
+    /// ([`close`](SessionManager::close)) and the natural-exit path (the
+    /// output-forwarder marking the last backend dead), so a staged update
+    /// auto-applies the moment the agent goes idle regardless of how the last
+    /// session ended (#2378). Persistent daemon sessions still counted as running
+    /// keep the agent busy and defer the apply, exactly as before.
+    async fn apply_deferred_update_if_idle(&self) {
+        let idle = {
+            let mut sessions = self.sessions.lock().await;
+            settle_exited(&mut sessions);
+            !sessions
+                .values()
+                .any(|s| s.status == SessionStatus::Running)
+        };
+        if idle {
             if let Err(e) = self.apply_pending_update().await {
                 warn!("Deferred agent update failed to apply on last disconnect: {e:#}");
             }
         }
-
-        true
     }
 
     /// Detach all sessions without closing them.
@@ -1057,6 +1096,7 @@ fn spawn_output_forwarder(
     session_id: String,
     notification_tx: NotificationSender,
     alive: Arc<AtomicBool>,
+    manager: Weak<SessionManager>,
 ) -> tokio::task::JoinHandle<()> {
     let sink = JsonRpcOutputSink::new(notification_tx);
     tokio::spawn(async move {
@@ -1074,6 +1114,15 @@ fn spawn_output_forwarder(
                     // then notify the desktop.
                     alive.store(false, Ordering::SeqCst);
                     let _ = sink.send_exit(&session_id, Some(0));
+                    // Natural-exit deferred-update hook (#2378): if this was the
+                    // last active session, apply any staged self-update now,
+                    // matching the explicit-close path. The `Weak` is empty when
+                    // the manager was not built through `into_arc`; then this is
+                    // skipped and the read-path reconciliation still settles the
+                    // session.
+                    if let Some(manager) = manager.upgrade() {
+                        manager.apply_deferred_update_if_idle().await;
+                    }
                     return;
                 }
             }
@@ -1732,6 +1781,120 @@ mod tests {
                 .unwrap_err();
             assert!(matches!(err, DeferredUpdateError::BinaryNotFound(_)));
         }
+
+        // ── Natural-exit deferred-apply (issue #2378) ────────────────────
+
+        #[tokio::test]
+        async fn natural_exit_applies_only_after_the_last_session_goes() {
+            // The natural-exit twin of `applies_only_on_last_disconnect`: a
+            // backend that exits on its own (no explicit close) must trigger the
+            // same "reached zero → apply pending update" hook, but only once the
+            // *last* running session is gone.
+            let (mgr, applied, _tmp) = manager_with_recording_applier();
+            let a = mgr
+                .create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            let b = mgr
+                .create_stub_session("stub", "B".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            mgr.seed_pending_update_for_test(fake_pending("/tmp/new-agent"))
+                .await;
+
+            // First backend exits naturally — one session still running, so the
+            // idle hook must NOT apply.
+            mgr.mark_backend_exited_for_test(&a.id).await;
+            mgr.apply_deferred_update_if_idle().await;
+            assert!(
+                applied.lock().unwrap().is_empty(),
+                "update must not apply while a session is still running"
+            );
+            assert!(
+                mgr.pending_update_for_test().await.is_some(),
+                "the pending update must be retained until the agent is idle"
+            );
+
+            // Last backend exits naturally — now idle, so the staged update
+            // applies exactly once and is consumed.
+            mgr.mark_backend_exited_for_test(&b.id).await;
+            mgr.apply_deferred_update_if_idle().await;
+            {
+                let log = applied.lock().unwrap();
+                assert_eq!(log.len(), 1, "update applies exactly once when idle");
+                assert_eq!(log[0].binary_path, "/tmp/new-agent");
+            }
+            assert!(
+                mgr.pending_update_for_test().await.is_none(),
+                "a successful natural-exit apply clears pending_update"
+            );
+        }
+
+        #[tokio::test]
+        async fn natural_exit_without_pending_does_not_apply() {
+            // No staged update → a naturally exiting last session applies nothing.
+            let (mgr, applied, _tmp) = manager_with_recording_applier();
+            let a = mgr
+                .create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+
+            mgr.mark_backend_exited_for_test(&a.id).await;
+            mgr.apply_deferred_update_if_idle().await;
+
+            assert!(
+                applied.lock().unwrap().is_empty(),
+                "no pending update → nothing applied on natural exit"
+            );
+        }
+
+        #[tokio::test]
+        async fn output_forwarder_applies_pending_update_on_last_exit() {
+            // End-to-end wiring: the output-forwarder must reach back into the
+            // manager (via the `into_arc` self-reference) and run the deferred
+            // apply when the last backend's output channel closes (#2378).
+            let tmp = tempfile::tempdir().unwrap();
+            let state_path = tmp.path().join("state.json");
+            let applied: AppliedLog = Arc::new(StdMutex::new(Vec::new()));
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                state_path,
+                Arc::new(RecordingApplier {
+                    applied: applied.clone(),
+                }),
+            )
+            .into_arc();
+            mgr.seed_pending_update_for_test(fake_pending("/tmp/new-agent"))
+                .await;
+
+            // No running sessions: the manager is already idle, so the forwarder
+            // detecting its backend's EOF must trigger the apply.
+            let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+            let alive = Arc::new(AtomicBool::new(true));
+            let handle = spawn_output_forwarder(
+                rx,
+                "sess".to_string(),
+                test_notification_tx(),
+                alive.clone(),
+                Arc::downgrade(&mgr),
+            );
+
+            drop(tx); // model the backend exiting / EOF
+            handle.await.expect("forwarder task joins cleanly");
+
+            assert!(!alive.load(Ordering::SeqCst), "backend marked dead");
+            assert_eq!(
+                applied.lock().unwrap().len(),
+                1,
+                "the forwarder must apply the staged update on the last natural exit"
+            );
+            assert!(
+                mgr.pending_update_for_test().await.is_none(),
+                "a successful apply clears pending_update"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1859,6 +2022,7 @@ mod tests {
             "sess".to_string(),
             test_notification_tx(),
             alive.clone(),
+            Weak::new(),
         );
 
         assert!(alive.load(Ordering::SeqCst), "alive before channel closes");
