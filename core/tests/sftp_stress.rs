@@ -25,7 +25,8 @@ mod common;
 
 use common::{port_sftp_stress, require_docker};
 use serial_test::serial;
-use termihub_core::backends::ssh::Ssh;
+use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser, Ssh};
+use termihub_core::config::SshConfig;
 use termihub_core::connection::ConnectionType;
 
 /// Connect to the SFTP stress container and return an Ssh instance
@@ -450,5 +451,99 @@ async fn sftp_stress_16_permission_000_directory() {
     assert!(
         result.is_err(),
         "SFTP-STRESS-16: Permission 000 directory should return access denied error"
+    );
+}
+
+// ── SFTP-STRESS-17: session-path advanced-ops parity (#2312) ─────────
+//
+// The #2307 step-A convergence lets a session-scoped `&dyn FileBrowser` reach the
+// SFTP advanced ops via the new `FileBrowser::as_any` downcast bridge. This test
+// proves that bridge end-to-end AND that the results match the standalone
+// `sftp_*` path (a directly-constructed `SftpFileBrowser`), so the session path
+// is a faithful mirror rather than a divergent second implementation.
+
+/// Build the standalone-path browser for the stress container (mirrors how the
+/// desktop `SftpManager::open_session` constructs one from an `SshConfig`).
+fn standalone_browser() -> SftpFileBrowser {
+    SftpFileBrowser::new(SshConfig {
+        host: "127.0.0.1".to_string(),
+        port: port_sftp_stress(),
+        username: "testuser".to_string(),
+        auth_method: "password".to_string(),
+        password: Some("testpass".to_string()),
+        ..Default::default()
+    })
+}
+
+#[tokio::test]
+#[serial(sftp_stress)]
+async fn sftp_stress_17_session_path_advanced_ops_parity() {
+    require_docker!(port_sftp_stress());
+
+    // Session/ConnectionType path: reach the advanced ops through the `&dyn
+    // FileBrowser` the session holds, via the new `as_any` downcast (#2312).
+    let ssh = connect_sftp().await;
+    let dynamic = ssh
+        .file_browser()
+        .expect("file browser should be available");
+    let via_session = dynamic
+        .as_any()
+        .and_then(|any| any.downcast_ref::<SftpFileBrowser>())
+        .expect("SSH session's FileBrowser must downcast to SftpFileBrowser (#2312)");
+
+    // Standalone `sftp_*` path.
+    let standalone = standalone_browser();
+
+    // realpath(".") → home dir; both paths must agree and yield an absolute path.
+    let session_home = via_session
+        .realpath(".")
+        .await
+        .expect("session realpath should succeed");
+    let standalone_home = standalone
+        .realpath(".")
+        .await
+        .expect("standalone realpath should succeed");
+    assert_eq!(
+        session_home, standalone_home,
+        "session-path realpath must match the standalone path"
+    );
+    assert!(
+        session_home.starts_with('/'),
+        "realpath must be absolute, got {session_home:?}"
+    );
+
+    // check_writable on a known fixture file → both paths must return the same
+    // verdict (the probe is non-destructive: WRITE-open only, no truncate).
+    let probe_path = "/home/testuser/sftp-test/large-files/1mb.bin";
+    let session_verdict = via_session
+        .check_writable(probe_path)
+        .await
+        .expect("session check_writable should succeed");
+    let standalone_verdict = standalone
+        .check_writable(probe_path)
+        .await
+        .expect("standalone check_writable should succeed");
+    assert_eq!(
+        session_verdict, standalone_verdict,
+        "session-path writability verdict must match the standalone path"
+    );
+
+    // has_exec_capability (inherent, reached through the same downcast): a normal
+    // SSH+shell container exposes an exec channel on both paths.
+    let session_exec = via_session
+        .has_exec_capability()
+        .await
+        .expect("session has_exec_capability should succeed");
+    let standalone_exec = standalone
+        .has_exec_capability()
+        .await
+        .expect("standalone has_exec_capability should succeed");
+    assert_eq!(
+        session_exec, standalone_exec,
+        "session-path exec-capability must match the standalone path"
+    );
+    assert!(
+        session_exec,
+        "the sftp-stress container is a normal SSH host, so exec must be available"
     );
 }
