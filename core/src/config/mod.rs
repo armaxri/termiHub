@@ -155,12 +155,13 @@ impl Default for ShellConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SerialConfig {
+    #[serde(default)]
     pub port: String,
-    #[serde(default = "default_baud_rate")]
+    #[serde(default = "default_baud_rate", deserialize_with = "de_u32_num_or_str")]
     pub baud_rate: u32,
-    #[serde(default = "default_data_bits")]
+    #[serde(default = "default_data_bits", deserialize_with = "de_u8_num_or_str")]
     pub data_bits: u8,
-    #[serde(default = "default_stop_bits")]
+    #[serde(default = "default_stop_bits", deserialize_with = "de_u8_num_or_str")]
     pub stop_bits: u8,
     #[serde(default = "default_parity")]
     pub parity: String,
@@ -659,6 +660,62 @@ impl DockerConfig {
         }
         self
     }
+}
+
+// --- Flexible numeric deserialization ---
+
+/// A number that may arrive on the wire as a JSON number *or* a numeric string.
+///
+/// termiHub's schema-driven connection form renders the serial framing fields
+/// (baud rate / data bits / stop bits) as `Select` widgets, whose chosen value
+/// is emitted as a **string** (`"115200"`). Stored connection definitions,
+/// agent-forwarded configs, and the `docs/remote-protocol.md` session config
+/// instead carry them as JSON **numbers** (`115200`). Both must deserialize;
+/// anything else — a malformed string, a boolean, a float, an array, an
+/// object — is **rejected** rather than silently coerced to a default, so a
+/// mis-typed framing parameter surfaces a clear error instead of quietly opening
+/// the port at the wrong framing (#2351).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum NumOrStr {
+    Num(u64),
+    Str(String),
+}
+
+impl NumOrStr {
+    /// Resolve to a `u64`, parsing the string form and rejecting a non-numeric
+    /// value. Shared core of [`de_u32_num_or_str`] and [`de_u8_num_or_str`].
+    fn into_u64<E: serde::de::Error>(self) -> Result<u64, E> {
+        match self {
+            NumOrStr::Num(n) => Ok(n),
+            NumOrStr::Str(s) => s
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| E::custom(format!("expected a number, got string {s:?}"))),
+        }
+    }
+}
+
+/// Deserialize a [`u32`] from a JSON number or a numeric string (see [`NumOrStr`]).
+fn de_u32_num_or_str<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = NumOrStr::deserialize(deserializer)?.into_u64::<D::Error>()?;
+    u32::try_from(value).map_err(|_| {
+        <D::Error as serde::de::Error>::custom(format!("value {value} out of range for u32"))
+    })
+}
+
+/// Deserialize a [`u8`] from a JSON number or a numeric string (see [`NumOrStr`]).
+fn de_u8_num_or_str<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = NumOrStr::deserialize(deserializer)?.into_u64::<D::Error>()?;
+    u8::try_from(value).map_err(|_| {
+        <D::Error as serde::de::Error>::custom(format!("value {value} out of range for u8"))
+    })
 }
 
 // --- Default value functions ---

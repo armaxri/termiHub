@@ -345,45 +345,19 @@ impl ConnectionType for Serial {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
 
-        let port = settings
-            .get("port")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let baud_rate: u32 = settings
-            .get("baudRate")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(115200);
-        let data_bits: u8 = settings
-            .get("dataBits")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(8);
-        let stop_bits: u8 = settings
-            .get("stopBits")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
-        let parity = settings
-            .get("parity")
-            .and_then(|v| v.as_str())
-            .unwrap_or("none")
-            .to_string();
-        let flow_control = settings
-            .get("flowControl")
-            .and_then(|v| v.as_str())
-            .unwrap_or("none")
-            .to_string();
-
-        let config = SerialConfig {
-            port,
-            baud_rate,
-            data_bits,
-            stop_bits,
-            parity,
-            flow_control,
-        };
+        // Deserialize into the shared typed [`SerialConfig`] rather than pulling
+        // fields out by hand. The numeric framing fields (`baudRate`/`dataBits`/
+        // `stopBits`) accept either a JSON number — stored/agent-forwarded configs
+        // and `docs/remote-protocol.md` carry them that way — or a numeric string,
+        // which the schema form's `Select` widgets emit. A present but non-numeric
+        // value is **rejected here** instead of silently defaulting: the previous
+        // `.as_str().parse().ok().unwrap_or(default)` path dropped a JSON-number
+        // baud/data-bits back to the default before the hardened
+        // [`parse_serial_config`] gate ever saw it, mis-framing the port with no
+        // error (#2351). `parse_serial_config` remains the final validation gate.
+        let config: SerialConfig = serde_json::from_value(settings).map_err(|e| {
+            SessionError::InvalidConfig(format!("invalid serial configuration: {e}"))
+        })?;
         let config = config.expand();
         let parsed = parse_serial_config(&config)?;
 
