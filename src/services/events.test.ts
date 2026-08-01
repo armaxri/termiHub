@@ -758,6 +758,53 @@ describe("events service", () => {
       // The callback must have been called exactly once — not doubled
       expect(outputCb).toHaveBeenCalledTimes(1);
     });
+
+    it("cleans up a partially-initialized listener without dereferencing nulled fields when destroy races mid-init", async () => {
+      // Regression: destroy() runs while doInit() is suspended *after* the output
+      // listener resolved (this.unlistenOutput already set) but *before* the exit
+      // listener resolves. destroy() nulls this.unlistenOutput, so the stale
+      // doInit's generation-mismatch cleanup must NOT call the nulled instance
+      // field (that threw a TypeError and rejected the init promise). It must
+      // instead unlisten the listener it itself just registered so it cannot leak.
+      const unlistenOutput = vi.fn();
+      const unlistenExit = vi.fn();
+
+      let resolveExit!: (value: () => void) => void;
+      const deferredExit = new Promise<() => void>((r) => (resolveExit = r));
+
+      let callCount = 0;
+      mockedListen.mockImplementation(() => {
+        callCount++;
+        // #1 output: resolves immediately so this.unlistenOutput gets set.
+        if (callCount === 1) return Promise.resolve(unlistenOutput);
+        // #2 exit: stays pending so init suspends inside doInit's second await.
+        if (callCount === 2) return deferredExit;
+        return Promise.resolve(vi.fn());
+      });
+
+      const initPromise = dispatcher.init();
+
+      // Let the output listen() resolve: doInit is now suspended awaiting the
+      // exit listen(), with this.unlistenOutput already assigned.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // Unmount races in: destroy() bumps the generation and nulls the fields
+      // it has (including this.unlistenOutput).
+      dispatcher.destroy();
+
+      // The exit listener finally resolves — the stale init must clean up
+      // gracefully rather than throw on the nulled this.unlistenOutput.
+      resolveExit(unlistenExit);
+
+      await expect(initPromise).resolves.toBeUndefined();
+
+      // destroy() unlistened the already-registered output listener exactly once.
+      expect(unlistenOutput).toHaveBeenCalledTimes(1);
+      // The mid-init exit listener the stale doInit registered was cleaned up
+      // (exactly once) rather than leaking as a duplicate.
+      expect(unlistenExit).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("onCredentialStoreLocked", () => {
