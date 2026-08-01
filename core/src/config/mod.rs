@@ -155,12 +155,13 @@ impl Default for ShellConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SerialConfig {
+    #[serde(default)]
     pub port: String,
-    #[serde(default = "default_baud_rate")]
+    #[serde(default = "default_baud_rate", deserialize_with = "de_u32_num_or_str")]
     pub baud_rate: u32,
-    #[serde(default = "default_data_bits")]
+    #[serde(default = "default_data_bits", deserialize_with = "de_u8_num_or_str")]
     pub data_bits: u8,
-    #[serde(default = "default_stop_bits")]
+    #[serde(default = "default_stop_bits", deserialize_with = "de_u8_num_or_str")]
     pub stop_bits: u8,
     #[serde(default = "default_parity")]
     pub parity: String,
@@ -659,6 +660,62 @@ impl DockerConfig {
         }
         self
     }
+}
+
+// --- Flexible numeric deserialization ---
+
+/// A number that may arrive on the wire as a JSON number *or* a numeric string.
+///
+/// termiHub's schema-driven connection form renders the serial framing fields
+/// (baud rate / data bits / stop bits) as `Select` widgets, whose chosen value
+/// is emitted as a **string** (`"115200"`). Stored connection definitions,
+/// agent-forwarded configs, and the `docs/remote-protocol.md` session config
+/// instead carry them as JSON **numbers** (`115200`). Both must deserialize;
+/// anything else — a malformed string, a boolean, a float, an array, an
+/// object — is **rejected** rather than silently coerced to a default, so a
+/// mis-typed framing parameter surfaces a clear error instead of quietly opening
+/// the port at the wrong framing (#2351).
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum NumOrStr {
+    Num(u64),
+    Str(String),
+}
+
+impl NumOrStr {
+    /// Resolve to a `u64`, parsing the string form and rejecting a non-numeric
+    /// value. Shared core of [`de_u32_num_or_str`] and [`de_u8_num_or_str`].
+    fn into_u64<E: serde::de::Error>(self) -> Result<u64, E> {
+        match self {
+            NumOrStr::Num(n) => Ok(n),
+            NumOrStr::Str(s) => s
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| E::custom(format!("expected a number, got string {s:?}"))),
+        }
+    }
+}
+
+/// Deserialize a [`u32`] from a JSON number or a numeric string (see [`NumOrStr`]).
+fn de_u32_num_or_str<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = NumOrStr::deserialize(deserializer)?.into_u64::<D::Error>()?;
+    u32::try_from(value).map_err(|_| {
+        <D::Error as serde::de::Error>::custom(format!("value {value} out of range for u32"))
+    })
+}
+
+/// Deserialize a [`u8`] from a JSON number or a numeric string (see [`NumOrStr`]).
+fn de_u8_num_or_str<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = NumOrStr::deserialize(deserializer)?.into_u64::<D::Error>()?;
+    u8::try_from(value).map_err(|_| {
+        <D::Error as serde::de::Error>::custom(format!("value {value} out of range for u8"))
+    })
 }
 
 // --- Default value functions ---
@@ -1951,5 +2008,84 @@ mod tests {
             ..SshConfig::default()
         };
         assert_eq!(cfg.connect_timeout(), Duration::from_secs(5));
+    }
+
+    // --- SerialConfig flexible numeric deserialization (#2351) ---
+
+    #[test]
+    fn serial_config_deserializes_numeric_framing_fields() {
+        // The canonical wire form: JSON numbers (stored/agent-forwarded configs,
+        // docs/remote-protocol.md). These must be honoured, never dropped to a
+        // default.
+        let cfg: SerialConfig = serde_json::from_value(serde_json::json!({
+            "port": "/dev/ttyUSB0",
+            "baudRate": 9600,
+            "dataBits": 7,
+            "stopBits": 2,
+            "parity": "even",
+            "flowControl": "hardware",
+        }))
+        .expect("numeric framing fields should deserialize");
+        assert_eq!(cfg.baud_rate, 9600);
+        assert_eq!(cfg.data_bits, 7);
+        assert_eq!(cfg.stop_bits, 2);
+    }
+
+    #[test]
+    fn serial_config_deserializes_string_framing_fields() {
+        // The schema form's `Select` widgets emit numeric strings; these must
+        // still parse to the same values.
+        let cfg: SerialConfig = serde_json::from_value(serde_json::json!({
+            "port": "/dev/ttyUSB0",
+            "baudRate": "9600",
+            "dataBits": "7",
+            "stopBits": "2",
+        }))
+        .expect("string framing fields should deserialize");
+        assert_eq!(cfg.baud_rate, 9600);
+        assert_eq!(cfg.data_bits, 7);
+        assert_eq!(cfg.stop_bits, 2);
+    }
+
+    #[test]
+    fn serial_config_absent_framing_fields_use_defaults() {
+        let cfg: SerialConfig = serde_json::from_value(serde_json::json!({
+            "port": "/dev/ttyUSB0",
+        }))
+        .expect("absent framing fields should fall back to defaults");
+        assert_eq!(cfg.baud_rate, default_baud_rate());
+        assert_eq!(cfg.data_bits, default_data_bits());
+        assert_eq!(cfg.stop_bits, default_stop_bits());
+    }
+
+    #[test]
+    fn serial_config_rejects_malformed_baud_string() {
+        // Regression for #2351: a malformed value must error, not silently
+        // default to 115200.
+        let result: Result<SerialConfig, _> = serde_json::from_value(serde_json::json!({
+            "port": "/dev/ttyUSB0",
+            "baudRate": "fast",
+        }));
+        assert!(result.is_err(), "malformed baud string must be rejected");
+    }
+
+    #[test]
+    fn serial_config_rejects_non_numeric_baud_type() {
+        // A boolean (or any non-number, non-numeric-string) must error.
+        let result: Result<SerialConfig, _> = serde_json::from_value(serde_json::json!({
+            "port": "/dev/ttyUSB0",
+            "baudRate": true,
+        }));
+        assert!(result.is_err(), "boolean baud rate must be rejected");
+    }
+
+    #[test]
+    fn serial_config_rejects_out_of_range_data_bits() {
+        // 999 does not fit in a u8; must error rather than wrap or default.
+        let result: Result<SerialConfig, _> = serde_json::from_value(serde_json::json!({
+            "port": "/dev/ttyUSB0",
+            "dataBits": 999,
+        }));
+        assert!(result.is_err(), "out-of-range data bits must be rejected");
     }
 }

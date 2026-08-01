@@ -345,45 +345,19 @@ impl ConnectionType for Serial {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
 
-        let port = settings
-            .get("port")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let baud_rate: u32 = settings
-            .get("baudRate")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(115200);
-        let data_bits: u8 = settings
-            .get("dataBits")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(8);
-        let stop_bits: u8 = settings
-            .get("stopBits")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(1);
-        let parity = settings
-            .get("parity")
-            .and_then(|v| v.as_str())
-            .unwrap_or("none")
-            .to_string();
-        let flow_control = settings
-            .get("flowControl")
-            .and_then(|v| v.as_str())
-            .unwrap_or("none")
-            .to_string();
-
-        let config = SerialConfig {
-            port,
-            baud_rate,
-            data_bits,
-            stop_bits,
-            parity,
-            flow_control,
-        };
+        // Deserialize into the shared typed [`SerialConfig`] rather than pulling
+        // fields out by hand. The numeric framing fields (`baudRate`/`dataBits`/
+        // `stopBits`) accept either a JSON number — stored/agent-forwarded configs
+        // and `docs/remote-protocol.md` carry them that way — or a numeric string,
+        // which the schema form's `Select` widgets emit. A present but non-numeric
+        // value is **rejected here** instead of silently defaulting: the previous
+        // `.as_str().parse().ok().unwrap_or(default)` path dropped a JSON-number
+        // baud/data-bits back to the default before the hardened
+        // [`parse_serial_config`] gate ever saw it, mis-framing the port with no
+        // error (#2351). `parse_serial_config` remains the final validation gate.
+        let config: SerialConfig = serde_json::from_value(settings).map_err(|e| {
+            SessionError::InvalidConfig(format!("invalid serial configuration: {e}"))
+        })?;
         let config = config.expand();
         let parsed = parse_serial_config(&config)?;
 
@@ -700,6 +674,48 @@ mod tests {
         });
         let result = serial.connect(settings).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn connect_rejects_malformed_baud_rate() {
+        // Regression for #2351: a malformed `baudRate` must surface a config
+        // error, not silently open the port at the 115200 default.
+        let mut serial = Serial::new();
+        let settings = serde_json::json!({
+            "port": "/dev/ttyUSB0",
+            "baudRate": "fast",
+            "dataBits": "8",
+        });
+        let err = serial
+            .connect(settings)
+            .await
+            .expect_err("malformed baud rate must be rejected");
+        assert!(
+            err.to_string().contains("invalid serial configuration"),
+            "expected a config-parse error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_accepts_numeric_baud_rate() {
+        // Regression for #2351: a JSON-number `baudRate`/`dataBits` (the canonical
+        // wire form) must parse through rather than being dropped by `.as_str()`.
+        // An empty port then makes `parse_serial_config` the point of failure,
+        // proving deserialization accepted the numbers instead of erroring earlier.
+        let mut serial = Serial::new();
+        let settings = serde_json::json!({
+            "port": "",
+            "baudRate": 9600,
+            "dataBits": 8,
+        });
+        let err = serial
+            .connect(settings)
+            .await
+            .expect_err("empty port must still fail");
+        assert!(
+            err.to_string().contains("must not be empty"),
+            "numeric framing should parse and fail only on the empty port, got: {err}"
+        );
     }
 
     #[tokio::test]
