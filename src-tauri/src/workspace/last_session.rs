@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
+use super::atomic::write_atomic;
 use super::config::{WorkspaceTabGroupDef, WorkspaceWindowDef};
 use crate::utils::config_paths::resolve_config_dir;
 
@@ -83,11 +84,16 @@ impl LastSessionStorage {
     }
 
     /// Save the last session to disk (pretty-printed JSON).
+    ///
+    /// The write is atomic (temp file in the same directory + rename). This file
+    /// is rewritten on every layout change, so a torn write is especially likely;
+    /// an atomic replace guarantees the previous session survives an interrupted
+    /// save instead of being silently discarded on next startup (#2318).
     pub fn save(&self, session: &LastSession) -> Result<()> {
         let data =
             serde_json::to_string_pretty(session).context("Failed to serialize last session")?;
 
-        fs::write(&self.file_path, data).context("Failed to write last-session file")?;
+        write_atomic(&self.file_path, &data).context("Failed to write last-session file")?;
 
         Ok(())
     }
@@ -211,6 +217,53 @@ mod tests {
 
         // Clearing a non-existent file must succeed silently.
         assert!(storage.clear().is_ok());
+    }
+
+    /// Regression (#2318): the last-session file is rewritten on every layout
+    /// change, so a torn write is especially likely. A save that cannot durably
+    /// complete must fail without destroying the previously-saved session. The
+    /// old truncate-in-place `fs::write` overwrites the existing file here (red);
+    /// the atomic temp+rename write leaves it untouched.
+    #[cfg(unix)]
+    #[test]
+    fn failed_save_preserves_previous_session() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        storage.save(&sample_session()).unwrap();
+        let before = fs::read_to_string(&storage.file_path).unwrap();
+
+        let restore = fs::metadata(dir.path()).unwrap().permissions();
+        let mut ro = restore.clone();
+        ro.set_mode(0o500);
+        fs::set_permissions(dir.path(), ro).unwrap();
+
+        // Root can write regardless of mode — skip in that case.
+        let probe = dir.path().join(".probe");
+        if fs::write(&probe, b"x").is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(dir.path(), restore).unwrap();
+            return;
+        }
+
+        let mut updated = sample_session();
+        updated.version = "2".to_string();
+        let result = storage.save(&updated);
+
+        fs::set_permissions(dir.path(), restore).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a save that cannot durably complete must report an error"
+        );
+        let after = fs::read_to_string(&storage.file_path).unwrap();
+        assert_eq!(
+            before, after,
+            "a failed save must leave the previous session fully intact"
+        );
+        serde_json::from_str::<LastSession>(&after).expect("preserved session still parses");
     }
 
     #[test]
