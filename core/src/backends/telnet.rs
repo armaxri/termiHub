@@ -33,6 +33,8 @@ const READ_TIMEOUT: Duration = Duration::from_millis(100);
 
 // Telnet protocol constants.
 const IAC: u8 = 255;
+const SE: u8 = 240;
+const SB: u8 = 250;
 const WILL: u8 = 251;
 const WONT: u8 = 252;
 const DO: u8 = 253;
@@ -78,50 +80,116 @@ impl Default for Telnet {
     }
 }
 
-/// Filter telnet IAC commands from raw data, responding with WONT/DONT to
-/// all negotiation attempts.
-///
-/// Returns a `Vec<u8>` containing only the user-visible data with all IAC
-/// sequences stripped. Negotiation responses (WONT for DO, DONT for WILL)
-/// are written directly to the provided stream.
-fn filter_telnet_commands(data: &[u8], stream: &mut TcpStream) -> Vec<u8> {
-    let mut output = Vec::with_capacity(data.len());
-    let mut i = 0;
+/// Parser state for [`TelnetFilter`], persisted across TCP reads so an IAC
+/// sequence split across a read boundary is resumed rather than mishandled.
+enum FilterState {
+    /// Ordinary data flow.
+    Data,
+    /// Saw an `IAC` byte; awaiting the command byte.
+    Iac,
+    /// Saw `IAC <cmd>` where `cmd` is DO/DONT/WILL/WONT; awaiting the option byte.
+    Negotiate(u8),
+    /// Inside a subnegotiation (after `IAC SB`); consuming payload until `IAC SE`.
+    Subneg,
+    /// Inside a subnegotiation and saw an `IAC`; the next byte is either `SE`
+    /// (ends the subnegotiation) or an escaped/ignored byte that keeps it open.
+    SubnegIac,
+}
 
-    while i < data.len() {
-        if data[i] == IAC && i + 1 < data.len() {
-            match data[i + 1] {
-                DO if i + 2 < data.len() => {
-                    // Refuse all DO requests.
-                    let _ = stream.write_all(&[IAC, WONT, data[i + 2]]);
-                    i += 3;
-                }
-                WILL if i + 2 < data.len() => {
-                    // Refuse all WILL offers.
-                    let _ = stream.write_all(&[IAC, DONT, data[i + 2]]);
-                    i += 3;
-                }
-                DONT | WONT if i + 2 < data.len() => {
-                    // Acknowledge — just skip.
-                    i += 3;
-                }
-                IAC => {
-                    // Escaped 0xFF byte.
-                    output.push(IAC);
-                    i += 2;
-                }
-                _ => {
-                    // Skip unknown IAC sequences.
-                    i += 2;
-                }
-            }
-        } else {
-            output.push(data[i]);
-            i += 1;
+/// Stateful filter for telnet IAC command sequences, responding with WONT/DONT
+/// to all negotiation attempts.
+///
+/// A single [`TelnetFilter`] is created per connection and fed successive TCP
+/// reads via [`filter()`](TelnetFilter::filter). Each call returns the
+/// user-visible data with all IAC sequences stripped; negotiation responses
+/// (WONT for DO, DONT for WILL) are written directly to the provided stream.
+///
+/// Because TCP delivers arbitrary chunk sizes, an IAC command or
+/// subnegotiation can straddle a read boundary. The parser is a byte-at-a-time
+/// state machine whose [`FilterState`] persists between calls, so a sequence
+/// split across reads is resumed on the next chunk instead of leaking raw
+/// bytes (a stray `0xFF`, dropped negotiation, or leaked subnegotiation
+/// payload) into the terminal (#2331).
+struct TelnetFilter {
+    state: FilterState,
+}
+
+impl TelnetFilter {
+    /// Create a new filter in the default (data) state.
+    fn new() -> Self {
+        Self {
+            state: FilterState::Data,
         }
     }
 
-    output
+    /// Filter one chunk of raw telnet bytes, resuming from the state left by
+    /// the previous call.
+    fn filter(&mut self, data: &[u8], stream: &mut TcpStream) -> Vec<u8> {
+        let mut output = Vec::with_capacity(data.len());
+
+        for &byte in data {
+            match self.state {
+                FilterState::Data => {
+                    if byte == IAC {
+                        self.state = FilterState::Iac;
+                    } else {
+                        output.push(byte);
+                    }
+                }
+                FilterState::Iac => match byte {
+                    IAC => {
+                        // Escaped 0xFF byte.
+                        output.push(IAC);
+                        self.state = FilterState::Data;
+                    }
+                    DO | DONT | WILL | WONT => {
+                        // Await the option byte before responding.
+                        self.state = FilterState::Negotiate(byte);
+                    }
+                    SB => {
+                        self.state = FilterState::Subneg;
+                    }
+                    _ => {
+                        // Two-byte command with no option (NOP, GA, unknown) — skip.
+                        self.state = FilterState::Data;
+                    }
+                },
+                FilterState::Negotiate(cmd) => {
+                    match cmd {
+                        // Refuse all DO requests.
+                        DO => {
+                            let _ = stream.write_all(&[IAC, WONT, byte]);
+                        }
+                        // Refuse all WILL offers.
+                        WILL => {
+                            let _ = stream.write_all(&[IAC, DONT, byte]);
+                        }
+                        // DONT / WONT — acknowledged, nothing to send.
+                        _ => {}
+                    }
+                    self.state = FilterState::Data;
+                }
+                FilterState::Subneg => {
+                    // Discard subnegotiation payload; only IAC can end/escape it.
+                    if byte == IAC {
+                        self.state = FilterState::SubnegIac;
+                    }
+                }
+                FilterState::SubnegIac => {
+                    // `IAC SE` ends the subnegotiation; `IAC IAC` is escaped
+                    // payload and anything else is malformed — either way keep
+                    // consuming the subnegotiation until a real `IAC SE`.
+                    self.state = if byte == SE {
+                        FilterState::Data
+                    } else {
+                        FilterState::Subneg
+                    };
+                }
+            }
+        }
+
+        output
+    }
 }
 
 #[async_trait::async_trait]
@@ -258,11 +326,12 @@ impl ConnectionType for Telnet {
         let output_tx_clone = self.output_tx.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            let mut filter = TelnetFilter::new();
             while alive_clone.load(Ordering::SeqCst) {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let filtered = filter_telnet_commands(&buf[..n], &mut reader);
+                        let filtered = filter.filter(&buf[..n], &mut reader);
                         if filtered.is_empty() {
                             continue;
                         }
@@ -355,6 +424,14 @@ impl ConnectionType for Telnet {
 mod tests {
     use super::*;
     use crate::connection::validate_settings;
+
+    /// Filter a single whole chunk through a fresh [`TelnetFilter`].
+    ///
+    /// Preserves the original whole-chunk test surface; multi-chunk tests use a
+    /// persistent [`TelnetFilter`] directly to exercise cross-read state.
+    fn filter_telnet_commands(data: &[u8], stream: &mut TcpStream) -> Vec<u8> {
+        TelnetFilter::new().filter(data, stream)
+    }
 
     #[test]
     fn type_id() {
@@ -528,6 +605,87 @@ mod tests {
         let mut stream = mock_tcp_stream();
         let result = filter_telnet_commands(&data, &mut stream);
         assert_eq!(result, vec![b'Y']);
+    }
+
+    // --- Cross-read (split IAC sequence) regression tests (#2331) ---
+    //
+    // The reader thread feeds successive TCP reads through ONE persistent
+    // `TelnetFilter`, so an IAC sequence split across a read boundary must be
+    // resumed on the next chunk instead of leaking raw bytes into the terminal.
+
+    #[test]
+    fn filter_trailing_iac_not_leaked() {
+        // A chunk ending in a lone IAC (0xFF) is the start of a command whose
+        // remaining bytes arrive later — it must NOT be emitted as raw output.
+        let mut stream = mock_tcp_stream();
+        let mut filter = TelnetFilter::new();
+        let out = filter.filter(&[b'A', IAC], &mut stream);
+        assert_eq!(out, vec![b'A'], "trailing IAC leaked into terminal output");
+    }
+
+    #[test]
+    fn filter_split_do_across_reads() {
+        // `IAC DO <opt>` split so the option byte lands in the next read.
+        let mut stream = mock_tcp_stream();
+        let mut filter = TelnetFilter::new();
+        let mut out = filter.filter(&[b'A', IAC, DO], &mut stream);
+        out.extend(filter.filter(&[1, b'B'], &mut stream));
+        assert_eq!(out, vec![b'A', b'B']);
+    }
+
+    #[test]
+    fn filter_split_iac_then_command_and_option() {
+        // Worst case: IAC, then WILL, then the option each in separate reads.
+        let mut stream = mock_tcp_stream();
+        let mut filter = TelnetFilter::new();
+        let mut out = filter.filter(&[IAC], &mut stream);
+        out.extend(filter.filter(&[WILL], &mut stream));
+        out.extend(filter.filter(&[3, b'Z'], &mut stream));
+        assert_eq!(out, vec![b'Z']);
+    }
+
+    #[test]
+    fn filter_split_escaped_iac() {
+        // Escaped `IAC IAC` split across reads yields a single 0xFF.
+        let mut stream = mock_tcp_stream();
+        let mut filter = TelnetFilter::new();
+        let mut out = filter.filter(&[b'A', IAC], &mut stream);
+        out.extend(filter.filter(&[IAC, b'B'], &mut stream));
+        assert_eq!(out, vec![b'A', IAC, b'B']);
+    }
+
+    // --- Subnegotiation (IAC SB ... IAC SE) tests (#2331) ---
+
+    #[test]
+    fn filter_subnegotiation_stripped_whole() {
+        // A full subnegotiation in one chunk is discarded, surrounding data kept.
+        let data = [b'A', IAC, SB, 24, 1, IAC, SE, b'B'];
+        let mut stream = mock_tcp_stream();
+        let mut filter = TelnetFilter::new();
+        let out = filter.filter(&data, &mut stream);
+        assert_eq!(out, vec![b'A', b'B']);
+    }
+
+    #[test]
+    fn filter_subnegotiation_split_across_reads() {
+        // Subnegotiation split mid-payload and mid-terminator across three reads.
+        let mut stream = mock_tcp_stream();
+        let mut filter = TelnetFilter::new();
+        let mut out = filter.filter(&[b'A', IAC, SB, 24], &mut stream);
+        out.extend(filter.filter(&[1, 2, 3, IAC], &mut stream));
+        out.extend(filter.filter(&[SE, b'B'], &mut stream));
+        assert_eq!(out, vec![b'A', b'B']);
+    }
+
+    #[test]
+    fn filter_escaped_iac_inside_subnegotiation() {
+        // `IAC IAC` inside a subnegotiation is escaped payload, not a terminator,
+        // so the SB continues until the real `IAC SE`.
+        let data = [b'A', IAC, SB, 24, IAC, IAC, 5, IAC, SE, b'B'];
+        let mut stream = mock_tcp_stream();
+        let mut filter = TelnetFilter::new();
+        let out = filter.filter(&data, &mut stream);
+        assert_eq!(out, vec![b'A', b'B']);
     }
 
     // --- Integration tests ---
