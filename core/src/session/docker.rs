@@ -11,35 +11,56 @@ use crate::errors::SessionError;
 
 /// Validate a [`DockerConfig`] before session creation.
 ///
-/// Checks that the image is non-empty, all environment variable keys are
-/// non-empty, and all volume mount paths (host and container) are non-empty.
+/// Checks that the image is non-blank, every environment variable key is
+/// non-blank and free of `=`, and every volume mount path (host and container)
+/// is non-blank.
+///
+/// This is the last no-I/O gate before a session is created — the desktop
+/// `connect()` path does not run the schema validator — so, like
+/// [`validate_ssh_config`](crate::session::ssh::validate_ssh_config) and
+/// [`parse_serial_config`](crate::session::serial::parse_serial_config) (#2349),
+/// it **rejects** malformed values rather than letting them through to fail deep
+/// in the runtime:
+/// - Blank (whitespace-only) values are treated as empty: an image of `"   "`
+///   would otherwise reach `create_image` and fail mid-pull with a confusing
+///   `Failed to pull image '   '` instead of a clear up-front error.
+/// - An env-var key containing `=` is rejected because the backend builds each
+///   variable as `format!("{key}={value}")`; a key like `FOO=BAR` would be split
+///   by the daemon at the first `=`, silently corrupting the container's
+///   environment.
 ///
 /// # Errors
 ///
 /// Returns [`SessionError::InvalidConfig`] with a descriptive message if
 /// validation fails.
 pub fn validate_docker_config(config: &DockerConfig) -> Result<(), SessionError> {
-    if config.image.is_empty() {
+    if config.image.trim().is_empty() {
         return Err(SessionError::InvalidConfig(
             "Docker image must not be empty".to_string(),
         ));
     }
 
     for env_var in &config.env_vars {
-        if env_var.key.is_empty() {
+        if env_var.key.trim().is_empty() {
             return Err(SessionError::InvalidConfig(
                 "Environment variable key must not be empty".to_string(),
             ));
         }
+        if env_var.key.contains('=') {
+            return Err(SessionError::InvalidConfig(format!(
+                "Environment variable key must not contain '=': {:?}",
+                env_var.key
+            )));
+        }
     }
 
     for volume in &config.volumes {
-        if volume.host_path.is_empty() {
+        if volume.host_path.trim().is_empty() {
             return Err(SessionError::InvalidConfig(
                 "Volume host path must not be empty".to_string(),
             ));
         }
-        if volume.container_path.is_empty() {
+        if volume.container_path.trim().is_empty() {
             return Err(SessionError::InvalidConfig(
                 "Volume container path must not be empty".to_string(),
             ));
