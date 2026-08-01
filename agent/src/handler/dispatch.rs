@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use jsonrpsee::core::server::RpcModule;
 use jsonrpsee::types::ErrorObjectOwned;
+use semver::Version as SemverVersion;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tracing::{debug, warn};
@@ -301,6 +302,24 @@ fn invalid_params(context: &str, e: impl std::fmt::Display) -> ErrorObjectOwned 
     )
 }
 
+/// Negotiate the protocol version the agent will speak with a client.
+///
+/// Both sides must share the same MAJOR version — a breaking change bumps MAJOR,
+/// so a mismatch is incompatible and yields `None`. The negotiated version is
+/// the *lower* of the two: the highest version both sides understand, per
+/// `docs/remote-protocol.md` ("the agent selects the highest compatible version
+/// it supports, matching major, up to its minor"). Versions are parsed with the
+/// maintained [`semver`] crate. Returns the canonical `MAJOR.MINOR.PATCH`
+/// string, or `None` when either version is unparseable or their majors differ.
+fn negotiate_protocol_version(requested: &str, agent: &str) -> Option<String> {
+    let req = SemverVersion::parse(requested.trim()).ok()?;
+    let ag = SemverVersion::parse(agent.trim()).ok()?;
+    if req.major != ag.major {
+        return None;
+    }
+    Some(req.min(ag).to_string())
+}
+
 fn map_file_error(e: FileError) -> ErrorObjectOwned {
     match e {
         FileError::NotFound(msg) => rpc_err(errors::FILE_NOT_FOUND, msg),
@@ -464,21 +483,22 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             .parse()
             .map_err(|e| invalid_params("initialize", e))?;
 
-        let major = p
-            .protocol_version
-            .split('.')
-            .next()
-            .and_then(|s| s.parse::<u32>().ok());
-
-        if major != Some(0) {
-            return Err(rpc_err(
-                errors::VERSION_NOT_SUPPORTED,
-                format!(
-                    "Unsupported protocol version: {} (agent supports 0.x)",
-                    p.protocol_version
-                ),
-            ));
-        }
+        // Negotiate the version both sides will speak: the highest version the
+        // agent supports that does not exceed the client's request, sharing the
+        // agent's major (docs/remote-protocol.md → Version Negotiation). An
+        // incompatible major (or an unparseable version) is rejected.
+        let negotiated_version =
+            negotiate_protocol_version(&p.protocol_version, AGENT_PROTOCOL_VERSION).ok_or_else(
+                || {
+                    rpc_err(
+                        errors::VERSION_NOT_SUPPORTED,
+                        format!(
+                            "Unsupported protocol version: {} (agent supports {})",
+                            p.protocol_version, AGENT_PROTOCOL_VERSION
+                        ),
+                    )
+                },
+            )?;
 
         let (session_manager, connection_store, buffer_size, client_id) = {
             let mut s = ctx.lock().await;
@@ -540,7 +560,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
 
         Ok::<_, ErrorObjectOwned>(
             serde_json::to_value(InitializeResult {
-                protocol_version: AGENT_PROTOCOL_VERSION.to_string(),
+                protocol_version: negotiated_version,
                 agent_version: env!("CARGO_PKG_VERSION").to_string(),
                 client_id,
                 capabilities: Capabilities {
@@ -2202,6 +2222,41 @@ mod tests {
         let handler = make_handler();
         let result = dispatch(&handler, "initialize", json!({}), 1).await;
         assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
+    }
+
+    #[test]
+    fn negotiate_protocol_version_picks_the_lower_compatible() {
+        // Older client → negotiate down to the client's version.
+        assert_eq!(
+            negotiate_protocol_version("0.3.0", "0.7.0").as_deref(),
+            Some("0.3.0")
+        );
+        // Newer client → cap at the agent's version.
+        assert_eq!(
+            negotiate_protocol_version("0.99.0", "0.7.0").as_deref(),
+            Some("0.7.0")
+        );
+        // Equal → that version.
+        assert_eq!(
+            negotiate_protocol_version("0.7.0", "0.7.0").as_deref(),
+            Some("0.7.0")
+        );
+        // Patch-level negotiation still applies within the same minor.
+        assert_eq!(
+            negotiate_protocol_version("0.7.3", "0.7.5").as_deref(),
+            Some("0.7.3")
+        );
+    }
+
+    #[test]
+    fn negotiate_protocol_version_rejects_incompatible_or_malformed() {
+        // Different major → incompatible.
+        assert_eq!(negotiate_protocol_version("1.0.0", "0.7.0"), None);
+        // Unparseable requests (semver requires a full MAJOR.MINOR.PATCH).
+        assert_eq!(negotiate_protocol_version("", "0.7.0"), None);
+        assert_eq!(negotiate_protocol_version("abc", "0.7.0"), None);
+        assert_eq!(negotiate_protocol_version("0.x.0", "0.7.0"), None);
+        assert_eq!(negotiate_protocol_version("0.3", "0.7.0"), None);
     }
 
     #[tokio::test]
