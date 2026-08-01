@@ -3,6 +3,7 @@
 //! Opens a dedicated SSH session for SFTP operations using russh-sftp.
 //! All operations are fully async — no `spawn_blocking` needed.
 
+use std::any::Any;
 use std::sync::Arc;
 
 use russh_sftp::client::fs::File;
@@ -41,6 +42,17 @@ struct SftpState {
 /// path and the desktop file-browser/transfer command layer, whose `SftpSession`
 /// wraps one of these (#2104). It reaches jump-host targets through their pooled
 /// gateway via [`connect_target`] (#939).
+///
+/// `Clone` shares the underlying connection: the lazily-opened [`SftpState`] lives
+/// behind an `Arc<Mutex<…>>`, so a clone points at the **same** authenticated SFTP
+/// session rather than opening a new one. This lets a session-scoped caller lift an
+/// *owned* handle out from under the sessions lock (via
+/// [`FileBrowser::as_any`](crate::files::FileBrowser::as_any) →
+/// `downcast_ref::<SftpFileBrowser>()` → `.clone()`) and move it into a background
+/// transfer task, exactly as the desktop `SftpManager` hands out
+/// `Arc<SftpFileBrowser>` (#2312). The shared `state` keeps the connection alive as
+/// long as either the session or an in-flight transfer holds a clone.
+#[derive(Clone)]
 pub struct SftpFileBrowser {
     config: SshConfig,
     state: Arc<Mutex<Option<SftpState>>>,
@@ -337,6 +349,15 @@ impl FileBrowser for SftpFileBrowser {
             .await
             .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))
     }
+
+    /// Expose the concrete browser so a session-scoped caller holding only a
+    /// `&dyn FileBrowser` can `downcast_ref::<SftpFileBrowser>()` and reach the
+    /// SFTP advanced ops ([`SftpAdvancedOps`]), the exec-capability probe, and the
+    /// owned transfer handle — none of which fit on the shared [`FileBrowser`]
+    /// trait (#2312).
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
+    }
 }
 
 /// Advanced SFTP capabilities that complement [`FileBrowser`].
@@ -469,5 +490,45 @@ mod tests {
     #[test]
     fn sftp_transfer_channel_is_send() {
         _assert_send::<SftpTransferChannel>();
+    }
+
+    /// A minimal `SshConfig` for constructing a browser without connecting.
+    fn test_config() -> SshConfig {
+        SshConfig {
+            host: "127.0.0.1".to_string(),
+            port: 22,
+            username: "tester".to_string(),
+            ..Default::default()
+        }
+    }
+
+    /// Cloning an `SftpFileBrowser` shares the same lazily-opened SFTP session
+    /// (the `state` `Arc`), so an owned clone lifted out from under a session lock
+    /// drives the *same* authenticated connection rather than opening a new one
+    /// (#2312).
+    #[test]
+    fn clone_shares_the_underlying_connection_state() {
+        let browser = SftpFileBrowser::new(test_config());
+        let cloned = browser.clone();
+        assert!(
+            Arc::ptr_eq(&browser.state, &cloned.state),
+            "a clone must share the same connection state Arc"
+        );
+    }
+
+    /// `as_any` returns the concrete browser so a `&dyn FileBrowser` can be
+    /// downcast to `SftpFileBrowser` to reach the SFTP advanced ops / transfer
+    /// handle from the session path (#2312).
+    #[test]
+    fn as_any_downcasts_back_to_the_concrete_browser() {
+        let browser = SftpFileBrowser::new(test_config());
+        let dynamic: &dyn FileBrowser = &browser;
+        let recovered = dynamic
+            .as_any()
+            .and_then(|any| any.downcast_ref::<SftpFileBrowser>());
+        assert!(
+            recovered.is_some(),
+            "as_any must expose the concrete SftpFileBrowser for downcasting"
+        );
     }
 }

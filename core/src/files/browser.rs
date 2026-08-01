@@ -6,6 +6,8 @@
 //! desktop remote proxy). It is also the agent's file backend — the former,
 //! near-duplicate `FileBackend` trait was retired in favour of it (#2104).
 
+use std::any::Any;
+
 use crate::errors::FileError;
 use crate::files::FileEntry;
 
@@ -43,6 +45,22 @@ pub trait FileBrowser: Send {
 
     /// Create a directory (and any missing parent directories) at the given path.
     async fn mkdir(&self, path: &str) -> Result<(), FileError>;
+
+    /// Optional downcast hook to the concrete browser type behind this
+    /// `&dyn FileBrowser`.
+    ///
+    /// The shared capability surface is deliberately uniform, but a
+    /// session-scoped caller that holds only a `&dyn FileBrowser` sometimes needs
+    /// the backend-specific advanced operations that cannot live on this trait —
+    /// for SSH, the SFTP advanced ops (`realpath` / `check_writable` /
+    /// privilege-elevated write) and the owned transfer handle exposed by
+    /// [`SftpFileBrowser`](crate::backends::ssh::SftpFileBrowser). Backends that
+    /// offer such capabilities override this to return `Some(self)`, letting the
+    /// caller `downcast_ref` to the concrete type; the default returns `None`, so
+    /// no other backend is affected (#2312).
+    fn as_any(&self) -> Option<&dyn Any> {
+        None
+    }
 }
 
 #[cfg(test)]
