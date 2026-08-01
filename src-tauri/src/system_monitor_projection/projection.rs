@@ -53,6 +53,7 @@ use tauri::{AppHandle, Manager};
 
 use termihub_core::monitoring::{MonitorStatus, SystemStats};
 
+use crate::commands::projection::ProjectionState;
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 use crate::system_monitor_projection::store::{MonitorEntry, SystemMonitorStore};
 
@@ -70,6 +71,40 @@ pub fn publish_monitors(projector: &Projector, store: &SystemMonitorStore) -> Ve
             version,
         }],
         None => Vec::new(),
+    }
+}
+
+/// Fold a monitoring transition into the managed [`SystemMonitorStore`]
+/// **server-side** and fan the resulting `system-monitors` region diff out to
+/// every subscriber (#2376, prerequisite for #2224).
+///
+/// This is the server-authority counterpart to [`register_monitor_intents`]: the
+/// same store transitions the frontend currently mirrors via `monitor.*` intents
+/// are applied here **at the source** — the instant the session collector loop
+/// produces a stats sample / status change, or the session monitoring lifecycle
+/// (connect / disconnect / pause / interval) advances — so the store is fed
+/// server-side, with no client round-trip required for it to be correct. It is
+/// **additive**: the existing Tauri event emission and the client `monitor.*`
+/// mirror stay in place, and the render-cut seed (`seedMonitorsRegion` on the
+/// frontend) keeps the region a faithful mirror of `appStore`, so this changes no
+/// user-facing behavior. Removing the now-redundant client re-dispatch is the
+/// later #2224 render/mutation inversion.
+///
+/// Best-effort and non-fatal: if the store or the projection state is not managed
+/// (e.g. a headless unit-test app that never ran `setup()`), the fold is skipped
+/// rather than erroring — the client mirror still drives the region. The `apply`
+/// closure runs to completion synchronously before the publish, so the store lock
+/// is never held across an await.
+pub fn fold_monitor_transition<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    apply: impl FnOnce(&SystemMonitorStore),
+) {
+    let Some(store) = app_handle.try_state::<Arc<SystemMonitorStore>>() else {
+        return;
+    };
+    apply(store.inner().as_ref());
+    if let Some(projection) = app_handle.try_state::<ProjectionState>() {
+        publish_monitors(&projection.projector, store.inner().as_ref());
     }
 }
 
