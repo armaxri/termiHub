@@ -28,14 +28,25 @@ pub struct ParsedSerialConfig {
 ///
 /// # Mapping rules
 ///
-/// | Field          | Input                        | Output                              |
+/// | Field          | Accepted input               | Output                              |
 /// |----------------|------------------------------|-------------------------------------|
-/// | `data_bits`    | 5, 6, 7, 8 (default 8)      | `CharSize::{Bits5..Bits8}`          |
-/// | `stop_bits`    | 1, 2 (default 1)             | `StopBits::{One,Two}`               |
-/// | `parity`       | "none","odd","even" (def.)   | `Parity::{None,Odd,Even}`           |
+/// | `data_bits`    | 5, 6, 7, 8                   | `CharSize::{Bits5..Bits8}`          |
+/// | `stop_bits`    | 1, 2                         | `StopBits::{One,Two}`               |
+/// | `parity`       | "none","odd","even"          | `Parity::{None,Odd,Even}`           |
 /// | `flow_control` | "none","hardware","software" | `FlowControl::{None,RtsCts,XonXoff}`|
+/// | `baud_rate`    | any non-zero value           | passed through unchanged            |
 ///
-/// Returns [`SessionError::InvalidConfig`] if the port name is empty.
+/// # Errors
+///
+/// Returns [`SessionError::InvalidConfig`] if the port name is empty, the baud
+/// rate is `0`, or any of `data_bits` / `stop_bits` / `parity` / `flow_control`
+/// is outside the accepted set above. Invalid framing parameters are **rejected,
+/// never silently coerced to a default** — this function is the last gate before
+/// a real serial port is opened (the desktop `connect()` path does not run the
+/// schema validator), and silently opening at the wrong framing (e.g. 8N1 when a
+/// corrupt or imported config asked for 7E2) would mis-frame every byte to the
+/// attached hardware with no error surfaced. Non-standard baud rates (e.g.
+/// `230400`) are accepted, since only `0` is invalid.
 pub fn parse_serial_config(config: &SerialConfig) -> Result<ParsedSerialConfig, SessionError> {
     if config.port.is_empty() {
         return Err(SessionError::InvalidConfig(
@@ -43,28 +54,54 @@ pub fn parse_serial_config(config: &SerialConfig) -> Result<ParsedSerialConfig, 
         ));
     }
 
+    if config.baud_rate == 0 {
+        return Err(SessionError::InvalidConfig(
+            "serial baud rate must be greater than 0".into(),
+        ));
+    }
+
     let char_size = match config.data_bits {
         5 => serial2::CharSize::Bits5,
         6 => serial2::CharSize::Bits6,
         7 => serial2::CharSize::Bits7,
-        _ => serial2::CharSize::Bits8,
+        8 => serial2::CharSize::Bits8,
+        other => {
+            return Err(SessionError::InvalidConfig(format!(
+                "serial data bits must be 5, 6, 7, or 8, got {other}"
+            )));
+        }
     };
 
     let stop_bits = match config.stop_bits {
+        1 => serial2::StopBits::One,
         2 => serial2::StopBits::Two,
-        _ => serial2::StopBits::One,
+        other => {
+            return Err(SessionError::InvalidConfig(format!(
+                "serial stop bits must be 1 or 2, got {other}"
+            )));
+        }
     };
 
     let parity = match config.parity.as_str() {
+        "none" => serial2::Parity::None,
         "odd" => serial2::Parity::Odd,
         "even" => serial2::Parity::Even,
-        _ => serial2::Parity::None,
+        other => {
+            return Err(SessionError::InvalidConfig(format!(
+                "serial parity must be \"none\", \"odd\", or \"even\", got {other:?}"
+            )));
+        }
     };
 
     let flow_control = match config.flow_control.as_str() {
+        "none" => serial2::FlowControl::None,
         "hardware" => serial2::FlowControl::RtsCts,
         "software" => serial2::FlowControl::XonXoff,
-        _ => serial2::FlowControl::None,
+        other => {
+            return Err(SessionError::InvalidConfig(format!(
+                "serial flow control must be \"none\", \"hardware\", or \"software\", got {other:?}"
+            )));
+        }
     };
 
     Ok(ParsedSerialConfig {
@@ -302,6 +339,20 @@ mod tests {
         }
     }
 
+    /// Assert that parsing `config` fails with [`SessionError::InvalidConfig`].
+    ///
+    /// Used by the invalid-value rejection tests: for safety-critical serial
+    /// hardware an out-of-range framing parameter must be surfaced as an error,
+    /// never silently coerced to a default (see the doc comment on
+    /// [`parse_serial_config`]).
+    fn assert_rejected(config: &SerialConfig) {
+        let result = parse_serial_config(config);
+        assert!(
+            matches!(result, Err(SessionError::InvalidConfig(_))),
+            "expected InvalidConfig, got: {result:?}"
+        );
+    }
+
     #[test]
     fn parse_defaults() {
         let cfg = make_config("/dev/ttyUSB0");
@@ -359,14 +410,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_data_bits_unknown_defaults_to_eight() {
-        let cfg = SerialConfig {
-            port: "COM1".into(),
-            data_bits: 99,
-            ..SerialConfig::default()
-        };
-        let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.char_size, serial2::CharSize::Bits8);
+    fn parse_data_bits_out_of_range_rejected() {
+        for bad in [0u8, 4, 9, 99] {
+            assert_rejected(&SerialConfig {
+                port: "COM1".into(),
+                data_bits: bad,
+                ..SerialConfig::default()
+            });
+        }
     }
 
     #[test]
@@ -392,14 +443,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_stop_bits_unknown_defaults_to_one() {
-        let cfg = SerialConfig {
-            port: "COM1".into(),
-            stop_bits: 42,
-            ..SerialConfig::default()
-        };
-        let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.stop_bits, serial2::StopBits::One);
+    fn parse_stop_bits_out_of_range_rejected() {
+        for bad in [0u8, 3, 42] {
+            assert_rejected(&SerialConfig {
+                port: "COM1".into(),
+                stop_bits: bad,
+                ..SerialConfig::default()
+            });
+        }
     }
 
     #[test]
@@ -436,14 +487,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_parity_unknown_defaults_to_none() {
-        let cfg = SerialConfig {
-            port: "COM1".into(),
-            parity: "mark".into(),
-            ..SerialConfig::default()
-        };
-        let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.parity, serial2::Parity::None);
+    fn parse_parity_unknown_rejected() {
+        for bad in ["mark", "space", "", "None", "ODD"] {
+            assert_rejected(&SerialConfig {
+                port: "COM1".into(),
+                parity: bad.into(),
+                ..SerialConfig::default()
+            });
+        }
     }
 
     #[test]
@@ -480,14 +531,38 @@ mod tests {
     }
 
     #[test]
-    fn parse_flow_control_unknown_defaults_to_none() {
-        let cfg = SerialConfig {
+    fn parse_flow_control_unknown_rejected() {
+        for bad in ["xonxoff", "rtscts", "", "Hardware"] {
+            assert_rejected(&SerialConfig {
+                port: "COM1".into(),
+                flow_control: bad.into(),
+                ..SerialConfig::default()
+            });
+        }
+    }
+
+    #[test]
+    fn parse_baud_rate_zero_rejected() {
+        assert_rejected(&SerialConfig {
             port: "COM1".into(),
-            flow_control: "xonxoff".into(),
+            baud_rate: 0,
             ..SerialConfig::default()
-        };
-        let parsed = parse_serial_config(&cfg).unwrap();
-        assert_eq!(parsed.flow_control, serial2::FlowControl::None);
+        });
+    }
+
+    #[test]
+    fn parse_non_standard_baud_rate_accepted() {
+        // Baud rates beyond the UI dropdown (e.g. 230400, custom) are legitimate
+        // on real hardware and must not be rejected — only 0 is invalid.
+        for baud in [230400u32, 460800, 921600, 500_000] {
+            let cfg = SerialConfig {
+                port: "COM1".into(),
+                baud_rate: baud,
+                ..SerialConfig::default()
+            };
+            let parsed = parse_serial_config(&cfg).expect("non-standard baud must be accepted");
+            assert_eq!(parsed.baud_rate, baud);
+        }
     }
 
     #[test]
