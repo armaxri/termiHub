@@ -322,6 +322,17 @@ pub struct AppSettings {
     /// imported workflow can never add an entry.
     #[serde(default)]
     pub workflow_local_process_allowlist: Vec<String>,
+    /// Forward-compatibility catch-all (#2311).
+    ///
+    /// Preserves any field the frontend `AppSettings` interface
+    /// (`src/types/connection.ts`) carries that this struct does not model
+    /// explicitly. Without it, an unmodelled key is silently dropped when
+    /// settings are saved and the user loses that setting on the next restart —
+    /// the exact defect class behind #2261 (`confirmCloseAttachedTab` etc.) and
+    /// #2309. Unknown keys round-trip verbatim instead. Empty by default, so a
+    /// flattened empty map contributes nothing to the serialized output.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for AppSettings {
@@ -378,6 +389,7 @@ impl Default for AppSettings {
             syntax_highlighting: None,
             workflow_local_process_enabled: false,
             workflow_local_process_allowlist: Vec::new(),
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -1348,5 +1360,47 @@ mod tests {
         assert!(legacy.warn_large_port_scan);
         assert!(legacy.warn_large_ping_sweep);
         assert!(legacy.screen_reader_mode.is_none());
+    }
+
+    #[test]
+    fn app_settings_flatten_preserves_unknown_frontend_field() {
+        // #2311: a field the backend does not model must round-trip through the
+        // `#[serde(flatten)] extra` catch-all instead of being silently dropped
+        // on save — the exact failure mode of #2261/#2309. Without the catch-all
+        // this assertion fails, which is what makes it a guard.
+        let json = serde_json::json!({
+            "version": "1",
+            "externalConnectionFiles": [],
+            "theme": "dark",
+            "someFutureSetting": { "a": 1, "b": [true, false] },
+            "anotherNewToggle": true,
+        });
+
+        let settings: AppSettings = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(
+            settings.extra.get("someFutureSetting"),
+            json.get("someFutureSetting"),
+            "unknown key was not captured by the flatten catch-all",
+        );
+
+        let round_tripped = serde_json::to_value(&settings).unwrap();
+        assert_eq!(
+            round_tripped.get("someFutureSetting"),
+            json.get("someFutureSetting")
+        );
+        assert_eq!(
+            round_tripped.get("anotherNewToggle"),
+            json.get("anotherNewToggle")
+        );
+        // A modelled field still deserializes correctly alongside the catch-all.
+        assert_eq!(settings.theme.as_deref(), Some("dark"));
+    }
+
+    #[test]
+    fn app_settings_empty_extra_keeps_serialized_output_clean() {
+        // An empty catch-all must not leak an `extra` key into the JSON.
+        let settings = AppSettings::default();
+        let json = serde_json::to_value(&settings).unwrap();
+        assert!(json.get("extra").is_none(), "flatten leaked an `extra` key");
     }
 }
