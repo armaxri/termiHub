@@ -500,9 +500,11 @@ impl ConnectionStore {
         }
         match serde_json::to_string_pretty(&storage) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(&self.file_path, json) {
+                // Atomic write (temp + rename) so a crash mid-write can never
+                // truncate connections.json and lose saved connections (#2366).
+                if let Err(e) = crate::fs::write_atomic(&self.file_path, &json) {
                     warn!(
-                        "Failed to write connections to {}: {}",
+                        "Failed to write connections to {}: {:#}",
                         self.file_path.display(),
                         e
                     );

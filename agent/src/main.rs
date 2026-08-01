@@ -1,6 +1,7 @@
 mod client_registry;
 mod daemon;
 mod files;
+mod fs;
 mod handler;
 mod io;
 mod monitoring;

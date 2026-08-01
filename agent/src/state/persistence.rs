@@ -4,7 +4,7 @@
 //! can reconnect to surviving daemon processes on startup.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -101,7 +101,7 @@ impl AgentState {
     }
 
     /// Save state to a specific path.
-    pub fn save_to(&self, path: &PathBuf) {
+    pub fn save_to(&self, path: &Path) {
         if let Some(parent) = path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 warn!(
@@ -114,8 +114,10 @@ impl AgentState {
         }
         match serde_json::to_string_pretty(self) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(path, json) {
-                    warn!("Failed to write agent state to {}: {}", path.display(), e);
+                // Atomic write (temp + rename) so a crash mid-write can never
+                // truncate state.json and lose the persisted session state (#2366).
+                if let Err(e) = crate::fs::write_atomic(path, &json) {
+                    warn!("Failed to write agent state to {}: {:#}", path.display(), e);
                 }
             }
             Err(e) => {
@@ -431,9 +433,10 @@ mod tests {
 
         // Persist a good state first.
         let mut original = AgentState::default();
-        original
-            .sessions
-            .insert("keep".to_string(), make_session("local", Some("/tmp/keep.sock")));
+        original.sessions.insert(
+            "keep".to_string(),
+            make_session("local", Some("/tmp/keep.sock")),
+        );
         original.save_to(&path);
         assert_eq!(AgentState::load_from(&path).sessions.len(), 1);
 
