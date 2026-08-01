@@ -18,6 +18,7 @@ use super::tree::{
 };
 use crate::credential::crypto::{decrypt_with_password, encrypt_with_password};
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
+use crate::utils::fs::write_atomic;
 
 /// Route credentials to the active store (if `savePassword` is set),
 /// then strip the password field so it is never written to disk.
@@ -1008,7 +1009,7 @@ pub(crate) fn try_load_external_file(
         };
         let cleaned_data = serde_json::to_string_pretty(&cleaned_store)
             .context("Failed to serialize external file during migration")?;
-        std::fs::write(file_path, cleaned_data)
+        write_atomic(std::path::Path::new(file_path), &cleaned_data)
             .with_context(|| format!("Failed to rewrite external file: {}", file_path))?;
     }
 
@@ -1086,7 +1087,7 @@ fn save_or_update_in_external_file(file_path: &str, connection: SavedConnection)
 
     let data = serde_json::to_string_pretty(&ext_store)
         .context("Failed to serialize external connection file")?;
-    std::fs::write(file_path, data)
+    write_atomic(std::path::Path::new(file_path), &data)
         .with_context(|| format!("Failed to write external file: {}", file_path))?;
     Ok(())
 }
@@ -1105,7 +1106,7 @@ fn remove_from_external_file(file_path: &str, connection_id: &str) -> Result<()>
 
     let data = serde_json::to_string_pretty(&ext_store)
         .context("Failed to serialize external connection file")?;
-    std::fs::write(file_path, data)
+    write_atomic(std::path::Path::new(file_path), &data)
         .with_context(|| format!("Failed to write external file: {}", file_path))?;
     Ok(())
 }
@@ -1133,7 +1134,7 @@ fn remove_and_return_from_external_file(
 
     let data = serde_json::to_string_pretty(&ext_store)
         .context("Failed to serialize external connection file")?;
-    std::fs::write(file_path, data)
+    write_atomic(std::path::Path::new(file_path), &data)
         .with_context(|| format!("Failed to write external file: {}", file_path))?;
 
     Ok(conn)
@@ -1160,7 +1161,7 @@ pub fn save_external_file(
     };
     let data = serde_json::to_string_pretty(&store)
         .context("Failed to serialize external connection file")?;
-    std::fs::write(file_path, data)
+    write_atomic(std::path::Path::new(file_path), &data)
         .with_context(|| format!("Failed to write external file: {}", file_path))?;
     Ok(())
 }
@@ -1483,6 +1484,51 @@ mod tests {
         let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
         assert!(source.error.is_none());
         assert_eq!(source.connections.len(), 1);
+    }
+
+    /// Regression (#2320): a save into an external file that cannot durably
+    /// complete must fail **without** clobbering the previously-saved file. The
+    /// old truncate-in-place `fs::write` would succeed by overwriting the existing
+    /// file, so this fails red on it; the atomic temp+rename write cannot create
+    /// its temp file in a read-only directory and therefore leaves the prior file
+    /// intact.
+    #[cfg(unix)]
+    #[test]
+    fn failed_external_file_save_preserves_previous_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("connections.json");
+        let path_str = file_path.to_str().unwrap();
+
+        save_or_update_in_external_file(path_str, make_local_conn("Original")).unwrap();
+        let before = std::fs::read_to_string(&file_path).unwrap();
+
+        let restore = std::fs::metadata(dir.path()).unwrap().permissions();
+        let mut ro = restore.clone();
+        ro.set_mode(0o500);
+        std::fs::set_permissions(dir.path(), ro).unwrap();
+
+        // A privileged/root process can create files regardless of mode — skip.
+        let probe = dir.path().join(".probe");
+        if std::fs::write(&probe, b"x").is_ok() {
+            let _ = std::fs::remove_file(&probe);
+            std::fs::set_permissions(dir.path(), restore).unwrap();
+            return;
+        }
+
+        let result = save_or_update_in_external_file(path_str, make_local_conn("Replacement"));
+        std::fs::set_permissions(dir.path(), restore).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a save that cannot durably complete must report an error"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file_path).unwrap(),
+            before,
+            "a failed external-file save must leave the previous file fully intact"
+        );
     }
 
     #[test]

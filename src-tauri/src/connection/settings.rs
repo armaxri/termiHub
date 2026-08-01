@@ -8,6 +8,7 @@ use tauri::AppHandle;
 use super::recovery::{RecoveryResult, RecoveryWarning};
 use super::shell_integration::ShellIntegrationSettings;
 use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::fs::write_atomic;
 
 const FILE_NAME: &str = "settings.json";
 
@@ -492,7 +493,7 @@ impl SettingsStorage {
         let data =
             serde_json::to_string_pretty(settings).context("Failed to serialize settings")?;
 
-        fs::write(&self.file_path, data).context("Failed to write settings file")?;
+        write_atomic(&self.file_path, &data).context("Failed to write settings file")?;
 
         Ok(())
     }
@@ -507,6 +508,59 @@ mod tests {
         SettingsStorage {
             file_path: dir.path().join(FILE_NAME),
         }
+    }
+
+    /// Regression (#2320): a `save` that cannot durably complete must fail
+    /// **without** clobbering the previously-saved settings. The old
+    /// truncate-in-place `fs::write` would succeed by overwriting the existing
+    /// file, so this fails red on it; the atomic temp+rename write cannot create
+    /// its temp file in a read-only directory and therefore leaves the prior
+    /// `settings.json` untouched.
+    #[cfg(unix)]
+    #[test]
+    fn failed_save_preserves_previous_settings() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let original = AppSettings {
+            theme: Some("dark".to_string()),
+            ..Default::default()
+        };
+        storage.save(&original).unwrap();
+        let before = fs::read_to_string(&storage.file_path).unwrap();
+
+        let restore = fs::metadata(dir.path()).unwrap().permissions();
+        let mut ro = restore.clone();
+        ro.set_mode(0o500);
+        fs::set_permissions(dir.path(), ro).unwrap();
+
+        // A privileged/root process can create files regardless of mode — skip.
+        let probe = dir.path().join(".probe");
+        if fs::write(&probe, b"x").is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(dir.path(), restore).unwrap();
+            return;
+        }
+
+        let updated = AppSettings {
+            theme: Some("light".to_string()),
+            ..Default::default()
+        };
+        let result = storage.save(&updated);
+        fs::set_permissions(dir.path(), restore).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a save that cannot durably complete must report an error"
+        );
+        let after = fs::read_to_string(&storage.file_path).unwrap();
+        assert_eq!(
+            before, after,
+            "a failed save must leave the previous settings fully intact"
+        );
+        serde_json::from_str::<AppSettings>(&after).expect("preserved settings still parse");
     }
 
     #[test]

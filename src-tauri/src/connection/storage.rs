@@ -8,6 +8,7 @@ use super::config::{ConnectionStore, ConnectionTreeNode, FlatConnectionStore, Sa
 use super::recovery::{RecoveryResult, RecoveryWarning};
 use super::tree::flatten_tree;
 use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::fs::write_atomic;
 
 const FILE_NAME: &str = "connections.json";
 
@@ -168,7 +169,7 @@ impl ConnectionStorage {
         let data =
             serde_json::to_string_pretty(store).context("Failed to serialize connections")?;
 
-        fs::write(&self.file_path, data).context("Failed to write connections file")?;
+        write_atomic(&self.file_path, &data).context("Failed to write connections file")?;
 
         Ok(())
     }
@@ -277,6 +278,56 @@ mod tests {
         ConnectionStorage {
             file_path: dir.path().join(FILE_NAME),
         }
+    }
+
+    /// Regression (#2320): a `save_store` that cannot durably complete must fail
+    /// **without** clobbering the previously-saved connections. The old
+    /// truncate-in-place `fs::write` would succeed by overwriting the existing
+    /// file, so this fails red on it; the atomic temp+rename write cannot create
+    /// its temp file in a read-only directory and therefore leaves the prior
+    /// `connections.json` untouched.
+    #[cfg(unix)]
+    #[test]
+    fn failed_save_preserves_previous_connections() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let store = ConnectionStore {
+            version: "2".to_string(),
+            children: vec![],
+            agents: vec![],
+        };
+        storage.save_store(&store).unwrap();
+        let before = fs::read_to_string(&storage.file_path).unwrap();
+
+        let restore = fs::metadata(dir.path()).unwrap().permissions();
+        let mut ro = restore.clone();
+        ro.set_mode(0o500);
+        fs::set_permissions(dir.path(), ro).unwrap();
+
+        // A privileged/root process can create files regardless of mode — skip.
+        let probe = dir.path().join(".probe");
+        if fs::write(&probe, b"x").is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(dir.path(), restore).unwrap();
+            return;
+        }
+
+        let result = storage.save_store(&store);
+        fs::set_permissions(dir.path(), restore).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a save that cannot durably complete must report an error"
+        );
+        let after = fs::read_to_string(&storage.file_path).unwrap();
+        assert_eq!(
+            before, after,
+            "a failed save must leave the previous connections fully intact"
+        );
+        serde_json::from_str::<ConnectionStore>(&after).expect("preserved store still parses");
     }
 
     #[test]
