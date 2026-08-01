@@ -47,20 +47,22 @@ where
                 break;
             }
 
-            result = read_ndjson_line(reader, &mut pending) => {
-                let Some(line) = result? else {
-                    debug!("Reader closed (EOF), exiting transport loop");
-                    break;
+            result = read_ndjson_line(reader, &mut pending, MAX_LINE_SIZE) => {
+                let line = match result? {
+                    LineOutcome::Eof => {
+                        debug!("Reader closed (EOF), exiting transport loop");
+                        break;
+                    }
+                    LineOutcome::TooLarge => {
+                        warn!("Message exceeds {} byte limit; rejecting", MAX_LINE_SIZE);
+                        write_line(writer, SIZE_LIMIT_ERROR).await?;
+                        continue;
+                    }
+                    LineOutcome::Line(line) => line,
                 };
 
                 let trimmed = line.trim();
                 if trimmed.is_empty() {
-                    continue;
-                }
-
-                if trimmed.len() > MAX_LINE_SIZE {
-                    warn!("Message exceeds 1 MiB limit ({} bytes)", trimmed.len());
-                    write_line(writer, SIZE_LIMIT_ERROR).await?;
                     continue;
                 }
 
@@ -106,37 +108,104 @@ where
 /// `consume`d synchronously, with no intervening await, so cancelling this
 /// future can never lose data: whatever was consumed is already in `pending`.
 ///
-/// Returns `Ok(Some(line))` for a complete line (without the trailing newline),
-/// or `Ok(None)` at EOF with no buffered bytes.
-async fn read_ndjson_line<R>(reader: &mut R, pending: &mut Vec<u8>) -> io::Result<Option<String>>
+/// Outcome of reading one NDJSON line under a size cap.
+#[derive(Debug)]
+enum LineOutcome {
+    /// A complete line — newline-terminated, or a trailing line delivered at
+    /// EOF — whose length is within the cap. The trailing newline is stripped.
+    Line(String),
+    /// The line exceeded the cap. Any buffered bytes were dropped and the rest
+    /// of the over-long line was discarded up to (and including) its terminating
+    /// newline, so the caller can reject it and keep serving the connection
+    /// without ever having buffered the whole thing.
+    TooLarge,
+    /// Clean EOF with no buffered bytes.
+    Eof,
+}
+
+/// Read one newline-delimited line, **cancellation-safe** in a `select!` and
+/// **bounded** to `max_len` resident bytes.
+///
+/// The cap is enforced *while reading*, not after: once the current line would
+/// exceed `max_len`, `pending` is cleared and subsequent bytes are discarded
+/// (never buffered) until the terminating newline. This keeps resident memory at
+/// ~`max_len` regardless of how much a peer sends before a newline. A peer that
+/// streams bytes without ever sending one used to grow `pending` without limit —
+/// the 1 MiB size check ran only in the caller, *after* the whole line had been
+/// assembled — which was a memory-exhaustion denial-of-service against a daemon
+/// that parses framed bytes straight off a socket (#2352). The sibling binary
+/// frame protocol ([`crate::daemon::protocol`]) already rejects an over-limit
+/// length before allocating; this brings the NDJSON path in line.
+///
+/// Returns [`LineOutcome::Line`] for a complete line within the cap,
+/// [`LineOutcome::TooLarge`] when the cap was exceeded (bytes discarded to the
+/// next newline; the connection may continue), or [`LineOutcome::Eof`] at a
+/// clean EOF with no buffered bytes.
+///
+/// Cancellation safety (the #1559 property) is preserved for lines within the
+/// cap: bytes are appended to `pending` before the reader is `consume`d, with no
+/// intervening await, so a cancelled future never loses buffered data. In the
+/// over-size discard path bytes are dropped rather than retained, but those
+/// belong to an already-rejected line, so no valid message is ever lost.
+async fn read_ndjson_line<R>(
+    reader: &mut R,
+    pending: &mut Vec<u8>,
+    max_len: usize,
+) -> io::Result<LineOutcome>
 where
     R: AsyncBufReadExt + Unpin,
 {
+    // Whether the current line has already crossed the cap. A partial line
+    // carried over from a cancelled read is always within the cap, but never
+    // trust that blindly.
+    let mut over = pending.len() > max_len;
     loop {
         let available = reader.fill_buf().await?;
         if available.is_empty() {
-            // EOF. A trailing line without a newline is still delivered once;
-            // an empty accumulator means a clean close.
+            // EOF.
+            if over {
+                pending.clear();
+                return Ok(LineOutcome::TooLarge);
+            }
+            // A trailing line without a newline is still delivered once; an
+            // empty accumulator means a clean close.
             if pending.is_empty() {
-                return Ok(None);
+                return Ok(LineOutcome::Eof);
             }
             let line = String::from_utf8(std::mem::take(pending))
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            return Ok(Some(line));
+            return Ok(LineOutcome::Line(line));
         }
 
         if let Some(idx) = available.iter().position(|&b| b == b'\n') {
+            // A complete line ends here. If it (or an earlier chunk) crossed the
+            // cap, discard it up to and including the newline and report the
+            // overflow; otherwise hand it back.
+            if over || pending.len().saturating_add(idx) > max_len {
+                reader.consume(idx + 1);
+                pending.clear();
+                return Ok(LineOutcome::TooLarge);
+            }
             pending.extend_from_slice(&available[..idx]);
             reader.consume(idx + 1);
             let line = String::from_utf8(std::mem::take(pending))
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            return Ok(Some(line));
+            return Ok(LineOutcome::Line(line));
         }
 
-        // No newline yet: keep the whole chunk and read more. `available` is a
-        // borrow of the reader, so copy its length before consuming.
+        // No newline yet. Buffer the chunk unless doing so would cross the cap,
+        // in which case drop what we have and switch to discard-until-newline
+        // mode. `available` is a borrow of the reader, so finish using it before
+        // consuming.
         let len = available.len();
-        pending.extend_from_slice(available);
+        if over {
+            // Already discarding: drop this chunk.
+        } else if pending.len().saturating_add(len) > max_len {
+            over = true;
+            pending.clear();
+        } else {
+            pending.extend_from_slice(available);
+        }
         reader.consume(len);
     }
 }
@@ -183,15 +252,84 @@ mod tests {
         client.write_all(b"{\"a\":1").await.unwrap();
         client.write_all(b",\"b\":2}\n").await.unwrap();
 
-        let line = read_ndjson_line(&mut reader, &mut pending)
+        let line = match read_ndjson_line(&mut reader, &mut pending, MAX_LINE_SIZE)
             .await
             .unwrap()
-            .unwrap();
+        {
+            LineOutcome::Line(line) => line,
+            other => panic!("expected a complete line, got {other:?}"),
+        };
         assert_eq!(line, r#"{"a":1,"b":2}"#);
         assert!(
             pending.is_empty(),
             "accumulator must be drained after a line"
         );
+    }
+
+    /// A line larger than the cap, delivered without a newline, must be rejected
+    /// as [`LineOutcome::TooLarge`] and never fully buffered — the
+    /// memory-exhaustion regression for #2352. Uses a tiny cap and a body many
+    /// times larger so the pre-fix unbounded accumulation would have retained
+    /// the whole 100 KiB blob.
+    #[tokio::test]
+    async fn read_ndjson_line_rejects_oversize_line_without_unbounded_buffering() {
+        const CAP: usize = 64;
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut reader = BufReader::new(server);
+        let mut pending = Vec::new();
+
+        // Stream far more than the cap with no newline, then terminate the line.
+        // Written from a task because the reader must drain the pipe concurrently.
+        let writer = tokio::spawn(async move {
+            client.write_all(&vec![b'x'; 100_000]).await.unwrap();
+            client.write_all(b"\n").await.unwrap();
+            client // keep the writer alive until the read completes
+        });
+
+        let outcome = read_ndjson_line(&mut reader, &mut pending, CAP)
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome, LineOutcome::TooLarge),
+            "over-size line must be rejected, got {outcome:?}"
+        );
+        assert!(
+            pending.is_empty(),
+            "accumulator must be cleared after an over-size line, not left holding it"
+        );
+        let _client = writer.await.unwrap();
+    }
+
+    /// After an over-size line is rejected, the connection must keep working: a
+    /// normal line that follows still parses. Guards the "reject and continue"
+    /// contract for #2352.
+    #[tokio::test]
+    async fn read_ndjson_line_recovers_after_oversize_line() {
+        const CAP: usize = 32;
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut reader = BufReader::new(server);
+        let mut pending = Vec::new();
+
+        // An over-size line, then a normal one — both newline-terminated.
+        client.write_all(&vec![b'A'; 1000]).await.unwrap();
+        client.write_all(b"\n").await.unwrap();
+        client.write_all(b"{\"ok\":true}\n").await.unwrap();
+
+        let first = read_ndjson_line(&mut reader, &mut pending, CAP)
+            .await
+            .unwrap();
+        assert!(
+            matches!(first, LineOutcome::TooLarge),
+            "first (over-size) line must be rejected, got {first:?}"
+        );
+
+        match read_ndjson_line(&mut reader, &mut pending, CAP)
+            .await
+            .unwrap()
+        {
+            LineOutcome::Line(line) => assert_eq!(line, r#"{"ok":true}"#),
+            other => panic!("line after an over-size one must still parse, got {other:?}"),
+        }
     }
 
     /// The #1559 mechanism, isolated: a partially received line must survive
@@ -214,7 +352,7 @@ mod tests {
 
         // A concurrent branch wins the race and cancels the in-flight read.
         tokio::select! {
-            _ = read_ndjson_line(&mut reader, &mut pending) => {
+            _ = read_ndjson_line(&mut reader, &mut pending, MAX_LINE_SIZE) => {
                 panic!("read must not complete before the newline arrives");
             }
             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
@@ -228,10 +366,13 @@ mod tests {
             .write_all(b"ection.close\",\"params\":{}}\n")
             .await
             .unwrap();
-        let line = read_ndjson_line(&mut reader, &mut pending)
+        let line = match read_ndjson_line(&mut reader, &mut pending, MAX_LINE_SIZE)
             .await
             .unwrap()
-            .unwrap();
+        {
+            LineOutcome::Line(line) => line,
+            other => panic!("expected a complete line, got {other:?}"),
+        };
         assert_eq!(
             line,
             r#"{"jsonrpc":"2.0","id":7,"method":"connection.close","params":{}}"#
@@ -333,6 +474,99 @@ mod tests {
         assert!(
             got_result,
             "initialize response was lost/corrupted by the racing notification"
+        );
+
+        shutdown.cancel();
+        let _ = loop_handle.await;
+    }
+
+    /// End-to-end regression for #2352: a message larger than the 1 MiB limit is
+    /// rejected with the size-limit error, and the loop keeps serving — a valid
+    /// `initialize` sent afterwards still gets a real response. On the pre-fix
+    /// loop the over-size line was buffered whole (unbounded) before the limit
+    /// was ever checked; here it must be rejected while bounding memory and the
+    /// connection must survive.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oversize_message_is_rejected_and_loop_continues() {
+        use crate::handler::dispatch::AgentHandler;
+        use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
+        use crate::session::definitions::{ConnectionStore, ConnectionStoreApi};
+        use crate::session::manager::{SessionManager, SessionManagerApi};
+
+        let (notif_tx, mut notif_rx) = tokio::sync::mpsc::unbounded_channel();
+        let tmp =
+            std::env::temp_dir().join(format!("termihub-oversize-{}.json", uuid::Uuid::new_v4()));
+        let conn_store = Arc::new(ConnectionStore::new_temp(tmp));
+        let registry = Arc::new(crate::registry::build_registry());
+        let session_manager = Arc::new(SessionManager::new(notif_tx.clone(), registry));
+        let monitoring = Arc::new(MonitoringManager::new(notif_tx.clone(), conn_store.clone()));
+        let handler = AgentHandler::new(
+            session_manager as Arc<dyn SessionManagerApi>,
+            conn_store as Arc<dyn ConnectionStoreApi>,
+            monitoring as Arc<dyn MonitoringManagerApi>,
+        )
+        .unwrap();
+
+        let (client, server) = tokio::io::duplex(4 * 1024 * 1024);
+        let (server_rd, mut server_wr) = tokio::io::split(server);
+        let (mut client_rd, mut client_wr) = tokio::io::split(client);
+        let mut reader = BufReader::new(server_rd);
+
+        let shutdown = CancellationToken::new();
+        let loop_shutdown = shutdown.clone();
+        let loop_handle: tokio::task::JoinHandle<anyhow::Result<()>> = tokio::spawn(async move {
+            run_transport_loop(
+                &mut reader,
+                &mut server_wr,
+                &handler,
+                &mut notif_rx,
+                loop_shutdown,
+            )
+            .await
+        });
+
+        // An over-size line: more than 1 MiB of bytes, then a newline.
+        client_wr
+            .write_all(&vec![b'x'; MAX_LINE_SIZE + 1024])
+            .await
+            .unwrap();
+        client_wr.write_all(b"\n").await.unwrap();
+
+        // Then a perfectly valid request on the same connection.
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"0.1.0","client":"t","clientVersion":"0.1.0"}}"#;
+        client_wr.write_all(request.as_bytes()).await.unwrap();
+        client_wr.write_all(b"\n").await.unwrap();
+
+        // Expect the size-limit error first, then the initialize result for id 1.
+        let mut lines = BufReader::new(&mut client_rd);
+        let (saw_size_error, got_result) = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut saw_size_error = false;
+            loop {
+                let mut line = String::new();
+                let n = lines.read_line(&mut line).await.unwrap();
+                if n == 0 {
+                    return (saw_size_error, false);
+                }
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+                    if v["error"]["code"] == serde_json::json!(-32700) {
+                        saw_size_error = true;
+                    }
+                    if v["id"] == serde_json::json!(1) && v.get("result").is_some() {
+                        return (saw_size_error, true);
+                    }
+                }
+            }
+        })
+        .await
+        .unwrap_or((false, false));
+
+        assert!(
+            saw_size_error,
+            "over-size message must be rejected with a size-limit error"
+        );
+        assert!(
+            got_result,
+            "the loop must keep serving: the follow-up initialize should still get a result"
         );
 
         shutdown.cancel();
