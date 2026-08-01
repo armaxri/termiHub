@@ -414,6 +414,59 @@ mod tests {
         assert!(loaded.update.pending_update.is_none());
     }
 
+    /// A save that fails part-way (here: the parent directory is read-only, so a
+    /// new temp file cannot be created) must leave the **previous** good
+    /// `state.json` untouched — never a truncated or empty file. This is the
+    /// whole point of an atomic write: a torn write must never lose the persisted
+    /// session-recovery state. Regression test for #2366.
+    #[cfg(unix)]
+    #[test]
+    fn failed_save_preserves_previous_state() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join("cfg");
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("state.json");
+
+        // Persist a good state first.
+        let mut original = AgentState::default();
+        original
+            .sessions
+            .insert("keep".to_string(), make_session("local", Some("/tmp/keep.sock")));
+        original.save_to(&path);
+        assert_eq!(AgentState::load_from(&path).sessions.len(), 1);
+
+        // Make the parent directory read-only so the save cannot complete.
+        let mut ro = std::fs::metadata(&dir).unwrap().permissions();
+        ro.set_mode(0o500);
+        std::fs::set_permissions(&dir, ro).unwrap();
+
+        // Attempt to save a DIFFERENT state; the write must fail internally
+        // without panicking and without clobbering the file on disk.
+        let mut changed = AgentState::default();
+        changed
+            .sessions
+            .insert("gone".to_string(), make_session("serial", None));
+        changed.save_to(&path);
+
+        // Restore write permission so we can read the file and so temp-dir
+        // cleanup succeeds.
+        let mut rw = std::fs::metadata(&dir).unwrap().permissions();
+        rw.set_mode(0o700);
+        std::fs::set_permissions(&dir, rw).unwrap();
+
+        // The on-disk file must still hold the ORIGINAL state, intact.
+        let recovered = AgentState::load_from(&path);
+        assert_eq!(
+            recovered.sessions.len(),
+            1,
+            "a failed save clobbered state.json — torn write lost data"
+        );
+        assert!(recovered.sessions.contains_key("keep"));
+        assert!(!recovered.sessions.contains_key("gone"));
+    }
+
     #[test]
     fn add_and_remove_session() {
         let tmp = TempDir::new().unwrap();
