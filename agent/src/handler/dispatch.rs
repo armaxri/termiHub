@@ -2144,7 +2144,7 @@ mod tests {
 
     fn init_params() -> Value {
         json!({
-            "protocolVersion": "0.1.0",
+            "protocolVersion": AGENT_PROTOCOL_VERSION,
             "client": "test",
             "clientVersion": "0.1.0"
         })
@@ -2202,6 +2202,53 @@ mod tests {
         let handler = make_handler();
         let result = dispatch(&handler, "initialize", json!({}), 1).await;
         assert_eq!(result["error"]["code"], errors::INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn initialize_negotiates_down_to_older_client_minor() {
+        // A desktop speaking an older minor must get that older version back, not
+        // the agent's newer one: the negotiated version is the highest version
+        // both sides understand (docs/remote-protocol.md → Version Negotiation).
+        let handler = make_handler();
+        let result = dispatch(
+            &handler,
+            "initialize",
+            json!({"protocolVersion": "0.3.0", "client": "test", "clientVersion": "0.1.0"}),
+            1,
+        )
+        .await;
+        assert_eq!(result["result"]["protocol_version"], "0.3.0");
+    }
+
+    #[tokio::test]
+    async fn initialize_caps_newer_client_at_agent_version() {
+        // A desktop newer than the agent is capped at what the agent supports.
+        let handler = make_handler();
+        let result = dispatch(
+            &handler,
+            "initialize",
+            json!({"protocolVersion": "0.99.0", "client": "test", "clientVersion": "0.1.0"}),
+            1,
+        )
+        .await;
+        assert_eq!(result["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
+    }
+
+    #[tokio::test]
+    async fn initialize_returns_agent_version_for_equal_request() {
+        let handler = make_handler();
+        let result = dispatch(
+            &handler,
+            "initialize",
+            json!({
+                "protocolVersion": AGENT_PROTOCOL_VERSION,
+                "client": "test",
+                "clientVersion": "0.1.0"
+            }),
+            1,
+        )
+        .await;
+        assert_eq!(result["result"]["protocol_version"], AGENT_PROTOCOL_VERSION);
     }
 
     // ── ConnectionRegistry integration ─────────────────────────────
