@@ -27,6 +27,7 @@ use tracing::{info, warn};
 
 use termihub_core::monitoring::{MonitorStatus, MonitorStatusReceiver};
 
+use crate::system_monitor_projection::projection::fold_monitor_transition;
 use crate::utils::errors::TerminalError;
 
 use super::manager::{SessionEntry, SessionMonitoringStatsEvent, SessionMonitoringStatusEvent};
@@ -117,6 +118,15 @@ impl<'a> MonitoringController<'a> {
                     stats = stats_rx.recv() => {
                         match stats {
                             Some(stats) => {
+                                // Server-authority fold (#2376): update the shared
+                                // `SystemMonitorStore` at the source — the instant
+                                // the collector loop produces the sample — and fan
+                                // the region diff out. Additive: the Tauri event
+                                // below and the client `monitor.stats` mirror stay
+                                // in place, so no user-facing behavior changes.
+                                fold_monitor_transition(&app_handle, |store| {
+                                    store.stats(&sid, stats.clone());
+                                });
                                 let event = SessionMonitoringStatsEvent {
                                     session_id: sid.clone(),
                                     stats,
@@ -132,6 +142,13 @@ impl<'a> MonitoringController<'a> {
                     status = recv_optional(&mut status_rx) => {
                         match status {
                             Some(status) => {
+                                // Server-authority fold (#2376): mirror the
+                                // collector-produced status transition into the
+                                // shared store at the source (additive; see the
+                                // stats arm above).
+                                fold_monitor_transition(&app_handle, |store| {
+                                    store.set_status(&sid, status);
+                                });
                                 let event = SessionMonitoringStatusEvent {
                                     session_id: sid.clone(),
                                     status,

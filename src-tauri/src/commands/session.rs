@@ -20,6 +20,7 @@ use crate::session::line_ending::LineEnding;
 use crate::session::manager::{
     PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager,
 };
+use crate::system_monitor_projection::projection::fold_monitor_transition;
 use crate::utils::errors::TerminalError;
 use crate::utils::fs::file_name_of;
 use crate::utils::shell_detect;
@@ -569,19 +570,43 @@ pub async fn session_monitoring_open(
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     info!(session_id, interval_ms = ?interval_ms, "Starting session monitoring");
-    manager
-        .start_session_monitoring(&session_id, interval_ms, app_handle)
+    // Server-authority fold (#2376): reflect the connect outcome into the shared
+    // `SystemMonitorStore` at the source. Additive — the client `monitor.opened`
+    // / `monitor.openFailed` mirror stays in place, so no user-facing change. The
+    // entry itself is created client-side (`monitor.open`, which carries the UI
+    // `host` label the command does not have); making the server own entry
+    // creation is the remaining #2224 inversion step.
+    match manager
+        .start_session_monitoring(&session_id, interval_ms, app_handle.clone())
         .await
+    {
+        Ok(()) => {
+            fold_monitor_transition(&app_handle, |store| store.opened(&session_id));
+            Ok(())
+        }
+        Err(e) => {
+            fold_monitor_transition(&app_handle, |store| {
+                store.open_failed(&session_id, Some(e.to_string()));
+            });
+            Err(e)
+        }
+    }
 }
 
 /// Stop session-based monitoring.
 #[tauri::command]
 pub async fn session_monitoring_close(
     session_id: String,
+    app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     info!(session_id, "Stopping session monitoring");
-    manager.stop_session_monitoring(&session_id).await
+    let result = manager.stop_session_monitoring(&session_id).await;
+    // Server-authority fold (#2376): drop the entry from the shared store at the
+    // source (retaining the stats cache, as the store's `close` does). Additive —
+    // the client `monitor.close` mirror stays in place.
+    fold_monitor_transition(&app_handle, |store| store.close(&session_id));
+    result
 }
 
 /// Pause or resume a session monitor's collection loop (#1233).
@@ -589,12 +614,18 @@ pub async fn session_monitoring_close(
 pub async fn session_monitoring_set_paused(
     session_id: String,
     paused: bool,
+    app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     info!(session_id, paused, "Setting session monitoring paused");
     manager
         .set_session_monitoring_paused(&session_id, paused)
-        .await
+        .await?;
+    // Server-authority fold (#2376): mirror the pause/resume into the shared store
+    // at the source (additive; the collector loop also emits the authoritative
+    // `Paused`/`Live` status, folded by the push task).
+    fold_monitor_transition(&app_handle, |store| store.set_paused(&session_id, paused));
+    Ok(())
 }
 
 /// Change a session monitor's refresh interval (#1233).
@@ -602,6 +633,7 @@ pub async fn session_monitoring_set_paused(
 pub async fn session_monitoring_set_interval(
     session_id: String,
     interval_ms: u64,
+    app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     info!(
@@ -610,17 +642,29 @@ pub async fn session_monitoring_set_interval(
     );
     manager
         .set_session_monitoring_interval(&session_id, interval_ms)
-        .await
+        .await?;
+    // Server-authority fold (#2376): mirror the new cadence into the shared store
+    // at the source (additive).
+    fold_monitor_transition(&app_handle, |store| {
+        store.set_interval(&session_id, interval_ms)
+    });
+    Ok(())
 }
 
 /// Cancel a session monitor's in-flight connect / collect (#1233).
 #[tauri::command]
 pub async fn session_monitoring_cancel(
     session_id: String,
+    app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     info!(session_id, "Cancelling session monitoring connect");
-    manager.cancel_session_monitoring(&session_id).await
+    let result = manager.cancel_session_monitoring(&session_id).await;
+    // Server-authority fold (#2376): a cancel tears the monitor down (the frontend
+    // `cancelMonitoring` disconnects), so drop the entry from the shared store at
+    // the source. Additive — the client teardown's `monitor.close` mirror stays.
+    fold_monitor_transition(&app_handle, |store| store.close(&session_id));
+    result
 }
 
 // --- Session output logging commands (#1960) ---
