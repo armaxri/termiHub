@@ -49,6 +49,13 @@ pub fn copy_file(src: &str, dest: &str, is_directory: bool) -> Result<(), Termin
 }
 
 /// Recursively copy a directory and all its contents.
+///
+/// Symlinks are checked **before** the directory case (`entry.file_type()` does
+/// not follow links) and are recreated as symlinks pointing at their original
+/// target rather than being followed. This avoids two problems: `std::fs::copy`
+/// erroring on a symlink-to-directory (which previously aborted the whole copy
+/// and left a partial tree behind), and unbounded recursion should a link form
+/// a loop back into the tree.
 fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<(), TerminalError> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(src)? {
@@ -56,10 +63,38 @@ fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<(
         let file_type = entry.file_type()?;
         let src_path = entry.path();
         let dest_path = dest.join(entry.file_name());
-        if file_type.is_dir() {
+        if file_type.is_symlink() {
+            copy_symlink(&src_path, &dest_path)?;
+        } else if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dest_path)?;
         } else {
             std::fs::copy(&src_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Recreate a symlink at `dest` pointing at the same target as the one at `src`.
+///
+/// The link is copied verbatim (its target is not followed or resolved), so a
+/// broken or relative link is preserved as-is. On Windows the file/dir variant
+/// is chosen from the resolved target's kind, defaulting to a file symlink when
+/// the target cannot be stat'd (e.g. a broken link).
+fn copy_symlink(src: &std::path::Path, dest: &std::path::Path) -> Result<(), TerminalError> {
+    let target = std::fs::read_link(src)?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&target, dest)?;
+    }
+    #[cfg(windows)]
+    {
+        // Follows the link to learn whether the target is a directory; a broken
+        // link (metadata fails) falls back to a file symlink.
+        let target_is_dir = std::fs::metadata(src).map(|m| m.is_dir()).unwrap_or(false);
+        if target_is_dir {
+            std::os::windows::fs::symlink_dir(&target, dest)?;
+        } else {
+            std::os::windows::fs::symlink_file(&target, dest)?;
         }
     }
     Ok(())
@@ -197,6 +232,52 @@ mod tests {
         );
         // Source should still exist
         assert!(src.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_directory_preserves_nested_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src_dir");
+        std::fs::create_dir_all(src.join("realsub")).unwrap();
+        std::fs::write(src.join("a.txt"), "hi").unwrap();
+        std::fs::write(src.join("realsub/b.txt"), "nested").unwrap();
+
+        // A symlink pointing at a directory, and one pointing at a file. The
+        // symlink-to-dir is the regression trigger: `entry.file_type()` reports
+        // it as a symlink (not a dir), so the old code fell through to
+        // `std::fs::copy`, which follows the link, finds a directory, and errors
+        // ("source path is neither a regular file …"), aborting the whole copy.
+        symlink(src.join("realsub"), src.join("link_to_dir")).unwrap();
+        symlink(src.join("a.txt"), src.join("link_to_file")).unwrap();
+
+        let dest = dir.path().join("dest_dir");
+        copy_file(src.to_str().unwrap(), dest.to_str().unwrap(), true).unwrap();
+
+        // Real entries are copied.
+        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "hi");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("realsub/b.txt")).unwrap(),
+            "nested"
+        );
+
+        // Both symlinks are preserved AS symlinks (not dereferenced), pointing
+        // at their original targets.
+        let dir_link = dest.join("link_to_dir");
+        assert!(
+            std::fs::symlink_metadata(&dir_link).unwrap().is_symlink(),
+            "link_to_dir should be preserved as a symlink"
+        );
+        assert_eq!(std::fs::read_link(&dir_link).unwrap(), src.join("realsub"));
+
+        let file_link = dest.join("link_to_file");
+        assert!(
+            std::fs::symlink_metadata(&file_link).unwrap().is_symlink(),
+            "link_to_file should be preserved as a symlink"
+        );
+        assert_eq!(std::fs::read_link(&file_link).unwrap(), src.join("a.txt"));
     }
 
     #[test]
