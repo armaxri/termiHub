@@ -7,6 +7,7 @@ use tauri::AppHandle;
 use super::config::EmbeddedServerStore;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::fs::write_atomic;
 
 const FILE_NAME: &str = "embedded_servers.json";
 
@@ -75,10 +76,16 @@ impl EmbeddedServerStorage {
     }
 
     /// Save the store to disk as pretty-printed JSON.
+    ///
+    /// The write is **atomic** (temp file in the same directory → `sync_all` →
+    /// rename over the target): a crash, power loss, or full disk mid-write
+    /// leaves `embedded_servers.json` holding either the complete previous
+    /// contents or the complete new contents, never a truncated mix that the
+    /// recovery path would discard as corrupt (#2320 torn-write class, #2327).
     pub fn save(&self, store: &EmbeddedServerStore) -> Result<()> {
         let data =
             serde_json::to_string_pretty(store).context("Failed to serialize embedded servers")?;
-        fs::write(&self.file_path, data).context("Failed to write embedded servers file")?;
+        write_atomic(&self.file_path, &data).context("Failed to write embedded servers file")?;
         Ok(())
     }
 }
@@ -112,6 +119,68 @@ mod tests {
         let result = storage.load_with_recovery().unwrap();
         assert!(result.warnings.is_empty());
         assert!(result.data.servers.is_empty());
+    }
+
+    /// Regression (#2327): a `save` that cannot durably complete must fail
+    /// **without** clobbering the previously-saved servers. The old
+    /// truncate-in-place `fs::write` opens the existing file for writing (which a
+    /// read-only *directory* does not block) and reports success, so this test
+    /// fails red on it; the atomic temp+rename write cannot create its temp file
+    /// in a read-only directory and therefore errors while leaving the prior
+    /// `embedded_servers.json` untouched.
+    #[cfg(unix)]
+    #[test]
+    fn failed_save_preserves_previous_servers() {
+        use super::super::config::{EmbeddedServerConfig, ServerType};
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let store = EmbeddedServerStore {
+            version: "1".to_string(),
+            servers: vec![EmbeddedServerConfig {
+                id: "srv-1".to_string(),
+                name: "docs".to_string(),
+                server_type: ServerType::Http,
+                root_directory: "/tmp/docs".to_string(),
+                bind_host: "127.0.0.1".to_string(),
+                port: 8080,
+                auto_start: false,
+                read_only: true,
+                directory_listing: Some(true),
+                ftp_auth: None,
+            }],
+        };
+        storage.save(&store).unwrap();
+        let before = fs::read_to_string(&storage.file_path).unwrap();
+
+        let restore = fs::metadata(dir.path()).unwrap().permissions();
+        let mut ro = restore.clone();
+        ro.set_mode(0o500);
+        fs::set_permissions(dir.path(), ro).unwrap();
+
+        // A privileged/root process can create files regardless of mode — skip.
+        let probe = dir.path().join(".probe");
+        if fs::write(&probe, b"x").is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(dir.path(), restore).unwrap();
+            return;
+        }
+
+        let result = storage.save(&store);
+        fs::set_permissions(dir.path(), restore).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a save that cannot durably complete must report an error"
+        );
+        let after = fs::read_to_string(&storage.file_path).unwrap();
+        assert_eq!(
+            before, after,
+            "a failed save must leave the previous servers fully intact"
+        );
+        serde_json::from_str::<EmbeddedServerStore>(&after).expect("preserved store still parses");
     }
 
     #[test]
