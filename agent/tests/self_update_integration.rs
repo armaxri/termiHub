@@ -340,8 +340,20 @@ impl Client {
         let id = self.next_id;
         self.next_id += 1;
         let req = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-        writeln!(self.writer, "{req}").expect("write request");
-        self.writer.flush().expect("flush");
+        // The write races the peer just as the reads below do: during the
+        // deferred idle→apply→re-exec cycle the agent swaps its binary and
+        // re-execs, so a socket that `TcpStream::connect` just accepted against
+        // the outgoing listener can be reset before this request lands
+        // (`ConnectionReset`/`BrokenPipe`, #2333). Treat a failed write/flush as
+        // a dead connection — return `Null` rather than panicking — so the
+        // `connect` retry loop simply tries again on a fresh socket, exactly as
+        // the read path already does.
+        if writeln!(self.writer, "{req}")
+            .and_then(|()| self.writer.flush())
+            .is_err()
+        {
+            return Value::Null;
+        }
 
         loop {
             let mut line = String::new();
