@@ -12,12 +12,16 @@ use tracing::{debug, info};
 use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::files::FileEntry;
 
+use crate::commands::files::open_transfer_channel;
 use crate::connection::manager::ConnectionManager;
+use crate::files::sftp::{ElevatedWriteResult, Writability};
+use crate::files::transfer::{self, TransferContext, TransferDirection, TransferRegistry};
 use crate::session::line_ending::LineEnding;
 use crate::session::manager::{
     PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager,
 };
 use crate::utils::errors::TerminalError;
+use crate::utils::fs::file_name_of;
 use crate::utils::shell_detect;
 use crate::window::WindowManager;
 
@@ -337,6 +341,194 @@ pub async fn session_mkdir(
 ) -> Result<(), TerminalError> {
     debug!(session_id, path, "Session mkdir");
     manager.mkdir_file(&session_id, &path).await
+}
+
+// --- Session-scoped SFTP advanced operations & transfers (#2312) ---
+//
+// Session-path mirrors of the standalone `sftp_*` commands, routed through the
+// session's `ConnectionType` file browser rather than a separate `SftpManager`
+// session. They only succeed for an SFTP-backed (SSH) session; other backends
+// return a "not supported" error. Part of the #2307 convergence (step A):
+// additive, so the standalone `sftp_*` path keeps working unchanged.
+
+/// Resolve a remote path to its canonical absolute form via a session's SFTP
+/// realpath.
+///
+/// Passing `"."` yields the session's home directory, avoiding a `/home/<user>`
+/// guess (mirror of `sftp_realpath`, #2312).
+#[tauri::command]
+pub async fn session_realpath(
+    session_id: String,
+    path: String,
+    manager: State<'_, SessionManager>,
+) -> Result<String, TerminalError> {
+    debug!(session_id, path, "Session SFTP realpath");
+    manager.session_realpath(&session_id, &path).await
+}
+
+/// Authoritatively check whether a remote file is writable by the connecting
+/// user, via a non-destructive SFTP write-open probe on a session (mirror of
+/// `sftp_check_writable`, #2312).
+#[tauri::command]
+pub async fn session_check_writable(
+    session_id: String,
+    remote_path: String,
+    manager: State<'_, SessionManager>,
+) -> Result<Writability, TerminalError> {
+    debug!(session_id, "Session SFTP check writable");
+    manager
+        .session_check_writable(&session_id, &remote_path)
+        .await
+}
+
+/// Write a string to a remote file with `sudo`-elevated privileges over a
+/// session's SFTP connection.
+///
+/// Returns a typed [`ElevatedWriteResult`] (`success` / `incorrectPassword` /
+/// `other`) rather than erroring on an authorization failure, so the caller can
+/// re-prompt. The temp upload is always cleaned up and the password is never
+/// logged (mirror of `sftp_write_file_content_elevated`, #2312).
+#[tauri::command]
+pub async fn session_write_file_elevated(
+    session_id: String,
+    remote_path: String,
+    content: String,
+    sudo_password: String,
+    manager: State<'_, SessionManager>,
+) -> Result<ElevatedWriteResult, TerminalError> {
+    // Do not log `sudo_password`.
+    debug!(session_id, remote_path, "Session SFTP elevated write");
+    manager
+        .session_write_file_elevated(&session_id, &remote_path, &content, &sudo_password)
+        .await
+}
+
+/// Report whether a session's SFTP connection can open an exec channel (i.e. run
+/// remote commands such as `sudo`).
+///
+/// Returns `true` for a normal SSH+shell connection and `false` for an
+/// SFTP-only / relayed connection, letting the editor know whether elevated
+/// writes are possible (mirror of `sftp_has_exec_capability`, #2312).
+#[tauri::command]
+pub async fn session_has_exec_capability(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<bool, TerminalError> {
+    manager.session_has_exec_capability(&session_id).await
+}
+
+/// Start a download (remote → local) over a session's SFTP connection.
+///
+/// Registers a `transfer_id`, runs a chunked copy on a **dedicated** SFTP
+/// channel in the background, and returns the id immediately — the copy does not
+/// hold the session lock, so listing / navigating the same session stays live
+/// during the transfer (#1245). Progress and completion are reported via
+/// `transfer-progress` events (mirror of `sftp_download`, #2312).
+#[tauri::command]
+pub async fn session_download(
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+    manager: State<'_, SessionManager>,
+    registry: State<'_, TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, TerminalError> {
+    debug!(session_id, remote_path, local_path, "Session SFTP download");
+    let browser = manager.sftp_transfer_browser(&session_id).await?;
+    let (dedicated, total) = open_transfer_channel(browser, Some(remote_path.clone())).await?;
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let file_name = file_name_of(&remote_path);
+    let token = registry.register(
+        &transfer_id,
+        &session_id,
+        TransferDirection::Download,
+        &file_name,
+        &remote_path,
+        total,
+    );
+    let ctx = TransferContext {
+        transfer_id: transfer_id.clone(),
+        session_id,
+        direction: TransferDirection::Download,
+        file_name,
+        path: remote_path.clone(),
+        total,
+    };
+    let registry = (*registry).clone();
+    let sink = transfer::app_progress_sink(app_handle);
+    tauri::async_runtime::spawn(async move {
+        transfer::run_download(
+            dedicated,
+            remote_path,
+            local_path,
+            ctx,
+            token,
+            registry,
+            sink,
+        )
+        .await;
+    });
+    Ok(transfer_id)
+}
+
+/// Start an upload (local → remote) over a session's SFTP connection.
+///
+/// Registers a `transfer_id`, runs a chunked copy on a dedicated SFTP channel in
+/// the background, and returns the id immediately (#1245). Mirrors
+/// [`session_download`] and the standalone `sftp_upload` (#2312).
+#[tauri::command]
+pub async fn session_upload(
+    session_id: String,
+    local_path: String,
+    remote_path: String,
+    manager: State<'_, SessionManager>,
+    registry: State<'_, TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, TerminalError> {
+    debug!(session_id, local_path, remote_path, "Session SFTP upload");
+    let browser = manager.sftp_transfer_browser(&session_id).await?;
+    let (dedicated, _total) = open_transfer_channel(browser, None).await?;
+
+    // Local files are cheap to stat, so we can report a real total for uploads.
+    let total = tokio::fs::metadata(&local_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let file_name = file_name_of(&remote_path);
+    let token = registry.register(
+        &transfer_id,
+        &session_id,
+        TransferDirection::Upload,
+        &file_name,
+        &remote_path,
+        total,
+    );
+    let ctx = TransferContext {
+        transfer_id: transfer_id.clone(),
+        session_id,
+        direction: TransferDirection::Upload,
+        file_name,
+        path: remote_path.clone(),
+        total,
+    };
+    let registry = (*registry).clone();
+    let sink = transfer::app_progress_sink(app_handle);
+    tauri::async_runtime::spawn(async move {
+        transfer::run_upload(
+            dedicated,
+            local_path,
+            remote_path,
+            ctx,
+            token,
+            registry,
+            sink,
+        )
+        .await;
+    });
+    Ok(transfer_id)
 }
 
 // --- Session-based monitoring commands ---

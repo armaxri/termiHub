@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use serde::Serialize;
 use tauri::Emitter;
+use termihub_core::backends::ssh::SftpFileBrowser;
 use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};
 use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
@@ -26,6 +27,7 @@ use termihub_core::output::screen_clear::ScreenClearDetector;
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
 use tracing::{error, info, warn};
 
+use crate::files::sftp::{ElevatedWriteResult, Writability};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
@@ -873,6 +875,72 @@ impl SessionManager {
     /// Create a directory via a session's file browser capability.
     pub async fn mkdir_file(&self, session_id: &str, path: &str) -> Result<(), TerminalError> {
         self.file_ops().mkdir(session_id, path).await
+    }
+
+    // --- Session-scoped SFTP advanced operations & transfers (#2312) ---
+    //
+    // These reach the SSH-specific SFTP capabilities that do not fit on the shared
+    // `FileBrowser` trait (realpath / writability probe / elevated write / exec
+    // probe) and hand out an owned transfer handle, so a session-backed SSH
+    // connection can drive the same advanced ops and cancellable transfers the
+    // standalone `sftp_*` path offers. They only succeed for an SFTP-backed
+    // session; other backends get a "not supported" `RemoteError`.
+
+    /// Resolve a remote path to its canonical absolute form via a session's SFTP
+    /// realpath (session-path mirror of `sftp_realpath`, #2312).
+    pub async fn session_realpath(
+        &self,
+        session_id: &str,
+        path: &str,
+    ) -> Result<String, TerminalError> {
+        self.file_ops().realpath(session_id, path).await
+    }
+
+    /// Authoritatively probe whether a remote file is writable by the connecting
+    /// user via a session's SFTP write-open probe (session-path mirror of
+    /// `sftp_check_writable`, #2312).
+    pub async fn session_check_writable(
+        &self,
+        session_id: &str,
+        remote_path: &str,
+    ) -> Result<Writability, TerminalError> {
+        self.file_ops()
+            .check_writable(session_id, remote_path)
+            .await
+    }
+
+    /// Write `content` to `remote_path` with `sudo`-elevated privileges over a
+    /// session's SFTP connection (session-path mirror of
+    /// `sftp_write_file_content_elevated`, #2312).
+    pub async fn session_write_file_elevated(
+        &self,
+        session_id: &str,
+        remote_path: &str,
+        content: &str,
+        sudo_password: &str,
+    ) -> Result<ElevatedWriteResult, TerminalError> {
+        self.file_ops()
+            .write_file_elevated(session_id, remote_path, content, sudo_password)
+            .await
+    }
+
+    /// Report whether a session's SFTP connection can open an exec channel
+    /// (session-path mirror of `sftp_has_exec_capability`, #2312).
+    pub async fn session_has_exec_capability(
+        &self,
+        session_id: &str,
+    ) -> Result<bool, TerminalError> {
+        self.file_ops().has_exec_capability(session_id).await
+    }
+
+    /// Resolve an owned [`Arc<SftpFileBrowser>`] for a session so a cancellable
+    /// background transfer can own its channel independently of the sessions lock
+    /// (#1245/#2312). See [`FileOps::sftp_browser`](super::file_ops).
+    pub async fn sftp_transfer_browser(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<SftpFileBrowser>, TerminalError> {
+        self.file_ops().sftp_browser(session_id).await
     }
 
     /// Get the list of available connection types from the registry.
@@ -3177,6 +3245,68 @@ mod tests {
         let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
         let err = manager.read_file("ghost", "/").await.unwrap_err();
         assert!(matches!(err, TerminalError::SessionNotFound(_)));
+    }
+
+    /// The session-scoped SFTP advanced ops (#2312) refuse a session whose file
+    /// browser is not SFTP-backed: the `MockFileBrowser` uses the default
+    /// `FileBrowser::as_any` (returns `None`), so the downcast to
+    /// `SftpFileBrowser` fails and every entry point returns the "not supported"
+    /// `RemoteError` rather than misbehaving.
+    #[tokio::test]
+    async fn session_sftp_ops_error_when_browser_not_sftp_backed() {
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session(
+                "fs-nonsftp",
+                Box::new(FileConnection {
+                    browser: MockFileBrowser {
+                        listed: Arc::new(std::sync::Mutex::new(Vec::new())),
+                    },
+                }),
+            )
+            .await;
+
+        let assert_not_supported = |res: Result<String, TerminalError>| match res {
+            Err(TerminalError::RemoteError(msg)) => {
+                assert!(
+                    msg.contains("does not support SFTP advanced operations"),
+                    "unexpected message: {msg}"
+                );
+            }
+            other => panic!("expected RemoteError, got {other:?}"),
+        };
+
+        assert_not_supported(manager.session_realpath("fs-nonsftp", ".").await);
+        // The transfer-handle resolver rejects the same way. `SftpFileBrowser` is
+        // not `Debug`, so assert on the error without formatting the Ok value.
+        match manager.sftp_transfer_browser("fs-nonsftp").await {
+            Err(TerminalError::RemoteError(msg)) => {
+                assert!(msg.contains("does not support SFTP advanced operations"))
+            }
+            Err(other) => panic!("expected RemoteError, got {other:?}"),
+            Ok(_) => panic!("expected RemoteError for a non-SFTP session, got Ok"),
+        }
+        // has_exec_capability also rejects a non-SFTP session (it cannot silently
+        // report `false` — that verdict only applies to a real SFTP connection).
+        assert!(matches!(
+            manager.session_has_exec_capability("fs-nonsftp").await,
+            Err(TerminalError::RemoteError(_))
+        ));
+    }
+
+    /// The session-scoped SFTP ops surface `SessionNotFound` for an unknown
+    /// session, exactly like the rest of the file-ops facade (#2312).
+    #[tokio::test]
+    async fn session_sftp_ops_error_when_session_unknown() {
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        assert!(matches!(
+            manager.session_realpath("ghost", ".").await,
+            Err(TerminalError::SessionNotFound(_))
+        ));
+        assert!(matches!(
+            manager.sftp_transfer_browser("ghost").await,
+            Err(TerminalError::SessionNotFound(_))
+        ));
     }
 
     // ── MonitoringController facade tests (#2110) ─────────────────────

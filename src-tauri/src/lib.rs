@@ -1294,6 +1294,13 @@ pub fn run() {
             commands::session::session_delete_file,
             commands::session::session_rename_file,
             commands::session::session_mkdir,
+            // Session-scoped SFTP advanced ops & transfers (#2312)
+            commands::session::session_realpath,
+            commands::session::session_check_writable,
+            commands::session::session_write_file_elevated,
+            commands::session::session_has_exec_capability,
+            commands::session::session_download,
+            commands::session::session_upload,
             // Session-based monitoring
             commands::session::session_get_capabilities,
             commands::session::session_monitoring_open,

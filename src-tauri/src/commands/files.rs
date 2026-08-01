@@ -114,7 +114,7 @@ pub async fn sftp_check_writable(
 /// stat the remote size. Both are awaited directly on the async core browser —
 /// no `spawn_blocking` / `block_in_place` bridging is needed. Returns the
 /// dedicated channel plus the known total size (`0` = indeterminate).
-async fn open_transfer_channel(
+pub(crate) async fn open_transfer_channel(
     browser: std::sync::Arc<SftpFileBrowser>,
     remote_path: Option<String>,
 ) -> Result<(SftpTransferChannel, u64), TerminalError> {
