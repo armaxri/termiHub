@@ -257,6 +257,57 @@ describe("useSectionResize", () => {
       });
     });
 
+    it("removes document listeners and resets body styles when unmounted mid-drag", () => {
+      let result: ReturnType<typeof useSectionResize> | undefined;
+
+      act(() => {
+        root.render(
+          createElement(ResizeHarness, { initialCount: 2, onResult: (r) => (result = r) })
+        );
+      });
+
+      const above = document.createElement("div");
+      const below = document.createElement("div");
+      Object.defineProperty(above, "getBoundingClientRect", { value: () => ({ height: 100 }) });
+      Object.defineProperty(below, "getBoundingClientRect", { value: () => ({ height: 100 }) });
+      result!.sectionRefs.current[0] = above;
+      result!.sectionRefs.current[1] = below;
+
+      // Start a drag — this attaches document listeners and sets body styles.
+      act(() => {
+        result!.handleProps(0).onMouseDown({
+          clientY: 100,
+          preventDefault: vi.fn(),
+        } as unknown as React.MouseEvent);
+      });
+      expect(document.body.style.cursor).toBe("ns-resize");
+      expect(document.body.style.userSelect).toBe("none");
+
+      const removeSpy = vi.spyOn(document, "removeEventListener");
+
+      // Unmount WITHOUT firing mouseup — simulates the sidebar being hidden or
+      // its section list rebuilt while a resize drag is still in progress.
+      act(() => root.unmount());
+
+      // Both document-level drag listeners must be removed on unmount.
+      const removed = removeSpy.mock.calls.map((c) => c[0]);
+      expect(removed).toContain("mousemove");
+      expect(removed).toContain("mouseup");
+
+      // Body styles must not be left stuck app-wide.
+      expect(document.body.style.cursor).toBe("");
+      expect(document.body.style.userSelect).toBe("");
+
+      // A later mousemove must not reach the (now-unmounted) hook.
+      const before = result!.flexValues;
+      act(() => {
+        document.dispatchEvent(new MouseEvent("mousemove", { clientY: 300 }));
+      });
+      expect(result!.flexValues).toEqual(before);
+
+      removeSpy.mockRestore();
+    });
+
     it("releases listeners and resets isResizing on mouseup", () => {
       let result: ReturnType<typeof useSectionResize> | undefined;
 
