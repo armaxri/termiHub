@@ -49,6 +49,13 @@ pub fn copy_file(src: &str, dest: &str, is_directory: bool) -> Result<(), Termin
 }
 
 /// Recursively copy a directory and all its contents.
+///
+/// Symlinks are checked **before** the directory case (`entry.file_type()` does
+/// not follow links) and are recreated as symlinks pointing at their original
+/// target rather than being followed. This avoids two problems: `std::fs::copy`
+/// erroring on a symlink-to-directory (which previously aborted the whole copy
+/// and left a partial tree behind), and unbounded recursion should a link form
+/// a loop back into the tree.
 fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<(), TerminalError> {
     std::fs::create_dir_all(dest)?;
     for entry in std::fs::read_dir(src)? {
@@ -56,10 +63,38 @@ fn copy_dir_recursive(src: &std::path::Path, dest: &std::path::Path) -> Result<(
         let file_type = entry.file_type()?;
         let src_path = entry.path();
         let dest_path = dest.join(entry.file_name());
-        if file_type.is_dir() {
+        if file_type.is_symlink() {
+            copy_symlink(&src_path, &dest_path)?;
+        } else if file_type.is_dir() {
             copy_dir_recursive(&src_path, &dest_path)?;
         } else {
             std::fs::copy(&src_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Recreate a symlink at `dest` pointing at the same target as the one at `src`.
+///
+/// The link is copied verbatim (its target is not followed or resolved), so a
+/// broken or relative link is preserved as-is. On Windows the file/dir variant
+/// is chosen from the resolved target's kind, defaulting to a file symlink when
+/// the target cannot be stat'd (e.g. a broken link).
+fn copy_symlink(src: &std::path::Path, dest: &std::path::Path) -> Result<(), TerminalError> {
+    let target = std::fs::read_link(src)?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&target, dest)?;
+    }
+    #[cfg(windows)]
+    {
+        // Follows the link to learn whether the target is a directory; a broken
+        // link (metadata fails) falls back to a file symlink.
+        let target_is_dir = std::fs::metadata(src).map(|m| m.is_dir()).unwrap_or(false);
+        if target_is_dir {
+            std::os::windows::fs::symlink_dir(&target, dest)?;
+        } else {
+            std::os::windows::fs::symlink_file(&target, dest)?;
         }
     }
     Ok(())
