@@ -105,6 +105,17 @@ pub struct TerminalOptions {
     /// precedent rather than duplicating the frontend's nested schema in Rust.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_highlighting: Option<serde_json::Value>,
+    /// Forward-compatibility catch-all (#2311).
+    ///
+    /// Preserves any field the frontend `TerminalOptions` interface
+    /// (`src/types/terminal.ts`) carries that this struct does not model
+    /// explicitly. Without it, an unmodelled key is silently dropped on the
+    /// save/load round-trip and the user loses that per-connection option on the
+    /// next restart — the exact defect class behind #2261, #2309 and this
+    /// hardening. Unknown keys round-trip verbatim instead. Empty by default, so
+    /// a flattened empty map contributes nothing to the serialized output.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -115,6 +126,12 @@ pub struct TerminalOptions {
 ///
 /// Folders contain children; connections are leaf nodes.
 /// Neither has an `id` — identity is determined by name within the parent.
+// Both variants are intentionally value-carrying persistence nodes: a
+// `Connection` inlines its `ConnectionConfig` and `TerminalOptions` (the latter
+// grew with the #2311 flatten catch-all). Boxing a field to shrink the enum
+// would add heap indirection to every tree node — an unhelpful trade for a
+// short-lived (de)serialization type — so the size skew is accepted.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ConnectionTreeNode {
@@ -520,5 +537,206 @@ mod tests {
         assert_eq!(json.get("type").unwrap(), "folder");
         assert_eq!(json.get("name").unwrap(), "Work");
         assert_eq!(json.get("isExpanded").unwrap(), false);
+    }
+
+    // -----------------------------------------------------------------------
+    // #2311 — serde field-drop guard
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn terminal_options_flatten_preserves_unknown_frontend_field() {
+        // A field the backend does not model must round-trip through the
+        // `#[serde(flatten)] extra` catch-all instead of vanishing on save.
+        // Without the catch-all this assertion fails — that is the guard.
+        let json = serde_json::json!({
+            "cursorStyle": "bar",
+            "someFutureOption": { "nested": [1, 2, 3] },
+            "anotherNewFlag": true,
+        });
+
+        let opts: TerminalOptions = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(
+            opts.extra.get("someFutureOption"),
+            json.get("someFutureOption"),
+            "unknown key was not captured by the flatten catch-all",
+        );
+
+        let round_tripped = serde_json::to_value(&opts).unwrap();
+        assert_eq!(
+            round_tripped.get("someFutureOption"),
+            json.get("someFutureOption")
+        );
+        assert_eq!(
+            round_tripped.get("anotherNewFlag"),
+            json.get("anotherNewFlag")
+        );
+        // Modelled fields still work alongside the catch-all.
+        assert_eq!(round_tripped.get("cursorStyle").unwrap(), "bar");
+    }
+
+    #[test]
+    fn terminal_options_empty_extra_keeps_serialized_output_clean() {
+        // An empty catch-all must contribute nothing to the JSON — no stray
+        // "extra" key, no empty object.
+        let opts = TerminalOptions {
+            cursor_style: Some("block".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&opts).unwrap();
+        assert!(json.get("extra").is_none(), "flatten leaked an `extra` key");
+        let obj = json.as_object().unwrap();
+        assert_eq!(obj.len(), 1, "unexpected keys: {obj:?}");
+        assert_eq!(obj.get("cursorStyle").unwrap(), "block");
+    }
+
+    // ---- Frontend/backend drift guard (approach (b), for the non-flatten
+    // ---- container structs `SavedConnection` and `ConnectionConfig`) --------
+
+    /// Extract the top-level field names of a TypeScript `export interface`.
+    ///
+    /// Only depth-1 members are returned; JSDoc/`//` comments, blank lines and
+    /// nested object types are skipped. Trailing `?` (optional) is stripped.
+    fn extract_ts_interface_fields(
+        src: &str,
+        interface: &str,
+    ) -> std::collections::BTreeSet<String> {
+        let header = format!("export interface {interface} {{");
+        let mut lines = src.lines();
+        let mut found = false;
+        for line in lines.by_ref() {
+            if line.contains(&header) {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "interface `{interface}` not found in source");
+
+        let mut fields = std::collections::BTreeSet::new();
+        let mut depth = 1i32; // the opening brace was on the header line
+        for line in lines {
+            let trimmed = line.trim();
+            let is_comment = trimmed.is_empty()
+                || trimmed.starts_with("//")
+                || trimmed.starts_with("/*")
+                || trimmed.starts_with('*');
+            if depth == 1 && !is_comment {
+                if let Some(name) = parse_ts_field_name(trimmed) {
+                    fields.insert(name);
+                }
+            }
+            depth += line.matches('{').count() as i32;
+            depth -= line.matches('}').count() as i32;
+            if depth <= 0 {
+                break;
+            }
+        }
+        fields
+    }
+
+    /// Parse a leading `name:` / `name?:` identifier from a TS member line.
+    fn parse_ts_field_name(line: &str) -> Option<String> {
+        let end = line
+            .char_indices()
+            .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_' || *c == '$'))
+            .map(|(i, _)| i)
+            .unwrap_or(line.len());
+        if end == 0 {
+            return None;
+        }
+        let rest = line[end..].trim_start();
+        if rest.starts_with('?') || rest.starts_with(':') {
+            Some(line[..end].to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Fail when the frontend interface carries a field the backend neither
+    /// models nor knowingly excludes — the silent-drop defect (#2311).
+    fn assert_no_silent_drop(ts_src: &str, interface: &str, modelled: &[&str], known_gap: &[&str]) {
+        let ts = extract_ts_interface_fields(ts_src, interface);
+        assert!(!ts.is_empty(), "no fields parsed for `{interface}`");
+        let modelled: std::collections::BTreeSet<String> =
+            modelled.iter().map(|s| s.to_string()).collect();
+        let known_gap: std::collections::BTreeSet<String> =
+            known_gap.iter().map(|s| s.to_string()).collect();
+        let dropped: Vec<&String> = ts
+            .iter()
+            .filter(|f| !modelled.contains(*f) && !known_gap.contains(*f))
+            .collect();
+        assert!(
+            dropped.is_empty(),
+            "frontend `{interface}` has field(s) the backend silently drops: {dropped:?}. \
+             Add a matching backend field (or `#[serde(flatten)] extra` catch-all), or record \
+             it in the known-gap list with a tracking issue.",
+        );
+    }
+
+    // These const lists mirror the serialized (camelCase) keys of the Rust
+    // structs. Update them when a field is added/removed so the drift test
+    // stays a faithful mirror.
+    const CONNECTION_CONFIG_BACKEND_FIELDS: &[&str] = &["type", "config"];
+    const SAVED_CONNECTION_BACKEND_FIELDS: &[&str] = &[
+        "id",
+        "name",
+        "config",
+        "folderId",
+        "terminalOptions",
+        "sourceFile",
+    ];
+
+    #[test]
+    fn connection_config_no_silent_frontend_field_drop() {
+        // `ConnectionConfig.settings` is opaque JSON (`serde_json::Value`) that
+        // already preserves everything under `config`; only the two top-level
+        // keys need to stay in parity with the frontend.
+        let ts = include_str!("../../../src/types/terminal.ts");
+        assert_no_silent_drop(
+            ts,
+            "ConnectionConfig",
+            CONNECTION_CONFIG_BACKEND_FIELDS,
+            &[],
+        );
+    }
+
+    #[test]
+    fn saved_connection_no_silent_frontend_field_drop() {
+        let ts = include_str!("../../../src/types/connection.ts");
+        // KNOWN GAP: the frontend `SavedConnection.icon` (src/types/connection.ts)
+        // has no backend field, so it is dropped on `save_connection`. Recorded
+        // here rather than silently ignored — tracked by a follow-up to #2311.
+        assert_no_silent_drop(
+            ts,
+            "SavedConnection",
+            SAVED_CONNECTION_BACKEND_FIELDS,
+            &["icon"],
+        );
+    }
+
+    #[test]
+    fn drift_guard_flags_an_unmodelled_field() {
+        // Proves the guard's red path: a synthetic interface with a field the
+        // backend does not model is reported.
+        let ts = "export interface Sample {\n  known: string;\n  brandNew?: number;\n}\n";
+        // The catch-all is expected to panic; silence its backtrace so the test
+        // log stays clean, then restore the previous hook.
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let result = std::panic::catch_unwind(|| {
+            assert_no_silent_drop(ts, "Sample", &["known"], &[]);
+        });
+        std::panic::set_hook(prev);
+        assert!(
+            result.is_err(),
+            "drift guard failed to flag the unmodelled `brandNew` field",
+        );
+    }
+
+    #[test]
+    fn ts_field_extractor_ignores_comments_and_nested_blocks() {
+        let ts = "export interface Sample {\n  /** doc */\n  a: string;\n  // note\n  b?: { x: number };\n  c: string;\n}\n";
+        let fields = extract_ts_interface_fields(ts, "Sample");
+        let got: Vec<&str> = fields.iter().map(String::as_str).collect();
+        assert_eq!(got, vec!["a", "b", "c"]);
     }
 }
