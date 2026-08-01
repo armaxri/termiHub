@@ -7,8 +7,12 @@ use vte::{Params, Parser, Perform};
 ///
 /// - `CSI 2 J` — erase entire display
 /// - `CSI 3 J` — erase display + scrollback (xterm extension)
+/// - `ESC c` — RIS (Reset to Initial State): resets the terminal, which
+///   clears the visible screen and homes the cursor
 ///
-/// Other `CSI n J` variants (`0`, `1`, default) are not treated as a clear.
+/// Other `CSI n J` variants (`0`, `1`, default) are not treated as a clear,
+/// and `ESC` sequences carrying intermediate bytes (e.g. charset designation
+/// `ESC ( B`) are not RIS and are ignored.
 pub struct ScreenClearDetector {
     parser: Parser,
 }
@@ -50,6 +54,15 @@ impl Perform for Hit {
             .and_then(|p| p.first().copied())
             .unwrap_or(0);
         if n == 2 || n == 3 {
+            self.0 = true;
+        }
+    }
+
+    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
+        // RIS (Reset to Initial State) is `ESC c` with no intermediate bytes.
+        // An ESC sequence with intermediates (e.g. `ESC ( B`, charset
+        // designation) or one vte flagged to ignore is not a reset.
+        if !ignore && intermediates.is_empty() && byte == b'c' {
             self.0 = true;
         }
     }
