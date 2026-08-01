@@ -703,6 +703,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connect_rejects_malformed_baud_rate() {
+        // Regression for #2351: a malformed `baudRate` must surface a config
+        // error, not silently open the port at the 115200 default.
+        let mut serial = Serial::new();
+        let settings = serde_json::json!({
+            "port": "/dev/ttyUSB0",
+            "baudRate": "fast",
+            "dataBits": "8",
+        });
+        let err = serial
+            .connect(settings)
+            .await
+            .expect_err("malformed baud rate must be rejected");
+        assert!(
+            err.to_string().contains("invalid serial configuration"),
+            "expected a config-parse error, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_accepts_numeric_baud_rate() {
+        // Regression for #2351: a JSON-number `baudRate`/`dataBits` (the canonical
+        // wire form) must parse through rather than being dropped by `.as_str()`.
+        // An empty port then makes `parse_serial_config` the point of failure,
+        // proving deserialization accepted the numbers instead of erroring earlier.
+        let mut serial = Serial::new();
+        let settings = serde_json::json!({
+            "port": "",
+            "baudRate": 9600,
+            "dataBits": 8,
+        });
+        let err = serial
+            .connect(settings)
+            .await
+            .expect_err("empty port must still fail");
+        assert!(
+            err.to_string().contains("must not be empty"),
+            "numeric framing should parse and fail only on the empty port, got: {err}"
+        );
+    }
+
+    #[tokio::test]
     async fn disconnect_when_not_connected_is_noop() {
         let mut serial = Serial::new();
         serial
