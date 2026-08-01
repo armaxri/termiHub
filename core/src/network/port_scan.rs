@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use ipnet::IpNet;
 use tokio::net::TcpStream;
-use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
 use super::error::NetworkError;
@@ -52,6 +52,13 @@ pub async fn scan_ports(
 /// `(target, port)` combination share a single concurrency budget — useful
 /// when expanding a CIDR range without overwhelming the local network stack.
 ///
+/// Work is streamed through a bounded [`JoinSet`]: at most `concurrency` probe
+/// tasks are ever in flight, and each is reaped as it completes rather than
+/// pre-spawning (and holding a join handle for) one task per combination. This
+/// keeps memory and file-descriptor use bounded regardless of how large the
+/// `targets × ports` product is, so a wide scan (e.g. a CIDR range across the
+/// full port range) throttles instead of exhausting local resources.
+///
 /// See [`scan_ports`] for argument semantics. `targets` may contain hostnames
 /// or IP addresses; each result carries its originating `host` for grouping.
 pub async fn scan_targets(
@@ -62,13 +69,57 @@ pub async fn scan_targets(
     on_result: impl Fn(PortScanResult) + Send + Sync + 'static,
     cancel: CancellationToken,
 ) -> Result<PortScanSummary, NetworkError> {
-    let concurrency = concurrency.max(1);
     let timeout = Duration::from_millis(timeout_ms);
-    let sem = Arc::new(Semaphore::new(concurrency));
     let on_result = Arc::new(on_result);
+    let probe_cancel = cancel.clone();
 
+    let summary = run_bounded_scan(targets, ports, concurrency, cancel, move |host, port| {
+        let cb = Arc::clone(&on_result);
+        let cancel = probe_cancel.clone();
+        async move {
+            if cancel.is_cancelled() {
+                return None;
+            }
+            let result = probe_port(&host, port, timeout).await;
+            cb(result.clone());
+            Some(result)
+        }
+    })
+    .await;
+
+    Ok(summary)
+}
+
+/// Run one probe per `(target, port)` combination with the number of in-flight
+/// tasks capped at `concurrency`, tallying the outcomes into a summary.
+///
+/// Combinations are enumerated lazily and pushed into a [`JoinSet`] one at a
+/// time; whenever the set is full the oldest-completed task is reaped before
+/// another is spawned, so at most `concurrency` tasks (and join handles) exist
+/// at once. Completion order — and therefore the order individual results are
+/// observed by `make_probe` — is unspecified, matching the previous behaviour.
+///
+/// `make_probe` builds the future for a single probe. Factoring it out keeps
+/// the bounding logic testable against a fake prober that records its own peak
+/// concurrency.
+async fn run_bounded_scan<F, Fut>(
+    targets: &[String],
+    ports: &[u16],
+    concurrency: usize,
+    cancel: CancellationToken,
+    make_probe: F,
+) -> PortScanSummary
+where
+    F: Fn(String, u16) -> Fut,
+    Fut: std::future::Future<Output = Option<PortScanResult>> + Send + 'static,
+{
+    let concurrency = concurrency.max(1);
     let started = Instant::now();
-    let mut handles = Vec::with_capacity(targets.len().saturating_mul(ports.len()));
+
+    let mut set: JoinSet<Option<PortScanResult>> = JoinSet::new();
+    let mut open = 0u32;
+    let mut closed = 0u32;
+    let mut filtered = 0u32;
 
     'outer: for target in targets {
         for &port in ports {
@@ -76,51 +127,42 @@ pub async fn scan_targets(
                 break 'outer;
             }
 
-            let permit = Arc::clone(&sem)
-                .acquire_owned()
-                .await
-                .map_err(|_| NetworkError::Cancelled)?;
-
-            let host = target.clone();
-            let cb = Arc::clone(&on_result);
-            let cancel = cancel.clone();
-
-            let handle = tokio::spawn(async move {
-                let _permit = permit;
-                if cancel.is_cancelled() {
-                    return None;
+            // Backpressure: never let more than `concurrency` tasks be in
+            // flight. Reap finished tasks before spawning the next one.
+            while set.len() >= concurrency {
+                if let Some(joined) = set.join_next().await {
+                    record(joined.ok().flatten(), &mut open, &mut closed, &mut filtered);
                 }
-
-                let result = probe_port(&host, port, timeout).await;
-                cb(result.clone());
-                Some(result)
-            });
-
-            handles.push(handle);
-        }
-    }
-
-    let mut open = 0u32;
-    let mut closed = 0u32;
-    let mut filtered = 0u32;
-
-    for handle in handles {
-        if let Ok(Some(result)) = handle.await {
-            match result.state {
-                PortState::Open => open += 1,
-                PortState::Closed => closed += 1,
-                PortState::Filtered => filtered += 1,
             }
+
+            set.spawn(make_probe(target.clone(), port));
         }
     }
 
-    Ok(PortScanSummary {
+    // Drain whatever is still running.
+    while let Some(joined) = set.join_next().await {
+        record(joined.ok().flatten(), &mut open, &mut closed, &mut filtered);
+    }
+
+    PortScanSummary {
         total: open + closed + filtered,
         open,
         closed,
         filtered,
         elapsed_ms: started.elapsed().as_millis() as u64,
-    })
+    }
+}
+
+/// Fold a single probe outcome into the running per-state tallies. A `None`
+/// outcome (cancelled or a panicked/aborted task) contributes to nothing.
+fn record(outcome: Option<PortScanResult>, open: &mut u32, closed: &mut u32, filtered: &mut u32) {
+    if let Some(result) = outcome {
+        match result.state {
+            PortState::Open => *open += 1,
+            PortState::Closed => *closed += 1,
+            PortState::Filtered => *filtered += 1,
+        }
+    }
 }
 
 /// Probe a single TCP port. Never fails — connection errors map to PortState variants.
@@ -520,6 +562,83 @@ mod tests {
 
         assert_eq!(summary.total, 1);
         assert_eq!(summary.open, 0);
+    }
+
+    #[tokio::test]
+    async fn run_bounded_scan_caps_in_flight_probes() {
+        // Backpressure boundary: with far more (target × port) combinations
+        // than the concurrency budget, the number of simultaneously-running
+        // probes must never exceed the budget — and must actually reach it,
+        // proving the work is streamed rather than serialised or spawned all
+        // at once (the memory/FD blowup this guards against).
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let cancel = CancellationToken::new();
+        let in_flight = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+
+        let targets: Vec<String> = vec!["a".into(), "b".into(), "c".into()];
+        let ports: Vec<u16> = (1..=40).collect(); // 3 × 40 = 120 combinations
+        let concurrency = 8;
+
+        let in_flight_cb = Arc::clone(&in_flight);
+        let peak_cb = Arc::clone(&peak);
+        let summary = run_bounded_scan(&targets, &ports, concurrency, cancel, move |host, port| {
+            let in_flight = Arc::clone(&in_flight_cb);
+            let peak = Arc::clone(&peak_cb);
+            async move {
+                let current = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
+                peak.fetch_max(current, Ordering::SeqCst);
+                // Hold the slot briefly so concurrent probes overlap.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                in_flight.fetch_sub(1, Ordering::SeqCst);
+                Some(PortScanResult {
+                    host,
+                    port,
+                    state: PortState::Closed,
+                    latency_ms: None,
+                })
+            }
+        })
+        .await;
+
+        // Every combination was probed and tallied.
+        assert_eq!(summary.total, 120);
+        assert_eq!(summary.closed, 120);
+
+        let observed_peak = peak.load(Ordering::SeqCst);
+        assert!(
+            observed_peak <= concurrency,
+            "peak in-flight {observed_peak} exceeded the concurrency bound {concurrency}"
+        );
+        assert_eq!(
+            observed_peak, concurrency,
+            "expected the concurrency budget to be fully used (peak {observed_peak})"
+        );
+        // Nothing should still be running once the scan returns.
+        assert_eq!(in_flight.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn run_bounded_scan_handles_concurrency_zero() {
+        // A zero concurrency request must be clamped to at least one worker
+        // (never a deadlock) and still complete every probe.
+        let cancel = CancellationToken::new();
+        let targets = vec!["h".to_string()];
+        let ports: Vec<u16> = (1..=5).collect();
+
+        let summary = run_bounded_scan(&targets, &ports, 0, cancel, move |host, port| async move {
+            Some(PortScanResult {
+                host,
+                port,
+                state: PortState::Open,
+                latency_ms: None,
+            })
+        })
+        .await;
+
+        assert_eq!(summary.total, 5);
+        assert_eq!(summary.open, 5);
     }
 
     #[tokio::test]
