@@ -84,9 +84,20 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
     // Line 2: aggregate cpu line from /proc/stat
     let cpu_counters = parse_cpu_line(lines[2]);
 
-    // Lines 3+: /proc/meminfo — find MemTotal and MemAvailable
+    // Lines 3+: /proc/meminfo — find MemTotal and MemAvailable.
+    //
+    // `MemAvailable` was only added to /proc/meminfo in Linux 3.14 (2014).
+    // Older/embedded kernels and some minimal /proc implementations omit it,
+    // so we also collect the fields needed to estimate available memory the
+    // way `free`/`htop` do when it is absent: MemFree + Buffers + Cached +
+    // SReclaimable. `SwapCached` is deliberately not counted.
     let mut mem_total_kb: u64 = 0;
     let mut mem_available_kb: u64 = 0;
+    let mut mem_available_seen = false;
+    let mut mem_free_kb: u64 = 0;
+    let mut mem_buffers_kb: u64 = 0;
+    let mut mem_cached_kb: u64 = 0;
+    let mut mem_sreclaimable_kb: u64 = 0;
     let mut meminfo_end = 3;
 
     for (i, line) in lines.iter().enumerate().skip(3) {
@@ -94,6 +105,16 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
             mem_total_kb = parse_meminfo_value(line);
         } else if line.starts_with("MemAvailable:") {
             mem_available_kb = parse_meminfo_value(line);
+            mem_available_seen = true;
+        } else if line.starts_with("MemFree:") {
+            mem_free_kb = parse_meminfo_value(line);
+        } else if line.starts_with("Buffers:") {
+            mem_buffers_kb = parse_meminfo_value(line);
+        } else if line.starts_with("Cached:") {
+            // Exact prefix match avoids picking up "SwapCached:".
+            mem_cached_kb = parse_meminfo_value(line);
+        } else if line.starts_with("SReclaimable:") {
+            mem_sreclaimable_kb = parse_meminfo_value(line);
         }
         // /proc/uptime line starts with a digit — signals end of meminfo
         if !line.contains(':') && line.chars().next().is_some_and(|c| c.is_ascii_digit()) {
@@ -113,6 +134,18 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
         .first()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0);
+
+    // Fall back to the classic approximation when the kernel did not report
+    // MemAvailable, so hosts on pre-3.14 kernels don't read as 100% used.
+    if !mem_available_seen {
+        let estimate = mem_free_kb
+            .saturating_add(mem_buffers_kb)
+            .saturating_add(mem_cached_kb)
+            .saturating_add(mem_sreclaimable_kb);
+        // Never report more available than total (defends the agent's
+        // `available <= total` invariant against odd inputs).
+        mem_available_kb = estimate.min(mem_total_kb);
+    }
 
     let memory_used_percent = if mem_total_kb > 0 {
         let used = mem_total_kb.saturating_sub(mem_available_kb);
@@ -358,6 +391,62 @@ Linux 6.1.0";
         // used = 8000000 - 2000000 = 6000000, percent = 75%
         assert!((stats.memory_used_percent - 75.0).abs() < 0.1);
         assert!((stats.disk_used_percent - 60.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn parse_stats_memavailable_absent_falls_back() {
+        // Pre-3.14 kernels (and some minimal /proc implementations) omit the
+        // MemAvailable line. Without a fallback the parser reported 100% used.
+        let output = "\
+oldhost
+0.20 0.10 0.05 1/100 4321
+cpu  5000 0 3000 80000 2000 0 0 0 0 0
+MemTotal:       8000000 kB
+MemFree:        1000000 kB
+Buffers:         200000 kB
+Cached:         2000000 kB
+SwapCached:       50000 kB
+SReclaimable:    300000 kB
+1000.50 2000.00
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/sda1        100000000  60000000  38000000      60% /
+Linux 3.10.0";
+
+        let (stats, _) = parse_stats(output).unwrap();
+        // available ≈ MemFree + Buffers + Cached + SReclaimable
+        //         = 1_000_000 + 200_000 + 2_000_000 + 300_000 = 3_500_000
+        // (SwapCached must NOT be counted).
+        assert_eq!(stats.memory_available_kb, 3_500_000);
+        // used = 8_000_000 - 3_500_000 = 4_500_000 → 56.25%, not 100%.
+        assert!(
+            (stats.memory_used_percent - 56.25).abs() < 0.1,
+            "expected ~56.25%, got {}",
+            stats.memory_used_percent
+        );
+    }
+
+    #[test]
+    fn parse_stats_memavailable_present_unchanged() {
+        // When MemAvailable is present it wins; the fallback fields are ignored.
+        let output = "\
+newhost
+0.20 0.10 0.05 1/100 4321
+cpu  5000 0 3000 80000 2000 0 0 0 0 0
+MemTotal:       8000000 kB
+MemFree:        1000000 kB
+Buffers:         200000 kB
+Cached:         2000000 kB
+MemAvailable:   6000000 kB
+SReclaimable:    300000 kB
+1000.50 2000.00
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/sda1        100000000  60000000  38000000      60% /
+Linux 6.1.0";
+
+        let (stats, _) = parse_stats(output).unwrap();
+        assert_eq!(stats.memory_available_kb, 6_000_000);
+        // used = 8_000_000 - 6_000_000 = 2_000_000 → 25%.
+        assert!((stats.memory_used_percent - 25.0).abs() < 0.1);
     }
 
     #[test]
