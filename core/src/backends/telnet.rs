@@ -80,6 +80,22 @@ impl Default for Telnet {
     }
 }
 
+/// Parser state for [`TelnetFilter`], persisted across TCP reads so an IAC
+/// sequence split across a read boundary is resumed rather than mishandled.
+enum FilterState {
+    /// Ordinary data flow.
+    Data,
+    /// Saw an `IAC` byte; awaiting the command byte.
+    Iac,
+    /// Saw `IAC <cmd>` where `cmd` is DO/DONT/WILL/WONT; awaiting the option byte.
+    Negotiate(u8),
+    /// Inside a subnegotiation (after `IAC SB`); consuming payload until `IAC SE`.
+    Subneg,
+    /// Inside a subnegotiation and saw an `IAC`; the next byte is either `SE`
+    /// (ends the subnegotiation) or an escaped/ignored byte that keeps it open.
+    SubnegIac,
+}
+
 /// Stateful filter for telnet IAC command sequences, responding with WONT/DONT
 /// to all negotiation attempts.
 ///
@@ -87,49 +103,88 @@ impl Default for Telnet {
 /// reads via [`filter()`](TelnetFilter::filter). Each call returns the
 /// user-visible data with all IAC sequences stripped; negotiation responses
 /// (WONT for DO, DONT for WILL) are written directly to the provided stream.
-struct TelnetFilter;
+///
+/// Because TCP delivers arbitrary chunk sizes, an IAC command or
+/// subnegotiation can straddle a read boundary. The parser is a byte-at-a-time
+/// state machine whose [`FilterState`] persists between calls, so a sequence
+/// split across reads is resumed on the next chunk instead of leaking raw
+/// bytes (a stray `0xFF`, dropped negotiation, or leaked subnegotiation
+/// payload) into the terminal (#2331).
+struct TelnetFilter {
+    state: FilterState,
+}
 
 impl TelnetFilter {
     /// Create a new filter in the default (data) state.
     fn new() -> Self {
-        Self
+        Self {
+            state: FilterState::Data,
+        }
     }
 
-    /// Filter one chunk of raw telnet bytes.
+    /// Filter one chunk of raw telnet bytes, resuming from the state left by
+    /// the previous call.
     fn filter(&mut self, data: &[u8], stream: &mut TcpStream) -> Vec<u8> {
         let mut output = Vec::with_capacity(data.len());
-        let mut i = 0;
 
-        while i < data.len() {
-            if data[i] == IAC && i + 1 < data.len() {
-                match data[i + 1] {
-                    DO if i + 2 < data.len() => {
-                        // Refuse all DO requests.
-                        let _ = stream.write_all(&[IAC, WONT, data[i + 2]]);
-                        i += 3;
+        for &byte in data {
+            match self.state {
+                FilterState::Data => {
+                    if byte == IAC {
+                        self.state = FilterState::Iac;
+                    } else {
+                        output.push(byte);
                     }
-                    WILL if i + 2 < data.len() => {
-                        // Refuse all WILL offers.
-                        let _ = stream.write_all(&[IAC, DONT, data[i + 2]]);
-                        i += 3;
-                    }
-                    DONT | WONT if i + 2 < data.len() => {
-                        // Acknowledge — just skip.
-                        i += 3;
-                    }
+                }
+                FilterState::Iac => match byte {
                     IAC => {
                         // Escaped 0xFF byte.
                         output.push(IAC);
-                        i += 2;
+                        self.state = FilterState::Data;
+                    }
+                    DO | DONT | WILL | WONT => {
+                        // Await the option byte before responding.
+                        self.state = FilterState::Negotiate(byte);
+                    }
+                    SB => {
+                        self.state = FilterState::Subneg;
                     }
                     _ => {
-                        // Skip unknown IAC sequences.
-                        i += 2;
+                        // Two-byte command with no option (NOP, GA, unknown) — skip.
+                        self.state = FilterState::Data;
+                    }
+                },
+                FilterState::Negotiate(cmd) => {
+                    match cmd {
+                        // Refuse all DO requests.
+                        DO => {
+                            let _ = stream.write_all(&[IAC, WONT, byte]);
+                        }
+                        // Refuse all WILL offers.
+                        WILL => {
+                            let _ = stream.write_all(&[IAC, DONT, byte]);
+                        }
+                        // DONT / WONT — acknowledged, nothing to send.
+                        _ => {}
+                    }
+                    self.state = FilterState::Data;
+                }
+                FilterState::Subneg => {
+                    // Discard subnegotiation payload; only IAC can end/escape it.
+                    if byte == IAC {
+                        self.state = FilterState::SubnegIac;
                     }
                 }
-            } else {
-                output.push(data[i]);
-                i += 1;
+                FilterState::SubnegIac => {
+                    // `IAC SE` ends the subnegotiation; `IAC IAC` is escaped
+                    // payload and anything else is malformed — either way keep
+                    // consuming the subnegotiation until a real `IAC SE`.
+                    self.state = if byte == SE {
+                        FilterState::Data
+                    } else {
+                        FilterState::Subneg
+                    };
+                }
             }
         }
 
