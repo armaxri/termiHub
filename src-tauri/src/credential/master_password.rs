@@ -18,6 +18,7 @@ use super::crypto::{
 };
 use super::types::{CredentialKey, CredentialStoreStatus};
 use super::CredentialStore;
+use crate::utils::fs::write_atomic;
 
 /// Why an unlock attempt failed.
 ///
@@ -338,12 +339,16 @@ impl MasterPasswordStore {
         let json =
             serde_json::to_string_pretty(&envelope).context("Failed to serialize envelope")?;
 
-        // Atomic write: write to a temp file, then rename.
-        let tmp_path = self.file_path.with_extension("enc.tmp");
-        fs::write(&tmp_path, json.as_bytes())
-            .context("Failed to write temporary credentials file")?;
-        fs::rename(&tmp_path, &self.file_path)
-            .context("Failed to rename temporary credentials file")?;
+        // Atomic, durable write via the shared helper: it writes to a temp file
+        // in the same directory, `sync_all()`s it to disk, then renames over the
+        // target. The fsync *before* the rename is what makes this crash-safe —
+        // it guarantees the envelope's contents are durable before the rename is
+        // observable, so a crash or power loss right after the rename can never
+        // leave a zero-length or partially-written credentials file behind
+        // (#2324). The previous bespoke temp+rename here skipped the fsync. The
+        // helper's temp file is mode 0600 on Unix, so the credentials file is no
+        // longer world-readable — a strict improvement for secret material.
+        write_atomic(&self.file_path, &json).context("Failed to write credentials file")?;
 
         Ok(())
     }
@@ -708,6 +713,58 @@ mod tests {
         store.remove(&key).unwrap();
         let raw = fs::read_to_string(&store.file_path).unwrap();
         assert!(serde_json::from_str::<EncryptedEnvelope>(&raw).is_ok());
+    }
+
+    /// A save must leave the credentials file complete and no temporary sibling
+    /// behind. `write_atomic` writes to a randomly-named temp file, fsyncs it,
+    /// then renames it over the target (#2324) — so after any write the store
+    /// directory holds exactly the one envelope file, fully-formed JSON, and no
+    /// `.tmp` artifact from an interrupted or half-flushed write.
+    #[test]
+    fn save_leaves_complete_file_and_no_temp_artifact() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        store.set(&key, "secret").unwrap();
+
+        // The envelope on disk is complete, valid JSON after the write.
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        assert!(serde_json::from_str::<EncryptedEnvelope>(&raw).is_ok());
+
+        // Only the envelope file exists — no leftover temp sibling.
+        let names: Vec<String> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["credentials.enc".to_string()],
+            "expected only the envelope file, got {names:?}"
+        );
+    }
+
+    /// On Unix the credentials file must not be world- or group-readable: it holds
+    /// encrypted secrets, and `write_atomic`'s temp file is created mode 0600 and
+    /// keeps those perms through the rename (#2324).
+    #[cfg(unix)]
+    #[test]
+    fn saved_file_is_owner_only_readable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        let mode = fs::metadata(&store.file_path).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "credentials file must not be group/other readable, got mode {:o}",
+            mode & 0o777
+        );
     }
 
     #[test]
