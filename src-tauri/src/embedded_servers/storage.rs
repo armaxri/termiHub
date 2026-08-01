@@ -114,6 +114,68 @@ mod tests {
         assert!(result.data.servers.is_empty());
     }
 
+    /// Regression (#2327): a `save` that cannot durably complete must fail
+    /// **without** clobbering the previously-saved servers. The old
+    /// truncate-in-place `fs::write` opens the existing file for writing (which a
+    /// read-only *directory* does not block) and reports success, so this test
+    /// fails red on it; the atomic temp+rename write cannot create its temp file
+    /// in a read-only directory and therefore errors while leaving the prior
+    /// `embedded_servers.json` untouched.
+    #[cfg(unix)]
+    #[test]
+    fn failed_save_preserves_previous_servers() {
+        use super::super::config::{EmbeddedServerConfig, ServerType};
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let store = EmbeddedServerStore {
+            version: "1".to_string(),
+            servers: vec![EmbeddedServerConfig {
+                id: "srv-1".to_string(),
+                name: "docs".to_string(),
+                server_type: ServerType::Http,
+                root_directory: "/tmp/docs".to_string(),
+                bind_host: "127.0.0.1".to_string(),
+                port: 8080,
+                auto_start: false,
+                read_only: true,
+                directory_listing: Some(true),
+                ftp_auth: None,
+            }],
+        };
+        storage.save(&store).unwrap();
+        let before = fs::read_to_string(&storage.file_path).unwrap();
+
+        let restore = fs::metadata(dir.path()).unwrap().permissions();
+        let mut ro = restore.clone();
+        ro.set_mode(0o500);
+        fs::set_permissions(dir.path(), ro).unwrap();
+
+        // A privileged/root process can create files regardless of mode — skip.
+        let probe = dir.path().join(".probe");
+        if fs::write(&probe, b"x").is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(dir.path(), restore).unwrap();
+            return;
+        }
+
+        let result = storage.save(&store);
+        fs::set_permissions(dir.path(), restore).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a save that cannot durably complete must report an error"
+        );
+        let after = fs::read_to_string(&storage.file_path).unwrap();
+        assert_eq!(
+            before, after,
+            "a failed save must leave the previous servers fully intact"
+        );
+        serde_json::from_str::<EmbeddedServerStore>(&after).expect("preserved store still parses");
+    }
+
     #[test]
     fn corrupt_file_triggers_recovery() {
         let dir = TempDir::new().unwrap();
