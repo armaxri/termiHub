@@ -1,5 +1,8 @@
 //! Session types for the generic connection-based session manager.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
@@ -11,7 +14,10 @@ use termihub_core::connection::ConnectionType;
 #[serde(rename_all = "lowercase")]
 pub enum SessionStatus {
     Running,
-    #[allow(dead_code)]
+    /// The session's backend process exited on its own (daemon `MSG_EXITED`/EOF,
+    /// or an in-process connection whose output channel closed) rather than being
+    /// explicitly closed by a client. Such a session lingers in the map so the
+    /// desktop can still see and clean it up, but is no longer counted as active.
     Exited,
 }
 
@@ -40,11 +46,34 @@ pub enum SessionBackend {
         connection: Box<dyn ConnectionType>,
         /// Handle for the background output-forwarding task.
         output_task: Option<tokio::task::JoinHandle<()>>,
+        /// Cleared by the output-forwarder when the connection's output channel
+        /// closes (the backend process exited / hit EOF on its own), so the
+        /// manager can settle the session to [`SessionStatus::Exited`] (#2369).
+        alive: Arc<AtomicBool>,
     },
 
     /// No-op stub backend for testing. All operations succeed silently.
     #[cfg(test)]
-    Stub,
+    Stub { alive: Arc<AtomicBool> },
+}
+
+impl SessionBackend {
+    /// Whether the backend's underlying process/connection is still alive.
+    ///
+    /// Returns `false` once the backend has exited on its own — a daemon that
+    /// sent `MSG_EXITED` or closed its connection (EOF), or an in-process
+    /// connection whose output channel closed — even though the session has not
+    /// been explicitly closed. This is what lets the manager settle such a
+    /// session to [`SessionStatus::Exited`] instead of leaving it `Running`
+    /// forever (#2369).
+    pub fn is_alive(&self) -> bool {
+        match self {
+            SessionBackend::Daemon(client) => client.is_alive(),
+            SessionBackend::InProcess { alive, .. } => alive.load(Ordering::SeqCst),
+            #[cfg(test)]
+            SessionBackend::Stub { alive } => alive.load(Ordering::SeqCst),
+        }
+    }
 }
 
 /// Internal session model tracking a single terminal connection.

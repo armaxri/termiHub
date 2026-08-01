@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -639,22 +639,30 @@ impl SessionManager {
             .map_err(|e| anyhow::anyhow!("Connection failed: {e}"))?;
 
         let output_rx = connection.subscribe_output();
+        let alive = Arc::new(AtomicBool::new(true));
         let output_task = spawn_output_forwarder(
             output_rx,
             session_id.to_string(),
             self.notification_tx.clone(),
+            alive.clone(),
         );
 
         info!("In-process connection for session {session_id} (type={type_id})");
         Ok(SessionBackend::InProcess {
             connection,
             output_task: Some(output_task),
+            alive,
         })
     }
 
     /// List all sessions as read-only snapshots.
+    ///
+    /// Settles any session whose backend has exited on its own to
+    /// [`SessionStatus::Exited`] first, so the desktop never sees a naturally
+    /// dead session reported as `Running` (#2369).
     pub async fn list(&self) -> Vec<SessionSnapshot> {
-        let sessions = self.sessions.lock().await;
+        let mut sessions = self.sessions.lock().await;
+        settle_exited(&mut sessions);
         sessions.values().map(|s| s.snapshot()).collect()
     }
 
@@ -838,8 +846,14 @@ impl SessionManager {
     }
 
     /// Return the number of sessions with status `Running`.
+    ///
+    /// Sessions whose backend has exited on its own are settled to
+    /// [`SessionStatus::Exited`] first, so a naturally dead session is not
+    /// counted as active (#2369) — this keeps the deferred-update "is idle"
+    /// check and any leak detection honest.
     pub async fn active_count(&self) -> u32 {
-        let sessions = self.sessions.lock().await;
+        let mut sessions = self.sessions.lock().await;
+        settle_exited(&mut sessions);
         sessions
             .values()
             .filter(|s| s.status == SessionStatus::Running)
@@ -966,6 +980,7 @@ async fn close_backend(backend: &mut SessionBackend) {
         SessionBackend::InProcess {
             connection,
             output_task,
+            ..
         } => {
             if let Err(e) = connection.disconnect().await {
                 warn!("Disconnect error: {e}");
@@ -975,7 +990,7 @@ async fn close_backend(backend: &mut SessionBackend) {
             }
         }
         #[cfg(test)]
-        SessionBackend::Stub => {}
+        SessionBackend::Stub { .. } => {}
     }
 }
 
@@ -992,6 +1007,7 @@ async fn shutdown_backend(backend: &mut SessionBackend) {
         SessionBackend::InProcess {
             connection,
             output_task,
+            ..
         } => {
             if let Err(e) = connection.disconnect().await {
                 warn!("Disconnect error: {e}");
@@ -1001,7 +1017,7 @@ async fn shutdown_backend(backend: &mut SessionBackend) {
             }
         }
         #[cfg(test)]
-        SessionBackend::Stub => {}
+        SessionBackend::Stub { .. } => {}
     }
 }
 
@@ -1014,7 +1030,7 @@ async fn attach_backend(backend: &mut SessionBackend) -> Result<(), anyhow::Erro
             // In-process connections always forward output; no-op.
         }
         #[cfg(test)]
-        SessionBackend::Stub => {}
+        SessionBackend::Stub { .. } => {}
     }
     Ok(())
 }
@@ -1028,7 +1044,7 @@ async fn detach_backend(backend: &mut SessionBackend) {
             // In-process connections keep forwarding; no-op.
         }
         #[cfg(test)]
-        SessionBackend::Stub => {}
+        SessionBackend::Stub { .. } => {}
     }
 }
 
@@ -1040,6 +1056,7 @@ fn spawn_output_forwarder(
     mut output_rx: OutputReceiver,
     session_id: String,
     notification_tx: NotificationSender,
+    alive: Arc<AtomicBool>,
 ) -> tokio::task::JoinHandle<()> {
     let sink = JsonRpcOutputSink::new(notification_tx);
     tokio::spawn(async move {
@@ -1051,12 +1068,35 @@ fn spawn_output_forwarder(
                     }
                 }
                 None => {
+                    // The connection's output channel closed: the backend
+                    // process exited / hit EOF on its own. Mark the backend dead
+                    // so the manager settles the session to `Exited` (#2369),
+                    // then notify the desktop.
+                    alive.store(false, Ordering::SeqCst);
                     let _ = sink.send_exit(&session_id, Some(0));
                     return;
                 }
             }
         }
     })
+}
+
+/// Settle any session whose backend has exited on its own to
+/// [`SessionStatus::Exited`].
+///
+/// Natural backend exit (daemon `MSG_EXITED`/EOF, or an in-process
+/// output-channel close) is detected asynchronously by the reader/forwarder
+/// tasks, which flip the backend's liveness flag but cannot reach the session
+/// map. This reconciles that liveness into the stored session status on the
+/// read paths that report it, so a dead session no longer lingers as `Running`
+/// (#2369). Exited sessions are kept in the map (not dropped) so the desktop can
+/// still see and explicitly close them.
+fn settle_exited(sessions: &mut HashMap<String, SessionInfo>) {
+    for info in sessions.values_mut() {
+        if info.status == SessionStatus::Running && !info.backend.is_alive() {
+            info.status = SessionStatus::Exited;
+        }
+    }
 }
 
 // ── SessionManagerApi impl ─────────────────────────────────────────
@@ -1138,7 +1178,7 @@ impl SessionManagerApi for SessionManager {
                     sync_result = Some(connection.write(data).map_err(|e| e.to_string()));
                 }
                 #[cfg(test)]
-                SessionBackend::Stub => {
+                SessionBackend::Stub { .. } => {
                     sync_result = Some(Ok(()));
                 }
             }
@@ -1176,7 +1216,7 @@ impl SessionManagerApi for SessionManager {
                     sync_result = Some(connection.resize(cols, rows).map_err(|e| e.to_string()));
                 }
                 #[cfg(test)]
-                SessionBackend::Stub => {
+                SessionBackend::Stub { .. } => {
                     sync_result = Some(Ok(()));
                 }
             }
@@ -1304,13 +1344,29 @@ mod tests {
                 created_at: now,
                 last_activity: now,
                 attached: false,
-                backend: SessionBackend::Stub,
+                backend: SessionBackend::Stub {
+                    alive: Arc::new(AtomicBool::new(true)),
+                },
                 definition_id: None,
             };
 
             let snapshot = info.snapshot();
             sessions.insert(id, info);
             Ok(snapshot)
+        }
+
+        /// Mark a session's backend as exited (test-only), simulating the
+        /// backend process dying on its own without an explicit close (#2369).
+        #[cfg(test)]
+        pub async fn mark_backend_exited_for_test(&self, session_id: &str) {
+            let sessions = self.sessions.lock().await;
+            if let Some(info) = sessions.get(session_id) {
+                match &info.backend {
+                    SessionBackend::Stub { alive } => alive.store(false, Ordering::SeqCst),
+                    SessionBackend::InProcess { alive, .. } => alive.store(false, Ordering::SeqCst),
+                    SessionBackend::Daemon(_) => {}
+                }
+            }
         }
 
         /// Seed a pending update directly into the in-memory + persisted state
@@ -1765,6 +1821,58 @@ mod tests {
         assert!(result.unwrap().is_empty());
     }
 
+    // ── Natural-exit status settling (issue #2369) ────────────────────
+
+    #[tokio::test]
+    async fn session_settles_to_exited_when_backend_exits() {
+        let mgr = SessionManager::new(test_notification_tx(), test_registry());
+        let snap = mgr
+            .create_stub_session("stub", "A".to_string(), serde_json::json!({}))
+            .await
+            .unwrap();
+
+        // Freshly created: running and counted as active.
+        let listed = mgr.list().await;
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].status, SessionStatus::Running);
+        assert_eq!(mgr.active_count().await, 1);
+
+        // Simulate the backend process exiting on its own (no explicit close).
+        mgr.mark_backend_exited_for_test(&snap.id).await;
+
+        // list() must now report the session as Exited (not Running), and it
+        // must still be listed — settled, not silently dropped.
+        let listed = mgr.list().await;
+        assert_eq!(listed.len(), 1, "exited session must remain listed");
+        assert_eq!(listed[0].status, SessionStatus::Exited);
+
+        // active_count() must no longer count a naturally-dead session.
+        assert_eq!(mgr.active_count().await, 0);
+    }
+
+    #[tokio::test]
+    async fn output_forwarder_marks_backend_dead_on_channel_close() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+        let alive = Arc::new(AtomicBool::new(true));
+        let handle = spawn_output_forwarder(
+            rx,
+            "sess".to_string(),
+            test_notification_tx(),
+            alive.clone(),
+        );
+
+        assert!(alive.load(Ordering::SeqCst), "alive before channel closes");
+
+        // Closing the output channel models the backend process exiting / EOF;
+        // the forwarder must flip the liveness flag so the session can settle.
+        drop(tx);
+        handle.await.expect("forwarder task joins cleanly");
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "backend must be marked dead once its output channel closes"
+        );
+    }
+
     #[tokio::test]
     async fn set_persistent_buffer_size_bytes_updates_atomic() {
         let mgr = SessionManager::new(test_notification_tx(), test_registry());
@@ -1821,7 +1929,9 @@ mod tests {
                     .lock()
                     .await
                     .push((session_id.to_string(), type_id.to_string()));
-                Ok(SessionBackend::Stub)
+                Ok(SessionBackend::Stub {
+                    alive: Arc::new(AtomicBool::new(true)),
+                })
             }
         }
 
