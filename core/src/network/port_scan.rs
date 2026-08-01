@@ -247,6 +247,9 @@ pub fn parse_target_spec(spec: &str) -> Result<Vec<String>, NetworkError> {
 /// - Comma-separated: `"22,80,443"`
 /// - Range: `"8000-8080"`
 /// - Mixed: `"22,80,8000-8080,443"`
+///
+/// Every port must be within the valid TCP range `1..=65535`; port `0` is
+/// IANA-reserved and rejected with [`NetworkError::InvalidParameter`].
 pub fn parse_port_spec(spec: &str) -> Result<Vec<u16>, NetworkError> {
     let mut ports = Vec::new();
 
@@ -270,11 +273,21 @@ pub fn parse_port_spec(spec: &str) -> Result<Vec<u16>, NetworkError> {
                     "port range {start}-{end}: start must be <= end"
                 )));
             }
+            if start == 0 {
+                return Err(NetworkError::InvalidParameter(format!(
+                    "port range {start}-{end}: port must be between 1 and 65535"
+                )));
+            }
             ports.extend(start..=end);
         } else {
             let port: u16 = part
                 .parse()
                 .map_err(|_| NetworkError::InvalidParameter(format!("invalid port: '{part}'")))?;
+            if port == 0 {
+                return Err(NetworkError::InvalidParameter(
+                    "port 0 is reserved: port must be between 1 and 65535".into(),
+                ));
+            }
             ports.push(port);
         }
     }
@@ -331,6 +344,31 @@ mod tests {
     #[test]
     fn parse_empty_spec() {
         assert!(parse_port_spec("").is_err());
+    }
+
+    #[test]
+    fn parse_rejects_single_port_zero() {
+        // Port 0 is IANA-reserved and can never host a listening TCP service.
+        assert!(matches!(
+            parse_port_spec("0"),
+            Err(NetworkError::InvalidParameter(_))
+        ));
+    }
+
+    #[test]
+    fn parse_rejects_range_starting_at_zero() {
+        assert!(matches!(
+            parse_port_spec("0-100"),
+            Err(NetworkError::InvalidParameter(_))
+        ));
+    }
+
+    #[test]
+    fn parse_accepts_boundary_ports() {
+        // The valid TCP port boundaries (1 and 65535) must still parse.
+        assert_eq!(parse_port_spec("1").unwrap(), vec![1]);
+        assert_eq!(parse_port_spec("65535").unwrap(), vec![65535]);
+        assert_eq!(parse_port_spec("1-3").unwrap(), vec![1, 2, 3]);
     }
 
     // ── parse_target_spec ────────────────────────────────────────────────────
