@@ -13,8 +13,8 @@ use rand::RngCore;
 use zeroize::Zeroize;
 
 use super::crypto::{
-    derive_key, EncryptedEnvelope, KdfParams, AAD, ARGON2_MEMORY_COST, ARGON2_PARALLELISM,
-    ARGON2_TIME_COST, ENVELOPE_VERSION, NONCE_LEN, SALT_LEN,
+    derive_key, derive_key_with_cost, Argon2Cost, EncryptedEnvelope, KdfParams, AAD,
+    ENVELOPE_VERSION, NONCE_LEN, SALT_LEN,
 };
 use super::types::{CredentialKey, CredentialStoreStatus};
 use super::CredentialStore;
@@ -59,6 +59,11 @@ pub struct MasterPasswordStore {
     salt: RwLock<Option<Vec<u8>>>,
     credentials: RwLock<Option<HashMap<String, String>>>,
     derived_key: RwLock<Option<Vec<u8>>>,
+    /// The Argon2 cost parameters the in-memory key was derived with. A vault
+    /// keeps the params it was written with, so `derived_key` and the params
+    /// persisted on the next save always agree even if the compiled-in
+    /// constants change under an existing vault (#2362).
+    kdf_cost: RwLock<Option<Argon2Cost>>,
 }
 
 impl MasterPasswordStore {
@@ -73,6 +78,7 @@ impl MasterPasswordStore {
             salt: RwLock::new(None),
             credentials: RwLock::new(None),
             derived_key: RwLock::new(None),
+            kdf_cost: RwLock::new(None),
         }
     }
 
@@ -97,6 +103,10 @@ impl MasterPasswordStore {
         {
             let mut key_guard = self.derived_key.write().expect("derived_key lock poisoned");
             *key_guard = Some(key.to_vec());
+        }
+        {
+            let mut cost_guard = self.kdf_cost.write().expect("kdf_cost lock poisoned");
+            *cost_guard = Some(Argon2Cost::current());
         }
         {
             let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
@@ -163,7 +173,12 @@ impl MasterPasswordStore {
             )));
         }
 
-        let key = derive_key(password, &salt)
+        // Derive from the cost parameters carried *in the file*, not the
+        // compiled-in constants, so an existing vault stays decryptable even
+        // after the KDF is strengthened. The params are validated first (#2362).
+        let cost = Argon2Cost::from_kdf(&envelope.kdf)
+            .map_err(|e| UnlockFailure::Corrupted(format!("invalid KDF params: {e}")))?;
+        let key = derive_key_with_cost(password, &salt, &cost)
             .map_err(|e| UnlockFailure::Corrupted(format!("key derivation failed: {e}")))?;
 
         let cipher = Aes256Gcm::new_from_slice(&key)
@@ -190,6 +205,10 @@ impl MasterPasswordStore {
         {
             let mut key_guard = self.derived_key.write().expect("derived_key lock poisoned");
             *key_guard = Some(key.to_vec());
+        }
+        {
+            let mut cost_guard = self.kdf_cost.write().expect("kdf_cost lock poisoned");
+            *cost_guard = Some(cost);
         }
         {
             let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
@@ -229,6 +248,9 @@ impl MasterPasswordStore {
         if let Ok(mut salt_guard) = self.salt.write() {
             *salt_guard = None;
         }
+        if let Ok(mut cost_guard) = self.kdf_cost.write() {
+            *cost_guard = None;
+        }
     }
 
     /// Returns `true` if the store is currently unlocked.
@@ -249,7 +271,14 @@ impl MasterPasswordStore {
                 .clone()
                 .context("Store is locked — cannot change password")?
         };
-        let current_key = derive_key(current_password, &current_salt)?;
+        // Re-derive with the cost params the current key was derived with — the
+        // vault may carry non-default params — so the verification compares
+        // like with like (#2362).
+        let current_cost = {
+            let cost_guard = self.kdf_cost.read().expect("kdf_cost lock poisoned");
+            cost_guard.context("Store is locked — cannot change password")?
+        };
+        let current_key = derive_key_with_cost(current_password, &current_salt, &current_cost)?;
         {
             let key_guard = self.derived_key.read().expect("derived_key lock poisoned");
             let stored_key = key_guard
@@ -260,7 +289,9 @@ impl MasterPasswordStore {
             }
         }
 
-        // Generate a new salt and derive a new key.
+        // Generate a new salt and derive a new key. Re-keying adopts the current
+        // compiled-in cost, so changing the master password transparently
+        // upgrades the vault to any strengthened KDF parameters.
         let mut new_salt = vec![0u8; SALT_LEN];
         OsRng.fill_bytes(&mut new_salt);
         let new_key = derive_key(new_password, &new_salt)?;
@@ -275,6 +306,10 @@ impl MasterPasswordStore {
                 old_key.zeroize();
             }
             *key_guard = Some(new_key.to_vec());
+        }
+        {
+            let mut cost_guard = self.kdf_cost.write().expect("kdf_cost lock poisoned");
+            *cost_guard = Some(Argon2Cost::current());
         }
 
         self.save_to_disk()
@@ -297,6 +332,10 @@ impl MasterPasswordStore {
         let key = {
             let key_guard = self.derived_key.read().expect("derived_key lock poisoned");
             key_guard.clone().context("Cannot save — store is locked")?
+        };
+        let cost = {
+            let cost_guard = self.kdf_cost.read().expect("kdf_cost lock poisoned");
+            cost_guard.context("Cannot save — store is locked")?
         };
         let creds = {
             let creds_guard = self.credentials.read().expect("credentials lock poisoned");
@@ -328,9 +367,9 @@ impl MasterPasswordStore {
             kdf: KdfParams {
                 algorithm: "argon2id".to_string(),
                 salt: BASE64.encode(&salt),
-                memory_cost: ARGON2_MEMORY_COST,
-                time_cost: ARGON2_TIME_COST,
-                parallelism: ARGON2_PARALLELISM,
+                memory_cost: cost.memory_cost,
+                time_cost: cost.time_cost,
+                parallelism: cost.parallelism,
             },
             nonce: BASE64.encode(nonce_bytes),
             data: BASE64.encode(&ciphertext),
@@ -676,6 +715,46 @@ mod tests {
 
         assert_eq!(store.get(&pw_key).unwrap(), None);
         assert_eq!(store.get(&kp_key).unwrap(), None);
+    }
+
+    #[test]
+    fn unlock_uses_stored_kdf_params_and_round_trips() {
+        use crate::credential::crypto::{
+            encrypt_with_cost, Argon2Cost, ARGON2_MEMORY_COST, ARGON2_PARALLELISM, ARGON2_TIME_COST,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+
+        // Seal a vault (empty credential map) with Argon2 params different from
+        // the compiled-in constants — as a build with a strengthened KDF would
+        // write. Unlock must derive from these stored params, not `ARGON2_*`
+        // (#2362); before the fix this failed with a wrong-password error.
+        let cost = Argon2Cost {
+            memory_cost: ARGON2_MEMORY_COST,
+            time_cost: ARGON2_TIME_COST + 2,
+            parallelism: ARGON2_PARALLELISM,
+        };
+        let empty: HashMap<String, String> = HashMap::new();
+        let plaintext = serde_json::to_vec(&empty).unwrap();
+        let envelope = encrypt_with_cost("pw", &plaintext, &cost).unwrap();
+        fs::write(
+            &store.file_path,
+            serde_json::to_string_pretty(&envelope).unwrap(),
+        )
+        .unwrap();
+
+        store.unlock("pw").unwrap();
+        assert!(store.is_unlocked());
+
+        // A subsequent save must keep the vault's params consistent: the file
+        // stays decryptable across a lock/unlock cycle rather than being
+        // silently re-sealed with params that mismatch the key.
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        store.set(&key, "secret").unwrap();
+        store.lock();
+        store.unlock("pw").unwrap();
+        assert_eq!(store.get(&key).unwrap(), Some("secret".to_string()));
     }
 
     #[test]
