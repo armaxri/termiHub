@@ -247,6 +247,9 @@ pub fn parse_target_spec(spec: &str) -> Result<Vec<String>, NetworkError> {
 /// - Comma-separated: `"22,80,443"`
 /// - Range: `"8000-8080"`
 /// - Mixed: `"22,80,8000-8080,443"`
+///
+/// Every port must be within the valid TCP range `1..=65535`; port `0` is
+/// IANA-reserved and rejected with [`NetworkError::InvalidParameter`].
 pub fn parse_port_spec(spec: &str) -> Result<Vec<u16>, NetworkError> {
     let mut ports = Vec::new();
 
@@ -270,11 +273,21 @@ pub fn parse_port_spec(spec: &str) -> Result<Vec<u16>, NetworkError> {
                     "port range {start}-{end}: start must be <= end"
                 )));
             }
+            if start == 0 {
+                return Err(NetworkError::InvalidParameter(format!(
+                    "port range {start}-{end}: port must be between 1 and 65535"
+                )));
+            }
             ports.extend(start..=end);
         } else {
             let port: u16 = part
                 .parse()
                 .map_err(|_| NetworkError::InvalidParameter(format!("invalid port: '{part}'")))?;
+            if port == 0 {
+                return Err(NetworkError::InvalidParameter(
+                    "port 0 is reserved: port must be between 1 and 65535".into(),
+                ));
+            }
             ports.push(port);
         }
     }
