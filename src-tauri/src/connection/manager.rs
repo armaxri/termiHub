@@ -1237,6 +1237,7 @@ mod tests {
             settings["savePassword"] = serde_json::Value::Bool(sp);
         }
         SavedConnection {
+            icon: None,
             id: id.to_string(),
             name: "SSH".to_string(),
             config: ConnectionConfig {
@@ -1291,6 +1292,7 @@ mod tests {
 
     fn make_serial_conn(id: &str) -> SavedConnection {
         SavedConnection {
+            icon: None,
             id: id.to_string(),
             name: "Serial".to_string(),
             config: ConnectionConfig {
@@ -1305,6 +1307,7 @@ mod tests {
 
     fn make_local_conn(id: &str) -> SavedConnection {
         SavedConnection {
+            icon: None,
             id: id.to_string(),
             name: "Local".to_string(),
             config: ConnectionConfig {
@@ -1704,6 +1707,7 @@ mod tests {
 
         // Helper: make a connection with a distinct name (ID is computed from name)
         let make_conn = |name: &str| SavedConnection {
+            icon: None,
             id: format!("conn-{}", name),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -1758,6 +1762,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            icon: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -1807,6 +1812,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            icon: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -1852,6 +1858,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            icon: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -1910,6 +1917,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            icon: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {
@@ -1965,6 +1973,7 @@ mod tests {
         let cred_store = Arc::new(MockStore::new());
 
         let make_conn = |name: &str| SavedConnection {
+            icon: None,
             id: name.to_string(),
             name: name.to_string(),
             config: ConnectionConfig {

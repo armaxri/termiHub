@@ -350,6 +350,7 @@ mod tests {
         let store = ConnectionStore {
             version: "2".to_string(),
             children: vec![ConnectionTreeNode::Connection {
+                icon: None,
                 name: "Test".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
                     type_id: "local".to_string(),
@@ -380,6 +381,7 @@ mod tests {
                 name: "Work".to_string(),
                 is_expanded: true,
                 children: vec![ConnectionTreeNode::Connection {
+                    icon: None,
                     name: "SSH".to_string(),
                     config: crate::terminal::backend::ConnectionConfig {
                         type_id: "ssh".to_string(),
@@ -479,6 +481,7 @@ mod tests {
 
         let flat = FlatConnectionStore {
             connections: vec![SavedConnection {
+                icon: None,
                 id: "Work/SSH".to_string(),
                 name: "SSH".to_string(),
                 config: crate::terminal::backend::ConnectionConfig {
