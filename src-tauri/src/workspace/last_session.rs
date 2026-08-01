@@ -5,9 +5,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::atomic::write_atomic;
 use super::config::{WorkspaceTabGroupDef, WorkspaceWindowDef};
 use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::fs::write_atomic;
 
 const FILE_NAME: &str = "last-session.json";
 
