@@ -39,6 +39,12 @@ pub struct DynamicForwarder {
     death: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
+/// Upper bound on the SOCKS5 negotiation (greeting, method select, request
+/// parse, channel open, success reply). It bounds **only** the handshake so a
+/// slow or absent client cannot tie up a task forever; the established relay
+/// runs with no deadline (#2329).
+const SOCKS5_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
 const SOCKS5_VERSION: u8 = 0x05;
 const SOCKS5_NO_AUTH: u8 = 0x00;
 const SOCKS5_CMD_CONNECT: u8 = 0x01;
@@ -130,7 +136,7 @@ impl DynamicForwarder {
                     let opener = Arc::clone(&opener);
                     let stats = Arc::clone(&stats);
                     tokio::spawn(async move {
-                        Self::handle_socks5(stream, opener, &stats).await;
+                        Self::handle_socks5(stream, opener, &stats, SOCKS5_HANDSHAKE_TIMEOUT).await;
                         stats.decrement_active();
                     });
                 }
@@ -146,28 +152,61 @@ impl DynamicForwarder {
         mut stream: tokio::net::TcpStream,
         opener: Arc<O>,
         stats: &ForwarderStats,
+        handshake_timeout: Duration,
     ) {
-        if tokio::time::timeout(
-            Duration::from_secs(10),
-            Self::do_socks5(&mut stream, opener, stats),
+        // Only the negotiation is time-bounded: a client that stalls mid-handshake
+        // must not tie up a task forever. Once the handshake succeeds the relay
+        // runs with no deadline — a SOCKS proxy holds connections open for as long
+        // as the client needs (downloads, long-lived streams), so bounding the
+        // relay by the handshake timeout would kill every session (#2329).
+        let mut channel_stream = match tokio::time::timeout(
+            handshake_timeout,
+            Self::socks5_handshake(&mut stream, opener),
         )
         .await
-        .is_err()
         {
-            tracing::debug!("SOCKS5 handshake timed out");
+            // Handshake succeeded and the success reply was sent — relay is ready.
+            Ok(Ok(Some(ch))) => ch,
+            // Request was handled but there is nothing to relay (rejected auth,
+            // non-CONNECT command, unsupported address type, or channel-open
+            // failure — each already sent its own reply).
+            Ok(Ok(None)) => return,
+            Ok(Err(e)) => {
+                tracing::debug!("SOCKS5 handshake error: {}", e);
+                return;
+            }
+            Err(_) => {
+                tracing::debug!("SOCKS5 handshake timed out");
+                return;
+            }
+        };
+
+        if let Ok((sent, received)) =
+            tokio::io::copy_bidirectional(&mut stream, &mut channel_stream).await
+        {
+            stats.add_bytes_sent(sent);
+            stats.add_bytes_received(received);
         }
     }
 
-    async fn do_socks5<O: ChannelOpener>(
+    /// Perform the SOCKS5 negotiation (greeting, method select, request parse,
+    /// channel open, success reply).
+    ///
+    /// Returns `Ok(Some(stream))` with the opened channel byte stream when the
+    /// connection is negotiated and ready to relay (the success reply has already
+    /// been sent). Returns `Ok(None)` when the request was fully handled but there
+    /// is nothing to relay — a rejected auth negotiation, a non-CONNECT command, an
+    /// unsupported address type, or a failed channel open — each of which has
+    /// already written its own SOCKS5 reply.
+    async fn socks5_handshake<O: ChannelOpener>(
         stream: &mut tokio::net::TcpStream,
         opener: Arc<O>,
-        stats: &ForwarderStats,
-    ) -> std::io::Result<()> {
+    ) -> std::io::Result<Option<O::Stream>> {
         // Greeting
         let mut header = [0u8; 2];
         stream.read_exact(&mut header).await?;
         if header[0] != SOCKS5_VERSION {
-            return Ok(());
+            return Ok(None);
         }
 
         let nmethods = header[1] as usize;
@@ -176,7 +215,7 @@ impl DynamicForwarder {
 
         if !methods.contains(&SOCKS5_NO_AUTH) {
             stream.write_all(&[SOCKS5_VERSION, 0xFF]).await?;
-            return Ok(());
+            return Ok(None);
         }
         stream.write_all(&[SOCKS5_VERSION, SOCKS5_NO_AUTH]).await?;
 
@@ -184,11 +223,11 @@ impl DynamicForwarder {
         let mut req = [0u8; 4];
         stream.read_exact(&mut req).await?;
         if req[0] != SOCKS5_VERSION {
-            return Ok(());
+            return Ok(None);
         }
         if req[1] != SOCKS5_CMD_CONNECT {
             Self::send_reply(stream, SOCKS5_REP_CMD_NOT_SUPPORTED).await?;
-            return Ok(());
+            return Ok(None);
         }
 
         let (dest_host, dest_port) = match req[3] {
@@ -216,12 +255,11 @@ impl DynamicForwarder {
             }
             _ => {
                 Self::send_reply(stream, SOCKS5_REP_CMD_NOT_SUPPORTED).await?;
-                return Ok(());
+                return Ok(None);
             }
         };
 
-        let mut channel_stream = match opener.open_direct_tcpip(dest_host.clone(), dest_port).await
-        {
+        let channel_stream = match opener.open_direct_tcpip(dest_host.clone(), dest_port).await {
             Ok(ch) => ch,
             Err(e) => {
                 tracing::debug!(
@@ -231,20 +269,13 @@ impl DynamicForwarder {
                     e
                 );
                 Self::send_reply(stream, SOCKS5_REP_GENERAL_FAILURE).await?;
-                return Ok(());
+                return Ok(None);
             }
         };
 
         Self::send_reply(stream, SOCKS5_REP_SUCCESS).await?;
 
-        if let Ok((sent, received)) =
-            tokio::io::copy_bidirectional(stream, &mut channel_stream).await
-        {
-            stats.add_bytes_sent(sent);
-            stats.add_bytes_received(received);
-        }
-
-        Ok(())
+        Ok(Some(channel_stream))
     }
 
     async fn send_reply(stream: &mut tokio::net::TcpStream, rep: u8) -> std::io::Result<()> {
@@ -485,6 +516,79 @@ mod tests {
             "target parsed even though the channel open failed"
         );
         drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn established_relay_outlives_the_handshake_timeout() {
+        // Regression for #2329: the handshake timeout must bound ONLY the SOCKS5
+        // negotiation, not the established relay. Previously the timeout wrapped
+        // the whole session (handshake + copy_bidirectional), so every proxied
+        // connection was force-closed once the window elapsed — regardless of
+        // activity. Here the handshake completes, then we idle well past a tiny
+        // handshake timeout and confirm bytes still relay.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind proxy listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let stats = Arc::new(ForwarderStats::new());
+        let stats_clone = Arc::clone(&stats);
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept client");
+            DynamicForwarder::handle_socks5(
+                stream,
+                Arc::new(EchoChannelOpener::new()),
+                &stats_clone,
+                Duration::from_millis(100),
+            )
+            .await;
+        });
+
+        let mut client = TcpStream::connect(addr).await.expect("connect to proxy");
+        greet_no_auth(&mut client).await;
+        // CONNECT 10.0.0.1:80 (IPv4) — the echo opener accepts any target.
+        client
+            .write_all(&[
+                SOCKS5_VERSION,
+                SOCKS5_CMD_CONNECT,
+                0x00,
+                SOCKS5_ATYP_IPV4,
+                10,
+                0,
+                0,
+                1,
+                0x00,
+                0x50,
+            ])
+            .await
+            .expect("write request");
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_SUCCESS, "handshake should succeed");
+
+        // Idle past the handshake timeout, then drive traffic. With the bug the
+        // whole session is cancelled at 100ms, so the connection is dead here.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        client
+            .write_all(b"late-bytes")
+            .await
+            .expect("write payload");
+        client.shutdown().await.expect("half-close");
+        let mut echoed = Vec::new();
+        client
+            .read_to_end(&mut echoed)
+            .await
+            .expect("read echoed bytes");
+        assert_eq!(
+            &echoed, b"late-bytes",
+            "relay must survive well past the handshake timeout"
+        );
+
+        server.await.expect("server task ok");
+        assert_eq!(
+            stats.to_tunnel_stats().bytes_sent,
+            10,
+            "relayed bytes should be recorded"
+        );
     }
 
     #[tokio::test]
