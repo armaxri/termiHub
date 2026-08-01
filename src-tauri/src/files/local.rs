@@ -199,6 +199,52 @@ mod tests {
         assert!(src.is_dir());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn copy_directory_preserves_nested_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src_dir");
+        std::fs::create_dir_all(src.join("realsub")).unwrap();
+        std::fs::write(src.join("a.txt"), "hi").unwrap();
+        std::fs::write(src.join("realsub/b.txt"), "nested").unwrap();
+
+        // A symlink pointing at a directory, and one pointing at a file. The
+        // symlink-to-dir is the regression trigger: `entry.file_type()` reports
+        // it as a symlink (not a dir), so the old code fell through to
+        // `std::fs::copy`, which follows the link, finds a directory, and errors
+        // ("source path is neither a regular file …"), aborting the whole copy.
+        symlink(src.join("realsub"), src.join("link_to_dir")).unwrap();
+        symlink(src.join("a.txt"), src.join("link_to_file")).unwrap();
+
+        let dest = dir.path().join("dest_dir");
+        copy_file(src.to_str().unwrap(), dest.to_str().unwrap(), true).unwrap();
+
+        // Real entries are copied.
+        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "hi");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("realsub/b.txt")).unwrap(),
+            "nested"
+        );
+
+        // Both symlinks are preserved AS symlinks (not dereferenced), pointing
+        // at their original targets.
+        let dir_link = dest.join("link_to_dir");
+        assert!(
+            std::fs::symlink_metadata(&dir_link).unwrap().is_symlink(),
+            "link_to_dir should be preserved as a symlink"
+        );
+        assert_eq!(std::fs::read_link(&dir_link).unwrap(), src.join("realsub"));
+
+        let file_link = dest.join("link_to_file");
+        assert!(
+            std::fs::symlink_metadata(&file_link).unwrap().is_symlink(),
+            "link_to_file should be preserved as a symlink"
+        );
+        assert_eq!(std::fs::read_link(&file_link).unwrap(), src.join("a.txt"));
+    }
+
     #[test]
     fn copy_file_creates_parent_dirs() {
         let dir = tempfile::tempdir().unwrap();
