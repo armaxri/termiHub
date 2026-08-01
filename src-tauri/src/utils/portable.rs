@@ -51,15 +51,22 @@ pub fn detect_app_mode() -> Result<AppMode> {
 
 /// Decide the [`AppMode`] for a given portable base directory.
 ///
-/// Portable mode requires a `data/` directory or a `portable.marker` file next
-/// to the executable. Split out from [`detect_app_mode`] (which resolves the
-/// base directory from the current executable) so the detection rule can be
-/// exercised directly against real temporary directories in tests.
+/// Portable mode requires a `data/` **directory** or a `portable.marker`
+/// **file** next to the executable. The entry kind is checked deliberately
+/// (`is_dir`/`is_file`, not `exists`): a stray regular file named `data` — or a
+/// directory that merely happens to be named `portable.marker` — must not flip
+/// the app into portable mode. In particular the resolved `data` path is later
+/// `create_dir_all`-ed during setup, which fails when a non-directory already
+/// occupies it, so a false-positive here would panic the app at startup.
+///
+/// Split out from [`detect_app_mode`] (which resolves the base directory from
+/// the current executable) so the detection rule can be exercised directly
+/// against real temporary directories in tests.
 fn detect_mode_at(base_dir: &Path) -> AppMode {
     let marker_path = base_dir.join("portable.marker");
     let data_dir = base_dir.join("data");
 
-    if marker_path.exists() || data_dir.exists() {
+    if marker_path.is_file() || data_dir.is_dir() {
         AppMode::Portable { data_dir }
     } else {
         AppMode::Installed
