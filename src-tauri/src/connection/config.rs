@@ -151,6 +151,13 @@ pub enum ConnectionTreeNode {
         config: ConnectionConfig,
         #[serde(skip_serializing_if = "Option::is_none")]
         terminal_options: Option<TerminalOptions>,
+        /// Optional per-connection icon identifier chosen in the UI.
+        ///
+        /// Mirrors the frontend `SavedConnection.icon`
+        /// (`src/types/connection.ts`). Persisted on disk so the user's icon
+        /// choice survives a save/load round-trip (#2316).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        icon: Option<String>,
     },
 }
 
@@ -245,6 +252,13 @@ pub struct SavedConnection {
     pub folder_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_options: Option<TerminalOptions>,
+    /// Optional per-connection icon identifier chosen in the UI.
+    ///
+    /// Mirrors the frontend `SavedConnection.icon` (`src/types/connection.ts`).
+    /// Without this field the user's icon choice was silently dropped on
+    /// `save_connection` and lost on the next restart (#2316).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
     /// Runtime-only: which external file this connection was loaded from.
     /// `None` = main connections.json, `Some(path)` = external file.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -305,6 +319,7 @@ mod tests {
             name: "Work".to_string(),
             is_expanded: true,
             children: vec![ConnectionTreeNode::Connection {
+                icon: None,
                 name: "My SSH".to_string(),
                 config: make_ssh_config(),
                 terminal_options: None,
@@ -329,6 +344,7 @@ mod tests {
     #[test]
     fn connection_tree_node_connection_serde_round_trip() {
         let node = ConnectionTreeNode::Connection {
+            icon: None,
             name: "Local Shell".to_string(),
             config: make_local_config(),
             terminal_options: Some(TerminalOptions {
@@ -343,10 +359,12 @@ mod tests {
                 name,
                 config,
                 terminal_options,
+                icon,
             } => {
                 assert_eq!(name, "Local Shell");
                 assert_eq!(config.type_id, "local");
                 assert!(terminal_options.is_some());
+                assert!(icon.is_none());
             }
             _ => panic!("Expected Connection"),
         }
@@ -361,12 +379,14 @@ mod tests {
                     name: "Work".to_string(),
                     is_expanded: true,
                     children: vec![ConnectionTreeNode::Connection {
+                        icon: None,
                         name: "Prod SSH".to_string(),
                         config: make_ssh_config(),
                         terminal_options: None,
                     }],
                 },
                 ConnectionTreeNode::Connection {
+                    icon: None,
                     name: "Local".to_string(),
                     config: make_local_config(),
                     terminal_options: None,
@@ -465,6 +485,7 @@ mod tests {
     #[test]
     fn serde_produces_correct_json_shape() {
         let node = ConnectionTreeNode::Connection {
+            icon: None,
             name: "Test".to_string(),
             config: make_local_config(),
             terminal_options: Some(TerminalOptions {
@@ -682,6 +703,7 @@ mod tests {
         "config",
         "folderId",
         "terminalOptions",
+        "icon",
         "sourceFile",
     ];
 
@@ -702,15 +724,69 @@ mod tests {
     #[test]
     fn saved_connection_no_silent_frontend_field_drop() {
         let ts = include_str!("../../../src/types/connection.ts");
-        // KNOWN GAP: the frontend `SavedConnection.icon` (src/types/connection.ts)
-        // has no backend field, so it is dropped on `save_connection`. Recorded
-        // here rather than silently ignored — tracked by a follow-up to #2311.
-        assert_no_silent_drop(
-            ts,
-            "SavedConnection",
-            SAVED_CONNECTION_BACKEND_FIELDS,
-            &["icon"],
+        // No known gaps: every frontend `SavedConnection` field is now modelled
+        // by the backend (the `icon` gap tracked by #2311 was closed in #2316).
+        assert_no_silent_drop(ts, "SavedConnection", SAVED_CONNECTION_BACKEND_FIELDS, &[]);
+    }
+
+    #[test]
+    fn saved_connection_icon_round_trips_through_serde() {
+        // Regression for #2316: the frontend `SavedConnection.icon`
+        // (src/types/connection.ts) must survive the save/load round-trip
+        // instead of being silently dropped and lost on the next restart.
+        let json = serde_json::json!({
+            "id": "Work/My SSH",
+            "name": "My SSH",
+            "config": { "type": "ssh", "config": { "host": "example.com" } },
+            "folderId": "Work",
+            "icon": "server"
+        });
+        let conn: SavedConnection = serde_json::from_value(json).unwrap();
+        assert_eq!(conn.icon.as_deref(), Some("server"));
+
+        let round_tripped = serde_json::to_value(&conn).unwrap();
+        assert_eq!(round_tripped.get("icon").unwrap(), "server");
+    }
+
+    #[test]
+    fn saved_connection_without_icon_stays_clean() {
+        // A connection with no icon must not emit a stray `icon` key.
+        let conn = SavedConnection {
+            id: "Local".to_string(),
+            name: "Local".to_string(),
+            config: make_local_config(),
+            folder_id: None,
+            terminal_options: None,
+            icon: None,
+            source_file: None,
+        };
+        let json = serde_json::to_value(&conn).unwrap();
+        assert!(
+            json.get("icon").is_none(),
+            "icon: None leaked an `icon` key into the serialized output",
         );
+    }
+
+    #[test]
+    fn connection_tree_node_connection_icon_round_trips() {
+        // The on-disk `ConnectionTreeNode::Connection` variant must carry `icon`
+        // so it persists to disk, not just in memory (#2316).
+        let node = ConnectionTreeNode::Connection {
+            name: "My SSH".to_string(),
+            config: make_ssh_config(),
+            terminal_options: None,
+            icon: Some("server".to_string()),
+        };
+        let json = serde_json::to_value(&node).unwrap();
+        assert_eq!(json.get("icon").unwrap(), "server");
+
+        let deserialized: ConnectionTreeNode = serde_json::from_value(json).unwrap();
+        match deserialized {
+            ConnectionTreeNode::Connection { icon, .. } => {
+                assert_eq!(icon.as_deref(), Some("server"));
+            }
+            _ => panic!("Expected Connection"),
+        }
     }
 
     #[test]

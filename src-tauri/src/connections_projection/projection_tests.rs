@@ -30,6 +30,7 @@ use crate::terminal::backend::ConnectionConfig;
 
 fn connection(id: &str, name: &str, folder_id: Option<&str>) -> SavedConnection {
     SavedConnection {
+        icon: None,
         id: id.to_string(),
         name: name.to_string(),
         config: ConnectionConfig {
