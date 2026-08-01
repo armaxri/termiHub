@@ -213,6 +213,53 @@ mod tests {
         assert!(storage.clear().is_ok());
     }
 
+    /// Regression (#2318): the last-session file is rewritten on every layout
+    /// change, so a torn write is especially likely. A save that cannot durably
+    /// complete must fail without destroying the previously-saved session. The
+    /// old truncate-in-place `fs::write` overwrites the existing file here (red);
+    /// the atomic temp+rename write leaves it untouched.
+    #[cfg(unix)]
+    #[test]
+    fn failed_save_preserves_previous_session() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        storage.save(&sample_session()).unwrap();
+        let before = fs::read_to_string(&storage.file_path).unwrap();
+
+        let restore = fs::metadata(dir.path()).unwrap().permissions();
+        let mut ro = restore.clone();
+        ro.set_mode(0o500);
+        fs::set_permissions(dir.path(), ro).unwrap();
+
+        // Root can write regardless of mode — skip in that case.
+        let probe = dir.path().join(".probe");
+        if fs::write(&probe, b"x").is_ok() {
+            let _ = fs::remove_file(&probe);
+            fs::set_permissions(dir.path(), restore).unwrap();
+            return;
+        }
+
+        let mut updated = sample_session();
+        updated.version = "2".to_string();
+        let result = storage.save(&updated);
+
+        fs::set_permissions(dir.path(), restore).unwrap();
+
+        assert!(
+            result.is_err(),
+            "a save that cannot durably complete must report an error"
+        );
+        let after = fs::read_to_string(&storage.file_path).unwrap();
+        assert_eq!(
+            before, after,
+            "a failed save must leave the previous session fully intact"
+        );
+        serde_json::from_str::<LastSession>(&after).expect("preserved session still parses");
+    }
+
     #[test]
     fn deserialize_without_active_group_index_defaults_to_zero() {
         let json = r#"{"version":"1","tabGroups":[]}"#;
