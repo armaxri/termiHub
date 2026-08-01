@@ -190,20 +190,19 @@ impl SshCollector {
                     .await
                     .context("SSH exec failed")?;
 
-                let mut output = String::new();
+                // Collect the raw stdout frames; a multi-byte UTF-8 character
+                // can straddle two frames, so decoding is deferred until every
+                // frame has been received (see [`decode_stdout`]).
+                let mut frames: Vec<Vec<u8>> = Vec::new();
                 loop {
                     match channel.wait().await {
-                        Some(ChannelMsg::Data { ref data }) => {
-                            if let Ok(s) = std::str::from_utf8(data) {
-                                output.push_str(s);
-                            }
-                        }
+                        Some(ChannelMsg::Data { ref data }) => frames.push(data.to_vec()),
                         Some(ChannelMsg::ExitStatus { .. }) => {}
                         Some(ChannelMsg::Eof) | None => break,
                         _ => {}
                     }
                 }
-                Ok::<String, anyhow::Error>(output)
+                Ok::<String, anyhow::Error>(decode_stdout(&frames))
             })
         })
     }
@@ -239,9 +238,47 @@ impl StatsCollector for SshCollector {
     }
 }
 
+/// Reassemble SSH stdout, delivered as a sequence of `ChannelMsg::Data` byte
+/// frames, into a single string.
+///
+/// SSH frames carry arbitrary byte slices whose boundaries are set by the
+/// channel window, not by character boundaries, so a multi-byte UTF-8 sequence
+/// can straddle two frames. The bytes are concatenated before decoding so a
+/// boundary-split character is never lost; [`String::from_utf8_lossy`] then
+/// tolerates any genuinely invalid bytes rather than discarding a whole frame.
+fn decode_stdout(frames: &[Vec<u8>]) -> String {
+    let mut bytes = Vec::with_capacity(frames.iter().map(Vec::len).sum());
+    for frame in frames {
+        bytes.extend_from_slice(frame);
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_stdout_reassembles_utf8_split_across_frames() {
+        // "é" is 0xC3 0xA9; split it across two Data frames, as SSH may deliver
+        // it when the character straddles a channel-window boundary.
+        let frames = vec![vec![b'c', b'a', b'f', 0xC3], vec![0xA9, b'\n']];
+        assert_eq!(decode_stdout(&frames), "café\n");
+    }
+
+    #[test]
+    fn decode_stdout_handles_empty_and_ascii() {
+        assert_eq!(decode_stdout(&[]), "");
+        assert_eq!(decode_stdout(&[b"hostname\n".to_vec()]), "hostname\n");
+    }
+
+    #[test]
+    fn decode_stdout_is_lossy_on_invalid_bytes() {
+        // A lone continuation byte is never valid UTF-8; it becomes U+FFFD
+        // while the surrounding bytes survive, rather than dropping the frame.
+        let frames = vec![vec![b'a', 0xFF, b'b']];
+        assert_eq!(decode_stdout(&frames), "a\u{FFFD}b");
+    }
 
     #[test]
     fn local_collector_returns_valid_stats() {
