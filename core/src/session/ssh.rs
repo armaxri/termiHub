@@ -61,33 +61,61 @@ pub fn build_ssh_args(config: &SshConfig) -> Vec<String> {
 
 /// Validate SSH config before attempting a connection.
 ///
-/// Checks:
+/// Checks, for the target **and every `proxy_jump` hop** (#2337):
 /// - `host` is not empty
 /// - `username` is not empty
 /// - When `auth_method` is `"key"`, `key_path` must be present and non-empty
+///
+/// Each jump-host hop is TCP-connected and authenticated exactly like the target
+/// (see [`connect_gateway_chain`](crate::backends::ssh::jump_host::connect_gateway_chain)),
+/// so a misconfigured bastion is held to the same bar here — rejected up front
+/// with a hop-identifying error instead of failing with a confusing low-level
+/// connect/auth error mid-chain, or (for a `key` hop with no key) silently
+/// falling back to `~/.ssh/id_rsa` in the auth path.
 pub fn validate_ssh_config(config: &SshConfig) -> Result<(), SessionError> {
+    // Target: `None` context keeps the original error messages byte-stable.
+    validate_connection_identity(config, None)?;
+
+    for (idx, hop) in config.proxy_jump.iter().enumerate() {
+        let label = format!("jump host {} ({}:{})", idx + 1, hop.host, hop.port);
+        validate_connection_identity(&hop.to_ssh_config(), Some(&label))?;
+    }
+
+    Ok(())
+}
+
+/// Validate the host / username / key-path of a single SSH connection identity —
+/// the target (`context == None`) or one jump-host hop (`context == Some(label)`,
+/// which prefixes each error so the user sees which hop is at fault). Shared by
+/// [`validate_ssh_config`] so a hop is held to the same bar as the target.
+fn validate_connection_identity(
+    config: &SshConfig,
+    context: Option<&str>,
+) -> Result<(), SessionError> {
+    let err = |msg: &str| {
+        let message = match context {
+            Some(label) => format!("{label}: {msg}"),
+            None => msg.to_string(),
+        };
+        SessionError::InvalidConfig(message)
+    };
+
     if config.host.trim().is_empty() {
-        return Err(SessionError::InvalidConfig(
-            "SSH host must not be empty".to_string(),
-        ));
+        return Err(err("SSH host must not be empty"));
     }
 
     if config.username.trim().is_empty() {
-        return Err(SessionError::InvalidConfig(
-            "SSH username must not be empty".to_string(),
-        ));
+        return Err(err("SSH username must not be empty"));
     }
 
     if config.auth_method == "key" {
         match &config.key_path {
             None => {
-                return Err(SessionError::InvalidConfig(
-                    "SSH key path is required when auth method is \"key\"".to_string(),
-                ));
+                return Err(err("SSH key path is required when auth method is \"key\""));
             }
             Some(path) if path.trim().is_empty() => {
-                return Err(SessionError::InvalidConfig(
-                    "SSH key path must not be empty when auth method is \"key\"".to_string(),
+                return Err(err(
+                    "SSH key path must not be empty when auth method is \"key\"",
                 ));
             }
             Some(_) => {}
@@ -365,5 +393,105 @@ mod tests {
         };
         let err = validate_ssh_config(&config).unwrap_err();
         assert!(err.to_string().contains("key path"));
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_ssh_config — proxy_jump hops (#2337)
+    // -----------------------------------------------------------------------
+
+    use crate::config::JumpHostConfig;
+
+    /// A minimal, valid jump-host hop for building chains in the tests below.
+    fn jump_hop(host: &str, username: &str, auth_method: &str) -> JumpHostConfig {
+        JumpHostConfig {
+            host: host.into(),
+            port: 22,
+            username: username.into(),
+            auth_method: auth_method.into(),
+            ..Default::default()
+        }
+    }
+
+    fn target_with_hops(hops: Vec<JumpHostConfig>) -> SshConfig {
+        SshConfig {
+            host: "target.example.com".into(),
+            username: "admin".into(),
+            auth_method: "agent".into(),
+            proxy_jump: hops,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn validate_accepts_valid_single_hop() {
+        let config = target_with_hops(vec![jump_hop("bastion", "jump", "agent")]);
+        assert!(validate_ssh_config(&config).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_valid_multi_hop_chain() {
+        let config = target_with_hops(vec![
+            jump_hop("edge", "u", "agent"),
+            JumpHostConfig {
+                key_path: Some("/home/u/.ssh/id_ed25519".into()),
+                ..jump_hop("bastion", "u", "key")
+            },
+        ]);
+        assert!(validate_ssh_config(&config).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_hop_with_empty_host() {
+        let config = target_with_hops(vec![jump_hop("", "jump", "agent")]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("host"), "unexpected: {err}");
+        assert!(err.contains("jump host 1"), "should name the hop: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_hop_with_whitespace_username() {
+        let config = target_with_hops(vec![jump_hop("bastion", "   ", "agent")]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("username"), "unexpected: {err}");
+        assert!(err.contains("jump host 1"), "should name the hop: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_key_auth_hop_without_key_path() {
+        // The security-adjacent case: a key-auth hop with no key selected would
+        // otherwise silently fall back to ~/.ssh/id_rsa in auth.rs.
+        let config = target_with_hops(vec![jump_hop("bastion", "jump", "key")]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("key path"), "unexpected: {err}");
+        assert!(err.contains("jump host 1"), "should name the hop: {err}");
+    }
+
+    #[test]
+    fn validate_rejects_key_auth_hop_with_empty_key_path() {
+        let config = target_with_hops(vec![JumpHostConfig {
+            key_path: Some("  ".into()),
+            ..jump_hop("bastion", "jump", "key")
+        }]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("key path"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn validate_names_the_offending_hop_in_a_chain() {
+        // First hop is fine; the second is invalid — the error must point at hop 2.
+        let config = target_with_hops(vec![
+            jump_hop("edge", "u", "agent"),
+            jump_hop("", "u", "agent"),
+        ]);
+        let err = validate_ssh_config(&config).unwrap_err().to_string();
+        assert!(err.contains("jump host 2"), "should name hop 2: {err}");
+    }
+
+    #[test]
+    fn validate_still_accepts_direct_target_without_hops() {
+        // A regression guard: adding hop validation must not change the
+        // no-jump-host path.
+        let config = target_with_hops(vec![]);
+        assert!(validate_ssh_config(&config).is_ok());
     }
 }
