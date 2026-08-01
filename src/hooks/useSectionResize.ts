@@ -119,6 +119,25 @@ export function useSectionResize(expandedCount: number): UseSectionResizeResult 
     [startResize]
   );
 
+  // Cleanup on unmount: if the component unmounts mid-drag (before `mouseup`
+  // fires — e.g. the sidebar is hidden or its section list rebuilt via a
+  // keyboard shortcut), the document-level listeners would otherwise leak and
+  // keep calling `setFlexValues` on an unmounted hook, and `document.body`
+  // would stay stuck with `user-select: none` and a `ns-resize` cursor
+  // app-wide. Mirror `useSidebarResize`'s cleanup here, and additionally clear
+  // the stuck body styles when a drag was active.
+  useEffect(() => {
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+      if (resizeRef.current) {
+        resizeRef.current = null;
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+      }
+    };
+  }, [handleMouseMove, handleMouseUp]);
+
   // Normalise the returned array to always be exactly `expandedCount` long,
   // defaulting any missing slot to an even `1`. `flexValues` state lags
   // `expandedCount` for one render whenever the section count grows (the reset
