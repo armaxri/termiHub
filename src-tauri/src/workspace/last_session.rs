@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
+use super::atomic::write_atomic;
 use super::config::{WorkspaceTabGroupDef, WorkspaceWindowDef};
 use crate::utils::config_paths::resolve_config_dir;
 
@@ -83,11 +84,16 @@ impl LastSessionStorage {
     }
 
     /// Save the last session to disk (pretty-printed JSON).
+    ///
+    /// The write is atomic (temp file in the same directory + rename). This file
+    /// is rewritten on every layout change, so a torn write is especially likely;
+    /// an atomic replace guarantees the previous session survives an interrupted
+    /// save instead of being silently discarded on next startup (#2318).
     pub fn save(&self, session: &LastSession) -> Result<()> {
         let data =
             serde_json::to_string_pretty(session).context("Failed to serialize last session")?;
 
-        fs::write(&self.file_path, data).context("Failed to write last-session file")?;
+        write_atomic(&self.file_path, &data).context("Failed to write last-session file")?;
 
         Ok(())
     }

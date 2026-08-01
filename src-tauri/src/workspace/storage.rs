@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
+use super::atomic::write_atomic;
 use super::config::WorkspaceStore;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
@@ -78,10 +79,14 @@ impl WorkspaceStorage {
     }
 
     /// Save the workspace store to disk (pretty-printed JSON).
+    ///
+    /// The write is atomic (temp file in the same directory + rename), so an
+    /// interrupted save can never truncate the existing store and lose every
+    /// saved workspace (#2318).
     pub fn save(&self, store: &WorkspaceStore) -> Result<()> {
         let data = serde_json::to_string_pretty(store).context("Failed to serialize workspaces")?;
 
-        fs::write(&self.file_path, data).context("Failed to write workspaces file")?;
+        write_atomic(&self.file_path, &data).context("Failed to write workspaces file")?;
 
         Ok(())
     }
