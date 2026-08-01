@@ -259,9 +259,12 @@ export class TerminalOutputDispatcher {
     });
 
     if (gen !== this.initGeneration) {
+      // A generation mismatch means destroy() has run; it already unlistened
+      // (and nulled) every listener this invocation had assigned to `this.*`.
+      // Only the listener we just registered above is still live and untracked,
+      // so unlisten that local one — never the nulled instance fields, which
+      // would throw (or, after a fresh init(), tear down the new listener).
       unlistenExit();
-      this.unlistenOutput();
-      this.unlistenOutput = null;
       return;
     }
     this.unlistenExit = unlistenExit;
@@ -278,11 +281,9 @@ export class TerminalOutputDispatcher {
     );
 
     if (gen !== this.initGeneration) {
+      // See the note above: destroy() already cleaned up the earlier listeners;
+      // unlisten only the one this invocation just registered.
       unlistenRemoteState();
-      this.unlistenOutput();
-      this.unlistenOutput = null;
-      this.unlistenExit();
-      this.unlistenExit = null;
       return;
     }
     this.unlistenRemoteState = unlistenRemoteState;
@@ -299,13 +300,9 @@ export class TerminalOutputDispatcher {
     );
 
     if (gen !== this.initGeneration) {
+      // See the note above: destroy() already cleaned up the earlier listeners;
+      // unlisten only the one this invocation just registered.
       unlistenAgentState();
-      this.unlistenOutput();
-      this.unlistenOutput = null;
-      this.unlistenExit();
-      this.unlistenExit = null;
-      this.unlistenRemoteState();
-      this.unlistenRemoteState = null;
       return;
     }
     this.unlistenAgentState = unlistenAgentState;
