@@ -199,22 +199,38 @@ export function simplifyTree(root: PanelNode): PanelNode {
   if (root.type === "leaf") return root;
 
   // First simplify children
-  let children = root.children.map(simplifyTree);
+  const simplified = root.children.map(simplifyTree);
 
-  // Flatten children that split in the same direction
+  // Flatten children that split in the same direction. When flattening, the
+  // parent size slot allotted to the nested split is subdivided among its
+  // hoisted grandchildren so `sizes` stays aligned with `children` and keeps
+  // summing to 100 (SplitView reads sizes by child index).
   const flattened: PanelNode[] = [];
-  for (const child of children) {
+  const flattenedSizes: number[] = [];
+  simplified.forEach((child, i) => {
+    const slotSize = root.sizes?.[i] ?? 100 / simplified.length;
     if (child.type === "split" && child.direction === root.direction) {
-      flattened.push(...child.children);
+      const inner =
+        child.sizes && child.sizes.length === child.children.length
+          ? child.sizes
+          : child.children.map(() => 100 / child.children.length);
+      const innerTotal = inner.reduce((a, b) => a + b, 0) || child.children.length;
+      child.children.forEach((grandchild, j) => {
+        flattened.push(grandchild);
+        flattenedSizes.push((slotSize * (inner[j] ?? 0)) / innerTotal);
+      });
     } else {
       flattened.push(child);
+      flattenedSizes.push(slotSize);
     }
-  }
-  children = flattened;
+  });
 
-  if (children.length === 0) return createLeafPanel();
-  if (children.length === 1) return children[0];
-  return { ...root, children };
+  if (flattened.length === 0) return createLeafPanel();
+  if (flattened.length === 1) return flattened[0];
+
+  // Preserve the "no sizes" contract: only attach sizes when the parent had them.
+  const sizes = root.sizes ? normalizeSizes(flattenedSizes) : undefined;
+  return { ...root, children: flattened, ...(sizes ? { sizes } : {}) };
 }
 
 /** Convert a DropEdge to split direction and position, or null for center. */
