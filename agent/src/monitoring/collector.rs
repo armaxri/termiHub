@@ -243,15 +243,15 @@ impl StatsCollector for SshCollector {
 ///
 /// SSH frames carry arbitrary byte slices whose boundaries are set by the
 /// channel window, not by character boundaries, so a multi-byte UTF-8 sequence
-/// can straddle two frames. Each frame is decoded on its own here.
+/// can straddle two frames. The bytes are concatenated before decoding so a
+/// boundary-split character is never lost; [`String::from_utf8_lossy`] then
+/// tolerates any genuinely invalid bytes rather than discarding a whole frame.
 fn decode_stdout(frames: &[Vec<u8>]) -> String {
-    let mut output = String::new();
+    let mut bytes = Vec::with_capacity(frames.iter().map(Vec::len).sum());
     for frame in frames {
-        if let Ok(s) = std::str::from_utf8(frame) {
-            output.push_str(s);
-        }
+        bytes.extend_from_slice(frame);
     }
-    output
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 #[cfg(test)]
