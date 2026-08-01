@@ -7,6 +7,7 @@ use tauri::AppHandle;
 use super::config::EmbeddedServerStore;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::fs::write_atomic;
 
 const FILE_NAME: &str = "embedded_servers.json";
 
@@ -75,10 +76,16 @@ impl EmbeddedServerStorage {
     }
 
     /// Save the store to disk as pretty-printed JSON.
+    ///
+    /// The write is **atomic** (temp file in the same directory → `sync_all` →
+    /// rename over the target): a crash, power loss, or full disk mid-write
+    /// leaves `embedded_servers.json` holding either the complete previous
+    /// contents or the complete new contents, never a truncated mix that the
+    /// recovery path would discard as corrupt (#2320 torn-write class, #2327).
     pub fn save(&self, store: &EmbeddedServerStore) -> Result<()> {
         let data =
             serde_json::to_string_pretty(store).context("Failed to serialize embedded servers")?;
-        fs::write(&self.file_path, data).context("Failed to write embedded servers file")?;
+        write_atomic(&self.file_path, &data).context("Failed to write embedded servers file")?;
         Ok(())
     }
 }
