@@ -39,6 +39,12 @@ pub struct DynamicForwarder {
     death: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
+/// Upper bound on the SOCKS5 negotiation (greeting, method select, request
+/// parse, channel open, success reply). It bounds **only** the handshake so a
+/// slow or absent client cannot tie up a task forever; the established relay
+/// runs with no deadline (#2329).
+const SOCKS5_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
 const SOCKS5_VERSION: u8 = 0x05;
 const SOCKS5_NO_AUTH: u8 = 0x00;
 const SOCKS5_CMD_CONNECT: u8 = 0x01;
@@ -130,7 +136,7 @@ impl DynamicForwarder {
                     let opener = Arc::clone(&opener);
                     let stats = Arc::clone(&stats);
                     tokio::spawn(async move {
-                        Self::handle_socks5(stream, opener, &stats).await;
+                        Self::handle_socks5(stream, opener, &stats, SOCKS5_HANDSHAKE_TIMEOUT).await;
                         stats.decrement_active();
                     });
                 }
@@ -146,9 +152,10 @@ impl DynamicForwarder {
         mut stream: tokio::net::TcpStream,
         opener: Arc<O>,
         stats: &ForwarderStats,
+        handshake_timeout: Duration,
     ) {
         if tokio::time::timeout(
-            Duration::from_secs(10),
+            handshake_timeout,
             Self::do_socks5(&mut stream, opener, stats),
         )
         .await
@@ -485,6 +492,79 @@ mod tests {
             "target parsed even though the channel open failed"
         );
         drop(forwarder);
+    }
+
+    #[tokio::test]
+    async fn established_relay_outlives_the_handshake_timeout() {
+        // Regression for #2329: the handshake timeout must bound ONLY the SOCKS5
+        // negotiation, not the established relay. Previously the timeout wrapped
+        // the whole session (handshake + copy_bidirectional), so every proxied
+        // connection was force-closed once the window elapsed — regardless of
+        // activity. Here the handshake completes, then we idle well past a tiny
+        // handshake timeout and confirm bytes still relay.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind proxy listener");
+        let addr = listener.local_addr().expect("listener addr");
+        let stats = Arc::new(ForwarderStats::new());
+        let stats_clone = Arc::clone(&stats);
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept client");
+            DynamicForwarder::handle_socks5(
+                stream,
+                Arc::new(EchoChannelOpener::new()),
+                &stats_clone,
+                Duration::from_millis(100),
+            )
+            .await;
+        });
+
+        let mut client = TcpStream::connect(addr).await.expect("connect to proxy");
+        greet_no_auth(&mut client).await;
+        // CONNECT 10.0.0.1:80 (IPv4) — the echo opener accepts any target.
+        client
+            .write_all(&[
+                SOCKS5_VERSION,
+                SOCKS5_CMD_CONNECT,
+                0x00,
+                SOCKS5_ATYP_IPV4,
+                10,
+                0,
+                0,
+                1,
+                0x00,
+                0x50,
+            ])
+            .await
+            .expect("write request");
+        let reply = read_reply(&mut client).await;
+        assert_eq!(reply[1], SOCKS5_REP_SUCCESS, "handshake should succeed");
+
+        // Idle past the handshake timeout, then drive traffic. With the bug the
+        // whole session is cancelled at 100ms, so the connection is dead here.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        client
+            .write_all(b"late-bytes")
+            .await
+            .expect("write payload");
+        client.shutdown().await.expect("half-close");
+        let mut echoed = Vec::new();
+        client
+            .read_to_end(&mut echoed)
+            .await
+            .expect("read echoed bytes");
+        assert_eq!(
+            &echoed, b"late-bytes",
+            "relay must survive well past the handshake timeout"
+        );
+
+        server.await.expect("server task ok");
+        assert_eq!(
+            stats.to_tunnel_stats().bytes_sent,
+            10,
+            "relayed bytes should be recorded"
+        );
     }
 
     #[tokio::test]
