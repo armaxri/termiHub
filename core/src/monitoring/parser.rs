@@ -84,9 +84,20 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
     // Line 2: aggregate cpu line from /proc/stat
     let cpu_counters = parse_cpu_line(lines[2]);
 
-    // Lines 3+: /proc/meminfo — find MemTotal and MemAvailable
+    // Lines 3+: /proc/meminfo — find MemTotal and MemAvailable.
+    //
+    // `MemAvailable` was only added to /proc/meminfo in Linux 3.14 (2014).
+    // Older/embedded kernels and some minimal /proc implementations omit it,
+    // so we also collect the fields needed to estimate available memory the
+    // way `free`/`htop` do when it is absent: MemFree + Buffers + Cached +
+    // SReclaimable. `SwapCached` is deliberately not counted.
     let mut mem_total_kb: u64 = 0;
     let mut mem_available_kb: u64 = 0;
+    let mut mem_available_seen = false;
+    let mut mem_free_kb: u64 = 0;
+    let mut mem_buffers_kb: u64 = 0;
+    let mut mem_cached_kb: u64 = 0;
+    let mut mem_sreclaimable_kb: u64 = 0;
     let mut meminfo_end = 3;
 
     for (i, line) in lines.iter().enumerate().skip(3) {
@@ -94,6 +105,16 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
             mem_total_kb = parse_meminfo_value(line);
         } else if line.starts_with("MemAvailable:") {
             mem_available_kb = parse_meminfo_value(line);
+            mem_available_seen = true;
+        } else if line.starts_with("MemFree:") {
+            mem_free_kb = parse_meminfo_value(line);
+        } else if line.starts_with("Buffers:") {
+            mem_buffers_kb = parse_meminfo_value(line);
+        } else if line.starts_with("Cached:") {
+            // Exact prefix match avoids picking up "SwapCached:".
+            mem_cached_kb = parse_meminfo_value(line);
+        } else if line.starts_with("SReclaimable:") {
+            mem_sreclaimable_kb = parse_meminfo_value(line);
         }
         // /proc/uptime line starts with a digit — signals end of meminfo
         if !line.contains(':') && line.chars().next().is_some_and(|c| c.is_ascii_digit()) {
@@ -113,6 +134,18 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
         .first()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0);
+
+    // Fall back to the classic approximation when the kernel did not report
+    // MemAvailable, so hosts on pre-3.14 kernels don't read as 100% used.
+    if !mem_available_seen {
+        let estimate = mem_free_kb
+            .saturating_add(mem_buffers_kb)
+            .saturating_add(mem_cached_kb)
+            .saturating_add(mem_sreclaimable_kb);
+        // Never report more available than total (defends the agent's
+        // `available <= total` invariant against odd inputs).
+        mem_available_kb = estimate.min(mem_total_kb);
+    }
 
     let memory_used_percent = if mem_total_kb > 0 {
         let used = mem_total_kb.saturating_sub(mem_available_kb);
