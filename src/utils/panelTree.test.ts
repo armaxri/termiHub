@@ -223,6 +223,81 @@ describe("simplifyTree", () => {
     const result = simplifyTree(split);
     expect(result).toBe(leaf);
   });
+
+  it("keeps sizes length in sync with children when flattening", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const leaf3 = makeLeaf("leaf-3");
+    const inner = makeSplit("inner", "horizontal", [leaf2, leaf3]);
+    inner.sizes = [50, 50];
+    const outer = makeSplit("outer", "horizontal", [leaf1, inner]);
+    outer.sizes = [40, 60];
+
+    const result = simplifyTree(outer) as SplitContainer;
+    expect(result.children).toHaveLength(3);
+    expect(result.sizes).toBeDefined();
+    expect(result.sizes).toHaveLength(3);
+    const total = result.sizes!.reduce((a, b) => a + b, 0);
+    expect(total).toBeCloseTo(100);
+  });
+
+  it("subdivides the flattened slot by the inner proportions", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const leaf3 = makeLeaf("leaf-3");
+    const inner = makeSplit("inner", "horizontal", [leaf2, leaf3]);
+    inner.sizes = [50, 50];
+    const outer = makeSplit("outer", "horizontal", [leaf1, inner]);
+    outer.sizes = [40, 60];
+
+    const result = simplifyTree(outer) as SplitContainer;
+    expect(result.children.map((c) => c.id)).toEqual(["leaf-1", "leaf-2", "leaf-3"]);
+    expect(result.sizes![0]).toBeCloseTo(40);
+    expect(result.sizes![1]).toBeCloseTo(30);
+    expect(result.sizes![2]).toBeCloseTo(30);
+  });
+
+  it("subdivides an uneven flattened slot proportionally", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const leaf3 = makeLeaf("leaf-3");
+    const inner = makeSplit("inner", "vertical", [leaf2, leaf3]);
+    inner.sizes = [75, 25];
+    const outer = makeSplit("outer", "vertical", [leaf1, inner]);
+    outer.sizes = [20, 80];
+
+    const result = simplifyTree(outer) as SplitContainer;
+    expect(result.sizes![0]).toBeCloseTo(20);
+    expect(result.sizes![1]).toBeCloseTo(60); // 80 * 0.75
+    expect(result.sizes![2]).toBeCloseTo(20); // 80 * 0.25
+  });
+
+  it("does not add sizes when the parent split has none", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const leaf3 = makeLeaf("leaf-3");
+    const inner = makeSplit("inner", "horizontal", [leaf2, leaf3]);
+    const outer = makeSplit("outer", "horizontal", [leaf1, inner]);
+
+    const result = simplifyTree(outer) as SplitContainer;
+    expect(result.children).toHaveLength(3);
+    expect(result.sizes).toBeUndefined();
+  });
+
+  it("falls back to equal sizes when the inner split has no sizes", () => {
+    const leaf1 = makeLeaf("leaf-1");
+    const leaf2 = makeLeaf("leaf-2");
+    const leaf3 = makeLeaf("leaf-3");
+    const inner = makeSplit("inner", "horizontal", [leaf2, leaf3]);
+    const outer = makeSplit("outer", "horizontal", [leaf1, inner]);
+    outer.sizes = [50, 50];
+
+    const result = simplifyTree(outer) as SplitContainer;
+    expect(result.sizes).toHaveLength(3);
+    expect(result.sizes![0]).toBeCloseTo(50);
+    expect(result.sizes![1]).toBeCloseTo(25);
+    expect(result.sizes![2]).toBeCloseTo(25);
+  });
 });
 
 describe("edgeToSplit", () => {
