@@ -16,14 +16,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
+use tauri::Manager;
 
 use termihub_core::monitoring::SystemStats;
 
+use crate::commands::projection::ProjectionState;
 use crate::projection::{
     apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
     ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
-use crate::system_monitor_projection::projection::{publish_monitors, SYSTEM_MONITORS_REGION};
+use crate::system_monitor_projection::projection::{
+    fold_monitor_transition, publish_monitors, SYSTEM_MONITORS_REGION,
+};
 use crate::system_monitor_projection::store::SystemMonitorStore;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -436,4 +440,163 @@ fn a_dead_subscriber_is_reaped_on_publish() {
         1,
         "the dead subscriber was reaped"
     );
+}
+
+// ── Server-authority fold (#2376, prerequisite for #2224) ─────────────────────
+//
+// These drive the *production* `fold_monitor_transition` end to end against a
+// `tauri::test::mock_app()` with the same managed state `lib.rs::setup()` wires:
+// an `Arc<SystemMonitorStore>` and a `ProjectionState`. They prove the store is
+// fed **server-side** — the instant the collector loop / lifecycle produces a
+// transition — with no `monitor.*` client dispatch, and that the fold reproduces
+// the client route's store transition exactly (parity, no double count).
+
+/// A collector-produced stats sample folded server-side updates the shared store
+/// and fans the `system-monitors` region diff out — without any client dispatch.
+#[test]
+fn server_side_stats_fold_updates_store_and_region_without_client_dispatch() {
+    let app = tauri::test::mock_app();
+
+    // The entry is created client-side (`monitor.open`, which carries the UI host
+    // label); the server folds the collector stream into it.
+    let store = Arc::new(SystemMonitorStore::new());
+    store.open("s1", Some("host-a".to_string()), None);
+    store.opened("s1");
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SYSTEM_MONITORS_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    // Server folds a sample at the source — no `monitor.stats` intent is dispatched.
+    let sample = stats("host-a", 42.0);
+    fold_monitor_transition(app.handle(), |s| s.stats("s1", sample.clone()));
+
+    // The store is authoritative server-side.
+    let entry = store.get("s1").expect("entry still present");
+    assert_eq!(
+        entry.sample_count, 1,
+        "server fold incremented the sample count"
+    );
+    assert_eq!(
+        store.cached_stats("s1").map(|s| s.cpu_usage_percent),
+        Some(42.0)
+    );
+
+    // Exactly one region diff fanned out; the client cache converges on the server
+    // truth with no round-trip.
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view["monitors"]["s1"]["sampleCount"], json!(1));
+    assert_eq!(
+        cache.view["monitors"]["s1"]["stats"]["cpuUsagePercent"],
+        json!(42.0)
+    );
+}
+
+/// A collector-produced status transition folded server-side updates the store
+/// and region without any client dispatch.
+#[test]
+fn server_side_status_fold_updates_store_and_region() {
+    use termihub_core::monitoring::MonitorStatus;
+
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SystemMonitorStore::new());
+    store.open("s1", Some("host-a".to_string()), None);
+    store.opened("s1");
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SYSTEM_MONITORS_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    fold_monitor_transition(app.handle(), |s| s.set_status("s1", MonitorStatus::Stale));
+
+    assert_eq!(
+        store.get("s1").and_then(|e| e.status),
+        Some(MonitorStatus::Stale)
+    );
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1);
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view["monitors"]["s1"]["status"], json!("stale"));
+}
+
+/// The server-side stats fold reproduces the client `monitor.stats` route's store
+/// transition exactly — identical snapshots, so there is no drift or double count
+/// when the fold and the (still-present, additive) client mirror both run.
+#[test]
+fn server_side_stats_fold_matches_the_client_monitor_stats_route() {
+    let sample = stats("host-a", 42.0);
+
+    // (a) Server-side fold: the store method the fold applies at the source.
+    let server = seeded_store();
+    server.opened("s1");
+    server.stats("s1", sample.clone());
+
+    // (b) Client route: the `monitor.stats` intent through the production registry.
+    let client = seeded_store();
+    client.opened("s1");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SYSTEM_MONITORS_REGION, client.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(client.clone())));
+    let ack = dispatcher.dispatch(intent(
+        "monitor.stats",
+        json!({ "key": "s1", "stats": serde_json::to_value(&sample).unwrap() }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    assert_eq!(
+        server.snapshot(),
+        client.snapshot(),
+        "the server fold reproduces the client route's transition exactly"
+    );
+}
+
+/// A server-side close fold drops the entry from the shared store (the disconnect
+/// / cancel lifecycle edge), publishing the region diff.
+#[test]
+fn server_side_close_fold_drops_the_entry() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SystemMonitorStore::new());
+    store.open("s1", Some("host-a".to_string()), None);
+    store.opened("s1");
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    app.manage(projection);
+
+    fold_monitor_transition(app.handle(), |s| s.close("s1"));
+
+    assert!(
+        store.get("s1").is_none(),
+        "close dropped the entry server-side"
+    );
+}
+
+/// The fold is a best-effort no-op when no store / projection state is managed
+/// (e.g. a headless harness that never ran `setup()`) — it must not panic.
+#[test]
+fn server_side_fold_is_a_noop_without_managed_state() {
+    let app = tauri::test::mock_app();
+    // Nothing managed — reaching the assert without panicking is the contract.
+    fold_monitor_transition(app.handle(), |s| s.stats("s1", stats("h", 1.0)));
 }
