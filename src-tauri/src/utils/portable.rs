@@ -46,14 +46,30 @@ pub fn detect_app_mode() -> Result<AppMode> {
         .context("Failed to resolve executable directory")?;
 
     let base_dir = resolve_base_dir(exe_dir);
+    Ok(detect_mode_at(&base_dir))
+}
 
+/// Decide the [`AppMode`] for a given portable base directory.
+///
+/// Portable mode requires a `data/` **directory** or a `portable.marker`
+/// **file** next to the executable. The entry kind is checked deliberately
+/// (`is_dir`/`is_file`, not `exists`): a stray regular file named `data` — or a
+/// directory that merely happens to be named `portable.marker` — must not flip
+/// the app into portable mode. In particular the resolved `data` path is later
+/// `create_dir_all`-ed during setup, which fails when a non-directory already
+/// occupies it, so a false-positive here would panic the app at startup.
+///
+/// Split out from [`detect_app_mode`] (which resolves the base directory from
+/// the current executable) so the detection rule can be exercised directly
+/// against real temporary directories in tests.
+fn detect_mode_at(base_dir: &Path) -> AppMode {
     let marker_path = base_dir.join("portable.marker");
     let data_dir = base_dir.join("data");
 
-    if marker_path.exists() || data_dir.exists() {
-        Ok(AppMode::Portable { data_dir })
+    if marker_path.is_file() || data_dir.is_dir() {
+        AppMode::Portable { data_dir }
     } else {
-        Ok(AppMode::Installed)
+        AppMode::Installed
     }
 }
 
@@ -165,42 +181,51 @@ mod tests {
     }
 
     #[test]
-    fn detect_app_mode_portable_via_marker_file() {
+    fn detect_mode_at_portable_via_marker_file() {
         let dir = TempDir::new().unwrap();
-        let marker = dir.path().join("portable.marker");
-        std::fs::write(&marker, "").unwrap();
-        let data_dir = dir.path().join("data");
+        std::fs::write(dir.path().join("portable.marker"), "").unwrap();
 
-        // Simulate detection logic directly (can't override exe path in tests)
-        let base_dir = dir.path();
-        let detected_marker = base_dir.join("portable.marker");
-        let detected_data = base_dir.join("data");
-        assert!(detected_marker.exists() || detected_data.exists());
-        let mode = if detected_marker.exists() || detected_data.exists() {
-            AppMode::Portable { data_dir }
-        } else {
-            AppMode::Installed
-        };
+        let mode = detect_mode_at(dir.path());
         assert!(mode.is_portable());
+        assert_eq!(mode.data_dir(), Some(dir.path().join("data").as_path()));
     }
 
     #[test]
-    fn detect_app_mode_portable_via_data_directory() {
+    fn detect_mode_at_portable_via_data_directory() {
         let dir = TempDir::new().unwrap();
-        let data_dir = dir.path().join("data");
-        std::fs::create_dir_all(&data_dir).unwrap();
+        std::fs::create_dir_all(dir.path().join("data")).unwrap();
 
-        let base_dir = dir.path();
-        let detected_marker = base_dir.join("portable.marker");
-        let detected_data = base_dir.join("data");
-        let mode = if detected_marker.exists() || detected_data.exists() {
-            AppMode::Portable {
-                data_dir: detected_data,
-            }
-        } else {
-            AppMode::Installed
-        };
+        let mode = detect_mode_at(dir.path());
         assert!(mode.is_portable());
+        assert_eq!(mode.data_dir(), Some(dir.path().join("data").as_path()));
+    }
+
+    #[test]
+    fn detect_mode_at_installed_when_empty() {
+        let dir = TempDir::new().unwrap();
+        assert_eq!(detect_mode_at(dir.path()), AppMode::Installed);
+    }
+
+    #[test]
+    fn detect_mode_at_ignores_data_file_that_is_not_a_directory() {
+        // Regression: a stray *file* named `data` (not a `data/` directory) next
+        // to the executable must NOT trigger portable mode. If it did, the
+        // portable-mode setup would later `create_dir_all` that path, which fails
+        // when a non-directory occupies it, panicking the app at startup.
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("data"), "not a directory").unwrap();
+
+        assert_eq!(detect_mode_at(dir.path()), AppMode::Installed);
+    }
+
+    #[test]
+    fn detect_mode_at_ignores_marker_that_is_a_directory() {
+        // Regression: the portable marker is a *file*. A directory that merely
+        // happens to be named `portable.marker` must not trigger portable mode.
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("portable.marker")).unwrap();
+
+        assert_eq!(detect_mode_at(dir.path()), AppMode::Installed);
     }
 
     #[cfg(target_os = "macos")]
