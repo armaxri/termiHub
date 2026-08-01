@@ -87,7 +87,19 @@ class _Connection:
         self._next_id += 1
         future: asyncio.Future = self._loop.create_future()
         self._pending[request_id] = future
-        await self._ws.send(encode_request(request_id, command))
+        try:
+            await self._ws.send(encode_request(request_id, command))
+        except websockets.exceptions.ConnectionClosed as exc:
+            # The app closed the socket between our `_closed` check and this
+            # send — e.g. it was killed/restarted mid-flight. A clean close
+            # arrives as ConnectionClosedOK; surface it as the same BridgeError
+            # a drop produces (the reader's `_fail_all` sets it for in-flight
+            # requests) rather than leaking the raw websockets exception, which
+            # otherwise races the reader and made this window flaky (#2359).
+            self._pending.pop(request_id, None)
+            raise BridgeError(
+                command.get("action", ""), "bridge connection closed"
+            ) from exc
         try:
             return await asyncio.wait_for(future, timeout)
         except asyncio.TimeoutError as exc:
