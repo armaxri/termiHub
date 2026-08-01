@@ -28,14 +28,25 @@ pub struct ParsedSerialConfig {
 ///
 /// # Mapping rules
 ///
-/// | Field          | Input                        | Output                              |
+/// | Field          | Accepted input               | Output                              |
 /// |----------------|------------------------------|-------------------------------------|
-/// | `data_bits`    | 5, 6, 7, 8 (default 8)      | `CharSize::{Bits5..Bits8}`          |
-/// | `stop_bits`    | 1, 2 (default 1)             | `StopBits::{One,Two}`               |
-/// | `parity`       | "none","odd","even" (def.)   | `Parity::{None,Odd,Even}`           |
+/// | `data_bits`    | 5, 6, 7, 8                   | `CharSize::{Bits5..Bits8}`          |
+/// | `stop_bits`    | 1, 2                         | `StopBits::{One,Two}`               |
+/// | `parity`       | "none","odd","even"          | `Parity::{None,Odd,Even}`           |
 /// | `flow_control` | "none","hardware","software" | `FlowControl::{None,RtsCts,XonXoff}`|
+/// | `baud_rate`    | any non-zero value           | passed through unchanged            |
 ///
-/// Returns [`SessionError::InvalidConfig`] if the port name is empty.
+/// # Errors
+///
+/// Returns [`SessionError::InvalidConfig`] if the port name is empty, the baud
+/// rate is `0`, or any of `data_bits` / `stop_bits` / `parity` / `flow_control`
+/// is outside the accepted set above. Invalid framing parameters are **rejected,
+/// never silently coerced to a default** — this function is the last gate before
+/// a real serial port is opened (the desktop `connect()` path does not run the
+/// schema validator), and silently opening at the wrong framing (e.g. 8N1 when a
+/// corrupt or imported config asked for 7E2) would mis-frame every byte to the
+/// attached hardware with no error surfaced. Non-standard baud rates (e.g.
+/// `230400`) are accepted, since only `0` is invalid.
 pub fn parse_serial_config(config: &SerialConfig) -> Result<ParsedSerialConfig, SessionError> {
     if config.port.is_empty() {
         return Err(SessionError::InvalidConfig(
@@ -43,28 +54,54 @@ pub fn parse_serial_config(config: &SerialConfig) -> Result<ParsedSerialConfig, 
         ));
     }
 
+    if config.baud_rate == 0 {
+        return Err(SessionError::InvalidConfig(
+            "serial baud rate must be greater than 0".into(),
+        ));
+    }
+
     let char_size = match config.data_bits {
         5 => serial2::CharSize::Bits5,
         6 => serial2::CharSize::Bits6,
         7 => serial2::CharSize::Bits7,
-        _ => serial2::CharSize::Bits8,
+        8 => serial2::CharSize::Bits8,
+        other => {
+            return Err(SessionError::InvalidConfig(format!(
+                "serial data bits must be 5, 6, 7, or 8, got {other}"
+            )));
+        }
     };
 
     let stop_bits = match config.stop_bits {
+        1 => serial2::StopBits::One,
         2 => serial2::StopBits::Two,
-        _ => serial2::StopBits::One,
+        other => {
+            return Err(SessionError::InvalidConfig(format!(
+                "serial stop bits must be 1 or 2, got {other}"
+            )));
+        }
     };
 
     let parity = match config.parity.as_str() {
+        "none" => serial2::Parity::None,
         "odd" => serial2::Parity::Odd,
         "even" => serial2::Parity::Even,
-        _ => serial2::Parity::None,
+        other => {
+            return Err(SessionError::InvalidConfig(format!(
+                "serial parity must be \"none\", \"odd\", or \"even\", got {other:?}"
+            )));
+        }
     };
 
     let flow_control = match config.flow_control.as_str() {
+        "none" => serial2::FlowControl::None,
         "hardware" => serial2::FlowControl::RtsCts,
         "software" => serial2::FlowControl::XonXoff,
-        _ => serial2::FlowControl::None,
+        other => {
+            return Err(SessionError::InvalidConfig(format!(
+                "serial flow control must be \"none\", \"hardware\", or \"software\", got {other:?}"
+            )));
+        }
     };
 
     Ok(ParsedSerialConfig {
