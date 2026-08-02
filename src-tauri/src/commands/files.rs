@@ -515,7 +515,24 @@ pub async fn vscode_open_remote(
 ) -> Result<(), TerminalError> {
     // Clone the session browser Arc before spawning the background task.
     let browser = manager.get_session(&session_id)?;
+    open_remote_in_vscode(browser, remote_path, app_handle).await
+}
 
+/// Download `remote_path` from `browser` to a temp file, open it in VS Code with
+/// `--wait`, and re-upload on close, emitting a `vscode-edit-complete` event.
+///
+/// Shared by the standalone `SftpManager` path ([`vscode_open_remote`]) and the
+/// session/`ConnectionType` path
+/// ([`session_vscode_open_remote`](crate::commands::session::session_vscode_open_remote))
+/// so both drive the identical download → edit → re-upload flow on the one core
+/// [`SftpFileBrowser`], differing only in how they resolve the browser handle
+/// (part of the #2307 SFTP-session convergence). The initial download is awaited
+/// here; the `--wait` + re-upload run in a spawned background task.
+pub(crate) async fn open_remote_in_vscode(
+    browser: std::sync::Arc<SftpFileBrowser>,
+    remote_path: String,
+    app_handle: tauri::AppHandle,
+) -> Result<(), TerminalError> {
     // Extract the filename from the remote path
     let filename = std::path::Path::new(&remote_path)
         .file_name()
