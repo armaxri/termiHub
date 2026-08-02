@@ -54,19 +54,24 @@ function scheduleOwnersRefresh(refresh: () => void): void {
 
 /**
  * Hook that listens for `transfer-progress` events from the backend (#1245) and
- * folds them into the store's `transfers` map (#1247), driving the Open
+ * folds them into the store's transient `transfers` map (#1247), driving the Open
  * Connections "Transfers" section, the file-browser footer, and the status-bar
  * aggregate. On a terminal phase it also raises the one success/error toast for
  * the transfer (#1286).
  *
+ * The **Transfer Queue panel** slice is no longer folded here: since #2229 the
+ * shared `transfers` projection region is authoritative and the backend folds the
+ * same `transfer-progress` stream into it **at the source** (#2387), so the queue
+ * rows arrive via the region diff without any client-side fold.
+ *
  * It also keeps the backend `session → window` ownership map mirrored in the
  * store fresh (#1964): once on mount, and coalesced while transfers flow. That
  * lets a window learn which of its sibling windows owns a session so a broadcast
- * transfer is folded only in the owning window, even without a tab move.
+ * transfer is folded (into the transient `transfers` map) only in the owning
+ * window, even without a tab move.
  */
 export function useTransferEvents(): void {
   const applyTransferProgress = useAppStore((s) => s.applyTransferProgress);
-  const applyTransferProgressToQueue = useAppStore((s) => s.applyTransferProgressToQueue);
   const refreshSessionOwners = useAppStore((s) => s.refreshSessionOwners);
 
   useEffect(() => {
@@ -90,11 +95,11 @@ export function useTransferEvents(): void {
         // Keep the ownership map fresh while transfers flow (coalesced) so a
         // session claimed by a sibling window is scoped out here (#1964).
         scheduleOwnersRefresh(() => void refreshSessionOwners());
-        // Feed both consumers from the single `transfer-progress` subscription:
-        // the transient #1247 `transfers` map (clears terminal rows) and the
-        // persistent #1337 Transfer Queue panel (retains terminal rows).
+        // Fold the event into the transient #1247 `transfers` map (clears
+        // terminal rows) that drives Open Connections / the footer / the status
+        // bar. The persistent #1337 Transfer Queue panel is fed server-side into
+        // the authoritative `transfers` region (#2229 / #2387) — no fold here.
         applyTransferProgress(progress);
-        applyTransferProgressToQueue(progress);
         toastTerminalPhase(progress);
       });
     };
@@ -105,5 +110,5 @@ export function useTransferEvents(): void {
       unlisten?.();
       unlistenOwnership?.();
     };
-  }, [applyTransferProgress, applyTransferProgressToQueue, refreshSessionOwners]);
+  }, [applyTransferProgress, refreshSessionOwners]);
 }

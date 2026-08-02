@@ -9,7 +9,6 @@
 
 import type { ConnectionConfig, TabContentType } from "@/types/terminal";
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
-import type { TransferEntry } from "@/types/transfer";
 
 /** Runtime label of the primary application window. */
 export const MAIN_WINDOW_LABEL = "main";
@@ -45,19 +44,6 @@ export interface HandoffTab {
   persistentConnectionId?: string;
   connectionId?: string;
   spawned?: boolean;
-  /**
-   * Transfer Queue rows (SFTP/FTP) that belong to the moved tab's session(s),
-   * carried so in-flight and history transfers **follow the tab** across the
-   * window boundary rather than being orphaned in the source window (#1951).
-   *
-   * Not part of the `TerminalTab` view-model — it rides in this opaque
-   * frontend-owned hand-off envelope (the backend only ferries `tab`), which is
-   * the concept's designated extension seam. The destination seeds these into
-   * its own per-window `transferQueue` on hydrate; the source removes them and
-   * marks the session ids "released" so ongoing broadcast progress events don't
-   * re-adopt the moved rows.
-   */
-  transfers?: TransferEntry[];
 }
 
 /**
