@@ -565,17 +565,22 @@ pub async fn session_get_capabilities(
 #[tauri::command]
 pub async fn session_monitoring_open(
     session_id: String,
+    host: Option<String>,
     interval_ms: Option<u64>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     info!(session_id, interval_ms = ?interval_ms, "Starting session monitoring");
-    // Server-authority fold (#2376): reflect the connect outcome into the shared
-    // `SystemMonitorStore` at the source. Additive — the client `monitor.opened`
-    // / `monitor.openFailed` mirror stays in place, so no user-facing change. The
-    // entry itself is created client-side (`monitor.open`, which carries the UI
-    // `host` label the command does not have); making the server own entry
-    // creation is the remaining #2224 inversion step.
+    // Server-authority (#2224): the server now owns monitor entry creation. Fold
+    // `open` at the source with the UI-only `host` label the client threads
+    // through, so the `connecting` entry appears in the shared `SystemMonitorStore`
+    // (and its `system-monitors` region) before the possibly-slow provider
+    // subscription, priming any cached stats. The connect outcome then settles the
+    // same entry `opened`/`openFailed`. The region is now authoritative — the
+    // frontend no longer creates the entry client-side.
+    fold_monitor_transition(&app_handle, |store| {
+        store.open(&session_id, host.clone(), interval_ms);
+    });
     match manager
         .start_session_monitoring(&session_id, interval_ms, app_handle.clone())
         .await
