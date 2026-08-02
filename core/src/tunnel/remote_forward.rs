@@ -203,17 +203,16 @@ mod tests {
         tokio::spawn(async move {
             while let Ok((mut sock, _)) = listener.accept().await {
                 tokio::spawn(async move {
-                    let mut buf = [0u8; 4096];
-                    loop {
-                        match sock.read(&mut buf).await {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => {
-                                if sock.write_all(&buf[..n]).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    // Echo every byte back until the relay half-closes, then shut
+                    // our own write half down cleanly. Draining to EOF before
+                    // closing (rather than dropping the socket abruptly) makes the
+                    // teardown a graceful FIN instead of a windows-loopback RST —
+                    // an RST made the relay's `copy_bidirectional` return `Err`,
+                    // which skipped the stats update and flaked the byte-count
+                    // assertion below on windows CI (#2395).
+                    let (mut rd, mut wr) = sock.split();
+                    let _ = tokio::io::copy(&mut rd, &mut wr).await;
+                    let _ = wr.shutdown().await;
                 });
             }
         });
@@ -241,13 +240,21 @@ mod tests {
         });
 
         peer.write_all(b"hello").await.expect("write to channel");
-        let mut echoed = [0u8; 5];
-        peer.read_exact(&mut echoed).await.expect("read echo");
+        // Half-close the channel's write side so `copy_bidirectional` sees EOF on
+        // the channel->local direction; the local target then closes its end,
+        // ending the copy so the byte counts are recorded. Draining the echo with
+        // `read_to_end` (instead of an exact read then an immediate `drop(peer)`)
+        // lets the relay finish its own shutdown gracefully, so the copy returns
+        // `Ok` deterministically rather than racing into an `Err` that would drop
+        // the stats — the windows flake fixed here (#2395).
+        peer.shutdown().await.expect("half-close channel");
+
+        let mut echoed = Vec::new();
+        peer.read_to_end(&mut echoed).await.expect("read echo");
         assert_eq!(&echoed, b"hello", "channel <-> local relay round-trips");
 
-        peer.shutdown().await.expect("half-close channel");
-        drop(peer);
-
+        // `peer` stays alive until after the relay task is joined; dropping it
+        // early raced the relay's channel shutdown.
         tokio::time::timeout(Duration::from_secs(3), relay)
             .await
             .expect("relay finished")
