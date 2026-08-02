@@ -532,6 +532,29 @@ pub async fn session_upload(
     Ok(transfer_id)
 }
 
+/// Open a remote file in VS Code over a session's SFTP connection: download,
+/// open with `--wait`, re-upload on close.
+///
+/// Session-path mirror of the standalone `vscode_open_remote` — the one
+/// `sftp_*`-only command #2312 left without a session equivalent — so an SSH tab
+/// can edit a remote file in VS Code straight from its `ConnectionType` session,
+/// with no separate `SftpManager` session. Resolves the owned
+/// `Arc<SftpFileBrowser>` from the session path and reuses the exact shared
+/// download → edit → re-upload flow. Only succeeds for an SFTP-backed session;
+/// other backends return a "not supported" error. Completes the step-A backend
+/// parity of the #2307 convergence.
+#[tauri::command]
+pub async fn session_vscode_open_remote(
+    session_id: String,
+    remote_path: String,
+    manager: State<'_, SessionManager>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), TerminalError> {
+    debug!(session_id, remote_path, "Session SFTP open in VS Code");
+    let browser = manager.sftp_transfer_browser(&session_id).await?;
+    crate::commands::files::open_remote_in_vscode(browser, remote_path, app_handle).await
+}
+
 // --- Session-based monitoring commands ---
 
 /// Capabilities of an active session exposed to the frontend.

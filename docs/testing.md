@@ -2237,6 +2237,25 @@ Raspberry Pi). See PR #1508 (#1329).
 8. Confirm the sudo password is never visible in the LogViewer (elevated-save DEBUG
    lines name the host/path only) and never written to workspace/tab state.
 
+### Open remote file in VS Code over the session path (#2307)
+
+Verifies the session/`ConnectionType`-scoped `session_vscode_open_remote`
+command drives the same download → edit (`--wait`) → re-upload flow as the
+standalone `vscode_open_remote`. Both now share the `open_remote_in_vscode`
+helper, differing only in how they resolve the core `SftpFileBrowser`; the
+shared flow is already exercised by the guided-manual harness test
+`test_open_in_vscode_sftp` (`tests/system/tests/test_external_app.py`), and the
+session resolver's error shapes by `session_sftp_ops_error_*` unit tests. This
+manual pass covers the session route end-to-end and is exercisable once the
+frontend cut (#2313, step B) routes SSH remote-edit through the session path.
+
+1. On a remote SSH/SFTP connection with the VS Code CLI (`code`) available,
+   browse to a remote file, right-click → **Open in VS Code**.
+2. Confirm VS Code opens the downloaded file; edit and save it, then close the
+   VS Code tab.
+3. Confirm the change is re-uploaded to the host (`cat` it in a shell) and
+   termiHub is still running (no crash — regression #828).
+
 ### File editor SFTP-only read-only fallback (#1330)
 
 Verifies the graceful fallback for a read-only file on an SFTP-only / relayed
