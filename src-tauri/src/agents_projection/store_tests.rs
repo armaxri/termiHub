@@ -286,6 +286,131 @@ fn update_folder_replaces_by_id() {
 }
 
 #[test]
+fn create_folder_upserts_by_id_so_it_is_idempotent() {
+    // The server-side fold of the `create_agent_folder` RPC outcome (#2388) and
+    // the additive client `agent.createFolder` mirror both apply `create_folder`
+    // with the same server-assigned id; upsert-by-id must converge on one entry.
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+
+    store.create_folder("a1", folder("f1"));
+    store.create_folder("a1", folder("f1"));
+    assert_eq!(
+        store.folders_of("a1").len(),
+        1,
+        "duplicate id does not append"
+    );
+
+    // A distinct id still appends.
+    store.create_folder("a1", folder("f2"));
+    assert_eq!(store.folders_of("a1").len(), 2);
+
+    // Re-creating with the same id replaces (last-write-wins).
+    let mut renamed = folder("f1");
+    renamed.name = "renamed".to_string();
+    store.create_folder("a1", renamed);
+    let f1 = store
+        .folders_of("a1")
+        .into_iter()
+        .find(|f| f.id == "f1")
+        .unwrap();
+    assert_eq!(f1.name, "renamed");
+    assert_eq!(store.folders_of("a1").len(), 2, "still no duplicate");
+}
+
+#[test]
+fn set_sessions_replaces_only_the_sessions_slice() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    store.refresh(
+        "a1",
+        vec![session("s1")],
+        vec![definition("d1", None)],
+        vec![folder("f1")],
+    );
+
+    store.set_sessions("a1", vec![session("s2"), session("s3")]);
+
+    let view = store.snapshot();
+    let ids: Vec<&str> = view["sessions"]["a1"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["sessionId"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["s2", "s3"], "sessions replaced");
+    // Definitions and folders are untouched (distinct from `refresh`).
+    assert_eq!(store.definitions_of("a1").len(), 1);
+    assert_eq!(store.folders_of("a1").len(), 1);
+}
+
+#[test]
+fn remove_session_drops_one_session_by_id_and_is_idempotent() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    store.set_sessions("a1", vec![session("s1"), session("s2")]);
+
+    store.remove_session("a1", "s1");
+    let remaining: Vec<String> = store.snapshot()["sessions"]["a1"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["sessionId"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(remaining, vec!["s2".to_string()]);
+
+    // Removing again / an unknown id is a no-op.
+    store.remove_session("a1", "s1");
+    store.remove_session("a1", "ghost");
+    assert_eq!(
+        store.snapshot()["sessions"]["a1"].as_array().unwrap().len(),
+        1
+    );
+}
+
+#[test]
+fn set_definitions_and_set_folders_replace_only_their_slice() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    store.refresh(
+        "a1",
+        vec![session("s1")],
+        vec![definition("d1", None)],
+        vec![folder("f1")],
+    );
+
+    store.set_definitions("a1", vec![definition("d2", None), definition("d3", None)]);
+    store.set_folders("a1", vec![folder("f2")]);
+
+    let def_ids: Vec<String> = store
+        .definitions_of("a1")
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    assert_eq!(def_ids, vec!["d2".to_string(), "d3".to_string()]);
+    let folder_ids: Vec<String> = store.folders_of("a1").into_iter().map(|f| f.id).collect();
+    assert_eq!(folder_ids, vec!["f2".to_string()]);
+    // The live-session slice is untouched.
+    assert_eq!(
+        store.snapshot()["sessions"]["a1"].as_array().unwrap().len(),
+        1
+    );
+}
+
+#[test]
+fn per_slice_setters_on_an_unknown_agent_are_no_ops() {
+    let store = AgentsStore::new();
+    store.set_sessions("ghost", vec![session("s1")]);
+    store.set_definitions("ghost", vec![definition("d1", None)]);
+    store.set_folders("ghost", vec![folder("f1")]);
+    store.remove_session("ghost", "s1");
+    assert_eq!(
+        store.snapshot(),
+        json!({ "agents": [], "sessions": {}, "definitions": {}, "folders": {} })
+    );
+}
+
+#[test]
 fn transitions_on_an_unknown_agent_are_no_ops() {
     let store = AgentsStore::new();
     // None of these should panic or create an agent / sub-state.

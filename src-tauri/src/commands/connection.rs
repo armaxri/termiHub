@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{AppHandle, State};
 use tracing::{debug, info};
 
 use crate::connection::config::{
@@ -68,12 +68,17 @@ pub fn load_connections_and_folders(
 #[tauri::command]
 pub fn save_connection(
     connection: SavedConnection,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<String, String> {
     debug!(id = %connection.id, name = %connection.name, "Saving connection");
-    manager
+    let persisted_id = manager
         .save_connection_routed(connection)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Server-authority fold (#2389): reflect the persisted tree into the shadow
+    // `ConnectionsStore` at the source. Additive; no user-facing change.
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(persisted_id)
 }
 
 /// Delete a connection by ID, optionally from an external file.
@@ -81,12 +86,15 @@ pub fn save_connection(
 pub fn delete_connection(
     id: String,
     source_file: Option<String>,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
     info!(id, ?source_file, "Deleting connection");
     manager
         .delete_connection_routed(&id, source_file.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(())
 }
 
 /// Move a connection between storage files (main <-> external).
@@ -95,6 +103,7 @@ pub fn move_connection_to_file(
     connection_id: String,
     current_source: Option<String>,
     target_source: Option<String>,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<SavedConnection, String> {
     info!(
@@ -103,24 +112,39 @@ pub fn move_connection_to_file(
         ?target_source,
         "Moving connection to file"
     );
-    manager
+    let moved = manager
         .move_connection_to_file(&connection_id, current_source.as_deref(), target_source)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // A move into/out of the main store changes the persisted tree; an
+    // external↔external move leaves it untouched and coalesces to no diff.
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(moved)
 }
 
 /// Save (add or update) a folder.
 #[tauri::command]
 pub fn save_folder(
     folder: ConnectionFolder,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
-    manager.save_folder(folder).map_err(|e| e.to_string())
+    manager.save_folder(folder).map_err(|e| e.to_string())?;
+    // Covers `addFolder` and the `toggleFolder`-persist edge (the frontend
+    // persists a folder's `isExpanded` flip via `save_folder`).
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(())
 }
 
 /// Delete a folder by ID.
 #[tauri::command]
-pub fn delete_folder(id: String, manager: State<'_, ConnectionManager>) -> Result<(), String> {
-    manager.delete_folder(&id).map_err(|e| e.to_string())
+pub fn delete_folder(
+    id: String,
+    app: AppHandle,
+    manager: State<'_, ConnectionManager>,
+) -> Result<(), String> {
+    manager.delete_folder(&id).map_err(|e| e.to_string())?;
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(())
 }
 
 /// Export all connections as a JSON string.
@@ -133,9 +157,12 @@ pub fn export_connections(manager: State<'_, ConnectionManager>) -> Result<Strin
 #[tauri::command]
 pub fn import_connections(
     json: String,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<usize, String> {
-    manager.import_json(&json).map_err(|e| e.to_string())
+    let count = manager.import_json(&json).map_err(|e| e.to_string())?;
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(count)
 }
 
 /// Get the current application settings.
@@ -250,15 +277,18 @@ pub fn preview_import(json: String) -> Result<ImportPreview, String> {
 pub fn import_connections_with_credentials(
     json: String,
     import_password: Option<String>,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<ImportResult, String> {
     info!(
         "Importing connections (with_credentials={})",
         import_password.is_some()
     );
-    manager
+    let result = manager
         .import_encrypted_json(&json, import_password.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(result)
 }
 
 /// Drain and return any recovery warnings collected during app startup.

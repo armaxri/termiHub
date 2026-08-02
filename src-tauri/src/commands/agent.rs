@@ -4,6 +4,11 @@ use serde_json::Value;
 use tauri::State;
 use tracing::{debug, info, warn};
 
+use crate::agents_projection::projection::fold_agent_transition;
+use crate::agents_projection::store::{
+    AgentDefinition as StoreAgentDefinition, AgentFolder as StoreAgentFolder,
+    AgentSession as StoreAgentSession,
+};
 use crate::connection::config::AgentSettings;
 use crate::connection::manager::ConnectionManager;
 use crate::session::manager::SessionManager;
@@ -15,6 +20,54 @@ use crate::terminal::agent_manager::{
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult, RemoteArchInfo};
 use crate::terminal::backend::{RemoteAgentConfig, UpdateStrategy};
+
+// ── Server-authority projection folds (#2388) ────────────────────────────────
+//
+// The definition/folder/session CRUD commands below fold their RPC outcome into
+// the shared `AgentsStore` **at the source** (see `fold_agent_transition`), so the
+// `agents` projection region is fed server-side rather than only by the client
+// `agent.*` mirror. Additive: every command still returns its value to the
+// frontend unchanged, and the transitions are idempotent so running alongside the
+// (still-present) client mirror converges without drift. The `Info` wire types
+// and the store types share the same camelCase shape one-to-one; these helpers
+// convert without a serde round-trip.
+
+/// Convert an agent definition RPC value into the store's definition shape.
+fn to_store_definition(info: &AgentDefinitionInfo) -> StoreAgentDefinition {
+    StoreAgentDefinition {
+        id: info.id.clone(),
+        name: info.name.clone(),
+        session_type: info.session_type.clone(),
+        config: info.config.clone(),
+        persistent: info.persistent,
+        folder_id: info.folder_id.clone(),
+        terminal_options: info.terminal_options.clone(),
+        icon: info.icon.clone(),
+        source_file: info.source_file.clone(),
+    }
+}
+
+/// Convert an agent folder RPC value into the store's folder shape.
+fn to_store_folder(info: &AgentFolderInfo) -> StoreAgentFolder {
+    StoreAgentFolder {
+        id: info.id.clone(),
+        name: info.name.clone(),
+        parent_id: info.parent_id.clone(),
+        is_expanded: info.is_expanded,
+    }
+}
+
+/// Convert an agent session RPC value into the store's session shape.
+fn to_store_session(info: &AgentSessionInfo) -> StoreAgentSession {
+    StoreAgentSession {
+        session_id: info.session_id.clone(),
+        title: info.title.clone(),
+        session_type: info.session_type.clone(),
+        status: info.status.clone(),
+        attached: info.attached,
+        definition_id: info.definition_id.clone(),
+    }
+}
 
 /// Connect to a remote agent via SSH.
 ///
@@ -294,17 +347,26 @@ pub async fn request_agent_update(
 pub async fn close_agent_session(
     agent_id: String,
     session_id: String,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<(), String> {
     info!(agent_id, session_id, "Closing session on remote agent");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .close_session(&agent_id, &session_id)
-            .map_err(|e| e.to_string())
+    let aid = agent_id.clone();
+    let sid = session_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        manager.close_session(&aid, &sid).map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): drop the closed session from the shared store
+    // at the source.
+    if result.is_ok() {
+        fold_agent_transition(&app_handle, |store| {
+            store.remove_session(&agent_id, &session_id);
+        });
+    }
+    result
 }
 
 /// List sessions on a remote agent.
@@ -313,15 +375,24 @@ pub async fn close_agent_session(
 #[tauri::command]
 pub async fn list_agent_sessions(
     agent_id: String,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<Vec<AgentSessionInfo>, String> {
     debug!(agent_id, "Listing agent sessions");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        manager.list_sessions(&agent_id).map_err(|e| e.to_string())
+    let aid = agent_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        manager.list_sessions(&aid).map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): mirror the live-session snapshot into the
+    // shared store at the source.
+    if let Ok(sessions) = &result {
+        let stored = sessions.iter().map(to_store_session).collect();
+        fold_agent_transition(&app_handle, |store| store.set_sessions(&agent_id, stored));
+    }
+    result
 }
 
 /// List saved session definitions on a remote agent.
@@ -330,17 +401,26 @@ pub async fn list_agent_sessions(
 #[tauri::command]
 pub async fn list_agent_definitions(
     agent_id: String,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<Vec<AgentDefinitionInfo>, String> {
     debug!(agent_id, "Listing agent definitions");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .list_definitions(&agent_id)
-            .map_err(|e| e.to_string())
+    let aid = agent_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        manager.list_definitions(&aid).map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): mirror the saved-definition snapshot into the
+    // shared store at the source.
+    if let Ok(definitions) = &result {
+        let stored = definitions.iter().map(to_store_definition).collect();
+        fold_agent_transition(&app_handle, |store| {
+            store.set_definitions(&agent_id, stored)
+        });
+    }
+    result
 }
 
 /// Save a session definition on a remote agent.
@@ -350,17 +430,28 @@ pub async fn list_agent_definitions(
 pub async fn save_agent_definition(
     agent_id: String,
     definition: Value,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentDefinitionInfo, String> {
     debug!(agent_id, "Saving agent definition");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let aid = agent_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         manager
-            .save_definition(&agent_id, definition)
+            .save_definition(&aid, definition)
             .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): upsert the saved definition into the shared
+    // store at the source.
+    if let Ok(info) = &result {
+        let stored = to_store_definition(info);
+        fold_agent_transition(&app_handle, |store| {
+            store.save_definition(&agent_id, stored)
+        });
+    }
+    result
 }
 
 /// Delete a session definition on a remote agent.
@@ -370,17 +461,28 @@ pub async fn save_agent_definition(
 pub async fn delete_agent_definition(
     agent_id: String,
     definition_id: String,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<(), String> {
     info!(agent_id, definition_id, "Deleting agent definition");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let aid = agent_id.clone();
+    let did = definition_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         manager
-            .delete_definition(&agent_id, &definition_id)
+            .delete_definition(&aid, &did)
             .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): drop the deleted definition from the shared
+    // store at the source.
+    if result.is_ok() {
+        fold_agent_transition(&app_handle, |store| {
+            store.delete_definition(&agent_id, &definition_id);
+        });
+    }
+    result
 }
 
 /// List saved connections and folders on a remote agent.
@@ -389,17 +491,31 @@ pub async fn delete_agent_definition(
 #[tauri::command]
 pub async fn list_agent_connections(
     agent_id: String,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentConnectionsData, String> {
     debug!(agent_id, "Listing agent connections and folders");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let aid = agent_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         manager
-            .list_connections_and_folders(&agent_id)
+            .list_connections_and_folders(&aid)
             .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): mirror the saved connections + folders
+    // snapshot into the shared store at the source (definitions and folders slices
+    // only; the live-session slice is left to `list_agent_sessions`).
+    if let Ok(data) = &result {
+        let definitions = data.connections.iter().map(to_store_definition).collect();
+        let folders = data.folders.iter().map(to_store_folder).collect();
+        fold_agent_transition(&app_handle, |store| {
+            store.set_definitions(&agent_id, definitions);
+            store.set_folders(&agent_id, folders);
+        });
+    }
+    result
 }
 
 /// Update a saved connection definition on a remote agent.
@@ -409,17 +525,28 @@ pub async fn list_agent_connections(
 pub async fn update_agent_definition(
     agent_id: String,
     params: Value,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentDefinitionInfo, String> {
     debug!(agent_id, "Updating agent definition");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let aid = agent_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         manager
-            .update_definition(&agent_id, params)
+            .update_definition(&aid, params)
             .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): replace the updated definition in the shared
+    // store at the source.
+    if let Ok(info) = &result {
+        let stored = to_store_definition(info);
+        fold_agent_transition(&app_handle, |store| {
+            store.update_definition(&agent_id, stored)
+        });
+    }
+    result
 }
 
 /// Create a folder on a remote agent.
@@ -430,17 +557,26 @@ pub async fn create_agent_folder(
     agent_id: String,
     name: String,
     parent_id: Option<String>,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentFolderInfo, String> {
     debug!(agent_id, %name, "Creating agent folder");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let aid = agent_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         manager
-            .create_folder(&agent_id, &name, parent_id.as_deref())
+            .create_folder(&aid, &name, parent_id.as_deref())
             .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): add the new folder to the shared store at the
+    // source (upsert by id, so the additive client mirror does not duplicate it).
+    if let Ok(info) = &result {
+        let stored = to_store_folder(info);
+        fold_agent_transition(&app_handle, |store| store.create_folder(&agent_id, stored));
+    }
+    result
 }
 
 /// Update a folder on a remote agent.
@@ -450,17 +586,26 @@ pub async fn create_agent_folder(
 pub async fn update_agent_folder(
     agent_id: String,
     params: Value,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentFolderInfo, String> {
     debug!(agent_id, "Updating agent folder");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let aid = agent_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         manager
-            .update_folder(&agent_id, params)
+            .update_folder(&aid, params)
             .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): replace the updated folder in the shared store
+    // at the source.
+    if let Ok(info) = &result {
+        let stored = to_store_folder(info);
+        fold_agent_transition(&app_handle, |store| store.update_folder(&agent_id, stored));
+    }
+    result
 }
 
 /// Delete a folder on a remote agent.
@@ -470,17 +615,27 @@ pub async fn update_agent_folder(
 pub async fn delete_agent_folder(
     agent_id: String,
     folder_id: String,
+    app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<(), String> {
     info!(agent_id, folder_id, "Deleting agent folder");
     let manager = agent_manager.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .delete_folder(&agent_id, &folder_id)
-            .map_err(|e| e.to_string())
+    let aid = agent_id.clone();
+    let fid = folder_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        manager.delete_folder(&aid, &fid).map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(e.to_string()));
+    // Server-authority fold (#2388): drop the deleted folder from the shared store
+    // at the source (reparenting its child definitions to the root, as the store's
+    // `delete_folder` does).
+    if result.is_ok() {
+        fold_agent_transition(&app_handle, |store| {
+            store.delete_folder(&agent_id, &folder_id);
+        });
+    }
+    result
 }
 
 /// Detect the remote host's architecture before the setup dialog opens.

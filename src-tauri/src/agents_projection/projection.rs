@@ -64,6 +64,7 @@ use tauri::{AppHandle, Manager};
 use crate::agents_projection::store::{
     AgentConnectionState, AgentDefinition, AgentEntry, AgentFolder, AgentSession, AgentsStore,
 };
+use crate::commands::projection::ProjectionState;
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 
 /// The projection region id for the agents domain (shared, per Open Design
@@ -80,6 +81,43 @@ pub fn publish_agents(projector: &Projector, store: &AgentsStore) -> Vec<Produce
             version,
         }],
         None => Vec::new(),
+    }
+}
+
+/// Fold an agent transition into the managed [`AgentsStore`] **server-side** and
+/// fan the resulting `agents` region diff out to every subscriber (#2388,
+/// prerequisite for #2226).
+///
+/// This is the server-authority counterpart to [`register_agent_intents`]: the
+/// same store transitions the frontend currently mirrors via `agent.*` intents
+/// are applied here **at the source** — the instant the backend produces the
+/// outcome (a connection-state change emitted by the agent manager, or a
+/// definition/folder/session CRUD result returned by an agent RPC command) — so
+/// the store is fed server-side, with no client round-trip required for it to be
+/// correct. It is **additive**: the existing Tauri event emission / RPC return
+/// and the client `agent.*` mirror stay in place, and the render-cut seed
+/// (`agent.replace` on the frontend) keeps the region a faithful mirror of
+/// `appStore`, so this changes no user-facing behavior. Removing the now-redundant
+/// client re-dispatch is the later #2226 render/mutation inversion.
+///
+/// Best-effort and non-fatal: if the store or the projection state is not managed
+/// (e.g. a headless unit-test app that never ran `setup()`), the fold is skipped
+/// rather than erroring — the client mirror still drives the region. The `apply`
+/// closure runs to completion synchronously before the publish, so the store lock
+/// is never held across an await. The per-agent transitions are themselves no-ops
+/// for an unknown agent id (entry creation stays client-side, carrying the UI
+/// fields the backend command does not receive — the analog of the
+/// system-monitor bridge's client-owned `monitor.open`).
+pub fn fold_agent_transition<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    apply: impl FnOnce(&AgentsStore),
+) {
+    let Some(store) = app_handle.try_state::<Arc<AgentsStore>>() else {
+        return;
+    };
+    apply(store.inner().as_ref());
+    if let Some(projection) = app_handle.try_state::<ProjectionState>() {
+        publish_agents(&projection.projector, store.inner().as_ref());
     }
 }
 
