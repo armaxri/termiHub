@@ -610,6 +610,217 @@ fn server_side_fold_is_a_noop_without_managed_state() {
     fold_connections_from_manager(app.handle());
 }
 
+// ── External-file overlay reflected in the region (#2394) ─────────────────────
+//
+// The frontend `appStore` connections slice holds the main persisted store **and**
+// the read-only external-file overlay (`reloadExternalConnections` /
+// `load_connections_and_folders` flatten `load_external_sources()` into the list;
+// each external row carries `sourceFile`). These prove the server-side fold
+// reflects that **same unified set** into the region, so #2225's render cut is
+// non-lossy for external-file connections. `fold_connections_from_manager` now
+// reflects `ConnectionManager::load_unified_view` (main + external), not the main
+// store alone.
+
+/// Write `connections` into a fresh enabled external file inside `dir` and point
+/// the manager's settings at it. Returns the file path (kept alive by the caller's
+/// `TempDir`).
+fn enable_external_file(
+    manager: &ConnectionManager,
+    dir: &std::path::Path,
+    file_name: &str,
+    connections: Vec<SavedConnection>,
+) -> String {
+    let path = dir.join(file_name);
+    let path_str = path.to_str().unwrap().to_string();
+    crate::connection::manager::save_external_file(
+        &path_str,
+        "Shared",
+        vec![],
+        connections,
+        &crate::credential::NullStore,
+    )
+    .unwrap();
+    manager
+        .save_settings(crate::connection::settings::AppSettings {
+            external_connection_files: vec![crate::connection::settings::ExternalFileConfig {
+                path: path_str.clone(),
+                enabled: true,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+    path_str
+}
+
+/// The fold reflects the unified main + external view: a main-store connection and
+/// an enabled external file both land in the `connections` region, the external
+/// row carrying its `sourceFile`. One diff fans out and the client cache converges
+/// on the unified authority — with no `connection.*` client dispatch.
+#[test]
+fn server_side_fold_reflects_external_file_connections_in_the_region() {
+    let (manager, dir) = test_manager();
+
+    // A main-store connection persisted through the manager.
+    manager
+        .save_connection(connection("Main", "Main", None))
+        .expect("manager persists the main connection");
+
+    // An enabled external file carrying one connection on disk.
+    let ext_path = enable_external_file(
+        &manager,
+        dir.path(),
+        "shared.json",
+        vec![connection("Ext", "Ext", None)],
+    );
+
+    let (app, store, sink, mut cache) = wire_app(manager);
+
+    // Fold the unified view server-side — no `connection.*` intent is dispatched.
+    fold_connections_from_manager(app.handle());
+
+    // The region carries BOTH connections; the external one carries its
+    // `sourceFile`, the main one does not.
+    assert_eq!(
+        store.connection_count(),
+        2,
+        "main store + external overlay both reflected in the region"
+    );
+    let conns = store.snapshot()["connections"].as_array().unwrap().clone();
+    let external = conns
+        .iter()
+        .find(|c| c["sourceFile"] == json!(ext_path))
+        .expect("the external connection is present, tagged with its sourceFile");
+    assert_eq!(external["name"], json!("Ext"));
+    assert!(
+        conns
+            .iter()
+            .any(|c| c["name"] == json!("Main") && c["sourceFile"].is_null()),
+        "the main connection is present with no sourceFile"
+    );
+
+    // Exactly one diff fanned out; the client cache converges on the unified tree.
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view,
+        store.snapshot(),
+        "cache converges on the unified (main + external) authority"
+    );
+}
+
+/// A `reload_external_connections`-shaped change (toggling / editing the external
+/// set) re-reflects the overlay: enabling a second external file and re-folding
+/// adds its connection to the region.
+#[test]
+fn server_side_fold_repicks_up_external_changes() {
+    let (manager, dir) = test_manager();
+    let ext_path = enable_external_file(
+        &manager,
+        dir.path(),
+        "one.json",
+        vec![connection("One", "One", None)],
+    );
+
+    let (app, store, sink, _cache) = wire_app(manager);
+    fold_connections_from_manager(app.handle());
+    assert_eq!(
+        store.connection_count(),
+        1,
+        "one external connection reflected"
+    );
+
+    // Enable a *second* external file (mirrors editing the enabled set, then the
+    // frontend's `reloadExternalConnections`, which now folds server-side).
+    let dir2 = tempfile::tempdir().unwrap();
+    let ext_path_2 = dir2.path().join("two.json");
+    let ext_path_2_str = ext_path_2.to_str().unwrap().to_string();
+    crate::connection::manager::save_external_file(
+        &ext_path_2_str,
+        "Two",
+        vec![],
+        vec![connection("Two", "Two", None)],
+        &crate::credential::NullStore,
+    )
+    .unwrap();
+    app.state::<ConnectionManager>()
+        .save_settings(crate::connection::settings::AppSettings {
+            external_connection_files: vec![
+                crate::connection::settings::ExternalFileConfig {
+                    path: ext_path.clone(),
+                    enabled: true,
+                },
+                crate::connection::settings::ExternalFileConfig {
+                    path: ext_path_2_str.clone(),
+                    enabled: true,
+                },
+            ],
+            ..Default::default()
+        })
+        .unwrap();
+
+    fold_connections_from_manager(app.handle());
+    assert_eq!(
+        store.connection_count(),
+        2,
+        "both external files now reflected after the reload-shaped fold"
+    );
+    let conns = store.snapshot()["connections"].as_array().unwrap().clone();
+    assert!(conns.iter().any(|c| c["sourceFile"] == json!(ext_path)));
+    assert!(conns
+        .iter()
+        .any(|c| c["sourceFile"] == json!(ext_path_2_str)));
+    assert_eq!(sink.diffs().len(), 2, "one diff per fold");
+}
+
+/// An external file that fails to load contributes **no** rows to the region and
+/// does not panic — exactly how the frontend flatten handles it (a failed source
+/// yields an empty `connections` list; the error is logged, never part of the
+/// `appStore` connections slice, so it is not modelled in the region either).
+#[test]
+fn server_side_fold_skips_a_failed_external_file_like_the_frontend() {
+    let (manager, dir) = test_manager();
+    manager
+        .save_connection(connection("Main", "Main", None))
+        .expect("manager persists the main connection");
+
+    // A malformed (non-empty, invalid JSON) external file fails to load.
+    let bad_path = dir.path().join("broken.json");
+    std::fs::write(&bad_path, "{ not valid json").unwrap();
+    manager
+        .save_settings(crate::connection::settings::AppSettings {
+            external_connection_files: vec![crate::connection::settings::ExternalFileConfig {
+                path: bad_path.to_str().unwrap().to_string(),
+                enabled: true,
+            }],
+            ..Default::default()
+        })
+        .unwrap();
+
+    let (app, store, sink, _cache) = wire_app(manager);
+
+    // Must not panic; the region reflects only the main connection.
+    fold_connections_from_manager(app.handle());
+    assert_eq!(
+        store.connection_count(),
+        1,
+        "only the main connection; the broken external file adds no rows"
+    );
+    assert!(
+        store.snapshot()["connections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["sourceFile"].is_null()),
+        "no external rows from the failed file"
+    );
+    assert_eq!(
+        sink.diffs().len(),
+        1,
+        "one diff (the main connection seeded into the region)"
+    );
+}
+
 #[test]
 fn a_dead_subscriber_is_reaped_on_publish() {
     let store = seeded_store();
