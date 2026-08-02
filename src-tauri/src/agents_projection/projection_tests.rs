@@ -15,9 +15,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
+use tauri::Manager;
 
-use crate::agents_projection::projection::{publish_agents, AGENTS_REGION};
-use crate::agents_projection::store::{AgentDefinition, AgentFolder, AgentSession, AgentsStore};
+use crate::agents_projection::projection::{fold_agent_transition, publish_agents, AGENTS_REGION};
+use crate::agents_projection::store::{
+    AgentConnectionState, AgentDefinition, AgentFolder, AgentSession, AgentsStore,
+};
+use crate::commands::projection::ProjectionState;
 use crate::projection::{
     apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
     ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
@@ -459,4 +463,246 @@ fn replace_mirrors_a_whole_snapshot_in_one_diff_and_converges() {
     assert_eq!(cache.view["agents"].as_array().unwrap().len(), 1);
     assert_eq!(cache.view["agents"][0]["name"], json!("Only"));
     assert!(store.get("a2").is_none(), "replace dropped the prior agent");
+}
+
+// ── Server-authority fold (#2388, prerequisite for #2226) ─────────────────────
+//
+// These drive the *production* `fold_agent_transition` end to end against a
+// `tauri::test::mock_app()` with the same managed state `lib.rs::setup()` wires:
+// an `Arc<AgentsStore>` and a `ProjectionState`. They prove the store is fed
+// **server-side** — the instant the agent manager emits a state change or an
+// agent-RPC command returns a CRUD outcome — with no `agent.*` client dispatch,
+// and that the fold reproduces the client route's store transition exactly
+// (parity) and stays idempotent alongside the still-present client mirror.
+
+/// A definition RPC record → the store shape it folds into.
+fn definition(id: &str, folder: Option<&str>) -> AgentDefinition {
+    AgentDefinition {
+        id: id.to_string(),
+        name: format!("def-{id}"),
+        session_type: "shell".to_string(),
+        config: json!({ "shell": "bash" }),
+        persistent: false,
+        folder_id: folder.map(str::to_string),
+        terminal_options: None,
+        icon: None,
+        source_file: None,
+    }
+}
+
+fn folder(id: &str) -> AgentFolder {
+    AgentFolder {
+        id: id.to_string(),
+        name: format!("folder-{id}"),
+        parent_id: None,
+        is_expanded: true,
+    }
+}
+
+fn session(id: &str) -> AgentSession {
+    AgentSession {
+        session_id: id.to_string(),
+        title: format!("session {id}"),
+        session_type: "shell".to_string(),
+        status: "running".to_string(),
+        attached: true,
+        definition_id: None,
+    }
+}
+
+/// A live connection-status transition folded server-side (the `agent-state-change`
+/// emission point) updates the shared store and fans the `agents` region diff out
+/// — without any client `agent.status` dispatch.
+#[test]
+fn server_side_status_fold_updates_store_and_region_without_client_dispatch() {
+    let app = tauri::test::mock_app();
+
+    // The agent entry is created client-side (it carries the UI config/settings the
+    // backend does not receive); the server folds the live status into it.
+    let store = Arc::new(AgentsStore::new());
+    store.add("a1", "One", json!({ "host": "h1" }), json!({}));
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(AGENTS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    // Server folds the transition at the source — no `agent.status` intent runs.
+    fold_agent_transition(app.handle(), |s| {
+        s.set_status("a1", AgentConnectionState::Connected, None)
+    });
+
+    // The store is authoritative server-side.
+    assert_eq!(
+        store.get("a1").map(|a| a.connection_state),
+        Some(AgentConnectionState::Connected)
+    );
+
+    // Exactly one region diff fanned out; the client cache converges with no round-trip.
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view["agents"][0]["connectionState"],
+        json!("connected")
+    );
+}
+
+/// The server-side status fold reproduces the client `agent.status` route's store
+/// transition exactly — identical snapshots, so the (additive) client mirror and
+/// the fold never drift and `set_status` is idempotent across both.
+#[test]
+fn server_side_status_fold_matches_the_client_agent_status_route() {
+    // (a) Server-side fold: the store method the fold applies at the source.
+    let server = seeded_store();
+    server.set_status(
+        "a1",
+        AgentConnectionState::Reconnecting,
+        Some("boom".into()),
+    );
+
+    // (b) Client route: the `agent.status` intent through the production registry.
+    let client = seeded_store();
+    let projector = Arc::new(Projector::new());
+    projector.register_region(AGENTS_REGION, client.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(client.clone())));
+    let ack = dispatcher.dispatch(intent(
+        "agent.status",
+        json!({ "id": "a1", "state": "reconnecting", "error": "boom" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    assert_eq!(
+        server.snapshot(),
+        client.snapshot(),
+        "the server fold reproduces the client route's transition exactly"
+    );
+}
+
+/// A definition CRUD outcome folded server-side upserts into the shared store and
+/// publishes the region diff, and re-folding the identical outcome is a no-op (no
+/// double count when the additive client `agent.saveDefinition` mirror also runs).
+#[test]
+fn server_side_definition_fold_upserts_and_is_idempotent() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(AgentsStore::new());
+    store.add("a1", "One", json!({ "host": "h1" }), json!({}));
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(AGENTS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    // Server folds a `save_agent_definition` outcome at the source.
+    fold_agent_transition(app.handle(), |s| {
+        s.save_definition("a1", definition("d1", None))
+    });
+    // The (still-present) client `agent.saveDefinition` mirror folds the same id.
+    fold_agent_transition(app.handle(), |s| {
+        s.save_definition("a1", definition("d1", None))
+    });
+
+    assert_eq!(
+        store.definitions_of("a1").len(),
+        1,
+        "upsert — no double count across the fold and the client mirror"
+    );
+    // One diff (the first fold); the identical second fold advances nothing.
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "the idempotent re-fold produced no diff");
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view["definitions"]["a1"][0]["id"], json!("d1"));
+}
+
+/// A `create_agent_folder` outcome folded server-side adds the folder and — because
+/// `create_folder` upserts by id — running the identical fold again (the additive
+/// client `agent.createFolder` mirror) neither duplicates the folder nor emits a
+/// second diff.
+#[test]
+fn server_side_create_folder_fold_converges_without_duplicate() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(AgentsStore::new());
+    store.add("a1", "One", json!({ "host": "h1" }), json!({}));
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(AGENTS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projection
+        .projector
+        .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
+    app.manage(projection);
+
+    fold_agent_transition(app.handle(), |s| s.create_folder("a1", folder("f1")));
+    fold_agent_transition(app.handle(), |s| s.create_folder("a1", folder("f1")));
+
+    assert_eq!(
+        store.folders_of("a1").len(),
+        1,
+        "the folder is not duplicated"
+    );
+    assert_eq!(
+        sink.diffs().len(),
+        1,
+        "only the first fold advanced the region"
+    );
+}
+
+/// A `close_agent_session` outcome folded server-side drops the session from the
+/// shared store and publishes the region diff.
+#[test]
+fn server_side_close_session_fold_drops_the_session() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(AgentsStore::new());
+    store.add("a1", "One", json!({ "host": "h1" }), json!({}));
+    store.set_sessions("a1", vec![session("s1"), session("s2")]);
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(AGENTS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projection
+        .projector
+        .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
+    app.manage(projection);
+
+    fold_agent_transition(app.handle(), |s| s.remove_session("a1", "s1"));
+
+    let remaining: Vec<String> = store.snapshot()["sessions"]["a1"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["sessionId"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(remaining, vec!["s2".to_string()]);
+    assert_eq!(sink.diffs().len(), 1);
+}
+
+/// The fold is a best-effort no-op when no store / projection state is managed
+/// (e.g. a headless harness that never ran `setup()`) — it must not panic.
+#[test]
+fn server_side_fold_is_a_noop_without_managed_state() {
+    let app = tauri::test::mock_app();
+    // Nothing managed — reaching the assert without panicking is the contract.
+    fold_agent_transition(app.handle(), |s| {
+        s.set_status("a1", AgentConnectionState::Connected, None)
+    });
 }

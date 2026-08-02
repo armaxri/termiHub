@@ -22,6 +22,8 @@ use tracing::{error, info, warn};
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
 
+use crate::agents_projection::projection::fold_agent_transition;
+use crate::agents_projection::store::AgentConnectionState;
 use crate::connection::config::AgentSettings;
 use crate::terminal::agent_deploy::ConnectedHost;
 use crate::terminal::agent_forward::DesktopAgentForward;
@@ -1596,6 +1598,21 @@ async fn read_handshake_line(
     }
 }
 
+/// Map an `agent-state-change` wire string to the store's connection-state enum.
+///
+/// The four states the agent manager emits are the camelCase variants of
+/// [`AgentConnectionState`]; an unrecognised string yields `None` so the fold is
+/// skipped rather than forcing a state.
+fn parse_agent_connection_state(state: &str) -> Option<AgentConnectionState> {
+    match state {
+        "disconnected" => Some(AgentConnectionState::Disconnected),
+        "connecting" => Some(AgentConnectionState::Connecting),
+        "connected" => Some(AgentConnectionState::Connected),
+        "reconnecting" => Some(AgentConnectionState::Reconnecting),
+        _ => None,
+    }
+}
+
 /// Emit an agent state change event with an optional error description.
 fn emit_agent_state_with_error(
     app_handle: &AppHandle,
@@ -1603,6 +1620,20 @@ fn emit_agent_state_with_error(
     state: &str,
     error: Option<&str>,
 ) {
+    // Server-authority fold (#2388): reflect the connection-state transition into
+    // the shared `AgentsStore` at the source — this function is the single choke
+    // point every `connecting`/`connected`/`disconnected`/`reconnecting` emission
+    // flows through. Additive: the Tauri event below and the client `agent.status`
+    // mirror stay in place, so no user-facing behavior changes. The store's
+    // `set_status` tracks `lastError` with the same rules the frontend's
+    // `setAgentConnectionState` applies (record on `disconnected`, clear on
+    // `connecting`/`connected`), so the fold and the client mirror agree.
+    if let Some(connection_state) = parse_agent_connection_state(state) {
+        let error_owned = error.map(|s| s.to_string());
+        fold_agent_transition(app_handle, move |store| {
+            store.set_status(agent_id, connection_state, error_owned);
+        });
+    }
     let _ = app_handle.emit(
         "agent-state-change",
         RemoteStateChangeEvent {
