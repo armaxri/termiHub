@@ -332,6 +332,51 @@ impl AgentsStore {
         }
     }
 
+    /// Replace one agent's live-session list with a server-produced snapshot (the
+    /// `list_agent_sessions` RPC outcome, #2388). Distinct from [`Self::refresh`],
+    /// which replaces sessions/definitions/folders together; this sets only the
+    /// sessions slice so folding a `list_agent_sessions` result does not clobber
+    /// the saved definitions/folders. A no-op for an unknown id. Idempotent, so
+    /// running it alongside the additive client `agent.refresh` mirror converges
+    /// without drift.
+    pub fn set_sessions(&self, id: &str, sessions: Vec<AgentSession>) {
+        let mut inner = self.lock();
+        if inner.agent_mut(id).is_some() {
+            inner.sessions.insert(id.to_string(), sessions);
+        }
+    }
+
+    /// Remove one live session from an agent by session id (the
+    /// `close_agent_session` RPC outcome, #2388). A no-op if the agent or session
+    /// is unknown; idempotent.
+    pub fn remove_session(&self, id: &str, session_id: &str) {
+        let mut inner = self.lock();
+        if let Some(list) = inner.sessions.get_mut(id) {
+            list.retain(|s| s.session_id != session_id);
+        }
+    }
+
+    /// Replace one agent's saved-definition list with a server-produced snapshot
+    /// (the `list_agent_definitions` / `list_agent_connections` RPC outcome,
+    /// #2388). Sets only the definitions slice (see [`Self::set_sessions`]). A
+    /// no-op for an unknown id; idempotent.
+    pub fn set_definitions(&self, id: &str, definitions: Vec<AgentDefinition>) {
+        let mut inner = self.lock();
+        if inner.agent_mut(id).is_some() {
+            inner.definitions.insert(id.to_string(), definitions);
+        }
+    }
+
+    /// Replace one agent's folder list with a server-produced snapshot (the
+    /// `list_agent_connections` RPC outcome, #2388). Sets only the folders slice
+    /// (see [`Self::set_sessions`]). A no-op for an unknown id; idempotent.
+    pub fn set_folders(&self, id: &str, folders: Vec<AgentFolder>) {
+        let mut inner = self.lock();
+        if inner.agent_mut(id).is_some() {
+            inner.folders.insert(id.to_string(), folders);
+        }
+    }
+
     // ── Definition CRUD (on-agent connection definitions) ─────────────────────
 
     /// `agent.saveDefinition` — upsert a saved definition on an agent
@@ -369,18 +414,24 @@ impl AgentsStore {
 
     // ── Folder CRUD ───────────────────────────────────────────────────────────
 
-    /// `agent.createFolder` — append a folder to an agent (`createAgentFolder`).
-    /// A no-op for an unknown agent id.
+    /// `agent.createFolder` — add a folder to an agent (`createAgentFolder`).
+    /// Upsert by id: replace any existing folder with the same id, else append. A
+    /// no-op for an unknown agent id.
+    ///
+    /// Upsert (rather than a bare append) keeps the transition idempotent so the
+    /// server-side fold of the `create_agent_folder` RPC outcome (#2388) and the
+    /// additive client `agent.createFolder` mirror — both carrying the same
+    /// server-assigned folder id — converge on one entry instead of duplicating
+    /// it. Folder ids are unique, so legitimate creates never collide and see no
+    /// behavior change.
     pub fn create_folder(&self, id: &str, folder: AgentFolder) {
         let mut inner = self.lock();
         if inner.agent_mut(id).is_none() {
             return;
         }
-        inner
-            .folders
-            .entry(id.to_string())
-            .or_default()
-            .push(folder);
+        let list = inner.folders.entry(id.to_string()).or_default();
+        list.retain(|f| f.id != folder.id);
+        list.push(folder);
     }
 
     /// `agent.updateFolder` — replace an existing folder by id
