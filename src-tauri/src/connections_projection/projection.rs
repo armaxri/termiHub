@@ -54,7 +54,9 @@ use std::sync::Arc;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
+use crate::commands::projection::ProjectionState;
 use crate::connection::config::{ConnectionFolder, SavedConnection};
+use crate::connection::manager::ConnectionManager;
 use crate::connections_projection::store::ConnectionsStore;
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 
@@ -72,6 +74,60 @@ pub fn publish_connections(projector: &Projector, store: &ConnectionsStore) -> V
             version,
         }],
         None => Vec::new(),
+    }
+}
+
+/// Fold the [`ConnectionManager`]'s authoritative saved-connection / folder tree
+/// into the managed [`ConnectionsStore`] **server-side** and fan the resulting
+/// `connections` region diff out to every subscriber (#2389, prerequisite for
+/// #2225).
+///
+/// This is the server-authority counterpart to the `connection.*` intents
+/// [`register_connection_intents`] registers: the same store transitions the
+/// frontend currently mirrors via `connection.*` intents are reflected here **at
+/// the source** — the instant a saved-connection / folder mutation
+/// (`save_connection` / `delete_connection` / `move_connection_to_file` /
+/// `save_folder` / `delete_folder` / import) lands in the persisted
+/// [`ConnectionManager`] authority — with no client round-trip required for the
+/// store to be correct.
+///
+/// It reflects the manager's **whole** post-mutation tree (via
+/// [`ConnectionManager::get_all`] + [`ConnectionsStore::replace`]) rather than
+/// replaying one fine-grained store op per call. This is deliberate: the manager
+/// is a *coarse* authority — a single `save_connection` may recompute the
+/// path-based id, deduplicate sibling names, re-home children, and migrate
+/// credentials — so replaying the intent-level ops (`add` / `update` / …) against
+/// the store would drift from the persisted truth. Reflecting the manager's
+/// authoritative snapshot guarantees the region always equals what was actually
+/// persisted. The projector coalesces an unchanged snapshot to no diff, so a
+/// mutation that leaves the main tree untouched (e.g. an external-file-only save)
+/// is a no-op.
+///
+/// It is **additive**: the per-transition `connection.*` intents and the
+/// render-cut `connection.replace` mirror stay in place, and nothing in the live
+/// UI subscribes to the region yet, so this changes no user-facing behavior.
+/// Dropping the now-redundant client re-dispatch is the later #2225
+/// render/mutation inversion.
+///
+/// Best-effort and non-fatal: if the store, the connection manager, or the
+/// projection state is not managed (e.g. a headless unit-test app that never ran
+/// `setup()`), or the disk reload inside `get_all` fails, the fold is skipped
+/// rather than erroring. The `replace` runs to completion synchronously before
+/// the publish, so the store lock is never held across an await.
+pub fn fold_connections_from_manager<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
+    let Some(store) = app_handle.try_state::<Arc<ConnectionsStore>>() else {
+        return;
+    };
+    let store: Arc<ConnectionsStore> = (*store).clone();
+    let Some(manager) = app_handle.try_state::<ConnectionManager>() else {
+        return;
+    };
+    let Ok(flat) = manager.get_all() else {
+        return;
+    };
+    store.replace(flat.folders, flat.connections);
+    if let Some(projection) = app_handle.try_state::<ProjectionState>() {
+        publish_connections(&projection.projector, &store);
     }
 }
 
