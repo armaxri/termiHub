@@ -228,12 +228,8 @@ import {
   connectTimeoutMs,
   type ConnectTimeoutKind,
 } from "@/utils/connectTimeout";
-import { DEFAULT_MONITORING_INTERVAL_MS, MonitoringEntry, SystemStats } from "@/types/monitoring";
-import {
-  onSessionMonitoringStats,
-  onSessionMonitoringStatus,
-  onPersistentSessionStateChanged,
-} from "@/services/events";
+import { DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
+import { onPersistentSessionStateChanged } from "@/services/events";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import {
@@ -277,7 +273,11 @@ import {
   sessionIntentsEnabled,
   type SessionIntentKind,
 } from "@/store/sessionBridge";
-import { mirrorMonitorIntent } from "@/store/systemMonitorBridge";
+import {
+  currentMonitorsView,
+  dispatchMonitorIntentBestEffort,
+  ensureMonitorsSubscribed,
+} from "@/store/systemMonitorBridge";
 import { mirrorAgentIntent } from "@/store/agentsBridge";
 import { mirrorConnectionIntent } from "@/store/connectionsBridge";
 import { mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
@@ -1343,21 +1343,22 @@ export interface AppState
   setEditorActions: (actions: EditorActions | null) => void;
 
   // Monitoring
-  /**
-   * Per-host/session monitoring state, keyed by {@link MonitoringEntry.key}
-   * (audit gap G6, #1231). Replaces the former global singleton so multiple
-   * hosts can be monitored at once: the status bar renders the active tab's
-   * entry (see {@link selectActiveMonitor}) while Open Connections iterates
-   * every entry.
-   */
-  monitors: Record<string, MonitoringEntry>;
-  /** Last-known stats per MonitorKey, persisted across tab switches for instant display on reconnect. */
-  monitoringStatsCache: Record<string, SystemStats>;
+  //
+  // The per-host/session monitoring state (`monitors` map + `monitoringStatsCache`)
+  // no longer lives in `appStore` (#2224): it is owned by the backend
+  // `SystemMonitorStore` and projected through the authoritative `system-monitors`
+  // region. Readers use {@link import("./useProjectedMonitors").useProjectedMonitors}
+  // (components) or {@link import("./systemMonitorBridge").currentMonitorsView}
+  // (store-side). The lifecycle actions below drive the backend commands, which
+  // fold the transitions at the source; the few client-originated transitions with
+  // no backend command dispatch a `monitor.*` intent against the region directly.
   /**
    * Subscribe the terminal session `sessionId` to its `MonitoringProvider` push
    * path, keying the entry by `sessionId`. `host` is the human-readable label
    * shown in the status bar. All monitors — desktop-direct SSH and
-   * remote-session alike — flow through this single path (#1232).
+   * remote-session alike — flow through this single path (#1232). The backend
+   * owns entry creation and the connect outcome (#2224); this action calls the
+   * `session_monitoring_open` command and the region reflects the result.
    */
   connectMonitoring: (sessionId: string, host?: string | null) => Promise<void>;
   /** Disconnect one monitor by key, or every monitor when `key` is omitted. */
@@ -2439,76 +2440,20 @@ export function resolveBroadcastTargetTabIds(
 }
 
 /**
- * Per-key unlisten functions for session-based monitoring subscriptions, keyed
- * by MonitorKey. Since multiple hosts can be monitored simultaneously (#1231),
- * each session monitor owns its own stats + status subscription that must be
- * detached individually when that host is disconnected (or its open fails).
- */
-const _monitoringStatsUnlisten = new Map<string, () => void>();
-const _monitoringStatusUnlisten = new Map<string, () => void>();
-
-/** Detach and forget both subscriptions for one session-based monitor key. */
-function detachMonitorListeners(key: string): void {
-  _monitoringStatsUnlisten.get(key)?.();
-  _monitoringStatsUnlisten.delete(key);
-  _monitoringStatusUnlisten.get(key)?.();
-  _monitoringStatusUnlisten.delete(key);
-}
-
-/** Build a fresh, idle {@link MonitoringEntry} for a key. */
-function emptyMonitor(key: string, host: string | null): MonitoringEntry {
-  return {
-    key,
-    host,
-    monitorSessionId: null,
-    stats: null,
-    loading: false,
-    error: null,
-    status: null,
-    sampleCount: 0,
-    paused: false,
-    intervalMs: DEFAULT_MONITORING_INTERVAL_MS,
-  };
-}
-
-/** Merge a partial patch into the entry for `key`, creating it if absent. */
-function upsertMonitor(key: string, patch: Partial<MonitoringEntry>): void {
-  useAppStore.setState((state) => {
-    const entry = state.monitors[key] ?? emptyMonitor(key, patch.host ?? key);
-    return { monitors: { ...state.monitors, [key]: { ...entry, ...patch } } };
-  });
-}
-
-/**
- * Derive the {@link MonitoringEntry} key for a tab: the id of the terminal
- * session that owns the monitor. Every monitor — desktop-direct SSH and
- * remote-session alike — routes through the session-based `MonitoringProvider`
- * push path (#1232), so the key is uniformly the session id. Returns `null`
- * when the tab has no session yet (so it cannot be monitored).
+ * Derive the monitor key for a tab: the id of the terminal session that owns the
+ * monitor. Every monitor — desktop-direct SSH and remote-session alike — routes
+ * through the session-based `MonitoringProvider` push path (#1232), so the key is
+ * uniformly the session id. Returns `null` when the tab has no session yet (so it
+ * cannot be monitored).
+ *
+ * Monitor entries themselves live in the authoritative `system-monitors` region
+ * (#2224), not in `appStore`: read them with
+ * {@link import("./useProjectedMonitors").useProjectedMonitors} (components) or
+ * {@link import("./systemMonitorBridge").currentMonitorsView} (store-side), then
+ * index by this key.
  */
 export function monitorKeyForTab(tab: TerminalTab | null | undefined): string | null {
   return tab?.sessionId ?? null;
-}
-
-/** Select one monitor entry by key, or `null` when none exists. */
-export function selectMonitor(state: AppState, key: string | null): MonitoringEntry | null {
-  if (!key) return null;
-  return state.monitors[key] ?? null;
-}
-
-/** Select the monitor entry for the currently active tab, or `null`. */
-export function selectActiveMonitor(state: AppState): MonitoringEntry | null {
-  return selectMonitor(state, monitorKeyForTab(getActiveTab(state)));
-}
-
-/**
- * Select every monitor with a live backend subscription (a non-null
- * `monitorSessionId`) — the set Open Connections lists and can kill. Entries
- * that only carry a transient error/cancelled state (never connected) are
- * excluded so nothing unkillable-yet-invisible is shown.
- */
-export function selectOpenMonitors(state: AppState): MonitoringEntry[] {
-  return Object.values(state.monitors).filter((m) => m.monitorSessionId !== null);
 }
 
 function createTab(
@@ -6260,7 +6205,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Stop monitoring the dying tab's host — its stats are no longer updated
       // and the overlay hides the terminal anyway. Other hosts keep monitoring.
       const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
-      if (deadKey && get().monitors[deadKey]) {
+      if (deadKey && currentMonitorsView().monitors[deadKey]) {
         get().disconnectMonitoring(deadKey);
       }
       // Agentless resilient reconnect (#1962): a dropped link on a plain-SSH tab
@@ -6320,7 +6265,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // restore/launch cohort so the aggregate summary reflects it (#1146).
       get().settleRestoreTab(tabId, "failed");
       const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
-      if (deadKey && get().monitors[deadKey]) {
+      if (deadKey && currentMonitorsView().monitors[deadKey]) {
         get().disconnectMonitoring(deadKey);
       }
     },
@@ -7289,22 +7234,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
     editorActions: null,
     setEditorActions: (actions) => set({ editorActions: actions }),
 
-    // Monitoring — per-host/session keyed slice (audit gap G6, #1231).
-    monitors: {},
-    monitoringStatsCache: {},
+    // Monitoring — state lives in the authoritative `system-monitors` region
+    // (#2224), not here (audit gap G6, #1231).
     sessionCapabilities: {},
     remoteDesktopResolutions: {},
 
     clearMonitoringError: (key) => {
-      const entry = useAppStore.getState().monitors[key];
-      if (!entry || entry.error === null) return;
-      set((state) => {
-        const current = state.monitors[key];
-        if (!current || current.error === null) return {};
-        return { monitors: { ...state.monitors, [key]: { ...current, error: null } } };
-      });
-      // Mutation cut (#2224): dismiss the error in the authoritative region too.
-      mirrorMonitorIntent("monitor.clearError", { key });
+      const entry = currentMonitorsView().monitors[key];
+      if (!entry || entry.error == null) return;
+      // Region-authoritative (#2224): dismissing an error banner is a
+      // client-originated action with no backend command, so dispatch the intent
+      // against the region directly; the diff clears the entry's error.
+      dispatchMonitorIntentBestEffort("monitor.clearError", { key });
     },
 
     setSessionCapabilities: (sessionId, caps) =>
@@ -7333,175 +7274,104 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }),
 
     connectMonitoring: async (sessionId: string, host: string | null = null) => {
-      const { monitoringStatsCache, monitors } = useAppStore.getState();
-
-      // Unified session-based (push) monitoring: the key is the id of the
-      // terminal session that owns the monitor. The backend subscribes the
-      // session's `MonitoringProvider` and pushes stats/status as
-      // "session-monitoring-stats" / "session-monitoring-status" events (#1232).
+      // Unified session-based (push) monitoring: the key is the id of the terminal
+      // session that owns the monitor. The backend owns the entry lifecycle in the
+      // authoritative `system-monitors` region (#2224): the `session_monitoring_open`
+      // command folds `open` (connecting, priming any cached stats from the store),
+      // then the connect outcome `opened` / `openFailed` — all server-side. The
+      // collector loop folds every subsequent stats/status sample (#2376). No
+      // client-side entry, no event listeners, no `appStore` writes.
       const key = sessionId;
-      const cachedStats = monitoringStatsCache[key] ?? null;
+
+      // Ensure the region subscription is live so the connecting / opened / failed
+      // diffs reach the UI (the status bar mounts it too, but a connect can race
+      // that mount). Non-Tauri / no socket just leaves the UI on the empty view.
+      void ensureMonitorsSubscribed().catch(() => {});
 
       // Preserve a previously-chosen refresh interval across a reconnect so the
-      // user's rate selection is not silently reset (#1233).
-      const intervalMs = monitors[key]?.intervalMs ?? DEFAULT_MONITORING_INTERVAL_MS;
+      // user's rate selection is not silently reset (#1233), sourced from the
+      // authoritative region.
+      const intervalMs =
+        currentMonitorsView().monitors[key]?.intervalMs ?? DEFAULT_MONITORING_INTERVAL_MS;
 
-      // Upsert a fresh loading entry keyed by MonitorKey. monitorSessionId stays
-      // null until the backend subscription is established, which the UI reads as
-      // "not yet connected".
-      upsertMonitor(key, {
-        ...emptyMonitor(key, host ?? key),
-        stats: cachedStats,
-        loading: true,
-        status: "connecting",
-        intervalMs,
-      });
-      // Mutation cut (#2224): mirror the connect start into the authoritative
-      // `system-monitors` region. A no-op / logged fallback when the flag is off
-      // or the transport is unavailable — the local slice above already applied.
-      mirrorMonitorIntent("monitor.open", { key, host: host ?? key, intervalMs });
-
-      try {
-        // Attach the stats listener; it filters by sessionId and folds fresh
-        // samples into this entry + the shared cache.
-        const statsUnlisten = await onSessionMonitoringStats((sid, stats) => {
-          if (sid !== key) return;
-          useAppStore.setState((state) => {
-            const entry = state.monitors[key];
-            if (!entry) return {};
-            return {
-              monitors: {
-                ...state.monitors,
-                [key]: { ...entry, stats, error: null, sampleCount: entry.sampleCount + 1 },
-              },
-              monitoringStatsCache: { ...state.monitoringStatsCache, [key]: stats },
-            };
-          });
-          mirrorMonitorIntent("monitor.stats", { key, stats });
-        });
-        _monitoringStatsUnlisten.set(key, statsUnlisten);
-
-        // The status stream flips the indicator to `stale` on a mid-stream
-        // drop (and back to `live` on recovery) so frozen stats are never
-        // shown as live (#1229, audit gap G1).
-        const statusUnlisten = await onSessionMonitoringStatus((sid, status) => {
-          if (sid !== key) return;
-          useAppStore.setState((state) => {
-            const entry = state.monitors[key];
-            if (!entry) return {};
-            return { monitors: { ...state.monitors, [key]: { ...entry, status } } };
-          });
-          mirrorMonitorIntent("monitor.status", { key, status });
-        });
-        _monitoringStatusUnlisten.set(key, statusUnlisten);
-
-        await sessionMonitoringOpen(key, intervalMs);
-        upsertMonitor(key, { monitorSessionId: key, loading: false, status: "live" });
-        mirrorMonitorIntent("monitor.opened", { key });
-      } catch (err) {
-        // The stats/status listeners are attached before the open that may throw
-        // here. Detach them so a failed open never leaks a dangling Tauri
-        // listener (monitorSessionId stays null, so disconnectMonitoring would
-        // not clean it up either). See audit gap G5.
-        frontendLog("monitoring", "detaching monitoring listeners after failed open");
-        detachMonitorListeners(key);
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        upsertMonitor(key, {
-          monitorSessionId: null,
-          loading: false,
-          error: errorMessage,
-          status: null,
-        });
-        mirrorMonitorIntent("monitor.openFailed", { key, error: errorMessage });
-      }
+      // A rejection means the backend recorded `openFailed` in the region (the
+      // command's error branch folds it), so the UI already shows the error
+      // without any client write. Propagate so callers — the status bar
+      // auto-connect latch and the Open Connections retry toast — can react.
+      await sessionMonitoringOpen(key, host ?? key, intervalMs);
     },
 
     disconnectMonitoring: async (key) => {
       // Kill exactly one entry when a key is given, or every entry otherwise
-      // (Open Connections "Kill All", global toggle-off).
-      const { monitors } = useAppStore.getState();
+      // (Open Connections "Kill All", global toggle-off). The current set is read
+      // from the authoritative region (#2224).
+      const monitors = currentMonitorsView().monitors;
       const keys = key !== undefined ? [key] : Object.keys(monitors);
 
       for (const k of keys) {
         const entry = monitors[k];
         if (entry?.monitorSessionId) {
+          // A live monitor: the `session_monitoring_close` command tears down the
+          // provider subscription and folds `close` into the region server-side
+          // (retaining the stats cache for an instant reconnect). Ignore close
+          // errors — the entry is torn down regardless.
           try {
             await sessionMonitoringClose(entry.monitorSessionId);
           } catch {
-            // Ignore close errors — the entry is torn down regardless.
+            // Ignore — torn down regardless.
           }
+        } else {
+          // A still-connecting or failed entry has no backend session to close, so
+          // drop it from the region directly (a client-originated teardown).
+          dispatchMonitorIntentBestEffort("monitor.close", { key: k });
         }
-        detachMonitorListeners(k);
       }
-
-      set((state) => {
-        const nextMonitors = { ...state.monitors };
-        const nextCache = { ...state.monitoringStatsCache };
-        for (const k of keys) {
-          const entry = state.monitors[k];
-          // Preserve last-known stats so the UI can show them instantly on reconnect.
-          if (entry?.stats) nextCache[k] = entry.stats;
-          delete nextMonitors[k];
-        }
-        return { monitors: nextMonitors, monitoringStatsCache: nextCache };
-      });
-
-      // Mutation cut (#2224): drop each entry from the authoritative region. The
-      // store's `close` retains the stats cache (as the local teardown does), and
-      // the cache already tracks the last stats via `monitor.stats`, so the region
-      // stays a faithful mirror of `appStore`.
-      for (const k of keys) mirrorMonitorIntent("monitor.close", { key: k });
     },
 
     setMonitoringPaused: async (key, paused) => {
-      const entry = useAppStore.getState().monitors[key];
+      const entry = currentMonitorsView().monitors[key];
       if (!entry) return;
-      // Optimistically flag the entry; the backend session loop drives the
-      // authoritative `status`, but the flag gates the local UI (neutral badge +
-      // dimmed stats) immediately (#1233).
-      upsertMonitor(key, { paused, status: paused ? "paused" : "live" });
-      // Mutation cut (#2224): mirror the optimistic pause into the region.
-      mirrorMonitorIntent("monitor.setPaused", { key, paused });
       if (entry.monitorSessionId) {
-        try {
-          await sessionMonitoringSetPaused(entry.monitorSessionId, paused);
-        } catch (err) {
-          frontendLog("monitoring", `set paused failed for ${key}: ${err}`);
-          // Roll back the optimistic flag so the UI reflects reality.
-          upsertMonitor(key, { paused: !paused });
-          mirrorMonitorIntent("monitor.setPaused", { key, paused: !paused });
-          throw err;
-        }
+        // The backend session loop is authoritative: the `session_monitoring_set_paused`
+        // command folds the pause/resume into the region at the source (#2224), and
+        // the collector loop also emits the authoritative `paused`/`live` status.
+        // A failure folds nothing, so the region stays live — the caller re-throws
+        // to surface the error toast.
+        await sessionMonitoringSetPaused(entry.monitorSessionId, paused);
+      } else {
+        // No backend session (a still-connecting entry): reflect the pause in the
+        // region directly.
+        dispatchMonitorIntentBestEffort("monitor.setPaused", { key, paused });
       }
     },
 
     setMonitoringInterval: async (key, intervalMs) => {
-      const entry = useAppStore.getState().monitors[key];
+      const entry = currentMonitorsView().monitors[key];
       if (!entry) return;
-      upsertMonitor(key, { intervalMs });
-      // Mutation cut (#2224): mirror the new cadence into the region.
-      mirrorMonitorIntent("monitor.setInterval", { key, intervalMs });
       if (entry.monitorSessionId) {
-        try {
-          await sessionMonitoringSetInterval(entry.monitorSessionId, intervalMs);
-        } catch (err) {
-          frontendLog("monitoring", `set interval failed for ${key}: ${err}`);
-          throw err;
-        }
+        // The `session_monitoring_set_interval` command reconfigures the backend
+        // loop cadence and folds the new interval into the region (#2224).
+        await sessionMonitoringSetInterval(entry.monitorSessionId, intervalMs);
+      } else {
+        // No backend session yet: persist the chosen cadence in the region so the
+        // next connect picks it up.
+        dispatchMonitorIntentBestEffort("monitor.setInterval", { key, intervalMs });
       }
     },
 
     cancelMonitoring: async (key) => {
-      const entry = useAppStore.getState().monitors[key];
+      const entry = currentMonitorsView().monitors[key];
       if (!entry) return;
       // Abort the backend monitor connect (keyed by session id) so a stuck
-      // handshake stops promptly (#1233); ignore errors — torn down anyway.
+      // handshake stops promptly (#1233); the command folds `close` into the
+      // region. Ignore errors — torn down anyway.
       try {
         await sessionMonitoringCancel(key);
       } catch (err) {
         frontendLog("monitoring", `cancel failed for ${key}: ${err}`);
       }
-      // Tear the entry down so the picker / Retry affordance is reachable again.
+      // Belt-and-suspenders: drop any lingering entry (e.g. one that never
+      // established a session) from the region so the picker / Retry is reachable.
       await useAppStore.getState().disconnectMonitoring(key);
     },
 

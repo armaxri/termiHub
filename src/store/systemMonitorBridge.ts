@@ -1,32 +1,32 @@
 /**
- * System-monitor projection bridge — Phase 5 render cut of the Monitors domain
- * (#2224, part of #2139).
+ * System-monitor projection bridge — the Monitors domain is now
+ * **region-authoritative** (#2224, part of #2139).
  *
- * The Monitors **shadow** (PR #2230) landed a backend-authoritative
- * `SystemMonitorStore` served as the shared `system-monitors` projection region,
- * with `monitor.*` intents, but nothing in the UI touched it. This step makes the
- * **status bar** and **Open Connections** source their monitor stats/status from
- * that region — the parity-safe render cut (the direct analog of the layout
- * render cut {@link import("./useLayoutRenderTree").useLayoutRenderTree}, #2151,
- * and the session render cut {@link import("./useSessionLifecycle")}, #2204).
+ * The shared `system-monitors` projection region, backed by the Rust
+ * `SystemMonitorStore`, is the single source of truth for monitor
+ * stats/status/lifecycle. The backend folds every transition **at the source**
+ * (#2376): the session collector loop folds each stats sample and status change,
+ * and the session monitoring commands fold `open`/`opened`/`openFailed`/`close`/
+ * `setPaused`/`setInterval`. `appStore` no longer holds any monitor state — the
+ * render-cut seed, the deep-equal mirror gate, and the `appStore`
+ * `monitors`/`monitoringStatsCache` reducers were all removed once the region
+ * became authoritative.
  *
- * # Strangler safety — flag-gated, on by default, faithful-mirror gate
+ * This bridge is the frontend's window onto that region. It:
  *
- * The `appStore` monitoring slice is still authoritative (the mutation cut is a
- * later step). To keep the render cut parity-safe **independent of any mutation
- * flag**, the region is kept a faithful copy of `appStore` by
- * {@link seedMonitorsRegion} (a `monitor.replace` mirror, the analog of the layout
- * bridge's `layout.replace` seed), and the UI renders from the region **only when
- * it faithfully mirrors** `appStore` ({@link monitorsViewMirrors}); otherwise it
- * falls back to `appStore` verbatim. Because the gate guarantees the projected
- * view deep-equals `appStore`'s slice, the rendered output is byte-identical to
- * the pre-cut path.
+ * - **subscribes** to the region diffs and fans the projected view out to the
+ *   reader hooks ({@link import("./useProjectedMonitors").useProjectedMonitors}),
+ *   also caching the latest view for synchronous store-side reads
+ *   ({@link currentMonitorsView});
+ * - **dispatches** the few client-originated `monitor.*` intents that have no
+ *   backend command and are therefore genuine client actions, never
+ *   server-produced data: dismissing an error banner (`monitor.clearError`) and
+ *   pause / interval / close on an entry that never established a backend session
+ *   (a still-connecting or failed monitor the user tears down or retunes).
  *
- * Gated by {@link monitorRenderFromProjectionEnabled} — **on by default**.
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_MONITOR_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.monitorRenderFromProjection"]` (set `"false"` to render
- * straight from `appStore`).
+ * All server-originated transitions (stats, status, and every command-driven
+ * lifecycle step) reach the region without any client round-trip, so the
+ * inversion is non-lossy — nothing safety-critical is routed through the client.
  */
 
 import {
@@ -48,7 +48,7 @@ export const SYSTEM_MONITORS_REGION = "system-monitors";
  * The `system-monitors` region view model — a twin of the Rust store snapshot:
  * `{ monitors: { <key>: MonitorEntry }, statsCache: { <key>: SystemStats } }`.
  * The projected `MonitorEntry` shape matches the frontend {@link MonitoringEntry}
- * one-to-one, so the render cut is a pure parity swap.
+ * one-to-one, so consumers read it directly.
  */
 export interface SystemMonitorsView {
   monitors: Record<string, MonitoringEntry>;
@@ -57,113 +57,6 @@ export interface SystemMonitorsView {
 
 /** The empty view a fresh region reports (twin of the empty store snapshot). */
 const EMPTY_VIEW: SystemMonitorsView = { monitors: {}, statsCache: {} };
-
-// ── Render-cut feature flag (runtime-flippable, on by default) ─────────────────
-
-let renderFlagOverride: boolean | null = null;
-
-interface MonitorRenderFlagWindow {
-  __TERMIHUB_MONITOR_RENDER_FROM_PROJECTION__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the render-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
- */
-export function setMonitorRenderFromProjectionEnabled(value: boolean | null): void {
-  renderFlagOverride = value;
-}
-
-/**
- * Whether the status bar and Open Connections render their monitor stats/status
- * from the projected `system-monitors` region instead of reading `appStore`'s
- * monitoring slice directly.
- *
- * **On by default** — the render cut is parity-safe: the UI renders from the
- * region only when it faithfully mirrors `appStore` ({@link monitorsViewMirrors}),
- * and otherwise falls back to `appStore` verbatim, so the output is byte-identical
- * to the pre-cut path. Independent of the (later) mutation cut: the region is kept
- * a mirror of `appStore` by {@link seedMonitorsRegion}, so it is always populated.
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_MONITOR_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.monitorRenderFromProjection"]`.
- */
-export function monitorRenderFromProjectionEnabled(): boolean {
-  if (renderFlagOverride !== null) return renderFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as MonitorRenderFlagWindow;
-      if (typeof w.__TERMIHUB_MONITOR_RENDER_FROM_PROJECTION__ === "boolean") {
-        return w.__TERMIHUB_MONITOR_RENDER_FROM_PROJECTION__;
-      }
-      const ls = w.localStorage?.getItem("termihub.monitorRenderFromProjection");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
-
-// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
-
-let mutationFlagOverride: boolean | null = null;
-
-interface MonitorMutationFlagWindow {
-  __TERMIHUB_MONITOR_INTENTS__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
- */
-export function setMonitorIntentsEnabled(value: boolean | null): void {
-  mutationFlagOverride = value;
-}
-
-/**
- * Whether the monitor lifecycle actions (`connectMonitoring` /
- * `disconnectMonitoring` / `setMonitoringPaused` / `setMonitoringInterval` /
- * `clearMonitoringError` / `cancelMonitoring`) dispatch granular `monitor.*`
- * intents so the backend {@link SystemMonitorStore} is authoritative — instead of
- * only the render-cut {@link seedMonitorsRegion} `monitor.replace` mirror driving
- * the region.
- *
- * **On by default** (#2224 mutation cut). When on, each action mirrors its
- * transition through a `monitor.*` intent (via {@link mirrorMonitorIntent}), and
- * the render-cut hook ({@link import("./useProjectedMonitors").useProjectedMonitors})
- * reflects the region back into the UI. The local `appStore` reducer path stays in
- * place as the render source and as a resilience / rollback fallback — any
- * dispatch failure is logged and the local mutation continues, so a backend hiccup
- * can never break monitoring (the reducer removal is a later step). When off,
- * `appStore` drives the slice purely locally (the pre-cut path). The flip was taken
- * on the automated parity tests plus the instant local fallback, mirroring the
- * session mutation cut (#2233). Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_MONITOR_INTENTS__` or `localStorage["termihub.monitorIntents"]`
- * (set `"false"` to restore the pre-cut local-mutation path; `"true"` to force on).
- */
-export function monitorIntentsEnabled(): boolean {
-  if (mutationFlagOverride !== null) return mutationFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as MonitorMutationFlagWindow;
-      if (typeof w.__TERMIHUB_MONITOR_INTENTS__ === "boolean") {
-        return w.__TERMIHUB_MONITOR_INTENTS__;
-      }
-      const ls = w.localStorage?.getItem("termihub.monitorIntents");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
 
 // ── Transport + shared region client (lazy, mirrors the session slice) ─────────
 
@@ -177,14 +70,13 @@ let startPromise: Promise<ProjectionClient> | null = null;
 const clientId = newClientId();
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription / seed dedup. */
+ * drops any active subscription. */
 export function setMonitorTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
   startPromise = null;
   transportInstance = t;
   lastView = EMPTY_VIEW;
-  lastSeededSignature = null;
 }
 
 function transport(): Transport {
@@ -215,7 +107,7 @@ export function onMonitorsView(listener: MonitorsViewListener): () => void {
  * Ensure the shared `system-monitors` region client is subscribed so projected
  * diffs are received and fanned out to the {@link onMonitorsView} listeners.
  * Idempotent and de-duplicated across concurrent callers; a transport/subscribe
- * failure is logged and rethrown so the caller can fall back to `appStore`.
+ * failure is logged and rethrown so the caller can react.
  */
 export function ensureMonitorsSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);
@@ -253,70 +145,26 @@ export function stopMonitorsSubscription(): void {
   regionClient = null;
   startPromise = null;
   lastView = EMPTY_VIEW;
-  lastSeededSignature = null;
 }
 
-/** The last view fanned out (for a hook that subscribes after the first diff). */
+/**
+ * The last projected view received (for a hook that subscribes after the first
+ * diff, and for synchronous store-side reads in the monitor lifecycle actions).
+ * Since the region is authoritative and the backend folds every transition at the
+ * source, this is the frontend's current picture of the monitor state.
+ */
 export function currentMonitorsView(): SystemMonitorsView {
   return lastView;
 }
 
-// ── Seed: keep the region a faithful mirror of appStore (monitor.replace) ──────
-
-let lastSeededSignature: string | null = null;
+// ── Client-originated monitor.* intent dispatch ────────────────────────────────
 
 /**
- * Seed the shared region with `appStore`'s whole monitoring slice via a
- * `monitor.replace` intent, so the projection tracks `appStore`'s current state
- * while `appStore` stays authoritative (the render-side counterpart to the layout
- * bridge's seed). De-duplicated: a slice identical to the last seeded one is not
- * re-dispatched. Never throws synchronously — a transport that cannot dispatch
- * surfaces as a rejected promise the caller logs and ignores (staying on the
- * `appStore` fallback). Idempotent server-side: replacing with the same content
- * yields no diff.
- */
-export function seedMonitorsRegion(
-  monitors: Record<string, MonitoringEntry>,
-  statsCache: Record<string, SystemStats>
-): Promise<void> {
-  const signature = JSON.stringify({ monitors, statsCache });
-  if (signature === lastSeededSignature) return Promise.resolve();
-  // Set before dispatching so concurrent callers (status bar + Open Connections)
-  // do not double-dispatch the same seed.
-  lastSeededSignature = signature;
-  try {
-    return transport()
-      .dispatch({
-        intentId: newIntentId(),
-        kind: "monitor.replace",
-        payload: { monitors, statsCache },
-        clientId,
-      })
-      .then((ack: IntentAck) => {
-        if (ack.status === "rejected") {
-          // Let a later change retry the seed rather than latch on a failure.
-          lastSeededSignature = null;
-          throw new Error(ack.error?.message ?? "monitor.replace rejected");
-        }
-      })
-      .catch((err) => {
-        lastSeededSignature = null;
-        throw err;
-      });
-  } catch (err) {
-    // A synchronous transport-construction failure (non-Tauri, no socket).
-    lastSeededSignature = null;
-    return Promise.reject(err instanceof Error ? err : new Error(String(err)));
-  }
-}
-
-// ── Mutation cut: granular monitor.* intent dispatch (mutation cut) ────────────
-
-/**
- * The granular `monitor.*` intent kinds the mutation cut dispatches (twins of the
- * Rust routes). Excludes `monitor.replace`, which is the render-cut whole-map
- * mirror ({@link seedMonitorsRegion}); the mutation cut drives the region through
- * these per-transition intents instead so the store becomes authoritative.
+ * The granular `monitor.*` intent kinds (twins of the Rust routes). The backend
+ * folds the server-originated transitions itself (#2376) — stats, status, and
+ * every command-driven lifecycle step — so the frontend only ever dispatches the
+ * client-originated ones that have no backend command: `monitor.clearError` and
+ * pause / interval / close on an entry with no backend session.
  */
 export type MonitorIntentKind =
   | "monitor.open"
@@ -338,19 +186,18 @@ export function dispatchMonitorIntent(
 }
 
 /**
- * Fire a granular `monitor.*` intent to keep the backend store authoritative,
- * swallowing and logging any failure so the local `appStore` mutation path is
- * never disrupted by a bridge hiccup (the resilience fallback). A no-op when the
- * mutation cut is disabled ({@link monitorIntentsEnabled} off — the rollback path).
- * Never throws — a synchronous transport-construction failure (non-Tauri, no
- * socket) is caught and logged, leaving the UI on the local slice. The twin of the
- * session bridge's {@link import("./sessionBridge").mirrorSessionIntent}.
+ * Fire a client-originated `monitor.*` intent against the authoritative region,
+ * swallowing and logging any failure so a bridge/transport hiccup never throws
+ * out of a UI action. Used for the transitions that have no backend command —
+ * dismissing an error banner, and pause / interval / close on an entry with no
+ * backend session — so they are genuine client actions, not server-produced data
+ * routed through the client. Never throws: a synchronous transport-construction
+ * failure (non-Tauri, no socket) is caught and logged.
  */
-export function mirrorMonitorIntent(
+export function dispatchMonitorIntentBestEffort(
   kind: MonitorIntentKind,
   payload: Record<string, unknown>
 ): void {
-  if (!monitorIntentsEnabled()) return;
   try {
     void dispatchMonitorIntent(kind, payload)
       .then((ack) => {
@@ -364,57 +211,8 @@ export function mirrorMonitorIntent(
   }
 }
 
-// ── Faithful-mirror gate ───────────────────────────────────────────────────────
-
-/**
- * Whether a projected `view` faithfully mirrors `appStore`'s monitoring slice —
- * the gate deciding whether the UI may render from the projection (true) or must
- * fall back to `appStore` (false). A deep value comparison of both the `monitors`
- * map and the `statsCache`; because the projected `MonitorEntry` shape matches
- * {@link MonitoringEntry} one-to-one, a mirroring view is value-identical to the
- * `appStore` slice, so rendering from it can never diverge.
- *
- * The twin of the layout render cut's `viewMatchesTree` and the session render
- * cut's `projectedReconnectMirrors`.
- */
-export function monitorsViewMirrors(
-  view: SystemMonitorsView | undefined,
-  monitors: Record<string, MonitoringEntry>,
-  statsCache: Record<string, SystemStats>
-): boolean {
-  if (!view) return false;
-  return deepEqual(view.monitors, monitors) && deepEqual(view.statsCache, statsCache);
-}
-
-/**
- * A structural deep-equal for the JSON-ish monitoring view model (objects,
- * arrays, and primitives — no functions/dates/maps). Numbers compare with `===`,
- * so an integer that round-tripped through JSON as a float (`40` vs `40.0`) still
- * matches. Exported for the bridge's parity tests.
- */
-export function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== typeof b) return false;
-  if (a === null || b === null) return a === b;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => deepEqual(v, b[i]));
-  }
-  if (typeof a === "object" && typeof b === "object") {
-    const ao = a as Record<string, unknown>;
-    const bo = b as Record<string, unknown>;
-    const aKeys = Object.keys(ao);
-    const bKeys = Object.keys(bo);
-    if (aKeys.length !== bKeys.length) return false;
-    return aKeys.every(
-      (k) => Object.prototype.hasOwnProperty.call(bo, k) && deepEqual(ao[k], bo[k])
-    );
-  }
-  return false;
-}
-
-/** Log a bridge fallback so the appStore-path recovery is visible in the LogViewer. */
+/** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logMonitorBridgeFallback(kind: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
-  frontendLog("monitor_bridge", `${kind} fell back to appStore monitoring: ${message}`);
+  frontendLog("monitor_bridge", `${kind} monitor intent failed: ${message}`);
 }

@@ -376,7 +376,7 @@ export function dispatchBroadcastIntent(
  * cut is disabled ({@link broadcastIntentsEnabled} off — the rollback path). Never
  * throws — a synchronous transport-construction failure (non-Tauri, no socket) is
  * caught and logged, leaving the UI on the local slice. The twin of the monitors
- * bridge's {@link import("./systemMonitorBridge").mirrorMonitorIntent}.
+ * bridge's {@link import("./systemMonitorBridge").dispatchMonitorIntentBestEffort}.
  */
 export function mirrorBroadcastIntent(
   kind: BroadcastIntentKind,

@@ -394,7 +394,7 @@ export function dispatchAgentIntent(
  * mutation cut is disabled ({@link agentIntentsEnabled} off — the rollback path).
  * Never throws — a synchronous transport-construction failure (non-Tauri, no
  * socket) is caught and logged, leaving the UI on the local slice. The twin of the
- * monitor bridge's {@link import("./systemMonitorBridge").mirrorMonitorIntent}.
+ * monitor bridge's {@link import("./systemMonitorBridge").dispatchMonitorIntentBestEffort}.
  */
 export function mirrorAgentIntent(kind: AgentIntentKind, payload: Record<string, unknown>): void {
   if (!agentIntentsEnabled()) return;
