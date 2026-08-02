@@ -9,24 +9,21 @@ vi.mock("@/services/api", async () => {
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
-// Spy on `isTerminalTransferState` (keeping its real behaviour) so a test can
-// prove the pending-row scan is memoized and does not re-run on unrelated store
-// mutations (#1657).
-vi.mock("@/types/transfer", async () => {
-  const actual = await vi.importActual<typeof import("@/types/transfer")>("@/types/transfer");
-  return { ...actual, isTerminalTransferState: vi.fn(actual.isTerminalTransferState) };
-});
-
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { useTransferReconcile } from "./useTransferReconcile";
 import { useAppStore } from "@/store/appStore";
 import { transferList } from "@/services/api";
-import { isTerminalTransferState } from "@/types/transfer";
+import { currentTransfersView, ensureTransfersSubscribed } from "@/store/transfersBridge";
 import type { TransferSnapshot } from "@/services/api";
+import {
+  fakeTransferEntry,
+  installTransferHarness,
+  transfersView,
+  type FakeTransferTransport,
+} from "@/test/transferHarness";
 
 const mockTransferList = vi.mocked(transferList);
-const mockIsTerminal = vi.mocked(isTerminalTransferState);
 
 function snapshot(overrides: Partial<TransferSnapshot> = {}): TransferSnapshot {
   return {
@@ -46,15 +43,19 @@ function snapshot(overrides: Partial<TransferSnapshot> = {}): TransferSnapshot {
   };
 }
 
-describe("useTransferReconcile (#1645)", () => {
+describe("useTransferReconcile (#1645, region-authoritative #2229)", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
+  let transport: FakeTransferTransport;
+  let teardown: () => void;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
+    ({ transport, teardown } = installTransferHarness());
+    await ensureTransfersSubscribed();
     vi.clearAllMocks();
     mockTransferList.mockResolvedValue([]);
   });
@@ -62,6 +63,7 @@ describe("useTransferReconcile (#1645)", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    teardown();
   });
 
   async function mountHook(): Promise<void> {
@@ -72,32 +74,26 @@ describe("useTransferReconcile (#1645)", () => {
     await act(async () => {
       root.render(React.createElement(Harness));
     });
-    // Let the effect's async `reconcile()` resolve.
+    // Let the effect's async `reconcile()` resolve and the dispatch round-trip.
     await act(async () => {
       await Promise.resolve();
       await Promise.resolve();
     });
   }
 
-  it("settles a stuck row from the backend snapshot when the terminal event was dropped", async () => {
-    // A transfer was seeded (#1632) but every progress event — including the
-    // terminal one — was dropped, so the row is stuck at `queued`.
-    useAppStore.getState().seedTransferQueue({
-      id: "t1",
-      sessionId: "sess-a",
-      direction: "download",
-      name: "file.txt",
-      path: "/remote/file.txt",
-    });
-    expect(useAppStore.getState().transferQueue["t1"].state).toBe("queued");
-
-    // The backend still reports it (retained terminal snapshot, #1645).
+  it("settles a stuck row via transfer.reconcile when the terminal event was dropped", async () => {
+    // A transfer is stuck at `queued` (every progress event, incl. terminal, was
+    // dropped); the backend still reports it (retained terminal snapshot, #1645).
+    transport.seed(
+      transfersView([fakeTransferEntry("t1", { state: "queued", percent: null })])
+    );
     mockTransferList.mockResolvedValue([snapshot({ state: "completed", transferred: 100 })]);
 
     await mountHook();
 
     expect(mockTransferList).toHaveBeenCalled();
-    expect(useAppStore.getState().transferQueue["t1"]).toMatchObject({
+    expect(transport.kinds()).toContain("transfer.reconcile");
+    expect(currentTransfersView().queue["t1"]).toMatchObject({
       state: "completed",
       transferred: 100,
       percent: 100,
@@ -106,65 +102,27 @@ describe("useTransferReconcile (#1645)", () => {
 
   it("makes no backend call while the queue has no pending rows", async () => {
     // Only a terminal row present → nothing to reconcile → no polling.
-    useAppStore.getState().addTransfer({
-      id: "done",
-      sessionId: "sess-a",
-      direction: "download",
-      name: "file.txt",
-      state: "completed",
-      transferred: 100,
-      totalBytes: 100,
-      percent: 100,
-      speedBytesPerSec: null,
-      updatedAt: 0,
-    });
+    transport.seed(
+      transfersView([fakeTransferEntry("done", { state: "completed", percent: 100 })])
+    );
 
     await mountHook();
 
     expect(mockTransferList).not.toHaveBeenCalled();
+    expect(transport.kinds()).not.toContain("transfer.reconcile");
   });
 
   it("does not settle a stuck row from a transient rich `failed` snapshot (settled:false, #1657)", async () => {
-    // The row is seeded/stuck at `queued`; the backend reports the transfer as
-    // `failed` but `settled: false` — a live rich handle mid auto-retry. The
-    // reconcile must leave the row non-terminal so a later recovery can settle
-    // it, rather than freezing it at `failed`.
-    useAppStore.getState().seedTransferQueue({
-      id: "t1",
-      sessionId: "sess-a",
-      direction: "download",
-      name: "file.txt",
-      path: "/remote/file.txt",
-    });
+    // The backend reports the transfer as `failed` but `settled: false` — a live
+    // rich handle mid auto-retry. The reconcile must leave the row non-terminal.
+    transport.seed(
+      transfersView([fakeTransferEntry("t1", { state: "queued", percent: null })])
+    );
     mockTransferList.mockResolvedValue([snapshot({ state: "failed", settled: false })]);
 
     await mountHook();
 
     expect(mockTransferList).toHaveBeenCalled();
-    expect(useAppStore.getState().transferQueue["t1"].state).toBe("queued");
-  });
-
-  it("does not re-scan the queue for pending rows on an unrelated store mutation (#1657)", async () => {
-    // With a pending row present, the pending-row derivation is memoized on the
-    // `transferQueue` reference, so an unrelated `setState` (which leaves that
-    // reference untouched) must not re-run the O(rows) scan.
-    useAppStore.getState().seedTransferQueue({
-      id: "t1",
-      sessionId: "sess-a",
-      direction: "download",
-      name: "file.txt",
-      path: "/remote/file.txt",
-    });
-
-    await mountHook();
-    // The mount's initial render already ran the scan; from here it must not.
-    mockIsTerminal.mockClear();
-
-    act(() => {
-      // A mutation to an unrelated slice — the queue reference is unchanged.
-      useAppStore.setState({ tabCwds: { "tab-1": "/home/user" } });
-    });
-
-    expect(mockIsTerminal).not.toHaveBeenCalled();
+    expect(currentTransfersView().queue["t1"].state).toBe("queued");
   });
 });

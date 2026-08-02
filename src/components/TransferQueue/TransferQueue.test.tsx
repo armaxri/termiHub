@@ -44,32 +44,37 @@ import { TransferQueueIndicator } from "./TransferQueueIndicator";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { transferCancel } from "@/services/api";
+import { ensureTransfersSubscribed, currentTransfersView } from "@/store/transfersBridge";
 import type { TransferEntry } from "@/types/transfer";
+import {
+  fakeTransferEntry,
+  installTransferHarness,
+  transfersView,
+  type FakeTransferTransport,
+} from "@/test/transferHarness";
 
 function entry(overrides: Partial<TransferEntry> = {}): TransferEntry {
-  return {
-    id: "t1",
+  return fakeTransferEntry("t1", {
     sessionId: "sess-a",
-    direction: "download",
     name: "file.txt",
     state: "active",
     transferred: 10,
     totalBytes: 100,
     percent: 10,
     speedBytesPerSec: null,
-    updatedAt: 0,
     ...overrides,
-  };
-}
-
-function seed(entries: TransferEntry[], minimized = false) {
-  const map: Record<string, TransferEntry> = {};
-  for (const e of entries) map[e.id] = e;
-  useAppStore.setState({ transferQueue: map, transferQueueMinimized: minimized });
+  });
 }
 
 let container: HTMLDivElement;
 let root: Root;
+let transport: FakeTransferTransport;
+let teardown: () => void;
+
+/** Seed the authoritative region with the given rows (the panel renders from it). */
+function seed(entries: TransferEntry[], minimized = false) {
+  transport.seed(transfersView(entries, minimized));
+}
 
 function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
@@ -79,9 +84,13 @@ function queryAll(selector: string): Element[] {
   return Array.from(container.querySelectorAll(selector));
 }
 
+const flush = () => act(async () => await Promise.resolve());
+
 describe("TransferQueue panel", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     useAppStore.setState(useAppStore.getInitialState());
+    ({ transport, teardown } = installTransferHarness());
+    await ensureTransfersSubscribed();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -91,6 +100,7 @@ describe("TransferQueue panel", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    teardown();
   });
 
   it("renders nothing when the queue is empty", () => {
@@ -130,7 +140,7 @@ describe("TransferQueue panel", () => {
     expect(query("transfer-queue")).toBeNull();
   });
 
-  it("Minimize collapses the panel to the status bar", () => {
+  it("Minimize dispatches transfer.setMinimized(true)", async () => {
     seed([entry()]);
     act(() =>
       root.render(
@@ -140,10 +150,14 @@ describe("TransferQueue panel", () => {
       )
     );
     act(() => query("transfer-minimize")?.click());
-    expect(useAppStore.getState().transferQueueMinimized).toBe(true);
+    await flush();
+    expect(transport.dispatched).toContainEqual(
+      expect.objectContaining({ kind: "transfer.setMinimized", payload: { minimized: true } })
+    );
+    expect(currentTransfersView().minimized).toBe(true);
   });
 
-  it("Clear Completed removes only completed rows", () => {
+  it("Clear Completed dispatches transfer.clearCompleted, dropping only completed rows", async () => {
     seed([entry({ id: "done", state: "completed" }), entry({ id: "live", state: "active" })]);
     act(() =>
       root.render(
@@ -153,7 +167,9 @@ describe("TransferQueue panel", () => {
       )
     );
     act(() => query("transfer-clear-completed")?.click());
-    const q = useAppStore.getState().transferQueue;
+    await flush();
+    expect(transport.kinds()).toContain("transfer.clearCompleted");
+    const q = currentTransfersView().queue;
     expect(q["done"]).toBeUndefined();
     expect(q["live"]).toBeDefined();
   });
@@ -183,8 +199,10 @@ describe("TransferQueue panel", () => {
 });
 
 describe("TransferQueueIndicator (minimized)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     useAppStore.setState(useAppStore.getInitialState());
+    ({ transport, teardown } = installTransferHarness());
+    await ensureTransfersSubscribed();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -194,6 +212,7 @@ describe("TransferQueueIndicator (minimized)", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    teardown();
   });
 
   it("renders nothing when not minimized", () => {
@@ -220,7 +239,7 @@ describe("TransferQueueIndicator (minimized)", () => {
     expect(query("transfer-queue-indicator")).toBeNull();
   });
 
-  it("shows a live count when minimized and restores the panel on click", () => {
+  it("shows a live count when minimized and restores the panel on click", async () => {
     seed([entry({ id: "a", state: "active" }), entry({ id: "b", state: "active" })], true);
     act(() =>
       root.render(
@@ -233,6 +252,9 @@ describe("TransferQueueIndicator (minimized)", () => {
     expect(indicator).not.toBeNull();
     expect(indicator?.textContent).toContain("2");
     act(() => indicator?.click());
-    expect(useAppStore.getState().transferQueueMinimized).toBe(false);
+    await flush();
+    expect(transport.dispatched).toContainEqual(
+      expect.objectContaining({ kind: "transfer.setMinimized", payload: { minimized: false } })
+    );
   });
 });

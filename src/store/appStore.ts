@@ -138,7 +138,6 @@ import type { CapturedWindowLayout, WindowRestorePlanEntry } from "@/utils/windo
 import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
 import type { ConnectionTypeInfo, ContainerSpawn, ShellSpawn } from "@/services/api";
 import type { SpawnRequestPayload } from "@/services/events";
-import { type TransferEntry } from "@/types/transfer";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { createTunnelSlice, TunnelSlice } from "./slices/tunnelSlice";
 import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embedded-serversSlice";
