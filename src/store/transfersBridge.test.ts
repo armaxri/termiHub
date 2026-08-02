@@ -106,9 +106,7 @@ describe("dispatchTransferIntentBestEffort", () => {
       error: { message: "nope" },
       produced: [],
     } as unknown as IntentAck);
-    expect(() =>
-      dispatchTransferIntentBestEffort("transfer.remove", { id: "gone" })
-    ).not.toThrow();
+    expect(() => dispatchTransferIntentBestEffort("transfer.remove", { id: "gone" })).not.toThrow();
     await flush();
   });
 

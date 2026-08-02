@@ -119,7 +119,7 @@ import { createRoot } from "react-dom/client";
 import { sftpUpload } from "@/services/api";
 import { useFileSystem } from "./useFileSystem";
 import { useAppStore } from "@/store/appStore";
-import { currentTransfersView } from "@/store/transfersBridge";
+import { currentTransfersView, ensureTransfersSubscribed } from "@/store/transfersBridge";
 import { installTransferHarness, type FakeTransferTransport } from "@/test/transferHarness";
 
 describe("useFileSystem (SFTP) — uploadFileFromPath API call", () => {
@@ -128,12 +128,13 @@ describe("useFileSystem (SFTP) — uploadFileFromPath API call", () => {
   let transport: FakeTransferTransport;
   let teardown: () => void;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     ({ transport, teardown } = installTransferHarness());
+    await ensureTransfersSubscribed();
     vi.clearAllMocks();
   });
 

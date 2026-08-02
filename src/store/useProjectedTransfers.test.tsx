@@ -62,7 +62,10 @@ const flush = () => act(async () => await Promise.resolve());
 
 describe("useProjectedTransfers", () => {
   it("returns the seeded region view", async () => {
-    const view = transfersView([fakeTransferEntry("t1"), fakeTransferEntry("t2", { state: "queued" })]);
+    const view = transfersView([
+      fakeTransferEntry("t1"),
+      fakeTransferEntry("t2", { state: "queued" }),
+    ]);
     transport.seed(view);
 
     const hook = renderHook();

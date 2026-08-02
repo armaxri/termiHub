@@ -84,9 +84,7 @@ describe("useTransferReconcile (#1645, region-authoritative #2229)", () => {
   it("settles a stuck row via transfer.reconcile when the terminal event was dropped", async () => {
     // A transfer is stuck at `queued` (every progress event, incl. terminal, was
     // dropped); the backend still reports it (retained terminal snapshot, #1645).
-    transport.seed(
-      transfersView([fakeTransferEntry("t1", { state: "queued", percent: null })])
-    );
+    transport.seed(transfersView([fakeTransferEntry("t1", { state: "queued", percent: null })]));
     mockTransferList.mockResolvedValue([snapshot({ state: "completed", transferred: 100 })]);
 
     await mountHook();
@@ -115,9 +113,7 @@ describe("useTransferReconcile (#1645, region-authoritative #2229)", () => {
   it("does not settle a stuck row from a transient rich `failed` snapshot (settled:false, #1657)", async () => {
     // The backend reports the transfer as `failed` but `settled: false` — a live
     // rich handle mid auto-retry. The reconcile must leave the row non-terminal.
-    transport.seed(
-      transfersView([fakeTransferEntry("t1", { state: "queued", percent: null })])
-    );
+    transport.seed(transfersView([fakeTransferEntry("t1", { state: "queued", percent: null })]));
     mockTransferList.mockResolvedValue([snapshot({ state: "failed", settled: false })]);
 
     await mountHook();
