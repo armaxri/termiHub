@@ -592,6 +592,34 @@ fn server_side_close_fold_drops_the_entry() {
     );
 }
 
+/// The server now owns monitor entry creation (#2224): the `open` fold creates the
+/// `connecting` entry at the source with the UI-only host label, primes any cached
+/// stats, and leaves `monitorSessionId` null until the connect settles.
+#[test]
+fn server_side_open_fold_creates_the_connecting_entry() {
+    use termihub_core::monitoring::MonitorStatus;
+
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SystemMonitorStore::new());
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    app.manage(projection);
+
+    fold_monitor_transition(app.handle(), |s| {
+        s.open("s1", Some("host-a".to_string()), None)
+    });
+
+    let entry = store.get("s1").expect("open created the entry server-side");
+    assert_eq!(entry.host.as_deref(), Some("host-a"));
+    assert!(entry.loading, "a fresh open is loading");
+    assert_eq!(entry.monitor_session_id, None);
+    assert!(matches!(entry.status, Some(MonitorStatus::Connecting)));
+}
+
 /// The fold is a best-effort no-op when no store / projection state is managed
 /// (e.g. a headless harness that never ran `setup()`) — it must not panic.
 #[test]

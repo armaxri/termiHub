@@ -22,6 +22,7 @@ import {
 import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
+import { currentMonitorsView } from "@/store/systemMonitorBridge";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { frontendLog } from "@/utils/frontendLog";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
@@ -594,8 +595,9 @@ function MonitoringStatus() {
     if (!key) return;
 
     // Already monitoring this session (connected or in flight) → nothing to do.
-    // Switching tabs no longer tears down other hosts (#1231, audit gap G6).
-    const existing = useAppStore.getState().monitors[key];
+    // Switching tabs no longer tears down other hosts (#1231, audit gap G6). The
+    // monitor state is read from the authoritative `system-monitors` region (#2224).
+    const existing = currentMonitorsView().monitors[key];
     if (existing && (existing.monitorSessionId || existing.loading)) return;
     if (autoConnectFailedRef.current === key) return;
     autoConnectFailedRef.current = key;
@@ -604,9 +606,14 @@ function MonitoringStatus() {
     const hostLabel = (cfg.host as string) || activeTab.title || key;
 
     const doConnect = async () => {
-      await useAppStore.getState().connectMonitoring(key, hostLabel);
-      if (useAppStore.getState().monitors[key]?.monitorSessionId) {
+      try {
+        // Resolves once the backend has folded `opened` into the region; rejects
+        // (with `openFailed` already recorded) on a failed connect. Clear the
+        // failed latch only on success so a failing host is not retried in a loop.
+        await useAppStore.getState().connectMonitoring(key, hostLabel);
         autoConnectFailedRef.current = null;
+      } catch (err) {
+        frontendLog("monitoring", `monitoring auto-connect failed for ${key}: ${err}`);
       }
     };
 

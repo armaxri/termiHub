@@ -2125,10 +2125,17 @@ export async function sessionGetCapabilities(
 /**
  * Start session-based monitoring; stats arrive as `session-monitoring-stats` Tauri events.
  *
- * `intervalMs` sets the collection cadence; when omitted the backend default is used (#1233).
+ * The backend owns monitor entry creation (#2224): `host` is the UI-only label the
+ * client threads through so the server can create the `connecting` entry in the
+ * authoritative `SystemMonitorStore`. `intervalMs` sets the collection cadence;
+ * when omitted the backend default is used (#1233).
  */
-export async function sessionMonitoringOpen(sessionId: string, intervalMs?: number): Promise<void> {
-  await invoke("session_monitoring_open", { sessionId, intervalMs });
+export async function sessionMonitoringOpen(
+  sessionId: string,
+  host?: string | null,
+  intervalMs?: number
+): Promise<void> {
+  await invoke("session_monitoring_open", { sessionId, host, intervalMs });
 }
 
 /** Stop session-based monitoring. */
