@@ -11,6 +11,12 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { MonitoringEntry } from "@/types/monitoring";
+import { ensureMonitorsSubscribed } from "@/store/systemMonitorBridge";
+import {
+  installMonitorHarness,
+  monitorsView,
+  type FakeMonitorTransport,
+} from "@/test/systemMonitorHarness";
 
 // jsdom lacks the observer/pointer-capture APIs Radix touches on mount.
 class ResizeObserverStub {
@@ -78,17 +84,31 @@ function monitorSection(): HTMLElement | null {
 describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => {
   let container: HTMLDivElement;
   let root: Root;
+  let transport: FakeMonitorTransport;
+  let teardownMonitors: () => void;
 
-  beforeEach(() => {
+  /**
+   * Seed a monitor row into the authoritative `system-monitors` region (#2224 —
+   * monitor state no longer lives in `appStore`). The bridge is pre-subscribed, so
+   * this synchronously updates the projected view the modal reads on first render.
+   */
+  function seedMonitor(patch: Partial<MonitoringEntry> = {}) {
+    transport.seed(monitorsView([monitorEntry(patch)]));
+  }
+
+  beforeEach(async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
+    ({ transport, teardown: teardownMonitors } = installMonitorHarness());
+    await ensureMonitorsSubscribed();
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    teardownMonitors();
   });
 
   function renderModal() {
@@ -102,7 +122,7 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
   }
 
   it("renders Pause and interval controls on a live monitoring row", () => {
-    useAppStore.setState({ monitors: { [KEY]: monitorEntry() } });
+    seedMonitor();
     renderModal();
 
     expect(monitorSection()).not.toBeNull();
@@ -114,7 +134,8 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
 
   it("Pause invokes setMonitoringPaused(key, true)", async () => {
     const setMonitoringPaused = vi.fn(() => Promise.resolve());
-    useAppStore.setState({ monitors: { [KEY]: monitorEntry() }, setMonitoringPaused });
+    seedMonitor();
+    useAppStore.setState({ setMonitoringPaused });
     renderModal();
 
     const pause = document.querySelector(
@@ -127,7 +148,7 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
   });
 
   it("shows a Resume control (not Pause) when the entry is paused", () => {
-    useAppStore.setState({ monitors: { [KEY]: monitorEntry({ paused: true, status: "paused" }) } });
+    seedMonitor({ paused: true, status: "paused" });
     renderModal();
 
     expect(document.querySelector(`[data-testid="monitor-resume-${KEY}"]`)).not.toBeNull();
@@ -139,11 +160,8 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
   it("shows a Retry control and error badge when the entry is offline", async () => {
     const connectMonitoring = vi.fn(() => Promise.resolve());
     const disconnectMonitoring = vi.fn(() => Promise.resolve());
-    useAppStore.setState({
-      monitors: { [KEY]: monitorEntry({ status: "offline" }) },
-      connectMonitoring,
-      disconnectMonitoring,
-    });
+    seedMonitor({ status: "offline" });
+    useAppStore.setState({ connectMonitoring, disconnectMonitoring });
     renderModal();
 
     const retry = document.querySelector(
@@ -162,7 +180,7 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
   });
 
   it("does not render a Retry control while live", () => {
-    useAppStore.setState({ monitors: { [KEY]: monitorEntry({ status: "live" }) } });
+    seedMonitor({ status: "live" });
     renderModal();
     expect(document.querySelector(`[data-testid="monitor-retry-${KEY}"]`)).toBeNull();
   });

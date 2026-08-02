@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { TerminalTab, LeafPanel } from "@/types/terminal";
 
 // Mock service modules before importing the store
@@ -45,36 +45,43 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import type { MonitoringEntry } from "@/types/monitoring";
+import { ensureMonitorsSubscribed } from "./systemMonitorBridge";
+import {
+  fakeMonitor,
+  installMonitorHarness,
+  monitorsView,
+  type FakeMonitorTransport,
+} from "@/test/systemMonitorHarness";
+import { flushMacrotask } from "@/test/flushAsync";
 
-/** A single connected monitor entry keyed by its owning terminal session id. */
-function openMonitor(sessionId: string, host: string): Record<string, MonitoringEntry> {
-  return {
-    [sessionId]: {
-      key: sessionId,
-      host,
-      monitorSessionId: sessionId,
-      stats: null,
-      loading: false,
-      error: null,
-      status: "live",
-      sampleCount: 0,
-      paused: false,
-      intervalMs: 2000,
-    },
-  };
+let transport: FakeMonitorTransport;
+let teardownMonitors: () => void;
+
+/**
+ * Seed the authoritative `system-monitors` region with one live monitor keyed by
+ * its owning session id (#2224 — monitor state no longer lives in `appStore`).
+ */
+async function seedMonitor(sessionId: string, host: string): Promise<void> {
+  await ensureMonitorsSubscribed();
+  transport.seed(monitorsView([fakeMonitor(sessionId, { host, monitorSessionId: sessionId })]));
+  await flushMacrotask();
 }
 
 describe("appStore — settings toggles", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
+    ({ transport, teardown: teardownMonitors } = installMonitorHarness());
+  });
+
+  afterEach(() => {
+    teardownMonitors();
   });
 
   it("disabling power monitoring disconnects active monitoring session", async () => {
-    // Set up connected monitoring state
+    // Set up connected monitoring state in the authoritative region.
+    await seedMonitor("mon-1", "pi@pi.local:22");
     useAppStore.setState({
-      monitors: openMonitor("mon-1", "pi@pi.local:22"),
       settings: {
         version: "1",
         externalConnectionFiles: [],
@@ -92,7 +99,6 @@ describe("appStore — settings toggles", () => {
 
     const state = useAppStore.getState();
     expect(state.settings.powerMonitoringEnabled).toBe(false);
-    expect(state.monitors).toEqual({});
     expect(mockSessionMonitoringClose).toHaveBeenCalledWith("mon-1");
   });
 
@@ -125,8 +131,8 @@ describe("appStore — settings toggles", () => {
   });
 
   it("disabling one feature does not affect the other", async () => {
+    await seedMonitor("mon-1", "pi@pi.local:22");
     useAppStore.setState({
-      monitors: openMonitor("mon-1", "pi@pi.local:22"),
       sftpSessionId: "sftp-1",
       sftpConnectedHost: "pi@pi.local:22",
       sidebarView: "files",
@@ -147,8 +153,8 @@ describe("appStore — settings toggles", () => {
     });
 
     const state = useAppStore.getState();
-    // Monitoring disconnected
-    expect(state.monitors).toEqual({});
+    // Monitoring disconnected via the backend close command.
+    expect(mockSessionMonitoringClose).toHaveBeenCalledWith("mon-1");
     // SFTP still connected
     expect(state.sftpSessionId).toBe("sftp-1");
     expect(state.sidebarView).toBe("files");
@@ -211,8 +217,8 @@ describe("appStore — settings toggles", () => {
   }
 
   it("disabling global monitoring keeps session when active tab has explicit enableMonitoring=true", async () => {
+    await seedMonitor("mon-1", "pi@pi.local:22");
     useAppStore.setState({
-      monitors: openMonitor("mon-1", "pi@pi.local:22"),
       ...sshTabPanel({ enableMonitoring: true }),
       settings: {
         version: "1",
@@ -231,7 +237,6 @@ describe("appStore — settings toggles", () => {
 
     // Monitoring should NOT be disconnected — the active tab has an explicit override
     expect(mockSessionMonitoringClose).not.toHaveBeenCalled();
-    expect(useAppStore.getState().monitors["mon-1"]).toBeDefined();
   });
 
   it("disabling global file browser keeps SFTP when active tab has explicit enableFileBrowser=true", async () => {
@@ -262,8 +267,8 @@ describe("appStore — settings toggles", () => {
   });
 
   it("disabling global monitoring disconnects when active tab uses default (no override)", async () => {
+    await seedMonitor("mon-1", "pi@pi.local:22");
     useAppStore.setState({
-      monitors: openMonitor("mon-1", "pi@pi.local:22"),
       ...sshTabPanel({}), // No per-connection override
       settings: {
         version: "1",

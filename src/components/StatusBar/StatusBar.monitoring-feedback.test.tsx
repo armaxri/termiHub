@@ -21,6 +21,13 @@ import { StatusBar } from "./StatusBar";
 import type { ConnectionTypeInfo, SavedConnection } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import type { MonitoringEntry } from "@/types/monitoring";
+import { currentMonitorsView, ensureMonitorsSubscribed } from "@/store/systemMonitorBridge";
+import {
+  fakeMonitor,
+  installMonitorHarness,
+  monitorsView,
+  type FakeMonitorTransport,
+} from "@/test/systemMonitorHarness";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -76,43 +83,45 @@ function primeMonitoringTab() {
 /** MonitorKey for the primed SSH tab: the owning terminal session id (#1232). */
 const MONITOR_KEY = "sess-1";
 
-/** Install a keyed monitor entry for the primed tab (#1231, per-host slice). */
+let transport: FakeMonitorTransport;
+let teardownMonitors: () => void;
+
+/**
+ * Seed the active tab's monitor entry into the authoritative `system-monitors`
+ * region (#2224). The bridge is pre-subscribed in `beforeEach`, so this
+ * synchronously updates the projected view the component reads on first render.
+ */
 function setActiveMonitor(patch: Partial<MonitoringEntry>) {
-  useAppStore.setState((s) => ({
-    monitors: {
-      ...s.monitors,
-      [MONITOR_KEY]: {
-        key: MONITOR_KEY,
+  transport.seed(
+    monitorsView([
+      fakeMonitor(MONITOR_KEY, {
         host: MONITOR_KEY,
         monitorSessionId: null,
-        stats: null,
-        loading: false,
-        error: null,
         status: null,
-        sampleCount: 0,
-        paused: false,
-        intervalMs: 2000,
         ...patch,
-      },
-    },
-  }));
+      }),
+    ])
+  );
 }
 
 describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () => {
   let container: HTMLDivElement;
   let root: Root;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     primeMonitoringTab();
+    ({ transport, teardown: teardownMonitors } = installMonitorHarness());
+    await ensureMonitorsSubscribed();
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    teardownMonitors();
   });
 
   function renderStatusBar() {
@@ -159,7 +168,7 @@ describe("StatusBar — monitoring auto-connect feedback (#1148, G7/G8/G9)", () 
     });
 
     // The stale error must be cleared so it does not linger (G9)…
-    expect(useAppStore.getState().monitors[MONITOR_KEY].error).toBeNull();
+    expect(currentMonitorsView().monitors[MONITOR_KEY].error).toBeNull();
     // …and a fresh connect attempt must be made (G7).
     expect(connectSpy.mock.calls.length).toBe(before + 1);
   });

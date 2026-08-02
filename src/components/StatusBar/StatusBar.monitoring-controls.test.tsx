@@ -15,6 +15,13 @@ import { StatusBar } from "./StatusBar";
 import type { SystemStats, MonitoringEntry } from "@/types/monitoring";
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
+import { ensureMonitorsSubscribed } from "@/store/systemMonitorBridge";
+import {
+  fakeMonitor,
+  installMonitorHarness,
+  monitorsView,
+  type FakeMonitorTransport,
+} from "@/test/systemMonitorHarness";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
@@ -112,44 +119,43 @@ function primeRemoteSessionTab(sessionId: string) {
 /** MonitorKey for the primed SSH tab — the owning session id (#1232). */
 const MONITOR_KEY = "sess-1";
 
-/** Install a keyed monitor entry for the primed tab (#1231, per-session slice). */
-function setActiveMonitor(patch: Partial<MonitoringEntry>) {
-  useAppStore.setState((s) => ({
-    monitors: {
-      ...s.monitors,
-      [MONITOR_KEY]: {
-        key: MONITOR_KEY,
-        host: MONITOR_KEY,
-        monitorSessionId: null,
-        stats: null,
-        loading: false,
-        error: null,
-        status: null,
-        sampleCount: 0,
-        paused: false,
-        intervalMs: 2000,
-        ...patch,
-      },
-    },
-  }));
+let transport: FakeMonitorTransport;
+let teardownMonitors: () => void;
+
+/**
+ * Seed the active tab's monitor entry into the authoritative `system-monitors`
+ * region (#2224 — monitor state no longer lives in `appStore`). The bridge is
+ * pre-subscribed in `beforeEach`, so this synchronously updates the projected
+ * view the component reads on its first render.
+ */
+function setActiveMonitor(patch: Partial<MonitoringEntry>, key = MONITOR_KEY) {
+  transport.seed(
+    monitorsView([fakeMonitor(key, { host: key, monitorSessionId: null, status: null, ...patch })])
+  );
 }
 
 describe("StatusBar — monitoring controls (#1233)", () => {
   let container: HTMLDivElement;
   let root: Root;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     primeMonitoringTab();
     vi.restoreAllMocks();
+    ({ transport, teardown: teardownMonitors } = installMonitorHarness());
+    await ensureMonitorsSubscribed();
+    // Neutralise the auto-connect effect so it never reaches the real backend
+    // command (these tests drive the region + controls directly).
+    useAppStore.setState({ connectMonitoring: vi.fn(() => Promise.resolve()) });
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    teardownMonitors();
   });
 
   function renderStatusBar() {
@@ -164,26 +170,8 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     // A remote-session tab surfaces the Connecting + Cancel affordance without
     // any saved connections (direct-SSH gates that block behind a picker).
     primeRemoteSessionTab(SESSION);
-    useAppStore.setState((s) => ({
-      cancelMonitoring,
-      monitors: {
-        ...s.monitors,
-        [SESSION]: {
-          key: SESSION,
-          host: SESSION,
-          sessionBased: true,
-          monitorSessionId: null,
-          stats: null,
-          loading: true,
-          error: null,
-          status: "connecting",
-          sampleCount: 0,
-          cancelled: false,
-          paused: false,
-          intervalMs: 2000,
-        },
-      },
-    }));
+    useAppStore.setState({ cancelMonitoring });
+    setActiveMonitor({ loading: true, status: "connecting" }, SESSION);
     renderStatusBar();
 
     const cancel = container.querySelector('[data-testid="monitoring-cancel-btn"]');
