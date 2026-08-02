@@ -10,7 +10,7 @@ use super::config::{
     SavedRemoteAgent,
 };
 use super::recovery::RecoveryWarning;
-use super::settings::{AppSettings, SettingsStorage};
+use super::settings::{default_serial_port_scan_prefixes, AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
 use super::tree::{
     build_tree, compute_connection_id, compute_folder_id, count_tree_items,
@@ -592,6 +592,23 @@ impl ConnectionManager {
     /// Get the current application settings.
     pub fn get_settings(&self) -> AppSettings {
         self.settings.lock().unwrap().clone()
+    }
+
+    /// Get the current application settings with the serial-port-scan prefixes
+    /// resolved to the concrete built-in default list when they have never been
+    /// saved (`None` in storage).
+    ///
+    /// This is the exact shape the frontend receives from the `get_settings`
+    /// command and, therefore, the shape reflected into the shadow
+    /// [`SettingsStore`](crate::settings_projection::SettingsStore) at startup
+    /// and on every persisted save (#2386). Keeping the resolution in one place
+    /// keeps the command return value and the projection fold from drifting.
+    pub fn get_settings_resolved(&self) -> AppSettings {
+        let mut settings = self.get_settings();
+        if settings.serial_port_scan_prefixes.is_none() {
+            settings.serial_port_scan_prefixes = Some(default_serial_port_scan_prefixes());
+        }
+        settings
     }
 
     /// Update and persist application settings.

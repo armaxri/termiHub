@@ -51,6 +51,8 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 use tauri::{AppHandle, Manager};
 
+use crate::commands::projection::ProjectionState;
+use crate::connection::manager::ConnectionManager;
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 use crate::settings_projection::store::SettingsStore;
 
@@ -68,6 +70,54 @@ pub fn publish_settings(projector: &Projector, store: &SettingsStore) -> Vec<Pro
             version,
         }],
         None => Vec::new(),
+    }
+}
+
+/// Fold the persisted [`AppSettings`](crate::connection::settings::AppSettings)
+/// document — the real authority behind `get_settings` / `save_settings` — into
+/// the managed [`SettingsStore`] **server-side** and fan the resulting `settings`
+/// region diff out to every subscriber (#2386, prerequisite for #2227).
+///
+/// This is the server-authority counterpart to the `settings.*` intents
+/// [`register_settings_intents`] registers: the whole-document save the frontend
+/// currently mirrors via a `settings.replace` intent is reflected here **at the
+/// source** — the instant a `save_settings` lands in the persisted
+/// [`ConnectionManager`] authority — with no client round-trip required for the
+/// store to be correct.
+///
+/// It reflects the manager's **whole** post-save document (via
+/// [`ConnectionManager::get_settings_resolved`] serialized to its camelCase view
+/// shape + [`SettingsStore::replace`]) rather than a targeted patch. `AppSettings`
+/// is a single opaque document persisted and replaced as a whole, so reflecting
+/// the authoritative resolved document guarantees the region always equals what
+/// was actually persisted (including the resolved serial-port-scan prefixes the
+/// frontend receives). The projector coalesces an unchanged document to no diff,
+/// so a save that changes nothing is a no-op.
+///
+/// It is **additive**: the `settings.*` intents stay in place, and nothing in the
+/// live UI subscribes to the region yet, so this changes no user-facing behavior.
+/// Making the store authoritative (dropping the redundant `appStore` reducer) is
+/// the later #2227 reducer-removal.
+///
+/// Best-effort and non-fatal: if the store or the connection manager is not
+/// managed (e.g. a headless unit-test app that never ran `setup()`), or the
+/// resolved settings do not serialize to a JSON object, the fold is skipped
+/// rather than erroring. The `replace` runs to completion synchronously before
+/// the publish, so the store lock is never held across an await.
+pub fn fold_settings_from_manager<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
+    let Some(store) = app_handle.try_state::<Arc<SettingsStore>>() else {
+        return;
+    };
+    let store: Arc<SettingsStore> = (*store).clone();
+    let Some(manager) = app_handle.try_state::<ConnectionManager>() else {
+        return;
+    };
+    let Ok(Value::Object(doc)) = serde_json::to_value(manager.get_settings_resolved()) else {
+        return;
+    };
+    store.replace(doc);
+    if let Some(projection) = app_handle.try_state::<ProjectionState>() {
+        publish_settings(&projection.projector, &store);
     }
 }
 

@@ -9,7 +9,7 @@ use crate::connection::config::{
 };
 use crate::connection::manager::{self, ConnectionManager};
 use crate::connection::recovery::RecoveryWarning;
-use crate::connection::settings::{default_serial_port_scan_prefixes, AppSettings};
+use crate::connection::settings::AppSettings;
 use crate::credential::CredentialManager;
 
 /// Response containing all connections (unified), folders, and agents.
@@ -172,20 +172,22 @@ pub fn import_connections(
 /// the frontend always receives a concrete, editable list.
 #[tauri::command]
 pub fn get_settings(manager: State<'_, ConnectionManager>) -> Result<AppSettings, String> {
-    let mut settings = manager.get_settings();
-    if settings.serial_port_scan_prefixes.is_none() {
-        settings.serial_port_scan_prefixes = Some(default_serial_port_scan_prefixes());
-    }
-    Ok(settings)
+    Ok(manager.get_settings_resolved())
 }
 
 /// Update and persist application settings.
 #[tauri::command]
 pub fn save_settings(
     settings: AppSettings,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
-    manager.save_settings(settings).map_err(|e| e.to_string())
+    manager.save_settings(settings).map_err(|e| e.to_string())?;
+    // Server-authority fold (#2386): reflect the persisted `AppSettings`
+    // document into the shadow `SettingsStore` at the source. Additive; no
+    // user-facing change. (`AppHandle` is Tauri-injected — no JS invoke change.)
+    crate::settings_projection::projection::fold_settings_from_manager(&app);
+    Ok(())
 }
 
 /// Save an external connection file to disk.
