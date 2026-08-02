@@ -176,6 +176,23 @@ pub type ProgressSink = Arc<dyn Fn(&TransferProgress) + Send + Sync>;
 /// copy).
 pub fn app_progress_sink(app: AppHandle) -> ProgressSink {
     Arc::new(move |progress: &TransferProgress| {
+        // Server-authority fold (#2387, prerequisite for #2229): reflect every
+        // backend-produced transfer transition / progress sample into the shared
+        // `TransferStore` at the source — the instant the copy loop / FTP
+        // scheduler produces it — and fan the `transfers` region diff out.
+        // `app_progress_sink` is the single choke point every `transfer-progress`
+        // event flows through for both the legacy SFTP and rich FTP paths, so
+        // folding here feeds the store the whole register → queue → progress →
+        // pause → resume → finish → cancel lifecycle. Additive: the Tauri event
+        // below still fires and the frontend mirror is untouched, so no
+        // user-facing behavior changes; the fold serializes the event to the same
+        // camelCase JSON the frontend receives, so the store transition matches
+        // the client `transfer.progress` route exactly. Best-effort: skipped when
+        // the store/projection is unmanaged (e.g. a collector-sink integration
+        // test) or the event does not serialize.
+        if let Ok(value) = serde_json::to_value(progress) {
+            crate::transfers_projection::projection::fold_transfer_progress(&app, &value);
+        }
         if let Err(e) = app.emit(TRANSFER_PROGRESS_EVENT, progress) {
             warn!(error = %e, "failed to emit transfer-progress");
         }
