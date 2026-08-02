@@ -137,7 +137,7 @@ src-tauri/src/                # Rust backend (desktop)
   connection/                 # config.rs, manager.rs, storage.rs
   credential/                 # Credential store (encryption, master password, storage)
   files/                      # sftp.rs, local.rs, browser.rs, utils.rs
-  monitoring/                 # SSH remote system monitoring (CPU, memory, disk, etc.)
+  system_monitor_projection/  # System monitoring state projection (CPU, memory, disk, etc.)
   session/                    # manager.rs, registry.rs, remote_proxy.rs
   tunnel/                     # SSH tunnel functionality
   embedded_servers/           # Embedded HTTP/FTP/TFTP server management
@@ -160,19 +160,23 @@ core/src/                     # Shared Rust core library (termihub-core)
                               # shell/SSH/Docker/serial command builders and validators
 agent/                        # Remote agent (JSON-RPC over SSH)
   src/
-    daemon/                   # Session daemon process and binary frame protocol
-    shell/                    # ShellBackend (daemon client for shell sessions)
-    docker/                   # DockerBackend (Docker container sessions)
-    ssh/                      # SshBackend (SSH jump host sessions)
-    serial/                   # SerialBackend (direct serial port access)
-    session/                  # SessionManager, types, prepared connection definitions
-    files/                    # File browsing (local, SFTP relay, Docker)
-    monitoring/               # System monitoring (delegates to core parsers)
+    session/                  # SessionManager, SessionBackend enum, connection definitions, agent forwarding
+    daemon/                   # Session daemon client, process spawning, and binary frame protocol
+    registry_daemon/          # Host-wide registry daemon role — cross-worker "who's attached" visibility (ADR-11)
+    tunnel/                   # Agent-hosted SSH tunnel forwarding (local/remote/dynamic)
+    service/                  # Agent-hosted embedded HTTP/FTP/TFTP servers
+    monitoring/               # System monitoring (self + remote SSH, delegates to core parsers)
+    network/                  # Network diagnostic handlers (thin wrappers over core::network)
+    files/                    # Connection-scoped file browsing (core FileBrowser)
+    update/                   # Optional agent-side GitHub self-update (off by default)
     handler/                  # JSON-RPC method dispatcher
     protocol/                 # Protocol types, methods, error codes
     state/                    # Session state persistence (state.json)
     io/                       # Transport layer (stdio, TCP)
+    client_registry.rs        # Per-process registry of connected desktop clients
+    registry.rs               # Agent-side ConnectionTypeRegistry setup
     transport.rs              # Core trait adapters (OutputSink, ProcessSpawner, etc.)
+    fs.rs                     # Small shared filesystem helpers
     main.rs                   # Entry point (--stdio, --listen, --daemon)
 scripts/                      # Dev helper scripts (.sh + .cmd variants)
   internal/                   # Non-user-facing helpers (autoformat hook, kill-port utility)
