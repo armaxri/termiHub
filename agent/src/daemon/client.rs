@@ -5,8 +5,10 @@
 //! methods for write_input, resize, attach, detach, and close. Used by both
 //! `ShellBackend` and `DockerBackend`.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use base64::Engine;
@@ -23,6 +25,37 @@ use crate::protocol::messages::JsonRpcNotification;
 /// Like the connect timeout, this is generous so a daemon that is slow to
 /// finish startup and send `MSG_READY` under CI load is not dropped prematurely.
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Future returned by an [`ExitHook`].
+pub type ExitHookFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// Callback invoked once when the daemon reader detects the backend has exited
+/// on its own — an `MSG_EXITED` frame, a clean EOF, or a transport read error.
+///
+/// The [`SessionManager`](crate::session::manager::SessionManager) installs one
+/// via [`DaemonClient::set_exit_hook`] so a naturally-exiting daemon-backed
+/// session promptly runs its deferred self-update auto-apply, mirroring the
+/// in-process output-forwarder path (#2378/#2381). The reader awaits the
+/// returned future, so the hook may do async work (e.g. lock the session map).
+pub type ExitHook = Arc<dyn Fn() -> ExitHookFuture + Send + Sync>;
+
+/// Shared, set-once slot holding a session's [`ExitHook`].
+///
+/// Shared between the [`DaemonClient`] and its background reader task(s) so the
+/// hook can be installed *after* [`DaemonClient::connect`] has already spawned
+/// the reader, and so a reader respawned on reattach still observes it. Empty
+/// when no hook was installed (e.g. a manager not built through
+/// [`SessionManager::into_arc`](crate::session::manager::SessionManager::into_arc),
+/// or a client used in isolation), in which case the reader simply skips it.
+type ExitHookSlot = Arc<OnceLock<ExitHook>>;
+
+/// Run the installed exit hook, if any. Called by the reader once its backend
+/// has exited on its own.
+async fn run_exit_hook(slot: &ExitHookSlot) {
+    if let Some(hook) = slot.get() {
+        hook().await;
+    }
+}
 
 /// Cloneable handle to the daemon's write half.
 ///
@@ -49,6 +82,9 @@ pub struct DaemonClient {
     notification_tx: NotificationSender,
     /// Pending oneshot channel for a query_buffer response.
     pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    /// Hook the reader runs when this session's backend exits on its own,
+    /// installed via [`set_exit_hook`](Self::set_exit_hook) (#2381).
+    on_exit: ExitHookSlot,
 }
 
 impl DaemonClient {
@@ -65,12 +101,14 @@ impl DaemonClient {
     ) -> Result<Self, anyhow::Error> {
         let pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>> =
             Arc::new(Mutex::new(None));
+        let on_exit: ExitHookSlot = Arc::new(OnceLock::new());
 
         let (writer, reader_task, alive) = connect_and_start_reader(
             &endpoint,
             &session_id,
             notification_tx.clone(),
             pending_buffer_reply.clone(),
+            on_exit.clone(),
         )
         .await?;
 
@@ -82,7 +120,22 @@ impl DaemonClient {
             alive,
             notification_tx,
             pending_buffer_reply,
+            on_exit,
         })
+    }
+
+    /// Install the callback the reader runs when this session's backend exits on
+    /// its own (an `MSG_EXITED` frame or EOF/read error on the transport).
+    ///
+    /// Set-once — a second call is ignored. Wired by the
+    /// [`SessionManager`](crate::session::manager::SessionManager) so a natural
+    /// last-session exit promptly triggers the deferred self-update auto-apply,
+    /// matching the in-process output-forwarder path (#2381). Safe to call after
+    /// [`connect`](Self::connect): the reader reads the slot only once the
+    /// backend has actually exited, and the shared slot is also observed by a
+    /// reader respawned on [`attach`](Self::attach).
+    pub fn set_exit_hook(&self, hook: ExitHook) {
+        let _ = self.on_exit.set(hook);
     }
 
     /// Request the current ring buffer contents from the daemon without reconnecting.
@@ -157,6 +210,7 @@ impl DaemonClient {
             &self.session_id,
             self.notification_tx.clone(),
             self.pending_buffer_reply.clone(),
+            self.on_exit.clone(),
         )
         .await?;
 
@@ -284,6 +338,7 @@ async fn connect_and_start_reader(
     session_id: &str,
     notification_tx: NotificationSender,
     pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    on_exit: ExitHookSlot,
 ) -> Result<(BoxedWriter, tokio::task::JoinHandle<()>, Arc<AtomicBool>), anyhow::Error> {
     let (mut reader, writer) = transport::connect(endpoint).await?;
 
@@ -350,6 +405,7 @@ async fn connect_and_start_reader(
             &tx,
             &alive_clone,
             pending_buffer_reply,
+            on_exit,
         )
         .await;
     });
@@ -364,6 +420,7 @@ async fn reader_loop(
     notification_tx: &NotificationSender,
     alive: &AtomicBool,
     pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    on_exit: ExitHookSlot,
 ) {
     loop {
         match protocol::read_frame_async(&mut reader).await {
@@ -397,6 +454,10 @@ async fn reader_loop(
                         }),
                     );
                     let _ = notification_tx.send(notification);
+                    // Natural-exit deferred-update hook (#2381): if this was the
+                    // last active session, apply any staged self-update now,
+                    // matching the explicit-close and in-process paths.
+                    run_exit_hook(&on_exit).await;
                     return;
                 }
                 MSG_ERROR => {
@@ -424,11 +485,13 @@ async fn reader_loop(
                 // Daemon closed the connection (EOF)
                 info!("Daemon connection closed for session {session_id}");
                 alive.store(false, Ordering::SeqCst);
+                run_exit_hook(&on_exit).await;
                 return;
             }
             Err(e) => {
                 error!("Frame read error for session {session_id}: {e}");
                 alive.store(false, Ordering::SeqCst);
+                run_exit_hook(&on_exit).await;
                 return;
             }
         }
@@ -515,8 +578,17 @@ mod tests {
         let tx = notification_tx.clone();
         let pbr_clone = pending_buffer_reply.clone();
 
+        let on_exit: ExitHookSlot = Arc::new(OnceLock::new());
         let reader_task = tokio::spawn(async move {
-            reader_loop(reader, &session_id_owned, &tx, &alive_clone, pbr_clone).await;
+            reader_loop(
+                reader,
+                &session_id_owned,
+                &tx,
+                &alive_clone,
+                pbr_clone,
+                on_exit,
+            )
+            .await;
         });
 
         let writer_arc: Arc<Mutex<Option<BoxedWriter>>> = Arc::new(Mutex::new(Some(writer)));
@@ -544,5 +616,85 @@ mod tests {
         assert_eq!(reply, b"buffered output");
 
         reader_task.abort();
+    }
+
+    /// Build an [`ExitHook`] that flips the returned flag when run, so a test can
+    /// assert the reader reached back into its owner on a natural exit (#2381).
+    fn recording_exit_hook() -> (ExitHookSlot, Arc<AtomicBool>) {
+        let ran = Arc::new(AtomicBool::new(false));
+        let ran_for_hook = ran.clone();
+        let hook: ExitHook = Arc::new(move || {
+            let ran = ran_for_hook.clone();
+            Box::pin(async move {
+                ran.store(true, Ordering::SeqCst);
+            }) as ExitHookFuture
+        });
+        let slot: ExitHookSlot = Arc::new(OnceLock::new());
+        let _ = slot.set(hook);
+        (slot, ran)
+    }
+
+    /// The reader must run the installed exit hook when the daemon reports the
+    /// backend exited on its own via `MSG_EXITED` (#2381).
+    #[tokio::test]
+    async fn reader_loop_runs_exit_hook_on_msg_exited() {
+        let (client_sock, mut server_sock) = tokio::io::duplex(64 * 1024);
+        // The daemon side signals a natural backend exit, then closes.
+        tokio::spawn(async move {
+            protocol::write_frame_async(&mut server_sock, MSG_EXITED, &[])
+                .await
+                .unwrap();
+        });
+
+        let reader: BoxedReader = Box::new(client_sock);
+        let (on_exit, ran) = recording_exit_hook();
+        let alive = Arc::new(AtomicBool::new(true));
+        let pbr = Arc::new(Mutex::new(None));
+
+        reader_loop(
+            reader,
+            "sess",
+            &make_notification_tx(),
+            &alive,
+            pbr,
+            on_exit,
+        )
+        .await;
+
+        assert!(!alive.load(Ordering::SeqCst), "backend marked dead on exit");
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "exit hook must run when the daemon sends MSG_EXITED"
+        );
+    }
+
+    /// The reader must also run the exit hook when the daemon connection reaches
+    /// EOF (the daemon vanished without a clean `MSG_EXITED`) (#2381).
+    #[tokio::test]
+    async fn reader_loop_runs_exit_hook_on_eof() {
+        let (client_sock, server_sock) = tokio::io::duplex(64 * 1024);
+        // Drop the server end immediately → the client reader observes EOF.
+        drop(server_sock);
+
+        let reader: BoxedReader = Box::new(client_sock);
+        let (on_exit, ran) = recording_exit_hook();
+        let alive = Arc::new(AtomicBool::new(true));
+        let pbr = Arc::new(Mutex::new(None));
+
+        reader_loop(
+            reader,
+            "sess",
+            &make_notification_tx(),
+            &alive,
+            pbr,
+            on_exit,
+        )
+        .await;
+
+        assert!(!alive.load(Ordering::SeqCst), "backend marked dead on EOF");
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "exit hook must run when the daemon connection reaches EOF"
+        );
     }
 }

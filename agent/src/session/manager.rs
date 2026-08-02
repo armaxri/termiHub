@@ -24,7 +24,7 @@ use crate::transport::JsonRpcOutputSink;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
 use termihub_core::session::traits::OutputSink;
 
-use crate::daemon::client::{DaemonClient, DaemonWriterHandle};
+use crate::daemon::client::{DaemonClient, DaemonWriterHandle, ExitHook, ExitHookFuture};
 use crate::daemon::transport::{endpoint_alive, session_endpoint};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
@@ -590,6 +590,15 @@ impl SessionManager {
             )
             .await;
 
+        // Install the natural-exit deferred-update hook on the daemon client so a
+        // self-terminating daemon-backed session promptly applies a staged
+        // self-update, mirroring the in-process output-forwarder path (#2381).
+        if let Ok(SessionBackend::Daemon(ref client)) = result {
+            if let Some(hook) = self.deferred_update_exit_hook() {
+                client.set_exit_hook(hook);
+            }
+        }
+
         // A daemon that never launched leaves no one to talk to the relay, so
         // don't leave the socket dangling.
         if result.is_err() && ssh_auth_sock.is_some() {
@@ -755,6 +764,33 @@ impl SessionManager {
         }
     }
 
+    /// Build the natural-exit hook a daemon-backed session installs on its
+    /// [`DaemonClient`].
+    ///
+    /// When the daemon reports its backend exited on its own (`MSG_EXITED`/EOF),
+    /// the client runs this hook, which reaches back through the [`Weak`] self
+    /// reference and runs the shared [`apply_deferred_update_if_idle`] helper —
+    /// so a naturally-exiting last daemon-backed session promptly applies a
+    /// staged self-update, matching the in-process output-forwarder path
+    /// (#2378/#2381).
+    ///
+    /// Returns `None` when the manager was not wrapped through
+    /// [`into_arc`](Self::into_arc) (e.g. some unit tests); the daemon client
+    /// then installs no hook and read-path reconciliation still settles the
+    /// session — exactly as the in-process forwarder skips its hook on an empty
+    /// [`Weak`].
+    fn deferred_update_exit_hook(&self) -> Option<ExitHook> {
+        let weak = self.self_ref.get().cloned()?;
+        Some(Arc::new(move || {
+            let weak = weak.clone();
+            Box::pin(async move {
+                if let Some(manager) = weak.upgrade() {
+                    manager.apply_deferred_update_if_idle().await;
+                }
+            }) as ExitHookFuture
+        }))
+    }
+
     /// Detach all sessions without closing them.
     ///
     /// Called when a TCP client disconnects so sessions remain alive
@@ -846,6 +882,12 @@ impl SessionManager {
 
             match DaemonClient::connect(id.clone(), endpoint, self.notification_tx.clone()).await {
                 Ok(client) => {
+                    // A recovered daemon session must also promptly apply a
+                    // staged self-update when it later exits on its own (#2381).
+                    if let Some(hook) = self.deferred_update_exit_hook() {
+                        client.set_exit_hook(hook);
+                    }
+
                     let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)
                         .map(|dt| dt.with_timezone(&Utc))
                         .unwrap_or_else(|_| Utc::now());
@@ -1893,6 +1935,94 @@ mod tests {
             assert!(
                 mgr.pending_update_for_test().await.is_none(),
                 "a successful apply clears pending_update"
+            );
+        }
+
+        // ── Daemon-backed natural-exit deferred-apply (issue #2381) ──────
+
+        /// Build an `into_arc` manager with a recording applier so the daemon
+        /// exit hook (which reaches back through the `Weak` self-reference) can be
+        /// exercised end to end.
+        fn arc_manager_with_recording_applier(
+        ) -> (Arc<SessionManager>, AppliedLog, tempfile::TempDir) {
+            let tmp = tempfile::tempdir().unwrap();
+            let state_path = tmp.path().join("state.json");
+            let applied: AppliedLog = Arc::new(StdMutex::new(Vec::new()));
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                state_path,
+                Arc::new(RecordingApplier {
+                    applied: applied.clone(),
+                }),
+            )
+            .into_arc();
+            (mgr, applied, tmp)
+        }
+
+        #[tokio::test]
+        async fn daemon_exit_hook_applies_pending_update_when_idle() {
+            // The daemon-backed twin of the in-process forwarder test: when the
+            // last daemon-backed session exits on its own, the client runs the
+            // installed exit hook, which must drive the deferred apply through the
+            // manager's `Weak` self-reference (#2381).
+            let (mgr, applied, _tmp) = arc_manager_with_recording_applier();
+            mgr.seed_pending_update_for_test(fake_pending("/tmp/new-agent"))
+                .await;
+
+            // No running sessions → the manager is idle. Running the hook the
+            // daemon client would install must apply the staged update once.
+            let hook = mgr
+                .deferred_update_exit_hook()
+                .expect("an into_arc manager installs a daemon exit hook");
+            hook().await;
+
+            {
+                let log = applied.lock().unwrap();
+                assert_eq!(log.len(), 1, "update applies exactly once when idle");
+                assert_eq!(log[0].binary_path, "/tmp/new-agent");
+            }
+            assert!(
+                mgr.pending_update_for_test().await.is_none(),
+                "a successful daemon-exit apply clears pending_update"
+            );
+        }
+
+        #[tokio::test]
+        async fn daemon_exit_hook_defers_while_a_session_still_runs() {
+            // A daemon-backed session exiting while another session is still
+            // running must NOT apply the staged update — the agent is still busy.
+            let (mgr, applied, _tmp) = arc_manager_with_recording_applier();
+            mgr.create_stub_session("stub", "still-running".to_string(), serde_json::json!({}))
+                .await
+                .unwrap();
+            mgr.seed_pending_update_for_test(fake_pending("/tmp/new-agent"))
+                .await;
+
+            let hook = mgr.deferred_update_exit_hook().expect("hook present");
+            hook().await;
+
+            assert!(
+                applied.lock().unwrap().is_empty(),
+                "update must not apply while a session is still running"
+            );
+            assert!(
+                mgr.pending_update_for_test().await.is_some(),
+                "the pending update is retained until the agent is idle"
+            );
+        }
+
+        #[tokio::test]
+        async fn deferred_update_exit_hook_absent_without_into_arc() {
+            // A manager not built through `into_arc` has no self-reference, so no
+            // daemon exit hook is installed — read-path reconciliation still
+            // settles the session, exactly as the in-process forwarder skips its
+            // hook on an empty `Weak`.
+            let (mgr, _applied, _tmp) = manager_with_recording_applier();
+            assert!(
+                mgr.deferred_update_exit_hook().is_none(),
+                "no self-reference ⇒ no daemon exit hook"
             );
         }
     }
