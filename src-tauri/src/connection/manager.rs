@@ -97,6 +97,31 @@ pub struct ExternalSource {
     pub error: Option<String>,
 }
 
+/// The unified connections view the frontend `appStore` slice holds: the main
+/// persisted store's folders + agents, and its connections **merged with** every
+/// enabled external file's flattened connections (each external row carrying its
+/// `source_file`).
+///
+/// This is the exact set [`load_connections_and_folders`] returns to the frontend
+/// and, therefore, the set the server-authoritative `connections` projection
+/// region reflects (#2394): folding only the main store left external-file
+/// connections out of the region, so #2225's render cut would have been lossy for
+/// them. Resolving the merge in one place keeps the command return value, the
+/// startup seed, and the projection fold from drifting.
+///
+/// [`load_connections_and_folders`]: crate::commands::connection::load_connections_and_folders
+pub struct UnifiedConnectionView {
+    pub folders: Vec<ConnectionFolder>,
+    /// Main-store connections followed by every enabled external file's
+    /// connections. External rows carry `source_file`; a file that fails to load
+    /// contributes no rows (its failure is reported in `external_errors`).
+    pub connections: Vec<SavedConnection>,
+    pub agents: Vec<SavedRemoteAgent>,
+    /// Per-file load errors as `(file_path, error)`. A file listed here loaded no
+    /// connections; the frontend surfaces these by logging each one.
+    pub external_errors: Vec<(String, String)>,
+}
+
 /// Manages saved connections and folders with file persistence.
 pub struct ConnectionManager {
     store: Mutex<FlatConnectionStore>,
@@ -644,6 +669,35 @@ impl ConnectionManager {
         }
 
         sources
+    }
+
+    /// Build the [`UnifiedConnectionView`] the frontend `appStore` slice holds:
+    /// the main persisted store (via [`get_all`](Self::get_all)) with every
+    /// enabled external file's flattened connections appended (each carrying its
+    /// `source_file`), plus any per-file load errors.
+    ///
+    /// This is the single source of truth for the merged main + external view —
+    /// used by the `load_connections_and_folders` command, the `connections`
+    /// projection startup seed, and `fold_connections_from_manager` — so the
+    /// command return value and the server-authoritative region cannot drift
+    /// (#2394). The append order and error handling mirror the command's previous
+    /// inline flattening exactly.
+    pub fn load_unified_view(&self) -> Result<UnifiedConnectionView> {
+        let flat = self.get_all()?;
+        let mut connections = flat.connections;
+        let mut external_errors = Vec::new();
+        for source in self.load_external_sources() {
+            if let Some(err) = source.error {
+                external_errors.push((source.file_path, err));
+            }
+            connections.extend(source.connections);
+        }
+        Ok(UnifiedConnectionView {
+            folders: flat.folders,
+            connections,
+            agents: flat.agents,
+            external_errors,
+        })
     }
 
     /// Save a connection to its appropriate file based on `source_file`.

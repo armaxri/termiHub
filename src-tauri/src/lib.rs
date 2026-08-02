@@ -935,19 +935,22 @@ pub fn run() {
                     );
                 }
                 // Seed the shared `connections` region from the persisted
-                // `ConnectionManager` authority (#2389), so the shadow store — and
-                // the region a subscriber attaches to before the first
-                // `connection.*` intent — reflects the real saved-connection /
-                // folder tree from startup rather than an empty baseline. The
-                // manager is the coarse authority: seeding its whole snapshot here
-                // is the startup counterpart to `fold_connections_from_manager`,
-                // which keeps the store in sync on every later mutation (#2225).
+                // `ConnectionManager` authority (#2389/#2394), so the shadow store
+                // — and the region a subscriber attaches to before the first
+                // `connection.*` intent — reflects the real connections tree from
+                // startup rather than an empty baseline. The seed uses the same
+                // unified main + external-file view the frontend `appStore` holds,
+                // so external-file connections are present in the region from
+                // startup. The manager is the coarse authority: seeding its whole
+                // snapshot here is the startup counterpart to
+                // `fold_connections_from_manager`, which keeps the store in sync on
+                // every later mutation (#2225).
                 if let Some(store) =
                     app.handle().try_state::<Arc<connections_projection::ConnectionsStore>>()
                 {
                     if let Some(manager) = app.handle().try_state::<ConnectionManager>() {
-                        if let Ok(flat) = manager.get_all() {
-                            store.replace(flat.folders, flat.connections);
+                        if let Ok(view) = manager.load_unified_view() {
+                            store.replace(view.folders, view.connections);
                         }
                     }
                     projection_state.projector.register_region(
