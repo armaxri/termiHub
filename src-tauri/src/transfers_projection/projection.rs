@@ -53,6 +53,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
+use crate::commands::projection::ProjectionState;
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 use crate::transfers_projection::store::{
     TransferEntry, TransferProgress, TransferSeed, TransferSnapshot, TransferStore,
@@ -81,6 +82,48 @@ pub fn publish_transfers(projector: &Projector, store: &TransferStore) -> Vec<Pr
             version,
         }],
         None => Vec::new(),
+    }
+}
+
+/// Fold a backend-produced `transfer-progress` event into the managed
+/// [`TransferStore`] **server-side** and fan the resulting `transfers` region
+/// diff out to every subscriber (#2387, prerequisite for #2229).
+///
+/// This is the server-authority counterpart to the `transfer.progress` intent
+/// [`register_transfer_intents`] registers: the same store transition the
+/// frontend currently mirrors via `transfer.*` intents is applied here **at the
+/// source** — the instant the transfer engine (the SFTP copy loop / the FTP
+/// scheduler executor) produces a lifecycle transition or progress sample and
+/// hands it to [`crate::files::transfer::app_progress_sink`]. Every backend
+/// `transfer-progress` event carries the rich `state` field
+/// (`queued`/`active`/`paused`/`completed`/`failed`/`cancelled`), so folding the
+/// event stream reflects the full register → queue → progress → pause → resume →
+/// finish → cancel lifecycle into the store without any client round-trip.
+///
+/// `progress` is the event serialized exactly as the frontend receives it
+/// (camelCase JSON); it is parsed into the store's [`TransferProgress`] via the
+/// identical `serde_json::from_value` path the client `transfer.progress` route
+/// runs, so the server fold reproduces the client route's store transition
+/// exactly (parity). It is **additive**: the Tauri `transfer-progress` emission
+/// stays in place and the render-cut mirror (`transfer.replace`, a later #2229
+/// step) keeps the region a faithful copy of `appStore`, so this changes no
+/// user-facing behavior.
+///
+/// Best-effort and non-fatal: if the store or the projection state is not managed
+/// (e.g. a headless unit-test app that never ran `setup()`), or the event does
+/// not parse, the fold is skipped rather than erroring. The store transition runs
+/// to completion synchronously before the publish, so the store lock is never
+/// held across an await.
+pub fn fold_transfer_progress<R: tauri::Runtime>(app_handle: &AppHandle<R>, progress: &Value) {
+    let Some(store) = app_handle.try_state::<Arc<TransferStore>>() else {
+        return;
+    };
+    let Ok(parsed) = serde_json::from_value::<TransferProgress>(progress.clone()) else {
+        return;
+    };
+    store.progress(&parsed, now_ms());
+    if let Some(projection) = app_handle.try_state::<ProjectionState>() {
+        publish_transfers(&projection.projector, store.inner().as_ref());
     }
 }
 

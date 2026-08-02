@@ -16,14 +16,18 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
+use tauri::Manager;
 
+use crate::commands::projection::ProjectionState;
 use crate::projection::{
     apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
     ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
-use crate::transfers_projection::projection::{publish_transfers, TRANSFERS_REGION};
+use crate::transfers_projection::projection::{
+    fold_transfer_progress, publish_transfers, TRANSFERS_REGION,
+};
 use crate::transfers_projection::store::{
-    TransferProgress, TransferSeed, TransferSnapshot, TransferStore,
+    TransferProgress, TransferQueueState, TransferSeed, TransferSnapshot, TransferStore,
 };
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -439,4 +443,121 @@ fn progress_payload(id: &str, state: &str, transferred: u64) -> Value {
         "state": state,
         "totalBytes": 1000,
     })
+}
+
+// ── Server-authority fold (#2387, prerequisite for #2229) ─────────────────────
+//
+// These drive the *production* `fold_transfer_progress` end to end against a
+// `tauri::test::mock_app()` with the same managed state `lib.rs::setup()` wires:
+// an `Arc<TransferStore>` and a `ProjectionState`. They prove the store is fed
+// **server-side** — the instant the transfer engine produces a
+// register/queue/progress/pause/finish/cancel `transfer-progress` event and
+// hands it to `app_progress_sink` — with no `transfer.*` client dispatch, and
+// that the fold reproduces the client `transfer.progress` route's store
+// transition exactly (parity, no double count).
+
+/// A backend-produced progress event folded server-side upserts the row in the
+/// shared store and fans the `transfers` region diff out — without any client
+/// dispatch. The full lifecycle is captured because every backend event carries
+/// the rich `state` field.
+#[test]
+fn server_side_progress_fold_updates_store_and_region_without_client_dispatch() {
+    let app = tauri::test::mock_app();
+
+    let store = Arc::new(TransferStore::new());
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(TRANSFERS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(TRANSFERS_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    // The engine emits an `active` progress sample at the source — no
+    // `transfer.progress` intent is dispatched.
+    fold_transfer_progress(app.handle(), &progress_payload("t1", "active", 400));
+
+    // The store is authoritative server-side.
+    let entry = store.get("t1").expect("row created by the server fold");
+    assert_eq!(entry.state, TransferQueueState::Active);
+    assert_eq!(entry.transferred, 400);
+    assert_eq!(entry.percent, Some(40));
+
+    // Exactly one region diff fanned out; the client cache converges on the
+    // server truth with no round-trip.
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view["queue"]["t1"]["state"], json!("active"));
+    assert_eq!(cache.view["queue"]["t1"]["transferred"], json!(400));
+    assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
+}
+
+/// A terminal `completed` event folded server-side settles the row (percent
+/// 100), publishing the region diff — the finish edge of the lifecycle.
+#[test]
+fn server_side_terminal_fold_settles_the_row() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(TransferStore::new());
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(TRANSFERS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projection
+        .projector
+        .subscribe(TRANSFERS_REGION, "sub", "C", sink.clone());
+    app.manage(projection);
+
+    fold_transfer_progress(app.handle(), &progress_payload("t1", "active", 400));
+    fold_transfer_progress(app.handle(), &progress_payload("t1", "completed", 1000));
+
+    let entry = store.get("t1").expect("row retained after completion");
+    assert_eq!(entry.state, TransferQueueState::Completed);
+    assert_eq!(entry.percent, Some(100));
+    assert_eq!(sink.diffs().len(), 2, "one diff per folded event");
+}
+
+/// The server-side progress fold reproduces the client `transfer.progress`
+/// route's store transition exactly — identical snapshots, so there is no drift
+/// or double count when the fold and the (still-present, additive) client mirror
+/// both run the same event.
+#[test]
+fn server_side_progress_fold_matches_the_client_transfer_progress_route() {
+    let event = progress_payload("t1", "active", 400);
+
+    // (a) Server-side fold: the store method the fold applies at the source.
+    let server = Arc::new(TransferStore::new());
+    server.progress(&serde_json::from_value(event.clone()).unwrap(), NOW);
+
+    // (b) Client route: the `transfer.progress` intent through the production
+    // registry wiring (mirrored by `registry_for`).
+    let client = Arc::new(TransferStore::new());
+    let projector = Arc::new(Projector::new());
+    projector.register_region(TRANSFERS_REGION, client.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(client.clone())));
+    let ack = dispatcher.dispatch(intent("transfer.progress", json!({ "progress": event })));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    assert_eq!(
+        server.snapshot(),
+        client.snapshot(),
+        "the server fold reproduces the client route's transition exactly"
+    );
+}
+
+/// The fold is a best-effort no-op when no store / projection state is managed
+/// (e.g. a headless harness that never ran `setup()`) — it must not panic.
+#[test]
+fn server_side_fold_is_a_noop_without_managed_state() {
+    let app = tauri::test::mock_app();
+    // Nothing managed — reaching the assert without panicking is the contract.
+    fold_transfer_progress(app.handle(), &progress_payload("t1", "active", 1));
 }
