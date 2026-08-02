@@ -955,12 +955,24 @@ pub fn run() {
                         store.snapshot(),
                     );
                 }
-                // Seed the shared `settings` region with the default settings
-                // document at version 0, so a subscriber attaches to a real region
-                // before the first `settings.*` intent (#2227).
+                // Seed the shared `settings` region from the persisted
+                // `AppSettings` authority (#2386), so the shadow store — and the
+                // region a subscriber attaches to before the first `settings.*`
+                // intent — reflects the real persisted preferences document from
+                // startup rather than the default baseline. Seeding the resolved
+                // document here is the startup counterpart to
+                // `fold_settings_from_manager`, which keeps the store in sync on
+                // every later `save_settings` (#2227).
                 if let Some(store) =
                     app.handle().try_state::<Arc<settings_projection::SettingsStore>>()
                 {
+                    if let Some(manager) = app.handle().try_state::<ConnectionManager>() {
+                        if let Ok(serde_json::Value::Object(doc)) =
+                            serde_json::to_value(manager.get_settings_resolved())
+                        {
+                            store.replace(doc);
+                        }
+                    }
                     projection_state.projector.register_region(
                         settings_projection::projection::SETTINGS_REGION,
                         store.snapshot(),
