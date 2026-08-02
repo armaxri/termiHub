@@ -17,11 +17,17 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Map, Value};
 
+use tauri::Manager;
+
+use crate::commands::projection::ProjectionState;
+use crate::connection::manager::ConnectionManager;
 use crate::projection::{
     apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
     ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
-use crate::settings_projection::projection::{publish_settings, SETTINGS_REGION};
+use crate::settings_projection::projection::{
+    fold_settings_from_manager, publish_settings, SETTINGS_REGION,
+};
 use crate::settings_projection::store::SettingsStore;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -280,6 +286,134 @@ fn a_no_op_intent_advances_nothing() {
     assert_eq!(ack.produced, Some(vec![]), "no region advanced");
     assert_eq!(sink.diffs().len(), 0);
     assert_eq!(projector.region_version(SETTINGS_REGION), Some(0));
+}
+
+// ── Server-authority fold (#2386, prerequisite for #2227) ─────────────────────
+//
+// These drive the *production* `fold_settings_from_manager` end to end against a
+// `tauri::test::mock_app()` carrying the same managed state `lib.rs::setup()`
+// wires: a real `ConnectionManager` (backed by a temp dir), an
+// `Arc<SettingsStore>`, and a `ProjectionState`. They prove the store is fed
+// **server-side** — the instant a `save_settings` lands in the persisted manager
+// authority — with no `settings.*` client dispatch, and that the store reflects
+// the manager's *resolved* `AppSettings` document (serial-port-scan prefixes and
+// all), not the default baseline.
+
+/// A `ConnectionManager` backed by a fresh temp dir with a null credential store.
+/// Returns the manager and the `TempDir` guard (kept alive for the test's span).
+fn test_manager() -> (ConnectionManager, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let manager =
+        ConnectionManager::new_for_test(dir.path(), Arc::new(crate::credential::NullStore))
+            .unwrap();
+    (manager, dir)
+}
+
+/// Wire a mock app with the managed state `setup()` builds for the settings
+/// region: the manager, the store, and a `ProjectionState` whose `settings`
+/// region is registered and has one `VecSink` subscribed. Returns the app, the
+/// store, the sink, and the subscribe-time client cache.
+#[allow(clippy::type_complexity)]
+fn wire_app(
+    manager: ConnectionManager,
+) -> (
+    tauri::App<tauri::test::MockRuntime>,
+    Arc<SettingsStore>,
+    Arc<VecSink>,
+    ClientCache,
+) {
+    let app = tauri::test::mock_app();
+    app.manage(manager);
+
+    let store = Arc::new(SettingsStore::new());
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SETTINGS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SETTINGS_REGION, "sub", "C", sink.clone());
+    let cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    (app, store, sink, cache)
+}
+
+/// A backend-produced whole-document `save_settings` folded server-side replaces
+/// the document in the shared store and fans exactly one `settings` region diff
+/// out — with no `settings.*` client dispatch. The store reflects the persisted
+/// authority, proving the fold feeds the store at the source.
+#[test]
+fn server_side_settings_save_folds_into_store_and_region_without_client_dispatch() {
+    let (manager, _dir) = test_manager();
+    let (app, store, sink, mut cache) = wire_app(manager);
+
+    // Persist a whole-document save through the real manager authority.
+    let manager = app.state::<ConnectionManager>();
+    let mut settings = manager.get_settings();
+    settings.theme = Some("light".to_string());
+    settings.font_size = Some(20);
+    manager
+        .save_settings(settings)
+        .expect("manager persists the settings");
+
+    // No `settings.*` intent is dispatched — the fold feeds the store at the
+    // source, from the persisted authority.
+    fold_settings_from_manager(app.handle());
+
+    // The store is authoritative server-side and carries the saved document.
+    assert_eq!(store.get("theme"), Some(json!("light")));
+    assert_eq!(store.get("fontSize"), Some(json!(20)));
+
+    // Exactly one region diff fanned out; the client cache converges on the store
+    // (which equals the manager's resolved snapshot) with no round-trip.
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
+    assert_eq!(cache.view["theme"], json!("light"));
+    assert_eq!(cache.view["fontSize"], json!(20));
+}
+
+/// The fold reflects the manager's **resolved** document, not its raw storage:
+/// `serial_port_scan_prefixes` is `None` in storage after a plain save, but the
+/// fold reflects the concrete built-in default list the frontend receives from
+/// `get_settings` — proving `get_settings_resolved` is the single source shared
+/// by the command and the fold.
+#[test]
+fn server_side_fold_reflects_the_resolved_settings_document() {
+    let (manager, _dir) = test_manager();
+    let (app, store, sink, _cache) = wire_app(manager);
+
+    let manager = app.state::<ConnectionManager>();
+    // A plain save leaves `serial_port_scan_prefixes` unset in storage.
+    let settings = manager.get_settings();
+    assert!(settings.serial_port_scan_prefixes.is_none());
+    manager.save_settings(settings).unwrap();
+
+    fold_settings_from_manager(app.handle());
+
+    // The store carries the resolved (non-empty) prefixes, not `null`/absent.
+    let prefixes = store
+        .get("serialPortScanPrefixes")
+        .expect("prefixes present");
+    assert!(
+        prefixes.as_array().map(|a| !a.is_empty()).unwrap_or(false),
+        "the fold reflects the resolved default prefix list, got {prefixes:?}"
+    );
+    assert_eq!(sink.diffs().len(), 1, "one diff from the server-side fold");
+}
+
+/// The fold is a best-effort no-op when the required state is not managed (e.g. a
+/// headless harness that never ran `setup()`) — it must not panic.
+#[test]
+fn server_side_fold_is_a_noop_without_managed_state() {
+    let app = tauri::test::mock_app();
+    // Nothing managed — reaching the assert without panicking is the contract.
+    fold_settings_from_manager(app.handle());
 }
 
 #[test]
