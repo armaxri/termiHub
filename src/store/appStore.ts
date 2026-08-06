@@ -150,6 +150,7 @@ import {
   createRemoteDesktopResolutionsSlice,
   RemoteDesktopResolutionsSlice,
 } from "./slices/remoteDesktopResolutionsSlice";
+import { createPasswordPromptSlice, PasswordPromptSlice } from "./slices/passwordPromptSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 import {
@@ -464,7 +465,8 @@ export interface AppState
     CommandPaletteSlice,
     HttpMonitorsSlice,
     DialogsSlice,
-    RemoteDesktopResolutionsSlice {
+    RemoteDesktopResolutionsSlice,
+    PasswordPromptSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -479,16 +481,10 @@ export interface AppState
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
 
-  // Password prompt
-  passwordPromptOpen: boolean;
-  passwordPromptHost: string;
-  passwordPromptUsername: string;
-  passwordPromptResolve: ((password: string | null) => void) | null;
-  /** Whether the user checked "Save password" in the last password prompt. */
-  passwordPromptShouldSave: boolean;
-  requestPassword: (host: string, username: string) => Promise<string | null>;
-  submitPassword: (password: string, shouldSave?: boolean) => void;
-  dismissPasswordPrompt: () => void;
+  // Password prompt — the promise-based interactive host/SSH password prompt
+  // (open flag, host/username, pending resolver, "Save password" choice) plus
+  // requestPassword / submitPassword / dismissPasswordPrompt is provided by
+  // PasswordPromptSlice (extracted under #2077 via #2300).
 
   // Tab Groups (workspace-level named panel trees)
   tabGroups: TabGroup[];
@@ -2749,6 +2745,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createHttpMonitorsSlice(set, get, store),
     ...createDialogsSlice(set, get, store),
     ...createRemoteDesktopResolutionsSlice(set, get, store),
+    ...createPasswordPromptSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -2778,48 +2775,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
     setSidebarWidth: (width) => set({ sidebarWidth: width }),
 
-    // Password prompt
-    passwordPromptOpen: false,
-    passwordPromptHost: "",
-    passwordPromptUsername: "",
-    passwordPromptResolve: null,
-    passwordPromptShouldSave: false,
-
-    requestPassword: (host, username) => {
-      return new Promise<string | null>((resolve) => {
-        set({
-          passwordPromptOpen: true,
-          passwordPromptHost: host,
-          passwordPromptUsername: username,
-          passwordPromptResolve: resolve,
-          passwordPromptShouldSave: false,
-        });
-      });
-    },
-
-    submitPassword: (password, shouldSave = false) => {
-      const { passwordPromptResolve } = get();
-      if (passwordPromptResolve) passwordPromptResolve(password);
-      set({
-        passwordPromptOpen: false,
-        passwordPromptHost: "",
-        passwordPromptUsername: "",
-        passwordPromptResolve: null,
-        passwordPromptShouldSave: shouldSave,
-      });
-    },
-
-    dismissPasswordPrompt: () => {
-      const { passwordPromptResolve } = get();
-      if (passwordPromptResolve) passwordPromptResolve(null);
-      set({
-        passwordPromptOpen: false,
-        passwordPromptHost: "",
-        passwordPromptUsername: "",
-        passwordPromptResolve: null,
-        passwordPromptShouldSave: false,
-      });
-    },
+    // Password prompt — the promise-based interactive host/SSH password prompt
+    // is provided by createPasswordPromptSlice (extracted under #2077 via #2300).
 
     // Tab Groups
     tabGroups: [initialGroup],
