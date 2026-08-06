@@ -28,7 +28,7 @@
 //! steps cut rendering, then mutation, over to the region, then remove the
 //! `appStore` state.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -98,6 +98,28 @@ impl AgentEntry {
             last_error: None,
         }
     }
+}
+
+/// The persisted identity of one configured agent, as produced by the backend
+/// authority (the `ConnectionManager` agent list) — the input to
+/// [`AgentsStore::reflect_saved_agents`] (#2403).
+///
+/// Carries **only** the persisted fields the backend owns (id / name / config /
+/// settings); it deliberately excludes the live status the store owns
+/// (connection state, capabilities, last error, expansion, sessions), so
+/// reflecting the persisted list can create/refresh list-membership without
+/// clobbering an agent's in-flight connection state.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedAgentSeed {
+    /// Stable agent id.
+    pub id: String,
+    /// Human-readable agent name.
+    pub name: String,
+    /// The agent's `RemoteAgentConfig`, serialised opaquely (matches the shape
+    /// the frontend stores, so the eventual render cut is a parity swap).
+    pub config: Value,
+    /// The agent's `AgentSettings`, serialised opaquely.
+    pub agent_settings: Value,
 }
 
 /// A live remote session on an agent — mirrors the frontend `AgentSessionInfo`.
@@ -203,6 +225,67 @@ impl AgentsStore {
         inner
             .agents
             .push(AgentEntry::new(id, name, config, agent_settings));
+    }
+
+    /// Reflect the whole persisted agent list into the store from the backend
+    /// authority (the `ConnectionManager` agent list), making the `agents` region
+    /// authoritative for **list-membership** — not just the per-field status /
+    /// sessions / definitions / folders #2388 already folds (#2403, prerequisite
+    /// for #2226).
+    ///
+    /// This is the entry-**creation** + list-**load** counterpart to the #2388
+    /// per-field setters (all of which are a no-op for an unknown id): the persisted
+    /// list is the sole source of agent identity, so the store must reflect it to be
+    /// authoritative. It is the agents analog of the `connections_projection`
+    /// `ConnectionsStore::replace` from the manager snapshot (#2389), the difference
+    /// being that an agent's **live status lives only in the store** (never in the
+    /// persisted config), so this reflects list-membership *without* the clobbering a
+    /// naive whole-slice replace would cause:
+    ///
+    /// - a `seed` whose id is **new** → a fresh disconnected entry (like [`Self::add`]);
+    /// - a `seed` whose id **exists** → its persisted fields (name / config / settings)
+    ///   are refreshed while its live status (connection state, capabilities, last
+    ///   error, expansion) and its sessions / definitions / folders are **preserved**;
+    /// - an existing agent **absent** from `seed`s → dropped, along with its
+    ///   sessions / definitions / folders (it was deleted from the persisted list).
+    ///
+    /// The resulting list order follows `seeds` (the persisted order the frontend's
+    /// `reorderRemoteAgents` writes back), so the region mirrors the sidebar order.
+    /// Idempotent: reflecting the same list twice yields no change, so it composes
+    /// with the still-present client `agent.*` mirror without drift.
+    pub fn reflect_saved_agents(&self, seeds: Vec<SavedAgentSeed>) {
+        let mut inner = self.lock();
+        // Index the current entries by id so surviving agents keep their live status.
+        let mut previous: HashMap<String, AgentEntry> = std::mem::take(&mut inner.agents)
+            .into_iter()
+            .map(|entry| (entry.id.clone(), entry))
+            .collect();
+        let mut kept: HashSet<String> = HashSet::with_capacity(seeds.len());
+        let mut next: Vec<AgentEntry> = Vec::with_capacity(seeds.len());
+        for seed in seeds {
+            kept.insert(seed.id.clone());
+            match previous.remove(&seed.id) {
+                // Existing agent: refresh persisted fields, preserve live status.
+                Some(mut entry) => {
+                    entry.name = seed.name;
+                    entry.config = seed.config;
+                    entry.agent_settings = seed.agent_settings;
+                    next.push(entry);
+                }
+                // New agent: a fresh disconnected entry.
+                None => next.push(AgentEntry::new(
+                    &seed.id,
+                    &seed.name,
+                    seed.config,
+                    seed.agent_settings,
+                )),
+            }
+        }
+        inner.agents = next;
+        // Drop the sub-state of agents no longer in the persisted list.
+        inner.sessions.retain(|id, _| kept.contains(id));
+        inner.definitions.retain(|id, _| kept.contains(id));
+        inner.folders.retain(|id, _| kept.contains(id));
     }
 
     /// `agent.update` — update one agent's persisted fields (name, config,
