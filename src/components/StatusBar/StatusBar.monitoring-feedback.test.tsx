@@ -18,7 +18,7 @@ import { createRoot, Root } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
-import type { ConnectionTypeInfo, SavedConnection } from "@/types/connection";
+import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import type { MonitoringEntry } from "@/types/monitoring";
 import { currentMonitorsView, ensureMonitorsSubscribed } from "@/store/systemMonitorBridge";
@@ -44,17 +44,7 @@ const SSH_TYPE: ConnectionTypeInfo = {
   capabilities: { monitoring: true, fileBrowser: true, resize: true, persistent: false },
 };
 
-const SAVED_CONNECTION: SavedConnection = {
-  id: "conn-1",
-  name: "pi",
-  folderId: null,
-  config: {
-    type: "ssh",
-    config: { host: "pi.local", port: 22, username: "pi", authMethod: "key" },
-  },
-};
-
-/** Registers a monitoring-capable SSH type + saved connection and makes an SSH tab active. */
+/** Registers a monitoring-capable SSH type and makes an SSH tab active. */
 function primeMonitoringTab() {
   const tab: TerminalTab = {
     id: "tab-1",
@@ -77,7 +67,6 @@ function primeMonitoringTab() {
   useAppStore.setState((state) => ({
     ...state,
     connectionTypes: [SSH_TYPE],
-    connections: [SAVED_CONNECTION],
     rootPanel: leaf,
     activePanelId: "leaf-1",
   }));
