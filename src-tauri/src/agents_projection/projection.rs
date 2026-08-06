@@ -63,8 +63,11 @@ use tauri::{AppHandle, Manager};
 
 use crate::agents_projection::store::{
     AgentConnectionState, AgentDefinition, AgentEntry, AgentFolder, AgentSession, AgentsStore,
+    SavedAgentSeed,
 };
 use crate::commands::projection::ProjectionState;
+use crate::connection::config::SavedRemoteAgent;
+use crate::connection::manager::ConnectionManager;
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 
 /// The projection region id for the agents domain (shared, per Open Design
@@ -118,6 +121,70 @@ pub fn fold_agent_transition<R: tauri::Runtime>(
     apply(store.inner().as_ref());
     if let Some(projection) = app_handle.try_state::<ProjectionState>() {
         publish_agents(&projection.projector, store.inner().as_ref());
+    }
+}
+
+/// Serialise one persisted agent into a [`SavedAgentSeed`] — the persisted-only
+/// input to [`AgentsStore::reflect_saved_agents`]. The `config` / `agentSettings`
+/// blobs are serialised with the same serde attributes the frontend receives from
+/// `load_connections_and_folders`, so a server-created entry and the client
+/// `agent.add` mirror carry the identical shape (a parity swap for #2226). A
+/// serialisation failure (should not happen for these plain structs) degrades the
+/// blob to `null` rather than dropping the agent from the list.
+fn saved_agent_seed(agent: SavedRemoteAgent) -> SavedAgentSeed {
+    SavedAgentSeed {
+        id: agent.id,
+        name: agent.name,
+        config: serde_json::to_value(agent.config).unwrap_or(Value::Null),
+        agent_settings: serde_json::to_value(agent.agent_settings).unwrap_or(Value::Null),
+    }
+}
+
+/// Reflect the whole persisted agent list from the [`ConnectionManager`] authority
+/// into the managed [`AgentsStore`] **server-side**, making the `agents` region
+/// authoritative for **list-membership** — entry creation + list load, the gap
+/// #2388 deferred (#2403, prerequisite for #2226).
+///
+/// This is the list-membership counterpart to [`fold_agent_transition`]: where the
+/// per-field #2388 folds (`set_status` / `set_definitions` / …) update an
+/// **existing** entry and are a no-op for an unknown id, this feeds the store the
+/// full persisted agent set (via [`ConnectionManager::load_unified_view`] +
+/// [`AgentsStore::reflect_saved_agents`]) so a newly-added agent's identity enters
+/// the region without a client `agent.add`, and a boot / reload reflects the whole
+/// persisted list. It is the agents analog of
+/// `connections_projection::fold_connections_from_manager` (#2389/#2394) — the
+/// difference being that an agent's live status lives only in the store, so
+/// `reflect_saved_agents` preserves it for surviving ids rather than replacing the
+/// whole slice.
+///
+/// It is **additive**: the persisted-list authority and the client `agent.*` mirror
+/// stay in place, and nothing in the live UI subscribes to the region yet, so this
+/// changes no user-facing behavior. Best-effort and non-fatal: if the store, the
+/// connection manager, or the projection state is not managed (e.g. a headless
+/// unit-test app that never ran `setup()`), or the disk reload inside
+/// `load_unified_view` fails, the fold is skipped rather than erroring.
+pub fn fold_agents_from_manager<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
+    let Some(manager) = app_handle.try_state::<ConnectionManager>() else {
+        return;
+    };
+    let Ok(view) = manager.load_unified_view() else {
+        return;
+    };
+    let seeds: Vec<SavedAgentSeed> = view.agents.into_iter().map(saved_agent_seed).collect();
+    fold_agent_transition(app_handle, |store| store.reflect_saved_agents(seeds));
+}
+
+/// Reflect the persisted agent list from the [`ConnectionManager`] into the store
+/// **without** a projector publish — the startup-seed counterpart to
+/// [`fold_agents_from_manager`] (#2403). Used by `lib.rs::setup()` to seed the
+/// `agents` region from the persisted list before the region is registered (the
+/// projector is not built yet at that point), so a subscriber attaching before the
+/// first `agent.*` intent sees the real agent list rather than an empty baseline —
+/// the agents analog of the `connections` startup seed (#2389). A disk-reload
+/// failure leaves the store empty rather than erroring.
+pub fn seed_agents_from_manager(store: &AgentsStore, manager: &ConnectionManager) {
+    if let Ok(view) = manager.load_unified_view() {
+        store.reflect_saved_agents(view.agents.into_iter().map(saved_agent_seed).collect());
     }
 }
 
