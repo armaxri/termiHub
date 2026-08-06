@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { Monitor, Server, AlertTriangle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import {
   TunnelConfig,
   TunnelType,
@@ -74,7 +75,7 @@ function defaultTunnelType(type: "local" | "remote" | "dynamic"): TunnelType {
 
 export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const tunnels = useAppStore((s) => s.tunnels);
-  const connections = useAppStore((s) => s.connections);
+  const { connections } = useProjectedConnections();
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const startTunnel = useAppStore((s) => s.startTunnel);

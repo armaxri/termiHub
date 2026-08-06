@@ -265,7 +265,11 @@ import {
   ensureMonitorsSubscribed,
 } from "@/store/systemMonitorBridge";
 import { mirrorAgentIntent } from "@/store/agentsBridge";
-import { mirrorConnectionIntent } from "@/store/connectionsBridge";
+import {
+  currentConnectionsView,
+  ensureConnectionsSubscribed,
+  mirrorConnectionIntent,
+} from "@/store/connectionsBridge";
 import { mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 import { mirrorSettingsIntent } from "@/store/settingsBridge";
@@ -845,9 +849,11 @@ export interface AppState
    */
   moveWindowSessionsToWindow: (target: MoveWindowTarget) => Promise<void>;
 
-  // Connections
-  folders: ConnectionFolder[];
-  connections: SavedConnection[];
+  // Connections — the saved-connection / folder tree is region-authoritative
+  // (#2401): it lives only in the shared `connections` projection region, read
+  // via `useProjectedConnections()` / `currentConnectionsView()`. `appStore` holds
+  // no connections/folders slice; the lifecycle actions below are thin
+  // backend-command wrappers.
   settings: AppSettings;
   /** Last settings object that was successfully persisted to disk (or loaded from disk). */
   savedSettings: AppSettings;
@@ -2670,20 +2676,6 @@ function generateGroupId(): string {
   return `group-${Date.now()}-${groupCounter}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-// Monotonically increasing counters for connection-state reloads.
-// `_connReloadSeq` increments each time a reload is initiated; `_connAppliedSeq`
-// tracks the highest sequence whose result has been applied to the store.
-// This prevents a stale concurrent reload (lower seq) from overwriting a fresher
-// correction (higher seq) that happened to resolve first.
-let _connReloadSeq = 0;
-let _connAppliedSeq = 0;
-
-/** @internal Reset reload sequencer — for tests only. */
-export function _resetConnectionReloadSeq(): void {
-  _connReloadSeq = 0;
-  _connAppliedSeq = 0;
-}
-
 // Monotonic sequencer for SFTP directory-list requests (GAP R1, #1143).
 // navigateSftp/refreshSftp await sftpListDir with no ordering guarantee, so when
 // two navigations overlap the response that resolves LAST wins currentPath/
@@ -2718,42 +2710,16 @@ function isSftpSessionDeadError(message: string): boolean {
 }
 
 export const useAppStore = create<AppState>((set, get, store) => {
-  // Reload connections from the backend, applying the result only if this
-  // reload was initiated more recently than the last applied one.
-  /**
-   * Reconcile an in-memory connection's optimistic id with the **persisted** id
-   * the backend returns from a save. The editor assigns `conn-<ts>` and the
-   * backend recomputes a name-derived id, so a connect firing before the reload
-   * would otherwise store a credential under the stale id and orphan it (#863,
-   * #875). A no-op when the id is unchanged or the backend returned nothing.
-   */
-  function reconcileConnectionId(prevId: string, persistedId: string | undefined): void {
-    if (!persistedId || persistedId === prevId) return;
-    frontendLog("connection_sync", `reconciling ${prevId} → ${persistedId}`);
-    set((state) => ({
-      connections: state.connections.map((c) => (c.id === prevId ? { ...c, id: persistedId } : c)),
-    }));
-  }
-
-  function applyConnectionReload(): Promise<void> {
-    const mySeq = ++_connReloadSeq;
-    frontendLog("connection_sync", `reload initiated (seq=${mySeq})`);
-    return loadConnections().then(({ connections, folders }) => {
-      if (mySeq >= _connAppliedSeq) {
-        _connAppliedSeq = mySeq;
-        frontendLog(
-          "connection_sync",
-          `reload applied (seq=${mySeq}, conns=${connections.length}, folders=${folders.length})`
-        );
-        set({ connections, folders });
-      } else {
-        frontendLog(
-          "connection_sync",
-          `reload dropped (seq=${mySeq} superseded by applied=${_connAppliedSeq})`
-        );
-      }
-    });
-  }
+  // Connection-tree state is region-authoritative (#2401, PR B): the saved
+  // connections / folders live only in the shared `connections` projection
+  // region, fed server-side by every persist / remove / reload command's
+  // `fold_connections_from_manager` (#2389 / #2394). The tree lifecycle actions
+  // below are thin backend-command wrappers — they dispatch the optimistic
+  // `connection.*` intent and call the persist command; the command's fold
+  // reconciles the authoritative truth (persisted id, dedup rename, external
+  // overlay) back into the region, so there is no frontend reload / id-reconcile
+  // pass any more (that was the `appStore`-slice-era code). Reads source the
+  // inventory synchronously from `currentConnectionsView()`.
 
   const initialPanel = createLeafPanel();
   const initialGroupId = generateGroupId();
@@ -3264,7 +3230,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       };
       const builtGroups = buildTabGroupsFromWorkspace(
         payload.tabGroups,
-        state.connections,
+        currentConnectionsView().connections,
         state.defaultShell,
         agentContext
       );
@@ -3299,7 +3265,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         state.tabGroups,
         state.activeTabGroupId,
         state.rootPanel,
-        state.connections
+        currentConnectionsView().connections
       );
       const activeGroupIndex = Math.max(
         0,
@@ -3423,7 +3389,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     persistentSessions: {},
 
     startPersistentSession: async (connectionId) => {
-      const conn = get().connections.find((c) => c.id === connectionId);
+      const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
       if (!conn) return;
       set((state) => ({
         persistentSessions: {
@@ -3454,7 +3420,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     attachPersistentSession: async (connectionId, panelId) => {
       const entry = get().persistentSessions[connectionId];
-      const conn = get().connections.find((c) => c.id === connectionId);
+      const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
       if (!conn || !entry?.sessionId) return;
       const tabId = get().addTab(conn.name, conn.config.type, conn.config, {
         panelId,
@@ -4226,7 +4192,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         if (connectionId === "new-remote-agent") {
           title = "New Remote Agent";
         } else if (connectionId !== "new") {
-          const conn = state.connections.find((c) => c.id === connectionId);
+          const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
           if (conn) {
             title = `Edit: ${conn.name}`;
           }
@@ -4808,9 +4774,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         });
     },
 
-    // Connections — initialized empty, loaded from backend on mount
-    folders: [],
-    connections: [],
+    // Connections — the saved-connection / folder tree is region-authoritative
+    // (#2401); no `appStore` slice. See the `connections` projection region.
     settings: {
       version: "1",
       externalConnectionFiles: [],
@@ -4951,7 +4916,24 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     loadFromBackend: async () => {
       try {
-        const { connections, folders, agents, externalErrors } = await loadConnections();
+        // The saved-connection / folder tree is region-authoritative (#2401): the
+        // backend seeds and folds the `connections` region server-side (this
+        // `load_connections_and_folders` call also re-folds it, #2401 / #2389), so
+        // we only read `agents` / `externalErrors` here and never seed a slice.
+        const { agents, externalErrors } = await loadConnections();
+        // Prime the region subscription so `currentConnectionsView()` is populated
+        // for the store's own connect / session / restore reads (which run before
+        // the sidebar's `useProjectedConnections` may have mounted). Best-effort:
+        // the eager transport build throws synchronously in a non-Tauri env, so
+        // guard both the throw and the rejection.
+        try {
+          await ensureConnectionsSubscribed();
+        } catch (subErr) {
+          frontendLog(
+            "app_store",
+            `connections region subscribe failed: ${subErr instanceof Error ? subErr.message : String(subErr)}`
+          );
+        }
         const settings = await getSettings();
         // Hydrate agents: add ephemeral state (disconnected, collapsed)
         const remoteAgents = agents.map((a) => ({
@@ -4970,8 +4952,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const sidebarView: SidebarView = persistedView === "files" ? "connections" : persistedView;
         const sidebarCollapsed = layoutConfig.sidebarCollapsed ?? false;
         set({
-          connections,
-          folders,
           settings,
           savedSettings: settings,
           remoteAgents,
@@ -5191,12 +5171,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     reloadExternalConnections: async () => {
       try {
-        const externalConns = await apiReloadExternalConnections();
-        set((state) => {
-          // Replace external connections (those with sourceFile) while keeping main ones
-          const mainConns = state.connections.filter((c) => !c.sourceFile);
-          return { connections: [...mainConns, ...externalConns] };
-        });
+        // Re-reads the configured external files and folds the refreshed unified
+        // view into the authoritative `connections` region server-side (#2394), so
+        // every reader updates via the region diff — no frontend slice to splice.
+        await apiReloadExternalConnections();
       } catch (err) {
         frontendLog(
           "app_store",
@@ -5210,45 +5188,49 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     toggleFolder: (folderId) => {
-      set((state) => {
-        const folders = state.folders.map((f) =>
-          f.id === folderId ? { ...f, isExpanded: !f.isExpanded } : f
-        );
-        // Persist the toggled folder
-        const toggled = folders.find((f) => f.id === folderId);
-        if (toggled) {
-          persistFolder(toggled).catch((err) => {
-            frontendLog(
-              "app_store",
-              `Failed to persist folder toggle: ${err instanceof Error ? err.message : String(err)}`
-            );
-            toast.error(
-              `Failed to save folder state: ${err instanceof Error ? err.message : String(err)}`
-            );
-          });
-        }
-        return { folders };
-      });
+      const existing = currentConnectionsView().folders.find((f) => f.id === folderId);
+      if (!existing) return;
+      const toggled = { ...existing, isExpanded: !existing.isExpanded };
+      // Optimistic flip in the region, then persist (the persist command folds the
+      // authoritative view back, #2389).
       mirrorConnectionIntent("connection.toggleFolder", { folderId });
+      persistFolder(toggled).catch((err) => {
+        frontendLog(
+          "app_store",
+          `Failed to persist folder toggle: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(
+          `Failed to save folder state: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     reloadConnectionsFromBackend: () => {
       frontendLog("connection_sync", "focus reload: triggered by external event");
-      void applyConnectionReload();
+      // Re-reads the unified connection view and re-folds it into the authoritative
+      // `connections` region server-side (#2401), so the UI refreshes via the region
+      // diff. No frontend slice to set.
+      void loadConnections().catch((err) => {
+        frontendLog(
+          "app_store",
+          `focus reload failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     // Session history (#1883) — data + load/record/pin/promote/remove/clear
     // provided by createSessionHistorySlice (extracted under #2077).
 
     addConnection: (connection) => {
-      set((state) => ({ connections: [...state.connections, connection] }));
+      // Optimistic add in the region, then persist. The persist command recomputes
+      // the name-derived id and folds the authoritative view back server-side
+      // (#2389), so the optimistic `conn-<ts>` row is reconciled to the persisted id
+      // without a frontend id-reconcile / reload pass.
       mirrorConnectionIntent("connection.add", { connection });
       frontendLog("connection_sync", `addConnection: persisting ${connection.id}`);
       persistConnection(stripPassword(connection))
-        .then((persistedId) => {
-          reconcileConnectionId(connection.id, persistedId);
+        .then(() => {
           toast.success(`Saved ${connection.name}`);
-          return applyConnectionReload();
         })
         .catch((err) => {
           frontendLog(
@@ -5263,7 +5245,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     bulkAddConnections: (newConnections) => {
       if (newConnections.length === 0) return;
-      set((state) => ({ connections: [...state.connections, ...newConnections] }));
       for (const connection of newConnections) {
         mirrorConnectionIntent("connection.add", { connection });
       }
@@ -5271,18 +5252,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
         "connection_sync",
         `bulkAddConnections: persisting ${newConnections.length} connections`
       );
-      Promise.all(
-        newConnections.map((c) =>
-          persistConnection(stripPassword(c)).then((persistedId) =>
-            reconcileConnectionId(c.id, persistedId)
-          )
-        )
-      )
+      Promise.all(newConnections.map((c) => persistConnection(stripPassword(c))))
         .then(() => {
           toast.success(
             `Imported ${newConnections.length} ${newConnections.length === 1 ? "connection" : "connections"}`
           );
-          return applyConnectionReload();
         })
         .catch((err) => {
           frontendLog(
@@ -5296,18 +5270,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     updateConnection: (connection) => {
-      set((state) => ({
-        connections: state.connections.map((c) => (c.id === connection.id ? connection : c)),
-      }));
+      // Optimistic edit in the region, then persist. A rename changes the
+      // name-derived persisted id; the persist command's server-side fold (#2389)
+      // reconciles it back into the region under the new id, so a connect fired
+      // after the save resolves reads the correct id (#875) without a frontend pass.
       mirrorConnectionIntent("connection.update", { connection });
       frontendLog("connection_sync", `updateConnection: persisting ${connection.id}`);
       persistConnection(stripPassword(connection))
-        .then((persistedId) => {
-          // A rename changes the name-derived persisted id; reconcile so a connect
-          // before the reload stores its credential under the new id (#875).
-          reconcileConnectionId(connection.id, persistedId);
+        .then(() => {
           toast.success(`Saved ${connection.name}`);
-          return applyConnectionReload();
         })
         .catch((err) => {
           frontendLog(
@@ -5321,17 +5292,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     deleteConnection: (connectionId) => {
-      const conn = get().connections.find((c) => c.id === connectionId);
+      const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
       frontendLog("connection_sync", `deleteConnection: removing ${connectionId} optimistically`);
-      set((state) => ({
-        connections: state.connections.filter((c) => c.id !== connectionId),
-      }));
       mirrorConnectionIntent("connection.remove", { connectionId });
       removeConnection(connectionId, conn?.sourceFile)
         .then(() => {
-          frontendLog("connection_sync", `deleteConnection: backend confirmed, reloading`);
+          frontendLog("connection_sync", `deleteConnection: backend confirmed`);
           toast.success(`Deleted ${conn?.name ?? "connection"}`);
-          return applyConnectionReload();
         })
         .catch((err) => {
           frontendLog(
@@ -5346,24 +5313,20 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     bulkDeleteConnections: (connectionIds) => {
       const idSet = new Set(connectionIds);
-      const toDelete = get().connections.filter((c) => idSet.has(c.id));
+      const toDelete = currentConnectionsView().connections.filter((c) => idSet.has(c.id));
       frontendLog(
         "connection_sync",
         `bulkDeleteConnections: removing ${connectionIds.join(", ")} optimistically`
       );
-      set((state) => ({
-        connections: state.connections.filter((c) => !idSet.has(c.id)),
-      }));
       for (const c of toDelete) {
         mirrorConnectionIntent("connection.remove", { connectionId: c.id });
       }
       Promise.all(toDelete.map((c) => removeConnection(c.id, c.sourceFile)))
         .then(() => {
-          frontendLog("connection_sync", `bulkDeleteConnections: backend confirmed, reloading`);
+          frontendLog("connection_sync", `bulkDeleteConnections: backend confirmed`);
           toast.success(
             `Deleted ${toDelete.length} ${toDelete.length === 1 ? "connection" : "connections"}`
           );
-          return applyConnectionReload();
         })
         .catch((err) => {
           frontendLog(
@@ -5377,87 +5340,66 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     addFolder: (folder) => {
-      set((state) => ({ folders: [...state.folders, folder] }));
       mirrorConnectionIntent("connection.addFolder", { folder });
       frontendLog("connection_sync", `addFolder: persisting ${folder.id}`);
-      persistFolder(folder)
-        .then(() => applyConnectionReload())
-        .catch((err) => {
-          frontendLog(
-            "app_store",
-            `Failed to persist new folder: ${err instanceof Error ? err.message : String(err)}`
-          );
-          toast.error(
-            `Failed to create folder ${folder.name}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
+      persistFolder(folder).catch((err) => {
+        frontendLog(
+          "app_store",
+          `Failed to persist new folder: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(
+          `Failed to create folder ${folder.name}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     deleteFolder: (folderId) => {
-      set((state) => {
-        // Move child connections to root
-        const connections = state.connections.map((c) =>
-          c.folderId === folderId ? { ...c, folderId: null } : c
-        );
-        // Reparent child folders
-        const deletedFolder = state.folders.find((f) => f.id === folderId);
-        const parentId = deletedFolder?.parentId ?? null;
-        const folders = state.folders
-          .map((f) => (f.parentId === folderId ? { ...f, parentId } : f))
-          .filter((f) => f.id !== folderId);
-
-        return { folders, connections };
-      });
+      // The `connection.removeFolder` intent re-homes the folder's child
+      // connections to root and reparents its child folders in the region
+      // (optimistic), and the `removeFolder` command folds the authoritative
+      // result back server-side (#2389) — so no frontend reparenting is needed.
       mirrorConnectionIntent("connection.removeFolder", { folderId });
       frontendLog("connection_sync", `deleteFolder: removing ${folderId}`);
-      removeFolder(folderId)
-        .then(() => applyConnectionReload())
-        .catch((err) => {
-          frontendLog(
-            "app_store",
-            `Failed to persist folder deletion: ${err instanceof Error ? err.message : String(err)}`
-          );
-          toast.error(
-            `Failed to delete folder: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
+      removeFolder(folderId).catch((err) => {
+        frontendLog(
+          "app_store",
+          `Failed to persist folder deletion: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(`Failed to delete folder: ${err instanceof Error ? err.message : String(err)}`);
+      });
     },
 
     duplicateConnection: (connectionId) => {
-      const state = useAppStore.getState();
-      const original = state.connections.find((c) => c.id === connectionId);
+      const original = currentConnectionsView().connections.find((c) => c.id === connectionId);
       if (!original) return;
       const duplicate: SavedConnection = {
         ...original,
         id: `conn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         name: `Copy of ${original.name}`,
       };
-      set((s) => ({ connections: [...s.connections, duplicate] }));
       mirrorConnectionIntent("connection.add", { connection: duplicate });
       frontendLog("connection_sync", `duplicateConnection: persisting copy of ${connectionId}`);
-      persistConnection(stripPassword(duplicate))
-        .then(() => applyConnectionReload())
-        .catch((err) => {
-          frontendLog(
-            "app_store",
-            `Failed to persist duplicated connection: ${err instanceof Error ? err.message : String(err)}`
-          );
-          toast.error(
-            `Failed to duplicate ${original.name}: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
+      persistConnection(stripPassword(duplicate)).catch((err) => {
+        frontendLog(
+          "app_store",
+          `Failed to persist duplicated connection: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(
+          `Failed to duplicate ${original.name}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     moveConnectionToFile: async (connectionId, targetSource) => {
-      const conn = get().connections.find((c) => c.id === connectionId);
+      const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
       if (!conn) return;
       const currentSource = conn.sourceFile ?? null;
       if (currentSource === targetSource) return;
       try {
+        // The move command relocates the entry between config files and folds the
+        // refreshed unified view into the region server-side (#2394); mirror the
+        // update so the region reflects it immediately even before that diff lands.
         const updated = await apiMoveConnectionToFile(connectionId, currentSource, targetSource);
-        set((state) => ({
-          connections: state.connections.map((c) => (c.id === connectionId ? updated : c)),
-        }));
         mirrorConnectionIntent("connection.update", { connection: updated });
       } catch (err) {
         frontendLog(
@@ -5471,59 +5413,53 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     moveConnectionToFolder: (connectionId, folderId) => {
-      // Optimistic update for instant visual feedback
-      set((state) => ({
-        connections: state.connections.map((c) => (c.id === connectionId ? { ...c, folderId } : c)),
-      }));
+      const existing = currentConnectionsView().connections.find((c) => c.id === connectionId);
+      if (!existing) return;
+      // Optimistic move in the region for instant visual feedback.
       mirrorConnectionIntent("connection.move", { connectionId, folderId });
 
-      // Persist to backend, then reload to sync any dedup renames
-      // (e.g., when moving a connection into a folder with a same-named sibling)
-      const moved = get().connections.find((c) => c.id === connectionId);
-      if (moved) {
-        frontendLog("connection_sync", `moveConnectionToFolder: persisting ${connectionId}`);
-        persistConnection(stripPassword(moved))
-          .then(() => applyConnectionReload())
-          .catch((err) => {
-            frontendLog(
-              "app_store",
-              `Failed to persist connection move: ${err instanceof Error ? err.message : String(err)}`
-            );
-            toast.error(
-              `Failed to move ${moved.name}: ${err instanceof Error ? err.message : String(err)}`
-            );
-          });
-      }
+      // Persist to backend; the persist command folds any dedup rename (e.g. moving
+      // a connection into a folder with a same-named sibling) back into the region
+      // server-side (#2389).
+      const moved = { ...existing, folderId };
+      frontendLog("connection_sync", `moveConnectionToFolder: persisting ${connectionId}`);
+      persistConnection(stripPassword(moved)).catch((err) => {
+        frontendLog(
+          "app_store",
+          `Failed to persist connection move: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(
+          `Failed to move ${moved.name}: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     bulkMoveConnectionsToFolder: (connectionIds, folderId) => {
       const idSet = new Set(connectionIds);
 
-      // Optimistic update for instant visual feedback
-      set((state) => ({
-        connections: state.connections.map((c) => (idSet.has(c.id) ? { ...c, folderId } : c)),
-      }));
+      // Optimistic move in the region for instant visual feedback.
       for (const connectionId of connectionIds) {
         mirrorConnectionIntent("connection.move", { connectionId, folderId });
       }
 
-      // Persist all connections in parallel, then reload once
-      const moved = get().connections.filter((c) => idSet.has(c.id));
+      // Persist all connections in parallel; each persist folds the authoritative
+      // view back into the region server-side (#2389).
+      const moved = currentConnectionsView()
+        .connections.filter((c) => idSet.has(c.id))
+        .map((c) => ({ ...c, folderId }));
       frontendLog(
         "connection_sync",
         `bulkMoveConnectionsToFolder: persisting ${moved.length} connections`
       );
-      Promise.all(moved.map((conn) => persistConnection(stripPassword(conn))))
-        .then(() => applyConnectionReload())
-        .catch((err) => {
-          frontendLog(
-            "app_store",
-            `Failed to persist bulk connection move: ${err instanceof Error ? err.message : String(err)}`
-          );
-          toast.error(
-            `Failed to move connections: ${err instanceof Error ? err.message : String(err)}`
-          );
-        });
+      Promise.all(moved.map((conn) => persistConnection(stripPassword(conn)))).catch((err) => {
+        frontendLog(
+          "app_store",
+          `Failed to persist bulk connection move: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(
+          `Failed to move connections: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
     },
 
     // File browser / SFTP
@@ -7988,7 +7924,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
           const needsStoredCredential =
             allTabDefs.some((tabDef) => {
               if (!tabDef.connectionRef) return false;
-              const saved = state.connections.find((c) => c.id === tabDef.connectionRef);
+              const saved = currentConnectionsView().connections.find(
+                (c) => c.id === tabDef.connectionRef
+              );
               if (!saved) return false;
               const cfg = saved.config.config as Record<string, unknown>;
               const authMethod = cfg.authMethod as string | undefined;
@@ -8045,7 +7983,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           allTabDefs.filter((t) => t.connectionRef).map((t) => t.connectionRef!)
         );
         const resolvedConnections = await Promise.all(
-          state.connections.map(async (conn) => {
+          currentConnectionsView().connections.map(async (conn) => {
             if (!referencedIds.has(conn.id)) return conn;
             const cfg = conn.config.config as Record<string, unknown>;
             const authMethod = cfg.authMethod as string | undefined;
@@ -8152,7 +8090,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             [activeGroup],
             state.activeTabGroupId,
             state.rootPanel,
-            state.connections
+            currentConnectionsView().connections
           );
           stampedGroups = stampWindowId(tabGroups, currentWindowLabel());
           windows = buildWindowsMeta(stampedGroups);
@@ -8161,7 +8099,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             state.tabGroups,
             state.activeTabGroupId,
             state.rootPanel,
-            state.connections
+            currentConnectionsView().connections
           );
           const activeGroupIndex = Math.max(
             0,
@@ -8202,7 +8140,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         state.tabGroups,
         state.activeTabGroupId,
         state.rootPanel,
-        state.connections
+        currentConnectionsView().connections
       );
       const activeGroupIndex = Math.max(
         0,
@@ -8290,7 +8228,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const orderedGroups = await restoreWindowedLayout(plan);
         const builtGroups = buildTabGroupsFromWorkspace(
           orderedGroups,
-          state.connections,
+          currentConnectionsView().connections,
           state.defaultShell,
           agentContext
         );
@@ -8369,7 +8307,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // Pass loaded connections so `connectionRef` tabs resolve a host/serial
         // target for the reachability probe (connections are loaded before this
         // runs at startup).
-        const summary = await summarizeLastSession(session, get().connections);
+        const summary = await summarizeLastSession(session, currentConnectionsView().connections);
         // Nothing launchable → treat as "no session" and stay silent.
         if (summary.tabCount === 0) return;
         set({ restorePrompt: summary });

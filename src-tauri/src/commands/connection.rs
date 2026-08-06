@@ -49,6 +49,12 @@ pub fn load_connections_and_folders(
     // user-facing change.
     crate::agents_projection::projection::fold_agents_from_manager(&app);
 
+    // Server-authority fold (#2401): re-fold the unified connection view into the
+    // authoritative `connections` region so a focus / external reload
+    // (`reloadConnectionsFromBackend`) refreshes every region reader — the frontend
+    // no longer holds a connections slice to re-seed. Additive; no user-facing change.
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+
     Ok(ConnectionData {
         connections: view.connections,
         folders: view.folders,

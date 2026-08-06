@@ -4,6 +4,7 @@ import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { frontendLog } from "@/utils/frontendLog";
 import { getPlatform } from "@/utils/platform";
@@ -51,7 +52,7 @@ const LINUX_MANAGERS: {
  */
 export function ShellIntegrationSettings() {
   const storedSi = useProjectedSettings().shellIntegration;
-  const connections = useAppStore((s) => s.connections);
+  const { connections } = useProjectedConnections();
   const updateShellIntegration = useAppStore((s) => s.updateShellIntegration);
 
   const si = useMemo<ShellIntegrationSettingsType>(

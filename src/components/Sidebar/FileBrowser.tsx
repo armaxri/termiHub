@@ -37,6 +37,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import { Button, Tooltip, Progress, Input, toast } from "@/components/ui";
@@ -564,7 +565,7 @@ function useFileBrowserSync() {
   const localCurrentPath = useAppStore((s) => s.localCurrentPath);
   const sftpCurrentPath = useAppStore((s) => s.currentPath);
   const sessionCurrentPath = useAppStore((s) => s.sessionCurrentPath);
-  const connections = useAppStore((s) => s.connections);
+  const { connections } = useProjectedConnections();
   const remoteAgents = useAppStore((s) => s.remoteAgents);
   const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
   const globalFileBrowserEnabled = useProjectedSettings().fileBrowserEnabled;
