@@ -1,4 +1,4 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -49,7 +49,7 @@ function byTestId(id: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${id}"]`);
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("ShellIntegrationBanner", () => {
   beforeEach(() => {
@@ -57,12 +57,7 @@ describe("ShellIntegrationBanner", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({
-      settings: {
-        ...useAppStore.getState().settings,
-        shellIntegration: defaultShellIntegrationSettings(),
-      },
-    });
+    seedSettings({ shellIntegration: defaultShellIntegrationSettings() });
     mockedApi.getShellIntegrationStatus.mockResolvedValue(status());
     mockedApi.saveShellIntegrationSettings.mockResolvedValue(status());
     mockedApi.installShellIntegration.mockResolvedValue(status({ registered: true }));
@@ -86,13 +81,10 @@ describe("ShellIntegrationBanner", () => {
   });
 
   it("hides the banner when previously dismissed", async () => {
-    useAppStore.setState({
-      settings: {
-        ...useAppStore.getState().settings,
-        shellIntegration: {
-          ...defaultShellIntegrationSettings(),
-          firstLaunchBannerDismissed: true,
-        },
+    seedSettings({
+      shellIntegration: {
+        ...defaultShellIntegrationSettings(),
+        firstLaunchBannerDismissed: true,
       },
     });
     await render();

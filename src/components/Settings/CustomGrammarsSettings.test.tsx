@@ -1,10 +1,11 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { TooltipProvider } from "@/components/ui";
 import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 
@@ -50,7 +51,7 @@ function click(testId: string) {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("CustomGrammarsSettings", () => {
   beforeEach(() => {
@@ -138,7 +139,7 @@ describe("CustomGrammarsSettings", () => {
     await act(async () => {});
     render();
 
-    const settings = useAppStore.getState().settings;
+    const settings = currentSettingsView();
     expect(settings.customLanguageGrammars).toHaveLength(1);
     expect(settings.customLanguageGrammars![0].id).toBe("my-language");
     expect(settings.customLanguageGrammars![0].name).toBe("My Language");
@@ -160,20 +161,15 @@ describe("CustomGrammarsSettings", () => {
     render();
 
     expect(query("custom-grammar-draft")).toBeNull();
-    const settings = useAppStore.getState().settings;
+    const settings = currentSettingsView();
     expect(settings.customLanguageGrammars ?? []).toHaveLength(0);
   });
 
   it("shows existing grammars with remove button", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          customLanguageGrammars: [
-            { id: "my-lang", name: "My Lang", grammar: { scopeName: "source.my" } },
-          ],
-        },
-      });
+    seedSettings({
+      customLanguageGrammars: [
+        { id: "my-lang", name: "My Lang", grammar: { scopeName: "source.my" } },
+      ],
     });
     render();
 
@@ -183,15 +179,10 @@ describe("CustomGrammarsSettings", () => {
   });
 
   it("renders the remove button as a shared ghost Button primitive (not the bespoke shell)", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          customLanguageGrammars: [
-            { id: "my-lang", name: "My Lang", grammar: { scopeName: "source.my" } },
-          ],
-        },
-      });
+    seedSettings({
+      customLanguageGrammars: [
+        { id: "my-lang", name: "My Lang", grammar: { scopeName: "source.my" } },
+      ],
     });
     render();
 
@@ -202,15 +193,10 @@ describe("CustomGrammarsSettings", () => {
   });
 
   it("removes a grammar when trash button is clicked", async () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          customLanguageGrammars: [
-            { id: "my-lang", name: "My Lang", grammar: { scopeName: "source.my" } },
-          ],
-        },
-      });
+    seedSettings({
+      customLanguageGrammars: [
+        { id: "my-lang", name: "My Lang", grammar: { scopeName: "source.my" } },
+      ],
     });
     render();
 
@@ -218,7 +204,7 @@ describe("CustomGrammarsSettings", () => {
     await act(async () => {});
     render();
 
-    const settings = useAppStore.getState().settings;
+    const settings = currentSettingsView();
     expect(settings.customLanguageGrammars ?? []).toHaveLength(0);
     expect(container.textContent).toContain("No custom grammars imported.");
   });

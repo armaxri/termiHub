@@ -26,9 +26,9 @@ import type {
 } from "@/services/transport";
 import { afterEach, beforeEach } from "vitest";
 
-import { useAppStore } from "@/store/appStore";
 import {
   __emitSettingsViewForTest,
+  currentSettingsView,
   DEFAULT_SETTINGS_VIEW,
   SETTINGS_REGION,
   setSettingsTransportForTest,
@@ -59,6 +59,18 @@ export class FakeSettingsTransport implements Transport {
   private view: Record<string, unknown> = { ...DEFAULT_SETTINGS_VIEW };
   private version = 0;
   private handlers = new Set<FrameHandler>();
+
+  /**
+   * When `true`, a folded `settings.*` dispatch is also reflected synchronously
+   * into the bridge's projected view via {@link __emitSettingsViewForTest} — the
+   * stand-in for the production server-side fold, so a UI-driven mutation (an
+   * `updateSettings` / `updateShellIntegration` from a command wrapper) updates
+   * every reader without waiting for a subscribe round-trip. The
+   * {@link setupSettingsRegion} path enables this; the lower-level
+   * {@link installSettingsHarness} leaves it off so bridge-level tests observe the
+   * raw transport without an implicit view commit.
+   */
+  constructor(private readonly reflectDispatch = false) {}
 
   /** Seed the region document directly (test setup), fanning a snapshot. */
   seed(view: AppSettings): void {
@@ -100,6 +112,9 @@ export class FakeSettingsTransport implements Transport {
         return { intentId: intent.intentId, status: "accepted", produced: [] };
     }
     this.bump();
+    if (this.reflectDispatch) {
+      __emitSettingsViewForTest(this.regionView(), this.version);
+    }
     return {
       intentId: intent.intentId,
       status: "accepted",
@@ -136,11 +151,14 @@ export class FakeSettingsTransport implements Transport {
  * `teardown` that drops the subscription and restores the real transport — call it
  * in `afterEach`.
  */
-export function installSettingsHarness(initial?: AppSettings): {
+export function installSettingsHarness(
+  initial?: AppSettings,
+  opts?: { reflectDispatch?: boolean }
+): {
   transport: FakeSettingsTransport;
   teardown: () => void;
 } {
-  const transport = new FakeSettingsTransport();
+  const transport = new FakeSettingsTransport(opts?.reflectDispatch ?? false);
   setSettingsTransportForTest(transport);
   if (initial) transport.seed(initial);
   return {
@@ -152,64 +170,61 @@ export function installSettingsHarness(initial?: AppSettings): {
   };
 }
 
+// ── Region-direct seeding (the post-reducer-removal idiom, #2404) ──────────────
+
+let activeHarness: { transport: FakeSettingsTransport; teardown: () => void } | undefined;
+
 /**
- * Install a {@link FakeSettingsTransport} that **mirrors `appStore.settings` into
- * the region**, for the many render-reader tests that drive settings through
- * `appStore` (`useAppStore.setState({ settings })`, or an action that mutates the
- * slice) and assert on the settings-driven UI.
- *
- * Now that {@link import("@/store/useProjectedSettings").useProjectedSettings}
- * reads the region authoritatively, those tests can no longer rely on the removed
- * `appStore` fallback — the UI renders what the region projects. This helper seeds
- * the region with the current document and re-seeds it on every `appStore.settings`
- * change, so the region tracks whatever the test puts in `appStore` — the test-side
- * analog of production, where the region is fed from the persisted document at the
- * source (#2386). Returns the transport plus a `teardown` (drops the appStore
- * subscription, the region subscription, and restores the real transport) — call it
- * in `afterEach`.
+ * Seed (or extend) the authoritative `settings` region for the current test —
+ * the replacement for the retired `useAppStore.setState({ settings })` idiom now
+ * that `appStore` holds no settings slice (#2404). **Merges** the partial into the
+ * currently-projected document (starting from {@link DEFAULT_SETTINGS_VIEW} each
+ * test), mirroring how the old shallow `setState({ settings: { ...current, … } })`
+ * spread worked — so a test can set only the fields it cares about. Both seeds the
+ * transport (so a hook subscribing later gets a correct snapshot) and synchronously
+ * emits the view (so a reader mounting / re-rendering now reflects it without the
+ * async subscribe round-trip).
  */
-export function installSettingsHarnessMirroringAppStore(): {
-  transport: FakeSettingsTransport;
-  teardown: () => void;
-} {
-  const { transport, teardown } = installSettingsHarness();
-  // Seed the transport (so the hook's eventual subscribe snapshot is correct) AND
-  // synchronously emit the view (so a reader mounting/re-rendering now reflects it
-  // without waiting for the subscribe round-trip).
-  const push = (settings: AppSettings): void => {
-    transport.seed(settings);
-    __emitSettingsViewForTest(settings, transport.currentVersion());
-  };
-  push(useAppStore.getState().settings);
-  const unsubscribe = useAppStore.subscribe((state, prev) => {
-    if (state.settings !== prev.settings) push(state.settings);
-  });
-  return {
-    transport,
-    teardown: () => {
-      unsubscribe();
-      teardown();
-    },
-  };
+export function seedSettings(partial: Partial<AppSettings>): void {
+  if (!activeHarness) {
+    throw new Error("seedSettings() requires setupSettingsRegion() at module scope");
+  }
+  const next = { ...currentSettingsView(), ...partial } as AppSettings;
+  activeHarness.transport.seed(next);
+  __emitSettingsViewForTest(next, activeHarness.transport.currentVersion());
+}
+
+/** The transport double backing the active region seed (assertion helper). */
+export function settingsHarnessTransport(): FakeSettingsTransport {
+  if (!activeHarness) {
+    throw new Error("settingsHarnessTransport() requires setupSettingsRegion() at module scope");
+  }
+  return activeHarness.transport;
 }
 
 /**
- * Register the appStore→region mirror ({@link installSettingsHarnessMirroringAppStore})
- * for a whole test file via self-managed `beforeEach`/`afterEach` hooks. Call once
- * at the top of a render-reader test's module (or describe) so its existing
- * `appStore`-driven settings setup keeps rendering correctly now that
- * {@link import("@/store/useProjectedSettings").useProjectedSettings} reads the
- * region authoritatively — no per-`beforeEach` wiring needed. The mirror's live
- * subscription re-seeds the region on every `appStore.settings` change during the
- * test, so a later `setState` or a settings-mutating action still reaches the UI.
+ * Register a `beforeEach` / `afterEach` pair that installs the region transport
+ * double (seeded to {@link DEFAULT_SETTINGS_VIEW}, or `initial` if given) for every
+ * test in the current module. Call once at module scope, then use
+ * {@link seedSettings} inside individual tests to populate the region. Supersedes
+ * the render-cut-era `setupSettingsRegionMirror`, which mirrored `appStore.settings`
+ * into the region — a bridge that no longer exists now that `appStore` holds no
+ * settings slice (#2404).
  */
-export function setupSettingsRegionMirror(): void {
-  let harness: { transport: FakeSettingsTransport; teardown: () => void } | undefined;
+export function setupSettingsRegion(initial?: AppSettings): void {
   beforeEach(() => {
-    harness = installSettingsHarnessMirroringAppStore();
+    activeHarness = installSettingsHarness(initial ?? DEFAULT_SETTINGS_VIEW, {
+      reflectDispatch: true,
+    });
+    // Synchronously prime the projected view so a reader that renders before the
+    // hook's async subscribe resolves still sees the seeded baseline.
+    __emitSettingsViewForTest(
+      initial ?? DEFAULT_SETTINGS_VIEW,
+      activeHarness.transport.currentVersion()
+    );
   });
   afterEach(() => {
-    harness?.teardown();
-    harness = undefined;
+    activeHarness?.teardown();
+    activeHarness = undefined;
   });
 }

@@ -4,7 +4,6 @@ import { createRoot, Root } from "react-dom/client";
 import { RecentSessionsSidebar } from "./RecentSessionsSidebar";
 import { withTooltip } from "@/test/tooltip";
 import type { SessionHistoryEntry } from "@/types/sessionHistory";
-import type { AppSettings } from "@/types/connection";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn().mockResolvedValue(vi.fn()) }));
@@ -30,6 +29,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
 
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -79,6 +79,7 @@ const removeHistoryEntry = vi.fn().mockResolvedValue(undefined);
 const clearSessionHistory = vi.fn().mockResolvedValue(undefined);
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 describe("RecentSessionsSidebar", () => {
   beforeEach(() => {
@@ -90,7 +91,6 @@ describe("RecentSessionsSidebar", () => {
     useAppStore.setState({
       sessionHistory: [],
       connectionTypes: [],
-      settings: { defaultUser: "root" } as AppSettings,
       addTab,
       splitPanel,
       requestPassword: vi.fn(),
@@ -100,6 +100,7 @@ describe("RecentSessionsSidebar", () => {
       markHistoryPromoted: vi.fn().mockResolvedValue(undefined),
       addConnection: vi.fn(),
     });
+    seedSettings({ defaultUser: "root" });
   });
 
   afterEach(() => {

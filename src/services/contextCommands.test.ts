@@ -11,6 +11,7 @@ import { CONTEXT_COMMANDS } from "./contextCommands";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { setLayoutIntentsEnabled } from "@/store/layoutBridge";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 /** Add a tab of the given content type and make it the active tab/panel. */
 function addActiveTab(contentType: "terminal" | "editor" = "terminal"): string {
@@ -28,6 +29,8 @@ function activeLeaf() {
   const { rootPanel, activePanelId } = useAppStore.getState();
   return getAllLeaves(rootPanel).find((p) => p.id === activePanelId) ?? null;
 }
+
+setupSettingsRegion();
 
 beforeEach(() => {
   useAppStore.setState({ ...useAppStore.getInitialState() });
@@ -102,9 +105,7 @@ describe("close-tab", () => {
 
   it("closes the active tab immediately when the confirm setting is disabled", () => {
     addActiveTab();
-    useAppStore.setState((s) => ({
-      settings: { ...s.settings, confirmCloseTabOnShortcut: false },
-    }));
+    seedSettings({ confirmCloseTabOnShortcut: false });
     cmd.run();
     expect(activeLeaf()!.tabs).toHaveLength(0);
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();

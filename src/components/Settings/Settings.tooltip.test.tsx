@@ -1,4 +1,4 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -36,7 +36,7 @@ function btn(testId: string): HTMLButtonElement | null {
  * exposes an `aria-label` (a tooltip is not an accessible name), no longer sets a
  * bare `title=`, and gets `aria-describedby` wired by Radix on focus.
  */
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("Settings icon controls tooltip adoption", () => {
   beforeEach(() => {
@@ -54,14 +54,7 @@ describe("Settings icon controls tooltip adoption", () => {
 
   describe("FileTypeSettings remove/copy icon buttons", () => {
     function renderWithMapping() {
-      act(() => {
-        useAppStore.setState({
-          settings: {
-            ...useAppStore.getState().settings,
-            fileLanguageMappings: { Jenkinsfile: "groovy" },
-          },
-        });
-      });
+      seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
       renderNode(<FileTypeSettings />);
     }
 
@@ -119,13 +112,8 @@ describe("Settings icon controls tooltip adoption", () => {
 
   describe("SerialPortSettings remove-custom-prefix icon button", () => {
     function renderWithCustomPrefix() {
-      act(() => {
-        useAppStore.setState({
-          settings: {
-            ...useAppStore.getState().settings,
-            serialPortScanPrefixes: [{ prefix: "ttyXYZ", enabled: true, builtIn: false }],
-          },
-        });
+      seedSettings({
+        serialPortScanPrefixes: [{ prefix: "ttyXYZ", enabled: true, builtIn: false }],
       });
       renderNode(<SerialPortSettings />);
     }

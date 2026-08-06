@@ -9,7 +9,7 @@
  * stays hidden until the feature is globally enabled or already effectively on
  * for the session.
  */
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -38,11 +38,8 @@ function setActiveTab(tab: Partial<TerminalTab> & { config: ConnectionConfig }) 
 }
 
 function setGlobalHighlighting(config: Partial<SyntaxHighlightingConfig>) {
-  useAppStore.setState({
-    settings: {
-      ...useAppStore.getState().settings,
-      syntaxHighlighting: { enabled: false, builtinRules: {}, customRules: [], ...config },
-    },
+  seedSettings({
+    syntaxHighlighting: { enabled: false, builtinRules: {}, customRules: [], ...config },
   });
 }
 
@@ -52,7 +49,7 @@ function setPerConnection(tabId: string, options: TerminalOptions) {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("StatusBar — syntax-highlighting indicator", () => {
   let container: HTMLDivElement;

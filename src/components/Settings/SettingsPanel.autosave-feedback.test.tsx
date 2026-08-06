@@ -11,6 +11,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { seedSettings, setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { AppSettings } from "@/types/connection";
 import { TooltipProvider } from "@/components/ui";
 import { SettingsPanel } from "./SettingsPanel";
@@ -63,6 +64,8 @@ function ackEl(): HTMLElement | null {
   return container.querySelector("[data-testid='settings-saved-ack']");
 }
 
+setupSettingsRegion();
+
 describe("SettingsPanel — auto-save feedback (#1342)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -77,7 +80,7 @@ describe("SettingsPanel — auto-save feedback (#1342)", () => {
     root = createRoot(container);
 
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+    seedSettings(FULL_SETTINGS);
 
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "get_app_info") return Promise.resolve({ version: "0.0.0", gitHash: "abc" });

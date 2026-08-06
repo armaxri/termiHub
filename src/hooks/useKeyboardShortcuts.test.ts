@@ -62,6 +62,9 @@ import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { setLayoutIntentsEnabled } from "@/store/layoutBridge";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+
+setupSettingsRegion();
 
 const mockProcessKeyEvent = vi.mocked(processKeyEvent);
 const mockCancelChord = vi.mocked(cancelChord);
@@ -235,9 +238,7 @@ describe("useKeyboardShortcuts", () => {
     });
 
     it("dispatches normally when passthrough is explicitly disabled in settings", () => {
-      useAppStore.setState((s) => ({
-        settings: { ...s.settings, terminalKeyPassthrough: false },
-      }));
+      seedSettings({ terminalKeyPassthrough: false });
       act(() => {
         root.render(createElement(KeyboardHarness));
       });
@@ -326,9 +327,7 @@ describe("useKeyboardShortcuts", () => {
       useAppStore.getState().addTab("Tab A", "local");
       const panelId = getAllLeaves(useAppStore.getState().rootPanel)[0].id;
       useAppStore.getState().setActivePanel(panelId);
-      useAppStore.setState((state) => ({
-        settings: { ...state.settings, confirmCloseTabOnShortcut: false },
-      }));
+      seedSettings({ confirmCloseTabOnShortcut: false });
 
       act(() => {
         root.render(createElement(KeyboardHarness));
@@ -369,9 +368,7 @@ describe("useKeyboardShortcuts", () => {
     it("closes the tab group immediately when the confirm setting is disabled", () => {
       useAppStore.getState().addTabGroup();
       const groupsBefore = useAppStore.getState().tabGroups.length;
-      useAppStore.setState((state) => ({
-        settings: { ...state.settings, confirmCloseTabOnShortcut: false },
-      }));
+      seedSettings({ confirmCloseTabOnShortcut: false });
 
       act(() => {
         root.render(createElement(KeyboardHarness));
@@ -567,9 +564,7 @@ describe("useKeyboardShortcuts", () => {
     });
 
     it("reverts to global-first behavior when editor delegation is disabled", () => {
-      useAppStore.setState((s) => ({
-        settings: { ...s.settings, editorShortcutDelegation: false },
-      }));
+      seedSettings({ editorShortcutDelegation: false });
       addActiveTab("editor");
 
       act(() => {

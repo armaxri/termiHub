@@ -14,7 +14,7 @@
  *  - it is disposed on unmount so no decorations or listeners leak.
  */
 
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -177,9 +177,7 @@ const LOCAL_CONFIG = { type: "local" as const, config: {} };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function setHighlighting(config: SyntaxHighlightingConfig | undefined): void {
-  useAppStore.setState((s) => ({
-    settings: { ...s.settings, syntaxHighlighting: config },
-  }));
+  seedSettings({ syntaxHighlighting: config });
 }
 
 function renderTerminal(existingSessionId: string | null = null): void {
@@ -197,7 +195,7 @@ function renderTerminal(existingSessionId: string | null = null): void {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("Terminal — syntax-highlighting engine wiring", () => {
   it("constructs one engine bound to the xterm and leaves it disabled by default", async () => {

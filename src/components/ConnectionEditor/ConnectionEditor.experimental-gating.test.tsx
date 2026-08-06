@@ -5,7 +5,7 @@
  * (those reporting `capabilities.graphical`) unless `experimentalFeaturesEnabled`
  * is on. When it is on, those types appear labelled "— Experimental".
  */
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -56,9 +56,9 @@ function renderNew(experimentalFeaturesEnabled: boolean) {
   useAppStore.setState({
     ...initial,
     connectionTypes: [LOCAL_TYPE, MOCK_RD_TYPE],
-    settings: { ...initial.settings, experimentalFeaturesEnabled },
   });
   seedConnectionsRegion({ connections: [] });
+  seedSettings({ experimentalFeaturesEnabled });
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
@@ -103,7 +103,7 @@ afterEach(() => {
   container.remove();
 });
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 setupConnectionsRegion();
 
 describe("ConnectionEditor — experimental type-picker gating", () => {

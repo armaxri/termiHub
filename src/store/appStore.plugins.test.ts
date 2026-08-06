@@ -98,6 +98,9 @@ import { darkTheme } from "@/themes/dark";
 import type { ThemeDefinition } from "@/themes";
 import type { InstalledPlugin, PluginState } from "@/types/plugin";
 import { resetLoadedFrontendPlugins } from "@/plugins/frontendPlugins";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+
+setupSettingsRegion();
 
 /** A plugin declaring a frontend (JS) extension — a protocol parser entry point. */
 function frontendPlugin(id: string, state: PluginState = "active"): InstalledPlugin {
@@ -228,9 +231,7 @@ describe("appStore — plugins (#1993)", () => {
 
   it("loadPlugins executes frontend plugins once the experimental gate is on (#2048)", async () => {
     vi.mocked(apiListPlugins).mockResolvedValueOnce([frontendPlugin("fe")]);
-    useAppStore.setState({
-      settings: { ...useAppStore.getState().settings, frontendPluginsEnabled: true },
-    });
+    seedSettings({ frontendPluginsEnabled: true });
 
     await useAppStore.getState().loadPlugins();
 

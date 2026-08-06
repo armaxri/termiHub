@@ -75,8 +75,11 @@ import {
   setWorkflowRenderFromProjectionEnabled,
   setWorkflowTransportForTest,
 } from "./workflowRunBridge";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { toast } from "@/components/ui";
+
+setupSettingsRegion();
 import type {
   FrameHandler,
   Intent,
@@ -408,11 +411,10 @@ describe("workflow-run cut — mutation parity (intents on)", () => {
     seedConnectedTerminal();
     useAppStore.setState({
       workflows: [workflow("w1", [lp("echo", ["hi"])])],
-      settings: {
-        ...useAppStore.getState().settings,
-        workflowLocalProcessEnabled: true,
-        workflowLocalProcessAllowlist: ["echo"],
-      },
+    });
+    seedSettings({
+      workflowLocalProcessEnabled: true,
+      workflowLocalProcessAllowlist: ["echo"],
     });
 
     await useAppStore.getState().runWorkflow("w1");
@@ -436,11 +438,10 @@ describe("workflow-run cut — mutation parity (intents on)", () => {
     invokeRunLocalProcess.mockResolvedValueOnce({ exitCode: 1, timedOut: false, cancelled: false });
     useAppStore.setState({
       workflows: [workflow("w1", [lp("boom", [])])],
-      settings: {
-        ...useAppStore.getState().settings,
-        workflowLocalProcessEnabled: true,
-        workflowLocalProcessAllowlist: ["boom"],
-      },
+    });
+    seedSettings({
+      workflowLocalProcessEnabled: true,
+      workflowLocalProcessAllowlist: ["boom"],
     });
 
     await useAppStore.getState().runWorkflow("w1");
@@ -457,11 +458,10 @@ describe("workflow-run cut — mutation parity (intents on)", () => {
     seedConnectedTerminal();
     useAppStore.setState({
       workflows: [workflow("w1", [lp("echo", ["hi"])])],
-      settings: {
-        ...useAppStore.getState().settings,
-        workflowLocalProcessEnabled: true,
-        workflowLocalProcessAllowlist: ["echo"],
-      },
+    });
+    seedSettings({
+      workflowLocalProcessEnabled: true,
+      workflowLocalProcessAllowlist: ["echo"],
     });
     await useAppStore.getState().runWorkflow("w1");
     await flush();

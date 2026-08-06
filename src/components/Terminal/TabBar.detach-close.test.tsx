@@ -9,6 +9,7 @@ import { createRoot, Root } from "react-dom/client";
 import { TabBar } from "./TabBar";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 vi.mock("@/components/ui", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/components/ui")>();
@@ -63,6 +64,8 @@ function persistentTab(): TerminalTab {
 let container: HTMLDivElement;
 let root: Root;
 
+setupSettingsRegion();
+
 function render(tabs: TerminalTab[]) {
   act(() => root.render(<TabBar panelId={PANEL_ID} tabs={tabs} />));
 }
@@ -106,10 +109,8 @@ describe("TabBar — closing a persistent-attached tab via the X", () => {
 
   it("closes immediately without a notice when the user opted out", () => {
     const closeTab = vi.fn();
-    useAppStore.setState({
-      closeTab,
-      settings: { ...useAppStore.getState().settings, confirmCloseAttachedTab: false },
-    });
+    useAppStore.setState({ closeTab });
+    seedSettings({ confirmCloseAttachedTab: false });
     render([persistentTab()]);
 
     clickClose();

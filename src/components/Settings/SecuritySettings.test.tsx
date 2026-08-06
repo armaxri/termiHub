@@ -1,9 +1,10 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { SecuritySettings } from "./SecuritySettings";
 
 vi.mock("@/themes", () => ({
@@ -47,7 +48,7 @@ function query(testId: string): Element | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("SecuritySettings", () => {
   beforeEach(() => {
@@ -548,17 +549,16 @@ describe("SecuritySettings", () => {
         toggle.click();
       });
 
-      expect(useAppStore.getState().settings.workflowLocalProcessEnabled).toBe(true);
+      expect(currentSettingsView().workflowLocalProcessEnabled).toBe(true);
     });
 
     it("lists allowed programs and removes one on click", async () => {
       useAppStore.setState({
         credentialStoreStatus: { mode: "none", status: "unlocked" },
-        settings: {
-          ...useAppStore.getState().settings,
-          workflowLocalProcessEnabled: true,
-          workflowLocalProcessAllowlist: ["notify-send", "echo"],
-        },
+      });
+      seedSettings({
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: ["notify-send", "echo"],
       });
       render();
 
@@ -571,9 +571,7 @@ describe("SecuritySettings", () => {
         remove.click();
       });
 
-      expect(useAppStore.getState().settings.workflowLocalProcessAllowlist).toEqual([
-        "notify-send",
-      ]);
+      expect(currentSettingsView().workflowLocalProcessAllowlist).toEqual(["notify-send"]);
     });
   });
 });

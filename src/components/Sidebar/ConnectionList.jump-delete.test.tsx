@@ -11,6 +11,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, JumpHostConfig } from "@/types/connection";
 
@@ -52,6 +53,7 @@ function sshConnection(id: string, settings: Record<string, unknown> = {}): Save
 const q = (testId: string) => document.querySelector(`[data-testid="${testId}"]`) as HTMLElement;
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 describe("ConnectionList — jump-host delete protection", () => {
   let container: HTMLDivElement;
@@ -64,7 +66,8 @@ describe("ConnectionList — jump-host delete protection", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     deleteConnection = vi.fn<(connectionId: string) => void>();
-    useAppStore.setState({ settings: { ...baseSettings }, deleteConnection });
+    useAppStore.setState({ deleteConnection });
+    seedSettings({ ...baseSettings });
   });
 
   afterEach(() => {

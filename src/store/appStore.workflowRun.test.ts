@@ -79,10 +79,14 @@ vi.mock("@/services/localProcessApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { currentSettingsView } from "./settingsBridge";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { serializeWorkflows } from "@/services/workflowIo";
 import { resetOnConnectDispatchState } from "@/services/workflowTriggers";
 import { toast } from "@/components/ui";
+
+setupSettingsRegion();
 
 const workflow = (id: string, steps: WorkflowStep[]): Workflow => ({
   id,
@@ -240,12 +244,9 @@ describe("appStore — workflow run slice (#1852)", () => {
 
     /** Enable the opt-in, optionally pre-authorizing programs. */
     function enableLocalProcess(allowlist: string[] = []) {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          workflowLocalProcessEnabled: true,
-          workflowLocalProcessAllowlist: allowlist,
-        },
+      seedSettings({
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: allowlist,
       });
     }
 
@@ -297,7 +298,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
       // "once" does NOT persist the program to the allowlist.
-      expect(useAppStore.getState().settings.workflowLocalProcessAllowlist).toEqual([]);
+      expect(currentSettingsView().workflowLocalProcessAllowlist).toEqual([]);
     });
 
     it("'always allow' persists the program to the allowlist", async () => {
@@ -311,7 +312,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       await done;
 
       expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
-      expect(useAppStore.getState().settings.workflowLocalProcessAllowlist).toContain("echo");
+      expect(currentSettingsView().workflowLocalProcessAllowlist).toContain("echo");
     });
 
     it("GUARDRAIL: 'cancel' refuses — the process never spawns", async () => {

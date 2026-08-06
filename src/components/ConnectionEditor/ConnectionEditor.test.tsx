@@ -1,4 +1,4 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { flushMacrotask } from "@/test/flushAsync";
@@ -115,7 +115,7 @@ function render() {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 setupConnectionsRegion();
 
 describe("ConnectionEditor — credential hint", () => {
@@ -1499,13 +1499,10 @@ describe("ConnectionEditor — storage-file picker (#1105)", () => {
       ...useAppStore.getInitialState(),
       connectionTypes: [SSH_TYPE],
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
-      // At least one enabled external file makes the storage-file picker render.
-      settings: {
-        ...useAppStore.getInitialState().settings,
-        externalConnectionFiles: [{ path: "/tmp/team.json", enabled: true }],
-      },
     });
     seedConnectionsRegion({ connections: [EXISTING_CONN] });
+    // At least one enabled external file makes the storage-file picker render.
+    seedSettings({ externalConnectionFiles: [{ path: "/tmp/team.json", enabled: true }] });
     mockedInvoke.mockImplementation(() => Promise.resolve(false));
   });
 

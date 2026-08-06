@@ -8,7 +8,7 @@
  * directly without the warning; cancelling does not persist the opt-out; and
  * re-enabling the setting brings the warning back.
  */
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -31,7 +31,7 @@ vi.mock("@/services/networkApi", () => ({
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
 import { networkPortScan, onScanComplete } from "@/services/networkApi";
-import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { PortScannerPanel } from "./PortScannerPanel";
 
 let container: HTMLDivElement;
@@ -110,7 +110,7 @@ async function completeScan() {
   await flush();
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("PortScannerPanel — large-scan don't-warn-again opt-out (#1877)", () => {
   beforeEach(() => {
@@ -118,11 +118,7 @@ describe("PortScannerPanel — large-scan don't-warn-again opt-out (#1877)", () 
     document.body.appendChild(container);
     root = createRoot(container);
     // Reset the persisted preference to the default (warn on) before each test.
-    act(() => {
-      useAppStore.setState((s) => ({
-        settings: { ...s.settings, warnLargePortScan: true },
-      }));
-    });
+    seedSettings({ warnLargePortScan: true });
   });
 
   afterEach(() => {
@@ -140,7 +136,7 @@ describe("PortScannerPanel — large-scan don't-warn-again opt-out (#1877)", () 
     await click('[data-testid="port-scan-warn-dont-ask-again"]');
     await click('[data-testid="port-scan-warn-confirm"]');
 
-    expect(useAppStore.getState().settings.warnLargePortScan).toBe(false);
+    expect(currentSettingsView().warnLargePortScan).toBe(false);
     expect(networkPortScan).toHaveBeenCalledTimes(1);
   });
 
@@ -168,7 +164,7 @@ describe("PortScannerPanel — large-scan don't-warn-again opt-out (#1877)", () 
     await click('[data-testid="port-scan-warn-dont-ask-again"]');
     await click('[data-testid="port-scan-warn-cancel"]');
 
-    expect(useAppStore.getState().settings.warnLargePortScan).toBe(true);
+    expect(currentSettingsView().warnLargePortScan).toBe(true);
     expect(networkPortScan).not.toHaveBeenCalled();
 
     // The next large scan still warns (opt-out was discarded on cancel).
@@ -178,11 +174,7 @@ describe("PortScannerPanel — large-scan don't-warn-again opt-out (#1877)", () 
 
   it("warns again once the setting is re-enabled", async () => {
     // Start opted out (e.g. re-enabling from General settings sets this true).
-    act(() => {
-      useAppStore.setState((s) => ({
-        settings: { ...s.settings, warnLargePortScan: false },
-      }));
-    });
+    seedSettings({ warnLargePortScan: false });
     await renderPanel();
     await setPorts("1-2000");
     await clickRun();
@@ -193,9 +185,7 @@ describe("PortScannerPanel — large-scan don't-warn-again opt-out (#1877)", () 
 
     // Re-enable the warning, as the General settings toggle would.
     act(() => {
-      useAppStore.setState((s) => ({
-        settings: { ...s.settings, warnLargePortScan: true },
-      }));
+      seedSettings({ warnLargePortScan: true });
     });
     await flush();
     await clickRun();

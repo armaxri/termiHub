@@ -1,4 +1,4 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -79,7 +79,7 @@ function fieldInput(label: string): HTMLInputElement {
   return el?.closest(".settings-form__field")?.querySelector("input") as HTMLInputElement;
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("ConnectionTerminalSettings — scrollback buffer", () => {
   beforeEach(() => {
@@ -137,9 +137,7 @@ describe("ConnectionTerminalSettings — scrollback buffer", () => {
   });
 
   it("placeholder reflects a custom global scrollbackBuffer setting", () => {
-    useAppStore.setState({
-      settings: { ...useAppStore.getState().settings, scrollbackBuffer: 50000 },
-    });
+    seedSettings({ scrollbackBuffer: 50000 });
     renderWith(emptyOptions);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));
     const field = labels
@@ -259,12 +257,7 @@ describe("ConnectionTerminalSettings — syntax highlighting override", () => {
   });
 
   it("global-default hint reflects the global on/off state", () => {
-    useAppStore.setState({
-      settings: {
-        ...useAppStore.getState().settings,
-        syntaxHighlighting: { enabled: true, builtinRules: {}, customRules: [] },
-      },
-    });
+    seedSettings({ syntaxHighlighting: { enabled: true, builtinRules: {}, customRules: [] } });
     renderWith(emptyOptions);
     const label = Array.from(container.querySelectorAll(".settings-form__label")).find(
       (l) => l.textContent === "Syntax Highlighting"

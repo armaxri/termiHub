@@ -12,6 +12,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { ConnectionFolder } from "@/types/connection";
 import type { RemoteAgentDefinition } from "@/types/connection";
@@ -61,6 +62,7 @@ const baseSettings = {
 };
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 describe("ConnectionList — folder chevron placement", () => {
   let container: HTMLDivElement;
@@ -71,7 +73,7 @@ describe("ConnectionList — folder chevron placement", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    seedSettings({ ...baseSettings });
   });
 
   afterEach(() => {

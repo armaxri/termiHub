@@ -1,9 +1,10 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { TooltipProvider } from "@/components/ui";
 import { FileTypeSettings } from "./FileTypeSettings";
 
@@ -37,7 +38,7 @@ function click(testId: string) {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("FileTypeSettings", () => {
   beforeEach(() => {
@@ -80,14 +81,7 @@ describe("FileTypeSettings", () => {
   });
 
   it("displays existing custom mappings from settings", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          fileLanguageMappings: { Jenkinsfile: "groovy", ".conf": "nginx" },
-        },
-      });
-    });
+    seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy", ".conf": "nginx" } });
     render();
 
     expect(container.textContent).toContain("Jenkinsfile");
@@ -97,28 +91,14 @@ describe("FileTypeSettings", () => {
   });
 
   it("shows remove button for each custom mapping", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          fileLanguageMappings: { Jenkinsfile: "groovy" },
-        },
-      });
-    });
+    seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
     render();
 
     expect(query("file-type-remove-Jenkinsfile")).not.toBeNull();
   });
 
   it("renders remove buttons as shared ghost Button primitives (not the bespoke shell)", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          fileLanguageMappings: { Jenkinsfile: "groovy" },
-        },
-      });
-    });
+    seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
     render();
 
     const btn = query("file-type-remove-Jenkinsfile") as HTMLButtonElement;
@@ -137,35 +117,21 @@ describe("FileTypeSettings", () => {
   });
 
   it("removes a custom mapping when trash button is clicked", async () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          fileLanguageMappings: { Jenkinsfile: "groovy" },
-        },
-      });
-    });
+    seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
     render();
 
     click("file-type-remove-Jenkinsfile");
     await act(async () => {});
     render();
 
-    const settings = useAppStore.getState().settings;
+    const settings = currentSettingsView();
     expect(settings.fileLanguageMappings).toBeUndefined();
     // The remove button for Jenkinsfile should be gone (no custom mapping)
     expect(query("file-type-remove-Jenkinsfile")).toBeNull();
   });
 
   it("shows Reset All button when custom mappings exist", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          fileLanguageMappings: { Jenkinsfile: "groovy" },
-        },
-      });
-    });
+    seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy" } });
     render();
 
     const resetBtn = Array.from(container.querySelectorAll("button")).find((b) =>
@@ -175,14 +141,7 @@ describe("FileTypeSettings", () => {
   });
 
   it("reset all button removes all custom mappings", async () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          fileLanguageMappings: { Jenkinsfile: "groovy", ".conf": "nginx" },
-        },
-      });
-    });
+    seedSettings({ fileLanguageMappings: { Jenkinsfile: "groovy", ".conf": "nginx" } });
     render();
 
     const resetBtn = Array.from(container.querySelectorAll("button")).find((b) =>
@@ -194,7 +153,7 @@ describe("FileTypeSettings", () => {
     await act(async () => {});
     render();
 
-    const settings = useAppStore.getState().settings;
+    const settings = currentSettingsView();
     expect(settings.fileLanguageMappings).toBeUndefined();
   });
 
@@ -263,14 +222,7 @@ describe("FileTypeSettings", () => {
   });
 
   it("shows overridden badge on a built-in row when it has a custom mapping", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          fileLanguageMappings: { Dockerfile: "groovy" },
-        },
-      });
-    });
+    seedSettings({ fileLanguageMappings: { Dockerfile: "groovy" } });
     render();
     expect(query("file-type-overridden-badge-Dockerfile")).not.toBeNull();
     // A non-overridden row should not have the badge

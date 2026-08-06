@@ -46,6 +46,8 @@ vi.mock("@/themes", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { currentSettingsView } from "./settingsBridge";
+import { setupSettingsRegion, seedSettings, settingsDoc } from "@/test/settingsRegionTestHarness";
 
 /** Build a minimal shell-integration settings value for tests. */
 function makeSi(overrides: Partial<ShellIntegrationSettings> = {}): ShellIntegrationSettings {
@@ -72,28 +74,32 @@ function makeStatus(overrides: Partial<ShellIntegrationStatus> = {}): ShellInteg
   };
 }
 
-/** Seed the store's `settings`/`savedSettings` with a shared base + shell integration. */
-function seedSettings(shellIntegration: ShellIntegrationSettings): AppSettings {
-  const base: AppSettings = {
-    version: "1",
-    externalConnectionFiles: [],
-    powerMonitoringEnabled: true,
-    fileBrowserEnabled: true,
-    shellIntegration,
-  };
-  useAppStore.setState({ settings: base, savedSettings: base });
+/**
+ * Seed the authoritative `settings` region with a shared base document carrying
+ * the given shell-integration value. The persisted settings document is now
+ * region-authoritative (#2404): `updateShellIntegration` reads/writes it via the
+ * `settings.*` bridge, so tests seed the region and read it back through the
+ * projection instead of an `appStore` slice.
+ */
+function seedBase(shellIntegration: ShellIntegrationSettings): AppSettings {
+  const base = settingsDoc({ shellIntegration });
+  seedSettings(base);
   return base;
 }
 
 describe("appStore — updateShellIntegration", () => {
+  // The persisted settings document is region-authoritative (#2404): seed the
+  // `settings` region, not an `appStore` slice, and read it back via the projection.
+  setupSettingsRegion();
+
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
   });
 
-  it("updates settings and savedSettings and returns the refreshed status on success", async () => {
+  it("patches the settings region and returns the refreshed status on success", async () => {
     const prevSi = makeSi();
-    seedSettings(prevSi);
+    seedBase(prevSi);
     const nextSi = makeSi({ openInNewWindow: true });
     const refreshed = makeStatus({ registered: true, registeredExePath: "/opt/th" });
     mockSaveShellIntegration.mockResolvedValueOnce(refreshed);
@@ -103,16 +109,13 @@ describe("appStore — updateShellIntegration", () => {
     expect(mockSaveShellIntegration).toHaveBeenCalledWith(nextSi);
     expect(result).toEqual(refreshed);
 
-    const state = useAppStore.getState();
-    expect(state.settings.shellIntegration).toEqual(nextSi);
-    expect(state.savedSettings.shellIntegration).toEqual(nextSi);
-    // settings and savedSettings stay in lockstep after a successful persist.
-    expect(state.settings).toBe(state.savedSettings);
+    // The authoritative region reflects the persisted shell-integration value.
+    expect(currentSettingsView().shellIntegration).toEqual(nextSi);
   });
 
-  it("rolls back settings and savedSettings and re-throws when the backend rejects", async () => {
+  it("rolls the settings region back and re-throws when the backend rejects", async () => {
     const prevSi = makeSi();
-    const base = seedSettings(prevSi);
+    const base = seedBase(prevSi);
     const nextSi = makeSi({ firstLaunchBannerDismissed: true });
     const failure = new Error("command failed");
     mockSaveShellIntegration.mockRejectedValueOnce(failure);
@@ -121,32 +124,33 @@ describe("appStore — updateShellIntegration", () => {
       "command failed"
     );
 
-    const state = useAppStore.getState();
-    // Both are rolled back to the previously-persisted shell-integration value.
-    expect(state.settings.shellIntegration).toEqual(prevSi);
-    expect(state.savedSettings.shellIntegration).toEqual(prevSi);
-    // The rest of the settings object is untouched.
-    expect(state.settings.version).toBe(base.version);
-    expect(state.settings.powerMonitoringEnabled).toBe(base.powerMonitoringEnabled);
+    const view = currentSettingsView();
+    // Rolled back to the previously-persisted shell-integration value.
+    expect(view.shellIntegration).toEqual(prevSi);
+    // The rest of the settings document is untouched.
+    expect(view.version).toBe(base.version);
+    expect(view.powerMonitoringEnabled).toBe(base.powerMonitoringEnabled);
   });
 
   it("rollback preserves a concurrent general-settings edit made mid-persist", async () => {
     const prevSi = makeSi();
-    seedSettings(prevSi);
+    seedBase(prevSi);
     const nextSi = makeSi({ openInNewWindow: true });
 
-    // Simulate a general-settings edit landing on `settings` (not yet `savedSettings`)
-    // while the shell-integration persist is in flight, then reject.
+    // Simulate a general-settings edit landing on the region (a `settings.patch`)
+    // while the shell-integration persist is in flight, then reject. Because the
+    // rollback is a targeted `shellIntegration` patch (not a whole-document
+    // replace), the concurrent edit must survive.
     mockSaveShellIntegration.mockImplementationOnce(() => {
-      useAppStore.setState((s) => ({ settings: { ...s.settings, fontSize: 15 } }));
+      seedSettings({ fontSize: 15 });
       return Promise.reject(new Error("boom"));
     });
 
     await expect(useAppStore.getState().updateShellIntegration(nextSi)).rejects.toThrow("boom");
 
-    const state = useAppStore.getState();
+    const view = currentSettingsView();
     // Shell integration is rolled back, but the concurrent general edit is preserved.
-    expect(state.settings.shellIntegration).toEqual(prevSi);
-    expect(state.settings.fontSize).toBe(15);
+    expect(view.shellIntegration).toEqual(prevSi);
+    expect(view.fontSize).toBe(15);
   });
 });

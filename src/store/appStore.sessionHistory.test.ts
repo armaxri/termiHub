@@ -58,22 +58,12 @@ vi.mock("@/components/ui", () => ({
 
 import { useAppStore } from "./appStore";
 import { recordSession as apiRecordSession } from "@/services/sessionHistoryApi";
-import type { AppSettings } from "@/types/connection";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import type { ConnectionConfig } from "@/types/terminal";
 
-const mockRecord = vi.mocked(apiRecordSession);
+setupSettingsRegion();
 
-function setSettings(partial: Partial<AppSettings>) {
-  useAppStore.setState({
-    settings: {
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: true,
-      ...partial,
-    } as AppSettings,
-  });
-}
+const mockRecord = vi.mocked(apiRecordSession);
 
 async function flush() {
   await Promise.resolve();
@@ -87,7 +77,7 @@ describe("appStore session history", () => {
   });
 
   it("does not record when session history is disabled", async () => {
-    setSettings({ sessionHistoryEnabled: false });
+    seedSettings({ sessionHistoryEnabled: false });
     await useAppStore
       .getState()
       .recordSession("ssh", { type: "ssh", config: { host: "h", username: "u" } });
@@ -95,7 +85,7 @@ describe("appStore session history", () => {
   });
 
   it("records with the password stripped and a computed title", async () => {
-    setSettings({ sessionHistoryEnabled: true, sessionHistoryLimit: 25 });
+    seedSettings({ sessionHistoryEnabled: true, sessionHistoryLimit: 25 });
     const config: ConnectionConfig = {
       type: "ssh",
       config: { host: "prod", username: "admin", port: 22, password: "s3cret" },
@@ -112,7 +102,7 @@ describe("appStore session history", () => {
   });
 
   it("records a terminal tab opened via addTab", async () => {
-    setSettings({ sessionHistoryEnabled: true });
+    seedSettings({ sessionHistoryEnabled: true });
     useAppStore
       .getState()
       .addTab("admin@prod", "ssh", { type: "ssh", config: { host: "prod", username: "admin" } });
@@ -122,7 +112,7 @@ describe("appStore session history", () => {
   });
 
   it("does not record a non-terminal tab (settings/editor)", async () => {
-    setSettings({ sessionHistoryEnabled: true });
+    seedSettings({ sessionHistoryEnabled: true });
     useAppStore
       .getState()
       .addTab("Settings", "local", { type: "local", config: {} }, { contentType: "settings" });

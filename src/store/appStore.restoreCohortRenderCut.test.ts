@@ -71,6 +71,7 @@ vi.mock("@/services/lastSessionApi", () => ({
 
 import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import {
   setRestoreIntentsEnabled,
   setRestoreRenderFromProjectionEnabled,
@@ -281,6 +282,7 @@ async function settleAsync(): Promise<void> {
 }
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
@@ -292,8 +294,8 @@ beforeEach(() => {
     defaultShell: "bash",
     restoreCohort: null,
     failedRestoreTabIds: [],
-    settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: true },
   });
+  seedSettings({ restoreLastSessionOnStartup: true });
   seedConnectionsRegion({ connections: [] });
   transport = new RestoreStoreTransport();
   setRestoreTransportForTest(transport);

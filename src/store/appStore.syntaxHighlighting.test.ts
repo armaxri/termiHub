@@ -29,8 +29,12 @@ vi.mock("@/themes", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { currentSettingsView } from "./settingsBridge";
+import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import * as storage from "@/services/storage";
 import type { SyntaxHighlightingConfig } from "@/types/syntaxHighlighting";
+
+setupSettingsRegion();
 
 describe("appStore — sessionHighlighting (per-session toggle)", () => {
   beforeEach(() => {
@@ -85,15 +89,14 @@ describe("appStore — global syntaxHighlighting config persistence", () => {
       ],
     };
 
-    const base = useAppStore.getState().settings;
+    const base = currentSettingsView();
     await useAppStore.getState().updateSettings({ ...base, syntaxHighlighting: config });
 
-    // Persisted to the backend and reflected in both settings and savedSettings.
+    // Persisted to the backend and reflected in the authoritative settings region.
     expect(storage.saveSettings).toHaveBeenCalledTimes(1);
     const persisted = (storage.saveSettings as unknown as ReturnType<typeof vi.fn>).mock
       .calls[0][0];
     expect(persisted.syntaxHighlighting).toEqual(config);
-    expect(useAppStore.getState().settings.syntaxHighlighting).toEqual(config);
-    expect(useAppStore.getState().savedSettings.syntaxHighlighting).toEqual(config);
+    expect(currentSettingsView().syntaxHighlighting).toEqual(config);
   });
 });

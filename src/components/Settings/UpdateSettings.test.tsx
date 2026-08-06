@@ -1,4 +1,4 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -33,7 +33,7 @@ function query(testId: string): Element | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("UpdateSettings", () => {
   beforeEach(() => {
@@ -108,13 +108,8 @@ describe("UpdateSettings", () => {
 
   it("renders a 'Clear' button for a skipped version and clears it", () => {
     const clearSkippedUpdateVersion = vi.fn().mockResolvedValue(undefined);
-    useAppStore.setState({
-      clearSkippedUpdateVersion,
-      settings: {
-        ...useAppStore.getState().settings,
-        updates: { autoCheck: true, skippedVersion: "1.0.0" },
-      },
-    });
+    useAppStore.setState({ clearSkippedUpdateVersion });
+    seedSettings({ updates: { autoCheck: true, skippedVersion: "1.0.0" } });
     render();
     const btn = query("update-clear-skipped") as HTMLButtonElement | null;
     expect(btn).not.toBeNull();
