@@ -63,6 +63,13 @@ import {
   localWriteFile,
   sftpReadFileContent,
   sftpWriteFileContent,
+  sessionRealpath,
+  sessionCheckWritable,
+  sessionWriteFileElevated,
+  sessionHasExecCapability,
+  sessionDownload,
+  sessionUpload,
+  sessionVscodeOpenRemote,
   vscodeAvailable,
   vscodeOpenLocal,
   vscodeOpenRemote,
@@ -647,6 +654,147 @@ describe("api service", () => {
         sessionId: "sftp-1",
         remotePath: "/remote/file.txt",
         content: "new content",
+      });
+    });
+  });
+
+  // Session-path mirrors of the SFTP advanced ops (#2312/#2383), the frontend
+  // half of the #2307 convergence (#2313). Each must invoke its `session_*`
+  // command with the same camelCase arg shape as its `sftp_*` twin so an SSH
+  // session id can drive the file browser / editor without a separate
+  // `SftpManager` session.
+  describe("session-scoped SFTP advanced commands", () => {
+    // Wait until `awaitTransfer` has registered its `transfer-progress`
+    // listener (it does so after a dynamic import), then emit `payload`.
+    const fireWhenListening = async (payload: unknown) => {
+      for (let i = 0; i < 50 && !transferListener; i++) {
+        await flushMacrotask();
+      }
+      if (!transferListener) throw new Error("transfer listener never registered");
+      transferListener({ payload });
+    };
+
+    it("sessionRealpath invokes with session ID and path", async () => {
+      mockedInvoke.mockResolvedValue("/home/pi");
+
+      const result = await sessionRealpath("ssh-1", ".");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_realpath", {
+        sessionId: "ssh-1",
+        path: ".",
+      });
+      expect(result).toBe("/home/pi");
+    });
+
+    it("sessionCheckWritable invokes with session ID and remote path", async () => {
+      mockedInvoke.mockResolvedValue("writable");
+
+      const result = await sessionCheckWritable("ssh-1", "/etc/hosts");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_check_writable", {
+        sessionId: "ssh-1",
+        remotePath: "/etc/hosts",
+      });
+      expect(result).toBe("writable");
+    });
+
+    it("sessionWriteFileElevated invokes with session ID, path, content and sudo password", async () => {
+      mockedInvoke.mockResolvedValue({ kind: "success" });
+
+      const result = await sessionWriteFileElevated("ssh-1", "/etc/hosts", "127.0.0.1 x", "pw");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_write_file_elevated", {
+        sessionId: "ssh-1",
+        remotePath: "/etc/hosts",
+        content: "127.0.0.1 x",
+        sudoPassword: "pw",
+      });
+      expect(result).toEqual({ kind: "success" });
+    });
+
+    it("sessionHasExecCapability invokes with session ID", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const result = await sessionHasExecCapability("ssh-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_has_exec_capability", {
+        sessionId: "ssh-1",
+      });
+      expect(result).toBe(true);
+    });
+
+    it("sessionDownload invokes with correct params and returns bytes on the done event", async () => {
+      mockedInvoke.mockResolvedValue("transfer-s1");
+
+      const pending = sessionDownload("ssh-1", "/remote/file.txt", "/local/file.txt");
+      await fireWhenListening({
+        transferId: "transfer-s1",
+        phase: "done",
+        transferred: 4096,
+      });
+
+      const result = await pending;
+      expect(mockedInvoke).toHaveBeenCalledWith("session_download", {
+        sessionId: "ssh-1",
+        remotePath: "/remote/file.txt",
+        localPath: "/local/file.txt",
+      });
+      expect(result).toBe(4096);
+    });
+
+    it("sessionDownload fires onRegistered with the transfer id before completion", async () => {
+      mockedInvoke.mockResolvedValue("transfer-seed-s");
+      const onRegistered = vi.fn();
+
+      const pending = sessionDownload("ssh-1", "/remote/file.txt", "/local/file.txt", onRegistered);
+      // onRegistered fires from the command's synchronous return, ahead of the event.
+      await flushMacrotask();
+      expect(onRegistered).toHaveBeenCalledWith("transfer-seed-s");
+
+      await fireWhenListening({ transferId: "transfer-seed-s", phase: "done", transferred: 1 });
+      await pending;
+    });
+
+    it("sessionUpload invokes with correct params and returns bytes on the done event", async () => {
+      mockedInvoke.mockResolvedValue("transfer-s2");
+
+      const pending = sessionUpload("ssh-1", "/local/file.txt", "/remote/file.txt");
+      await fireWhenListening({
+        transferId: "transfer-s2",
+        phase: "done",
+        transferred: 8192,
+      });
+
+      const result = await pending;
+      expect(mockedInvoke).toHaveBeenCalledWith("session_upload", {
+        sessionId: "ssh-1",
+        localPath: "/local/file.txt",
+        remotePath: "/remote/file.txt",
+      });
+      expect(result).toBe(8192);
+    });
+
+    it("sessionDownload rejects when the transfer errors", async () => {
+      mockedInvoke.mockResolvedValue("transfer-s3");
+
+      const pending = sessionDownload("ssh-1", "/remote/file.txt", "/local/file.txt");
+      await fireWhenListening({
+        transferId: "transfer-s3",
+        phase: "error",
+        message: "boom",
+      });
+
+      await expect(pending).rejects.toThrow("boom");
+    });
+
+    it("sessionVscodeOpenRemote invokes with session ID and remote path", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await sessionVscodeOpenRemote("ssh-1", "/remote/file.txt");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_vscode_open_remote", {
+        sessionId: "ssh-1",
+        remotePath: "/remote/file.txt",
       });
     });
   });
