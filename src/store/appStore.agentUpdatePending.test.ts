@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useAppStore } from "@/store/appStore";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import type { RemoteAgentDefinition } from "@/types/connection";
 
 const toastMocks = vi.hoisted(() => ({
@@ -24,8 +25,10 @@ function seedAgent(): void {
     name: "prod-box",
     config: { host: "h", port: 22, username: "u", authMethod: "key" },
   } as unknown as RemoteAgentDefinition;
-  useAppStore.setState({ remoteAgents: [agent] });
+  seedAgentsRegion({ remoteAgents: [agent] });
 }
+
+setupAgentsRegion();
 
 describe("handleAgentUpdatePending (coordinated-update notice, #1602)", () => {
   let disconnect: ReturnType<typeof vi.fn>;

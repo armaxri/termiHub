@@ -8,7 +8,7 @@
  * state — leaving an empty gap that "gives free view over the side bar".
  */
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
-import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -104,7 +104,7 @@ describe("ConnectionList – Remote Agents collapse (#1822)", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     seedSettings({ ...baseSettings });
-    useAppStore.setState({ remoteAgents: [makeAgent()] });
+    seedAgentsRegion({ remoteAgents: [makeAgent()] });
   });
 
   afterEach(() => {

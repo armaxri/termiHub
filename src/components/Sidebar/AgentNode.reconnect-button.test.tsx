@@ -14,6 +14,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 // --- mocks required by AgentNode --------------------------------------------
 
@@ -101,7 +102,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 function renderAgent(agent: RemoteAgentDefinition) {
-  useAppStore.setState({
+  seedAgentsRegion({
     agentDefinitions: { [AGENT_ID]: [] },
     agentFolders: { [AGENT_ID]: [] },
     agentSessions: { [AGENT_ID]: [] },
@@ -117,6 +118,8 @@ function reconnectButton(): HTMLButtonElement | null {
 }
 
 // --- tests -------------------------------------------------------------------
+
+setupAgentsRegion();
 
 describe("AgentNode — Reconnect button (G3, #1236)", () => {
   beforeEach(() => {

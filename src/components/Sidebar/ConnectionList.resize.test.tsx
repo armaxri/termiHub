@@ -10,6 +10,7 @@
  * so there is no fixed height for a splitter to apportion between them.
  */
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -76,6 +77,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 setupSettingsRegion();
+setupAgentsRegion();
 
 describe("ConnectionList – outer resize handle (connections vs remote agents)", () => {
   beforeEach(() => {
@@ -92,7 +94,7 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
   });
 
   it("outer separator is present when experimental features are enabled", () => {
-    useAppStore.setState({ remoteAgents: [makeAgent()] });
+    seedAgentsRegion({ remoteAgents: [makeAgent()] });
 
     act(() => {
       root.render(
@@ -107,7 +109,7 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
   });
 
   it("outer separator has --resizable class when connections is expanded", () => {
-    useAppStore.setState({ remoteAgents: [makeAgent()] });
+    seedAgentsRegion({ remoteAgents: [makeAgent()] });
 
     act(() => {
       root.render(
@@ -123,7 +125,7 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
   });
 
   it("outer separator is resizable regardless of whether the agent is expanded", () => {
-    useAppStore.setState({ remoteAgents: [makeAgent({ isExpanded: false })] });
+    seedAgentsRegion({ remoteAgents: [makeAgent({ isExpanded: false })] });
 
     act(() => {
       root.render(
@@ -154,7 +156,7 @@ describe("ConnectionList – no inner resize handles between agents (#2116)", ()
   });
 
   it("renders no inner separator even between two expanded agents (scroll model)", () => {
-    useAppStore.setState({
+    seedAgentsRegion({
       remoteAgents: [
         makeAgent({ id: "a1", isExpanded: true }),
         makeAgent({ id: "a2", isExpanded: true }),

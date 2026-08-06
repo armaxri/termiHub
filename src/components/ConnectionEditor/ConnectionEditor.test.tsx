@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { TooltipProvider, toast } from "@/components/ui";
@@ -117,6 +118,7 @@ function render() {
 
 setupSettingsRegion();
 setupConnectionsRegion();
+setupAgentsRegion();
 
 describe("ConnectionEditor — credential hint", () => {
   beforeEach(() => {
@@ -1014,8 +1016,8 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [makeAgent({ name: "Shared Name" })],
     });
+    seedAgentsRegion({ remoteAgents: [makeAgent({ name: "Shared Name" })] });
     seedConnectionsRegion({ connections: [] });
 
     renderLocal("new");
@@ -1032,7 +1034,6 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [],
     });
     seedConnectionsRegion({
       connections: [
@@ -1059,7 +1060,6 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [],
     });
     seedConnectionsRegion({
       connections: [
@@ -1086,7 +1086,6 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [],
     });
     seedConnectionsRegion({
       connections: [
@@ -1113,6 +1112,8 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       connectionTypes: [NAME_LOCAL_TYPE],
+    });
+    seedAgentsRegion({
       remoteAgents: [makeAgent({ id: "agent-existing", name: "Duplicate Agent" })],
     });
     seedConnectionsRegion({ connections: [] });
@@ -1132,9 +1133,8 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [agent],
-      agentDefinitions: { [agent.id]: [] },
     });
+    seedAgentsRegion({ remoteAgents: [agent], agentDefinitions: { [agent.id]: [] } });
     seedConnectionsRegion({
       connections: [
         {
@@ -1169,9 +1169,8 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [agent],
-      agentDefinitions: { [agent.id]: [existingDef] },
     });
+    seedAgentsRegion({ remoteAgents: [agent], agentDefinitions: { [agent.id]: [existingDef] } });
     seedConnectionsRegion({ connections: [] });
 
     renderAgentDefinition(agent.id);

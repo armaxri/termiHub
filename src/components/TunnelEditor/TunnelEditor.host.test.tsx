@@ -9,6 +9,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TunnelEditor } from "./TunnelEditor";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
@@ -76,6 +77,7 @@ function q(testid: string): HTMLElement | null {
 }
 
 setupConnectionsRegion();
+setupAgentsRegion();
 
 describe("TunnelEditor — tunnel host (S3, #2155)", () => {
   beforeEach(() => {
@@ -84,11 +86,11 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
     root = createRoot(container);
     saveTunnel = vi.fn(() => Promise.resolve());
     seedConnectionsRegion({ connections: [SSH_CONN] });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    seedAgentsRegion({ remoteAgents: [AGENT as any] });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       tunnels: [AGENT_TUNNEL],
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      remoteAgents: [AGENT as any],
       saveTunnel,
       startTunnel: vi.fn(() => Promise.resolve()),
       closeTab: vi.fn(),

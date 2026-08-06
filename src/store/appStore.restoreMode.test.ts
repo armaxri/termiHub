@@ -64,10 +64,12 @@ import { useAppStore } from "./appStore";
 import { currentSettingsView } from "./settingsBridge";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
 
 setupConnectionsRegion();
 setupSettingsRegion();
+setupAgentsRegion();
 import { saveSettings } from "@/services/storage";
 import { summarizeLastSession } from "@/utils/restoreMode";
 import type { LastSession } from "@/types/lastSession";
@@ -98,8 +100,6 @@ describe("startup restore mode", () => {
     vi.clearAllMocks();
     mockLoad.mockResolvedValue(null);
     useAppStore.setState({
-      remoteAgents: [],
-      agentDefinitions: {},
       defaultShell: "bash",
       restorePrompt: null,
     });

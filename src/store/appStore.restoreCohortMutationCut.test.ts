@@ -75,6 +75,7 @@ vi.mock("@/services/lastSessionApi", () => ({
 import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import {
   setRestoreIntentsEnabled,
   setRestoreRenderFromProjectionEnabled,
@@ -309,14 +310,13 @@ async function flush(): Promise<void> {
 
 setupConnectionsRegion();
 setupSettingsRegion();
+setupAgentsRegion();
 
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
   vi.clearAllMocks();
   mockLoad.mockResolvedValue(null);
   useAppStore.setState({
-    remoteAgents: [],
-    agentDefinitions: {},
     defaultShell: "bash",
     restoreCohort: null,
     failedRestoreTabIds: [],

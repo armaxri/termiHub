@@ -83,6 +83,7 @@ vi.mock("@/services/lastSessionApi", () => ({
 
 import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import {
   persistConnection,
   removeConnection,
@@ -148,6 +149,7 @@ async function flush() {
 const AGENT_ID = "agent-test-1";
 
 setupConnectionsRegion();
+setupAgentsRegion();
 
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
@@ -238,7 +240,7 @@ describe("#1472 — agent mutating actions surface errors", () => {
   it("updateRemoteAgent toasts on a rejected persist", async () => {
     vi.mocked(persistAgent).mockRejectedValueOnce(new Error("disk"));
     const agent = makeAgent({ name: "edge" });
-    useAppStore.setState({ remoteAgents: [agent] });
+    seedAgentsRegion({ remoteAgents: [agent] });
     useAppStore.getState().updateRemoteAgent({ ...agent, name: "edge2" });
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("edge2"));
@@ -246,7 +248,7 @@ describe("#1472 — agent mutating actions surface errors", () => {
 
   it("reorderRemoteAgents toasts on a rejected persist", async () => {
     vi.mocked(reorderAgents).mockRejectedValueOnce(new Error("order fail"));
-    useAppStore.setState({ remoteAgents: [makeAgent(), makeAgent()] });
+    seedAgentsRegion({ remoteAgents: [makeAgent(), makeAgent()] });
     useAppStore.getState().reorderRemoteAgents(0, 1);
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("order fail"));
@@ -255,7 +257,7 @@ describe("#1472 — agent mutating actions surface errors", () => {
   it("deleteRemoteAgent toasts on a rejected removal", async () => {
     vi.mocked(removeAgent).mockRejectedValueOnce(new Error("busy"));
     const agent = makeAgent({ name: "gone" });
-    useAppStore.setState({ remoteAgents: [agent] });
+    seedAgentsRegion({ remoteAgents: [agent] });
     useAppStore.getState().deleteRemoteAgent(agent.id);
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("busy"));

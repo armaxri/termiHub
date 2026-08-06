@@ -17,6 +17,7 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 // --- Mocks ---
 
@@ -144,10 +145,12 @@ const AGENT_CONFIG = {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+setupAgentsRegion();
+
 describe("Terminal — fresh session on reconnect", () => {
   it("does not reattach to the dead mount-time session; creates a fresh one on reconnect", async () => {
     // Agent is connected so a fresh session can be spawned immediately.
-    useAppStore.setState({
+    seedAgentsRegion({
       remoteAgents: [
         {
           id: "agent-1",
@@ -197,6 +200,8 @@ describe("Terminal — fresh session on reconnect", () => {
     const restartSpy = vi.fn().mockResolvedValue("restarted-session");
     useAppStore.setState({
       restartPersistentSessionForTab: restartSpy as never,
+    });
+    seedAgentsRegion({
       remoteAgents: [
         {
           id: "agent-1",
@@ -243,6 +248,8 @@ describe("Terminal — fresh session on reconnect", () => {
     const restartSpy = vi.fn().mockResolvedValue("restarted-session");
     useAppStore.setState({
       restartPersistentSessionForTab: restartSpy as never,
+    });
+    seedAgentsRegion({
       remoteAgents: [
         {
           id: "agent-1",

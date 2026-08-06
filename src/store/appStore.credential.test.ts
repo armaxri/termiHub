@@ -22,10 +22,12 @@ vi.mock("@/themes", () => ({
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 const mockedInvoke = vi.mocked(invoke);
 
 setupConnectionsRegion();
+setupAgentsRegion();
 
 describe("appStore credential store state", () => {
   beforeEach(() => {
@@ -359,8 +361,6 @@ describe("launchWorkspace — agentRef credential store pre-unlock", () => {
       credentialStoreStatus: null,
       unlockDialogOpen: false,
       activeWorkspaceName: null,
-      remoteAgents: [],
-      agentDefinitions: {},
     });
     seedConnectionsRegion({ connections: [] });
   });
@@ -372,10 +372,10 @@ describe("launchWorkspace — agentRef credential store pre-unlock", () => {
     mockedInvoke.mockResolvedValueOnce("stored-agent-pass"); // resolve_credential
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      remoteAgents: [disconnectedAgent],
       requestUnlock: mockRequestUnlock,
       connectRemoteAgent: mockConnectAgent,
     });
+    seedAgentsRegion({ remoteAgents: [disconnectedAgent] });
 
     await useAppStore.getState().launchWorkspace("ws-agent-1");
 
@@ -389,10 +389,10 @@ describe("launchWorkspace — agentRef credential store pre-unlock", () => {
     const mockConnectAgent = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
-      remoteAgents: [disconnectedAgent],
       requestUnlock: mockRequestUnlock,
       connectRemoteAgent: mockConnectAgent,
     });
+    seedAgentsRegion({ remoteAgents: [disconnectedAgent] });
 
     await useAppStore.getState().launchWorkspace("ws-agent-1");
 
@@ -406,10 +406,10 @@ describe("launchWorkspace — agentRef credential store pre-unlock", () => {
     const mockConnectAgent = vi.fn();
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      remoteAgents: [disconnectedAgent],
       requestUnlock: mockRequestUnlock,
       connectRemoteAgent: mockConnectAgent,
     });
+    seedAgentsRegion({ remoteAgents: [disconnectedAgent] });
 
     await useAppStore.getState().launchWorkspace("ws-agent-1");
 
@@ -425,10 +425,10 @@ describe("launchWorkspace — agentRef credential store pre-unlock", () => {
     const mockConnectAgent = vi.fn().mockRejectedValue(new Error("SSH auth failed"));
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
-      remoteAgents: [disconnectedAgent],
       requestUnlock: mockRequestUnlock,
       connectRemoteAgent: mockConnectAgent,
     });
+    seedAgentsRegion({ remoteAgents: [disconnectedAgent] });
 
     await useAppStore.getState().launchWorkspace("ws-agent-1");
 
@@ -446,10 +446,10 @@ describe("launchWorkspace — agentRef credential store pre-unlock", () => {
     const mockConnectAgent = vi.fn();
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      remoteAgents: [connectedAgent],
       requestUnlock: mockRequestUnlock,
       connectRemoteAgent: mockConnectAgent,
     });
+    seedAgentsRegion({ remoteAgents: [connectedAgent] });
 
     await useAppStore.getState().launchWorkspace("ws-agent-1");
 

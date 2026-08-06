@@ -20,7 +20,7 @@ import { AgentNode } from "./AgentNode";
 import { withTooltip } from "@/test/tooltip";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo } from "@/services/api";
-import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -174,7 +174,7 @@ describe("Sidebar ConnectionList group actions — tooltip adoption (#1159)", ()
 
 describe("Sidebar AgentNode persistent controls — tooltip adoption (#1159)", () => {
   function renderAgent() {
-    useAppStore.setState({
+    seedAgentsRegion({
       agentDefinitions: { [AGENT_ID]: [makePersistentDefinition()] },
       agentFolders: { [AGENT_ID]: [] },
       agentSessions: { [AGENT_ID]: [] },

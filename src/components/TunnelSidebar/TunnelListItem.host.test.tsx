@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TunnelListItem } from "./TunnelListItem";
 import { withTooltip } from "@/test/tooltip";
 import type { TunnelConfig, TunnelState } from "@/types/tunnel";
@@ -59,16 +60,16 @@ function badge(): HTMLElement | null {
   return container.querySelector<HTMLElement>('[data-testid="tunnel-host-tun-1"]');
 }
 
+setupAgentsRegion();
+
 describe("TunnelListItem — vantage host badge (S3, #2155)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    useAppStore.setState({
-      ...useAppStore.getInitialState(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      remoteAgents: [{ id: "agent-1", name: "build-box" } as any],
-    });
+    useAppStore.setState(useAppStore.getInitialState());
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    seedAgentsRegion({ remoteAgents: [{ id: "agent-1", name: "build-box" } as any] });
   });
 
   afterEach(() => {

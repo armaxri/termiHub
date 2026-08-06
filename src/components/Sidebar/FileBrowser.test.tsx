@@ -1,4 +1,5 @@
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -69,6 +70,7 @@ function setActiveTab(tab: TerminalTab) {
 }
 
 setupSettingsRegion();
+setupAgentsRegion();
 
 describe("FileBrowser – useFileBrowserSync", () => {
   beforeEach(() => {
@@ -366,7 +368,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       },
     });
     setActiveTab(remoteTab);
-    useAppStore.setState({
+    seedAgentsRegion({
       remoteAgents: [
         {
           id: "agent-1",
@@ -422,7 +424,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       },
     });
     setActiveTab(remoteTab);
-    useAppStore.setState({
+    seedAgentsRegion({
       remoteAgents: [
         {
           id: "agent-2",
@@ -477,7 +479,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       },
     });
     setActiveTab(remoteTab);
-    useAppStore.setState({ remoteAgents: [] });
+    seedAgentsRegion({ remoteAgents: [] });
 
     act(() => {
       root.render(

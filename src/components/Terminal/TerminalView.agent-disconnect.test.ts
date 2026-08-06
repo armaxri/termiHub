@@ -14,6 +14,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useAppStore } from "@/store/appStore";
+import { currentAgentsView } from "@/store/agentsBridge";
+import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -86,6 +88,8 @@ function findAgentTerminalTabs(agentId: string) {
   });
 }
 
+setupAgentsRegion();
+
 describe("agent-state-change tab discovery — regression for empty agentSessions", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
@@ -107,7 +111,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     });
 
     // agentSessions["agent-1"] is empty — this was the bug condition.
-    expect(useAppStore.getState().agentSessions["agent-1"] ?? []).toHaveLength(0);
+    expect(currentAgentsView().agentSessions["agent-1"] ?? []).toHaveLength(0);
 
     // The fixed handler finds tabs via config.agentId, not agentSessions.
     const found = findAgentTerminalTabs("agent-1");

@@ -15,7 +15,7 @@ import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo } from "@/services/api";
-import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -135,7 +135,7 @@ describe("AgentNode — agent-backed persistence badge (#2086)", () => {
   });
 
   it("renders the ∞ badge with a survives-restart tooltip for a persistent definition", () => {
-    useAppStore.setState({
+    seedAgentsRegion({
       remoteAgents: [makeAgent()],
       agentDefinitions: { [AGENT_ID]: [makeDef({ persistent: true })] },
     });
@@ -150,7 +150,7 @@ describe("AgentNode — agent-backed persistence badge (#2086)", () => {
   });
 
   it("renders no ∞ badge for a non-persistent definition", () => {
-    useAppStore.setState({
+    seedAgentsRegion({
       remoteAgents: [makeAgent()],
       agentDefinitions: { [AGENT_ID]: [makeDef({ persistent: false })] },
     });
