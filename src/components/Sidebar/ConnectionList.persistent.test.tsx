@@ -20,6 +20,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type {
   SavedConnection,
@@ -121,6 +122,8 @@ afterEach(() => {
   act(() => root.unmount());
   container.remove();
 });
+
+setupConnectionsRegionFromAppStore();
 
 describe("ConnectionList — desktop-local persistent controls", () => {
   it("shows NO persistence marker and NO state dot for a plain (desktop-local) connection", () => {
