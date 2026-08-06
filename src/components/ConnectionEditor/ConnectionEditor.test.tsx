@@ -1,3 +1,4 @@
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { flushMacrotask } from "@/test/flushAsync";
@@ -111,6 +112,8 @@ function render() {
     );
   });
 }
+
+setupSettingsRegionMirror();
 
 describe("ConnectionEditor — credential hint", () => {
   beforeEach(() => {

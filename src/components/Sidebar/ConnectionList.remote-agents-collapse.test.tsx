@@ -7,6 +7,7 @@
  * slot was keyed on `experimentalFeaturesEnabled` instead of the collapsed
  * state — leaving an empty gap that "gives free view over the side bar".
  */
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -91,6 +92,8 @@ function clickRemoteAgentsToggle() {
     toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
 }
+
+setupSettingsRegionMirror();
 
 describe("ConnectionList – Remote Agents collapse (#1822)", () => {
   beforeEach(() => {

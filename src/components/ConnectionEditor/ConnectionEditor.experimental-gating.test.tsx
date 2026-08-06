@@ -5,6 +5,7 @@
  * (those reporting `capabilities.graphical`) unless `experimentalFeaturesEnabled`
  * is on. When it is on, those types appear labelled "— Experimental".
  */
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -100,6 +101,8 @@ afterEach(() => {
   });
   container.remove();
 });
+
+setupSettingsRegionMirror();
 
 describe("ConnectionEditor — experimental type-picker gating", () => {
   it("omits graphical remote-desktop types when the flag is off", () => {

@@ -9,6 +9,7 @@
  * the agent list now scrolls, with every agent at its natural content height,
  * so there is no fixed height for a splitter to apportion between them.
  */
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -73,6 +74,8 @@ const baseSettings = {
 
 let container: HTMLDivElement;
 let root: Root;
+
+setupSettingsRegionMirror();
 
 describe("ConnectionList – outer resize handle (connections vs remote agents)", () => {
   beforeEach(() => {

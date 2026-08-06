@@ -1,3 +1,4 @@
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -47,6 +48,8 @@ async function render() {
 function byTestId(id: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${id}"]`);
 }
+
+setupSettingsRegionMirror();
 
 describe("ShellIntegrationBanner", () => {
   beforeEach(() => {

@@ -24,12 +24,15 @@ import type {
   Subscription,
   Transport,
 } from "@/services/transport";
+import { afterEach, beforeEach } from "vitest";
+
+import { useAppStore } from "@/store/appStore";
 import {
+  __emitSettingsViewForTest,
   DEFAULT_SETTINGS_VIEW,
   SETTINGS_REGION,
   setSettingsTransportForTest,
   stopSettingsSubscription,
-  type SettingsView,
 } from "@/store/settingsBridge";
 import type { AppSettings } from "@/types/connection";
 
@@ -38,6 +41,8 @@ export function settingsDoc(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
     version: "1",
     externalConnectionFiles: [],
+    powerMonitoringEnabled: true,
+    fileBrowserEnabled: true,
     ...overrides,
   };
 }
@@ -57,7 +62,7 @@ export class FakeSettingsTransport implements Transport {
 
   /** Seed the region document directly (test setup), fanning a snapshot. */
   seed(view: AppSettings): void {
-    this.view = structuredClone(view) as Record<string, unknown>;
+    this.view = structuredClone(view) as unknown as Record<string, unknown>;
     this.bump();
   }
 
@@ -69,6 +74,11 @@ export class FakeSettingsTransport implements Transport {
   /** The current projected document (assertion helper). */
   regionView(): AppSettings {
     return structuredClone(this.view) as unknown as AppSettings;
+  }
+
+  /** The current monotonic region version (mirrors the Rust store's version). */
+  currentVersion(): number {
+    return this.version;
   }
 
   async dispatch(intent: Intent): Promise<IntentAck> {
@@ -142,7 +152,64 @@ export function installSettingsHarness(initial?: AppSettings): {
   };
 }
 
-/** Convenience: a `SettingsView` (== `AppSettings`) for seeding. */
-export function settingsRegionView(overrides: Partial<AppSettings> = {}): SettingsView {
-  return settingsDoc(overrides);
+/**
+ * Install a {@link FakeSettingsTransport} that **mirrors `appStore.settings` into
+ * the region**, for the many render-reader tests that drive settings through
+ * `appStore` (`useAppStore.setState({ settings })`, or an action that mutates the
+ * slice) and assert on the settings-driven UI.
+ *
+ * Now that {@link import("@/store/useProjectedSettings").useProjectedSettings}
+ * reads the region authoritatively, those tests can no longer rely on the removed
+ * `appStore` fallback — the UI renders what the region projects. This helper seeds
+ * the region with the current document and re-seeds it on every `appStore.settings`
+ * change, so the region tracks whatever the test puts in `appStore` — the test-side
+ * analog of production, where the region is fed from the persisted document at the
+ * source (#2386). Returns the transport plus a `teardown` (drops the appStore
+ * subscription, the region subscription, and restores the real transport) — call it
+ * in `afterEach`.
+ */
+export function installSettingsHarnessMirroringAppStore(): {
+  transport: FakeSettingsTransport;
+  teardown: () => void;
+} {
+  const { transport, teardown } = installSettingsHarness();
+  // Seed the transport (so the hook's eventual subscribe snapshot is correct) AND
+  // synchronously emit the view (so a reader mounting/re-rendering now reflects it
+  // without waiting for the subscribe round-trip).
+  const push = (settings: AppSettings): void => {
+    transport.seed(settings);
+    __emitSettingsViewForTest(settings, transport.currentVersion());
+  };
+  push(useAppStore.getState().settings);
+  const unsubscribe = useAppStore.subscribe((state, prev) => {
+    if (state.settings !== prev.settings) push(state.settings);
+  });
+  return {
+    transport,
+    teardown: () => {
+      unsubscribe();
+      teardown();
+    },
+  };
+}
+
+/**
+ * Register the appStore→region mirror ({@link installSettingsHarnessMirroringAppStore})
+ * for a whole test file via self-managed `beforeEach`/`afterEach` hooks. Call once
+ * at the top of a render-reader test's module (or describe) so its existing
+ * `appStore`-driven settings setup keeps rendering correctly now that
+ * {@link import("@/store/useProjectedSettings").useProjectedSettings} reads the
+ * region authoritatively — no per-`beforeEach` wiring needed. The mirror's live
+ * subscription re-seeds the region on every `appStore.settings` change during the
+ * test, so a later `setState` or a settings-mutating action still reaches the UI.
+ */
+export function setupSettingsRegionMirror(): void {
+  let harness: { transport: FakeSettingsTransport; teardown: () => void } | undefined;
+  beforeEach(() => {
+    harness = installSettingsHarnessMirroringAppStore();
+  });
+  afterEach(() => {
+    harness?.teardown();
+    harness = undefined;
+  });
 }

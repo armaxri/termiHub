@@ -1,3 +1,4 @@
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -38,6 +39,8 @@ function click(testId: string) {
     (container.querySelector(`[data-testid="${testId}"]`) as HTMLElement).click();
   });
 }
+
+setupSettingsRegionMirror();
 
 describe("LanguagePackagesSettings", () => {
   beforeEach(() => {

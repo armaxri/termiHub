@@ -15,6 +15,7 @@
  * make scrolling with expanded agents possible; the pixel-level overflow is
  * verified separately with the real CSS in headless Chrome (see the PR).
  */
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -102,6 +103,8 @@ function render() {
     );
   });
 }
+
+setupSettingsRegionMirror();
 
 describe("ConnectionList – Remote Agents scroll with EXPANDED agents (#2116)", () => {
   beforeEach(() => {

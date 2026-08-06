@@ -1,3 +1,4 @@
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -77,6 +78,8 @@ function fieldInput(label: string): HTMLInputElement {
   );
   return el?.closest(".settings-form__field")?.querySelector("input") as HTMLInputElement;
 }
+
+setupSettingsRegionMirror();
 
 describe("ConnectionTerminalSettings — scrollback buffer", () => {
   beforeEach(() => {

@@ -141,7 +141,9 @@ class SettingsStoreTransport implements Transport {
         break;
       }
       case "settings.patch": {
-        const patch = structuredClone(p as Record<string, unknown>);
+        // Faithful to the backend route: the partial lives under a `{ patch }`
+        // envelope (settings_projection/projection.rs), not the payload root.
+        const patch = structuredClone((p.patch ?? {}) as Record<string, unknown>);
         for (const [key, value] of Object.entries(patch)) {
           this.doc[key] = value;
         }

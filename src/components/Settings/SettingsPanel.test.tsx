@@ -1,3 +1,4 @@
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -84,6 +85,8 @@ async function clickCheckbox(checkbox: HTMLElement) {
     checkbox.click();
   });
 }
+
+setupSettingsRegionMirror();
 
 describe("SettingsPanel — dirty state on revert to default", () => {
   beforeEach(() => {
