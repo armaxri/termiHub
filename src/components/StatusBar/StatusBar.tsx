@@ -20,6 +20,7 @@ import {
   Puzzle,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
 import { currentMonitorsView } from "@/store/systemMonitorBridge";
@@ -477,7 +478,7 @@ function PersistentSessionsIndicator() {
  * agent is connected.
  */
 function AgentUpdatesIndicator() {
-  const remoteAgents = useAppStore((s) => s.remoteAgents);
+  const { remoteAgents } = useProjectedAgents();
   const setSidebarView = useAppStore((s) => s.setSidebarView);
   const desktopVersion = useDesktopVersion();
 

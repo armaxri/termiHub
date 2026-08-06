@@ -23,6 +23,7 @@ import {
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import { currentAgentsView } from "@/store/agentsBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { getXtermTheme } from "@/themes";
@@ -584,9 +585,9 @@ export function Terminal({
 
               if (isAgentSession && agentId) {
                 // Check whether the agent transport itself is still connecting.
-                const agentState = useAppStore
-                  .getState()
-                  .remoteAgents.find((a) => a.id === agentId)?.connectionState;
+                const agentState = currentAgentsView().remoteAgents.find(
+                  (a) => a.id === agentId
+                )?.connectionState;
 
                 if (agentState === "connecting" || agentState === "reconnecting") {
                   // Park tab; TerminalView wakes it via retryTerminalSpawn

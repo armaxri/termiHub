@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { ArrowUpCircle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { Button, toast } from "@/components/ui";
 import { requestAgentDeferredUpdate, requestAgentUpdate } from "@/services/api";
 import "./AgentUpdateBanner.css";
@@ -52,9 +53,9 @@ export function AgentUpdateBanner({ agentId, agentName }: AgentUpdateBannerProps
   // coordinated apply (#1351): "Apply Now" must go through `agent.request_update`
   // so every *other* connected host is warned and given a clean disconnect
   // window, rather than hard-cut by the plain deferred apply (#1602).
-  const isCoordinated = useAppStore(
-    (s) => s.remoteAgents.find((a) => a.id === agentId)?.config.updateStrategy === "coordinated"
-  );
+  const { remoteAgents } = useProjectedAgents();
+  const isCoordinated =
+    remoteAgents.find((a) => a.id === agentId)?.config.updateStrategy === "coordinated";
 
   const handleApply = useCallback(async () => {
     try {

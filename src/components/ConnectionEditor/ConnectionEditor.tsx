@@ -12,6 +12,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import {
@@ -205,10 +206,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const addTab = useAppStore((s) => s.addTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
   const rootPanel = useAppStore((s) => s.rootPanel);
-  const remoteAgents = useAppStore((s) => s.remoteAgents);
+  const { remoteAgents, agentDefinitions } = useProjectedAgents();
   const addRemoteAgent = useAppStore((s) => s.addRemoteAgent);
   const updateRemoteAgent = useAppStore((s) => s.updateRemoteAgent);
-  const agentDefinitions = useAppStore((s) => s.agentDefinitions);
   const saveAgentDef = useAppStore((s) => s.saveAgentDef);
   const updateAgentDef = useAppStore((s) => s.updateAgentDef);
   const settings = useProjectedSettings();

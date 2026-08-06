@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { toast } from "@/components/ui";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
-import { useAppStore } from "@/store/appStore";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useRunLocationStore } from "@/store/runLocationStore";
 import { setNetworkToolRunLocation } from "@/services/networkApi";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
@@ -25,7 +25,7 @@ interface NetworkToolRunLocationProps {
  */
 export function NetworkToolRunLocation({ tool }: NetworkToolRunLocationProps) {
   const info = NETWORK_TOOL_LOCATION[tool];
-  const agents = useAppStore((s) => s.remoteAgents);
+  const { remoteAgents: agents } = useProjectedAgents();
   const value = useRunLocationStore((s) => s.networkToolLocations[tool]) ?? THIS_COMPUTER;
   const setLocation = useRunLocationStore((s) => s.setNetworkToolLocation);
 

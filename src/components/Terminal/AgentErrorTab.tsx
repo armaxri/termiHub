@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { currentAgentsView } from "@/store/agentsBridge";
 import { Button } from "@/components/ui";
 import { AgentErrorMeta } from "@/types/terminal";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
@@ -30,8 +31,7 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
     setIsReconnecting(true);
     setReconnectError(null);
     try {
-      const storeState = useAppStore.getState();
-      const agent = storeState.remoteAgents.find((a) => a.id === meta.agentId);
+      const agent = currentAgentsView().remoteAgents.find((a) => a.id === meta.agentId);
       let password: string | undefined;
 
       if (agent) {

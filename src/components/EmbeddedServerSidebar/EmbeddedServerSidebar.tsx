@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useRunLocationStore } from "@/store/runLocationStore";
 import { Button, ConfirmDialog, toast } from "@/components/ui";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
@@ -16,7 +17,7 @@ import "./EmbeddedServerSidebar.css";
 export function EmbeddedServerSidebar() {
   const servers = useAppStore((s) => s.embeddedServers);
   const serverStates = useAppStore((s) => s.embeddedServerStates);
-  const agents = useAppStore((s) => s.remoteAgents);
+  const { remoteAgents: agents } = useProjectedAgents();
   const saveEmbeddedServer = useAppStore((s) => s.saveEmbeddedServer);
   const deleteEmbeddedServer = useAppStore((s) => s.deleteEmbeddedServer);
   const startEmbeddedServer = useAppStore((s) => s.startEmbeddedServer);
