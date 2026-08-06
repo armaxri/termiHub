@@ -19,7 +19,7 @@ use tauri::Manager;
 
 use crate::agents_projection::projection::{fold_agent_transition, publish_agents, AGENTS_REGION};
 use crate::agents_projection::store::{
-    AgentConnectionState, AgentDefinition, AgentFolder, AgentSession, AgentsStore,
+    AgentConnectionState, AgentDefinition, AgentFolder, AgentSession, AgentsStore, SavedAgentSeed,
 };
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
@@ -705,4 +705,133 @@ fn server_side_fold_is_a_noop_without_managed_state() {
     fold_agent_transition(app.handle(), |s| {
         s.set_status("a1", AgentConnectionState::Connected, None)
     });
+}
+
+// ── Server-owned list-membership fold (#2403, prerequisite for #2226) ──────────
+//
+// These drive `reflect_saved_agents` through the production `fold_agent_transition`
+// end to end against a `mock_app()` — the exact store+publish path
+// `fold_agents_from_manager` / `seed_agents_from_manager` run once they have read
+// the `ConnectionManager` agent list. They prove the region carries full
+// list-membership fed from the backend (entry creation for an unknown id, a whole
+// list load, and a boot/reload reflecting the persisted list) **without any client
+// `agent.add` dispatch**. The thin manager-reading wiring is integration-verified
+// via a local `./scripts/dev.sh` run (same as the #2388 folds).
+
+/// A persisted-list seed carrying only the backend-owned fields.
+fn seed(id: &str, name: &str, host: &str) -> SavedAgentSeed {
+    SavedAgentSeed {
+        id: id.to_string(),
+        name: name.to_string(),
+        config: json!({ "host": host }),
+        agent_settings: json!({}),
+    }
+}
+
+/// A list-load fold creates the whole persisted agent list in the region — with no
+/// client `agent.add` — and fans one diff out to every subscriber.
+#[test]
+fn server_side_list_load_fold_creates_membership_without_client_dispatch() {
+    let app = tauri::test::mock_app();
+    // The store starts empty — the analog of a boot before any client seed.
+    let store = Arc::new(AgentsStore::new());
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(AGENTS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    // Server folds the persisted agent list at the source — no `agent.add` runs.
+    fold_agent_transition(app.handle(), |s| {
+        s.reflect_saved_agents(vec![seed("a1", "One", "h1"), seed("a2", "Two", "h2")])
+    });
+
+    // The store is authoritative for list-membership server-side.
+    assert_eq!(store.agent_ids(), vec!["a1", "a2"]);
+
+    // Exactly one region diff; the client cache converges with no round-trip.
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side list load");
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view["agents"][0]["id"], json!("a1"));
+    assert_eq!(cache.view["agents"][1]["id"], json!("a2"));
+    assert_eq!(
+        cache.view["agents"][0]["connectionState"],
+        json!("disconnected")
+    );
+}
+
+/// An entry-creation fold for an id **not** already in the store creates it — the
+/// gap #2388's per-field folds (all no-ops for an unknown id) left open.
+#[test]
+fn server_side_fold_creates_an_unknown_agent_entry() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(AgentsStore::new());
+    store.add("a1", "One", json!({ "host": "h1" }), json!({}));
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(AGENTS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projection
+        .projector
+        .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
+    app.manage(projection);
+
+    // A newly-added agent's identity enters the region via the persisted list —
+    // the a2 id was never dispatched client-side.
+    fold_agent_transition(app.handle(), |s| {
+        s.reflect_saved_agents(vec![seed("a1", "One", "h1"), seed("a2", "Two", "h2")])
+    });
+
+    assert_eq!(store.agent_ids(), vec!["a1", "a2"]);
+    assert_eq!(sink.diffs().len(), 1, "the new entry advanced the region");
+}
+
+/// The boot/reload fold reflects the persisted list while **preserving** the live
+/// status the store owns for a surviving agent (a reload must not reset an
+/// in-flight connection).
+#[test]
+fn server_side_list_fold_preserves_live_status_on_reload() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(AgentsStore::new());
+    store.add("a1", "One", json!({ "host": "h1" }), json!({}));
+    store.set_status("a1", AgentConnectionState::Connected, None);
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(AGENTS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projection
+        .projector
+        .subscribe(AGENTS_REGION, "sub", "C", sink.clone());
+    app.manage(projection);
+
+    // A reload reflects the persisted list; a1 survives (renamed) + a2 is added.
+    fold_agent_transition(app.handle(), |s| {
+        s.reflect_saved_agents(vec![
+            seed("a1", "One Renamed", "h1"),
+            seed("a2", "Two", "h2"),
+        ])
+    });
+
+    let a1 = store.get("a1").expect("a1 survives the reload");
+    assert_eq!(a1.name, "One Renamed");
+    assert_eq!(
+        a1.connection_state,
+        AgentConnectionState::Connected,
+        "the reload preserves the in-flight connection state"
+    );
+    assert_eq!(store.agent_ids(), vec!["a1", "a2"]);
 }
