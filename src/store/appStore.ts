@@ -262,11 +262,7 @@ import {
   dispatchMonitorIntentBestEffort,
   ensureMonitorsSubscribed,
 } from "@/store/systemMonitorBridge";
-import {
-  currentAgentsView,
-  ensureAgentsSubscribed,
-  mirrorAgentIntent,
-} from "@/store/agentsBridge";
+import { currentAgentsView, ensureAgentsSubscribed, mirrorAgentIntent } from "@/store/agentsBridge";
 import {
   currentConnectionsView,
   ensureConnectionsSubscribed,
@@ -6291,7 +6287,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // coordinated update — its reconnect is already queued.
       if (get().agentUpdatePending[agentId]) return;
 
-      const agentName = currentAgentsView().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
+      const agentName =
+        currentAgentsView().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
       const toastId = `agent-update-pending-${agentId}`;
 
       set((s) => ({
@@ -6520,8 +6517,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Single writer for `connectionState` (G4/#1234): only the backend
       // `agent-state-change` event reaches this setter. Read the previous state
       // from the authoritative region to guard the once-per-connect refresh below.
-      const previous = currentAgentsView().remoteAgents.find((a) => a.id === agentId)
-        ?.connectionState;
+      const previous = currentAgentsView().remoteAgents.find(
+        (a) => a.id === agentId
+      )?.connectionState;
 
       // Optimistically set the connection state in the region (#2409). This is the
       // single writer for `connectionState` (G4/#1234); the store's `set_status`

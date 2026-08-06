@@ -7,7 +7,7 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo } from "@/services/api";
 import {
@@ -90,15 +90,6 @@ function renderHook(): { get: () => AgentsView; unmount: () => void } {
 const flush = () => act(async () => await Promise.resolve());
 
 let teardown: (() => void) | undefined;
-
-beforeEach(() => {
-  useAppStore.setState({
-    remoteAgents: [],
-    agentSessions: {},
-    agentDefinitions: {},
-    agentFolders: {},
-  });
-});
 
 afterEach(() => {
   teardown?.();

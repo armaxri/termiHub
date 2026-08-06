@@ -38,11 +38,7 @@ import type {
   Subscription,
   Transport,
 } from "@/services/transport";
-import type {
-  AgentDefinitionInfo,
-  AgentFolderInfo,
-  AgentSessionInfo,
-} from "@/services/api";
+import type { AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo } from "@/services/api";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import {
   AGENTS_REGION,
@@ -230,7 +226,8 @@ function applyAgentIntent(
         ...a,
         name: payload.name as string,
         config: (payload.config ?? a.config) as RemoteAgentDefinition["config"],
-        agentSettings: (payload.agentSettings ?? a.agentSettings) as RemoteAgentDefinition["agentSettings"],
+        agentSettings: (payload.agentSettings ??
+          a.agentSettings) as RemoteAgentDefinition["agentSettings"],
       }));
       break;
     case "agent.applySettings":
@@ -324,10 +321,7 @@ function applyAgentIntent(
     case "agent.createFolder":
       if (known()) {
         const folder = payload.folder as AgentFolderInfo;
-        agentFolders[id] = [
-          ...(agentFolders[id] ?? []).filter((f) => f.id !== folder.id),
-          folder,
-        ];
+        agentFolders[id] = [...(agentFolders[id] ?? []).filter((f) => f.id !== folder.id), folder];
       }
       break;
     case "agent.updateFolder": {
