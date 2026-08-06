@@ -1,28 +1,31 @@
 /**
- * Test harness for the authoritative `agents` projection region (#2226 PR A).
+ * Test harness for the region-authoritative `agents` domain (#2226).
  *
  * The agent sidebar ({@link import("@/components/Sidebar/ConnectionList").ConnectionList} /
- * {@link import("@/components/Sidebar/AgentNode").AgentNode}) and Open Connections
- * read the ordered agent list, connection status and per-agent
- * sessions/definitions/folders from the shared `agents` region
- * ({@link import("@/store/useProjectedAgents").useProjectedAgents}), which is now the
- * source of truth — tests can no longer seed agents into `appStore` and expect the UI
- * to reflect them; they seed the **region**.
+ * {@link import("@/components/Sidebar/AgentNode").AgentNode}), Open Connections, the
+ * connection / tunnel editors, the file browser, the status bar and the store's own
+ * connect / restore / reconnect logic all read the ordered agent list, connection
+ * status and per-agent sessions/definitions/folders from the shared `agents` region
+ * ({@link import("@/store/useProjectedAgents").useProjectedAgents} /
+ * {@link import("@/store/agentsBridge").currentAgentsView}), which since the reducer
+ * removal (#2409, PR B) is the sole source of truth — `appStore` holds no agents
+ * slice. Tests can no longer seed agents into `appStore` and expect the UI to reflect
+ * them; they seed the **region**.
  *
- * {@link FakeAgentsTransport} is an in-memory twin of the Rust `AgentsStore`: it holds
- * one region view keyed to the Rust snapshot shape (`agents/sessions/definitions/
- * folders`), folds the whole-slice `agent.replace` intent **exactly as the backend
- * routes it**, and fans a fresh snapshot to every subscriber. `agent.replace` is the
- * intent the appStore→region mirror uses, so folding it faithfully is all the
- * render-reader tests need; the granular `agent.*` intents (the mutation cut) are
- * accepted and recorded but drive nothing here — they are validated in the bridge /
- * mutation-cut unit tests, not in a component render test.
+ * Two harness flavours live here:
  *
- * Most render-reader tests want {@link setupAgentsRegionMirror}: call it once at the
- * top of a test module (or inside a `describe`) and it keeps the region mirrored from
- * `appStore`'s agents slice for the duration of each test, so the existing
- * `appStore`-driven setup (`useAppStore.setState({ remoteAgents })`) keeps rendering
- * correctly through the region-authoritative hook.
+ * - {@link FakeAgentsTransport} + {@link installAgentsHarness}: an in-memory twin of
+ *   the Rust `AgentsStore` that folds the whole-slice `agent.replace` intent exactly
+ *   as the backend routes it (the bridge / hook unit tests use it to exercise the
+ *   subscribe / diff / seed plumbing directly).
+ *
+ * - {@link setupAgentsRegion} + {@link seedAgentsRegion}: the region-direct harness
+ *   most component tests want — it seeds the region synchronously and folds the
+ *   granular `agent.*` intents the lifecycle actions dispatch (a faithful stand-in
+ *   for the server-side stream/fold), so a UI-driven mutation (connect, rename a
+ *   folder, delete a definition) updates the rendered tree. This supersedes the
+ *   render-cut-era appStore→region mirror harness, which mirrored `appStore`'s
+ *   agents slice — a slice that no longer exists.
  */
 
 import { afterEach, beforeEach } from "vitest";
@@ -35,21 +38,16 @@ import type {
   Subscription,
   Transport,
 } from "@/services/transport";
-import { useAppStore } from "@/store/appStore";
+import type { AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo } from "@/services/api";
+import type { RemoteAgentDefinition } from "@/types/connection";
 import {
-  __emitAgentsViewForTest,
   AGENTS_REGION,
   EMPTY_AGENTS_VIEW,
+  setAgentsViewForTest,
   setAgentTransportForTest,
   stopAgentsSubscription,
   type AgentsView,
 } from "@/store/agentsBridge";
-
-/** The current `appStore` agents slice as an {@link AgentsView}. */
-function appStoreView(): AgentsView {
-  const { remoteAgents, agentSessions, agentDefinitions, agentFolders } = useAppStore.getState();
-  return { remoteAgents, agentSessions, agentDefinitions, agentFolders };
-}
 
 /** The region-snapshot shape the Rust `AgentsStore` serialises. */
 interface AgentsRegionSnapshot {
@@ -176,70 +174,290 @@ export function installAgentsHarness(initial?: AgentsView): {
   };
 }
 
-/**
- * Install a {@link FakeAgentsTransport} that **mirrors `appStore`'s agents slice into
- * the region**, for the many render-reader tests that drive agents through `appStore`
- * (`useAppStore.setState({ remoteAgents })`, or an action that mutates the slice) and
- * assert on the agent sidebar / Open Connections.
- *
- * Now that {@link import("@/store/useProjectedAgents").useProjectedAgents} reads the
- * region authoritatively, those tests can no longer rely on the removed `appStore`
- * fallback — the UI renders what the region projects. This helper seeds the region
- * with the current slice and re-seeds it on every agents-slice change, so the region
- * tracks whatever the test puts in `appStore` — the test-side analog of production,
- * where the region is fed from the backend at the source (#2388 / #2403). Returns the
- * transport plus a `teardown` (drops the appStore subscription, the region
- * subscription, and restores the real transport) — call it in `afterEach`.
- */
-export function installAgentsHarnessMirroringAppStore(): {
-  transport: FakeAgentsTransport;
-  teardown: () => void;
-} {
-  const { transport, teardown } = installAgentsHarness();
-  // Seed the transport (so the hook's eventual subscribe snapshot is correct) AND
-  // synchronously emit the view (so a reader mounting/re-rendering now reflects it
-  // without waiting for the subscribe round-trip).
-  const push = (view: AgentsView): void => {
-    transport.seed(view);
-    __emitAgentsViewForTest(view, transport.currentVersion());
-  };
-  push(appStoreView());
-  const unsubscribe = useAppStore.subscribe((state, prev) => {
-    if (
-      state.remoteAgents !== prev.remoteAgents ||
-      state.agentSessions !== prev.agentSessions ||
-      state.agentDefinitions !== prev.agentDefinitions ||
-      state.agentFolders !== prev.agentFolders
-    ) {
-      push(appStoreView());
-    }
-  });
+// ── Region-direct harness (folds the granular agent.* intents) ────────────────
+
+/** The empty region view a fresh test starts from. */
+const EMPTY: AgentsView = EMPTY_AGENTS_VIEW;
+
+/** The currently-seeded region view, mirrored by {@link SeededAgentsTransport}. */
+let current: AgentsView = EMPTY;
+
+/** A fresh, disconnected, collapsed agent entry (mirrors the Rust `AgentEntry::new`). */
+function newEntry(payload: Record<string, unknown>): RemoteAgentDefinition {
   return {
-    transport,
-    teardown: () => {
-      unsubscribe();
-      teardown();
-    },
+    id: payload.id as string,
+    name: payload.name as string,
+    config: (payload.config ?? {}) as RemoteAgentDefinition["config"],
+    agentSettings: (payload.agentSettings ?? {}) as RemoteAgentDefinition["agentSettings"],
+    isExpanded: false,
+    connectionState: "disconnected",
   };
 }
 
 /**
- * Register the appStore→region mirror ({@link installAgentsHarnessMirroringAppStore})
- * for a whole test file via self-managed `beforeEach`/`afterEach` hooks. Call once at
- * the top of a render-reader test's module (or describe) so its existing
- * `appStore`-driven agents setup keeps rendering correctly now that
- * {@link import("@/store/useProjectedAgents").useProjectedAgents} reads the region
- * authoritatively — no per-`beforeEach` wiring needed. The mirror's live subscription
- * re-seeds the region on every agents-slice change during the test, so a later
- * `setState` or an agents-mutating action still reaches the UI.
+ * Apply an `agent.*` intent to the seeded view, mirroring the Rust
+ * [`AgentsStore`](../../src-tauri/src/agents_projection/store.rs) routes one-to-one —
+ * the faithful stand-in for the server-side stream/fold. This is what lets a component
+ * test drive a real UI mutation (connect an agent, rename a folder, delete a
+ * definition) and see the region — and therefore the rendered tree — update, exactly
+ * as the backend fold would in production.
  */
-export function setupAgentsRegionMirror(): void {
-  let harness: { transport: FakeAgentsTransport; teardown: () => void } | undefined;
+function applyAgentIntent(
+  view: AgentsView,
+  kind: string,
+  payload: Record<string, unknown>
+): AgentsView {
+  const remoteAgents = [...view.remoteAgents];
+  const agentSessions = { ...view.agentSessions };
+  const agentDefinitions = { ...view.agentDefinitions };
+  const agentFolders = { ...view.agentFolders };
+  const id = payload.id as string;
+  const mapAgent = (fn: (a: RemoteAgentDefinition) => RemoteAgentDefinition): void => {
+    const idx = remoteAgents.findIndex((a) => a.id === id);
+    if (idx >= 0) remoteAgents[idx] = fn(remoteAgents[idx]);
+  };
+  const known = (): boolean => remoteAgents.some((a) => a.id === id);
+  switch (kind) {
+    case "agent.add":
+      if (!known()) remoteAgents.push(newEntry(payload));
+      break;
+    case "agent.update":
+      mapAgent((a) => ({
+        ...a,
+        name: payload.name as string,
+        config: (payload.config ?? a.config) as RemoteAgentDefinition["config"],
+        agentSettings: (payload.agentSettings ??
+          a.agentSettings) as RemoteAgentDefinition["agentSettings"],
+      }));
+      break;
+    case "agent.applySettings":
+      mapAgent((a) => ({
+        ...a,
+        agentSettings: payload.agentSettings as RemoteAgentDefinition["agentSettings"],
+      }));
+      break;
+    case "agent.remove": {
+      const idx = remoteAgents.findIndex((a) => a.id === id);
+      if (idx >= 0) remoteAgents.splice(idx, 1);
+      delete agentSessions[id];
+      delete agentDefinitions[id];
+      delete agentFolders[id];
+      break;
+    }
+    case "agent.reorder": {
+      const oldIndex = payload.oldIndex as number;
+      const newIndex = payload.newIndex as number;
+      if (
+        oldIndex >= 0 &&
+        oldIndex < remoteAgents.length &&
+        newIndex >= 0 &&
+        newIndex < remoteAgents.length
+      ) {
+        const [moved] = remoteAgents.splice(oldIndex, 1);
+        remoteAgents.splice(newIndex, 0, moved);
+      }
+      break;
+    }
+    case "agent.toggleExpanded":
+      mapAgent((a) => ({ ...a, isExpanded: !a.isExpanded }));
+      break;
+    case "agent.status": {
+      const state = payload.state as RemoteAgentDefinition["connectionState"];
+      const error = payload.error as string | undefined;
+      mapAgent((a) => {
+        let lastError = a.lastError;
+        if (state === "disconnected") lastError = error ?? a.lastError;
+        else if (state === "connecting" || state === "connected") lastError = undefined;
+        return { ...a, connectionState: state, lastError };
+      });
+      break;
+    }
+    case "agent.setCapabilities":
+      mapAgent((a) => ({
+        ...a,
+        capabilities: payload.capabilities as RemoteAgentDefinition["capabilities"],
+      }));
+      break;
+    case "agent.disconnect":
+      if (known()) {
+        mapAgent((a) => ({ ...a, connectionState: "disconnected" }));
+        agentSessions[id] = [];
+        agentFolders[id] = [];
+      }
+      break;
+    case "agent.refresh":
+      if (known()) {
+        agentSessions[id] = (payload.sessions ?? []) as AgentSessionInfo[];
+        agentDefinitions[id] = (payload.definitions ?? []) as AgentDefinitionInfo[];
+        agentFolders[id] = (payload.folders ?? []) as AgentFolderInfo[];
+      }
+      break;
+    case "agent.clearSessions":
+      if (known()) agentSessions[id] = [];
+      break;
+    case "agent.saveDefinition":
+      if (known()) {
+        const def = payload.definition as AgentDefinitionInfo;
+        agentDefinitions[id] = [
+          ...(agentDefinitions[id] ?? []).filter((d) => d.id !== def.id),
+          def,
+        ];
+      }
+      break;
+    case "agent.updateDefinition": {
+      const def = payload.definition as AgentDefinitionInfo;
+      if (agentDefinitions[id]) {
+        agentDefinitions[id] = agentDefinitions[id].map((d) => (d.id === def.id ? def : d));
+      }
+      break;
+    }
+    case "agent.deleteDefinition": {
+      const definitionId = payload.definitionId as string;
+      if (agentDefinitions[id]) {
+        agentDefinitions[id] = agentDefinitions[id].filter((d) => d.id !== definitionId);
+      }
+      break;
+    }
+    case "agent.createFolder":
+      if (known()) {
+        const folder = payload.folder as AgentFolderInfo;
+        agentFolders[id] = [...(agentFolders[id] ?? []).filter((f) => f.id !== folder.id), folder];
+      }
+      break;
+    case "agent.updateFolder": {
+      const folder = payload.folder as AgentFolderInfo;
+      if (agentFolders[id]) {
+        agentFolders[id] = agentFolders[id].map((f) => (f.id === folder.id ? folder : f));
+      }
+      break;
+    }
+    case "agent.deleteFolder": {
+      const folderId = payload.folderId as string;
+      if (agentFolders[id]) {
+        agentFolders[id] = agentFolders[id].filter((f) => f.id !== folderId);
+      }
+      if (agentDefinitions[id]) {
+        agentDefinitions[id] = agentDefinitions[id].map((d) =>
+          d.folderId === folderId ? { ...d, folderId: null } : d
+        );
+      }
+      break;
+    }
+    case "agent.replace":
+      return {
+        remoteAgents: (payload.agents ?? []) as RemoteAgentDefinition[],
+        agentSessions: (payload.sessions ?? {}) as AgentsView["agentSessions"],
+        agentDefinitions: (payload.definitions ?? {}) as AgentsView["agentDefinitions"],
+        agentFolders: (payload.folders ?? {}) as AgentsView["agentFolders"],
+      };
+    default:
+      break;
+  }
+  return { remoteAgents, agentSessions, agentDefinitions, agentFolders };
+}
+
+/**
+ * A transport double whose region subscription snapshot always reflects the
+ * currently-seeded view — so the reader hooks' mount-time subscribe agrees with the
+ * synchronously-primed region cache. Dispatched `agent.*` intents are recorded (for
+ * {@link agentsHarnessDispatched}) **and** folded into the seeded view via
+ * {@link applyAgentIntent}, standing in for the production server-side fold so a
+ * UI-driven mutation updates the rendered tree.
+ */
+class SeededAgentsTransport implements Transport {
+  dispatched: Intent[] = [];
+  private version = 1;
+
+  async dispatch(intent: Intent): Promise<IntentAck> {
+    this.dispatched.push(intent);
+    if (typeof intent.kind === "string" && intent.kind.startsWith("agent.")) {
+      current = applyAgentIntent(
+        current,
+        intent.kind,
+        (intent.payload ?? {}) as Record<string, unknown>
+      );
+      setAgentsViewForTest(current);
+    }
+    return { intentId: intent.intentId, status: "accepted", produced: [] };
+  }
+
+  async subscribe(region: string, _onFrame: FrameHandler): Promise<Subscription> {
+    this.version += 1;
+    return {
+      snapshot: {
+        kind: "snapshot",
+        region,
+        version: this.version,
+        view: toSnapshot(structuredClone(current)),
+      },
+      unsubscribe: () => {},
+    };
+  }
+
+  async resync(): Promise<SnapshotFrame | null> {
+    return null;
+  }
+}
+
+let activeSeededTransport: SeededAgentsTransport | null = null;
+
+/**
+ * Seed (or extend) the authoritative `agents` region for the current test. Merges
+ * with the currently-seeded view — passing only `remoteAgents` leaves the seeded
+ * sessions/definitions/folders untouched and vice-versa — mirroring how the retired
+ * `useAppStore.setState({ remoteAgents })` shallow-merged the slice. Fans the new
+ * view to any subscribed reader hooks so they re-render.
+ */
+export function seedAgentsRegion(partial: Partial<AgentsView>): void {
+  current = {
+    remoteAgents: partial.remoteAgents ?? current.remoteAgents,
+    agentSessions: partial.agentSessions ?? current.agentSessions,
+    agentDefinitions: partial.agentDefinitions ?? current.agentDefinitions,
+    agentFolders: partial.agentFolders ?? current.agentFolders,
+  };
+  setAgentsViewForTest(current);
+}
+
+/** Reset the seeded region back to empty (called by the `beforeEach` install). */
+export function resetAgentsRegion(): void {
+  current = EMPTY;
+  setAgentsViewForTest(current);
+}
+
+/** The intents the region-direct transport double has recorded this test. */
+export function agentsHarnessDispatched(): Intent[] {
+  return activeSeededTransport?.dispatched ?? [];
+}
+
+/**
+ * Install the region-direct transport double and reset the seed to empty. Returns a
+ * teardown. Prefer {@link setupAgentsRegion}, which wires the lifecycle.
+ */
+export function installAgentsRegion(): () => void {
+  activeSeededTransport = new SeededAgentsTransport();
+  setAgentTransportForTest(activeSeededTransport);
+  resetAgentsRegion();
+  return () => {
+    stopAgentsSubscription();
+    setAgentTransportForTest(null);
+    activeSeededTransport = null;
+    current = EMPTY;
+  };
+}
+
+/**
+ * Register a `beforeEach` / `afterEach` pair that installs the region-direct transport
+ * double (seeded empty) for every test in the current module. Call once at module
+ * scope, then use {@link seedAgentsRegion} inside individual tests. The replacement
+ * for the retired `setupAgentsRegion`.
+ */
+export function setupAgentsRegion(): void {
+  let teardown: (() => void) | undefined;
   beforeEach(() => {
-    harness = installAgentsHarnessMirroringAppStore();
+    teardown = installAgentsRegion();
   });
   afterEach(() => {
-    harness?.teardown();
-    harness = undefined;
+    teardown?.();
+    teardown = undefined;
   });
 }

@@ -14,7 +14,7 @@ import { AgentNode } from "./AgentNode";
 import { TooltipProvider } from "@/components/ui";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo } from "@/services/api";
-import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -105,7 +105,7 @@ function makeDefinition(overrides: Partial<AgentDefinitionInfo> = {}): AgentDefi
 let container: HTMLDivElement;
 let root: Root;
 
-setupAgentsRegionMirror();
+setupAgentsRegion();
 
 describe("AgentNode — definition settings forwarding (bug #633)", () => {
   beforeEach(() => {
@@ -131,7 +131,7 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       },
     });
 
-    useAppStore.setState({
+    seedAgentsRegion({
       agentDefinitions: { [AGENT_ID]: [def] },
       agentFolders: { [AGENT_ID]: [] },
       agentSessions: { [AGENT_ID]: [] },
@@ -173,7 +173,7 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       terminalOptions: { color: "#c0ffee" },
     });
 
-    useAppStore.setState({
+    seedAgentsRegion({
       agentDefinitions: { [AGENT_ID]: [def] },
       agentFolders: { [AGENT_ID]: [] },
       agentSessions: { [AGENT_ID]: [] },
@@ -211,7 +211,7 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       },
     });
 
-    useAppStore.setState({
+    seedAgentsRegion({
       agentDefinitions: { [AGENT_ID]: [def] },
       agentFolders: { [AGENT_ID]: [] },
       agentSessions: { [AGENT_ID]: [] },

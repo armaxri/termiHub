@@ -46,7 +46,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
 });
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
-import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 function agent(id: string, name: string): RemoteAgentDefinition {
   return {
@@ -79,7 +79,7 @@ async function confirmDialog(): Promise<void> {
   await act(async () => btn.click());
 }
 
-setupAgentsRegionMirror();
+setupAgentsRegion();
 
 describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
   let container: HTMLDivElement;
@@ -106,7 +106,8 @@ describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
   });
 
   function renderWithAgent(a: RemoteAgentDefinition) {
-    useAppStore.setState({ remoteAgents: [a], disconnectRemoteAgent, shutdownRemoteAgent });
+    useAppStore.setState({ disconnectRemoteAgent, shutdownRemoteAgent });
+    seedAgentsRegion({ remoteAgents: [a] });
     act(() => {
       root.render(
         <TooltipProvider delayDuration={0}>

@@ -15,7 +15,7 @@ import { AgentNode } from "./AgentNode";
 import { TooltipProvider } from "@/components/ui";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo, AgentSessionInfo } from "@/services/api";
-import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 // --- mocks required by AgentNode --------------------------------------------
 
@@ -123,7 +123,7 @@ let root: Root;
 
 // --- tests -------------------------------------------------------------------
 
-setupAgentsRegionMirror();
+setupAgentsRegion();
 
 describe("AgentNode — Active Sessions reattach", () => {
   beforeEach(() => {
@@ -142,11 +142,13 @@ describe("AgentNode — Active Sessions reattach", () => {
   it("routes through adoptAndAttachAgentPersistentSession when definitionId is known", async () => {
     const adopt = vi.fn().mockResolvedValue(undefined);
     const addTab = vi.fn();
-    useAppStore.setState({
+    seedAgentsRegion({
       agentDefinitions: { [AGENT_ID]: [makeDefinition()] },
       agentFolders: { [AGENT_ID]: [] },
       agentSessions: { [AGENT_ID]: [makeSession()] },
       remoteAgents: [makeAgent()],
+    });
+    useAppStore.setState({
       adoptAndAttachAgentPersistentSession: adopt,
       addTab,
     });
@@ -179,13 +181,15 @@ describe("AgentNode — Active Sessions reattach", () => {
   it("falls back to plain addTab when the session has no definitionId", async () => {
     const adopt = vi.fn().mockResolvedValue(undefined);
     const addTab = vi.fn();
-    useAppStore.setState({
+    seedAgentsRegion({
       agentDefinitions: { [AGENT_ID]: [makeDefinition()] },
       agentFolders: { [AGENT_ID]: [] },
       agentSessions: {
         [AGENT_ID]: [makeSession({ definitionId: undefined })],
       },
       remoteAgents: [makeAgent()],
+    });
+    useAppStore.setState({
       adoptAndAttachAgentPersistentSession: adopt,
       addTab,
     });

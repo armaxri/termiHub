@@ -17,7 +17,7 @@ import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
-import { useAppStore } from "@/store/appStore";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import {
   resolveTunnelHost,
   isAgentHost,
@@ -95,7 +95,7 @@ export function TunnelListItem({
   rowRef,
   rowProps,
 }: TunnelListItemProps) {
-  const remoteAgents = useAppStore((s) => s.remoteAgents);
+  const { remoteAgents } = useProjectedAgents();
   const status = state?.status ?? "disconnected";
   const isActive = status === "connected" || status === "connecting" || status === "reconnecting";
   const isError = status === "error";

@@ -14,7 +14,7 @@ import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo, AgentFolderInfo } from "@/services/api";
-import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -102,11 +102,13 @@ function query(sel: string): HTMLElement | null {
 
 function seed(definitions: AgentDefinitionInfo[], folders: AgentFolderInfo[] = []) {
   useAppStore.setState(useAppStore.getInitialState());
-  useAppStore.setState({
+  seedAgentsRegion({
     remoteAgents: [makeAgent()],
     agentDefinitions: { [AGENT_ID]: definitions },
     agentFolders: { [AGENT_ID]: folders },
     agentSessions: {},
+  });
+  useAppStore.setState({
     addTab: addTabMock,
   });
 }
@@ -123,7 +125,7 @@ function press(row: HTMLElement, key: string) {
   });
 }
 
-setupAgentsRegionMirror();
+setupAgentsRegion();
 
 describe("AgentNode — keyboard navigation + filter (#1379)", () => {
   beforeEach(() => {

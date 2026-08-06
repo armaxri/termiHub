@@ -14,6 +14,8 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { currentAgentsView } from "@/store/agentsBridge";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -127,13 +129,15 @@ async function flush(): Promise<void> {
   });
 }
 
+setupAgentsRegion();
+
 describe("AgentNode — disconnect (detach) vs shutdown (stop remote) (#1237, G9)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ remoteAgents: [makeAgent()] });
+    seedAgentsRegion({ remoteAgents: [makeAgent()] });
     disconnectAgentMock.mockClear();
     shutdownAgentMock.mockClear();
     toastSuccess.mockClear();
@@ -198,7 +202,7 @@ describe("AgentNode — disconnect (detach) vs shutdown (stop remote) (#1237, G9
 describe("appStore — shutdownRemoteAgent (#1237)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({
+    seedAgentsRegion({
       remoteAgents: [makeAgent()],
       agentSessions: {
         [AGENT_ID]: [
@@ -216,8 +220,8 @@ describe("appStore — shutdownRemoteAgent (#1237)", () => {
 
     expect(shutdownAgentMock).toHaveBeenCalledWith(AGENT_ID);
     expect(count).toBe(3);
-    const agent = useAppStore.getState().remoteAgents.find((a) => a.id === AGENT_ID);
+    const agent = currentAgentsView().remoteAgents.find((a) => a.id === AGENT_ID);
     expect(agent?.connectionState).toBe("disconnected");
-    expect(useAppStore.getState().agentSessions[AGENT_ID]).toEqual([]);
+    expect(currentAgentsView().agentSessions[AGENT_ID]).toEqual([]);
   });
 });

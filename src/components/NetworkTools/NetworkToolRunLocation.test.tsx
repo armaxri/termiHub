@@ -3,8 +3,8 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { setNetworkToolRunLocation } from "@/services/networkApi";
-import { useAppStore } from "@/store/appStore";
 import { useRunLocationStore } from "@/store/runLocationStore";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { NetworkToolRunLocation } from "./NetworkToolRunLocation";
 
 // Replace the Radix-backed selector with a trivial harness so the wiring
@@ -65,12 +65,14 @@ async function flush() {
   });
 }
 
+setupAgentsRegion();
+
 describe("NetworkToolRunLocation", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    useAppStore.setState({ remoteAgents: [agent("a1", "build-server")] });
+    seedAgentsRegion({ remoteAgents: [agent("a1", "build-server")] });
     useRunLocationStore.setState({ networkToolLocations: {}, serverLocations: {} });
   });
 

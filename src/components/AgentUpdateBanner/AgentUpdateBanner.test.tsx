@@ -3,6 +3,8 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import type { AgentPendingUpdate } from "@/store/appStore";
+import type { RemoteAgentDefinition } from "@/types/connection";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import * as api from "@/services/api";
 import { AgentUpdateBanner } from "./AgentUpdateBanner";
 
@@ -59,6 +61,8 @@ function byTestId(id: string): HTMLElement | null {
 const bannerId = `agent-update-banner-${AGENT_ID}`;
 const applyId = `agent-update-banner-apply-${AGENT_ID}`;
 const dismissId = `agent-update-banner-dismiss-${AGENT_ID}`;
+
+setupAgentsRegion();
 
 describe("AgentUpdateBanner", () => {
   beforeEach(() => {
@@ -142,14 +146,14 @@ describe("AgentUpdateBanner", () => {
 
   describe("coordinated strategy (#1602)", () => {
     function seedCoordinatedAgent(): void {
-      useAppStore.setState({
+      seedAgentsRegion({
         remoteAgents: [
           {
             id: AGENT_ID,
             name: AGENT_NAME,
             config: { updateStrategy: "coordinated" },
           },
-        ] as unknown as ReturnType<typeof useAppStore.getState>["remoteAgents"],
+        ] as unknown as RemoteAgentDefinition[],
       });
     }
 

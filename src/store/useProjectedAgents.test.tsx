@@ -7,13 +7,13 @@
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo } from "@/services/api";
-import { useAppStore } from "@/store/appStore";
 import {
   installAgentsHarness,
-  installAgentsHarnessMirroringAppStore,
+  installAgentsRegion,
+  seedAgentsRegion,
   type FakeAgentsTransport,
 } from "@/test/agentsRegionTestHarness";
 import type { RemoteAgentDefinition } from "@/types/connection";
@@ -91,15 +91,6 @@ const flush = () => act(async () => await Promise.resolve());
 
 let teardown: (() => void) | undefined;
 
-beforeEach(() => {
-  useAppStore.setState({
-    remoteAgents: [],
-    agentSessions: {},
-    agentDefinitions: {},
-    agentFolders: {},
-  });
-});
-
 afterEach(() => {
   teardown?.();
   teardown = undefined;
@@ -158,15 +149,14 @@ describe("useProjectedAgents", () => {
     hook.unmount();
   });
 
-  it("reflects a slice seeded through appStore via the mirror harness", async () => {
-    const harness = installAgentsHarnessMirroringAppStore();
-    teardown = harness.teardown;
+  it("reflects a slice seeded directly into the region", async () => {
+    teardown = installAgentsRegion();
 
     const hook = renderHook();
     await flush();
 
     await act(async () => {
-      useAppStore.setState({
+      seedAgentsRegion({
         remoteAgents: [agent("a2", "reconnecting")],
         agentSessions: { a2: [session("s2")] },
       });

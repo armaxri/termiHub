@@ -16,6 +16,7 @@ import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { TooltipProvider } from "@/components/ui";
 import { DEFAULT_AGENT_SETTINGS } from "@/types/connection";
@@ -136,6 +137,8 @@ function clickSave() {
   });
 }
 
+setupAgentsRegion();
+
 describe("ConnectionEditor — agent-definition save feedback (#1342)", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -144,9 +147,11 @@ describe("ConnectionEditor — agent-definition save feedback (#1342)", () => {
     resetRuntimeCache();
     useAppStore.setState({
       ...useAppStore.getInitialState(),
+      credentialStoreStatus: { mode: "none", status: "unlocked" },
+    });
+    seedAgentsRegion({
       remoteAgents: [makeAgent()],
       agentDefinitions: { [AGENT_ID]: [] },
-      credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
     mockedInvoke.mockImplementation(() => Promise.resolve(false));
     vi.clearAllMocks();

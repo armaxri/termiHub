@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { X, AlertTriangle } from "lucide-react";
-import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { WorkspaceTabDef } from "@/types/workspace";
 
 interface ConnectionPickerProps {
@@ -11,8 +11,7 @@ interface ConnectionPickerProps {
 
 export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) {
   const { connections, folders } = useProjectedConnections();
-  const remoteAgents = useAppStore((s) => s.remoteAgents);
-  const agentDefinitions = useAppStore((s) => s.agentDefinitions);
+  const { remoteAgents, agentDefinitions } = useProjectedAgents();
   const [search, setSearch] = useState("");
 
   const filtered = useMemo(() => {

@@ -37,7 +37,7 @@ vi.mock("@/services/networkApi", () => ({
 }));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
-import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 function agent(
   id: string,
@@ -59,7 +59,7 @@ function agent(
   } as unknown as RemoteAgentDefinition;
 }
 
-setupAgentsRegionMirror();
+setupAgentsRegion();
 
 describe("OpenConnectionsModal — Establishing / recovering section", () => {
   let container: HTMLDivElement;
@@ -80,7 +80,7 @@ describe("OpenConnectionsModal — Establishing / recovering section", () => {
   });
 
   function renderWithAgents(agents: RemoteAgentDefinition[]) {
-    useAppStore.setState({ remoteAgents: agents });
+    seedAgentsRegion({ remoteAgents: agents });
     act(() => {
       root.render(
         <TooltipProvider delayDuration={0}>

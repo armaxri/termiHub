@@ -12,6 +12,7 @@ import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { ClassifiedAgentError } from "@/utils/classifyAgentError";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 // --- mocks required by AgentNode --------------------------------------------
 
@@ -102,6 +103,8 @@ let root: Root;
 
 // --- tests -------------------------------------------------------------------
 
+setupAgentsRegion();
+
 describe("AgentNode — force reconnect wiring", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -129,13 +132,15 @@ describe("AgentNode — force reconnect wiring", () => {
     const mockDisconnect = vi.fn().mockResolvedValue(undefined);
     const mockConnect = vi.fn().mockResolvedValue(undefined);
 
-    useAppStore.setState({
+    seedAgentsRegion({
       agentDefinitions: { [AGENT_ID]: [] },
       agentFolders: { [AGENT_ID]: [] },
       agentSessions: { [AGENT_ID]: [] },
+      remoteAgents: [makeAgent()],
+    });
+    useAppStore.setState({
       disconnectRemoteAgent: mockDisconnect,
       connectRemoteAgent: mockConnect,
-      remoteAgents: [makeAgent()],
     });
 
     act(() => {
@@ -159,13 +164,15 @@ describe("AgentNode — force reconnect wiring", () => {
       callOrder.push("connect");
     });
 
-    useAppStore.setState({
+    seedAgentsRegion({
       agentDefinitions: { [AGENT_ID]: [] },
       agentFolders: { [AGENT_ID]: [] },
       agentSessions: { [AGENT_ID]: [] },
+      remoteAgents: [makeAgent()],
+    });
+    useAppStore.setState({
       disconnectRemoteAgent: mockDisconnect,
       connectRemoteAgent: mockConnect,
-      remoteAgents: [makeAgent()],
     });
 
     act(() => {

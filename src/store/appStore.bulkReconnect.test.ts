@@ -61,6 +61,7 @@ vi.mock("@/services/lastSessionApi", () => ({
 import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { loadLastSession } from "@/services/lastSessionApi";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { LastSession } from "@/types/lastSession";
@@ -116,14 +117,13 @@ async function restoreWithOneFailure(): Promise<string[]> {
 
 setupConnectionsRegion();
 setupSettingsRegion();
+setupAgentsRegion();
 
 describe("bulk reconnect of failed restore tabs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoad.mockResolvedValue(null);
     useAppStore.setState({
-      remoteAgents: [],
-      agentDefinitions: {},
       defaultShell: "bash",
       restoreCohort: null,
       failedRestoreTabIds: [],
