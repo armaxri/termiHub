@@ -146,6 +146,10 @@ import { createZoomSlice, ZoomSlice } from "./slices/zoomSlice";
 import { createCommandPaletteSlice, CommandPaletteSlice } from "./slices/commandPaletteSlice";
 import { createHttpMonitorsSlice, HttpMonitorsSlice } from "./slices/httpMonitorsSlice";
 import { createDialogsSlice, DialogsSlice } from "./slices/dialogsSlice";
+import {
+  createRemoteDesktopResolutionsSlice,
+  RemoteDesktopResolutionsSlice,
+} from "./slices/remoteDesktopResolutionsSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 import {
@@ -459,7 +463,8 @@ export interface AppState
     ZoomSlice,
     CommandPaletteSlice,
     HttpMonitorsSlice,
-    DialogsSlice {
+    DialogsSlice,
+    RemoteDesktopResolutionsSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -1371,15 +1376,8 @@ export interface AppState
     caps: { monitoring: boolean; fileBrowser: boolean }
   ) => void;
 
-  /**
-   * Live framebuffer resolution of each active graphical remote-desktop session,
-   * keyed by session id (#1709). Fed from the `remote-desktop-frame` /
-   * `onDimensions` path so the shared status-bar segment can show `WxH` for the
-   * active tab. Cleared when the session ends.
-   */
-  remoteDesktopResolutions: Record<string, { width: number; height: number }>;
-  setRemoteDesktopResolution: (sessionId: string, width: number, height: number) => void;
-  clearRemoteDesktopResolution: (sessionId: string) => void;
+  // Remote-desktop resolutions — the live per-session framebuffer WxH provided
+  // by RemoteDesktopResolutionsSlice (#1709, extracted under #2077 via #2300).
 
   // SSH Tunnels — tunnel data + lifecycle live in TunnelSlice (#2077); the
   // tab-opening action stays here as it belongs to the panel/tab domain.
@@ -2750,6 +2748,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createCommandPaletteSlice(set, get, store),
     ...createHttpMonitorsSlice(set, get, store),
     ...createDialogsSlice(set, get, store),
+    ...createRemoteDesktopResolutionsSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -6906,7 +6905,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Monitoring — state lives in the authoritative `system-monitors` region
     // (#2224), not here (audit gap G6, #1231).
     sessionCapabilities: {},
-    remoteDesktopResolutions: {},
+
+    // Remote-desktop resolutions (remoteDesktopResolutions + set/clear) provided
+    // by createRemoteDesktopResolutionsSlice (#1709, extracted under #2077 via
+    // #2300).
 
     clearMonitoringError: (key) => {
       const entry = currentMonitorsView().monitors[key];
@@ -6921,26 +6923,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set((state) => ({
         sessionCapabilities: { ...state.sessionCapabilities, [sessionId]: caps },
       })),
-
-    setRemoteDesktopResolution: (sessionId, width, height) =>
-      set((state) => {
-        const prev = state.remoteDesktopResolutions[sessionId];
-        if (prev && prev.width === width && prev.height === height) return {};
-        return {
-          remoteDesktopResolutions: {
-            ...state.remoteDesktopResolutions,
-            [sessionId]: { width, height },
-          },
-        };
-      }),
-
-    clearRemoteDesktopResolution: (sessionId) =>
-      set((state) => {
-        if (!(sessionId in state.remoteDesktopResolutions)) return {};
-        return {
-          remoteDesktopResolutions: omitKey(state.remoteDesktopResolutions, sessionId),
-        };
-      }),
 
     connectMonitoring: async (sessionId: string, host: string | null = null) => {
       // Unified session-based (push) monitoring: the key is the id of the terminal
