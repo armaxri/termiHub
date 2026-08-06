@@ -231,6 +231,22 @@ export function currentConnectionsView(): ConnectionsView {
   return lastView;
 }
 
+/**
+ * Test seam: synchronously set the cached region view and fan it to listeners,
+ * standing in for the server-side fold so a unit/component test can drive the
+ * authoritative region without a live backend. Not used in production.
+ */
+export function setConnectionsViewForTest(view: ConnectionsView): void {
+  lastView = { folders: view.folders, connections: view.connections };
+  for (const listener of viewListeners) {
+    try {
+      listener(lastView);
+    } catch (err) {
+      logConnectionBridgeFallback("reconcile", err);
+    }
+  }
+}
+
 // ── Mutation cut: granular connection.* intent dispatch ───────────────────────
 
 /**

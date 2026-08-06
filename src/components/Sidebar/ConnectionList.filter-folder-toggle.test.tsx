@@ -9,6 +9,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
 
@@ -84,6 +85,8 @@ function keydown(el: Element, key: string) {
 function folderExpanded(folderId: string): boolean | undefined {
   return useAppStore.getState().folders.find((f) => f.id === folderId)?.isExpanded;
 }
+
+setupConnectionsRegionFromAppStore();
 
 describe("ConnectionList — folder toggle ignored while filtering (#1378)", () => {
   let container: HTMLDivElement;

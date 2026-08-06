@@ -8,6 +8,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
 
@@ -79,6 +80,8 @@ function keydown(el: Element, key: string) {
     el.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
   });
 }
+
+setupConnectionsRegionFromAppStore();
 
 describe("ConnectionList — filter/search", () => {
   let container: HTMLDivElement;
