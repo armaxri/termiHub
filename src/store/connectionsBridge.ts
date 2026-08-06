@@ -1,34 +1,28 @@
 /**
- * Connections projection bridge — Phase 5 render cut of the Connections-tree
- * domain (#2225, part of #2139 and #2153).
+ * Connections projection bridge — Phase 5 Connections-tree domain (#2225, part of
+ * #2139 and #2153).
  *
- * The Connections **shadow** (PR #2231) landed a backend-authoritative
- * [`ConnectionsStore`](../../src-tauri/src/connections_projection/store.rs)
- * served as the shared `connections` projection region, with `connection.*`
- * intents, but nothing in the UI touched it. This step makes the **connection
- * tree sidebar** ({@link import("../components/Sidebar/ConnectionList").ConnectionList})
- * source the saved-connection / folder inventory from that region — the
- * parity-safe render cut (the direct analog of the agents render cut
- * {@link import("./agentsBridge")}, #2226, and the system-monitor render cut
- * {@link import("./systemMonitorBridge")}, #2224).
+ * The Connections **shadow** (PR #2231) landed a backend
+ * [`ConnectionsStore`](../../src-tauri/src/connections_projection/store.rs) served
+ * as the shared `connections` projection region, with `connection.*` intents. The
+ * region is now **authoritative** for the connection tree sidebar
+ * ({@link import("../components/Sidebar/ConnectionList").ConnectionList}): the store
+ * is fed at the source — every persisted saved-connection / folder mutation and the
+ * external-file overlay are folded server-side (#2389 and #2394) — so the sidebar
+ * reads the region directly through {@link import("./useProjectedConnections").useProjectedConnections},
+ * with no `appStore` seed, mirror gate, or fallback (the direct analog of the
+ * authoritative transfers bridge {@link import("./transfersBridge")}, #2229, and the
+ * authoritative system-monitor bridge {@link import("./systemMonitorBridge")},
+ * #2224).
  *
- * # Strangler safety — flag-gated, on by default, faithful-mirror gate
+ * # Scope of this step
  *
- * The `appStore` connections slice is still authoritative (the mutation cut is a
- * later step). To keep the render cut parity-safe **independent of any mutation
- * flag**, the region is kept a faithful copy of `appStore` by
- * {@link seedConnectionsRegion} (a `connection.replace` mirror, the analog of the
- * agents bridge's `agent.replace` seed), and the UI renders from the region
- * **only when it faithfully mirrors** `appStore` ({@link connectionsViewMirrors});
- * otherwise it falls back to `appStore` verbatim. Because the gate guarantees the
- * projected view deep-equals `appStore`'s slice, the rendered output is
- * byte-identical to the pre-cut path.
- *
- * Gated by {@link connectionRenderFromProjectionEnabled} — **on by default**.
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_CONNECTION_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.connectionRenderFromProjection"]` (set `"false"` to
- * render straight from `appStore`).
+ * Only the **sidebar** is authoritative. The `appStore` connections slice is still
+ * held for the other, not-yet-migrated readers, and the mutation reducers keep
+ * mirroring their transitions through the granular `connection.*` intents
+ * ({@link mirrorConnectionIntent}, still gated by {@link connectionIntentsEnabled}).
+ * Migrating those remaining readers and removing the `appStore` reducers is a later
+ * step.
  */
 
 import {
@@ -85,56 +79,6 @@ function toView(raw: ConnectionsRegionSnapshot): ConnectionsView {
   };
 }
 
-// ── Render-cut feature flag (runtime-flippable, on by default) ─────────────────
-
-let renderFlagOverride: boolean | null = null;
-
-interface ConnectionRenderFlagWindow {
-  __TERMIHUB_CONNECTION_RENDER_FROM_PROJECTION__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the render-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
- */
-export function setConnectionRenderFromProjectionEnabled(value: boolean | null): void {
-  renderFlagOverride = value;
-}
-
-/**
- * Whether the connection tree sidebar renders the saved-connection / folder
- * inventory from the projected `connections` region instead of reading
- * `appStore`'s connections slice directly.
- *
- * **On by default** — the render cut is parity-safe: the UI renders from the
- * region only when it faithfully mirrors `appStore` ({@link connectionsViewMirrors}),
- * and otherwise falls back to `appStore` verbatim, so the output is byte-identical
- * to the pre-cut path. Independent of the (later) mutation cut: the region is kept
- * a mirror of `appStore` by {@link seedConnectionsRegion}, so it is always
- * populated. Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_CONNECTION_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.connectionRenderFromProjection"]`.
- */
-export function connectionRenderFromProjectionEnabled(): boolean {
-  if (renderFlagOverride !== null) return renderFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as ConnectionRenderFlagWindow;
-      if (typeof w.__TERMIHUB_CONNECTION_RENDER_FROM_PROJECTION__ === "boolean") {
-        return w.__TERMIHUB_CONNECTION_RENDER_FROM_PROJECTION__;
-      }
-      const ls = w.localStorage?.getItem("termihub.connectionRenderFromProjection");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
-
 // ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
 
 let mutationFlagOverride: boolean | null = null;
@@ -156,21 +100,22 @@ export function setConnectionIntentsEnabled(value: boolean | null): void {
 /**
  * Whether the connection-tree lifecycle actions (add/update/remove/move the saved
  * connections, and add/remove/toggle folders) dispatch granular `connection.*`
- * intents so the backend {@link import("../../src-tauri/src/connections_projection/store").ConnectionsStore}
- * is authoritative — instead of only the render-cut {@link seedConnectionsRegion}
- * `connection.replace` mirror driving the region.
+ * intents to the backend {@link import("../../src-tauri/src/connections_projection/store").ConnectionsStore}
+ * so it tracks each transition (the backend also folds the persisted mutation
+ * server-side, #2389 / #2394).
  *
  * **On by default** (#2225 mutation cut). When on, each action mirrors its
  * transition through a `connection.*` intent (via {@link mirrorConnectionIntent}),
- * and the render-cut hook
+ * and the sidebar hook
  * ({@link import("./useProjectedConnections").useProjectedConnections}) reflects
  * the region back into the UI. The local `appStore` reducer path stays in place as
- * the render source and as a resilience / rollback fallback — any dispatch failure
- * is logged and the local mutation continues, so a backend hiccup can never break
- * the connection tree (the reducer removal is a later step). When off, `appStore`
- * drives the slice purely locally (the pre-cut path). The flip was taken on the
- * automated parity tests plus the instant local fallback, mirroring the agents
- * mutation cut (#2226). Overridable at runtime for rollback / tests via
+ * the render source for the not-yet-migrated readers and as a resilience / rollback
+ * fallback — any dispatch failure is logged and the local mutation continues, so a
+ * backend hiccup can never break the connection tree (the reducer removal is a later
+ * step). When off, `appStore` drives the slice purely locally (the pre-cut path).
+ * The flip was taken on the automated parity tests plus the instant local fallback,
+ * mirroring the agents mutation cut (#2226). Overridable at runtime for rollback /
+ * tests via
  * `window.__TERMIHUB_CONNECTION_INTENTS__` or
  * `localStorage["termihub.connectionIntents"]` (set `"false"` to restore the
  * pre-cut local-mutation path; `"true"` to force on).
@@ -205,14 +150,13 @@ let startPromise: Promise<ProjectionClient> | null = null;
 const clientId = newClientId();
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription / seed dedup. */
+ * drops any active subscription. */
 export function setConnectionTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
   startPromise = null;
   transportInstance = t;
   lastView = EMPTY_VIEW;
-  lastSeededSignature = null;
 }
 
 function transport(): Transport {
@@ -280,7 +224,6 @@ export function stopConnectionsSubscription(): void {
   regionClient = null;
   startPromise = null;
   lastView = EMPTY_VIEW;
-  lastSeededSignature = null;
 }
 
 /** The last view fanned out (for a hook that subscribes after the first diff). */
@@ -288,64 +231,13 @@ export function currentConnectionsView(): ConnectionsView {
   return lastView;
 }
 
-// ── Seed: keep the region a faithful mirror of appStore (connection.replace) ───
-
-let lastSeededSignature: string | null = null;
-
-/**
- * Seed the shared region with `appStore`'s whole connections slice via a
- * `connection.replace` intent, so the projection tracks `appStore`'s current
- * state while `appStore` stays authoritative (the render-side counterpart to the
- * agents bridge's seed). The payload is keyed to the Rust snapshot shape
- * (`folders`/`connections`). De-duplicated: a slice identical to the last seeded
- * one is not re-dispatched. Never throws synchronously — a transport that cannot
- * dispatch surfaces as a rejected promise the caller logs and ignores (staying on
- * the `appStore` fallback). Idempotent server-side: replacing with the same
- * content yields no diff.
- */
-export function seedConnectionsRegion(
-  folders: ConnectionFolder[],
-  connections: SavedConnection[]
-): Promise<void> {
-  const payload = { folders, connections };
-  const signature = JSON.stringify(payload);
-  if (signature === lastSeededSignature) return Promise.resolve();
-  // Set before dispatching so concurrent callers do not double-dispatch the seed.
-  lastSeededSignature = signature;
-  try {
-    return transport()
-      .dispatch({
-        intentId: newIntentId(),
-        kind: "connection.replace",
-        payload,
-        clientId,
-      })
-      .then((ack: IntentAck) => {
-        if (ack.status === "rejected") {
-          // Let a later change retry the seed rather than latch on a failure.
-          lastSeededSignature = null;
-          throw new Error(ack.error?.message ?? "connection.replace rejected");
-        }
-      })
-      .catch((err) => {
-        lastSeededSignature = null;
-        throw err;
-      });
-  } catch (err) {
-    // A synchronous transport-construction failure (non-Tauri, no socket).
-    lastSeededSignature = null;
-    return Promise.reject(err instanceof Error ? err : new Error(String(err)));
-  }
-}
-
 // ── Mutation cut: granular connection.* intent dispatch ───────────────────────
 
 /**
  * The granular `connection.*` intent kinds the mutation cut dispatches (twins of
- * the Rust routes). Excludes `connection.replace`, which is the render-cut
- * whole-slice mirror ({@link seedConnectionsRegion}); the mutation cut drives the
- * region through these per-transition intents instead so the store becomes
- * authoritative.
+ * the Rust routes). Excludes the whole-slice `connection.replace` mirror; the
+ * mutation reducers drive the region through these per-transition intents so the
+ * store tracks each transition.
  */
 export type ConnectionIntentKind =
   | "connection.add"
@@ -389,54 +281,6 @@ export function mirrorConnectionIntent(
   } catch (err) {
     logConnectionBridgeFallback(kind, err);
   }
-}
-
-// ── Faithful-mirror gate ───────────────────────────────────────────────────────
-
-/**
- * Whether a projected `view` faithfully mirrors `appStore`'s connections slice —
- * the gate deciding whether the UI may render from the projection (true) or must
- * fall back to `appStore` (false). A deep value comparison of the ordered folder
- * and connection arrays; because the projected records match the frontend shapes
- * one-to-one, a mirroring view is value-identical to the `appStore` slice, so
- * rendering from it can never diverge.
- *
- * The twin of the agents render cut's `agentsViewMirrors`.
- */
-export function connectionsViewMirrors(
-  view: ConnectionsView | undefined,
-  folders: ConnectionFolder[],
-  connections: SavedConnection[]
-): boolean {
-  if (!view) return false;
-  return deepEqual(view.folders, folders) && deepEqual(view.connections, connections);
-}
-
-/**
- * A structural deep-equal for the JSON-ish connections view model (objects,
- * arrays, and primitives — no functions/dates/maps). Numbers compare with `===`,
- * so an integer that round-tripped through JSON as a float (`22` vs `22.0`) still
- * matches. Exported for the bridge's parity tests.
- */
-export function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== typeof b) return false;
-  if (a === null || b === null) return a === b;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => deepEqual(v, b[i]));
-  }
-  if (typeof a === "object" && typeof b === "object") {
-    const ao = a as Record<string, unknown>;
-    const bo = b as Record<string, unknown>;
-    const aKeys = Object.keys(ao);
-    const bKeys = Object.keys(bo);
-    if (aKeys.length !== bKeys.length) return false;
-    return aKeys.every(
-      (k) => Object.prototype.hasOwnProperty.call(bo, k) && deepEqual(ao[k], bo[k])
-    );
-  }
-  return false;
 }
 
 /** Log a bridge fallback so the appStore-path recovery is visible in the LogViewer. */

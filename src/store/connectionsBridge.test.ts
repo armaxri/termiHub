@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+/**
+ * Connections bridge — the connection tree sidebar is region-authoritative (#2225,
+ * PR A). These tests drive the bridge against the in-memory {@link FakeTransport}
+ * store double and assert: it subscribes and fans the projected view out to
+ * listeners, caches the latest view for synchronous reads, and dispatches the
+ * granular `connection.*` mutation-cut intents (gated by the intents flag).
+ * Best-effort dispatch never throws, even on a rejected ack.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   FrameHandler,
@@ -13,14 +21,12 @@ import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 
 import {
   CONNECTIONS_REGION,
-  connectionRenderFromProjectionEnabled,
-  connectionsViewMirrors,
+  connectionIntentsEnabled,
   currentConnectionsView,
-  deepEqual,
   ensureConnectionsSubscribed,
+  mirrorConnectionIntent,
   onConnectionsView,
-  seedConnectionsRegion,
-  setConnectionRenderFromProjectionEnabled,
+  setConnectionIntentsEnabled,
   setConnectionTransportForTest,
   stopConnectionsSubscription,
   type ConnectionsView,
@@ -42,11 +48,10 @@ function folder(id: string, parentId: string | null = null, isExpanded = true): 
 }
 
 /**
- * An in-memory substrate double: holds one `connections` view, applies a
- * `connection.replace` intent by overwriting the view from its payload (keyed to
- * the Rust snapshot shape `folders`/`connections`), and fans a fresh snapshot to
- * every subscriber — so the seed round-trip and multi-subscriber fan-out are
- * exercised without a backend.
+ * An in-memory substrate double: holds one `connections` view (fed via
+ * {@link seed}, standing in for the server-side fold), records every dispatched
+ * intent, and fans a fresh snapshot to every subscriber — so subscription fan-out
+ * and mutation-cut dispatch are exercised without a backend.
  */
 class FakeTransport implements Transport {
   dispatched: Intent[] = [];
@@ -54,19 +59,15 @@ class FakeTransport implements Transport {
   private version = 0;
   private handlers: FrameHandler[] = [];
 
+  /** Feed the region as the server-side fold would, and fan the diff out. */
+  seed(view: ConnectionsView): void {
+    this.view = { folders: view.folders, connections: view.connections };
+    this.version += 1;
+    this.fan();
+  }
+
   async dispatch(intent: Intent): Promise<IntentAck> {
     this.dispatched.push(intent);
-    if (intent.kind === "connection.replace") {
-      const p = intent.payload as Record<string, unknown>;
-      this.view = { folders: p.folders ?? [], connections: p.connections ?? [] };
-      this.version += 1;
-      this.fan();
-      return {
-        intentId: intent.intentId,
-        status: "accepted",
-        produced: [{ region: CONNECTIONS_REGION, version: this.version }],
-      };
-    }
     return { intentId: intent.intentId, status: "accepted", produced: [] };
   }
 
@@ -104,111 +105,81 @@ beforeEach(() => {
 afterEach(() => {
   stopConnectionsSubscription();
   setConnectionTransportForTest(null);
-  setConnectionRenderFromProjectionEnabled(null);
+  setConnectionIntentsEnabled(null);
 });
 
-describe("connectionRenderFromProjectionEnabled flag", () => {
-  it("defaults on and honours the programmatic override", () => {
-    expect(connectionRenderFromProjectionEnabled()).toBe(true);
-    setConnectionRenderFromProjectionEnabled(false);
-    expect(connectionRenderFromProjectionEnabled()).toBe(false);
-    setConnectionRenderFromProjectionEnabled(true);
-    expect(connectionRenderFromProjectionEnabled()).toBe(true);
-    setConnectionRenderFromProjectionEnabled(null);
-    expect(connectionRenderFromProjectionEnabled()).toBe(true);
-  });
-});
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
-describe("deepEqual", () => {
-  it("treats an integer and its float round-trip as equal", () => {
-    expect(deepEqual(22, 22.0)).toBe(true);
-    expect(deepEqual({ a: [1, 2] }, { a: [1, 2] })).toBe(true);
-  });
+describe("subscription + fan-out", () => {
+  it("fans the server-fed region view out to listeners and caches it", async () => {
+    const received: ConnectionsView[] = [];
+    const unsubscribe = onConnectionsView((v) => received.push(v));
 
-  it("distinguishes differing values, key sets, and null", () => {
-    expect(deepEqual({ a: 1 }, { a: 2 })).toBe(false);
-    expect(deepEqual({ a: 1 }, { a: 1, b: 2 })).toBe(false);
-    expect(deepEqual(null, {})).toBe(false);
-    expect(deepEqual([1, 2], [1, 2, 3])).toBe(false);
-  });
-});
-
-describe("connectionsViewMirrors", () => {
-  const folders = [folder("Work")];
-  const connections = [connection("Work/A", "Work")];
-
-  it("is false for an undefined view", () => {
-    expect(connectionsViewMirrors(undefined, folders, connections)).toBe(false);
-  });
-
-  it("is true when the view value-matches the appStore slice", () => {
-    const view: ConnectionsView = {
-      folders: structuredClone(folders),
-      connections: structuredClone(connections),
-    };
-    expect(connectionsViewMirrors(view, folders, connections)).toBe(true);
-  });
-
-  it("is false when a folder's isExpanded diverges", () => {
-    const view: ConnectionsView = {
-      folders: [{ ...folders[0], isExpanded: false }],
-      connections,
-    };
-    expect(connectionsViewMirrors(view, folders, connections)).toBe(false);
-  });
-
-  it("is false when a connection's folderId diverges", () => {
-    const view: ConnectionsView = {
-      folders,
-      connections: [{ ...connections[0], folderId: null }],
-    };
-    expect(connectionsViewMirrors(view, folders, connections)).toBe(false);
-  });
-
-  it("is false when the folder order diverges", () => {
-    const two = [folder("A"), folder("B")];
-    const view: ConnectionsView = { folders: [folder("B"), folder("A")], connections: [] };
-    expect(connectionsViewMirrors(view, two, [])).toBe(false);
-  });
-});
-
-describe("seedConnectionsRegion", () => {
-  it("dispatches connection.replace carrying the whole slice, keyed to the Rust shape", async () => {
     const folders = [folder("Work")];
     const connections = [connection("Work/A", "Work")];
-    await seedConnectionsRegion(folders, connections);
-    expect(transport.dispatched).toHaveLength(1);
-    expect(transport.dispatched[0]).toMatchObject({
-      kind: "connection.replace",
-      payload: { folders, connections },
-    });
+    transport.seed({ folders, connections });
+    await ensureConnectionsSubscribed();
+
+    // A synchronous read returns the latest server-fed view…
+    expect(currentConnectionsView()).toEqual({ folders, connections });
+    // …and the same view was fanned out to the listener.
+    expect(received[received.length - 1]).toEqual({ folders, connections });
+    unsubscribe();
   });
 
-  it("de-dupes an identical slice but re-seeds after a change", async () => {
-    const folders = [folder("Work")];
-    await seedConnectionsRegion(folders, []);
-    await seedConnectionsRegion(folders, []);
-    expect(transport.dispatched).toHaveLength(1);
-
-    const changed = [folder("Work", null, false)];
-    await seedConnectionsRegion(changed, []);
-    expect(transport.dispatched).toHaveLength(2);
-  });
-});
-
-describe("seed round-trip → the region mirrors appStore", () => {
-  it("makes the projected view a faithful mirror of the seeded slice", async () => {
+  it("re-fans on every region diff", async () => {
     const received: ConnectionsView[] = [];
     const unsubscribe = onConnectionsView((v) => received.push(v));
     await ensureConnectionsSubscribed();
 
-    const folders = [folder("Work")];
-    const connections = [connection("Work/A", "Work")];
-    await seedConnectionsRegion(folders, connections);
+    transport.seed({ folders: [folder("A")], connections: [] });
+    transport.seed({ folders: [folder("A")], connections: [connection("A/1", "A")] });
 
-    // The region now carries the seeded slice and the gate accepts it.
-    expect(connectionsViewMirrors(currentConnectionsView(), folders, connections)).toBe(true);
-    expect(received[received.length - 1]).toEqual({ folders, connections });
+    expect(currentConnectionsView().connections).toHaveLength(1);
+    expect(received[received.length - 1].connections[0].id).toBe("A/1");
     unsubscribe();
+  });
+});
+
+describe("connectionIntentsEnabled flag", () => {
+  it("defaults on and honours the programmatic override", () => {
+    expect(connectionIntentsEnabled()).toBe(true);
+    setConnectionIntentsEnabled(false);
+    expect(connectionIntentsEnabled()).toBe(false);
+    setConnectionIntentsEnabled(true);
+    expect(connectionIntentsEnabled()).toBe(true);
+    setConnectionIntentsEnabled(null);
+    expect(connectionIntentsEnabled()).toBe(true);
+  });
+});
+
+describe("mirrorConnectionIntent (mutation cut)", () => {
+  it("dispatches the granular intent when enabled", async () => {
+    mirrorConnectionIntent("connection.add", { connection: connection("A/1", "A") });
+    await flush();
+    expect(transport.dispatched).toHaveLength(1);
+    expect(transport.dispatched[0]).toMatchObject({
+      kind: "connection.add",
+      payload: { connection: { id: "A/1" } },
+    });
+  });
+
+  it("is a no-op when the mutation cut is disabled", async () => {
+    setConnectionIntentsEnabled(false);
+    mirrorConnectionIntent("connection.remove", { connectionId: "A/1" });
+    await flush();
+    expect(transport.dispatched).toHaveLength(0);
+  });
+
+  it("never throws even when the ack is rejected", async () => {
+    vi.spyOn(transport, "dispatch").mockResolvedValue({
+      intentId: "x",
+      status: "rejected",
+      error: { message: "boom" },
+    } as IntentAck);
+    expect(() =>
+      mirrorConnectionIntent("connection.toggleFolder", { folderId: "A" })
+    ).not.toThrow();
+    await flush();
   });
 });
