@@ -37,28 +37,20 @@ pub fn load_connections_and_folders(
     manager: State<'_, ConnectionManager>,
 ) -> Result<ConnectionData, String> {
     info!("Loading connections and folders");
-    let flat = manager.get_all().map_err(|e| e.to_string())?;
-
-    // Flatten external connections into the main connections list
-    let external_sources = manager.load_external_sources();
-    let mut all_connections = flat.connections;
-    let mut external_errors = Vec::new();
-
-    for source in external_sources {
-        if let Some(err) = source.error {
-            external_errors.push(ExternalFileError {
-                file_path: source.file_path,
-                error: err,
-            });
-        }
-        all_connections.extend(source.connections);
-    }
+    // The unified main + external view (the same one reflected into the shadow
+    // `ConnectionsStore` server-side, #2394), so the command and the projection
+    // region cannot drift.
+    let view = manager.load_unified_view().map_err(|e| e.to_string())?;
 
     Ok(ConnectionData {
-        connections: all_connections,
-        folders: flat.folders,
-        agents: flat.agents,
-        external_errors,
+        connections: view.connections,
+        folders: view.folders,
+        agents: view.agents,
+        external_errors: view
+            .external_errors
+            .into_iter()
+            .map(|(file_path, error)| ExternalFileError { file_path, error })
+            .collect(),
     })
 }
 
@@ -75,8 +67,10 @@ pub fn save_connection(
     let persisted_id = manager
         .save_connection_routed(connection)
         .map_err(|e| e.to_string())?;
-    // Server-authority fold (#2389): reflect the persisted tree into the shadow
-    // `ConnectionsStore` at the source. Additive; no user-facing change.
+    // Server-authority fold (#2389/#2394): reflect the persisted tree — main
+    // store *and* the external-file overlay — into the shadow `ConnectionsStore`
+    // at the source. A save routed to an external file (`sourceFile` set) updates
+    // the region via that overlay. Additive; no user-facing change.
     crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(persisted_id)
 }
@@ -115,8 +109,9 @@ pub fn move_connection_to_file(
     let moved = manager
         .move_connection_to_file(&connection_id, current_source.as_deref(), target_source)
         .map_err(|e| e.to_string())?;
-    // A move into/out of the main store changes the persisted tree; an
-    // external↔external move leaves it untouched and coalesces to no diff.
+    // The fold reflects both the main store and the external-file overlay
+    // (#2394), so a move into/out of the main store *and* an external↔external
+    // move (the `sourceFile` changes) are reflected in the region.
     crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(moved)
 }
@@ -197,15 +192,23 @@ pub fn save_external_file(
     name: String,
     folders: Vec<ConnectionFolder>,
     connections: Vec<SavedConnection>,
+    app: AppHandle,
     credential_store: State<'_, Arc<CredentialManager>>,
 ) -> Result<(), String> {
     manager::save_external_file(&file_path, &name, folders, connections, &**credential_store)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    // Server-authority fold (#2394): reflect the external-file overlay (as it is
+    // now on disk) into the shadow `ConnectionsStore` when the saved file is a
+    // currently-enabled external source. The fold resolves the `ConnectionManager`
+    // from `app`. Additive; no user-facing change.
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(())
 }
 
 /// Reload external connection files and return flattened connections.
 #[tauri::command]
 pub fn reload_external_connections(
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<Vec<SavedConnection>, String> {
     let sources = manager.load_external_sources();
@@ -213,6 +216,11 @@ pub fn reload_external_connections(
     for source in sources {
         connections.extend(source.connections);
     }
+    // Server-authority fold (#2394): the external overlay just changed on disk /
+    // in the enabled set — reflect the unified main + external tree into the
+    // shadow `ConnectionsStore` so the region stays in sync with the frontend's
+    // `reloadExternalConnections`. Additive; no user-facing change.
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(connections)
 }
 
