@@ -1,7 +1,7 @@
 //! Tauri commands for the shell-integration config model (#1367) and OS
 //! context-menu registration (#1368).
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::connection::manager::ConnectionManager;
 use crate::connection::settings::AppSettings;
@@ -32,6 +32,22 @@ fn current_status(manager: &ConnectionManager) -> ShellIntegrationStatus {
     )
 }
 
+/// Reflect the just-persisted `AppSettings` document — including the updated
+/// `shell_integration` block — into the shared `SettingsStore` server-side, so
+/// the `settings` projection region mirrors a shell-integration change at the
+/// source (#2407, hardening #2227's reducer-removal).
+///
+/// The analog of the `save_settings` fold (#2386): every shell-integration
+/// command below persists through the `ConnectionManager` authority and then
+/// calls this, so the region reflects install / uninstall / edit / remembered-
+/// choice outcomes without depending on the frontend's follow-up `settings.patch`
+/// dispatch. Best-effort and non-fatal — it is a no-op when the store or manager
+/// is unmanaged (see [`fold_settings_from_manager`]). `AppHandle` is Tauri-
+/// injected, so this adds nothing to the JS invoke surface.
+fn fold_settings(app: &AppHandle) {
+    crate::settings_projection::projection::fold_settings_from_manager(app);
+}
+
 /// Report the current shell-integration registration status.
 ///
 /// Combines the persisted settings with runtime facts: whether the integration
@@ -56,11 +72,13 @@ pub fn get_shell_integration_status(
 /// unchanged. Returns the refreshed status.
 #[tauri::command]
 pub fn install_shell_integration(
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<ShellIntegrationStatus, String> {
     let mut settings = manager.get_settings();
     registry::register(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
     manager.save_settings(settings).map_err(|e| e.to_string())?;
+    fold_settings(&app);
     Ok(current_status(&manager))
 }
 
@@ -68,11 +86,13 @@ pub fn install_shell_integration(
 /// updated registration status. Returns the refreshed status.
 #[tauri::command]
 pub fn uninstall_shell_integration(
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<ShellIntegrationStatus, String> {
     let mut settings = manager.get_settings();
     registry::unregister(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
     manager.save_settings(settings).map_err(|e| e.to_string())?;
+    fold_settings(&app);
     Ok(current_status(&manager))
 }
 
@@ -99,6 +119,7 @@ fn stage_shell_integration(settings: &mut AppSettings, new_si: ShellIntegrationS
 /// surface the staleness banner without a second round-trip.
 #[tauri::command]
 pub fn save_shell_integration_settings(
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
     shell_integration: ShellIntegrationSettings,
 ) -> Result<ShellIntegrationStatus, String> {
@@ -108,6 +129,7 @@ pub fn save_shell_integration_settings(
         registry::register(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
     }
     manager.save_settings(settings).map_err(|e| e.to_string())?;
+    fold_settings(&app);
     Ok(current_status(&manager))
 }
 
@@ -144,6 +166,7 @@ fn stage_remembered_choice(
 /// [`save_shell_integration_settings`].
 #[tauri::command]
 pub fn remember_spawn_choice(
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
     entry_id: String,
     target: PickedTarget,
@@ -156,6 +179,7 @@ pub fn remember_spawn_choice(
         registry::register(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
     }
     manager.save_settings(settings).map_err(|e| e.to_string())?;
+    fold_settings(&app);
     Ok(current_status(&manager))
 }
 

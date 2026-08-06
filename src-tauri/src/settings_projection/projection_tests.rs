@@ -407,6 +407,65 @@ fn server_side_fold_reflects_the_resolved_settings_document() {
     assert_eq!(sink.diffs().len(), 1, "one diff from the server-side fold");
 }
 
+/// A shell-integration install / uninstall (`install_shell_integration` /
+/// `uninstall_shell_integration`) persists the updated `shell_integration` block
+/// through the manager and then folds server-side (#2407). This drives the same
+/// path: persist a shell-integration change through the real manager authority,
+/// fold, and assert the `settings` region reflects the `shellIntegration` block
+/// — the region no longer depends on the frontend's follow-up `settings.patch`.
+///
+/// The real commands are not called directly here: `registry::register` /
+/// `unregister` perform OS-level context-menu writes, so this asserts the fold
+/// (the additive part of #2407) reflects the persisted shell-integration outcome,
+/// mirroring how the `save_settings` fold is verified above.
+#[test]
+fn server_side_fold_reflects_shell_integration_install_and_uninstall() {
+    let (manager, _dir) = test_manager();
+    let (app, store, sink, _cache) = wire_app(manager);
+    let manager = app.state::<ConnectionManager>();
+
+    // Baseline: the store starts on the frontend default document, which has no
+    // `shellIntegration` block until the authority is folded in.
+    assert_eq!(store.get("shellIntegration"), None);
+
+    // Install: persist the registered outcome (as `install_shell_integration`
+    // does after `registry::register`), then fold — no `settings.*` dispatch.
+    let mut settings = manager.get_settings();
+    settings.shell_integration.registered = true;
+    settings.shell_integration.registered_exe_path = Some("/opt/termihub".to_string());
+    manager.save_settings(settings).unwrap();
+    fold_settings_from_manager(app.handle());
+
+    assert_eq!(
+        store.get("shellIntegration").unwrap()["registered"],
+        json!(true)
+    );
+    assert_eq!(
+        store.get("shellIntegration").unwrap()["registeredExePath"],
+        json!("/opt/termihub")
+    );
+
+    // Uninstall: persist the unregistered outcome, then fold again.
+    let mut settings = manager.get_settings();
+    settings.shell_integration.registered = false;
+    settings.shell_integration.registered_exe_path = None;
+    manager.save_settings(settings).unwrap();
+    fold_settings_from_manager(app.handle());
+
+    assert_eq!(
+        store.get("shellIntegration").unwrap()["registered"],
+        json!(false)
+    );
+
+    // Each fold that changed the document fanned exactly one region diff out to
+    // the subscriber with no client dispatch: install + uninstall = two.
+    assert_eq!(
+        sink.diffs().len(),
+        2,
+        "install and uninstall each fold one region diff, server-side"
+    );
+}
+
 /// The fold is a best-effort no-op when the required state is not managed (e.g. a
 /// headless harness that never ran `setup()`) — it must not panic.
 #[test]
