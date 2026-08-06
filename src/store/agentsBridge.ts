@@ -19,13 +19,23 @@
  * ({@link import("./connectionsBridge")}, #2225) and settings bridge
  * ({@link import("./settingsBridge")}, #2227).
  *
- * # Scope of this step (PR A)
+ * # Fully region-authoritative (#2409, PR B)
  *
- * Only the render readers are authoritative. The `appStore` agents slice is still
- * held for the other, not-yet-migrated readers, and the mutation reducers keep
- * mirroring their transitions through the granular `agent.*` intents
- * ({@link mirrorAgentIntent}, still gated by {@link agentIntentsEnabled}). Migrating
- * those remaining readers and removing the `appStore` reducers is PR B (#2409).
+ * The reducer removal is complete: `appStore` no longer holds an `agents` slice.
+ * **Every** reader — the agent sidebar, Open Connections, the connection / tunnel
+ * editors, the file browser, the status bar, and the store's own connect / session
+ * / restore / tab logic — sources the ordered agent list and the per-agent
+ * sessions / definitions / folders from this region, synchronously via
+ * {@link currentAgentsView} or reactively via
+ * {@link import("./useProjectedAgents").useProjectedAgents}. The agent lifecycle
+ * actions are thin backend-command wrappers: each dispatches its granular
+ * `agent.*` intent ({@link mirrorAgentIntent}) as the optimistic write, then calls
+ * the agent RPC / persist command whose result the backend folds authoritatively
+ * back into the region (the status / CRUD streams, #2388, and the persisted-list
+ * fold, #2403). There is no local slice left to fall back to, so the mutation-cut
+ * flag is gone. The per-client `agentUpdates` / `agentUpdatesDismissed` /
+ * `agentUpdatePending` sub-slices are presentation state the region does not model
+ * and stay in `appStore` (#2409).
  */
 
 import {
@@ -88,62 +98,6 @@ function toView(raw: AgentsRegionSnapshot): AgentsView {
     agentDefinitions: raw.definitions ?? {},
     agentFolders: raw.folders ?? {},
   };
-}
-
-// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
-
-let mutationFlagOverride: boolean | null = null;
-
-interface AgentMutationFlagWindow {
-  __TERMIHUB_AGENT_INTENTS__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
- */
-export function setAgentIntentsEnabled(value: boolean | null): void {
-  mutationFlagOverride = value;
-}
-
-/**
- * Whether the agent lifecycle actions (add/update/applySettings/remove/reorder/
- * toggleExpanded/connect/disconnect/shutdown/status/setCapabilities/refresh/
- * clearSessions and the definition/folder CRUD) dispatch granular `agent.*`
- * intents so the backend {@link import("../../src-tauri/src/agents_projection/store").AgentsStore}
- * tracks each transition (the backend also folds the persisted mutation
- * server-side, #2388 / #2403).
- *
- * **On by default** (#2226 mutation cut). When on, each action mirrors its
- * transition through an `agent.*` intent (via {@link mirrorAgentIntent}), and the
- * render readers ({@link import("./useProjectedAgents").useProjectedAgents})
- * reflect the region back into the UI. The local `appStore` reducer path stays in
- * place as the render source for the not-yet-migrated readers and as a resilience /
- * rollback fallback — any dispatch failure is logged and the local mutation
- * continues, so a backend hiccup can never break the agent sidebar (the reducer
- * removal is PR B). When off, `appStore` drives the slice purely locally (the
- * pre-cut path). Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_AGENT_INTENTS__` or `localStorage["termihub.agentIntents"]`
- * (set `"false"` to restore the pre-cut local-mutation path; `"true"` to force on).
- */
-export function agentIntentsEnabled(): boolean {
-  if (mutationFlagOverride !== null) return mutationFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as AgentMutationFlagWindow;
-      if (typeof w.__TERMIHUB_AGENT_INTENTS__ === "boolean") {
-        return w.__TERMIHUB_AGENT_INTENTS__;
-      }
-      const ls = w.localStorage?.getItem("termihub.agentIntents");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
 }
 
 // ── Transport + shared region client (lazy, mirrors the connections slice) ─────
@@ -296,6 +250,28 @@ export function __emitAgentsViewForTest(view: AgentsView, version: number): void
   commitAgentsView(view, version);
 }
 
+/**
+ * Test seam: synchronously set the cached region view and fan it to listeners,
+ * standing in for the server-side stream/fold so a unit/component test can drive
+ * the authoritative region without a live backend. Bypasses the stale-version /
+ * signature guards {@link commitAgentsView} applies to real diffs (a seed is
+ * always the intended current view), advancing `lastAppliedVersion` so a later
+ * real diff is not treated as stale relative to the seed. The twin of the
+ * connections bridge's `setConnectionsViewForTest`. Never call from production.
+ */
+export function setAgentsViewForTest(view: AgentsView): void {
+  lastView = view;
+  lastViewSignature = JSON.stringify(view);
+  lastAppliedVersion += 1;
+  for (const listener of viewListeners) {
+    try {
+      listener(view);
+    } catch (err) {
+      logAgentBridgeFallback("reconcile", err);
+    }
+  }
+}
+
 // ── Seed: reliably push appStore's slice into the region (agent.replace) ───────
 
 let lastSeededSignature: string | null = null;
@@ -358,10 +334,10 @@ export function seedAgentsRegion(
 // ── Mutation cut: granular agent.* intent dispatch ────────────────────────────
 
 /**
- * The granular `agent.*` intent kinds the mutation cut dispatches (twins of the
+ * The granular `agent.*` intent kinds the lifecycle actions dispatch (twins of the
  * Rust routes). Excludes `agent.replace`, which is the whole-slice mirror
- * ({@link seedAgentsRegion}); the mutation cut drives the region through these
- * per-transition intents so the store tracks each transition.
+ * ({@link seedAgentsRegion}); the actions drive the region through these
+ * per-transition intents as their optimistic write.
  */
 export type AgentIntentKind =
   | "agent.add"
@@ -391,16 +367,19 @@ export function dispatchAgentIntent(
 }
 
 /**
- * Fire a granular `agent.*` intent to keep the backend store authoritative,
- * swallowing and logging any failure so the local `appStore` mutation path is
- * never disrupted by a bridge hiccup (the resilience fallback). A no-op when the
- * mutation cut is disabled ({@link agentIntentsEnabled} off — the rollback path).
- * Never throws — a synchronous transport-construction failure (non-Tauri, no
- * socket) is caught and logged, leaving the UI on the local slice. The twin of the
- * connections bridge's {@link import("./connectionsBridge").mirrorConnectionIntent}.
+ * Fire a granular `agent.*` intent against the authoritative region — the agent
+ * lifecycle actions' optimistic write. Since the reducer removal (#2226 PR B) the
+ * `appStore` agents slice is gone, so this is no longer a "mirror" of a local
+ * mutation: it **is** the mutation's client-side transition, applied to the shared
+ * `agents` region ahead of the backend's authoritative fold (the agent status /
+ * CRUD streams, #2388, and the persisted-list fold, #2403) so the UI updates
+ * instantly. Best-effort: any dispatch failure is swallowed and logged (the
+ * backend still feeds the region at the source), and a synchronous
+ * transport-construction failure (non-Tauri, no socket) is caught too, so it never
+ * throws out of a reducer. The twin of the connections bridge's
+ * {@link import("./connectionsBridge").mirrorConnectionIntent}.
  */
 export function mirrorAgentIntent(kind: AgentIntentKind, payload: Record<string, unknown>): void {
-  if (!agentIntentsEnabled()) return;
   try {
     void dispatchAgentIntent(kind, payload)
       .then((ack) => {
@@ -414,8 +393,8 @@ export function mirrorAgentIntent(kind: AgentIntentKind, payload: Record<string,
   }
 }
 
-/** Log a bridge fallback so the appStore-path recovery is visible in the LogViewer. */
+/** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logAgentBridgeFallback(kind: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
-  frontendLog("agent_bridge", `${kind} fell back to appStore agents: ${message}`);
+  frontendLog("agent_bridge", `${kind} agent intent failed: ${message}`);
 }

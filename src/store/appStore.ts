@@ -264,7 +264,11 @@ import {
   dispatchMonitorIntentBestEffort,
   ensureMonitorsSubscribed,
 } from "@/store/systemMonitorBridge";
-import { mirrorAgentIntent } from "@/store/agentsBridge";
+import {
+  currentAgentsView,
+  ensureAgentsSubscribed,
+  mirrorAgentIntent,
+} from "@/store/agentsBridge";
 import {
   currentConnectionsView,
   ensureConnectionsSubscribed,
@@ -1219,11 +1223,13 @@ export interface AppState
   remoteStates: Record<string, string>;
   setRemoteState: (sessionId: string, state: string) => void;
 
-  // Remote agents
-  remoteAgents: RemoteAgentDefinition[];
-  agentSessions: Record<string, AgentSessionInfo[]>;
-  agentDefinitions: Record<string, AgentDefinitionInfo[]>;
-  agentFolders: Record<string, AgentFolderInfo[]>;
+  // Remote agents — the ordered agent list plus each agent's live sessions, saved
+  // definitions and folders are region-authoritative (#2409): they live only in the
+  // shared `agents` projection region, read via `useProjectedAgents()` /
+  // `currentAgentsView()`. `appStore` holds no agents slice; the lifecycle actions
+  // below are thin backend-command wrappers. The per-client update sub-slices below
+  // (`agentUpdates` / `agentUpdatesDismissed` / `agentUpdatePending`) are
+  // presentation state the region does not model and stay here.
   /** Staged/available agent updates by agent id, from `agent.update_available` (#1352). */
   agentUpdates: Record<string, AgentPendingUpdate>;
   /** Per-agent dismissal of the deferred-update banner (#1352). */
@@ -3228,13 +3234,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const state = get();
       // Agents are all disconnected at startup, so agentRef tabs resolve to
       // agent-error tabs rather than silently disappearing (mirrors restore).
+      const agentsView = currentAgentsView();
       const agentContext = {
-        agents: state.remoteAgents.map((a) => ({
+        agents: agentsView.remoteAgents.map((a) => ({
           id: a.id,
           name: a.name,
           connected: a.connectionState === "connected",
         })),
-        definitions: state.agentDefinitions,
+        definitions: agentsView.agentDefinitions,
       };
       const builtGroups = buildTabGroupsFromWorkspace(
         payload.tabGroups,
@@ -4250,7 +4257,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // Determine title
         let title = "New Agent Connection";
         if (definitionId !== "new") {
-          const defs = state.agentDefinitions[agentId] ?? [];
+          const defs = currentAgentsView().agentDefinitions[agentId] ?? [];
           const def = defs.find((d) => d.id === definitionId);
           if (def) title = `Edit: ${def.name}`;
         }
@@ -4900,11 +4907,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     loadFromBackend: async () => {
       try {
-        // The saved-connection / folder tree is region-authoritative (#2401): the
-        // backend seeds and folds the `connections` region server-side (this
-        // `load_connections_and_folders` call also re-folds it, #2401 / #2389), so
-        // we only read `agents` / `externalErrors` here and never seed a slice.
-        const { agents, externalErrors } = await loadConnections();
+        // The saved-connection / folder tree AND the agent list are
+        // region-authoritative (#2401 / #2409): the backend seeds and folds the
+        // `connections` and `agents` regions server-side (this
+        // `load_connections_and_folders` call also re-folds both, #2389 / #2403),
+        // so we only read `externalErrors` here and never seed a slice.
+        const { externalErrors } = await loadConnections();
         // Prime the region subscription so `currentConnectionsView()` is populated
         // for the store's own connect / session / restore reads (which run before
         // the sidebar's `useProjectedConnections` may have mounted). Best-effort:
@@ -4932,16 +4940,25 @@ export const useAppStore = create<AppState>((set, get, store) => {
             `settings region subscribe failed: ${subErr instanceof Error ? subErr.message : String(subErr)}`
           );
         }
+        // The agent list is region-authoritative (#2409): the backend seeds the
+        // `agents` region from the persisted list at startup and re-folds it on the
+        // `load_connections_and_folders` above (#2403), so prime the region
+        // subscription here so `currentAgentsView()` is populated for the store's own
+        // imperative reads (workspace hydration / restore / reconnect). Best-effort —
+        // the eager transport build throws synchronously in a non-Tauri env, so guard
+        // throw + rejection.
+        try {
+          await ensureAgentsSubscribed();
+        } catch (subErr) {
+          frontendLog(
+            "app_store",
+            `agents region subscribe failed: ${subErr instanceof Error ? subErr.message : String(subErr)}`
+          );
+        }
         // Still read the persisted document directly: it drives one-time startup
         // side-effects that do not live in the region view (theme apply, layout /
         // sidebar hydration, keybinding overrides, language packages / grammars).
         const settings = await getSettings();
-        // Hydrate agents: add ephemeral state (disconnected, collapsed)
-        const remoteAgents = agents.map((a) => ({
-          ...a,
-          isExpanded: false,
-          connectionState: "disconnected" as const,
-        }));
         if (externalErrors.length > 0) {
           for (const err of externalErrors) {
             frontendLog("app_store", `Failed to load external file ${err.filePath}: ${err.error}`);
@@ -4953,7 +4970,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const sidebarView: SidebarView = persistedView === "files" ? "connections" : persistedView;
         const sidebarCollapsed = layoutConfig.sidebarCollapsed ?? false;
         set({
-          remoteAgents,
           layoutConfig,
           sidebarView,
           sidebarCollapsed,
@@ -6248,11 +6264,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
     setRemoteState: (sessionId, state) =>
       set((s) => ({ remoteStates: { ...s.remoteStates, [sessionId]: state } })),
 
-    // Remote agents
-    remoteAgents: [],
-    agentSessions: {},
-    agentDefinitions: {},
-    agentFolders: {},
+    // Remote agents — the ordered agent list plus each agent's sessions /
+    // definitions / folders are region-authoritative (#2409); no `appStore` slice.
+    // See the `agents` projection region (read via `useProjectedAgents()` /
+    // `currentAgentsView()`). The per-client update sub-slices below stay here.
     agentUpdates: {},
     agentUpdatesDismissed: {},
 
@@ -6278,7 +6293,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // coordinated update — its reconnect is already queued.
       if (get().agentUpdatePending[agentId]) return;
 
-      const agentName = get().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
+      const agentName = currentAgentsView().remoteAgents.find((a) => a.id === agentId)?.name ?? "Agent";
       const toastId = `agent-update-pending-${agentId}`;
 
       set((s) => ({
@@ -6335,10 +6350,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     addRemoteAgent: (agent) => {
-      set((state) => ({ remoteAgents: [...state.remoteAgents, agent] }));
-      // Mutation cut (#2226): append the agent to the authoritative region. A
-      // no-op / logged fallback when the flag is off or the transport is
-      // unavailable — the local slice above already applied.
+      // Optimistic append in the authoritative region (#2409), then persist. The
+      // backend folds the persisted agent list back at the source (#2403).
       mirrorAgentIntent("agent.add", {
         id: agent.id,
         name: agent.name,
@@ -6362,10 +6375,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     updateRemoteAgent: (agent) => {
-      set((state) => ({
-        remoteAgents: state.remoteAgents.map((a) => (a.id === agent.id ? agent : a)),
-      }));
-      // Mutation cut (#2226): update the persisted fields in the region.
+      // Optimistic edit in the region (#2409), then persist.
       mirrorAgentIntent("agent.update", {
         id: agent.id,
         name: agent.name,
@@ -6389,15 +6399,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     reorderRemoteAgents: (oldIndex, newIndex) => {
-      set((state) => {
-        const agents = [...state.remoteAgents];
-        const [moved] = agents.splice(oldIndex, 1);
-        agents.splice(newIndex, 0, moved);
-        return { remoteAgents: agents };
-      });
-      // Mutation cut (#2226): reorder the agent in the region.
+      // Compute the new id order from the authoritative region view, optimistically
+      // reorder it in the region (#2409), then persist the new order.
+      const agents = [...currentAgentsView().remoteAgents];
+      const [moved] = agents.splice(oldIndex, 1);
+      agents.splice(newIndex, 0, moved);
+      const agentIds = agents.map((a) => a.id);
       mirrorAgentIntent("agent.reorder", { oldIndex, newIndex });
-      const agentIds = get().remoteAgents.map((a) => a.id);
       persistAgentOrder(agentIds).catch((err) => {
         frontendLog(
           "app_store",
@@ -6410,26 +6418,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     deleteRemoteAgent: (agentId) => {
-      const state = get();
       // Disconnect first if connected
-      const agent = state.remoteAgents.find((a) => a.id === agentId);
+      const agent = currentAgentsView().remoteAgents.find((a) => a.id === agentId);
       if (agent && agent.connectionState !== "disconnected") {
         apiDisconnectAgent(agentId).catch(() => {});
       }
-      set((s) => ({
-        remoteAgents: s.remoteAgents.filter((a) => a.id !== agentId),
-        agentSessions: Object.fromEntries(
-          Object.entries(s.agentSessions).filter(([k]) => k !== agentId)
-        ),
-        agentDefinitions: Object.fromEntries(
-          Object.entries(s.agentDefinitions).filter(([k]) => k !== agentId)
-        ),
-        agentFolders: Object.fromEntries(
-          Object.entries(s.agentFolders).filter(([k]) => k !== agentId)
-        ),
-      }));
-      // Mutation cut (#2226): drop the agent and all of its sub-state from the
-      // region (the store's `remove` clears sessions/definitions/folders too).
+      // Optimistic remove in the region — drops the agent and all of its sub-state
+      // (the store's `remove` clears sessions/definitions/folders too, #2409);
+      // the persisted-list fold reconciles server-side (#2403).
       mirrorAgentIntent("agent.remove", { id: agentId });
       removeAgent(agentId).catch((err) => {
         frontendLog(
@@ -6443,18 +6439,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     toggleRemoteAgent: (agentId) => {
-      set((state) => ({
-        remoteAgents: state.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, isExpanded: !a.isExpanded } : a
-        ),
-      }));
-      // Mutation cut (#2226): flip the sidebar expansion in the region.
+      // Optimistically flip the sidebar expansion in the authoritative region (#2409).
       mirrorAgentIntent("agent.toggleExpanded", { id: agentId });
     },
 
     connectRemoteAgent: async (agentId, password) => {
-      const state = get();
-      const agent = state.remoteAgents.find((a) => a.id === agentId);
+      const agent = currentAgentsView().remoteAgents.find((a) => a.id === agentId);
       if (!agent) return;
 
       // Single-writer rule (G4/#1234): `connectionState` is written ONLY by the
@@ -6475,18 +6465,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }
         const result = await apiConnectAgent(agentId, config, agent.agentSettings);
 
-        // Consume capabilities only (no connectionState write). Use a functional
-        // update so a state the event set in the meantime is preserved.
-        set((s) => ({
-          remoteAgents: s.remoteAgents.map((a) =>
-            a.id === agentId ? { ...a, capabilities: result.capabilities, isExpanded: true } : a
-          ),
-        }));
-
-        // Mutation cut (#2226): mirror the capabilities and the force-expand into
-        // the region. `connectionState` stays a single-writer field driven by the
-        // `agent-state-change` event (`setAgentConnectionState` → `agent.status`),
-        // so it is deliberately not written here.
+        // Consume capabilities only (no connectionState write): record the
+        // capabilities and the force-expand optimistically in the authoritative
+        // region (#2409). `connectionState` stays a single-writer field driven by
+        // the `agent-state-change` event (`setAgentConnectionState` →
+        // `agent.status`), so it is deliberately not written here.
         mirrorAgentIntent("agent.setCapabilities", {
           id: agentId,
           capabilities: result.capabilities,
@@ -6519,15 +6502,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
           `Failed to disconnect agent: ${err instanceof Error ? err.message : String(err)}`
         );
       }
-      set((s) => ({
-        remoteAgents: s.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
-        ),
-        agentSessions: { ...s.agentSessions, [agentId]: [] },
-        agentFolders: { ...s.agentFolders, [agentId]: [] },
-      }));
-      // Mutation cut (#2226): force the region entry to disconnected and clear its
-      // live sessions/folders (the store's `disconnect` does exactly this).
+      // Optimistically force the region entry to disconnected and clear its live
+      // sessions/folders (the store's `disconnect` does exactly this, #2409).
       mirrorAgentIntent("agent.disconnect", { id: agentId });
     },
 
@@ -6536,41 +6512,24 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // drops the transport. The backend returns how many sessions were
       // detached/killed so the UI can report the impact.
       const detached = await apiShutdownAgent(agentId);
-      set((s) => ({
-        remoteAgents: s.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, connectionState: "disconnected" as const } : a
-        ),
-        agentSessions: { ...s.agentSessions, [agentId]: [] },
-        agentFolders: { ...s.agentFolders, [agentId]: [] },
-      }));
-      // Mutation cut (#2226): as with disconnect, force the region entry to
-      // disconnected and clear its live sessions/folders.
+      // As with disconnect, optimistically force the region entry to disconnected
+      // and clear its live sessions/folders (#2409).
       mirrorAgentIntent("agent.disconnect", { id: agentId });
       return detached;
     },
 
     setAgentConnectionState: (agentId, connectionState, error) => {
       // Single writer for `connectionState` (G4/#1234): only the backend
-      // `agent-state-change` event reaches this setter.
-      const previous = get().remoteAgents.find((a) => a.id === agentId)?.connectionState;
-      // Track the terminal error across auto-reconnect exhaustion (G3/#1236):
-      // record it on `disconnected` so the header's Reconnect button can surface
-      // it, and clear it once a fresh attempt starts (`connecting`) or succeeds
-      // (`connected`). Other transitions leave the stored value untouched.
-      const nextLastError = (agent: RemoteAgentDefinition): string | undefined => {
-        if (connectionState === "disconnected") return error ?? agent.lastError;
-        if (connectionState === "connecting" || connectionState === "connected") return undefined;
-        return agent.lastError;
-      };
-      set((state) => ({
-        remoteAgents: state.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, connectionState, lastError: nextLastError(a) } : a
-        ),
-      }));
+      // `agent-state-change` event reaches this setter. Read the previous state
+      // from the authoritative region to guard the once-per-connect refresh below.
+      const previous = currentAgentsView().remoteAgents.find((a) => a.id === agentId)
+        ?.connectionState;
 
-      // Mutation cut (#2226): set the connection state in the region. This is the
+      // Optimistically set the connection state in the region (#2409). This is the
       // single writer for `connectionState` (G4/#1234); the store's `set_status`
-      // tracks `lastError` with the same rules as `nextLastError` above.
+      // tracks `lastError` across auto-reconnect exhaustion (G3/#1236) with the same
+      // rules the frontend used — record it on `disconnected` (falling back to the
+      // stored one), clear it on `connecting`/`connected`, leave it otherwise.
       mirrorAgentIntent("agent.status", { id: agentId, state: connectionState, error });
 
       // The refresh of sessions/definitions is owned by the transition INTO
@@ -6585,31 +6544,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     clearAgentSessions: (agentId) => {
-      set((s) => ({
-        agentSessions: { ...s.agentSessions, [agentId]: [] },
-      }));
-      // Mutation cut (#2226): empty the region's live-session list for the agent.
+      // Optimistically empty the region's live-session list for the agent (#2409).
       mirrorAgentIntent("agent.clearSessions", { id: agentId });
     },
 
     setAgentCapabilities: (agentId, capabilities) => {
-      set((state) => ({
-        remoteAgents: state.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, capabilities } : a
-        ),
-      }));
-      // Mutation cut (#2226): record the negotiated capabilities in the region.
+      // Optimistically record the negotiated capabilities in the region (#2409).
       mirrorAgentIntent("agent.setCapabilities", { id: agentId, capabilities });
     },
 
     updateAgentSettings: async (agentId, settings) => {
       await apiApplyAgentSettings(agentId, settings);
-      set((state) => ({
-        remoteAgents: state.remoteAgents.map((a) =>
-          a.id === agentId ? { ...a, agentSettings: settings } : a
-        ),
-      }));
-      // Mutation cut (#2226): apply just the settings in the region.
+      // Optimistically apply just the settings in the region (#2409).
       mirrorAgentIntent("agent.applySettings", { id: agentId, agentSettings: settings });
     },
 
@@ -6619,14 +6565,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
           listAgentSessions(agentId),
           listAgentConnections(agentId),
         ]);
-        set((s) => ({
-          agentSessions: { ...s.agentSessions, [agentId]: sessions },
-          agentDefinitions: { ...s.agentDefinitions, [agentId]: connectionsData.connections },
-          agentFolders: { ...s.agentFolders, [agentId]: connectionsData.folders },
-        }));
-        // Mutation cut (#2226): replace the agent's live sessions plus its saved
+        // Optimistically replace the agent's live sessions plus its saved
         // definitions and folders in the region in one shot (the once-per-connect
-        // refresh set).
+        // refresh set, #2409).
         mirrorAgentIntent("agent.refresh", {
           id: agentId,
           sessions,
@@ -6647,16 +6588,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     saveAgentDef: async (agentId, definition) => {
       try {
         const saved = await saveAgentDefinition(agentId, definition);
-        set((s) => ({
-          agentDefinitions: {
-            ...s.agentDefinitions,
-            [agentId]: [
-              ...(s.agentDefinitions[agentId] ?? []).filter((d) => d.id !== saved.id),
-              saved,
-            ],
-          },
-        }));
-        // Mutation cut (#2226): upsert the saved definition in the region.
+        // Optimistically upsert the saved definition in the region (#2409).
         mirrorAgentIntent("agent.saveDefinition", { id: agentId, definition: saved });
       } catch (err) {
         frontendLog(
@@ -6670,9 +6602,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     duplicateAgentDef: async (agentId, definitionId) => {
-      const original = useAppStore
-        .getState()
-        .agentDefinitions[agentId]?.find((d) => d.id === definitionId);
+      const original = currentAgentsView().agentDefinitions[agentId]?.find(
+        (d) => d.id === definitionId
+      );
       if (!original) return;
       await useAppStore.getState().saveAgentDef(agentId, {
         name: `Copy of ${original.name}`,
@@ -6688,13 +6620,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     deleteAgentDef: async (agentId, definitionId) => {
       try {
         await deleteAgentDefinition(agentId, definitionId);
-        set((s) => ({
-          agentDefinitions: {
-            ...s.agentDefinitions,
-            [agentId]: (s.agentDefinitions[agentId] ?? []).filter((d) => d.id !== definitionId),
-          },
-        }));
-        // Mutation cut (#2226): remove the definition from the region.
+        // Optimistically remove the definition from the region (#2409).
         mirrorAgentIntent("agent.deleteDefinition", { id: agentId, definitionId });
       } catch (err) {
         frontendLog(
@@ -6710,15 +6636,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     updateAgentDef: async (agentId, params) => {
       try {
         const updated = await apiUpdateAgentDefinition(agentId, params);
-        set((s) => ({
-          agentDefinitions: {
-            ...s.agentDefinitions,
-            [agentId]: (s.agentDefinitions[agentId] ?? []).map((d) =>
-              d.id === updated.id ? updated : d
-            ),
-          },
-        }));
-        // Mutation cut (#2226): replace the definition by id in the region.
+        // Optimistically replace the definition by id in the region (#2409).
         mirrorAgentIntent("agent.updateDefinition", { id: agentId, definition: updated });
       } catch (err) {
         frontendLog(
@@ -6744,13 +6662,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     createAgentFolder: async (agentId, name, parentId) => {
       try {
         const folder = await apiCreateAgentFolder(agentId, name, parentId);
-        set((s) => ({
-          agentFolders: {
-            ...s.agentFolders,
-            [agentId]: [...(s.agentFolders[agentId] ?? []), folder],
-          },
-        }));
-        // Mutation cut (#2226): append the folder to the region.
+        // Optimistically append the folder to the region (#2409).
         mirrorAgentIntent("agent.createFolder", { id: agentId, folder });
         toast.success(`Created folder ${folder.name}`);
       } catch (err) {
@@ -6768,15 +6680,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const isRename = typeof params.name === "string";
       try {
         const updated = await apiUpdateAgentFolder(agentId, params);
-        set((s) => ({
-          agentFolders: {
-            ...s.agentFolders,
-            [agentId]: (s.agentFolders[agentId] ?? []).map((f) =>
-              f.id === updated.id ? updated : f
-            ),
-          },
-        }));
-        // Mutation cut (#2226): replace the folder by id in the region.
+        // Optimistically replace the folder by id in the region (#2409).
         mirrorAgentIntent("agent.updateFolder", { id: agentId, folder: updated });
         if (isRename) toast.success(`Renamed folder to ${updated.name}`);
       } catch (err) {
@@ -6795,21 +6699,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     deleteAgentFolder: async (agentId, folderId) => {
       try {
         await apiDeleteAgentFolder(agentId, folderId);
-        set((s) => ({
-          agentFolders: {
-            ...s.agentFolders,
-            [agentId]: (s.agentFolders[agentId] ?? []).filter((f) => f.id !== folderId),
-          },
-          // Agent moves children to root — reflect in UI
-          agentDefinitions: {
-            ...s.agentDefinitions,
-            [agentId]: (s.agentDefinitions[agentId] ?? []).map((d) =>
-              d.folderId === folderId ? { ...d, folderId: null } : d
-            ),
-          },
-        }));
-        // Mutation cut (#2226): remove the folder and reparent its child
-        // definitions to the root (the store's `delete_folder` does both).
+        // Optimistically remove the folder and reparent its child definitions to
+        // the root (the store's `delete_folder` does both, #2409).
         mirrorAgentIntent("agent.deleteFolder", { id: agentId, folderId });
       } catch (err) {
         frontendLog(
@@ -6821,28 +6712,21 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     toggleAgentFolder: (agentId, folderId) => {
-      set((s) => ({
-        agentFolders: {
-          ...s.agentFolders,
-          [agentId]: (s.agentFolders[agentId] ?? []).map((f) =>
-            f.id === folderId ? { ...f, isExpanded: !f.isExpanded } : f
-          ),
-        },
-      }));
-      // Fire-and-forget: persist expansion state on agent
-      const folder = (get().agentFolders[agentId] ?? []).find((f) => f.id === folderId);
-      if (folder) {
-        // Mutation cut (#2226): replace the folder (with its flipped expansion) in
-        // the region.
-        mirrorAgentIntent("agent.updateFolder", { id: agentId, folder });
-        apiUpdateAgentFolder(agentId, { id: folderId, is_expanded: folder.isExpanded }).catch(
-          () => {}
-        );
-      }
+      const existing = (currentAgentsView().agentFolders[agentId] ?? []).find(
+        (f) => f.id === folderId
+      );
+      if (!existing) return;
+      const folder = { ...existing, isExpanded: !existing.isExpanded };
+      // Optimistically replace the folder (with its flipped expansion) in the
+      // region (#2409), then fire-and-forget persist the expansion state.
+      mirrorAgentIntent("agent.updateFolder", { id: agentId, folder });
+      apiUpdateAgentFolder(agentId, { id: folderId, is_expanded: folder.isExpanded }).catch(
+        () => {}
+      );
     },
 
     resolveAgentErrorTabs: (agentId) => {
-      const defs = get().agentDefinitions[agentId] ?? [];
+      const defs = currentAgentsView().agentDefinitions[agentId] ?? [];
 
       const convertPanel = (panel: PanelNode): PanelNode => {
         if (panel.type === "split") {
@@ -7902,7 +7786,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const referencedAgentIds = new Set(
           allTabDefs.filter((t) => t.agentRef).map((t) => t.agentRef!.agentId)
         );
-        const disconnectedAgentsNeedingCreds = state.remoteAgents.filter((agent) => {
+        const disconnectedAgentsNeedingCreds = currentAgentsView().remoteAgents.filter((agent) => {
           if (!referencedAgentIds.has(agent.id)) return false;
           if (agent.connectionState === "connected") return false;
           return (
@@ -8002,14 +7886,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // even if their `agent-state-change` "connected" event has not yet
         // updated the store (single-writer rule, G4/#1234): a resolved connect
         // request means the backend is connected.
-        const freshState = get();
+        const freshAgentsView = currentAgentsView();
         const agentContext = {
-          agents: freshState.remoteAgents.map((a) => ({
+          agents: freshAgentsView.remoteAgents.map((a) => ({
             id: a.id,
             name: a.name,
             connected: a.connectionState === "connected" || justConnectedAgentIds.has(a.id),
           })),
-          definitions: freshState.agentDefinitions,
+          definitions: freshAgentsView.agentDefinitions,
         };
 
         // Window dimension (#1925): spawn + hydrate the workspace's saved
@@ -8205,13 +8089,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const state = get();
         // Agents are all disconnected at startup, so agentRef tabs resolve to
         // agent-error tabs rather than silently disappearing.
+        const agentsView = currentAgentsView();
         const agentContext = {
-          agents: state.remoteAgents.map((a) => ({
+          agents: agentsView.remoteAgents.map((a) => ({
             id: a.id,
             name: a.name,
             connected: a.connectionState === "connected",
           })),
-          definitions: state.agentDefinitions,
+          definitions: agentsView.agentDefinitions,
         };
         // Window dimension (#1925): partition the saved groups by window, spawn +
         // hydrate the saved secondary windows, and build only the main window's
