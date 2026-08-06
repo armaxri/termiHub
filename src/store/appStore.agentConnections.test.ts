@@ -70,6 +70,8 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { currentAgentsView } from "./agentsBridge";
+import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import type { AgentDefinitionInfo, AgentFolderInfo } from "@/services/api";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 
@@ -97,6 +99,22 @@ function makeFolder(overrides: Partial<AgentFolderInfo> = {}): AgentFolderInfo {
 
 const AGENT_ID = "agent-test-1";
 
+/** A minimal known agent entry so the region's per-agent sub-state ops apply
+ * (the store no-ops on an unknown id, matching the Rust `AgentsStore`). */
+function knownAgent(overrides: Partial<RemoteAgentDefinition> = {}): RemoteAgentDefinition {
+  return {
+    id: AGENT_ID,
+    name: "Agent",
+    config: { host: "test.local", port: 22, username: "user", authMethod: "password" },
+    agentSettings: DEFAULT_AGENT_SETTINGS,
+    isExpanded: false,
+    connectionState: "disconnected",
+    ...overrides,
+  };
+}
+
+setupAgentsRegion();
+
 describe("appStore — agent connection management", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
@@ -106,26 +124,26 @@ describe("appStore — agent connection management", () => {
   describe("toggleAgentFolder", () => {
     it("flips isExpanded for the target folder", () => {
       const folder = makeFolder({ isExpanded: false });
-      useAppStore.setState({
+      seedAgentsRegion({
         agentFolders: { [AGENT_ID]: [folder] },
       });
 
       useAppStore.getState().toggleAgentFolder(AGENT_ID, folder.id);
 
-      const folders = useAppStore.getState().agentFolders[AGENT_ID];
+      const folders = currentAgentsView().agentFolders[AGENT_ID];
       expect(folders[0].isExpanded).toBe(true);
     });
 
     it("does not affect other folders", () => {
       const folder1 = makeFolder({ id: "f1", isExpanded: false });
       const folder2 = makeFolder({ id: "f2", isExpanded: true });
-      useAppStore.setState({
+      seedAgentsRegion({
         agentFolders: { [AGENT_ID]: [folder1, folder2] },
       });
 
       useAppStore.getState().toggleAgentFolder(AGENT_ID, "f1");
 
-      const folders = useAppStore.getState().agentFolders[AGENT_ID];
+      const folders = currentAgentsView().agentFolders[AGENT_ID];
       expect(folders.find((f) => f.id === "f1")?.isExpanded).toBe(true);
       expect(folders.find((f) => f.id === "f2")?.isExpanded).toBe(true);
     });
@@ -138,15 +156,15 @@ describe("appStore — agent connection management", () => {
       const conn2 = makeDefinition({ id: "c2", folderId: null });
       mockDeleteAgentFolder.mockResolvedValue(undefined);
 
-      useAppStore.setState({
+      seedAgentsRegion({
         agentFolders: { [AGENT_ID]: [folder] },
         agentDefinitions: { [AGENT_ID]: [conn1, conn2] },
       });
 
       await useAppStore.getState().deleteAgentFolder(AGENT_ID, "folder-del");
 
-      const folders = useAppStore.getState().agentFolders[AGENT_ID];
-      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      const folders = currentAgentsView().agentFolders[AGENT_ID];
+      const defs = currentAgentsView().agentDefinitions[AGENT_ID];
       expect(folders).toHaveLength(0);
       expect(defs.find((d) => d.id === "c1")?.folderId).toBeNull();
       expect(defs.find((d) => d.id === "c2")?.folderId).toBeNull();
@@ -164,8 +182,9 @@ describe("appStore — agent connection management", () => {
         folders: [folder],
       });
 
-      // Need a connected agent for refreshAgentSessions to be meaningful
-      useAppStore.setState({
+      // Need a known agent for refreshAgentSessions to apply to the region.
+      seedAgentsRegion({
+        remoteAgents: [knownAgent()],
         agentSessions: {},
         agentDefinitions: {},
         agentFolders: {},
@@ -173,8 +192,8 @@ describe("appStore — agent connection management", () => {
 
       await useAppStore.getState().refreshAgentSessions(AGENT_ID);
 
-      expect(useAppStore.getState().agentDefinitions[AGENT_ID]).toEqual([conn]);
-      expect(useAppStore.getState().agentFolders[AGENT_ID]).toEqual([folder]);
+      expect(currentAgentsView().agentDefinitions[AGENT_ID]).toEqual([conn]);
+      expect(currentAgentsView().agentFolders[AGENT_ID]).toEqual([folder]);
     });
   });
 
@@ -183,13 +202,14 @@ describe("appStore — agent connection management", () => {
       const newFolder = makeFolder({ id: "folder-new", name: "New" });
       mockCreateAgentFolder.mockResolvedValue(newFolder);
 
-      useAppStore.setState({
+      seedAgentsRegion({
+        remoteAgents: [knownAgent()],
         agentFolders: { [AGENT_ID]: [] },
       });
 
       await useAppStore.getState().createAgentFolder(AGENT_ID, "New", null);
 
-      const folders = useAppStore.getState().agentFolders[AGENT_ID];
+      const folders = currentAgentsView().agentFolders[AGENT_ID];
       expect(folders).toHaveLength(1);
       expect(folders[0].name).toBe("New");
     });
@@ -201,13 +221,13 @@ describe("appStore — agent connection management", () => {
       const updated = { ...original, name: "New" };
       mockUpdateAgentDefinition.mockResolvedValue(updated);
 
-      useAppStore.setState({
+      seedAgentsRegion({
         agentDefinitions: { [AGENT_ID]: [original] },
       });
 
       await useAppStore.getState().updateAgentDef(AGENT_ID, { id: "conn-upd", name: "New" });
 
-      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      const defs = currentAgentsView().agentDefinitions[AGENT_ID];
       expect(defs[0].name).toBe("New");
     });
   });
@@ -220,12 +240,12 @@ describe("appStore — agent connection management", () => {
         .mockResolvedValueOnce({ ...def1, folderId: "folder-1" })
         .mockResolvedValueOnce({ ...def2, folderId: "folder-1" });
 
-      useAppStore.setState({ agentDefinitions: { [AGENT_ID]: [def1, def2] } });
+      seedAgentsRegion({ agentDefinitions: { [AGENT_ID]: [def1, def2] } });
 
       await useAppStore.getState().bulkMoveAgentDefsToFolder(AGENT_ID, ["c1", "c2"], "folder-1");
 
       expect(mockUpdateAgentDefinition).toHaveBeenCalledTimes(2);
-      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      const defs = currentAgentsView().agentDefinitions[AGENT_ID];
       expect(defs.find((d) => d.id === "c1")?.folderId).toBe("folder-1");
       expect(defs.find((d) => d.id === "c2")?.folderId).toBe("folder-1");
     });
@@ -237,11 +257,11 @@ describe("appStore — agent connection management", () => {
         .mockResolvedValueOnce({ ...def1, folderId: null })
         .mockResolvedValueOnce({ ...def2, folderId: null });
 
-      useAppStore.setState({ agentDefinitions: { [AGENT_ID]: [def1, def2] } });
+      seedAgentsRegion({ agentDefinitions: { [AGENT_ID]: [def1, def2] } });
 
       await useAppStore.getState().bulkMoveAgentDefsToFolder(AGENT_ID, ["c1", "c2"], null);
 
-      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      const defs = currentAgentsView().agentDefinitions[AGENT_ID];
       expect(defs.find((d) => d.id === "c1")?.folderId).toBeNull();
       expect(defs.find((d) => d.id === "c2")?.folderId).toBeNull();
     });
@@ -253,7 +273,7 @@ describe("appStore — agent connection management", () => {
       const updated = { ...def, folderId: "folder-1" };
       mockUpdateAgentDefinition.mockResolvedValue(updated);
 
-      useAppStore.setState({ agentDefinitions: { [AGENT_ID]: [def] } });
+      seedAgentsRegion({ agentDefinitions: { [AGENT_ID]: [def] } });
 
       await useAppStore.getState().moveAgentDefToFolder(AGENT_ID, "conn-move", "folder-1");
 
@@ -261,7 +281,7 @@ describe("appStore — agent connection management", () => {
         id: "conn-move",
         folder_id: "folder-1",
       });
-      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      const defs = currentAgentsView().agentDefinitions[AGENT_ID];
       expect(defs.find((d) => d.id === "conn-move")?.folderId).toBe("folder-1");
     });
 
@@ -270,7 +290,7 @@ describe("appStore — agent connection management", () => {
       const updated = { ...def, folderId: null };
       mockUpdateAgentDefinition.mockResolvedValue(updated);
 
-      useAppStore.setState({ agentDefinitions: { [AGENT_ID]: [def] } });
+      seedAgentsRegion({ agentDefinitions: { [AGENT_ID]: [def] } });
 
       await useAppStore.getState().moveAgentDefToFolder(AGENT_ID, "conn-root", null);
 
@@ -278,7 +298,7 @@ describe("appStore — agent connection management", () => {
         id: "conn-root",
         folder_id: null,
       });
-      const defs = useAppStore.getState().agentDefinitions[AGENT_ID];
+      const defs = currentAgentsView().agentDefinitions[AGENT_ID];
       expect(defs.find((d) => d.id === "conn-root")?.folderId).toBeNull();
     });
   });
@@ -316,7 +336,7 @@ describe("appStore — agent connection management", () => {
 
     it("sets title from existing definition name", () => {
       const def = makeDefinition({ id: "def-title", name: "My Shell" });
-      useAppStore.setState({
+      seedAgentsRegion({
         agentDefinitions: { [AGENT_ID]: [def] },
       });
 
@@ -354,11 +374,11 @@ describe("appStore — agent connection management", () => {
         makeAgent("a2", "Agent 2"),
         makeAgent("a3", "Agent 3"),
       ];
-      useAppStore.setState({ remoteAgents: agents });
+      seedAgentsRegion({ remoteAgents: agents });
 
       useAppStore.getState().reorderRemoteAgents(0, 2);
 
-      const result = useAppStore.getState().remoteAgents;
+      const result = currentAgentsView().remoteAgents;
       expect(result.map((a) => a.id)).toEqual(["a2", "a3", "a1"]);
     });
 
@@ -368,21 +388,21 @@ describe("appStore — agent connection management", () => {
         makeAgent("a2", "Agent 2"),
         makeAgent("a3", "Agent 3"),
       ];
-      useAppStore.setState({ remoteAgents: agents });
+      seedAgentsRegion({ remoteAgents: agents });
 
       useAppStore.getState().reorderRemoteAgents(2, 0);
 
-      const result = useAppStore.getState().remoteAgents;
+      const result = currentAgentsView().remoteAgents;
       expect(result.map((a) => a.id)).toEqual(["a3", "a1", "a2"]);
     });
 
     it("no-ops when indices are the same", () => {
       const agents = [makeAgent("a1", "Agent 1"), makeAgent("a2", "Agent 2")];
-      useAppStore.setState({ remoteAgents: agents });
+      seedAgentsRegion({ remoteAgents: agents });
 
       useAppStore.getState().reorderRemoteAgents(0, 0);
 
-      const result = useAppStore.getState().remoteAgents;
+      const result = currentAgentsView().remoteAgents;
       expect(result.map((a) => a.id)).toEqual(["a1", "a2"]);
     });
   });
@@ -409,7 +429,7 @@ describe("appStore — agent connection management", () => {
     }
 
     it("does not clobber an event-written 'reconnecting' state with a late-settling connect", async () => {
-      useAppStore.setState({ remoteAgents: [makeAgent()] });
+      seedAgentsRegion({ remoteAgents: [makeAgent()] });
 
       // Hold the connect request open so we can interleave a state-change event.
       let resolveConnect!: (value: {
@@ -434,11 +454,11 @@ describe("appStore — agent connection management", () => {
       await connectPromise;
 
       // The late connect must NOT overwrite the event-written "reconnecting".
-      expect(useAppStore.getState().remoteAgents[0].connectionState).toBe("reconnecting");
+      expect(currentAgentsView().remoteAgents[0].connectionState).toBe("reconnecting");
     });
 
     it("consumes capabilities without writing connectionState", async () => {
-      useAppStore.setState({ remoteAgents: [makeAgent()] });
+      seedAgentsRegion({ remoteAgents: [makeAgent()] });
       mockConnectAgent.mockResolvedValue({
         capabilities: CAPS,
         agentVersion: "1",
@@ -447,14 +467,14 @@ describe("appStore — agent connection management", () => {
 
       await useAppStore.getState().connectRemoteAgent(AGENT_ID);
 
-      const agent = useAppStore.getState().remoteAgents[0];
+      const agent = currentAgentsView().remoteAgents[0];
       expect(agent.capabilities).toEqual(CAPS);
       // The action performs no terminal-state write; the event remains authoritative.
       expect(agent.connectionState).toBe("connecting");
     });
 
     it("does not refresh agent sessions from the connect action (de-duped)", async () => {
-      useAppStore.setState({ remoteAgents: [makeAgent()] });
+      seedAgentsRegion({ remoteAgents: [makeAgent()] });
       mockConnectAgent.mockResolvedValue({
         capabilities: CAPS,
         agentVersion: "1",
@@ -469,7 +489,7 @@ describe("appStore — agent connection management", () => {
     });
 
     it("refreshes agent sessions exactly once when the event writes 'connected'", async () => {
-      useAppStore.setState({ remoteAgents: [makeAgent()] });
+      seedAgentsRegion({ remoteAgents: [makeAgent()] });
 
       useAppStore.getState().setAgentConnectionState(AGENT_ID, "connected");
       // The refresh is fired fire-and-forget; let its microtasks flush.
@@ -480,7 +500,7 @@ describe("appStore — agent connection management", () => {
     });
 
     it("refreshes only on the transition into 'connected', not on a repeat event", async () => {
-      useAppStore.setState({ remoteAgents: [makeAgent()] });
+      seedAgentsRegion({ remoteAgents: [makeAgent()] });
 
       useAppStore.getState().setAgentConnectionState(AGENT_ID, "connected");
       useAppStore.getState().setAgentConnectionState(AGENT_ID, "connected");
@@ -510,47 +530,47 @@ describe("appStore — agent connection management", () => {
     }
 
     it("stores lastError when transitioning to 'disconnected' with an error", () => {
-      useAppStore.setState({ remoteAgents: [makeAgent({ connectionState: "reconnecting" })] });
+      seedAgentsRegion({ remoteAgents: [makeAgent({ connectionState: "reconnecting" })] });
 
       useAppStore
         .getState()
         .setAgentConnectionState(AGENT_ID, "disconnected", "Failed to reconnect after 10 attempts");
 
-      const agent = useAppStore.getState().remoteAgents[0];
+      const agent = currentAgentsView().remoteAgents[0];
       expect(agent.connectionState).toBe("disconnected");
       expect(agent.lastError).toBe("Failed to reconnect after 10 attempts");
     });
 
     it("leaves lastError unset when 'disconnected' arrives without an error", () => {
-      useAppStore.setState({ remoteAgents: [makeAgent({ connectionState: "connected" })] });
+      seedAgentsRegion({ remoteAgents: [makeAgent({ connectionState: "connected" })] });
 
       useAppStore.getState().setAgentConnectionState(AGENT_ID, "disconnected");
 
-      const agent = useAppStore.getState().remoteAgents[0];
+      const agent = currentAgentsView().remoteAgents[0];
       expect(agent.connectionState).toBe("disconnected");
       expect(agent.lastError).toBeUndefined();
     });
 
     it("clears a stored lastError on the next 'connecting' attempt", () => {
-      useAppStore.setState({
+      seedAgentsRegion({
         remoteAgents: [makeAgent({ connectionState: "disconnected", lastError: "old failure" })],
       });
 
       useAppStore.getState().setAgentConnectionState(AGENT_ID, "connecting");
 
-      const agent = useAppStore.getState().remoteAgents[0];
+      const agent = currentAgentsView().remoteAgents[0];
       expect(agent.connectionState).toBe("connecting");
       expect(agent.lastError).toBeUndefined();
     });
 
     it("clears a stored lastError once the agent reaches 'connected'", () => {
-      useAppStore.setState({
+      seedAgentsRegion({
         remoteAgents: [makeAgent({ connectionState: "reconnecting", lastError: "old failure" })],
       });
 
       useAppStore.getState().setAgentConnectionState(AGENT_ID, "connected");
 
-      const agent = useAppStore.getState().remoteAgents[0];
+      const agent = currentAgentsView().remoteAgents[0];
       expect(agent.connectionState).toBe("connected");
       expect(agent.lastError).toBeUndefined();
     });
@@ -558,7 +578,8 @@ describe("appStore — agent connection management", () => {
 
   describe("clearAgentSessions", () => {
     it("empties agentSessions for the given agent", () => {
-      useAppStore.setState({
+      seedAgentsRegion({
+        remoteAgents: [knownAgent()],
         agentSessions: {
           [AGENT_ID]: [
             { sessionId: "s1", title: "shell", type: "shell", status: "running", attached: false },
@@ -568,13 +589,14 @@ describe("appStore — agent connection management", () => {
 
       useAppStore.getState().clearAgentSessions(AGENT_ID);
 
-      expect(useAppStore.getState().agentSessions[AGENT_ID]).toEqual([]);
+      expect(currentAgentsView().agentSessions[AGENT_ID]).toEqual([]);
     });
 
     it("does not clear definitions or folders", () => {
       const def = makeDefinition({ id: "d1" });
       const folder = makeFolder({ id: "f1" });
-      useAppStore.setState({
+      seedAgentsRegion({
+        remoteAgents: [knownAgent()],
         agentSessions: {
           [AGENT_ID]: [
             { sessionId: "s1", title: "shell", type: "shell", status: "running", attached: false },
@@ -586,13 +608,14 @@ describe("appStore — agent connection management", () => {
 
       useAppStore.getState().clearAgentSessions(AGENT_ID);
 
-      expect(useAppStore.getState().agentSessions[AGENT_ID]).toEqual([]);
-      expect(useAppStore.getState().agentDefinitions[AGENT_ID]).toEqual([def]);
-      expect(useAppStore.getState().agentFolders[AGENT_ID]).toEqual([folder]);
+      expect(currentAgentsView().agentSessions[AGENT_ID]).toEqual([]);
+      expect(currentAgentsView().agentDefinitions[AGENT_ID]).toEqual([def]);
+      expect(currentAgentsView().agentFolders[AGENT_ID]).toEqual([folder]);
     });
 
     it("does not affect other agents", () => {
-      useAppStore.setState({
+      seedAgentsRegion({
+        remoteAgents: [knownAgent(), knownAgent({ id: "other-agent" })],
         agentSessions: {
           [AGENT_ID]: [
             { sessionId: "s1", title: "shell", type: "shell", status: "running", attached: false },
@@ -605,8 +628,8 @@ describe("appStore — agent connection management", () => {
 
       useAppStore.getState().clearAgentSessions(AGENT_ID);
 
-      expect(useAppStore.getState().agentSessions[AGENT_ID]).toEqual([]);
-      expect(useAppStore.getState().agentSessions["other-agent"]).toHaveLength(1);
+      expect(currentAgentsView().agentSessions[AGENT_ID]).toEqual([]);
+      expect(currentAgentsView().agentSessions["other-agent"]).toHaveLength(1);
     });
   });
 });

@@ -10,10 +10,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo } from "@/services/api";
-import { useAppStore } from "@/store/appStore";
 import {
   installAgentsHarness,
-  installAgentsHarnessMirroringAppStore,
+  installAgentsRegion,
+  seedAgentsRegion,
   type FakeAgentsTransport,
 } from "@/test/agentsRegionTestHarness";
 import type { RemoteAgentDefinition } from "@/types/connection";
@@ -158,15 +158,14 @@ describe("useProjectedAgents", () => {
     hook.unmount();
   });
 
-  it("reflects a slice seeded through appStore via the mirror harness", async () => {
-    const harness = installAgentsHarnessMirroringAppStore();
-    teardown = harness.teardown;
+  it("reflects a slice seeded directly into the region", async () => {
+    teardown = installAgentsRegion();
 
     const hook = renderHook();
     await flush();
 
     await act(async () => {
-      useAppStore.setState({
+      seedAgentsRegion({
         remoteAgents: [agent("a2", "reconnecting")],
         agentSessions: { a2: [session("s2")] },
       });

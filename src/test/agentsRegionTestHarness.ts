@@ -24,8 +24,8 @@
  *   granular `agent.*` intents the lifecycle actions dispatch (a faithful stand-in
  *   for the server-side stream/fold), so a UI-driven mutation (connect, rename a
  *   folder, delete a definition) updates the rendered tree. This supersedes the
- *   render-cut-era `setupAgentsRegionMirror`, which mirrored `appStore`'s agents
- *   slice — a slice that no longer exists.
+ *   render-cut-era appStore→region mirror harness, which mirrored `appStore`'s
+ *   agents slice — a slice that no longer exists.
  */
 
 import { afterEach, beforeEach } from "vitest";
@@ -455,7 +455,7 @@ export function installAgentsRegion(): () => void {
  * Register a `beforeEach` / `afterEach` pair that installs the region-direct transport
  * double (seeded empty) for every test in the current module. Call once at module
  * scope, then use {@link seedAgentsRegion} inside individual tests. The replacement
- * for the retired `setupAgentsRegionMirror`.
+ * for the retired `setupAgentsRegion`.
  */
 export function setupAgentsRegion(): void {
   let teardown: (() => void) | undefined;

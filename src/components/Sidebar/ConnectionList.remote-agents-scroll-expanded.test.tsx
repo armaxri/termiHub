@@ -16,7 +16,7 @@
  * verified separately with the real CSS in headless Chrome (see the PR).
  */
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
-import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -106,7 +106,7 @@ function render() {
 }
 
 setupSettingsRegion();
-setupAgentsRegionMirror();
+setupAgentsRegion();
 
 describe("ConnectionList – Remote Agents scroll with EXPANDED agents (#2116)", () => {
   beforeEach(() => {

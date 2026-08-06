@@ -46,7 +46,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
 });
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
-import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 function agent(id: string, name: string): RemoteAgentDefinition {
   return {
@@ -79,7 +79,7 @@ async function confirmDialog(): Promise<void> {
   await act(async () => btn.click());
 }
 
-setupAgentsRegionMirror();
+setupAgentsRegion();
 
 describe("OpenConnectionsModal — agent Disconnect / Shutdown intents", () => {
   let container: HTMLDivElement;

@@ -20,7 +20,7 @@ import { AgentNode } from "./AgentNode";
 import { withTooltip } from "@/test/tooltip";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo } from "@/services/api";
-import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
+import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -137,7 +137,7 @@ afterEach(() => {
   container.remove();
 });
 
-setupAgentsRegionMirror();
+setupAgentsRegion();
 
 describe("Sidebar ConnectionList group actions — tooltip adoption (#1159)", () => {
   function renderList() {
