@@ -266,13 +266,13 @@ describe("FileBrowser – useFileBrowserSync", () => {
     expect(useAppStore.getState().sessionFileBrowserId).toBe("ftp-sess-1");
   });
 
-  it("keeps fileBrowserMode on 'sftp' for an SSH tab (legacy SftpManager path)", async () => {
-    // 'sftp' mode auto-connects an SFTP session, so the SFTP command surface
-    // has to answer for real here rather than resolving undefined.
+  it("puts an SSH tab in 'session' mode via the tab session id (#2421 convergence)", async () => {
+    // Post-convergence, SSH browses through the shared session layer like FTP /
+    // Docker — no `sftp_open` / SftpManager auto-connect. Its SFTP-backed session
+    // still drives the dedicated transfer channel, resolved by session id.
     mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "sftp_open") return Promise.resolve("sftp-sess-1");
-      if (cmd === "sftp_realpath") return Promise.resolve("/root");
-      if (cmd === "sftp_list_dir") return Promise.resolve([]);
+      if (cmd === "session_has_exec_capability") return Promise.resolve(true);
+      if (cmd === "session_list_files") return Promise.resolve([]);
       return Promise.resolve(undefined);
     });
 
@@ -293,7 +293,10 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("sftp");
+    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(useAppStore.getState().sessionFileBrowserId).toBe("ssh-sess-1");
+    // No legacy SftpManager connect was attempted.
+    expect(mockedInvoke).not.toHaveBeenCalledWith("sftp_open", expect.anything());
   });
 
   it("sets fileBrowserMode to 'none' for an FTP tab that has no session yet", () => {
@@ -1593,146 +1596,11 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
   });
 });
 
-describe("FileBrowser – failed-connect recovery UI (S1)", () => {
-  /** An SSH connection type that supports the file browser (→ sftp mode). */
-  function seedSshCapability() {
-    useAppStore.setState({
-      sidebarView: "files",
-      connectionTypes: [
-        {
-          typeId: "ssh",
-          displayName: "SSH",
-          icon: "terminal",
-          schema: { groups: [] },
-          capabilities: {
-            monitoring: false,
-            fileBrowser: true,
-            resize: true,
-            persistent: false,
-          },
-        },
-      ],
-    });
-  }
-
-  function makeSshTab() {
-    return makeTab({
-      connectionType: "ssh",
-      config: {
-        type: "ssh",
-        config: {
-          host: "example.com",
-          port: 22,
-          username: "alice",
-          authMethod: "password",
-          password: "pw",
-        },
-      },
-    });
-  }
-
-  beforeEach(() => {
-    container = document.createElement("div");
-    document.body.appendChild(container);
-    root = createRoot(container);
-    useAppStore.setState(useAppStore.getInitialState());
-  });
-
-  afterEach(() => {
-    act(() => {
-      root.unmount();
-    });
-    container.remove();
-    vi.clearAllMocks();
-  });
-
-  it("shows Retry + Dismiss controls when the SFTP connect fails", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "sftp_open") return Promise.reject(new Error("auth failed"));
-      return Promise.resolve(undefined);
-    });
-    seedSshCapability();
-    setActiveTab(makeSshTab());
-
-    await act(async () => {
-      root.render(
-        <TooltipProvider delayDuration={0}>
-          <FileBrowser />
-        </TooltipProvider>
-      );
-    });
-    await flushAsync();
-
-    expect(useAppStore.getState().sftpError).toBe("auth failed");
-    const retryBtn = container.querySelector('[data-testid="file-browser-sftp-retry"]');
-    const dismissBtn = container.querySelector('[data-testid="file-browser-sftp-dismiss"]');
-    expect(retryBtn).toBeTruthy();
-    expect(dismissBtn).toBeTruthy();
-  });
-
-  it("Retry re-invokes the SFTP connect", async () => {
-    let openCalls = 0;
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "sftp_open") {
-        openCalls += 1;
-        return Promise.reject(new Error("auth failed"));
-      }
-      return Promise.resolve(undefined);
-    });
-    seedSshCapability();
-    setActiveTab(makeSshTab());
-
-    await act(async () => {
-      root.render(
-        <TooltipProvider delayDuration={0}>
-          <FileBrowser />
-        </TooltipProvider>
-      );
-    });
-    await flushAsync();
-
-    const callsAfterAutoConnect = openCalls;
-    expect(callsAfterAutoConnect).toBeGreaterThanOrEqual(1);
-
-    const retryBtn = container.querySelector(
-      '[data-testid="file-browser-sftp-retry"]'
-    ) as HTMLButtonElement;
-    await act(async () => {
-      retryBtn.click();
-    });
-    await flushAsync();
-
-    expect(openCalls).toBeGreaterThan(callsAfterAutoConnect);
-  });
-
-  it("Dismiss clears the error", async () => {
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === "sftp_open") return Promise.reject(new Error("auth failed"));
-      return Promise.resolve(undefined);
-    });
-    seedSshCapability();
-    setActiveTab(makeSshTab());
-
-    await act(async () => {
-      root.render(
-        <TooltipProvider delayDuration={0}>
-          <FileBrowser />
-        </TooltipProvider>
-      );
-    });
-    await flushAsync();
-
-    const dismissBtn = container.querySelector(
-      '[data-testid="file-browser-sftp-dismiss"]'
-    ) as HTMLButtonElement;
-    await act(async () => {
-      dismissBtn.click();
-    });
-    await flushAsync();
-
-    expect(useAppStore.getState().sftpError).toBeNull();
-  });
-});
+// (Removed in #2421) The SFTP failed-connect recovery UI (S1) tests covered the
+// SSH SFTP auto-connect flow, which the convergence retires: SSH now browses
+// through the session layer, so no tab auto-connects an SftpManager session and
+// the sftp connect-failure placeholder is unreachable. The placeholder + Retry/
+// Dismiss controls are dead code removed with the sftp model in #2422 (B4).
 
 describe("FileBrowser – navigation UX (#1361)", () => {
   const navEntries = [

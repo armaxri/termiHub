@@ -37,7 +37,6 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
@@ -558,15 +557,11 @@ function useFileBrowserSync() {
   const navigateSftp = useAppStore((s) => s.navigateSftp);
   const navigateSession = useAppStore((s) => s.navigateSession);
   const setSessionFileBrowserId = useAppStore((s) => s.setSessionFileBrowserId);
-  const connectSftp = useAppStore((s) => s.connectSftp);
   const sftpSessionId = useAppStore((s) => s.sftpSessionId);
-  const sftpConnectedHost = useAppStore((s) => s.sftpConnectedHost);
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
-  const requestPassword = useAppStore((s) => s.requestPassword);
   const localCurrentPath = useAppStore((s) => s.localCurrentPath);
   const sftpCurrentPath = useAppStore((s) => s.currentPath);
   const sessionCurrentPath = useAppStore((s) => s.sessionCurrentPath);
-  const { connections } = useProjectedConnections();
   const { remoteAgents } = useProjectedAgents();
   const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
   const globalFileBrowserEnabled = useProjectedSettings().fileBrowserEnabled;
@@ -656,17 +651,15 @@ function useFileBrowserSync() {
       if (!fileBrowserEnabled) {
         setSessionFileBrowserId(null);
         setFileBrowserMode("none");
-      } else if (activeTabConnectionType === "ssh") {
-        // SSH keeps the legacy SftpManager/sftp_* path, which carries features
-        // the shared FileBrowser trait does not expose yet (realpath, writability
-        // probes, elevated writes, exec capability). Converging it onto the
-        // session layer is tracked as a follow-up to #1335.
-        setFileBrowserMode("sftp");
       } else if (activeTab.sessionId) {
-        // Every other file-browser-capable type (FTP, Docker, ...) dispatches
-        // through the session layer: SessionManager already keys sessions by id
-        // and routes file ops via ConnectionType::file_browser(), so this works
-        // for any backend that implements the trait (#1335).
+        // Every file-browser-capable type dispatches through the session layer:
+        // SessionManager keys sessions by id and routes file ops via
+        // ConnectionType::file_browser(), so this works for any backend that
+        // implements the trait (#1335). Since the SFTP convergence (#2421) this
+        // includes SSH — its SFTP-backed session drives the dedicated transfer
+        // channel + VS Code remote open through useSessionFileSystem, retiring the
+        // separate SftpManager/sftp_* browser path (the sftpSessionId model is
+        // removed in #2422).
         setSessionFileBrowserId(activeTab.sessionId);
         setFileBrowserMode("session");
       } else {
@@ -766,58 +759,11 @@ function useFileBrowserSync() {
     navigateSession(sessionFileBrowserId, cwd ?? "~");
   }, [fileBrowserMode, sessionFileBrowserId, navigateSession, cwd]);
 
-  // Auto-connect SFTP for tabs with file browser capability
-  useEffect(() => {
-    // Editor tabs use a dummy local config — skip SFTP auto-connect for them.
-    // The session they need is already stored in editorMeta.sftpSessionId.
-    if (fileBrowserMode !== "sftp" || !activeTab || activeTabContentType === "editor") return;
-
-    const cfg = activeTab.config.config;
-    const host = (cfg.host as string) ?? "";
-    const port = (cfg.port as number) ?? 0;
-    const username = (cfg.username as string) ?? "";
-    const hostKey = `${username}@${host}:${port}`;
-
-    // Already connected to the right host
-    if (sftpSessionId && sftpConnectedHost === hostKey) return;
-
-    const owningTabId = activeTabId ?? undefined;
-
-    // Need to connect (or switch to a different host). We no longer close the
-    // previous session here: each tab owns its own SFTP session, so the store's
-    // connectSftp leaves a still-owned previous session registered (and closes
-    // it only if its owning tab is gone). Sessions are closed on tab close (#1241).
-    const doConnect = async () => {
-      let configToUse = cfg;
-      const authMethod = cfg.authMethod as string | undefined;
-      if (authMethod === "password" && !cfg.password) {
-        // Look for the saved connection to get any config details
-        const savedConn = connections.find((c) => {
-          const sc = c.config.config;
-          return sc.host === host && sc.port === port && sc.username === username;
-        });
-        const baseConfig = savedConn ? savedConn.config.config : cfg;
-
-        const password = await requestPassword(host, username);
-        if (password === null) return;
-        configToUse = { ...baseConfig, password };
-      }
-
-      connectSftp(configToUse, owningTabId);
-    };
-
-    doConnect();
-  }, [
-    fileBrowserMode,
-    activeTabId,
-    activeTab,
-    activeTabContentType,
-    sftpSessionId,
-    sftpConnectedHost,
-    connections,
-    connectSftp,
-    requestPassword,
-  ]);
+  // (Removed in #2421) The SSH-specific SFTP auto-connect effect that opened a
+  // separate SftpManager session when a file-browser-capable tab entered "sftp"
+  // mode. SSH now browses through the session layer (mode "session"), so no tab
+  // enters "sftp" mode and the standalone connect is dead. The legacy sftp store
+  // model itself is retired in #2422.
 
   // Callback to jump the file browser back to the terminal's current CWD.
   const navigateToCwd = useCallback(() => {
@@ -1397,11 +1343,17 @@ export function FileBrowser() {
     );
   }
 
-  // In-flight transfers owned by the SFTP session this browser is showing
-  // (#1247). Only these belong in the footer; other sessions' transfers live in
-  // the Open Connections panel. The list above stays live regardless.
-  const activeTransfers = sftpSessionId
-    ? Object.values(transfers).filter((t) => t.sessionId === sftpSessionId)
+  // In-flight transfers owned by the session this browser is showing (#1247).
+  // Only these belong in the footer; other sessions' transfers live in the Open
+  // Connections panel. The list above stays live regardless. Both transport
+  // shapes register on the `transfers` map keyed by session id: the legacy SFTP
+  // browser by `sftpSessionId`, and — since the convergence (#2421) — an
+  // SFTP-backed session browser (SSH) by its `sessionFileBrowserId`. A byte-based
+  // session backend (Docker / FTP / agent) registers no transfers, so its footer
+  // stays empty as before.
+  const footerSessionId = sftpSessionId ?? sessionFileBrowserId;
+  const activeTransfers = footerSessionId
+    ? Object.values(transfers).filter((t) => t.sessionId === footerSessionId)
     : [];
 
   const handleCancelTransfer = async (transferId: string) => {
