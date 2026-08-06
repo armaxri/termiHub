@@ -14,6 +14,7 @@
  *  - it is disposed on unmount so no decorations or listeners leak.
  */
 
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -195,6 +196,8 @@ function renderTerminal(existingSessionId: string | null = null): void {
     );
   });
 }
+
+setupSettingsRegionMirror();
 
 describe("Terminal — syntax-highlighting engine wiring", () => {
   it("constructs one engine bound to the xterm and leaves it disabled by default", async () => {

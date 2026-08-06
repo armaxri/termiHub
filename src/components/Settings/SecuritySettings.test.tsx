@@ -1,3 +1,4 @@
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -45,6 +46,8 @@ function render(props: { visibleFields?: Set<string> } = {}) {
 function query(testId: string): Element | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
+
+setupSettingsRegionMirror();
 
 describe("SecuritySettings", () => {
   beforeEach(() => {

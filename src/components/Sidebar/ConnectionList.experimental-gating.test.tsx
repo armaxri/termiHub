@@ -7,6 +7,7 @@
  * tree when `experimentalFeaturesEnabled` is off, and shown when it is on.
  * Non-graphical connections are unaffected either way.
  */
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -112,6 +113,7 @@ afterEach(() => {
   container.remove();
 });
 
+setupSettingsRegionMirror();
 setupConnectionsRegionFromAppStore();
 
 describe("ConnectionList — experimental remote-desktop gating", () => {

@@ -1,3 +1,4 @@
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -35,6 +36,8 @@ function btn(testId: string): HTMLButtonElement | null {
  * exposes an `aria-label` (a tooltip is not an accessible name), no longer sets a
  * bare `title=`, and gets `aria-describedby` wired by Radix on focus.
  */
+setupSettingsRegionMirror();
+
 describe("Settings icon controls tooltip adoption", () => {
   beforeEach(() => {
     container = document.createElement("div");

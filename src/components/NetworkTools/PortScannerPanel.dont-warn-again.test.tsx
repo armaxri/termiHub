@@ -8,6 +8,7 @@
  * directly without the warning; cancelling does not persist the opt-out; and
  * re-enabling the setting brings the warning back.
  */
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -108,6 +109,8 @@ async function completeScan() {
   });
   await flush();
 }
+
+setupSettingsRegionMirror();
 
 describe("PortScannerPanel — large-scan don't-warn-again opt-out (#1877)", () => {
   beforeEach(() => {

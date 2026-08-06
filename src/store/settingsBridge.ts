@@ -1,39 +1,33 @@
 /**
- * Settings projection bridge — Phase 5 render cut of the Settings domain (#2227,
- * part of #2153 / #2139).
+ * Settings projection bridge — the Settings domain reads the **authoritative**
+ * `settings` projection region (#2227 hook-authoritative cut, part of #2153 /
+ * #2139).
  *
- * The Settings **shadow** (PR #2260) landed a backend-authoritative
- * [`SettingsStore`](../../src-tauri/src/settings_projection/store.rs) served as the
- * shared `settings` projection region, with `settings.*` intents, but nothing in
- * the UI touched it. This step makes the **Settings screen** source the persisted
- * `AppSettings` document from that region — the parity-safe render cut (the direct
- * analog of the system-monitor render cut
- * {@link import("./systemMonitorBridge")}, #2224, and the agents render cut
- * {@link import("./agentsBridge")}, #2226).
+ * The shared `settings` projection region, backed by the Rust
+ * [`SettingsStore`](../../src-tauri/src/settings_projection/store.rs), is the
+ * source of truth for the persisted `AppSettings` document (theme, fonts,
+ * confirmation prompts, shell integration, editor mappings, …). The backend feeds
+ * it **at the source** (#2386): the region is seeded from the persisted
+ * `AppSettings` document at startup, and every `save_settings` folds the resolved
+ * document into the store — so the region always reflects what was persisted,
+ * without any client round-trip.
+ *
+ * This bridge is the frontend's window onto that region. It:
+ *
+ * - **subscribes** to the region diffs and fans the projected view out to the
+ *   reader hook ({@link import("./useProjectedSettings").useProjectedSettings}),
+ *   caching the latest view for synchronous reads ({@link currentSettingsView});
+ * - **mirrors** client-originated mutations into the region via the `settings.*`
+ *   intents ({@link mirrorSettingsIntent}), keeping the backend store in step with
+ *   an `appStore` edit while the reducer removal (making `appStore` drop its
+ *   authoritative slice) is completed in a later step.
  *
  * # The settings document is opaque
  *
  * `AppSettings` is one large, open-ended JSON document the app loads and saves as a
  * whole. The Rust store models it opaquely (see the shadow's `store.rs`); the
  * region snapshot **is** that document, so the projected view maps one-to-one to
- * the frontend {@link AppSettings} shape and the render cut is a pure parity swap.
- *
- * # Strangler safety — flag-gated, on by default, faithful-mirror gate
- *
- * The `appStore` settings slice is still authoritative (the mutation cut is a later
- * step). To keep the render cut parity-safe **independent of any mutation flag**,
- * the region is kept a faithful copy of `appStore` by {@link seedSettingsRegion} (a
- * `settings.replace` mirror, the analog of the monitor bridge's `monitor.replace`
- * seed), and the UI renders from the region **only when it faithfully mirrors**
- * `appStore` ({@link settingsViewMirrors}); otherwise it falls back to `appStore`
- * verbatim. Because the gate guarantees the projected view deep-equals `appStore`'s
- * slice, the rendered output is byte-identical to the pre-cut path.
- *
- * Gated by {@link settingsRenderFromProjectionEnabled} — **on by default**.
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_SETTINGS_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.settingsRenderFromProjection"]` (set `"false"` to render
- * straight from `appStore`).
+ * the frontend {@link AppSettings} shape and reading from it is a pure read.
  */
 
 import {
@@ -54,60 +48,25 @@ export const SETTINGS_REGION = "settings";
 /**
  * The projected `settings` region view model — the persisted `AppSettings`
  * document itself. The Rust store snapshots the document opaquely, so the region
- * view maps one-to-one to the frontend {@link AppSettings} shape and rendering from
+ * view maps one-to-one to the frontend {@link AppSettings} shape and reading from
  * it is a pure parity swap.
  */
 export type SettingsView = AppSettings;
 
-// ── Render-cut feature flag (runtime-flippable, on by default) ─────────────────
-
-let renderFlagOverride: boolean | null = null;
-
-interface SettingsRenderFlagWindow {
-  __TERMIHUB_SETTINGS_RENDER_FROM_PROJECTION__?: boolean;
-  localStorage?: Storage;
-}
-
 /**
- * Programmatic override for the render-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
+ * The minimal valid `AppSettings` document a consumer sees before the first region
+ * diff arrives (twin of the backend store's seed baseline). The backend seeds the
+ * region from the persisted document at startup (#2386), so this default only
+ * covers the brief window between a hook mounting and the first snapshot — the same
+ * pre-hydration window `appStore`'s initial slice covered before the cut. `version`
+ * and `externalConnectionFiles` are the only required {@link AppSettings} fields.
  */
-export function setSettingsRenderFromProjectionEnabled(value: boolean | null): void {
-  renderFlagOverride = value;
-}
-
-/**
- * Whether the Settings screen renders the persisted `AppSettings` document from the
- * projected `settings` region instead of reading `appStore`'s settings slice
- * directly.
- *
- * **On by default** — the render cut is parity-safe: the UI renders from the region
- * only when it faithfully mirrors `appStore` ({@link settingsViewMirrors}), and
- * otherwise falls back to `appStore` verbatim, so the output is byte-identical to
- * the pre-cut path. Independent of the (later) mutation cut: the region is kept a
- * mirror of `appStore` by {@link seedSettingsRegion}, so it is always populated.
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_SETTINGS_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.settingsRenderFromProjection"]`.
- */
-export function settingsRenderFromProjectionEnabled(): boolean {
-  if (renderFlagOverride !== null) return renderFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as SettingsRenderFlagWindow;
-      if (typeof w.__TERMIHUB_SETTINGS_RENDER_FROM_PROJECTION__ === "boolean") {
-        return w.__TERMIHUB_SETTINGS_RENDER_FROM_PROJECTION__;
-      }
-      const ls = w.localStorage?.getItem("termihub.settingsRenderFromProjection");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
+export const DEFAULT_SETTINGS_VIEW: SettingsView = {
+  version: "1",
+  externalConnectionFiles: [],
+  powerMonitoringEnabled: true,
+  fileBrowserEnabled: true,
+};
 
 // ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
 
@@ -132,26 +91,22 @@ export function setSettingsIntentsEnabled(value: boolean | null): void {
  * `updateShellIntegration`'s targeted field write, and the update-skip
  * refreshes) dispatch `settings.*` intents so the backend
  * {@link import("../../src-tauri/src/settings_projection/store").SettingsStore}
- * becomes authoritative — instead of only the render-cut {@link seedSettingsRegion}
- * `settings.replace` mirror driving the region.
+ * stays in step with an `appStore` edit.
  *
  * **On by default** (#2227 mutation cut). When on, each setter mirrors its
  * transition through a `settings.*` intent (via {@link mirrorSettingsIntent}) — a
  * whole-document `settings.replace` for `updateSettings`, a `settings.patch` for
- * the shell-integration field write — and the render-cut hook
+ * the shell-integration field write — and the reader hook
  * ({@link import("./useProjectedSettings").useProjectedSettings}) reflects the
- * region back into the Settings UI. The local `appStore` reducer path stays in
- * place as the render source and as a resilience / rollback fallback — any dispatch
- * failure is logged and the local mutation continues, so a backend hiccup can never
- * break the Settings screen (the reducer removal is a later step). The persistence
- * side-effect (`saveSettings` / `save_shell_integration_settings`) is untouched:
- * the intent is dispatched alongside it, not in place of it. When off, `appStore`
- * drives the slice purely locally (the pre-cut path). The flip was taken on the
- * automated parity tests plus the instant local fallback, mirroring the connections
- * (#2225) and agents (#2226) mutation cuts. Overridable at runtime for rollback /
- * tests via `window.__TERMIHUB_SETTINGS_INTENTS__` or
- * `localStorage["termihub.settingsIntents"]` (set `"false"` to restore the pre-cut
- * local-mutation path; `"true"` to force on).
+ * region back into the UI. The local `appStore` reducer path stays in place as a
+ * resilience / rollback fallback until the reducer removal — any dispatch failure
+ * is logged and the local mutation continues, so a backend hiccup can never break
+ * the Settings screen. The persistence side-effect (`saveSettings` /
+ * `save_shell_integration_settings`) is untouched: the intent is dispatched
+ * alongside it, not in place of it. When off, `appStore` drives the slice purely
+ * locally (the pre-cut path). Overridable at runtime for rollback / tests via
+ * `window.__TERMIHUB_SETTINGS_INTENTS__` or `localStorage["termihub.settingsIntents"]`
+ * (set `"false"` to restore the pre-cut local-mutation path; `"true"` to force on).
  */
 export function settingsIntentsEnabled(): boolean {
   if (mutationFlagOverride !== null) return mutationFlagOverride;
@@ -189,7 +144,9 @@ export function setSettingsTransportForTest(t: Transport | null): void {
   regionClient = null;
   startPromise = null;
   transportInstance = t;
-  lastView = undefined;
+  lastView = DEFAULT_SETTINGS_VIEW;
+  lastViewSignature = JSON.stringify(DEFAULT_SETTINGS_VIEW);
+  lastAppliedVersion = -1;
   lastSeededSignature = null;
 }
 
@@ -206,9 +163,41 @@ function transport(): Transport {
 export type SettingsViewListener = (view: SettingsView) => void;
 
 const viewListeners = new Set<SettingsViewListener>();
-// `undefined` until the first diff arrives, so the gate falls back to `appStore`
-// before the region has been observed.
-let lastView: SettingsView | undefined = undefined;
+// The last projected document received, defaulting to the seed baseline so a
+// synchronous read before the first diff still returns a valid document.
+let lastView: SettingsView = DEFAULT_SETTINGS_VIEW;
+// A content signature of `lastView`, so an identical-content diff (e.g. a resync
+// re-delivering the same document with a fresh object identity) does not churn the
+// view identity or re-notify subscribers — which would reset a consumer's local
+// draft or trigger needless re-renders.
+let lastViewSignature: string = JSON.stringify(DEFAULT_SETTINGS_VIEW);
+// The monotonic region version of `lastView`. A projected view older than this is
+// stale (e.g. an initial subscribe snapshot delivered late, after a newer diff has
+// already landed) and is ignored, so it can never clobber the current document.
+let lastAppliedVersion = -1;
+
+/**
+ * Commit a projected document (at its region `version`) as the current view and
+ * notify subscribers — but only when it is not stale and its content actually
+ * changed. Ignoring an older version stops a late-delivered snapshot from
+ * overwriting a newer document; preserving identity for unchanged content keeps the
+ * reader hook's value referentially stable across resyncs.
+ */
+function commitSettingsView(view: SettingsView, version: number): void {
+  if (version < lastAppliedVersion) return;
+  lastAppliedVersion = version;
+  const signature = JSON.stringify(view);
+  if (signature === lastViewSignature) return;
+  lastView = view;
+  lastViewSignature = signature;
+  for (const listener of viewListeners) {
+    try {
+      listener(view);
+    } catch (err) {
+      logSettingsBridgeFallback("reconcile", err);
+    }
+  }
+}
 
 /**
  * Register a listener, invoked with the projected view on every diff. Returns an
@@ -223,20 +212,19 @@ export function onSettingsView(listener: SettingsViewListener): () => void {
  * Ensure the shared `settings` region client is subscribed so projected diffs are
  * received and fanned out to the {@link onSettingsView} listeners. Idempotent and
  * de-duplicated across concurrent callers; a transport/subscribe failure is logged
- * and rethrown so the caller can fall back to `appStore`.
+ * and rethrown so the caller can react.
  */
 export function ensureSettingsSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);
   if (!startPromise) {
     const client = new ProjectionClient(transport(), SETTINGS_REGION);
     client.onChange((state) => {
-      lastView = (state.view ?? {}) as SettingsView;
-      for (const listener of viewListeners) {
-        try {
-          listener(lastView);
-        } catch (err) {
-          logSettingsBridgeFallback("reconcile", err);
-        }
+      const view = state.view as Partial<SettingsView> | undefined;
+      // Only accept a real document; an empty/absent view keeps the last known one
+      // so a reader never sees a document missing its required fields. `state.version`
+      // is the region's monotonic version (not the settings doc's `version` field).
+      if (view && typeof view.version === "string") {
+        commitSettingsView(view as SettingsView, state.version);
       }
     });
     startPromise = client
@@ -259,35 +247,54 @@ export function stopSettingsSubscription(): void {
   regionClient?.stop();
   regionClient = null;
   startPromise = null;
-  lastView = undefined;
+  lastView = DEFAULT_SETTINGS_VIEW;
+  lastViewSignature = JSON.stringify(DEFAULT_SETTINGS_VIEW);
+  lastAppliedVersion = -1;
   lastSeededSignature = null;
 }
 
-/** The last view fanned out (for a hook that subscribes after the first diff). */
-export function currentSettingsView(): SettingsView | undefined {
+/**
+ * The last projected view received (for a hook that subscribes after the first
+ * diff, and for synchronous reads). Since the region is authoritative and the
+ * backend feeds every transition at the source (#2386), this is the frontend's
+ * current picture of the persisted settings document; before the first diff it is
+ * the {@link DEFAULT_SETTINGS_VIEW} baseline.
+ */
+export function currentSettingsView(): SettingsView {
   return lastView;
 }
 
-// ── Seed: keep the region a faithful mirror of appStore (settings.replace) ─────
+/**
+ * Test-only: synchronously set the projected view and notify subscribers, without
+ * the async transport subscribe round-trip. The settings region test harness uses
+ * this to mirror an `appStore`-driven test's document into the region immediately,
+ * so a reader that renders (or re-renders on a mutation) sees the document without
+ * an explicit flush — matching the synchronous behaviour the removed `appStore`
+ * fallback used to provide. Never call this from production code.
+ */
+export function __emitSettingsViewForTest(view: SettingsView, version: number): void {
+  commitSettingsView(view, version);
+}
+
+// ── Seed: reliably push appStore's document into the region (settings.replace) ─
 
 let lastSeededSignature: string | null = null;
 
 /**
- * Seed the shared region with `appStore`'s whole settings document via a
- * `settings.replace` intent, so the projection tracks `appStore`'s current state
- * while `appStore` stays authoritative (the render-side counterpart to the monitor
- * bridge's seed). The payload is keyed to the Rust intent shape (`{ settings }`).
- * De-duplicated: a document identical to the last seeded one is not re-dispatched.
- * Never throws synchronously — a transport that cannot dispatch surfaces as a
- * rejected promise the caller logs and ignores (staying on the `appStore`
- * fallback). Idempotent server-side: replacing with the same content yields no
- * diff.
+ * Push `appStore`'s whole settings document into the shared region via a
+ * `settings.replace` intent, keeping the backend store in step with an `appStore`
+ * edit while the reducer removal is completed. **Reliable dispatch**: the returned
+ * promise resolves only once the region has accepted the replace and rejects on a
+ * rejected ack or a transport failure, so a caller can await the mirror rather than
+ * fire-and-forget. The payload is keyed to the Rust intent shape (`{ settings }`).
+ * De-duplicated: a document identical to the last seeded one is not re-dispatched
+ * (a repeated no-op is idempotent server-side anyway). On any failure the dedup
+ * signature is cleared so a later change retries the mirror.
  */
 export function seedSettingsRegion(settings: AppSettings): Promise<void> {
   const signature = JSON.stringify(settings);
   if (signature === lastSeededSignature) return Promise.resolve();
-  // Set before dispatching so concurrent callers (the various Settings panels) do
-  // not double-dispatch the same seed.
+  // Set before dispatching so concurrent callers do not double-dispatch the seed.
   lastSeededSignature = signature;
   try {
     return transport()
@@ -324,10 +331,10 @@ export function seedSettingsRegion(settings: AppSettings): Promise<void> {
  * update-refresh whole-document save), `settings.patch` shallow-merges a partial
  * document (the shell-integration field write), and `settings.reset` restores the
  * default baseline. Unlike the connection/agent cuts — where `*.replace` is the
- * render-cut whole-slice mirror only — the settings document is opaque and edited
- * by whole-document save, so `settings.replace` is itself the authoritative
- * mutation for `updateSettings`; {@link seedSettingsRegion} uses the same kind for
- * the (independent) render-cut mirror.
+ * whole-slice mirror only — the settings document is opaque and edited by
+ * whole-document save, so `settings.replace` is itself the authoritative mutation
+ * for `updateSettings`; {@link seedSettingsRegion} uses the same kind for the
+ * appStore→region mirror.
  */
 export type SettingsIntentKind = "settings.replace" | "settings.patch" | "settings.reset";
 
@@ -340,12 +347,13 @@ export function dispatchSettingsIntent(
 }
 
 /**
- * Fire a `settings.*` intent to keep the backend store authoritative, swallowing
- * and logging any failure so the local `appStore` mutation path is never disrupted
- * by a bridge hiccup (the resilience fallback). A no-op when the mutation cut is
- * disabled ({@link settingsIntentsEnabled} off — the rollback path). Never throws —
- * a synchronous transport-construction failure (non-Tauri, no socket) is caught and
- * logged, leaving the UI on the local slice. The twin of the connections bridge's
+ * Fire a `settings.*` intent to keep the backend store in step with an `appStore`
+ * mutation, swallowing and logging any failure so the local `appStore` mutation
+ * path is never disrupted by a bridge hiccup (the resilience fallback). A no-op
+ * when the mutation cut is disabled ({@link settingsIntentsEnabled} off — the
+ * rollback path). Never throws — a synchronous transport-construction failure
+ * (non-Tauri, no socket) is caught and logged, leaving the UI on the local slice.
+ * The twin of the connections bridge's
  * {@link import("./connectionsBridge").mirrorConnectionIntent} and the agents
  * bridge's {@link import("./agentsBridge").mirrorAgentIntent}.
  */
@@ -365,54 +373,6 @@ export function mirrorSettingsIntent(
   } catch (err) {
     logSettingsBridgeFallback(kind, err);
   }
-}
-
-// ── Faithful-mirror gate ───────────────────────────────────────────────────────
-
-/**
- * Whether a projected `view` faithfully mirrors `appStore`'s settings document —
- * the gate deciding whether the UI may render from the projection (true) or must
- * fall back to `appStore` (false). A deep value comparison of the whole document;
- * because the projected document maps to {@link AppSettings} one-to-one, a
- * mirroring view is value-identical to the `appStore` slice, so rendering from it
- * can never diverge.
- *
- * The twin of the monitor render cut's `monitorsViewMirrors` and the agents render
- * cut's `agentsViewMirrors`.
- */
-export function settingsViewMirrors(
-  view: SettingsView | undefined,
-  settings: AppSettings
-): boolean {
-  if (!view) return false;
-  return deepEqual(view, settings);
-}
-
-/**
- * A structural deep-equal for the JSON-ish settings view model (objects, arrays,
- * and primitives — no functions/dates/maps). Numbers compare with `===`, so an
- * integer that round-tripped through JSON as a float (`14` vs `14.0`) still
- * matches. Exported for the bridge's parity tests.
- */
-export function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== typeof b) return false;
-  if (a === null || b === null) return a === b;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => deepEqual(v, b[i]));
-  }
-  if (typeof a === "object" && typeof b === "object") {
-    const ao = a as Record<string, unknown>;
-    const bo = b as Record<string, unknown>;
-    const aKeys = Object.keys(ao);
-    const bKeys = Object.keys(bo);
-    if (aKeys.length !== bKeys.length) return false;
-    return aKeys.every(
-      (k) => Object.prototype.hasOwnProperty.call(bo, k) && deepEqual(ao[k], bo[k])
-    );
-  }
-  return false;
 }
 
 /** Log a bridge fallback so the appStore-path recovery is visible in the LogViewer. */

@@ -9,6 +9,7 @@
  * stays hidden until the feature is globally enabled or already effectively on
  * for the session.
  */
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -50,6 +51,8 @@ function setPerConnection(tabId: string, options: TerminalOptions) {
     tabTerminalOptions: { ...useAppStore.getState().tabTerminalOptions, [tabId]: options },
   });
 }
+
+setupSettingsRegionMirror();
 
 describe("StatusBar — syntax-highlighting indicator", () => {
   let container: HTMLDivElement;

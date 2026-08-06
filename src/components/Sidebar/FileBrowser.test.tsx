@@ -1,3 +1,4 @@
+import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -66,6 +67,8 @@ function setActiveTab(tab: TerminalTab) {
     rootPanel: panel,
   });
 }
+
+setupSettingsRegionMirror();
 
 describe("FileBrowser – useFileBrowserSync", () => {
   beforeEach(() => {

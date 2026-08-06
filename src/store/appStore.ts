@@ -5176,13 +5176,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Mutation cut (#2227): the shell-integration write is a targeted field
       // patch, so mirror it as a settings.patch (shallow-merge) rather than a
       // whole-document replace — keeping a concurrent general-settings edit intact.
-      mirrorSettingsIntent("settings.patch", { shellIntegration: nextSi });
+      // The backend `settings.patch` route reads the partial from a `{ patch }`
+      // envelope (see settings_projection/projection.rs), so wrap the field there.
+      mirrorSettingsIntent("settings.patch", { patch: { shellIntegration: nextSi } });
       try {
         return await saveShellIntegrationSettings(nextSi);
       } catch (err) {
         const rolledBack = { ...get().settings, shellIntegration: prevSi };
         set({ settings: rolledBack, savedSettings: rolledBack });
-        mirrorSettingsIntent("settings.patch", { shellIntegration: prevSi });
+        mirrorSettingsIntent("settings.patch", { patch: { shellIntegration: prevSi } });
         throw err;
       }
     },

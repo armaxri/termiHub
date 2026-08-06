@@ -1,98 +1,29 @@
 /**
- * `useExperimentalFeatures` render-cut parity (#2269). Proves a settings-driven
- * behavior reader sources its value from the projected `settings` region: with the
- * render flag on and the region a faithful mirror of `appStore`, the hook returns
- * the projected `experimentalFeaturesEnabled`; when the region cannot catch up it
- * falls back to `appStore` verbatim, so the value is identical to the pre-cut path.
+ * `useExperimentalFeatures` region-authoritative read (#2227). Proves a
+ * settings-driven behavior reader sources its value from the authoritative
+ * `settings` projection region: seeded with `experimentalFeaturesEnabled`, the hook
+ * returns the projected value; unset projects to the pre-cut default of `false`.
  *
- * Representative of the behavior-reader subset cut in #2269 — every reader now
- * routes through the same `useProjectedSettings()` hook, so the mirror + fallback
- * behavior proven here holds for all of them.
+ * Representative of the behavior-reader subset (#2269) — every reader routes
+ * through the same `useProjectedSettings()` hook, so the region-sourced behavior
+ * proven here holds for all of them.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import type {
-  FrameHandler,
-  Intent,
-  IntentAck,
-  ProjectionFrame,
-  SnapshotFrame,
-  Subscription,
-  Transport,
-} from "@/services/transport";
 import { useAppStore } from "@/store/appStore";
-import type { AppSettings } from "@/types/connection";
 import {
-  SETTINGS_REGION,
-  setSettingsRenderFromProjectionEnabled,
-  setSettingsTransportForTest,
-  stopSettingsSubscription,
-} from "@/store/settingsBridge";
+  FakeSettingsTransport,
+  installSettingsHarness,
+  settingsDoc,
+} from "@/test/settingsRegionTestHarness";
 
 import { useExperimentalFeatures } from "./useExperimentalFeatures";
 
-function settings(overrides: Partial<AppSettings> = {}): AppSettings {
-  return {
-    version: "1",
-    externalConnectionFiles: [],
-    powerMonitoringEnabled: true,
-    fileBrowserEnabled: true,
-    ...overrides,
-  };
-}
-
-/** In-memory substrate double: applies `settings.replace` and fans a snapshot. */
-class FakeTransport implements Transport {
-  dispatched: Intent[] = [];
-  applyReplace = true;
-  private view: Record<string, unknown> = { version: "1", externalConnectionFiles: [] };
-  private version = 0;
-  private handlers: FrameHandler[] = [];
-
-  async dispatch(intent: Intent): Promise<IntentAck> {
-    this.dispatched.push(intent);
-    if (intent.kind === "settings.replace" && this.applyReplace) {
-      const p = intent.payload as Record<string, unknown>;
-      this.view = (p.settings ?? {}) as Record<string, unknown>;
-      this.version += 1;
-      this.fan();
-    }
-    return {
-      intentId: intent.intentId,
-      status: "accepted",
-      produced: [{ region: SETTINGS_REGION, version: this.version }],
-    };
-  }
-
-  async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
-    this.handlers.push(onFrame);
-    return {
-      snapshot: this.snapshot(region),
-      unsubscribe: () => {
-        this.handlers = this.handlers.filter((h) => h !== onFrame);
-      },
-    };
-  }
-
-  async resync(): Promise<SnapshotFrame | null> {
-    return null;
-  }
-
-  private snapshot(region: string): SnapshotFrame {
-    return { kind: "snapshot", region, version: this.version, view: structuredClone(this.view) };
-  }
-
-  private fan(): void {
-    const frame: ProjectionFrame = this.snapshot(SETTINGS_REGION);
-    for (const h of this.handlers) h(frame);
-  }
-}
-
 let container: HTMLDivElement;
 let root: Root;
-let transport: FakeTransport;
+let harness: { transport: FakeSettingsTransport; teardown: () => void };
 
 const flush = () => act(async () => await Promise.resolve());
 
@@ -117,46 +48,28 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   useAppStore.setState(useAppStore.getInitialState());
-  transport = new FakeTransport();
-  setSettingsTransportForTest(transport);
 });
 
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  stopSettingsSubscription();
-  setSettingsTransportForTest(null);
-  setSettingsRenderFromProjectionEnabled(null);
+  harness?.teardown();
   vi.clearAllMocks();
 });
 
-describe("useExperimentalFeatures render cut (#2269)", () => {
+describe("useExperimentalFeatures region read (#2227)", () => {
   it("returns the value sourced from the projected region", async () => {
-    useAppStore.setState({ settings: settings({ experimentalFeaturesEnabled: true }) });
+    harness = installSettingsHarness(settingsDoc({ experimentalFeaturesEnabled: true }));
 
     render();
     await flush();
     await flush();
 
-    // The hook seeded the region and now reads the projected value.
-    expect(transport.dispatched.some((d) => d.kind === "settings.replace")).toBe(true);
-    expect(value()).toBe("true");
-  });
-
-  it("falls back to the appStore value when the region cannot catch up", async () => {
-    transport.applyReplace = false; // acks but never advances the region
-    useAppStore.setState({ settings: settings({ experimentalFeaturesEnabled: true }) });
-
-    render();
-    await flush();
-    await flush();
-
-    // Gate rejects the stale projection → appStore verbatim, parity preserved.
     expect(value()).toBe("true");
   });
 
   it("defaults to false when the setting is unset (parity with the pre-cut read)", async () => {
-    useAppStore.setState({ settings: settings() });
+    harness = installSettingsHarness(settingsDoc());
 
     render();
     await flush();
