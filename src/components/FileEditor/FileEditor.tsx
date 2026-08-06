@@ -121,11 +121,7 @@ async function sessionWriteFileContent(
 interface RemoteAdvancedOps {
   checkWritable: (path: string) => Promise<Writability>;
   realpath: (path: string) => Promise<string>;
-  writeElevated: (
-    path: string,
-    content: string,
-    password: string
-  ) => Promise<ElevatedWriteResult>;
+  writeElevated: (path: string, content: string, password: string) => Promise<ElevatedWriteResult>;
   writeContent: (path: string, content: string) => Promise<void>;
   download: (remotePath: string, localPath: string) => Promise<number>;
 }
