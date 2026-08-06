@@ -1,9 +1,9 @@
 /**
- * Connections bridge — the connection tree sidebar is region-authoritative (#2225,
- * PR A). These tests drive the bridge against the in-memory {@link FakeTransport}
+ * Connections bridge — the connections domain is region-authoritative (#2225, PR
+ * B). These tests drive the bridge against the in-memory {@link FakeTransport}
  * store double and assert: it subscribes and fans the projected view out to
  * listeners, caches the latest view for synchronous reads, and dispatches the
- * granular `connection.*` mutation-cut intents (gated by the intents flag).
+ * granular `connection.*` intents (the tree lifecycle actions' optimistic write).
  * Best-effort dispatch never throws, even on a rejected ack.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,12 +21,10 @@ import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 
 import {
   CONNECTIONS_REGION,
-  connectionIntentsEnabled,
   currentConnectionsView,
   ensureConnectionsSubscribed,
   mirrorConnectionIntent,
   onConnectionsView,
-  setConnectionIntentsEnabled,
   setConnectionTransportForTest,
   stopConnectionsSubscription,
   type ConnectionsView,
@@ -105,7 +103,6 @@ beforeEach(() => {
 afterEach(() => {
   stopConnectionsSubscription();
   setConnectionTransportForTest(null);
-  setConnectionIntentsEnabled(null);
 });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -141,20 +138,8 @@ describe("subscription + fan-out", () => {
   });
 });
 
-describe("connectionIntentsEnabled flag", () => {
-  it("defaults on and honours the programmatic override", () => {
-    expect(connectionIntentsEnabled()).toBe(true);
-    setConnectionIntentsEnabled(false);
-    expect(connectionIntentsEnabled()).toBe(false);
-    setConnectionIntentsEnabled(true);
-    expect(connectionIntentsEnabled()).toBe(true);
-    setConnectionIntentsEnabled(null);
-    expect(connectionIntentsEnabled()).toBe(true);
-  });
-});
-
-describe("mirrorConnectionIntent (mutation cut)", () => {
-  it("dispatches the granular intent when enabled", async () => {
+describe("mirrorConnectionIntent (optimistic dispatch)", () => {
+  it("dispatches the granular intent", async () => {
     mirrorConnectionIntent("connection.add", { connection: connection("A/1", "A") });
     await flush();
     expect(transport.dispatched).toHaveLength(1);
@@ -162,13 +147,6 @@ describe("mirrorConnectionIntent (mutation cut)", () => {
       kind: "connection.add",
       payload: { connection: { id: "A/1" } },
     });
-  });
-
-  it("is a no-op when the mutation cut is disabled", async () => {
-    setConnectionIntentsEnabled(false);
-    mirrorConnectionIntent("connection.remove", { connectionId: "A/1" });
-    await flush();
-    expect(transport.dispatched).toHaveLength(0);
   });
 
   it("never throws even when the ack is rejected", async () => {

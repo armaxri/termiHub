@@ -51,8 +51,11 @@ vi.mock("@/services/lastSessionApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { saveLastSession, loadLastSession } from "@/services/lastSessionApi";
 import type { LastSession } from "@/types/lastSession";
+
+setupConnectionsRegion();
 
 const mockSave = vi.mocked(saveLastSession);
 const mockLoad = vi.mocked(loadLastSession);
@@ -62,13 +65,13 @@ describe("appStore — auto-save mid-restore guard (GAP G5, #1146)", () => {
     vi.clearAllMocks();
     mockLoad.mockResolvedValue(null);
     useAppStore.setState({
-      connections: [],
       remoteAgents: [],
       agentDefinitions: {},
       defaultShell: "bash",
       restoreInProgress: false,
       settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: true },
     });
+    seedConnectionsRegion({ connections: [] });
     // Open a fresh local terminal so there is real content to capture.
     useAppStore.getState().addTab("Shell", "local", { type: "local", config: { shell: "bash" } });
   });

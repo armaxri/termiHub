@@ -4,6 +4,7 @@ import { Button, Checkbox, Modal, Select } from "@/components/ui";
 import { toast } from "@/components/ui";
 import type { InventoryHost, SavedConnection } from "@/types/connection";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import {
   importFolderOptions,
   resolveImportFolderId,
@@ -47,8 +48,7 @@ export function FleetOnboardDialog({
   rows,
   sourceLabel,
 }: FleetOnboardDialogProps) {
-  const connections = useAppStore((s) => s.connections);
-  const folders = useAppStore((s) => s.folders);
+  const { connections, folders } = useProjectedConnections();
   const bulkAddConnections = useAppStore((s) => s.bulkAddConnections);
 
   const [templateId, setTemplateId] = useState<string>("");

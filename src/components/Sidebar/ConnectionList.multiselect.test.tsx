@@ -9,7 +9,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
 import type { RemoteAgentDefinition } from "@/types/connection";
@@ -72,7 +72,7 @@ const baseSettings = {
   experimentalFeaturesEnabled: false,
 };
 
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — multi-select", () => {
   let container: HTMLDivElement;
@@ -92,7 +92,7 @@ describe("ConnectionList — multi-select", () => {
   });
 
   it("plain click selects a single connection", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
@@ -116,7 +116,7 @@ describe("ConnectionList — multi-select", () => {
   });
 
   it("plain click on a different connection moves selection", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
@@ -144,7 +144,7 @@ describe("ConnectionList — multi-select", () => {
   });
 
   it("Ctrl+Click adds a second connection to the selection", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
@@ -172,7 +172,7 @@ describe("ConnectionList — multi-select", () => {
   });
 
   it("Ctrl+Click on an already-selected connection deselects it", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
@@ -204,7 +204,7 @@ describe("ConnectionList — multi-select", () => {
   });
 
   it("Meta+Click (macOS) also toggles selection", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
@@ -232,7 +232,7 @@ describe("ConnectionList — multi-select", () => {
   });
 
   it("Shift+Click selects a range of connections in order", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [
         makeConnection({ id: "conn-1" }),
         makeConnection({ id: "conn-2" }),
@@ -266,7 +266,7 @@ describe("ConnectionList — multi-select", () => {
   });
 
   it("Shift+Click range works in reverse direction", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [
         makeConnection({ id: "conn-1" }),
         makeConnection({ id: "conn-2" }),
@@ -300,7 +300,7 @@ describe("ConnectionList — multi-select", () => {
   });
 
   it("Escape key clears the selection", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
 
@@ -333,7 +333,7 @@ describe("ConnectionList — multi-select", () => {
   });
 
   it("clicking on empty space in the tree clears selection", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" })],
     });
 
@@ -364,7 +364,7 @@ describe("ConnectionList — multi-select", () => {
 
   it("connections inside expanded folders are included in Shift+Click range", () => {
     const folder = makeFolder({ id: "folder-1", isExpanded: true });
-    useAppStore.setState({
+    seedConnectionsRegion({
       folders: [folder],
       connections: [
         makeConnection({ id: "conn-1", folderId: "folder-1" }),

@@ -47,9 +47,12 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
-import { useAppStore, _resetConnectionReloadSeq } from "./appStore";
+import { useAppStore } from "./appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { persistConnection, removeConnection } from "@/services/storage";
 import type { SavedConnection } from "@/types/connection";
+
+setupConnectionsRegion();
 
 function makeConnection(overrides: Partial<SavedConnection> = {}): SavedConnection {
   return {
@@ -71,7 +74,6 @@ async function flush() {
 describe("appStore — CRUD feedback wiring", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
-    _resetConnectionReloadSeq();
     vi.clearAllMocks();
     vi.mocked(persistConnection).mockResolvedValue("persisted-id");
     vi.mocked(removeConnection).mockResolvedValue(undefined);
@@ -94,7 +96,7 @@ describe("appStore — CRUD feedback wiring", () => {
 
   it("deleteConnection emits a success toast on backend confirm", async () => {
     const conn = makeConnection({ name: "old-box" });
-    useAppStore.setState({ connections: [conn] });
+    seedConnectionsRegion({ connections: [conn] });
     useAppStore.getState().deleteConnection(conn.id);
     await flush();
     expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("old-box"));
@@ -103,7 +105,7 @@ describe("appStore — CRUD feedback wiring", () => {
   it("deleteConnection emits an error toast when the backend rejects", async () => {
     vi.mocked(removeConnection).mockRejectedValueOnce(new Error("locked"));
     const conn = makeConnection({ name: "old-box" });
-    useAppStore.setState({ connections: [conn] });
+    seedConnectionsRegion({ connections: [conn] });
     useAppStore.getState().deleteConnection(conn.id);
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("old-box"));

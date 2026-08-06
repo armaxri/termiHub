@@ -15,6 +15,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { isWindows } from "@/utils/platform";
 import type { ConnectionTypeInfo, SavedConnection } from "@/types/connection";
@@ -154,6 +155,8 @@ function click(testId: string) {
   act(() => (el as HTMLButtonElement).click());
 }
 
+setupConnectionsRegion();
+
 describe("ConnectionEditor — guided Git Bash setup (#1692)", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -208,9 +211,9 @@ describe("ConnectionEditor — guided Git Bash setup (#1692)", () => {
     };
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [sshConn],
       connectionTypes: [SSH_TYPE, LOCAL_NO_UNIX],
     });
+    seedConnectionsRegion({ connections: [sshConn] });
     act(() => {
       root.render(
         <ConnectionEditor

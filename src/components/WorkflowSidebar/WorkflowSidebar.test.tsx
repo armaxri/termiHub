@@ -48,6 +48,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
 });
 
 import { useAppStore } from "@/store/appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -93,16 +94,18 @@ const sampleWorkflows: Workflow[] = [
   },
 ];
 
+setupConnectionsRegion();
+
 describe("WorkflowSidebar", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     vi.clearAllMocks();
+    seedConnectionsRegion({ connections: [] });
     useAppStore.setState({
       workflows: [],
       macros: [],
-      connections: [],
       workflowRun: null,
       saveWorkflowToBackend: vi.fn().mockResolvedValue(undefined),
       deleteWorkflowFromBackend: vi.fn().mockResolvedValue(undefined),

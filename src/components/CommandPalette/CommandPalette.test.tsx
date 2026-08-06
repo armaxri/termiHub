@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { getAllLeaves } from "@/utils/panelTree";
 import { CommandPalette } from "./CommandPalette";
 import type { SavedConnection } from "@/types/connection";
@@ -68,6 +69,8 @@ function activeLabel(): string | null {
   );
 }
 
+setupConnectionsRegion();
+
 beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -76,6 +79,8 @@ beforeEach(() => {
   useAppStore.setState({
     ...useAppStore.getInitialState(),
     commandPaletteOpen: true,
+  });
+  seedConnectionsRegion({
     connections: [
       sshConn("c1", "Production Server", "prod.example.com"),
       sshConn("c2", "Staging Box", "staging.example.com"),

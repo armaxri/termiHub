@@ -29,6 +29,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
 });
 
 import { useAppStore } from "@/store/appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -77,15 +78,17 @@ const pinHistoryEntry = vi.fn().mockResolvedValue(undefined);
 const removeHistoryEntry = vi.fn().mockResolvedValue(undefined);
 const clearSessionHistory = vi.fn().mockResolvedValue(undefined);
 
+setupConnectionsRegion();
+
 describe("RecentSessionsSidebar", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     vi.clearAllMocks();
+    seedConnectionsRegion({ folders: [] });
     useAppStore.setState({
       sessionHistory: [],
-      folders: [],
       connectionTypes: [],
       settings: { defaultUser: "root" } as AppSettings,
       addTab,

@@ -12,7 +12,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 
@@ -55,11 +55,11 @@ function render(connections: SavedConnection[]) {
   updateConnection = vi.fn<AppState["updateConnection"]>();
   useAppStore.setState({
     ...useAppStore.getInitialState(),
-    connections,
     addTab,
     updateConnection,
     credentialStoreStatus: { mode: "master_password", status: "unlocked" },
   });
+  seedConnectionsRegion({ connections });
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
@@ -107,7 +107,7 @@ afterEach(() => {
   container.remove();
 });
 
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — insecure-FTP warning modal", () => {
   it("shows the modal before connecting for plain FTP", async () => {

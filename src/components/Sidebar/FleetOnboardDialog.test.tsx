@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vite
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { FleetOnboardDialog } from "./FleetOnboardDialog";
 import { TooltipProvider } from "@/components/ui";
 import type { InventoryHost, SavedConnection } from "@/types/connection";
@@ -23,6 +24,8 @@ function sshConnection(id: string, settings: Record<string, unknown> = {}): Save
 }
 
 const q = (testId: string) => document.querySelector(`[data-testid="${testId}"]`) as HTMLElement;
+
+setupConnectionsRegion();
 
 describe("FleetOnboardDialog", () => {
   let container: HTMLDivElement;
@@ -44,7 +47,7 @@ describe("FleetOnboardDialog", () => {
   });
 
   function renderWith(connections: SavedConnection[], rows: InventoryHost[]) {
-    useAppStore.setState({ connections, folders: [] });
+    seedConnectionsRegion({ connections, folders: [] });
     act(() =>
       root.render(
         React.createElement(TooltipProvider, {

@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { flushMacrotask as flushPromises } from "@/test/flushAsync";
 
 // Mock service modules before importing the store
 vi.mock("@/services/storage", () => ({
@@ -34,20 +33,21 @@ vi.mock("@/services/api", () => ({
   sessionGetCapabilities: vi.fn(() => Promise.resolve({ monitoring: false, fileBrowser: true })),
 }));
 
-import { useAppStore, _resetConnectionReloadSeq } from "./appStore";
+import { useAppStore } from "./appStore";
+import { currentConnectionsView } from "@/store/connectionsBridge";
+import { setupConnectionsRegion } from "@/test/connectionsHarness";
 import { setLayoutIntentsEnabled } from "./layoutBridge";
 import type { LeafPanel } from "@/types/terminal";
 import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import * as api from "@/services/api";
-import * as storage from "@/services/storage";
 import type { AgentDefinitionInfo } from "@/services/api";
+
+setupConnectionsRegion();
 
 describe("appStore", () => {
   beforeEach(() => {
     // Reset store state by getting a fresh initial state
     useAppStore.setState(useAppStore.getInitialState());
-    // Reset the reload sequencer so sequence numbers don't bleed between tests
-    _resetConnectionReloadSeq();
     // These specs assert panel-tree reducer results synchronously. The mutation
     // cut (#2184) makes split/move async intent round-trips by default; here we
     // exercise the retained local reducer (the resilience fallback) directly.
@@ -257,11 +257,11 @@ describe("appStore", () => {
         folderId: null,
       });
 
-      expect(useAppStore.getState().connections).toHaveLength(1);
-      expect(useAppStore.getState().connections[0].name).toBe("Test Connection");
+      expect(currentConnectionsView().connections).toHaveLength(1);
+      expect(currentConnectionsView().connections[0].name).toBe("Test Connection");
 
       useAppStore.getState().deleteConnection("conn-1");
-      expect(useAppStore.getState().connections).toHaveLength(0);
+      expect(currentConnectionsView().connections).toHaveLength(0);
     });
   });
 
@@ -642,87 +642,6 @@ describe("appStore", () => {
         (l) => l.tabs
       ).length;
       expect(tabsAfter).toBe(tabsBefore + 1);
-    });
-  });
-
-  // Cross-instance connection propagation: when connections.json changes in
-  // another running instance the backend emits "connections-changed", which
-  // triggers reloadConnectionsFromBackend().  These tests verify the reload
-  // mechanism correctly replaces the in-store list with whatever the backend
-  // returns, and that the sequence guard prevents a stale in-flight reload from
-  // overwriting a fresher one that has already been applied.
-  describe("reloadConnectionsFromBackend", () => {
-    const makeConn = (id: string, name: string) => ({
-      id,
-      name,
-      config: { type: "local", config: { shell: "bash" } },
-      folderId: null,
-      sourceFile: null,
-    });
-
-    it("replaces store connections with the fresh list returned by the backend", async () => {
-      // Seed stale in-store state that includes a connection deleted in another instance.
-      useAppStore.setState({ connections: [makeConn("conn-deleted", "Deleted Connection")] });
-
-      // Backend returns a list without the deleted connection.
-      vi.mocked(storage.loadConnections).mockResolvedValueOnce({
-        connections: [makeConn("conn-kept", "Kept Connection")],
-        folders: [],
-        agents: [],
-        externalErrors: [],
-      });
-
-      useAppStore.getState().reloadConnectionsFromBackend();
-      await flushPromises();
-
-      const { connections } = useAppStore.getState();
-      const names = connections.map((c) => c.name);
-      expect(names).not.toContain("Deleted Connection");
-      expect(names).toContain("Kept Connection");
-    });
-
-    it("sequence guard drops a stale in-flight reload when a newer one already applied", async () => {
-      let resolveStale!: (v: Awaited<ReturnType<typeof storage.loadConnections>>) => void;
-      let resolveFresh!: (v: Awaited<ReturnType<typeof storage.loadConnections>>) => void;
-
-      // seq 1: stale data (the old list with the deleted connection)
-      vi.mocked(storage.loadConnections).mockReturnValueOnce(
-        new Promise((r) => {
-          resolveStale = r;
-        })
-      );
-      // seq 2: fresh data (deleted connection removed)
-      vi.mocked(storage.loadConnections).mockReturnValueOnce(
-        new Promise((r) => {
-          resolveFresh = r;
-        })
-      );
-
-      useAppStore.getState().reloadConnectionsFromBackend(); // seq 1
-      useAppStore.getState().reloadConnectionsFromBackend(); // seq 2
-
-      // Resolve seq 2 FIRST — its result must be applied.
-      resolveFresh({
-        connections: [makeConn("conn-fresh", "Fresh Connection")],
-        folders: [],
-        agents: [],
-        externalErrors: [],
-      });
-      await flushPromises();
-
-      // Resolve seq 1 SECOND — its stale result must be dropped.
-      resolveStale({
-        connections: [makeConn("conn-stale", "Stale Connection")],
-        folders: [],
-        agents: [],
-        externalErrors: [],
-      });
-      await flushPromises();
-
-      const { connections } = useAppStore.getState();
-      const names = connections.map((c) => c.name);
-      expect(names).toContain("Fresh Connection");
-      expect(names).not.toContain("Stale Connection");
     });
   });
 });

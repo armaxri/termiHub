@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { Button, toast } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -14,7 +15,7 @@ const ACTIVE_STATUSES: readonly TunnelStatus[] = ["connecting", "connected", "re
 export function TunnelSidebar() {
   const tunnels = useAppStore((s) => s.tunnels);
   const tunnelStates = useAppStore((s) => s.tunnelStates);
-  const connections = useAppStore((s) => s.connections);
+  const { connections } = useProjectedConnections();
   const startTunnel = useAppStore((s) => s.startTunnel);
   const stopTunnel = useAppStore((s) => s.stopTunnel);
   const reconnectTunnel = useAppStore((s) => s.reconnectTunnel);

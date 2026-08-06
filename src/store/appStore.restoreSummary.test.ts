@@ -57,7 +57,10 @@ vi.mock("@/services/lastSessionApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { loadLastSession } from "@/services/lastSessionApi";
+
+setupConnectionsRegion();
 import { getAllLeaves } from "@/utils/panelTree";
 import type { LastSession } from "@/types/lastSession";
 
@@ -95,13 +98,13 @@ describe("partial-restore summary", () => {
     vi.clearAllMocks();
     mockLoad.mockResolvedValue(null);
     useAppStore.setState({
-      connections: [],
       remoteAgents: [],
       agentDefinitions: {},
       defaultShell: "bash",
       restoreCohort: null,
       settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: true },
     });
+    seedConnectionsRegion({ connections: [] });
   });
 
   it("raises one info summary reflecting M/K when some restored tabs fail", async () => {
@@ -170,10 +173,10 @@ describe("partial-restore summary", () => {
   it("does not summarize session-id changes that are outside a restore cohort", () => {
     // A plain manual tab, no restore cohort registered.
     useAppStore.setState({
-      connections: [],
       remoteAgents: [],
       agentDefinitions: {},
     });
+    seedConnectionsRegion({ connections: [] });
     useAppStore.getState().addTab("Shell", "local", { type: "local", config: { shell: "bash" } });
     const id = restoredTabIds()[0];
 

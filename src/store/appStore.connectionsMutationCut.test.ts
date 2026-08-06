@@ -1,17 +1,17 @@
 /**
- * Connections mutation cut (#2225, part of #2139 and #2153) — cut-vs-local parity.
+ * Connections lifecycle — region-authoritative (#2225 PR B, part of #2139 and
+ * #2153).
  *
- * The mutation cut routes each connection-tree lifecycle action through a granular
- * `connection.*` intent so the backend `ConnectionsStore` becomes authoritative,
- * while the local `appStore` reducer path stays in place as the render source and
- * the resilience / rollback fallback (the reducer removal is a later step).
+ * The connection-tree lifecycle actions are thin backend-command wrappers: each
+ * dispatches its granular `connection.*` intent (the optimistic write) and calls a
+ * persist command whose server-side fold reconciles the truth. `appStore` holds no
+ * `connections` / `folders` slice.
  *
- * These tests prove the cut is parity-safe end to end: with the flag **on**, the
- * intents dispatched by the actions — applied by a faithful in-memory port of the
- * Rust store (mirroring `connections_projection/store.rs`) — reproduce the exact
- * `appStore` connections slice (`folders` + `connections`) for every action and
- * its fan-out. With the flag **off**, no intents are dispatched and the local
- * slice is byte-identical — the instant rollback path the flip relies on.
+ * These tests drive the real `appStore` actions against a faithful in-memory port
+ * of the Rust `ConnectionsStore` (mirroring `connections_projection/store.rs`) and
+ * assert that every action dispatches the right intent and that the reconstructed
+ * region view — which the bridge caches and every reader sources via
+ * {@link currentConnectionsView} — reflects the transition exactly.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -52,7 +52,12 @@ vi.mock("@/services/api", () => ({
 
 import { useAppStore } from "./appStore";
 import { moveConnectionToFile as apiMoveConnectionToFile } from "@/services/storage";
-import { setConnectionIntentsEnabled, setConnectionTransportForTest } from "./connectionsBridge";
+import {
+  currentConnectionsView,
+  ensureConnectionsSubscribed,
+  setConnectionTransportForTest,
+  stopConnectionsSubscription,
+} from "./connectionsBridge";
 import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 import type {
   FrameHandler,
@@ -201,28 +206,33 @@ class ConnectionsStoreTransport implements Transport {
 
 let transport: ConnectionsStoreTransport;
 
-/** Assert the region the intents reconstruct equals the local appStore slice. */
+/**
+ * Assert the region the intents reconstruct equals the bridge's cached view — the
+ * single source every reader now renders from ({@link currentConnectionsView}).
+ */
 function expectParity() {
-  const state = useAppStore.getState();
   const region = transport.regionView();
-  expect(region.folders).toEqual(state.folders);
-  expect(region.connections).toEqual(state.connections);
+  const view = currentConnectionsView();
+  expect(region.folders).toEqual(view.folders);
+  expect(region.connections).toEqual(view.connections);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   useAppStore.setState(useAppStore.getInitialState());
   vi.clearAllMocks();
   transport = new ConnectionsStoreTransport();
   setConnectionTransportForTest(transport);
-  setConnectionIntentsEnabled(true);
+  // Subscribe the bridge to the store double so its dispatched-intent fan-outs
+  // update the cached view every reader (and this test's parity check) reads.
+  await ensureConnectionsSubscribed();
 });
 
 afterEach(() => {
+  stopConnectionsSubscription();
   setConnectionTransportForTest(null);
-  setConnectionIntentsEnabled(null);
 });
 
-describe("connections mutation cut — cut-vs-local parity (flag on)", () => {
+describe("connections lifecycle — region reflects every action", () => {
   it("addConnection reproduces the fresh connection entry", () => {
     useAppStore.getState().addConnection(makeConnection("a"));
 
@@ -335,10 +345,9 @@ describe("connections mutation cut — cut-vs-local parity (flag on)", () => {
   });
 
   it("moveConnectionToFile replaces the connection by id (external-file move)", async () => {
-    // Seed the slice + region directly so the async action's await is not raced by
-    // an addConnection reload flushing mid-flight.
+    // Seed the region directly (standing in for the server-side fold) so the async
+    // action reads the existing entry from the cached view.
     const conn = makeConnection("a");
-    useAppStore.setState({ connections: [conn], folders: [] });
     transport.dispatch({
       intentId: "seed",
       kind: "connection.add",
@@ -389,24 +398,5 @@ describe("connections mutation cut — cut-vs-local parity (flag on)", () => {
     useAppStore.getState().deleteFolder("work");
     expectParity();
     expect(transport.regionView()).toEqual({ folders: [], connections: [] });
-  });
-});
-
-describe("connections mutation cut — flag off (rollback path)", () => {
-  beforeEach(() => setConnectionIntentsEnabled(false));
-
-  it("dispatches no intents and drives the slice locally", () => {
-    useAppStore.getState().addFolder(makeFolder("work"));
-    useAppStore.getState().addConnection(makeConnection("a"));
-    useAppStore.getState().moveConnectionToFolder("a", "work");
-    useAppStore.getState().toggleFolder("work");
-    useAppStore.getState().deleteConnection("a");
-    useAppStore.getState().deleteFolder("work");
-
-    // No mirror reached the region — the pre-cut local path is intact.
-    expect(transport.dispatched).toHaveLength(0);
-    // The local slice still behaves exactly as before the cut.
-    expect(useAppStore.getState().connections).toEqual([]);
-    expect(useAppStore.getState().folders).toEqual([]);
   });
 });

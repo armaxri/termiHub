@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
+import { currentConnectionsView } from "@/store/connectionsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import {
   ConnectionConfig,
@@ -193,8 +195,7 @@ interface ConnectionEditorProps {
 }
 
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
-  const connections = useAppStore((s) => s.connections);
-  const folders = useAppStore((s) => s.folders);
+  const { connections, folders } = useProjectedConnections();
   const connectionTypes = useAppStore((s) => s.connectionTypes);
   const refreshConnectionTypes = useAppStore((s) => s.refreshConnectionTypes);
   const addConnection = useAppStore((s) => s.addConnection);
@@ -1015,11 +1016,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           // has been reconciled by now (#863), and the editor enforces unique names
           // per folder, so name + folderId identifies the stored entry.
           if (useAppStore.getState().passwordPromptShouldSave) {
-            const storeConn = useAppStore
-              .getState()
-              .connections.find(
-                (c) => c.name === saved.name && (c.folderId ?? null) === (saved.folderId ?? null)
-              );
+            const storeConn = currentConnectionsView().connections.find(
+              (c) => c.name === saved.name && (c.folderId ?? null) === (saved.folderId ?? null)
+            );
             await storeCredential(
               storeConn?.id ?? saved.id,
               credentialType,

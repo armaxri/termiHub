@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { matchSorter } from "match-sorter";
 import { TerminalSquare, Play, Workflow as WorkflowIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { buildCommands } from "@/services/commands";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -64,7 +65,7 @@ type PaletteEntry =
 export function CommandPalette(): React.ReactElement {
   const open = useAppStore((s) => s.commandPaletteOpen);
   const setOpen = useAppStore((s) => s.setCommandPaletteOpen);
-  const connections = useAppStore((s) => s.connections);
+  const { connections } = useProjectedConnections();
   const macros = useAppStore((s) => s.macros);
   const workflows = useAppStore((s) => s.workflows);
   const playMacro = useAppStore((s) => s.playMacro);

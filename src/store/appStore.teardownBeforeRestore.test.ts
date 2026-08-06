@@ -80,6 +80,7 @@ vi.mock("@/components/ui", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { loadWorkspace as apiLoadWorkspace } from "@/services/workspaceApi";
 import { loadLastSession as apiLoadLastSession } from "@/services/lastSessionApi";
 import { closeTerminal, detachPersistentTab } from "@/services/api";
@@ -149,7 +150,6 @@ function seedTwoLiveGroups(): void {
   ];
 
   useAppStore.setState({
-    connections: [],
     remoteAgents: [],
     agentDefinitions: {},
     defaultShell: "bash",
@@ -160,7 +160,10 @@ function seedTwoLiveGroups(): void {
     rootPanel: activeLeaf,
     activePanelId: "panel-tab-active",
   });
+  seedConnectionsRegion({ connections: [] });
 }
+
+setupConnectionsRegion();
 
 describe("appStore — teardown live sessions before restore/launch (GAP G1, #1146)", () => {
   beforeEach(() => {
@@ -230,7 +233,6 @@ describe("appStore — teardown live sessions before restore/launch (GAP G1, #11
       persistentConnectionId: "conn-persist",
     });
     useAppStore.setState({
-      connections: [],
       remoteAgents: [],
       agentDefinitions: {},
       defaultShell: "bash",
@@ -248,6 +250,7 @@ describe("appStore — teardown live sessions before restore/launch (GAP G1, #11
       rootPanel: leaf("panel-tab-persist", [persistentTab]),
       activePanelId: "panel-tab-persist",
     });
+    seedConnectionsRegion({ connections: [] });
 
     const definition: WorkspaceDefinition = {
       id: "ws-new",

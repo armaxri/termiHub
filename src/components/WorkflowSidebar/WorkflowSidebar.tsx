@@ -4,6 +4,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
 import { Button, Input, toast, Tooltip } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
@@ -66,7 +67,7 @@ function blankWorkflow(): Workflow {
 export function WorkflowSidebar() {
   const workflows = useAppStore((s) => s.workflows);
   const macros = useAppStore((s) => s.macros);
-  const connections = useAppStore((s) => s.connections);
+  const { connections } = useProjectedConnections();
   const saveWorkflowToBackend = useAppStore((s) => s.saveWorkflowToBackend);
   const deleteWorkflowFromBackend = useAppStore((s) => s.deleteWorkflowFromBackend);
   const importWorkflows = useAppStore((s) => s.importWorkflows);

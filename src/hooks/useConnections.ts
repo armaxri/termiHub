@@ -1,13 +1,13 @@
 import { useCallback } from "react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
 
 /**
  * Hook for connection management operations.
  */
 export function useConnections() {
-  const connections = useAppStore((s) => s.connections);
-  const folders = useAppStore((s) => s.folders);
+  const { connections, folders } = useProjectedConnections();
   const addConnection = useAppStore((s) => s.addConnection);
   const updateConnection = useAppStore((s) => s.updateConnection);
   const deleteConnection = useAppStore((s) => s.deleteConnection);

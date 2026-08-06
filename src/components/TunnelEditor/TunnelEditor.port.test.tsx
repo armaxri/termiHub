@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TunnelEditor } from "./TunnelEditor";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
@@ -63,14 +64,16 @@ function setValue(el: HTMLInputElement, value: string) {
   });
 }
 
+setupConnectionsRegion();
+
 describe("TunnelEditor — blank port policy (#1444)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    seedConnectionsRegion({ connections: [SSH_CONN] });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [SSH_CONN],
       tunnels: [],
       saveTunnel: vi.fn(() => Promise.resolve()),
       startTunnel: vi.fn(() => Promise.resolve()),

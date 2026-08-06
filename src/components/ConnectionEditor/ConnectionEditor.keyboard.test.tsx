@@ -7,6 +7,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { TooltipProvider } from "@/components/ui";
@@ -94,15 +95,17 @@ function key(el: HTMLElement, k: string) {
   });
 }
 
+setupConnectionsRegion();
+
 describe("ConnectionEditor — keyboard interaction (#1341)", () => {
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
+    seedConnectionsRegion({ connections: [EXISTING_CONN] });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [EXISTING_CONN],
       connectionTypes: [SSH_TYPE],
       credentialStoreStatus: { mode: "none", status: "unlocked" },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any

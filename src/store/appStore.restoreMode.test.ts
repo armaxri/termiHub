@@ -61,7 +61,10 @@ vi.mock("@/components/ui", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
+
+setupConnectionsRegion();
 import { saveSettings } from "@/services/storage";
 import { summarizeLastSession } from "@/utils/restoreMode";
 import type { LastSession } from "@/types/lastSession";
@@ -92,7 +95,6 @@ describe("startup restore mode", () => {
     vi.clearAllMocks();
     mockLoad.mockResolvedValue(null);
     useAppStore.setState({
-      connections: [],
       remoteAgents: [],
       agentDefinitions: {},
       defaultShell: "bash",
@@ -103,6 +105,7 @@ describe("startup restore mode", () => {
         restoreLastSessionMode: "ask",
       },
     });
+    seedConnectionsRegion({ connections: [] });
     useAppStore.getState().addTab("Shell", "local", { type: "local", config: { shell: "bash" } });
   });
 
