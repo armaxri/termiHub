@@ -64,6 +64,8 @@ export type SettingsView = AppSettings;
 export const DEFAULT_SETTINGS_VIEW: SettingsView = {
   version: "1",
   externalConnectionFiles: [],
+  powerMonitoringEnabled: true,
+  fileBrowserEnabled: true,
 };
 
 // ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
@@ -143,6 +145,8 @@ export function setSettingsTransportForTest(t: Transport | null): void {
   startPromise = null;
   transportInstance = t;
   lastView = DEFAULT_SETTINGS_VIEW;
+  lastViewSignature = JSON.stringify(DEFAULT_SETTINGS_VIEW);
+  lastAppliedVersion = -1;
   lastSeededSignature = null;
 }
 
@@ -162,6 +166,38 @@ const viewListeners = new Set<SettingsViewListener>();
 // The last projected document received, defaulting to the seed baseline so a
 // synchronous read before the first diff still returns a valid document.
 let lastView: SettingsView = DEFAULT_SETTINGS_VIEW;
+// A content signature of `lastView`, so an identical-content diff (e.g. a resync
+// re-delivering the same document with a fresh object identity) does not churn the
+// view identity or re-notify subscribers — which would reset a consumer's local
+// draft or trigger needless re-renders.
+let lastViewSignature: string = JSON.stringify(DEFAULT_SETTINGS_VIEW);
+// The monotonic region version of `lastView`. A projected view older than this is
+// stale (e.g. an initial subscribe snapshot delivered late, after a newer diff has
+// already landed) and is ignored, so it can never clobber the current document.
+let lastAppliedVersion = -1;
+
+/**
+ * Commit a projected document (at its region `version`) as the current view and
+ * notify subscribers — but only when it is not stale and its content actually
+ * changed. Ignoring an older version stops a late-delivered snapshot from
+ * overwriting a newer document; preserving identity for unchanged content keeps the
+ * reader hook's value referentially stable across resyncs.
+ */
+function commitSettingsView(view: SettingsView, version: number): void {
+  if (version < lastAppliedVersion) return;
+  lastAppliedVersion = version;
+  const signature = JSON.stringify(view);
+  if (signature === lastViewSignature) return;
+  lastView = view;
+  lastViewSignature = signature;
+  for (const listener of viewListeners) {
+    try {
+      listener(view);
+    } catch (err) {
+      logSettingsBridgeFallback("reconcile", err);
+    }
+  }
+}
 
 /**
  * Register a listener, invoked with the projected view on every diff. Returns an
@@ -185,14 +221,10 @@ export function ensureSettingsSubscribed(): Promise<ProjectionClient> {
     client.onChange((state) => {
       const view = state.view as Partial<SettingsView> | undefined;
       // Only accept a real document; an empty/absent view keeps the last known one
-      // so a reader never sees a document missing its required fields.
-      lastView = view && typeof view.version === "string" ? (view as SettingsView) : lastView;
-      for (const listener of viewListeners) {
-        try {
-          listener(lastView);
-        } catch (err) {
-          logSettingsBridgeFallback("reconcile", err);
-        }
+      // so a reader never sees a document missing its required fields. `state.version`
+      // is the region's monotonic version (not the settings doc's `version` field).
+      if (view && typeof view.version === "string") {
+        commitSettingsView(view as SettingsView, state.version);
       }
     });
     startPromise = client
@@ -216,6 +248,8 @@ export function stopSettingsSubscription(): void {
   regionClient = null;
   startPromise = null;
   lastView = DEFAULT_SETTINGS_VIEW;
+  lastViewSignature = JSON.stringify(DEFAULT_SETTINGS_VIEW);
+  lastAppliedVersion = -1;
   lastSeededSignature = null;
 }
 
@@ -228,6 +262,18 @@ export function stopSettingsSubscription(): void {
  */
 export function currentSettingsView(): SettingsView {
   return lastView;
+}
+
+/**
+ * Test-only: synchronously set the projected view and notify subscribers, without
+ * the async transport subscribe round-trip. The settings region test harness uses
+ * this to mirror an `appStore`-driven test's document into the region immediately,
+ * so a reader that renders (or re-renders on a mutation) sees the document without
+ * an explicit flush — matching the synchronous behaviour the removed `appStore`
+ * fallback used to provide. Never call this from production code.
+ */
+export function __emitSettingsViewForTest(view: SettingsView, version: number): void {
+  commitSettingsView(view, version);
 }
 
 // ── Seed: reliably push appStore's document into the region (settings.replace) ─
