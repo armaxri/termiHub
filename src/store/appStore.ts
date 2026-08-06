@@ -151,6 +151,7 @@ import {
   RemoteDesktopResolutionsSlice,
 } from "./slices/remoteDesktopResolutionsSlice";
 import { createPasswordPromptSlice, PasswordPromptSlice } from "./slices/passwordPromptSlice";
+import { createTerminalSearchSlice, TerminalSearchSlice } from "./slices/terminalSearchSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 import {
@@ -466,7 +467,8 @@ export interface AppState
     HttpMonitorsSlice,
     DialogsSlice,
     RemoteDesktopResolutionsSlice,
-    PasswordPromptSlice {
+    PasswordPromptSlice,
+    TerminalSearchSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -891,10 +893,8 @@ export interface AppState
   // Zoom (runtime-only) — scale factor + in/out/reset provided by ZoomSlice
   // (extracted under #2077 via #2300).
 
-  // Terminal search (runtime-only)
-  terminalSearchVisible: Record<string, boolean>;
-  setTerminalSearchVisible: (tabId: string, visible: boolean) => void;
-  toggleTerminalSearch: (tabId: string) => void;
+  // Terminal search (runtime-only) — per-tab search-bar visibility + set/toggle
+  // provided by TerminalSearchSlice (extracted under #2077 via #2300).
 
   /**
    * Per-session temporary syntax-highlighting toggle (runtime-only, never
@@ -2746,6 +2746,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createDialogsSlice(set, get, store),
     ...createRemoteDesktopResolutionsSlice(set, get, store),
     ...createPasswordPromptSlice(set, get, store),
+    ...createTerminalSearchSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -4777,17 +4778,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Zoom (runtime-only) — scale factor + in/out/reset provided by
     // createZoomSlice (extracted under #2077 via #2300).
 
-    // Terminal search (runtime-only)
-    terminalSearchVisible: {},
-    setTerminalSearchVisible: (tabId, visible) =>
-      set((s) => ({ terminalSearchVisible: { ...s.terminalSearchVisible, [tabId]: visible } })),
-    toggleTerminalSearch: (tabId) =>
-      set((s) => ({
-        terminalSearchVisible: {
-          ...s.terminalSearchVisible,
-          [tabId]: !s.terminalSearchVisible[tabId],
-        },
-      })),
+    // Terminal search (runtime-only) — per-tab search-bar visibility + set/toggle
+    // provided by createTerminalSearchSlice (extracted under #2077 via #2300).
 
     // Per-session syntax-highlighting toggle (runtime-only, never persisted)
     sessionHighlighting: {},
