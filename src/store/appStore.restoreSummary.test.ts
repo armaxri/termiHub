@@ -58,9 +58,11 @@ vi.mock("@/services/lastSessionApi", () => ({
 
 import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { loadLastSession } from "@/services/lastSessionApi";
 
 setupConnectionsRegion();
+setupSettingsRegion();
 import { getAllLeaves } from "@/utils/panelTree";
 import type { LastSession } from "@/types/lastSession";
 
@@ -102,8 +104,8 @@ describe("partial-restore summary", () => {
       agentDefinitions: {},
       defaultShell: "bash",
       restoreCohort: null,
-      settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: true },
     });
+    seedSettings({ restoreLastSessionOnStartup: true });
     seedConnectionsRegion({ connections: [] });
   });
 

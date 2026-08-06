@@ -45,6 +45,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { currentSettingsView } from "./settingsBridge";
 import { ensureMonitorsSubscribed } from "./systemMonitorBridge";
 import {
   fakeMonitor,
@@ -52,6 +53,7 @@ import {
   monitorsView,
   type FakeMonitorTransport,
 } from "@/test/systemMonitorHarness";
+import { seedSettings, setupSettingsRegion, settingsDoc } from "@/test/settingsRegionTestHarness";
 import { flushMacrotask } from "@/test/flushAsync";
 
 let transport: FakeMonitorTransport;
@@ -68,6 +70,10 @@ async function seedMonitor(sessionId: string, host: string): Promise<void> {
 }
 
 describe("appStore — settings toggles", () => {
+  // The persisted settings document is region-authoritative (#2404): seed the
+  // `settings` region, not an `appStore` slice, and read it back via the projection.
+  setupSettingsRegion();
+
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
@@ -81,24 +87,13 @@ describe("appStore — settings toggles", () => {
   it("disabling power monitoring disconnects active monitoring session", async () => {
     // Set up connected monitoring state in the authoritative region.
     await seedMonitor("mon-1", "pi@pi.local:22");
-    useAppStore.setState({
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-      },
-    });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: false,
-      fileBrowserEnabled: true,
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(settingsDoc({ powerMonitoringEnabled: false, fileBrowserEnabled: true }));
 
-    const state = useAppStore.getState();
-    expect(state.settings.powerMonitoringEnabled).toBe(false);
+    expect(currentSettingsView().powerMonitoringEnabled).toBe(false);
     expect(mockSessionMonitoringClose).toHaveBeenCalledWith("mon-1");
   });
 
@@ -108,23 +103,15 @@ describe("appStore — settings toggles", () => {
       sftpSessionId: "sftp-1",
       sftpConnectedHost: "pi@pi.local:22",
       sidebarView: "files",
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-      },
     });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: false,
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(settingsDoc({ powerMonitoringEnabled: true, fileBrowserEnabled: false }));
 
     const state = useAppStore.getState();
-    expect(state.settings.fileBrowserEnabled).toBe(false);
+    expect(currentSettingsView().fileBrowserEnabled).toBe(false);
     expect(state.sftpSessionId).toBeNull();
     expect(state.sidebarView).toBe("connections");
     expect(mockSftpClose).toHaveBeenCalledWith("sftp-1");
@@ -136,21 +123,13 @@ describe("appStore — settings toggles", () => {
       sftpSessionId: "sftp-1",
       sftpConnectedHost: "pi@pi.local:22",
       sidebarView: "files",
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-      },
     });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
     // Disable only power monitoring
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: false,
-      fileBrowserEnabled: true,
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(settingsDoc({ powerMonitoringEnabled: false, fileBrowserEnabled: true }));
 
     const state = useAppStore.getState();
     // Monitoring disconnected via the backend close command.
@@ -162,22 +141,12 @@ describe("appStore — settings toggles", () => {
   });
 
   it("does not disconnect when feature was already disabled", async () => {
-    useAppStore.setState({
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: false,
-        fileBrowserEnabled: false,
-      },
-    });
+    seedSettings({ powerMonitoringEnabled: false, fileBrowserEnabled: false });
 
     // Re-save with same disabled values — no side effects
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: false,
-      fileBrowserEnabled: false,
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(settingsDoc({ powerMonitoringEnabled: false, fileBrowserEnabled: false }));
 
     expect(mockSessionMonitoringClose).not.toHaveBeenCalled();
     expect(mockSftpClose).not.toHaveBeenCalled();
@@ -218,22 +187,12 @@ describe("appStore — settings toggles", () => {
 
   it("disabling global monitoring keeps session when active tab has explicit enableMonitoring=true", async () => {
     await seedMonitor("mon-1", "pi@pi.local:22");
-    useAppStore.setState({
-      ...sshTabPanel({ enableMonitoring: true }),
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-      },
-    });
+    useAppStore.setState({ ...sshTabPanel({ enableMonitoring: true }) });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: false,
-      fileBrowserEnabled: true,
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(settingsDoc({ powerMonitoringEnabled: false, fileBrowserEnabled: true }));
 
     // Monitoring should NOT be disconnected — the active tab has an explicit override
     expect(mockSessionMonitoringClose).not.toHaveBeenCalled();
@@ -245,20 +204,12 @@ describe("appStore — settings toggles", () => {
       sftpConnectedHost: "pi@pi.local:22",
       sidebarView: "files",
       ...sshTabPanel({ enableFileBrowser: true }),
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-      },
     });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: false,
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(settingsDoc({ powerMonitoringEnabled: true, fileBrowserEnabled: false }));
 
     // SFTP should NOT be disconnected — the active tab has an explicit override
     expect(mockSftpClose).not.toHaveBeenCalled();
@@ -268,111 +219,61 @@ describe("appStore — settings toggles", () => {
 
   it("disabling global monitoring disconnects when active tab uses default (no override)", async () => {
     await seedMonitor("mon-1", "pi@pi.local:22");
-    useAppStore.setState({
-      ...sshTabPanel({}), // No per-connection override
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-      },
-    });
+    useAppStore.setState({ ...sshTabPanel({}) }); // No per-connection override
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: false,
-      fileBrowserEnabled: true,
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(settingsDoc({ powerMonitoringEnabled: false, fileBrowserEnabled: true }));
 
     // Should disconnect because the active tab inherits the global default
     expect(mockSessionMonitoringClose).toHaveBeenCalledWith("mon-1");
   });
 
   it("calls applyTheme when theme changes via updateSettings", async () => {
-    useAppStore.setState({
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-        theme: "dark",
-      },
-    });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "dark" });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: true,
-      theme: "light",
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(
+        settingsDoc({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "light" })
+      );
 
     expect(mockApplyTheme).toHaveBeenCalledWith("light");
   });
 
   it("does not call applyTheme when theme is unchanged", async () => {
-    useAppStore.setState({
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-        theme: "dark",
-      },
-    });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "dark" });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: false,
-      fileBrowserEnabled: true,
-      theme: "dark",
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(
+        settingsDoc({ powerMonitoringEnabled: false, fileBrowserEnabled: true, theme: "dark" })
+      );
 
     expect(mockApplyTheme).not.toHaveBeenCalled();
   });
 
   it("calls applyTheme('system') when switching to system mode", async () => {
-    useAppStore.setState({
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-        theme: "dark",
-      },
-    });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "dark" });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: true,
-      theme: "system",
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(
+        settingsDoc({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "system" })
+      );
 
     expect(mockApplyTheme).toHaveBeenCalledWith("system");
   });
 
   it("calls applyTheme when switching from system to light", async () => {
-    useAppStore.setState({
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-        theme: "system",
-      },
-    });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "system" });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: true,
-      theme: "light",
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(
+        settingsDoc({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "light" })
+      );
 
     expect(mockApplyTheme).toHaveBeenCalledWith("light");
   });
@@ -380,23 +281,13 @@ describe("appStore — settings toggles", () => {
   it("persists theme setting via saveSettings", async () => {
     const { saveSettings } = await import("@/services/storage");
 
-    useAppStore.setState({
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-        theme: "dark",
-      },
-    });
+    seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "dark" });
 
-    await useAppStore.getState().updateSettings({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: true,
-      theme: "light",
-    });
+    await useAppStore
+      .getState()
+      .updateSettings(
+        settingsDoc({ powerMonitoringEnabled: true, fileBrowserEnabled: true, theme: "light" })
+      );
 
     expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ theme: "light" }));
   });
@@ -451,20 +342,5 @@ describe("appStore — theme initialization on loadFromBackend", () => {
 
     expect(mockOnThemeChange).toHaveBeenCalledTimes(1);
     expect(mockOnThemeChange).toHaveBeenCalledWith(expect.any(Function));
-  });
-
-  it("stores theme setting in store state after load", async () => {
-    const { getSettings } = await import("@/services/storage");
-    vi.mocked(getSettings).mockResolvedValueOnce({
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: true,
-      theme: "light",
-    });
-
-    await useAppStore.getState().loadFromBackend();
-
-    expect(useAppStore.getState().settings.theme).toBe("light");
   });
 });

@@ -11,6 +11,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, JumpHostConfig } from "@/types/connection";
 
@@ -47,6 +48,7 @@ function sshConnection(id: string, settings: Record<string, unknown>): SavedConn
 }
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 describe("ConnectionList — jump-host hop badge", () => {
   let container: HTMLDivElement;
@@ -57,7 +59,7 @@ describe("ConnectionList — jump-host hop badge", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    seedSettings({ ...baseSettings });
   });
 
   afterEach(() => {

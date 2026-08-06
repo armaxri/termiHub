@@ -4,7 +4,8 @@ import { createRoot, Root } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { clearOverrides } from "@/services/keybindings";
-import { useAppStore } from "@/store/appStore";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { currentSettingsView } from "@/store/settingsBridge";
 
 vi.mock("@/utils/cheatSheetPdf", () => ({
   exportCheatSheet: vi.fn().mockResolvedValue(undefined),
@@ -28,12 +29,12 @@ function renderComponent(visibleFields?: Set<string>) {
   });
 }
 
+setupSettingsRegion();
+
 describe("KeyboardSettings", () => {
   beforeEach(() => {
     clearOverrides();
-    useAppStore.setState((s) => ({
-      settings: { ...s.settings, editorShortcutDelegation: undefined },
-    }));
+    seedSettings({ editorShortcutDelegation: undefined });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -142,7 +143,7 @@ describe("KeyboardSettings", () => {
       await Promise.resolve();
     });
 
-    expect(useAppStore.getState().settings.editorShortcutDelegation).toBe(false);
+    expect(currentSettingsView().editorShortcutDelegation).toBe(false);
   });
 
   it("renders nothing when visibleFields excludes keybindings", () => {
@@ -198,7 +199,7 @@ describe("KeyboardSettings", () => {
     expect(container.querySelector('[data-testid="keybinding-unbind-toggle-sidebar"]')).toBeNull();
 
     // The unbind is persisted to settings as an empty override.
-    const overrides = useAppStore.getState().settings.keybindingOverrides ?? [];
+    const overrides = currentSettingsView().keybindingOverrides ?? [];
     const entry = overrides.find((o) => o.action === "toggle-sidebar");
     expect(entry).toBeDefined();
     expect(entry?.key).toBe("");

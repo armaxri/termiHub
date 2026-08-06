@@ -7,7 +7,7 @@
  * slot was keyed on `experimentalFeaturesEnabled` instead of the collapsed
  * state — leaving an empty gap that "gives free view over the side bar".
  */
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -94,7 +94,7 @@ function clickRemoteAgentsToggle() {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 setupAgentsRegionMirror();
 
 describe("ConnectionList – Remote Agents collapse (#1822)", () => {
@@ -103,7 +103,7 @@ describe("ConnectionList – Remote Agents collapse (#1822)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    seedSettings({ ...baseSettings });
     useAppStore.setState({ remoteAgents: [makeAgent()] });
   });
 

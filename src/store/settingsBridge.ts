@@ -17,10 +17,13 @@
  * - **subscribes** to the region diffs and fans the projected view out to the
  *   reader hook ({@link import("./useProjectedSettings").useProjectedSettings}),
  *   caching the latest view for synchronous reads ({@link currentSettingsView});
- * - **mirrors** client-originated mutations into the region via the `settings.*`
- *   intents ({@link mirrorSettingsIntent}), keeping the backend store in step with
- *   an `appStore` edit while the reducer removal (making `appStore` drop its
- *   authoritative slice) is completed in a later step.
+ * - **dispatches** client-originated mutations into the region via the `settings.*`
+ *   intents ({@link mirrorSettingsIntent}) — the optimistic write of the
+ *   `appStore` settings command wrappers. Since the reducer removal (#2404) the
+ *   `appStore` `settings` / `savedSettings` slice is gone, so this is no longer a
+ *   "mirror" of a local slice: it **is** the mutation's client-side transition,
+ *   applied to the authoritative region ahead of the persist command's
+ *   server-side fold (#2386 / #2407).
  *
  * # The settings document is opaque
  *
@@ -67,64 +70,6 @@ export const DEFAULT_SETTINGS_VIEW: SettingsView = {
   powerMonitoringEnabled: true,
   fileBrowserEnabled: true,
 };
-
-// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
-
-let mutationFlagOverride: boolean | null = null;
-
-interface SettingsMutationFlagWindow {
-  __TERMIHUB_SETTINGS_INTENTS__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
- */
-export function setSettingsIntentsEnabled(value: boolean | null): void {
-  mutationFlagOverride = value;
-}
-
-/**
- * Whether the settings mutations (`updateSettings` whole-document save,
- * `updateShellIntegration`'s targeted field write, and the update-skip
- * refreshes) dispatch `settings.*` intents so the backend
- * {@link import("../../src-tauri/src/settings_projection/store").SettingsStore}
- * stays in step with an `appStore` edit.
- *
- * **On by default** (#2227 mutation cut). When on, each setter mirrors its
- * transition through a `settings.*` intent (via {@link mirrorSettingsIntent}) — a
- * whole-document `settings.replace` for `updateSettings`, a `settings.patch` for
- * the shell-integration field write — and the reader hook
- * ({@link import("./useProjectedSettings").useProjectedSettings}) reflects the
- * region back into the UI. The local `appStore` reducer path stays in place as a
- * resilience / rollback fallback until the reducer removal — any dispatch failure
- * is logged and the local mutation continues, so a backend hiccup can never break
- * the Settings screen. The persistence side-effect (`saveSettings` /
- * `save_shell_integration_settings`) is untouched: the intent is dispatched
- * alongside it, not in place of it. When off, `appStore` drives the slice purely
- * locally (the pre-cut path). Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_SETTINGS_INTENTS__` or `localStorage["termihub.settingsIntents"]`
- * (set `"false"` to restore the pre-cut local-mutation path; `"true"` to force on).
- */
-export function settingsIntentsEnabled(): boolean {
-  if (mutationFlagOverride !== null) return mutationFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as SettingsMutationFlagWindow;
-      if (typeof w.__TERMIHUB_SETTINGS_INTENTS__ === "boolean") {
-        return w.__TERMIHUB_SETTINGS_INTENTS__;
-      }
-      const ls = w.localStorage?.getItem("termihub.settingsIntents");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
 
 // ── Transport + shared region client (lazy, mirrors the monitor slice) ─────────
 
@@ -347,21 +292,23 @@ export function dispatchSettingsIntent(
 }
 
 /**
- * Fire a `settings.*` intent to keep the backend store in step with an `appStore`
- * mutation, swallowing and logging any failure so the local `appStore` mutation
- * path is never disrupted by a bridge hiccup (the resilience fallback). A no-op
- * when the mutation cut is disabled ({@link settingsIntentsEnabled} off — the
- * rollback path). Never throws — a synchronous transport-construction failure
- * (non-Tauri, no socket) is caught and logged, leaving the UI on the local slice.
- * The twin of the connections bridge's
- * {@link import("./connectionsBridge").mirrorConnectionIntent} and the agents
- * bridge's {@link import("./agentsBridge").mirrorAgentIntent}.
+ * Fire a `settings.*` intent against the authoritative region — the optimistic
+ * write of the `appStore` settings command wrappers. Since the reducer removal
+ * (#2404) the `appStore` `settings` / `savedSettings` slice is gone, so this is no
+ * longer a "mirror" of a local mutation: it **is** the mutation's client-side
+ * transition, applied to the shared `settings` region ahead of the persist
+ * command's authoritative server-side fold (#2386 / #2407) so the UI updates
+ * instantly. Best-effort: any dispatch failure is swallowed and logged (the paired
+ * persist command still folds the reconciled truth into the region), and a
+ * synchronous transport-construction failure (non-Tauri, no socket) is caught too,
+ * so it never throws out of a command wrapper. The twin of the connections
+ * bridge's {@link import("./connectionsBridge").mirrorConnectionIntent} and the
+ * agents bridge's {@link import("./agentsBridge").mirrorAgentIntent}.
  */
 export function mirrorSettingsIntent(
   kind: SettingsIntentKind,
   payload: Record<string, unknown>
 ): void {
-  if (!settingsIntentsEnabled()) return;
   try {
     void dispatchSettingsIntent(kind, payload)
       .then((ack) => {
@@ -375,8 +322,8 @@ export function mirrorSettingsIntent(
   }
 }
 
-/** Log a bridge fallback so the appStore-path recovery is visible in the LogViewer. */
+/** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logSettingsBridgeFallback(kind: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
-  frontendLog("settings_bridge", `${kind} fell back to appStore settings: ${message}`);
+  frontendLog("settings_bridge", `${kind} settings intent failed: ${message}`);
 }

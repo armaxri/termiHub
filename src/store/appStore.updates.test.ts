@@ -43,6 +43,9 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+
+setupSettingsRegion();
 
 const MOCK_REGULAR_UPDATE: UpdateInfo = {
   available: true,
@@ -128,15 +131,7 @@ describe("appStore — update checker", () => {
 
   it("auto-dismisses notification popup for skipped version", async () => {
     // Pre-set a skipped version in settings
-    useAppStore.setState({
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-        updates: { autoCheck: true, skippedVersion: "0.2.0" },
-      },
-    });
+    seedSettings({ updates: { autoCheck: true, skippedVersion: "0.2.0" } });
 
     const { checkForUpdates: apiCheck } = await import("@/services/api");
     vi.mocked(apiCheck).mockResolvedValueOnce(MOCK_REGULAR_UPDATE);
@@ -150,15 +145,7 @@ describe("appStore — update checker", () => {
   });
 
   it("does NOT auto-dismiss notification for security updates even if version was skipped", async () => {
-    useAppStore.setState({
-      settings: {
-        version: "1",
-        externalConnectionFiles: [],
-        powerMonitoringEnabled: true,
-        fileBrowserEnabled: true,
-        updates: { autoCheck: true, skippedVersion: "0.1.1" },
-      },
-    });
+    seedSettings({ updates: { autoCheck: true, skippedVersion: "0.1.1" } });
 
     const { checkForUpdates: apiCheck } = await import("@/services/api");
     vi.mocked(apiCheck).mockResolvedValueOnce(MOCK_SECURITY_UPDATE);

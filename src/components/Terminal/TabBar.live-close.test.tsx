@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { TabBar } from "./TabBar";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 const toastSuccess = vi.fn();
 vi.mock("@/components/ui", async (importOriginal) => {
@@ -58,6 +59,8 @@ function liveTerminalTab(): TerminalTab {
 let container: HTMLDivElement;
 let root: Root;
 
+setupSettingsRegion();
+
 function render(tabs: TerminalTab[]) {
   act(() => root.render(<TabBar panelId={PANEL_ID} tabs={tabs} />));
 }
@@ -95,10 +98,8 @@ describe("TabBar — closing a live-session tab via the X", () => {
 
   it("closes immediately with an Undo toast when the user opted out", () => {
     const closeTab = vi.fn();
-    useAppStore.setState({
-      closeTab,
-      settings: { ...useAppStore.getState().settings, confirmCloseLiveSession: false },
-    });
+    useAppStore.setState({ closeTab });
+    seedSettings({ confirmCloseLiveSession: false });
     render([liveTerminalTab()]);
 
     act(() => {

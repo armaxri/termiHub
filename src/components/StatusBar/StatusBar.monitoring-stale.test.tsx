@@ -25,10 +25,13 @@ import {
 } from "@/test/systemMonitorHarness";
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
 vi.mock("./UpdateIndicator", () => ({ UpdateIndicator: () => null }));
+
+setupSettingsRegion();
 
 function makeStats(overrides: Partial<SystemStats> = {}): SystemStats {
   return {
@@ -75,12 +78,12 @@ function primeMonitoringTab() {
     activeTabId: "tab-1",
   };
 
-  useAppStore.setState((state) => ({
+  useAppStore.setState({
     connectionTypes: [sshType],
-    settings: { ...state.settings, powerMonitoringEnabled: true },
     rootPanel: leaf,
     activePanelId: "leaf-1",
-  }));
+  });
+  seedSettings({ powerMonitoringEnabled: true });
 }
 
 /** MonitorKey for the primed SSH tab: the owning terminal session id (#1232). */

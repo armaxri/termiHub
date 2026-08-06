@@ -13,7 +13,7 @@
  *  - every agent row renders inside the scroll container, and
  *  - the header + filter live OUTSIDE it (so they stay pinned, not scrolled).
  */
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -90,7 +90,7 @@ function render() {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 setupAgentsRegionMirror();
 
 describe("ConnectionList – Remote Agents scroll (#2106)", () => {
@@ -99,7 +99,7 @@ describe("ConnectionList – Remote Agents scroll (#2106)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    seedSettings({ ...baseSettings });
     useAppStore.setState({
       remoteAgents: Array.from({ length: 15 }, (_, i) => makeAgent(i)),
     });

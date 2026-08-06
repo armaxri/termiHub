@@ -22,10 +22,13 @@ import {
   monitorsView,
   type FakeMonitorTransport,
 } from "@/test/systemMonitorHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
 vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
 vi.mock("./UpdateIndicator", () => ({ UpdateIndicator: () => null }));
+
+setupSettingsRegion();
 
 function makeStats(overrides: Partial<SystemStats> = {}): SystemStats {
   return {
@@ -72,12 +75,12 @@ function primeMonitoringTab() {
     activeTabId: "tab-1",
   };
 
-  useAppStore.setState((state) => ({
+  useAppStore.setState({
     connectionTypes: [sshType],
-    settings: { ...state.settings, powerMonitoringEnabled: true },
     rootPanel: leaf,
     activePanelId: "leaf-1",
-  }));
+  });
+  seedSettings({ powerMonitoringEnabled: true });
 }
 
 /**
@@ -106,7 +109,6 @@ function primeRemoteSessionTab(sessionId: string) {
   const leaf: LeafPanel = { type: "leaf", id: "leaf-rs", tabs: [tab], activeTabId: "tab-rs" };
   useAppStore.setState((state) => ({
     connectionTypes: [type],
-    settings: { ...state.settings, powerMonitoringEnabled: true },
     sessionCapabilities: {
       ...state.sessionCapabilities,
       [sessionId]: { monitoring: true, fileBrowser: true },
@@ -114,6 +116,7 @@ function primeRemoteSessionTab(sessionId: string) {
     rootPanel: leaf,
     activePanelId: "leaf-rs",
   }));
+  seedSettings({ powerMonitoringEnabled: true });
 }
 
 /** MonitorKey for the primed SSH tab — the owning session id (#1232). */

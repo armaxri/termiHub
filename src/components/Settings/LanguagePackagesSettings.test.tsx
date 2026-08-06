@@ -1,8 +1,9 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { TooltipProvider } from "@/components/ui";
 import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
 
@@ -40,7 +41,7 @@ function click(testId: string) {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("LanguagePackagesSettings", () => {
   beforeEach(() => {
@@ -89,14 +90,7 @@ describe("LanguagePackagesSettings", () => {
   });
 
   it("shows installed badge and uninstall button for installed packages", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          installedLanguagePackages: ["astro"],
-        },
-      });
-    });
+    seedSettings({ installedLanguagePackages: ["astro"] });
     render();
 
     // Should show uninstall button
@@ -111,14 +105,7 @@ describe("LanguagePackagesSettings", () => {
   });
 
   it("renders install and uninstall buttons as shared ghost Button primitives (not the bespoke shell)", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          installedLanguagePackages: ["astro"],
-        },
-      });
-    });
+    seedSettings({ installedLanguagePackages: ["astro"] });
     render();
 
     const uninstall = query("lang-pkg-uninstall-astro") as HTMLButtonElement;
@@ -139,38 +126,24 @@ describe("LanguagePackagesSettings", () => {
     click("lang-pkg-install-astro");
     await act(async () => {});
 
-    const settings = useAppStore.getState().settings;
+    const settings = currentSettingsView();
     expect(settings.installedLanguagePackages).toContain("astro");
     expect(registerAdditionalLanguagePackages).toHaveBeenCalledWith(["astro"]);
   });
 
   it("uninstalls a package and saves updated settings", async () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          installedLanguagePackages: ["astro"],
-        },
-      });
-    });
+    seedSettings({ installedLanguagePackages: ["astro"] });
     render();
 
     click("lang-pkg-uninstall-astro");
     await act(async () => {});
 
-    const settings = useAppStore.getState().settings;
+    const settings = currentSettingsView();
     expect(settings.installedLanguagePackages ?? []).not.toContain("astro");
   });
 
   it("shows restart required badge after uninstalling", () => {
-    act(() => {
-      useAppStore.setState({
-        settings: {
-          ...useAppStore.getState().settings,
-          installedLanguagePackages: ["astro"],
-        },
-      });
-    });
+    seedSettings({ installedLanguagePackages: ["astro"] });
     render();
 
     click("lang-pkg-uninstall-astro");

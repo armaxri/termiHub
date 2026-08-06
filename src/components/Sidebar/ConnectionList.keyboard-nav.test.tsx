@@ -9,6 +9,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
 
@@ -74,6 +75,7 @@ function keydown(el: Element, key: string) {
 }
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 describe("ConnectionList — keyboard navigation & ARIA", () => {
   let container: HTMLDivElement;
@@ -84,7 +86,7 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    seedSettings({ ...baseSettings });
   });
 
   afterEach(() => {

@@ -1,4 +1,5 @@
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 
@@ -47,7 +48,7 @@ function closeActiveTab(): void {
   if (!panel?.activeTabId) return;
   const tabId = panel.activeTabId;
   const state = useAppStore.getState();
-  const confirmEnabled = state.settings.confirmCloseTabOnShortcut ?? true;
+  const confirmEnabled = currentSettingsView().confirmCloseTabOnShortcut ?? true;
   if (confirmEnabled) {
     const activeTab = panel.tabs.find((t) => t.id === tabId);
     state.setPendingShortcutCloseConfirm({

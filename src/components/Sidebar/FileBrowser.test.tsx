@@ -1,4 +1,4 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -68,7 +68,7 @@ function setActiveTab(tab: TerminalTab) {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("FileBrowser – useFileBrowserSync", () => {
   beforeEach(() => {
@@ -322,9 +322,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
     setActiveTab(ftpTab);
     setFileBrowserCapableType("ftp", "FTP");
-    useAppStore.setState((s) => ({
-      settings: { ...s.settings, fileBrowserEnabled: false },
-    }));
+    seedSettings({ fileBrowserEnabled: false });
 
     act(() => {
       root.render(

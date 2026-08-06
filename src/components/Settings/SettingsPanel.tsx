@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { applyTheme } from "@/themes/engine";
 import { AppSettings } from "@/types/connection";
@@ -86,6 +87,23 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSettingsRef = useRef<AppSettings | null>(null);
   const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The last-persisted document — the dirty-tracking baseline. Since the settings
+  // slice was removed from `appStore` (#2404), the panel owns this baseline locally
+  // rather than reading a removed `savedSettings` field: the projected view is the
+  // optimistic/live document (updated on every edit), so it cannot double as the
+  // "clean" reference. Seeded from the projection and re-pinned on each persisted
+  // save; an external region change that lands while the tab is clean updates it
+  // (via the effect below), but one that lands mid-edit does not (so the tab stays
+  // dirty).
+  const savedSettingsRef = useRef<AppSettings>(settings);
+  const dirtyRef = useRef(false);
+
+  // Keep the persisted baseline current with external region updates (e.g. a
+  // startup load or a skipUpdate refresh) — but only while the tab is clean, so an
+  // external change during an edit never silently shifts the dirty baseline.
+  useEffect(() => {
+    if (!dirtyRef.current) savedSettingsRef.current = settings;
+  }, [settings]);
 
   /**
    * Briefly surface a transient "Saved" acknowledgment in the footer after a
@@ -112,7 +130,11 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     const toSave = pendingSettingsRef.current;
     if (toSave) {
       pendingSettingsRef.current = null;
-      useAppStore.setState({ savedSettings: toSave });
+      // The persisted document is region-authoritative (#2404): `updateSettings`
+      // persists and folds it into the region. Pin the local baseline so a later
+      // edit's dirty check compares against what we just persisted.
+      savedSettingsRef.current = toSave;
+      dirtyRef.current = false;
       updateSettings(toSave);
     }
   }, [updateSettings]);
@@ -157,17 +179,24 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       if (newSettings.theme !== settings.theme) {
         applyTheme(newSettings.theme);
       }
-      // Update local state immediately via store for responsive UI
-      useAppStore.setState({ settings: newSettings });
 
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
 
-      // Only dirty if the new value actually differs from the last persisted state
-      const isDirty =
-        JSON.stringify(newSettings) !== JSON.stringify(useAppStore.getState().savedSettings);
+      // Optimistically reflect the edit into the authoritative region so the UI
+      // (which renders from `useProjectedSettings`, #2404) updates instantly — the
+      // debounced `updateSettings` below persists it. This is the region-era
+      // replacement for the removed local `appStore.settings` optimistic write.
+      mirrorSettingsIntent("settings.replace", { settings: newSettings });
+
+      // Only dirty if the new value actually differs from the last persisted state.
+      // Compare against the locally-tracked persisted baseline, not the projected
+      // view — the optimistic write above just made the projection equal to
+      // `newSettings`, so it can no longer serve as the "clean" reference.
+      const isDirty = JSON.stringify(newSettings) !== JSON.stringify(savedSettingsRef.current);
+      dirtyRef.current = isDirty;
 
       if (isDirty) {
         pendingSettingsRef.current = newSettings;
@@ -177,7 +206,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           const toSave = pendingSettingsRef.current;
           if (toSave) {
             pendingSettingsRef.current = null;
-            useAppStore.setState({ savedSettings: toSave });
+            savedSettingsRef.current = toSave;
+            dirtyRef.current = false;
             updateSettings(toSave);
             setEditorDirty(tabId, false);
             acknowledgeSaved();

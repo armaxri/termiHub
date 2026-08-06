@@ -12,6 +12,7 @@ import {
   updatePluginSettings as apiUpdatePluginSettings,
   readPluginFile,
 } from "@/services/api";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { applyTheme, loadPluginThemes, setRegisteredPluginThemes } from "@/themes";
 import type { ThemeDefinition } from "@/themes";
 import type { InstalledPlugin, JsonValue, PluginBackendType } from "@/types/plugin";
@@ -160,12 +161,12 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       // rather than here. Frontend-plugin execution is gated behind the
       // experimental opt-in (#2048): when it is off, reconcile loads nothing and
       // unloads anything already loaded.
-      const frontendEnabled = get().settings.frontendPluginsEnabled ?? false;
+      const frontendEnabled = currentSettingsView().frontendPluginsEnabled ?? false;
       reconcileFrontendPlugins(plugins, frontendEnabled);
       // Re-apply the active theme: a just-registered plugin theme now takes
       // effect, and a theme whose plugin was disabled/uninstalled falls back
       // to the default (concept edge case).
-      const { theme, customThemes } = get().settings;
+      const { theme, customThemes } = currentSettingsView();
       applyTheme(theme, customThemes);
     } catch (err) {
       // Read-only refresh: log rather than toast, matching loadMacros.

@@ -60,6 +60,7 @@ vi.mock("@/services/lastSessionApi", () => ({
 
 import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { loadLastSession } from "@/services/lastSessionApi";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { LastSession } from "@/types/lastSession";
@@ -114,6 +115,7 @@ async function restoreWithOneFailure(): Promise<string[]> {
 }
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 describe("bulk reconnect of failed restore tabs", () => {
   beforeEach(() => {
@@ -128,8 +130,8 @@ describe("bulk reconnect of failed restore tabs", () => {
       terminalConnecting: {},
       terminalDisconnectErrors: {},
       terminalRetryCounters: {},
-      settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: true },
     });
+    seedSettings({ restoreLastSessionOnStartup: true });
     seedConnectionsRegion({ connections: [] });
   });
 

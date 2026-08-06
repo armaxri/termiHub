@@ -61,10 +61,13 @@ vi.mock("@/components/ui", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { currentSettingsView } from "./settingsBridge";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
 
 setupConnectionsRegion();
+setupSettingsRegion();
 import { saveSettings } from "@/services/storage";
 import { summarizeLastSession } from "@/utils/restoreMode";
 import type { LastSession } from "@/types/lastSession";
@@ -99,11 +102,10 @@ describe("startup restore mode", () => {
       agentDefinitions: {},
       defaultShell: "bash",
       restorePrompt: null,
-      settings: {
-        ...useAppStore.getState().settings,
-        restoreLastSessionOnStartup: undefined,
-        restoreLastSessionMode: "ask",
-      },
+    });
+    seedSettings({
+      restoreLastSessionOnStartup: undefined,
+      restoreLastSessionMode: "ask",
     });
     seedConnectionsRegion({ connections: [] });
     useAppStore.getState().addTab("Shell", "local", { type: "local", config: { shell: "bash" } });
@@ -111,9 +113,7 @@ describe("startup restore mode", () => {
 
   describe("saveLastSession honours the mode", () => {
     it("skips persisting when the mode is never", async () => {
-      useAppStore.setState({
-        settings: { ...useAppStore.getState().settings, restoreLastSessionMode: "never" },
-      });
+      seedSettings({ restoreLastSessionMode: "never" });
 
       await useAppStore.getState().saveLastSession();
 
@@ -126,9 +126,7 @@ describe("startup restore mode", () => {
     });
 
     it("persists when the mode is always", async () => {
-      useAppStore.setState({
-        settings: { ...useAppStore.getState().settings, restoreLastSessionMode: "always" },
-      });
+      seedSettings({ restoreLastSessionMode: "always" });
       await useAppStore.getState().saveLastSession();
       expect(mockSave).toHaveBeenCalledTimes(1);
     });
@@ -189,7 +187,7 @@ describe("startup restore mode", () => {
     it("persists mode=always when remember is set", async () => {
       await useAppStore.getState().confirmRestorePrompt(true);
 
-      expect(useAppStore.getState().settings.restoreLastSessionMode).toBe("always");
+      expect(currentSettingsView().restoreLastSessionMode).toBe("always");
       expect(mockPersistSettings).toHaveBeenCalled();
       expect(
         (mockPersistSettings.mock.calls[0][0] as { restoreLastSessionMode?: string })
@@ -200,7 +198,7 @@ describe("startup restore mode", () => {
     it("does not change the mode when remember is not set", async () => {
       await useAppStore.getState().confirmRestorePrompt(false);
 
-      expect(useAppStore.getState().settings.restoreLastSessionMode).toBe("ask");
+      expect(currentSettingsView().restoreLastSessionMode).toBe("ask");
       expect(mockPersistSettings).not.toHaveBeenCalled();
     });
   });
@@ -222,7 +220,7 @@ describe("startup restore mode", () => {
     it("persists mode=never when remember is set", async () => {
       await useAppStore.getState().dismissRestorePrompt(true);
 
-      expect(useAppStore.getState().settings.restoreLastSessionMode).toBe("never");
+      expect(currentSettingsView().restoreLastSessionMode).toBe("never");
       expect(
         (mockPersistSettings.mock.calls[0][0] as { restoreLastSessionMode?: string })
           .restoreLastSessionMode
@@ -232,7 +230,7 @@ describe("startup restore mode", () => {
     it("does not change the mode when remember is not set", async () => {
       await useAppStore.getState().dismissRestorePrompt(false);
 
-      expect(useAppStore.getState().settings.restoreLastSessionMode).toBe("ask");
+      expect(currentSettingsView().restoreLastSessionMode).toBe("ask");
       expect(mockPersistSettings).not.toHaveBeenCalled();
     });
   });

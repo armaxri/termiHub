@@ -14,6 +14,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
 import { toast } from "@/components/ui/Toast";
 import { UpdateNotification } from "./UpdateNotification";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(() => Promise.resolve()),
@@ -48,6 +49,8 @@ function byTestId(id: string): HTMLButtonElement | null {
   return container.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`);
 }
 
+setupSettingsRegion();
+
 beforeEach(() => {
   vi.clearAllMocks();
   useAppStore.setState({
@@ -59,13 +62,10 @@ beforeEach(() => {
       isSecurity: false,
     },
     updateNotificationDismissed: false,
-    settings: {
-      ...useAppStore.getState().settings,
-      updates: { autoCheck: true, skippedVersion: undefined },
-    },
     dismissUpdateNotification: vi.fn(),
     skipUpdate: vi.fn(() => Promise.resolve()),
   });
+  seedSettings({ updates: { autoCheck: true, skippedVersion: undefined } });
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);

@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useAppStore } from "@/store/appStore";
+import { describe, it, expect, vi } from "vitest";
+import { currentSettingsView } from "@/store/settingsBridge";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -25,36 +26,23 @@ vi.mock("@/services/storage", () => ({
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn() }));
 
-const baseSettings = {
-  version: "1",
-  externalConnectionFiles: [] as [],
-  powerMonitoringEnabled: true,
-  fileBrowserEnabled: true,
-};
+setupSettingsRegion();
 
 describe("experimentalFeaturesEnabled setting", () => {
-  beforeEach(() => {
-    useAppStore.setState({ settings: { ...baseSettings } });
-  });
-
   it("defaults to false when not set", () => {
-    const val = useAppStore.getState().settings.experimentalFeaturesEnabled ?? false;
+    const val = currentSettingsView().experimentalFeaturesEnabled ?? false;
     expect(val).toBe(false);
   });
 
   it("is false when explicitly set to false", () => {
-    useAppStore.setState({
-      settings: { ...baseSettings, experimentalFeaturesEnabled: false },
-    });
-    const val = useAppStore.getState().settings.experimentalFeaturesEnabled ?? false;
+    seedSettings({ experimentalFeaturesEnabled: false });
+    const val = currentSettingsView().experimentalFeaturesEnabled ?? false;
     expect(val).toBe(false);
   });
 
   it("is true when set to true", () => {
-    useAppStore.setState({
-      settings: { ...baseSettings, experimentalFeaturesEnabled: true },
-    });
-    const val = useAppStore.getState().settings.experimentalFeaturesEnabled ?? false;
+    seedSettings({ experimentalFeaturesEnabled: true });
+    const val = currentSettingsView().experimentalFeaturesEnabled ?? false;
     expect(val).toBe(true);
   });
 });

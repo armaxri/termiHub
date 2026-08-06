@@ -80,6 +80,7 @@ vi.mock("@/components/ui", () => ({
 
 import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
 import { toast } from "@/components/ui";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -93,6 +94,7 @@ const mockToast = vi.mocked(toast);
 const mockCurrentWindow = vi.mocked(getCurrentWindow);
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 describe("last session persistence", () => {
   beforeEach(() => {
@@ -109,8 +111,8 @@ describe("last session persistence", () => {
       remoteAgents: [],
       agentDefinitions: {},
       defaultShell: "bash",
-      settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: true },
     });
+    seedSettings({ restoreLastSessionOnStartup: true });
     seedConnectionsRegion({ connections: [] });
     // Open a fresh local terminal so there is real content to capture.
     useAppStore.getState().addTab("Shell", "local", { type: "local", config: { shell: "bash" } });
@@ -128,9 +130,7 @@ describe("last session persistence", () => {
     });
 
     it("does nothing when restore-on-startup is disabled", async () => {
-      useAppStore.setState({
-        settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: false },
-      });
+      seedSettings({ restoreLastSessionOnStartup: false });
 
       await useAppStore.getState().saveLastSession();
 

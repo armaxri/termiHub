@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useAppStore } from "./appStore";
+import { currentSettingsView } from "./settingsBridge";
+import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
+
+setupSettingsRegion();
 
 describe("openSavedFileDialog store state", () => {
   beforeEach(() => {
@@ -25,6 +29,8 @@ describe("openSavedFileDialog store state", () => {
   });
 
   it("askOpenSavedFileInTab defaults to true in settings", () => {
-    expect(useAppStore.getState().settings.askOpenSavedFileInTab).toBe(true);
+    // The field is unset in the projected baseline document (the backend seeds the
+    // `true` default, #2404); read sites coalesce a missing value to `true`.
+    expect(currentSettingsView().askOpenSavedFileInTab ?? true).toBe(true);
   });
 });

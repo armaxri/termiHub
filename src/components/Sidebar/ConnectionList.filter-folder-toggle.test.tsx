@@ -11,6 +11,7 @@ import { useAppStore } from "@/store/appStore";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
 
@@ -88,6 +89,7 @@ function folderExpanded(folderId: string): boolean | undefined {
 }
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 describe("ConnectionList — folder toggle ignored while filtering (#1378)", () => {
   let container: HTMLDivElement;
@@ -98,7 +100,7 @@ describe("ConnectionList — folder toggle ignored while filtering (#1378)", () 
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    seedSettings({ ...baseSettings });
   });
 
   afterEach(() => {

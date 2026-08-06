@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import {
   processKeyEvent,
   onChordStateChange,
@@ -52,7 +53,7 @@ export function useKeyboardShortcuts() {
       // Pass-through: when the terminal pane is focused, let standard shell /
       // tmux / vim / SSH-to-remote keys reach the PTY instead of firing any
       // matching app shortcut. Users can disable this in Settings.
-      const passthroughEnabled = useAppStore.getState().settings.terminalKeyPassthrough !== false;
+      const passthroughEnabled = currentSettingsView().terminalKeyPassthrough !== false;
       if (passthroughEnabled && isEventFromTerminal(e) && isShellReservedKey(e)) {
         return;
       }
@@ -82,7 +83,7 @@ export function useKeyboardShortcuts() {
       // setting lets users restore the old global-first behavior. Global-scoped
       // actions short-circuit before any context/DOM lookup since they always fire.
       const scope = getActionScope(action);
-      const delegationEnabled = useAppStore.getState().settings.editorShortcutDelegation !== false;
+      const delegationEnabled = currentSettingsView().editorShortcutDelegation !== false;
       if (delegationEnabled && scope !== "global") {
         const ctx = activeContextFromTab(getActiveTab(useAppStore.getState()) ?? undefined);
         if (!isScopeCompatible(scope, ctx, isEventFromTextInput(e))) {
@@ -179,9 +180,9 @@ export function useKeyboardShortcuts() {
 
         case "close-tab-group": {
           e.preventDefault();
-          const { tabGroups, activeTabGroupId, settings } = useAppStore.getState();
+          const { tabGroups, activeTabGroupId } = useAppStore.getState();
           if (tabGroups.length <= 1) break;
-          const confirmEnabled = settings.confirmCloseTabOnShortcut ?? true;
+          const confirmEnabled = currentSettingsView().confirmCloseTabOnShortcut ?? true;
           if (confirmEnabled) {
             const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
             useAppStore.getState().setPendingShortcutCloseConfirm({

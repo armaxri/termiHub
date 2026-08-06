@@ -20,6 +20,7 @@ import { sendInput } from "@/services/api";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { frontendLog } from "@/utils/frontendLog";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
 
@@ -252,8 +253,8 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
 
       // Offer to open the just-saved file in an editor tab, unless the user
       // disabled the prompt (in which case the file is saved silently).
-      const { settings, showOpenSavedFileDialog } = useAppStore.getState();
-      if (settings.askOpenSavedFileInTab ?? true) {
+      const { showOpenSavedFileDialog } = useAppStore.getState();
+      if (currentSettingsView().askOpenSavedFileInTab ?? true) {
         showOpenSavedFileDialog(filePath);
       }
     },

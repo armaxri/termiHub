@@ -1,8 +1,9 @@
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { seedSettings, setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { AppSettings } from "@/types/connection";
 import { TooltipProvider } from "@/components/ui";
 import { SettingsPanel } from "./SettingsPanel";
@@ -86,7 +87,7 @@ async function clickCheckbox(checkbox: HTMLElement) {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("SettingsPanel — dirty state on revert to default", () => {
   beforeEach(() => {
@@ -130,7 +131,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
   });
 
   it("clears dirty flag when setting is reverted to its last-saved value", async () => {
-    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+    seedSettings(FULL_SETTINGS);
     render();
 
     const checkbox = findShellIntegrationCheckbox();
@@ -150,12 +151,12 @@ describe("SettingsPanel — dirty state on revert to default", () => {
 
   it("clears dirty flag after revert when settings were updated externally after mount", async () => {
     // Simulate panel mounting before loadFromBackend completes (sparse initial state)
-    useAppStore.setState({ settings: SPARSE_SETTINGS });
+    seedSettings(SPARSE_SETTINGS);
     render();
 
     // Simulate loadFromBackend: settings now include defaultShellIntegration
     await act(async () => {
-      useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+      seedSettings(FULL_SETTINGS);
     });
 
     const checkbox = findShellIntegrationCheckbox();
@@ -176,7 +177,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
   });
 
   it("does not reset dirty baseline while user has pending unsaved changes", async () => {
-    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+    seedSettings(FULL_SETTINGS);
     render();
 
     const checkbox = findShellIntegrationCheckbox();
@@ -188,10 +189,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
 
     // External settings update (e.g., skipUpdate) while user has unsaved edits
     await act(async () => {
-      useAppStore.setState({
-        settings: { ...FULL_SETTINGS, defaultX11Forwarding: false },
-        savedSettings: { ...FULL_SETTINGS, defaultX11Forwarding: false },
-      });
+      seedSettings({ ...FULL_SETTINGS, defaultX11Forwarding: false });
     });
 
     // Dirty flag must still be true — the external update must not have reset the baseline
@@ -199,7 +197,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
   });
 
   it("marks settings dirty when toggling Provide X Server Automatically", async () => {
-    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+    seedSettings(FULL_SETTINGS);
     render();
 
     const checkbox = findProvideXServerCheckbox();
@@ -209,13 +207,13 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     // User disables auto-provisioning → dirty
     await clickCheckbox(checkbox!);
     expect(isChecked(checkbox!)).toBe(false);
-    expect(useAppStore.getState().settings.provideXServerAutomatically).toBe(false);
+    expect(currentSettingsView().provideXServerAutomatically).toBe(false);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
 
     // User reverts to original (enabled) value → clean
     await clickCheckbox(checkbox!);
     expect(isChecked(checkbox!)).toBe(true);
-    expect(useAppStore.getState().settings.provideXServerAutomatically).toBe(true);
+    expect(currentSettingsView().provideXServerAutomatically).toBe(true);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
 
@@ -223,26 +221,20 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     // After a connect-time Enable, the backend persists
     // provide_x_server_automatically = Some(true); the Settings toggle must show
     // that as checked so the decision is visible and reversible in one place.
-    useAppStore.setState({
-      settings: { ...FULL_SETTINGS, provideXServerAutomatically: true },
-      savedSettings: { ...FULL_SETTINGS, provideXServerAutomatically: true },
-    });
+    seedSettings({ ...FULL_SETTINGS, provideXServerAutomatically: true });
     render();
     expect(isChecked(findProvideXServerCheckbox()!)).toBe(true);
 
     // A persisted decline (Some(false)) shows as unchecked.
     act(() => root.unmount());
     root = createRoot(container);
-    useAppStore.setState({
-      settings: { ...FULL_SETTINGS, provideXServerAutomatically: false },
-      savedSettings: { ...FULL_SETTINGS, provideXServerAutomatically: false },
-    });
+    seedSettings({ ...FULL_SETTINGS, provideXServerAutomatically: false });
     render();
     expect(isChecked(findProvideXServerCheckbox()!)).toBe(false);
   });
 
   it("marks settings dirty when toggling Stop X Server When Idle", async () => {
-    useAppStore.setState({ settings: FULL_SETTINGS, savedSettings: FULL_SETTINGS });
+    seedSettings(FULL_SETTINGS);
     render();
 
     const checkbox = findStopXServerIdleCheckbox();
@@ -252,13 +244,13 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     // User disables idle shutdown → dirty
     await clickCheckbox(checkbox!);
     expect(isChecked(checkbox!)).toBe(false);
-    expect(useAppStore.getState().settings.stopXServerWhenIdle).toBe(false);
+    expect(currentSettingsView().stopXServerWhenIdle).toBe(false);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
 
     // User reverts to original (enabled) value → clean
     await clickCheckbox(checkbox!);
     expect(isChecked(checkbox!)).toBe(true);
-    expect(useAppStore.getState().settings.stopXServerWhenIdle).toBe(true);
+    expect(currentSettingsView().stopXServerWhenIdle).toBe(true);
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
   });
 });

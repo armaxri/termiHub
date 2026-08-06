@@ -15,7 +15,7 @@
  * make scrolling with expanded agents possible; the pixel-level overflow is
  * verified separately with the real CSS in headless Chrome (see the PR).
  */
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
@@ -105,7 +105,7 @@ function render() {
   });
 }
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 setupAgentsRegionMirror();
 
 describe("ConnectionList – Remote Agents scroll with EXPANDED agents (#2116)", () => {
@@ -115,7 +115,7 @@ describe("ConnectionList – Remote Agents scroll with EXPANDED agents (#2116)",
     root = createRoot(container);
     for (const k of Object.keys(receivedStyles)) delete receivedStyles[k];
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    seedSettings({ ...baseSettings });
     // 15 agents, several expanded — the scenario #2106 never tested.
     useAppStore.setState({
       remoteAgents: Array.from({ length: 15 }, (_, i) => makeAgent(i, i % 3 === 0)),

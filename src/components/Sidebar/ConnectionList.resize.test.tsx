@@ -9,7 +9,7 @@
  * the agent list now scrolls, with every agent at its natural content height,
  * so there is no fixed height for a splitter to apportion between them.
  */
-import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -75,7 +75,7 @@ const baseSettings = {
 let container: HTMLDivElement;
 let root: Root;
 
-setupSettingsRegionMirror();
+setupSettingsRegion();
 
 describe("ConnectionList – outer resize handle (connections vs remote agents)", () => {
   beforeEach(() => {
@@ -83,7 +83,7 @@ describe("ConnectionList – outer resize handle (connections vs remote agents)"
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    seedSettings({ ...baseSettings });
   });
 
   afterEach(() => {
@@ -145,7 +145,7 @@ describe("ConnectionList – no inner resize handles between agents (#2116)", ()
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ settings: { ...baseSettings } });
+    seedSettings({ ...baseSettings });
   });
 
   afterEach(() => {

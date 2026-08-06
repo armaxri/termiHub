@@ -11,6 +11,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
+import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, JumpHostConfig } from "@/types/connection";
 import { resolveCredential } from "@/services/api";
@@ -58,6 +59,7 @@ function sshConnection(id: string, settings: Record<string, unknown>): SavedConn
 }
 
 setupConnectionsRegion();
+setupSettingsRegion();
 
 describe("ConnectionList — jump-host context menu", () => {
   let container: HTMLDivElement;
@@ -70,9 +72,9 @@ describe("ConnectionList — jump-host context menu", () => {
     vi.clearAllMocks();
     useAppStore.setState(useAppStore.getInitialState());
     useAppStore.setState({
-      settings: { ...baseSettings },
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
+    seedSettings({ ...baseSettings });
   });
 
   afterEach(() => {
