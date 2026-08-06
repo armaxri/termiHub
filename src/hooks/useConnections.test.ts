@@ -31,6 +31,8 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "@/store/appStore";
+import { currentConnectionsView } from "@/store/connectionsBridge";
+import { setupConnectionsRegion } from "@/test/connectionsHarness";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
 
 // Re-implement the hook logic under test (it's just thin store wrappers).
@@ -60,6 +62,8 @@ function simulateCreateFolder(
   return folder;
 }
 
+setupConnectionsRegion();
+
 describe("useConnections logic", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
@@ -80,7 +84,7 @@ describe("useConnections logic", () => {
       const id = simulateCreateConnection(conn, addConnection);
 
       expect(id).toMatch(/^conn-\d+$/);
-      const stored = useAppStore.getState().connections.find((c) => c.id === id);
+      const stored = currentConnectionsView().connections.find((c) => c.id === id);
       expect(stored).toBeDefined();
       expect(stored!.name).toBe("My SSH");
     });
@@ -99,7 +103,7 @@ describe("useConnections logic", () => {
       // IDs should be different (Date.now() may collide in same ms but they're still unique objects)
       expect(id1).toMatch(/^conn-\d+$/);
       expect(id2).toMatch(/^conn-\d+$/);
-      expect(useAppStore.getState().connections).toHaveLength(2);
+      expect(currentConnectionsView().connections).toHaveLength(2);
     });
   });
 
@@ -110,7 +114,7 @@ describe("useConnections logic", () => {
       const folder = simulateCreateFolder("Production Servers", null, addFolder);
 
       expect(folder.id).toMatch(/^folder-\d+$/);
-      const stored = useAppStore.getState().folders.find((f) => f.id === folder.id);
+      const stored = currentConnectionsView().folders.find((f) => f.id === folder.id);
       expect(stored).toBeDefined();
       expect(stored!.name).toBe("Production Servers");
       expect(stored!.parentId).toBeNull();
@@ -131,7 +135,7 @@ describe("useConnections logic", () => {
       addFolder(parentFolder);
       addFolder(childFolder);
 
-      const storedChild = useAppStore.getState().folders.find((f) => f.id === "folder-c1");
+      const storedChild = currentConnectionsView().folders.find((f) => f.id === "folder-c1");
       expect(storedChild!.parentId).toBe("folder-p1");
     });
   });
@@ -145,11 +149,11 @@ describe("useConnections logic", () => {
         config: { type: "local", config: { shell: "bash" } },
         folderId: null,
       });
-      expect(useAppStore.getState().connections).toHaveLength(1);
+      expect(currentConnectionsView().connections).toHaveLength(1);
 
       deleteConnection("conn-test");
 
-      expect(useAppStore.getState().connections).toHaveLength(0);
+      expect(currentConnectionsView().connections).toHaveLength(0);
     });
 
     it("updateConnection updates connection in store", async () => {
@@ -165,7 +169,7 @@ describe("useConnections logic", () => {
       // updateConnection takes a full SavedConnection, not a partial update
       updateConnection({ ...original, name: "New Name" });
 
-      const conn = useAppStore.getState().connections.find((c) => c.id === "conn-upd");
+      const conn = currentConnectionsView().connections.find((c) => c.id === "conn-upd");
       expect(conn!.name).toBe("New Name");
     });
 
@@ -175,7 +179,7 @@ describe("useConnections logic", () => {
 
       toggleFolder("f-toggle");
 
-      const folder = useAppStore.getState().folders.find((f) => f.id === "f-toggle");
+      const folder = currentConnectionsView().folders.find((f) => f.id === "f-toggle");
       expect(folder!.isExpanded).toBe(false);
     });
   });

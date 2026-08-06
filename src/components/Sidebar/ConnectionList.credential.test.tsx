@@ -14,7 +14,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { resolveCredential, storeCredential, isSshKeyEncrypted } from "@/services/api";
@@ -65,9 +65,9 @@ let root: Root;
 function render(connections: SavedConnection[]) {
   useAppStore.setState({
     ...useAppStore.getInitialState(),
-    connections,
     credentialStoreStatus: { mode: "master_password", status: "unlocked" },
   });
+  seedConnectionsRegion({ connections });
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
@@ -105,7 +105,7 @@ afterEach(() => {
   container.remove();
 });
 
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — password dialog conditions", () => {
   it("shows dialog for password auth when no credential is stored", async () => {

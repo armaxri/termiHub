@@ -8,7 +8,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
 
@@ -73,7 +73,7 @@ function keydown(el: Element, key: string) {
   });
 }
 
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — keyboard navigation & ARIA", () => {
   let container: HTMLDivElement;
@@ -93,7 +93,7 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
   });
 
   it("exposes role=tree with treeitem rows", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
     render(container, root);
@@ -104,7 +104,7 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
   });
 
   it("uses roving tabindex: only the first item is tabbable initially", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
     render(container, root);
@@ -116,7 +116,7 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
   });
 
   it("ArrowDown moves focus (roving tabindex) to the next item", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" }), makeConnection({ id: "conn-2" })],
     });
     render(container, root);
@@ -133,9 +133,9 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
 
   it("Enter on a focused connection connects it", () => {
     const addTab = vi.fn();
-    useAppStore.setState({
+    useAppStore.setState({ addTab });
+    seedConnectionsRegion({
       connections: [makeConnection({ id: "conn-1" })],
-      addTab,
     });
     render(container, root);
 
@@ -150,7 +150,7 @@ describe("ConnectionList — keyboard navigation & ARIA", () => {
   });
 
   it("folder rows expose aria-expanded and ArrowRight expands a collapsed folder", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: false })],
       connections: [makeConnection({ id: "conn-1", folderId: "folder-1" })],
     });

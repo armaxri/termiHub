@@ -11,7 +11,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { ConnectionFolder } from "@/types/connection";
 import type { RemoteAgentDefinition } from "@/types/connection";
@@ -60,7 +60,7 @@ const baseSettings = {
   experimentalFeaturesEnabled: false,
 };
 
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — folder chevron placement", () => {
   let container: HTMLDivElement;
@@ -80,7 +80,7 @@ describe("ConnectionList — folder chevron placement", () => {
   });
 
   it("renders chevron as the last child of the folder button", () => {
-    useAppStore.setState({ folders: [makeFolder()] });
+    seedConnectionsRegion({ folders: [makeFolder()] });
 
     act(() => {
       root.render(
@@ -104,7 +104,7 @@ describe("ConnectionList — folder chevron placement", () => {
   });
 
   it("does not render chevron as the first child of the folder button", () => {
-    useAppStore.setState({ folders: [makeFolder()] });
+    seedConnectionsRegion({ folders: [makeFolder()] });
 
     act(() => {
       root.render(
@@ -125,7 +125,7 @@ describe("ConnectionList — folder chevron placement", () => {
   it("renders chevron at last position for a nested subfolder", () => {
     const parent = makeFolder({ id: "folder-parent", name: "Parent", isExpanded: true });
     const child = makeFolder({ id: "folder-child", name: "Child", parentId: "folder-parent" });
-    useAppStore.setState({ folders: [parent, child] });
+    seedConnectionsRegion({ folders: [parent, child] });
 
     act(() => {
       root.render(

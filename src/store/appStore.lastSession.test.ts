@@ -79,6 +79,7 @@ vi.mock("@/components/ui", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { saveLastSession, loadLastSession, clearLastSession } from "@/services/lastSessionApi";
 import { toast } from "@/components/ui";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -90,6 +91,8 @@ const mockLoad = vi.mocked(loadLastSession);
 const mockClear = vi.mocked(clearLastSession);
 const mockToast = vi.mocked(toast);
 const mockCurrentWindow = vi.mocked(getCurrentWindow);
+
+setupConnectionsRegion();
 
 describe("last session persistence", () => {
   beforeEach(() => {
@@ -103,12 +106,12 @@ describe("last session persistence", () => {
     openWindow.mockResolvedValue("win-1");
     // Reset to a clean single empty terminal group.
     useAppStore.setState({
-      connections: [],
       remoteAgents: [],
       agentDefinitions: {},
       defaultShell: "bash",
       settings: { ...useAppStore.getState().settings, restoreLastSessionOnStartup: true },
     });
+    seedConnectionsRegion({ connections: [] });
     // Open a fresh local terminal so there is real content to capture.
     useAppStore.getState().addTab("Shell", "local", { type: "local", config: { shell: "bash" } });
   });

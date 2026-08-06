@@ -10,7 +10,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, JumpHostConfig } from "@/types/connection";
 import { resolveCredential } from "@/services/api";
@@ -57,7 +57,7 @@ function sshConnection(id: string, settings: Record<string, unknown>): SavedConn
   };
 }
 
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — jump-host context menu", () => {
   let container: HTMLDivElement;
@@ -81,7 +81,7 @@ describe("ConnectionList — jump-host context menu", () => {
   });
 
   function openMenu(connection: SavedConnection) {
-    useAppStore.setState({ connections: [connection] });
+    seedConnectionsRegion({ connections: [connection] });
     act(() =>
       root.render(
         React.createElement(TooltipProvider, {

@@ -10,7 +10,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, JumpHostConfig } from "@/types/connection";
 
@@ -46,7 +46,7 @@ function sshConnection(id: string, settings: Record<string, unknown>): SavedConn
   };
 }
 
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — jump-host hop badge", () => {
   let container: HTMLDivElement;
@@ -66,7 +66,7 @@ describe("ConnectionList — jump-host hop badge", () => {
   });
 
   function render(connections: SavedConnection[]) {
-    useAppStore.setState({ connections });
+    seedConnectionsRegion({ connections });
     act(() =>
       root.render(
         React.createElement(TooltipProvider, {

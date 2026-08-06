@@ -8,7 +8,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
 
@@ -81,7 +81,7 @@ function keydown(el: Element, key: string) {
   });
 }
 
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — filter/search", () => {
   let container: HTMLDivElement;
@@ -106,7 +106,7 @@ describe("ConnectionList — filter/search", () => {
   });
 
   it("live-filters connections by name", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [
         makeConnection({ id: "conn-1", name: "web-server" }),
         makeConnection({ id: "conn-2", name: "database" }),
@@ -124,7 +124,7 @@ describe("ConnectionList — filter/search", () => {
   });
 
   it("auto-expands a collapsed folder that contains a match", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: false })],
       connections: [makeConnection({ id: "conn-1", name: "web-server", folderId: "folder-1" })],
     });
@@ -144,12 +144,12 @@ describe("ConnectionList — filter/search", () => {
 
   it("Enter connects the top hit", () => {
     const addTab = vi.fn();
-    useAppStore.setState({
+    useAppStore.setState({ addTab });
+    seedConnectionsRegion({
       connections: [
         makeConnection({ id: "conn-1", name: "database" }),
         makeConnection({ id: "conn-2", name: "web-server" }),
       ],
-      addTab,
     });
     render(container, root);
 
@@ -166,7 +166,7 @@ describe("ConnectionList — filter/search", () => {
   });
 
   it("Escape clears the query and restores all connections", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       connections: [
         makeConnection({ id: "conn-1", name: "web-server" }),
         makeConnection({ id: "conn-2", name: "database" }),

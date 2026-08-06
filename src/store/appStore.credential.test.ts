@@ -21,8 +21,11 @@ vi.mock("@/themes", () => ({
 // Import after mock setup
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "./appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 
 const mockedInvoke = vi.mocked(invoke);
+
+setupConnectionsRegion();
 
 describe("appStore credential store state", () => {
   beforeEach(() => {
@@ -173,8 +176,8 @@ describe("launchWorkspace — credential store pre-unlock", () => {
       credentialStoreStatus: null,
       unlockDialogOpen: false,
       activeWorkspaceName: null,
-      connections: [],
     });
+    seedConnectionsRegion({ connections: [] });
   });
 
   it("prompts for unlock before opening tabs when store is locked and workspace has a password connection", async () => {
@@ -182,9 +185,9 @@ describe("launchWorkspace — credential store pre-unlock", () => {
     const mockRequestUnlock = vi.fn().mockResolvedValue(true);
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      connections: [sshConnection],
       requestUnlock: mockRequestUnlock,
     });
+    seedConnectionsRegion({ connections: [sshConnection] });
 
     await useAppStore.getState().launchWorkspace("ws-1");
 
@@ -197,9 +200,9 @@ describe("launchWorkspace — credential store pre-unlock", () => {
     const mockRequestUnlock = vi.fn().mockResolvedValue(false);
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      connections: [sshConnection],
       requestUnlock: mockRequestUnlock,
     });
+    seedConnectionsRegion({ connections: [sshConnection] });
 
     await useAppStore.getState().launchWorkspace("ws-1");
 
@@ -212,9 +215,9 @@ describe("launchWorkspace — credential store pre-unlock", () => {
     const mockRequestUnlock = vi.fn().mockResolvedValue(true);
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
-      connections: [sshConnection],
       requestUnlock: mockRequestUnlock,
     });
+    seedConnectionsRegion({ connections: [sshConnection] });
 
     await useAppStore.getState().launchWorkspace("ws-1");
 
@@ -246,9 +249,9 @@ describe("launchWorkspace — credential store pre-unlock", () => {
     const mockRequestUnlock = vi.fn().mockResolvedValue(true);
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      connections: [localConnection],
       requestUnlock: mockRequestUnlock,
     });
+    seedConnectionsRegion({ connections: [localConnection] });
 
     await useAppStore.getState().launchWorkspace("ws-2");
 
@@ -263,9 +266,9 @@ describe("launchWorkspace — credential store pre-unlock", () => {
     const mockRequestUnlock = vi.fn().mockResolvedValue(true);
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
-      connections: [sshConnection],
       requestUnlock: mockRequestUnlock,
     });
+    seedConnectionsRegion({ connections: [sshConnection] });
 
     await useAppStore.getState().launchWorkspace("ws-1");
 
@@ -310,9 +313,9 @@ describe("launchWorkspace — credential store pre-unlock", () => {
     const mockRequestUnlock = vi.fn().mockResolvedValue(true);
     useAppStore.setState({
       credentialStoreStatus: { mode: "master_password", status: "locked" },
-      connections: [sshKeyConnection],
       requestUnlock: mockRequestUnlock,
     });
+    seedConnectionsRegion({ connections: [sshKeyConnection] });
 
     await useAppStore.getState().launchWorkspace("ws-3");
 
@@ -356,10 +359,10 @@ describe("launchWorkspace — agentRef credential store pre-unlock", () => {
       credentialStoreStatus: null,
       unlockDialogOpen: false,
       activeWorkspaceName: null,
-      connections: [],
       remoteAgents: [],
       agentDefinitions: {},
     });
+    seedConnectionsRegion({ connections: [] });
   });
 
   it("prompts for unlock when store is locked and workspace has an agentRef with stored credential", async () => {

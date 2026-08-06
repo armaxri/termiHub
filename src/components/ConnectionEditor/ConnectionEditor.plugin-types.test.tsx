@@ -12,6 +12,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { TooltipProvider } from "@/components/ui";
 import type { ConnectionTypeInfo, SavedConnection } from "@/types/connection";
@@ -70,9 +71,9 @@ function renderNew() {
   const initial = useAppStore.getInitialState();
   useAppStore.setState({
     ...initial,
-    connections: [],
     connectionTypes: [LOCAL_TYPE, ACME_TYPE, ACME_TYPE_B],
   });
+  seedConnectionsRegion({ connections: [] });
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
@@ -119,6 +120,8 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+setupConnectionsRegion();
+
 describe("ConnectionEditor — plugin connection types", () => {
   it("lists plugin types under a puzzle-badged Plugins separator, below the built-ins", () => {
     renderNew();
@@ -164,10 +167,10 @@ describe("ConnectionEditor — plugin connection types", () => {
     const initial = useAppStore.getInitialState();
     useAppStore.setState({
       ...initial,
-      connections: [existing],
       connectionTypes: [LOCAL_TYPE, ACME_TYPE],
       updateConnection,
     });
+    seedConnectionsRegion({ connections: [existing] });
     act(() => {
       root.render(
         <TooltipProvider delayDuration={0}>

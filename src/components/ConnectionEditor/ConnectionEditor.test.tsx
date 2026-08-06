@@ -6,6 +6,8 @@ import React from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { currentConnectionsView } from "@/store/connectionsBridge";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { TooltipProvider, toast } from "@/components/ui";
@@ -114,6 +116,7 @@ function render() {
 }
 
 setupSettingsRegionMirror();
+setupConnectionsRegion();
 
 describe("ConnectionEditor — credential hint", () => {
   beforeEach(() => {
@@ -123,10 +126,10 @@ describe("ConnectionEditor — credential hint", () => {
     resetRuntimeCache();
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [EXISTING_CONN],
       connectionTypes: [SSH_TYPE],
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
+    seedConnectionsRegion({ connections: [EXISTING_CONN] });
 
     mockedInvoke.mockImplementation(() => Promise.resolve(false));
   });
@@ -269,10 +272,10 @@ describe("ConnectionEditor — Save & Connect credential handling", () => {
     resetRuntimeCache();
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY],
       connectionTypes: [SSH_TYPE_FULL],
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
+    seedConnectionsRegion({ connections: [SSH_CONN_PASSWORD, SSH_CONN_KEY] });
   });
 
   afterEach(() => {
@@ -713,9 +716,9 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
   it("does not mark tab dirty when opening an existing connection without changes", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [DIRTY_CONN],
       connectionTypes: [LOCAL_TYPE],
     });
+    seedConnectionsRegion({ connections: [DIRTY_CONN] });
     renderEditor(DIRTY_CONN.id);
     await flushEffects();
 
@@ -725,9 +728,9 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
   it("does not mark tab dirty in StrictMode when opening an existing connection without changes", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [DIRTY_CONN],
       connectionTypes: [LOCAL_TYPE],
     });
+    seedConnectionsRegion({ connections: [DIRTY_CONN] });
     renderEditor(DIRTY_CONN.id, true);
     await flushEffects();
 
@@ -737,9 +740,9 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
   it("does not mark tab dirty when opening a new connection with default values without changes", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [],
       connectionTypes: [LOCAL_TYPE],
     });
+    seedConnectionsRegion({ connections: [] });
     renderEditor("new");
     await flushEffects();
 
@@ -749,9 +752,9 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
   it("does not mark tab dirty in StrictMode when opening a new connection with default values", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [],
       connectionTypes: [LOCAL_TYPE],
     });
+    seedConnectionsRegion({ connections: [] });
     renderEditor("new", true);
     await flushEffects();
 
@@ -761,9 +764,9 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
   it("marks tab dirty when user changes the connection name", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [DIRTY_CONN],
       connectionTypes: [LOCAL_TYPE],
     });
+    seedConnectionsRegion({ connections: [DIRTY_CONN] });
     renderEditor(DIRTY_CONN.id);
     await flushEffects();
 
@@ -782,9 +785,9 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
   it("clears dirty flag when name is changed back to its original value", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [DIRTY_CONN],
       connectionTypes: [LOCAL_TYPE],
     });
+    seedConnectionsRegion({ connections: [DIRTY_CONN] });
     renderEditor(DIRTY_CONN.id);
     await flushEffects();
 
@@ -845,9 +848,9 @@ describe("ConnectionEditor — unsaved-changes dirty state", () => {
   it("clears dirty when a schema-defaulted boolean is toggled off then back to its default", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [CONN_WITHOUT_EXPLICIT_DEFAULTS],
       connectionTypes: [LOCAL_TYPE_WITH_DEFAULTS],
     });
+    seedConnectionsRegion({ connections: [CONN_WITHOUT_EXPLICIT_DEFAULTS] });
     renderEditor(CONN_WITHOUT_EXPLICIT_DEFAULTS.id);
     await flushEffects();
 
@@ -1010,10 +1013,10 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
   it("does NOT flag a new connection whose name matches a remote agent (separate namespaces)", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [],
       connectionTypes: [NAME_LOCAL_TYPE],
       remoteAgents: [makeAgent({ name: "Shared Name" })],
     });
+    seedConnectionsRegion({ connections: [] });
 
     renderLocal("new");
     await flush();
@@ -1028,6 +1031,10 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
   it("still flags a new connection that duplicates another connection in the same folder", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [],
+    });
+    seedConnectionsRegion({
       connections: [
         {
           id: "existing-1",
@@ -1036,8 +1043,6 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
           folderId: null,
         },
       ],
-      connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [],
     });
 
     renderLocal("new");
@@ -1053,6 +1058,10 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
   it("does NOT flag a new connection that duplicates a connection in a DIFFERENT folder", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [],
+    });
+    seedConnectionsRegion({
       connections: [
         {
           id: "existing-other-folder",
@@ -1061,8 +1070,6 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
           folderId: "folder-A",
         },
       ],
-      connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [],
     });
 
     renderLocal("new", "folder-B");
@@ -1078,6 +1085,10 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
   it("does NOT flag a new remote agent whose name matches a local connection", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [],
+    });
+    seedConnectionsRegion({
       connections: [
         {
           id: "existing-conn",
@@ -1086,8 +1097,6 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
           folderId: null,
         },
       ],
-      connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [],
     });
 
     renderLocal("new-remote-agent");
@@ -1103,10 +1112,10 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
   it("still flags a new remote agent that duplicates another agent's name", async () => {
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [],
       connectionTypes: [NAME_LOCAL_TYPE],
       remoteAgents: [makeAgent({ id: "agent-existing", name: "Duplicate Agent" })],
     });
+    seedConnectionsRegion({ connections: [] });
 
     renderLocal("new-remote-agent");
     await flush();
@@ -1122,6 +1131,11 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     const agent = makeAgent({ id: "agent-with-defs" });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
+      connectionTypes: [NAME_LOCAL_TYPE],
+      remoteAgents: [agent],
+      agentDefinitions: { [agent.id]: [] },
+    });
+    seedConnectionsRegion({
       connections: [
         {
           id: "existing-conn",
@@ -1130,9 +1144,6 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
           folderId: null,
         },
       ],
-      connectionTypes: [NAME_LOCAL_TYPE],
-      remoteAgents: [agent],
-      agentDefinitions: { [agent.id]: [] },
     });
 
     renderAgentDefinition(agent.id);
@@ -1157,11 +1168,11 @@ describe("ConnectionEditor — name conflict validation namespaces", () => {
     };
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [],
       connectionTypes: [NAME_LOCAL_TYPE],
       remoteAgents: [agent],
       agentDefinitions: { [agent.id]: [existingDef] },
     });
+    seedConnectionsRegion({ connections: [] });
 
     renderAgentDefinition(agent.id);
     await flush();
@@ -1225,10 +1236,10 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
     });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [SSH_CONN_PASSWORD],
       connectionTypes: [SSH_TYPE_FULL],
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
+    seedConnectionsRegion({ connections: [SSH_CONN_PASSWORD] });
   });
 
   afterEach(() => {
@@ -1415,10 +1426,10 @@ describe("ConnectionEditor — Setup SSH Agent button", () => {
     });
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [SSH_CONN_AGENT, SSH_CONN_PASSWORD, SSH_CONN_KEY],
       connectionTypes: [SSH_TYPE_FULL],
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
     });
+    seedConnectionsRegion({ connections: [SSH_CONN_AGENT, SSH_CONN_PASSWORD, SSH_CONN_KEY] });
   });
 
   afterEach(() => {
@@ -1486,7 +1497,6 @@ describe("ConnectionEditor — storage-file picker (#1105)", () => {
     resetRuntimeCache();
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [EXISTING_CONN],
       connectionTypes: [SSH_TYPE],
       credentialStoreStatus: { mode: "master_password", status: "unlocked" },
       // At least one enabled external file makes the storage-file picker render.
@@ -1495,6 +1505,7 @@ describe("ConnectionEditor — storage-file picker (#1105)", () => {
         externalConnectionFiles: [{ path: "/tmp/team.json", enabled: true }],
       },
     });
+    seedConnectionsRegion({ connections: [EXISTING_CONN] });
     mockedInvoke.mockImplementation(() => Promise.resolve(false));
   });
 
@@ -1578,10 +1589,10 @@ describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
     resetRuntimeCache();
     useAppStore.setState({
       ...useAppStore.getInitialState(),
-      connections: [],
       connectionTypes: [LOCAL_REQ_TYPE],
       credentialStoreStatus: { mode: "none", status: "unlocked" },
     });
+    seedConnectionsRegion({ connections: [] });
     mockedInvoke.mockImplementation(() => Promise.resolve(false));
   });
 
@@ -1601,7 +1612,7 @@ describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
     await act(async () => saveBtn.click());
     await flush();
 
-    expect(useAppStore.getState().connections).toHaveLength(0);
+    expect(currentConnectionsView().connections).toHaveLength(0);
   });
 
   it("saves once the name and required field are filled", async () => {
@@ -1622,7 +1633,7 @@ describe("ConnectionEditor — Save gating on invalid input (#1357)", () => {
     await act(async () => saveBtn.click());
     await flush();
 
-    const conns = useAppStore.getState().connections;
+    const conns = currentConnectionsView().connections;
     expect(conns).toHaveLength(1);
     expect(conns[0].name).toBe("My Host");
   });

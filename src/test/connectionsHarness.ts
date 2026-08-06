@@ -51,19 +51,87 @@ const EMPTY: ConnectionsView = { folders: [], connections: [] };
 let current: ConnectionsView = EMPTY;
 
 /**
+ * Apply a `connection.*` intent to the seeded view, mirroring the Rust
+ * [`ConnectionsStore`](../../src-tauri/src/connections_projection/store.rs)
+ * routes one-to-one — the faithful stand-in for the server-side fold. This is
+ * what lets a component test drive a real UI mutation (click delete, drag into a
+ * folder, toggle a chevron) and see the region — and therefore the rendered tree
+ * — update, exactly as the backend fold would in production.
+ */
+function applyIntent(
+  view: ConnectionsView,
+  kind: string,
+  payload: Record<string, unknown>
+): ConnectionsView {
+  const folders = [...view.folders];
+  let connections = [...view.connections];
+  switch (kind) {
+    case "connection.add":
+      connections.push(payload.connection as SavedConnection);
+      break;
+    case "connection.update": {
+      const next = payload.connection as SavedConnection;
+      connections = connections.map((c) => (c.id === next.id ? next : c));
+      break;
+    }
+    case "connection.remove":
+      connections = connections.filter((c) => c.id !== (payload.connectionId as string));
+      break;
+    case "connection.move": {
+      const id = payload.connectionId as string;
+      const folderId = (payload.folderId as string | null | undefined) ?? null;
+      connections = connections.map((c) => (c.id === id ? { ...c, folderId } : c));
+      break;
+    }
+    case "connection.addFolder":
+      folders.push(payload.folder as ConnectionFolder);
+      break;
+    case "connection.removeFolder": {
+      const folderId = payload.folderId as string;
+      const removed = folders.find((f) => f.id === folderId);
+      const parentId = removed?.parentId ?? null;
+      connections = connections.map((c) =>
+        c.folderId === folderId ? { ...c, folderId: null } : c
+      );
+      const kept = folders
+        .filter((f) => f.id !== folderId)
+        .map((f) => (f.parentId === folderId ? { ...f, parentId } : f));
+      return { folders: kept, connections };
+    }
+    case "connection.toggleFolder": {
+      const folderId = payload.folderId as string;
+      return {
+        folders: folders.map((f) => (f.id === folderId ? { ...f, isExpanded: !f.isExpanded } : f)),
+        connections,
+      };
+    }
+    default:
+      break;
+  }
+  return { folders, connections };
+}
+
+/**
  * A transport double whose region subscription snapshot always reflects the
  * currently-seeded view — so the reader hooks' mount-time subscribe agrees with
- * the synchronously-primed region cache (no clobber back to empty). Dispatch is
- * accepted and recorded but drives nothing (mutation intents are validated in the
- * bridge unit test, not here); the last dispatched intents are readable via
- * {@link connectionsHarnessDispatched} for the rare test that asserts a mutation
- * cut fired.
+ * the synchronously-primed region cache (no clobber back to empty). Dispatched
+ * `connection.*` intents are recorded (for {@link connectionsHarnessDispatched})
+ * **and** folded into the seeded view via {@link applyIntent}, standing in for the
+ * production server-side fold so a UI-driven mutation updates the rendered tree.
  */
 class SeededTransport implements Transport {
   dispatched: Intent[] = [];
 
   async dispatch(intent: Intent): Promise<IntentAck> {
     this.dispatched.push(intent);
+    if (typeof intent.kind === "string" && intent.kind.startsWith("connection.")) {
+      current = applyIntent(
+        current,
+        intent.kind,
+        (intent.payload ?? {}) as Record<string, unknown>
+      );
+      setConnectionsViewForTest(current);
+    }
     return { intentId: intent.intentId, status: "accepted", produced: [] };
   }
 

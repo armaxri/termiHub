@@ -8,8 +8,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { currentConnectionsView } from "@/store/connectionsBridge";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, ConnectionFolder, RemoteAgentDefinition } from "@/types/connection";
 
@@ -83,10 +84,10 @@ function keydown(el: Element, key: string) {
 }
 
 function folderExpanded(folderId: string): boolean | undefined {
-  return useAppStore.getState().folders.find((f) => f.id === folderId)?.isExpanded;
+  return currentConnectionsView().folders.find((f) => f.id === folderId)?.isExpanded;
 }
 
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — folder toggle ignored while filtering (#1378)", () => {
   let container: HTMLDivElement;
@@ -110,7 +111,7 @@ describe("ConnectionList — folder toggle ignored while filtering (#1378)", () 
   }
 
   it("clicking a folder while filtering does not change its stored expansion state", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: true })],
       connections: [makeConnection({ id: "conn-1", name: "web-server", folderId: "folder-1" })],
     });
@@ -132,7 +133,7 @@ describe("ConnectionList — folder toggle ignored while filtering (#1378)", () 
   });
 
   it("keyboard-collapsing a folder while filtering does not change its stored expansion state", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: true })],
       connections: [makeConnection({ id: "conn-1", name: "web-server", folderId: "folder-1" })],
     });
@@ -156,7 +157,7 @@ describe("ConnectionList — folder toggle ignored while filtering (#1378)", () 
   });
 
   it("a collapsed folder stays collapsed after filtering force-expands then toggling it", () => {
-    useAppStore.setState({
+    seedConnectionsRegion({
       folders: [makeFolder({ id: "folder-1", isExpanded: false })],
       connections: [makeConnection({ id: "conn-1", name: "web-server", folderId: "folder-1" })],
     });

@@ -1,9 +1,8 @@
 /**
- * `useProjectedConnections` — the connection tree sidebar reads the authoritative
- * `connections` region (#2225, PR A). Drives the hook against an in-memory
- * substrate double and asserts: it renders the server-fed region view directly,
- * re-renders on every region diff, and never reads the `appStore` slice (no seed,
- * no mirror gate, no fallback).
+ * `useProjectedConnections` — every connections reader sources the authoritative
+ * `connections` region (#2225, PR B). Drives the hook against an in-memory
+ * substrate double and asserts: it renders the server-fed region view directly and
+ * re-renders on every region diff. There is no `appStore` slice left to read.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -18,7 +17,6 @@ import type {
   Subscription,
   Transport,
 } from "@/services/transport";
-import { useAppStore } from "@/store/appStore";
 import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 
 import {
@@ -118,7 +116,6 @@ let transport: FakeTransport;
 beforeEach(() => {
   transport = new FakeTransport();
   setConnectionTransportForTest(transport);
-  useAppStore.setState({ folders: [], connections: [] });
 });
 
 afterEach(() => {
@@ -154,24 +151,6 @@ describe("useProjectedConnections", () => {
 
     expect(hook.get().folders[0].id).toBe("A");
     expect(hook.get().connections[0].id).toBe("A/1");
-    hook.unmount();
-  });
-
-  it("ignores the appStore slice entirely (region is the source of truth)", async () => {
-    // appStore holds a divergent slice; the hook must not read it.
-    useAppStore.setState({
-      folders: [folder("Stale")],
-      connections: [connection("stale-1")],
-    });
-    const regionFolders = [folder("Live")];
-    const regionConnections = [connection("live-1", "Live")];
-    transport.seed({ folders: regionFolders, connections: regionConnections });
-
-    const hook = renderHook();
-    await flush();
-
-    expect(hook.get().folders).toEqual(regionFolders);
-    expect(hook.get().connections).toEqual(regionConnections);
     hook.unmount();
   });
 });

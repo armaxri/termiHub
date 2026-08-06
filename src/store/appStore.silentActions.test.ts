@@ -81,7 +81,8 @@ vi.mock("@/services/lastSessionApi", () => ({
   clearLastSession: vi.fn(() => Promise.resolve()),
 }));
 
-import { useAppStore, _resetConnectionReloadSeq } from "./appStore";
+import { useAppStore } from "./appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import {
   persistConnection,
   removeConnection,
@@ -146,9 +147,10 @@ async function flush() {
 
 const AGENT_ID = "agent-test-1";
 
+setupConnectionsRegion();
+
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
-  _resetConnectionReloadSeq();
   vi.clearAllMocks();
 });
 
@@ -156,7 +158,7 @@ describe("#1472 — connection mutating actions surface errors", () => {
   it("bulkDeleteConnections toasts on a rejected removal", async () => {
     vi.mocked(removeConnection).mockRejectedValueOnce(new Error("locked"));
     const conn = makeConnection();
-    useAppStore.setState({ connections: [conn] });
+    seedConnectionsRegion({ connections: [conn] });
     useAppStore.getState().bulkDeleteConnections([conn.id]);
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("locked"));
@@ -173,7 +175,7 @@ describe("#1472 — connection mutating actions surface errors", () => {
   it("deleteFolder toasts on a rejected removal", async () => {
     vi.mocked(removeFolder).mockRejectedValueOnce(new Error("nope"));
     const folder = makeFolder();
-    useAppStore.setState({ folders: [folder] });
+    seedConnectionsRegion({ folders: [folder] });
     useAppStore.getState().deleteFolder(folder.id);
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("nope"));
@@ -182,7 +184,7 @@ describe("#1472 — connection mutating actions surface errors", () => {
   it("toggleFolder toasts on a rejected persist", async () => {
     vi.mocked(persistFolder).mockRejectedValueOnce(new Error("io"));
     const folder = makeFolder();
-    useAppStore.setState({ folders: [folder] });
+    seedConnectionsRegion({ folders: [folder] });
     useAppStore.getState().toggleFolder(folder.id);
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("io"));
@@ -191,7 +193,7 @@ describe("#1472 — connection mutating actions surface errors", () => {
   it("duplicateConnection toasts on a rejected persist", async () => {
     vi.mocked(persistConnection).mockRejectedValueOnce(new Error("boom"));
     const conn = makeConnection({ name: "orig" });
-    useAppStore.setState({ connections: [conn] });
+    seedConnectionsRegion({ connections: [conn] });
     useAppStore.getState().duplicateConnection(conn.id);
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("orig"));
@@ -200,7 +202,7 @@ describe("#1472 — connection mutating actions surface errors", () => {
   it("moveConnectionToFile toasts on a rejected move", async () => {
     vi.mocked(moveConnectionToFile).mockRejectedValueOnce(new Error("perm"));
     const conn = makeConnection({ name: "mover", sourceFile: null });
-    useAppStore.setState({ connections: [conn] });
+    seedConnectionsRegion({ connections: [conn] });
     await useAppStore.getState().moveConnectionToFile(conn.id, "other.json");
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("perm"));
@@ -209,7 +211,7 @@ describe("#1472 — connection mutating actions surface errors", () => {
   it("moveConnectionToFolder toasts on a rejected persist", async () => {
     vi.mocked(persistConnection).mockRejectedValueOnce(new Error("bad"));
     const conn = makeConnection({ name: "movee" });
-    useAppStore.setState({ connections: [conn] });
+    seedConnectionsRegion({ connections: [conn] });
     useAppStore.getState().moveConnectionToFolder(conn.id, "folder-1");
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("bad"));
@@ -218,7 +220,7 @@ describe("#1472 — connection mutating actions surface errors", () => {
   it("bulkMoveConnectionsToFolder toasts on a rejected persist", async () => {
     vi.mocked(persistConnection).mockRejectedValueOnce(new Error("nope"));
     const conn = makeConnection();
-    useAppStore.setState({ connections: [conn] });
+    seedConnectionsRegion({ connections: [conn] });
     useAppStore.getState().bulkMoveConnectionsToFolder([conn.id], "folder-1");
     await flush();
     expect(toastError).toHaveBeenCalledWith(expect.stringContaining("nope"));

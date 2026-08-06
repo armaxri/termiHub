@@ -13,7 +13,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
-import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TooltipProvider } from "@/components/ui";
 import type {
   SavedConnection,
@@ -82,10 +82,10 @@ function render(experimentalFeaturesEnabled: boolean) {
   const initial = useAppStore.getInitialState();
   useAppStore.setState({
     ...initial,
-    connections: [SSH_CONN, RD_CONN],
     connectionTypes: [SSH_TYPE, MOCK_RD_TYPE],
     settings: { ...initial.settings, experimentalFeaturesEnabled },
   });
+  seedConnectionsRegion({ connections: [SSH_CONN, RD_CONN] });
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
@@ -114,7 +114,7 @@ afterEach(() => {
 });
 
 setupSettingsRegionMirror();
-setupConnectionsRegionFromAppStore();
+setupConnectionsRegion();
 
 describe("ConnectionList — experimental remote-desktop gating", () => {
   it("hides graphical remote-desktop connections when the flag is off", () => {

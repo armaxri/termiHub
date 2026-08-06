@@ -31,7 +31,8 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
-import { useAppStore, _resetConnectionReloadSeq } from "./appStore";
+import { useAppStore } from "./appStore";
+import { currentConnectionsView } from "./connectionsBridge";
 import {
   persistConnection,
   loadConnections,
@@ -41,6 +42,14 @@ import {
 import type { LeafPanel } from "@/types/terminal";
 import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { seedConnectionsRegion, setupConnectionsRegion } from "@/test/connectionsHarness";
+
+// The connections tree is region-authoritative (#2401): seed the `connections`
+// region directly and read it back via `currentConnectionsView()`. The lifecycle
+// actions dispatch `connection.*` intents that the harness's transport double
+// folds into the region (standing in for the server-side fold), so an
+// action-then-read sequence reflects the transition synchronously.
+setupConnectionsRegion();
 
 function makeConnection(overrides: Partial<SavedConnection> = {}): SavedConnection {
   return {
@@ -65,7 +74,6 @@ function makeFolder(overrides: Partial<ConnectionFolder> = {}): ConnectionFolder
 describe("appStore — connections, folders, and special tabs", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
-    _resetConnectionReloadSeq();
     vi.mocked(loadConnections).mockReset();
     vi.mocked(loadConnections).mockResolvedValue({
       connections: [],
@@ -82,32 +90,32 @@ describe("appStore — connections, folders, and special tabs", () => {
   describe("toggleFolder", () => {
     it("toggles folder expanded state", () => {
       const folder = makeFolder({ id: "f-1", isExpanded: true });
-      useAppStore.setState({ folders: [folder] });
+      seedConnectionsRegion({ folders: [folder] });
 
       useAppStore.getState().toggleFolder("f-1");
 
-      const toggled = useAppStore.getState().folders.find((f) => f.id === "f-1");
+      const toggled = currentConnectionsView().folders.find((f) => f.id === "f-1");
       expect(toggled?.isExpanded).toBe(false);
     });
 
     it("toggles back to expanded", () => {
       const folder = makeFolder({ id: "f-1", isExpanded: false });
-      useAppStore.setState({ folders: [folder] });
+      seedConnectionsRegion({ folders: [folder] });
 
       useAppStore.getState().toggleFolder("f-1");
 
-      const toggled = useAppStore.getState().folders.find((f) => f.id === "f-1");
+      const toggled = currentConnectionsView().folders.find((f) => f.id === "f-1");
       expect(toggled?.isExpanded).toBe(true);
     });
 
     it("does not affect other folders", () => {
       const folder1 = makeFolder({ id: "f-1", isExpanded: true });
       const folder2 = makeFolder({ id: "f-2", isExpanded: false });
-      useAppStore.setState({ folders: [folder1, folder2] });
+      seedConnectionsRegion({ folders: [folder1, folder2] });
 
       useAppStore.getState().toggleFolder("f-1");
 
-      const folders = useAppStore.getState().folders;
+      const folders = currentConnectionsView().folders;
       expect(folders.find((f) => f.id === "f-1")?.isExpanded).toBe(false);
       expect(folders.find((f) => f.id === "f-2")?.isExpanded).toBe(false);
     });
@@ -116,22 +124,22 @@ describe("appStore — connections, folders, and special tabs", () => {
   describe("updateConnection", () => {
     it("updates connection fields", () => {
       const conn = makeConnection({ id: "c-1", name: "Old Name" });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().updateConnection({ ...conn, name: "New Name" });
 
-      const updated = useAppStore.getState().connections.find((c) => c.id === "c-1");
+      const updated = currentConnectionsView().connections.find((c) => c.id === "c-1");
       expect(updated?.name).toBe("New Name");
     });
 
     it("only updates the targeted connection", () => {
       const conn1 = makeConnection({ id: "c-1", name: "Connection 1" });
       const conn2 = makeConnection({ id: "c-2", name: "Connection 2" });
-      useAppStore.setState({ connections: [conn1, conn2] });
+      seedConnectionsRegion({ connections: [conn1, conn2] });
 
       useAppStore.getState().updateConnection({ ...conn1, name: "Updated" });
 
-      const connections = useAppStore.getState().connections;
+      const connections = currentConnectionsView().connections;
       expect(connections.find((c) => c.id === "c-1")?.name).toBe("Updated");
       expect(connections.find((c) => c.id === "c-2")?.name).toBe("Connection 2");
     });
@@ -143,8 +151,8 @@ describe("appStore — connections, folders, and special tabs", () => {
 
       useAppStore.getState().addFolder(folder);
 
-      expect(useAppStore.getState().folders).toHaveLength(1);
-      expect(useAppStore.getState().folders[0].name).toBe("New Folder");
+      expect(currentConnectionsView().folders).toHaveLength(1);
+      expect(currentConnectionsView().folders[0].name).toBe("New Folder");
     });
 
     it("adds folder with parentId", () => {
@@ -154,7 +162,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().addFolder(parent);
       useAppStore.getState().addFolder(child);
 
-      const folders = useAppStore.getState().folders;
+      const folders = currentConnectionsView().folders;
       expect(folders).toHaveLength(2);
       expect(folders.find((f) => f.id === "f-child")?.parentId).toBe("f-parent");
     });
@@ -163,21 +171,21 @@ describe("appStore — connections, folders, and special tabs", () => {
   describe("deleteFolder", () => {
     it("removes the folder from the list", () => {
       const folder = makeFolder({ id: "f-1" });
-      useAppStore.setState({ folders: [folder] });
+      seedConnectionsRegion({ folders: [folder] });
 
       useAppStore.getState().deleteFolder("f-1");
 
-      expect(useAppStore.getState().folders).toHaveLength(0);
+      expect(currentConnectionsView().folders).toHaveLength(0);
     });
 
     it("reparents child connections to root", () => {
       const folder = makeFolder({ id: "f-1" });
       const conn = makeConnection({ id: "c-1", folderId: "f-1" });
-      useAppStore.setState({ folders: [folder], connections: [conn] });
+      seedConnectionsRegion({ folders: [folder], connections: [conn] });
 
       useAppStore.getState().deleteFolder("f-1");
 
-      const updated = useAppStore.getState().connections.find((c) => c.id === "c-1");
+      const updated = currentConnectionsView().connections.find((c) => c.id === "c-1");
       expect(updated?.folderId).toBeNull();
     });
 
@@ -185,11 +193,11 @@ describe("appStore — connections, folders, and special tabs", () => {
       const parent = makeFolder({ id: "f-parent", parentId: null });
       const deleted = makeFolder({ id: "f-deleted", parentId: "f-parent" });
       const child = makeFolder({ id: "f-child", parentId: "f-deleted" });
-      useAppStore.setState({ folders: [parent, deleted, child] });
+      seedConnectionsRegion({ folders: [parent, deleted, child] });
 
       useAppStore.getState().deleteFolder("f-deleted");
 
-      const folders = useAppStore.getState().folders;
+      const folders = currentConnectionsView().folders;
       expect(folders).toHaveLength(2);
       expect(folders.find((f) => f.id === "f-child")?.parentId).toBe("f-parent");
     });
@@ -197,11 +205,11 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("reparents child folders to root when deleting top-level folder", () => {
       const topLevel = makeFolder({ id: "f-top", parentId: null });
       const child = makeFolder({ id: "f-child", parentId: "f-top" });
-      useAppStore.setState({ folders: [topLevel, child] });
+      seedConnectionsRegion({ folders: [topLevel, child] });
 
       useAppStore.getState().deleteFolder("f-top");
 
-      const folders = useAppStore.getState().folders;
+      const folders = currentConnectionsView().folders;
       expect(folders).toHaveLength(1);
       expect(folders[0].id).toBe("f-child");
       expect(folders[0].parentId).toBeNull();
@@ -212,11 +220,11 @@ describe("appStore — connections, folders, and special tabs", () => {
       const folder2 = makeFolder({ id: "f-2" });
       const conn1 = makeConnection({ id: "c-1", folderId: "f-1" });
       const conn2 = makeConnection({ id: "c-2", folderId: "f-2" });
-      useAppStore.setState({ folders: [folder1, folder2], connections: [conn1, conn2] });
+      seedConnectionsRegion({ folders: [folder1, folder2], connections: [conn1, conn2] });
 
       useAppStore.getState().deleteFolder("f-1");
 
-      const connections = useAppStore.getState().connections;
+      const connections = currentConnectionsView().connections;
       expect(connections.find((c) => c.id === "c-1")?.folderId).toBeNull();
       expect(connections.find((c) => c.id === "c-2")?.folderId).toBe("f-2");
     });
@@ -225,158 +233,52 @@ describe("appStore — connections, folders, and special tabs", () => {
   describe("deleteConnection", () => {
     it("removes the connection from state immediately (optimistic)", () => {
       const conn = makeConnection({ id: "c-1" });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().deleteConnection("c-1");
 
-      expect(useAppStore.getState().connections).toHaveLength(0);
+      expect(currentConnectionsView().connections).toHaveLength(0);
     });
 
     it("does not affect other connections", () => {
       const conn1 = makeConnection({ id: "c-1" });
       const conn2 = makeConnection({ id: "c-2" });
-      useAppStore.setState({ connections: [conn1, conn2] });
+      seedConnectionsRegion({ connections: [conn1, conn2] });
 
       useAppStore.getState().deleteConnection("c-1");
 
-      const remaining = useAppStore.getState().connections;
+      const remaining = currentConnectionsView().connections;
       expect(remaining).toHaveLength(1);
       expect(remaining[0].id).toBe("c-2");
     });
 
-    it("reloads authoritative state from backend after deletion completes", async () => {
+    it("calls removeConnection with the connection's source file, then leaves the region without it", async () => {
       const survivor = makeConnection({ id: "c-2", name: "Survivor" });
-      const deleted = makeConnection({ id: "c-1", name: "To Delete" });
-      useAppStore.setState({ connections: [deleted, survivor] });
-
-      vi.mocked(loadConnections).mockResolvedValueOnce({
-        connections: [survivor],
-        folders: [],
-        agents: [],
-        externalErrors: [],
-      });
+      const deleted = makeConnection({ id: "c-1", name: "To Delete", sourceFile: "extra.json" });
+      seedConnectionsRegion({ connections: [deleted, survivor] });
 
       useAppStore.getState().deleteConnection("c-1");
 
-      // Flush: removeConnection → loadConnections → set
-      await Promise.resolve();
+      // Flush the removeConnection command.
       await Promise.resolve();
       await Promise.resolve();
 
-      expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("c-1", undefined);
-      expect(vi.mocked(loadConnections)).toHaveBeenCalled();
-      const final = useAppStore.getState().connections;
+      // The delete routes to the persist command with the entry's source file; the
+      // authoritative reconcile is the command's server-side fold (#2389), so there
+      // is no frontend reload here — the optimistic `connection.remove` intent
+      // already dropped it from the region.
+      expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("c-1", "extra.json");
+      const final = currentConnectionsView().connections;
       expect(final).toHaveLength(1);
       expect(final[0].id).toBe("c-2");
     });
 
-    // Regression: without the fix, a concurrent addFolder call would trigger
-    // loadConnections while removeConnection was still in-flight, reading stale
-    // disk state and resurrecting the deleted connection. The fix chains
-    // loadConnections after removeConnection so the final authoritative read
-    // always runs after the deletion is committed.
-    it("does not resurrect deleted connection when a concurrent addFolder reloads connections", async () => {
-      const deleted = makeConnection({ id: "c-del", name: "Deleted" });
-      useAppStore.setState({ connections: [deleted] });
-
-      // addFolder's loadConnections returns stale data (deletion not yet on disk)
-      vi.mocked(loadConnections).mockResolvedValueOnce({
-        connections: [deleted],
-        folders: [],
-        agents: [],
-        externalErrors: [],
-      });
-      // deleteConnection's loadConnections returns authoritative data (deletion committed)
-      vi.mocked(loadConnections).mockResolvedValueOnce({
-        connections: [],
-        folders: [],
-        agents: [],
-        externalErrors: [],
-      });
-
-      useAppStore.getState().deleteConnection("c-del");
-      useAppStore.getState().addFolder(makeFolder({ id: "f-new" }));
-
-      // Flush all promise chains
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-
-      expect(useAppStore.getState().connections.find((c) => c.id === "c-del")).toBeUndefined();
-    });
-
-    // Regression: if a concurrent operation's loadConnections resolves AFTER
-    // deleteConnection's loadConnections but with stale data (connection still
-    // present on disk when the concurrent op ran), the stale result permanently
-    // overrides the delete correction.
-    //
-    // Scenario: persistFolder (fast) completes before removeConnection (slow),
-    // so addFolder's reload gets a lower sequence number. It resolves with stale
-    // data AFTER deleteConnection's clean reload — and without the version-counter
-    // guard, it overwrites the corrected state and resurrects the deleted connection.
-    it("does not resurrect deleted connection when a concurrent reload resolves last with stale data", async () => {
-      const deleted = makeConnection({ id: "c-del", name: "Deleted" });
-      useAppStore.setState({ connections: [deleted] });
-
-      // Make removeConnection slow (async) so persistFolder completes first,
-      // causing addFolder's loadConnections to be initiated before deleteConnection's.
-      let resolveRemove!: () => void;
-      vi.mocked(removeConnection).mockImplementationOnce(
-        () => new Promise<void>((resolve) => (resolveRemove = resolve))
-      );
-
-      // Track which loadConnections call belongs to which action.
-      // addFolder fires loadConnections first (persistFolder fast),
-      // deleteConnection fires second (after manual resolveRemove).
-      let resolveAddFolderReload!: (val: Awaited<ReturnType<typeof loadConnections>>) => void;
-      let resolveDeleteReload!: (val: Awaited<ReturnType<typeof loadConnections>>) => void;
-      let lcCount = 0;
-      vi.mocked(loadConnections).mockImplementation(
-        () =>
-          new Promise<Awaited<ReturnType<typeof loadConnections>>>((resolve) => {
-            lcCount++;
-            if (lcCount === 1) {
-              resolveAddFolderReload = resolve; // addFolder's stale reload
-            } else {
-              resolveDeleteReload = resolve; // deleteConnection's clean reload
-            }
-          })
-      );
-
-      useAppStore.getState().deleteConnection("c-del");
-      useAppStore.getState().addFolder(makeFolder({ id: "f-new" }));
-
-      // persistFolder is already resolved (mock default) → addFolder's .then fires
-      // → loadConnections #1 (addFolder, stale) initiated (lower seq)
-      await Promise.resolve();
-      await Promise.resolve();
-
-      // Manually complete removeConnection → deleteConnection's .then fires
-      // → loadConnections #2 (deleteConnection, clean) initiated (higher seq)
-      resolveRemove();
-      await Promise.resolve();
-      await Promise.resolve();
-
-      // Resolve deleteConnection's clean reload FIRST
-      resolveDeleteReload({ connections: [], folders: [], agents: [], externalErrors: [] });
-      await Promise.resolve();
-      await Promise.resolve();
-
-      // Resolve addFolder's stale reload SECOND (includes the deleted connection)
-      resolveAddFolderReload({
-        connections: [deleted],
-        folders: [],
-        agents: [],
-        externalErrors: [],
-      });
-      await Promise.resolve();
-      await Promise.resolve();
-
-      // Without version-counter: addFolder's stale result wins (applied last) → c-del is back
-      // With version-counter:    addFolder's seq < deleteConnection's seq → dropped → c-del stays gone
-      expect(useAppStore.getState().connections.find((c) => c.id === "c-del")).toBeUndefined();
-    });
+    // The frontend reload-sequence guard (`_connReloadSeq` / `applyConnectionReload`)
+    // that used to protect against stale concurrent reloads resurrecting a deleted
+    // connection was removed in #2401: the region is fed server-side, and
+    // `fold_connections_from_manager` runs inside each persist command in commit
+    // order, so a stale frontend reload can no longer overwrite a fresher one.
+    // Ordering is now covered by the `connections_projection` Rust store tests.
   });
 
   describe("bulkDeleteConnections", () => {
@@ -384,11 +286,11 @@ describe("appStore — connections, folders, and special tabs", () => {
       const c1 = makeConnection({ id: "c-1" });
       const c2 = makeConnection({ id: "c-2" });
       const c3 = makeConnection({ id: "c-3" });
-      useAppStore.setState({ connections: [c1, c2, c3] });
+      seedConnectionsRegion({ connections: [c1, c2, c3] });
 
       useAppStore.getState().bulkDeleteConnections(["c-1", "c-2"]);
 
-      const remaining = useAppStore.getState().connections;
+      const remaining = currentConnectionsView().connections;
       expect(remaining).toHaveLength(1);
       expect(remaining[0].id).toBe("c-3");
     });
@@ -396,7 +298,7 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("calls removeConnection for each deleted connection", async () => {
       const c1 = makeConnection({ id: "c-1", sourceFile: "a.json" });
       const c2 = makeConnection({ id: "c-2", sourceFile: undefined });
-      useAppStore.setState({ connections: [c1, c2] });
+      seedConnectionsRegion({ connections: [c1, c2] });
 
       useAppStore.getState().bulkDeleteConnections(["c-1", "c-2"]);
 
@@ -407,35 +309,31 @@ describe("appStore — connections, folders, and special tabs", () => {
       expect(vi.mocked(removeConnection)).toHaveBeenCalledWith("c-2", undefined);
     });
 
-    it("reloads from backend once after all deletions complete", async () => {
+    it("drops every deleted connection from the region", async () => {
       const c1 = makeConnection({ id: "c-1" });
       const c2 = makeConnection({ id: "c-2" });
-      useAppStore.setState({ connections: [c1, c2] });
-      vi.mocked(loadConnections).mockResolvedValueOnce({
-        connections: [],
-        folders: [],
-        agents: [],
-        externalErrors: [],
-      });
+      const c3 = makeConnection({ id: "c-3" });
+      seedConnectionsRegion({ connections: [c1, c2, c3] });
 
       useAppStore.getState().bulkDeleteConnections(["c-1", "c-2"]);
 
       await Promise.resolve();
       await Promise.resolve();
-      await Promise.resolve();
 
-      expect(vi.mocked(loadConnections)).toHaveBeenCalledTimes(1);
+      // Each removal routes to the persist command (folded server-side, #2389); the
+      // optimistic `connection.remove` intents already dropped both from the region.
+      expect(currentConnectionsView().connections.map((c) => c.id)).toEqual(["c-3"]);
     });
 
     it("does not affect connections not in the delete list", () => {
       const c1 = makeConnection({ id: "c-1" });
       const c2 = makeConnection({ id: "c-2" });
       const c3 = makeConnection({ id: "c-3" });
-      useAppStore.setState({ connections: [c1, c2, c3] });
+      seedConnectionsRegion({ connections: [c1, c2, c3] });
 
       useAppStore.getState().bulkDeleteConnections(["c-1"]);
 
-      const remaining = useAppStore.getState().connections;
+      const remaining = currentConnectionsView().connections;
       expect(remaining.map((c) => c.id)).toEqual(["c-2", "c-3"]);
     });
   });
@@ -443,22 +341,22 @@ describe("appStore — connections, folders, and special tabs", () => {
   describe("duplicateConnection", () => {
     it("creates a copy with 'Copy of' prefix", () => {
       const conn = makeConnection({ id: "c-1", name: "My Connection" });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().duplicateConnection("c-1");
 
-      const connections = useAppStore.getState().connections;
+      const connections = currentConnectionsView().connections;
       expect(connections).toHaveLength(2);
       expect(connections[1].name).toBe("Copy of My Connection");
     });
 
     it("generates a unique ID for the duplicate", () => {
       const conn = makeConnection({ id: "c-1" });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().duplicateConnection("c-1");
 
-      const connections = useAppStore.getState().connections;
+      const connections = currentConnectionsView().connections;
       expect(connections[1].id).not.toBe("c-1");
     });
 
@@ -476,63 +374,63 @@ describe("appStore — connections, folders, and special tabs", () => {
           },
         },
       });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().duplicateConnection("c-1");
 
-      const connections = useAppStore.getState().connections;
+      const connections = currentConnectionsView().connections;
       expect(connections[1].config).toEqual(conn.config);
     });
 
     it("copies the folder assignment", () => {
       const conn = makeConnection({ id: "c-1", folderId: "f-1" });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().duplicateConnection("c-1");
 
-      const connections = useAppStore.getState().connections;
+      const connections = currentConnectionsView().connections;
       expect(connections[1].folderId).toBe("f-1");
     });
 
     it("does nothing for non-existent connection", () => {
       const conn = makeConnection({ id: "c-1" });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().duplicateConnection("c-nonexistent");
 
-      expect(useAppStore.getState().connections).toHaveLength(1);
+      expect(currentConnectionsView().connections).toHaveLength(1);
     });
   });
 
   describe("moveConnectionToFolder", () => {
     it("moves connection to a folder", () => {
       const conn = makeConnection({ id: "c-1", folderId: null });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().moveConnectionToFolder("c-1", "f-1");
 
-      const updated = useAppStore.getState().connections.find((c) => c.id === "c-1");
+      const updated = currentConnectionsView().connections.find((c) => c.id === "c-1");
       expect(updated?.folderId).toBe("f-1");
     });
 
     it("moves connection to root (null folderId)", () => {
       const conn = makeConnection({ id: "c-1", folderId: "f-1" });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().moveConnectionToFolder("c-1", null);
 
-      const updated = useAppStore.getState().connections.find((c) => c.id === "c-1");
+      const updated = currentConnectionsView().connections.find((c) => c.id === "c-1");
       expect(updated?.folderId).toBeNull();
     });
 
     it("does not affect other connections", () => {
       const conn1 = makeConnection({ id: "c-1", folderId: null });
       const conn2 = makeConnection({ id: "c-2", folderId: "f-2" });
-      useAppStore.setState({ connections: [conn1, conn2] });
+      seedConnectionsRegion({ connections: [conn1, conn2] });
 
       useAppStore.getState().moveConnectionToFolder("c-1", "f-1");
 
-      const connections = useAppStore.getState().connections;
+      const connections = currentConnectionsView().connections;
       expect(connections.find((c) => c.id === "c-1")?.folderId).toBe("f-1");
       expect(connections.find((c) => c.id === "c-2")?.folderId).toBe("f-2");
     });
@@ -561,7 +459,7 @@ describe("appStore — connections, folders, and special tabs", () => {
 
     it("creates a tab titled 'Edit: <name>' for existing connections", () => {
       const conn = makeConnection({ id: "c-1", name: "My SSH" });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().openConnectionEditorTab("c-1");
 
@@ -586,7 +484,7 @@ describe("appStore — connections, folders, and special tabs", () => {
 
     it("creates separate tabs for different connections", () => {
       const conn = makeConnection({ id: "c-1", name: "Conn 1" });
-      useAppStore.setState({ connections: [conn] });
+      seedConnectionsRegion({ connections: [conn] });
 
       useAppStore.getState().openConnectionEditorTab("new");
       useAppStore.getState().openConnectionEditorTab("c-1");
@@ -813,54 +711,38 @@ describe("appStore — connections, folders, and special tabs", () => {
     });
   });
 
-  describe("addConnection — optimistic id reconciliation (#863)", () => {
+  // Persisted-id reconciliation (#863 / #875) moved server-side in #2401: the
+  // frontend `reconcileConnectionId` pass is gone. `save_connection` recomputes
+  // the name-derived id and `fold_connections_from_manager` reflects it into the
+  // authoritative `connections` region — so a connect firing after the save
+  // resolves reads the reconciled id from the region. What stays frontend-observable
+  // is the optimistic add and that persist is invoked; the id swap is covered by the
+  // `connections_projection` Rust store / fold tests.
+  describe("addConnection / updateConnection — optimistic write + persist", () => {
     const mockPersist = vi.mocked(persistConnection);
 
-    it("reconciles the optimistic conn- id to the backend's persisted id", async () => {
-      // The backend recomputes the id from folder + name. Reconciling the
-      // in-memory entry as soon as the save returns keeps a credential stored
-      // during a connect that fires before the reload from being orphaned under
-      // the stale optimistic id.
-      mockPersist.mockResolvedValueOnce("host-alice");
-      // Hang the post-persist reload so reconciliation is observed in isolation
-      // (a completed reload would replace the list from disk regardless).
-      vi.mocked(loadConnections).mockReturnValueOnce(new Promise<never>(() => {}));
+    beforeEach(() => mockPersist.mockClear());
 
+    it("adds the connection to the region optimistically and persists it", () => {
       const conn = makeConnection({ id: "conn-987654", name: "Host Alice" });
       useAppStore.getState().addConnection(conn);
 
-      // The optimistic id is present immediately (before the save resolves).
-      expect(useAppStore.getState().connections.map((c) => c.id)).toContain("conn-987654");
-
-      await vi.waitFor(() => {
-        const ids = useAppStore.getState().connections.map((c) => c.id);
-        expect(ids).toContain("host-alice");
-        expect(ids).not.toContain("conn-987654");
-      });
+      // The optimistic entry is in the region immediately (via the folded intent).
+      expect(currentConnectionsView().connections.map((c) => c.id)).toContain("conn-987654");
+      expect(mockPersist).toHaveBeenCalledTimes(1);
+      expect((mockPersist.mock.calls[0][0] as SavedConnection).name).toBe("Host Alice");
     });
-  });
 
-  describe("updateConnection — persisted id reconciliation on rename (#875)", () => {
-    const mockPersist = vi.mocked(persistConnection);
-
-    it("reconciles the in-memory id to the backend's persisted id after a rename", async () => {
-      // A rename changes the name-derived persisted id. Reconciling the in-memory
-      // entry as soon as the save returns keeps a credential stored during a
-      // connect that fires before the reload from being orphaned under the old id.
+    it("replaces the entry in the region on a rename and persists it", () => {
       const existing = makeConnection({ id: "old-name", name: "Old Name" });
-      useAppStore.setState({ connections: [existing] });
-
-      mockPersist.mockResolvedValueOnce("new-name");
-      // Hang the reload so the reconciliation is observed in isolation.
-      vi.mocked(loadConnections).mockReturnValueOnce(new Promise<never>(() => {}));
+      seedConnectionsRegion({ connections: [existing] });
 
       useAppStore.getState().updateConnection({ ...existing, name: "New Name" });
 
-      await vi.waitFor(() => {
-        const ids = useAppStore.getState().connections.map((c) => c.id);
-        expect(ids).toContain("new-name");
-        expect(ids).not.toContain("old-name");
-      });
+      const view = currentConnectionsView().connections;
+      expect(view).toHaveLength(1);
+      expect(view[0].name).toBe("New Name");
+      expect(mockPersist).toHaveBeenCalledTimes(1);
     });
   });
 });

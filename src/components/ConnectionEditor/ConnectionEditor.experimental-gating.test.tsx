@@ -10,6 +10,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { ConnectionEditor } from "./ConnectionEditor";
 import { TooltipProvider } from "@/components/ui";
 import type { ConnectionTypeInfo } from "@/types/connection";
@@ -54,10 +55,10 @@ function renderNew(experimentalFeaturesEnabled: boolean) {
   const initial = useAppStore.getInitialState();
   useAppStore.setState({
     ...initial,
-    connections: [],
     connectionTypes: [LOCAL_TYPE, MOCK_RD_TYPE],
     settings: { ...initial.settings, experimentalFeaturesEnabled },
   });
+  seedConnectionsRegion({ connections: [] });
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
@@ -103,6 +104,7 @@ afterEach(() => {
 });
 
 setupSettingsRegionMirror();
+setupConnectionsRegion();
 
 describe("ConnectionEditor — experimental type-picker gating", () => {
   it("omits graphical remote-desktop types when the flag is off", () => {
