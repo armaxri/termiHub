@@ -37,6 +37,7 @@ vi.mock("@/services/networkApi", () => ({
 }));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
+import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
 
 function agent(
   id: string,
@@ -57,6 +58,8 @@ function agent(
     },
   } as unknown as RemoteAgentDefinition;
 }
+
+setupAgentsRegionMirror();
 
 describe("OpenConnectionsModal — Establishing / recovering section", () => {
   let container: HTMLDivElement;

@@ -10,10 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo } from "@/services/api";
 import type { Intent, IntentAck, Transport } from "@/services/transport";
 import type { RemoteAgentDefinition } from "@/types/connection";
-import {
-  FakeAgentsTransport,
-  installAgentsHarness,
-} from "@/test/agentsRegionTestHarness";
+import { FakeAgentsTransport, installAgentsHarness } from "@/test/agentsRegionTestHarness";
 
 import {
   currentAgentsView,
@@ -46,7 +43,14 @@ function session(id: string): AgentSessionInfo {
 }
 
 function definition(id: string): AgentDefinitionInfo {
-  return { id, name: `def ${id}`, sessionType: "shell", config: {}, persistent: false, folderId: null };
+  return {
+    id,
+    name: `def ${id}`,
+    sessionType: "shell",
+    config: {},
+    persistent: false,
+    folderId: null,
+  };
 }
 
 function folder(id: string): AgentFolderInfo {
@@ -89,7 +93,9 @@ describe("currentAgentsView", () => {
 
 describe("version guard", () => {
   it("ignores a stale (older-version) snapshot so it cannot clobber a newer view", async () => {
-    const { transport } = installAgentsHarness(view({ remoteAgents: [agent("a1", "disconnected")] }));
+    const { transport } = installAgentsHarness(
+      view({ remoteAgents: [agent("a1", "disconnected")] })
+    );
     onAgentsView(() => {});
     await ensureAgentsSubscribed();
     await flush();

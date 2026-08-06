@@ -15,6 +15,7 @@ import { AgentNode } from "./AgentNode";
 import { TooltipProvider } from "@/components/ui";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo, AgentSessionInfo } from "@/services/api";
+import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
 
 // --- mocks required by AgentNode --------------------------------------------
 
@@ -121,6 +122,8 @@ let container: HTMLDivElement;
 let root: Root;
 
 // --- tests -------------------------------------------------------------------
+
+setupAgentsRegionMirror();
 
 describe("AgentNode — Active Sessions reattach", () => {
   beforeEach(() => {

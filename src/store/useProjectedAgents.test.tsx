@@ -53,7 +53,14 @@ function session(id: string): AgentSessionInfo {
 }
 
 function definition(id: string): AgentDefinitionInfo {
-  return { id, name: `def ${id}`, sessionType: "shell", config: {}, persistent: false, folderId: null };
+  return {
+    id,
+    name: `def ${id}`,
+    sessionType: "shell",
+    config: {},
+    persistent: false,
+    folderId: null,
+  };
 }
 
 function folder(id: string): AgentFolderInfo {

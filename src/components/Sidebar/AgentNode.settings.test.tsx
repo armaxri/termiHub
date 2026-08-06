@@ -14,6 +14,7 @@ import { AgentNode } from "./AgentNode";
 import { TooltipProvider } from "@/components/ui";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo } from "@/services/api";
+import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -103,6 +104,8 @@ function makeDefinition(overrides: Partial<AgentDefinitionInfo> = {}): AgentDefi
 
 let container: HTMLDivElement;
 let root: Root;
+
+setupAgentsRegionMirror();
 
 describe("AgentNode — definition settings forwarding (bug #633)", () => {
   beforeEach(() => {

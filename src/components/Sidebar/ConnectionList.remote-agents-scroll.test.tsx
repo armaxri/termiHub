@@ -14,6 +14,7 @@
  *  - the header + filter live OUTSIDE it (so they stay pinned, not scrolled).
  */
 import { setupSettingsRegionMirror } from "@/test/settingsRegionTestHarness";
+import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -90,6 +91,7 @@ function render() {
 }
 
 setupSettingsRegionMirror();
+setupAgentsRegionMirror();
 
 describe("ConnectionList – Remote Agents scroll (#2106)", () => {
   beforeEach(() => {

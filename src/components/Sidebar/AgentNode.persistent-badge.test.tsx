@@ -15,6 +15,7 @@ import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo } from "@/services/api";
+import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -116,6 +117,8 @@ function render(): void {
     root.render(React.createElement(AgentNode, { agent: makeAgent() }));
   });
 }
+
+setupAgentsRegionMirror();
 
 describe("AgentNode — agent-backed persistence badge (#2086)", () => {
   beforeEach(() => {

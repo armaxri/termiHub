@@ -14,6 +14,7 @@ import { useAppStore } from "@/store/appStore";
 import { AgentNode } from "./AgentNode";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
 import type { AgentDefinitionInfo, AgentFolderInfo } from "@/services/api";
+import { setupAgentsRegionMirror } from "@/test/agentsRegionTestHarness";
 
 vi.mock("@dnd-kit/sortable", () => ({
   useSortable: () => ({
@@ -121,6 +122,8 @@ function press(row: HTMLElement, key: string) {
     row.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
   });
 }
+
+setupAgentsRegionMirror();
 
 describe("AgentNode — keyboard navigation + filter (#1379)", () => {
   beforeEach(() => {
