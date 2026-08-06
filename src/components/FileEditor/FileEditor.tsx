@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useId } from "react";
+import { useState, useEffect, useRef, useCallback, useId, useMemo } from "react";
 import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import {
@@ -41,12 +41,18 @@ import {
   sessionReadFile,
   sessionStat,
   sessionWriteFile,
+  sessionCheckWritable,
+  sessionHasExecCapability,
+  sessionWriteFileElevated,
+  sessionDownload,
+  sessionRealpath,
   storeCredential,
   resolveCredential,
   removeCredential,
   TransferTerminalError,
   type ElevatedWriteResult,
 } from "@/services/api";
+import type { Writability } from "@/types/connection";
 import { onLocalFileChanged } from "@/services/events";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog";
@@ -95,6 +101,33 @@ async function sessionWriteFileContent(
   content: string
 ): Promise<void> {
   await sessionWriteFile(sessionId, path, Array.from(new TextEncoder().encode(content)));
+}
+
+/**
+ * The SFTP-advanced file operations available to a remote editor tab, bound to
+ * whichever remote transport backs it (#2420).
+ *
+ * Two transports can back a remote tab (see {@link EditorTabMeta}): the legacy
+ * `sftpSessionId` (`sftp_*` commands) and the protocol-agnostic session layer
+ * (`session_*` twins). The advanced affordances — writability probe, exec
+ * capability, elevated/sudo write, realpath (home), download, save-a-copy — exist
+ * only for an **SFTP-backed** connection: the session-path twins resolve via the
+ * backend's `SftpFileBrowser` and error for a byte-based backend (Docker / FTP /
+ * remote-agent). This handle exposes exactly those ops with the transport already
+ * bound, so the editor's affordance code is transport-agnostic; it is `null` for
+ * local tabs, scratch buffers, and byte-based session backends (which keep plain
+ * read/write only).
+ */
+interface RemoteAdvancedOps {
+  checkWritable: (path: string) => Promise<Writability>;
+  realpath: (path: string) => Promise<string>;
+  writeElevated: (
+    path: string,
+    content: string,
+    password: string
+  ) => Promise<ElevatedWriteResult>;
+  writeContent: (path: string, content: string) => Promise<void>;
+  download: (remotePath: string, localPath: string) => Promise<number>;
 }
 
 /**
@@ -192,6 +225,15 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // run `sudo`. `false` for local files and SFTP-only connections.
   const [execCapable, setExecCapable] = useState(false);
 
+  // Whether a session-layer-backed remote tab's backend is SFTP-backed and can
+  // therefore drive the SFTP-advanced ops (#2420). Determined by the exec-
+  // capability probe: `session_has_exec_capability` resolves only for an
+  // SFTP-backed session and errors for a byte-based backend (Docker / FTP /
+  // remote-agent), so a resolved probe flips this on. Always `false` for the
+  // legacy `sftpSessionId` path (which is SFTP-backed by construction and gated
+  // directly), for local tabs, and for byte-based session backends.
+  const [sessionSftpCapable, setSessionSftpCapable] = useState(false);
+
   // Authoritative writability of the remote file, from a non-destructive SFTP
   // write-open probe (#1324/#1325): `false` = read-only (server denied the
   // write-open), `true` = writable, `"unknown"` = probe inconclusive. Only
@@ -254,6 +296,40 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // independent of the file name also preserves the model (and undo history)
   // when the buffer is later renamed via Save As.
   const monacoPath = meta.scratch ? `scratch/${tabId}` : fileName;
+
+  // The SFTP-advanced ops for this tab, bound to its remote transport, or null
+  // when none apply (#2420). The legacy `sftpSessionId` path is SFTP-backed by
+  // construction, so its ops are available immediately; the session path is
+  // offered these ops only once the capability probe has confirmed the backend is
+  // SFTP-backed (`sessionSftpCapable`) — a byte-based backend (Docker / FTP /
+  // remote-agent) keeps plain read/write only and this stays null, as do local
+  // tabs and scratch buffers. See {@link RemoteAdvancedOps}.
+  const advancedOps = useMemo<RemoteAdvancedOps | null>(() => {
+    if (!meta.isRemote || meta.scratch) return null;
+    const sftpId = meta.sftpSessionId;
+    if (sftpId) {
+      return {
+        checkWritable: (path) => sftpCheckWritable(sftpId, path),
+        realpath: (path) => sftpRealpath(sftpId, path),
+        writeElevated: (path, fileContent, password) =>
+          sftpWriteFileContentElevated(sftpId, path, fileContent, password),
+        writeContent: (path, fileContent) => sftpWriteFileContent(sftpId, path, fileContent),
+        download: (remotePath, localPath) => sftpDownload(sftpId, remotePath, localPath),
+      };
+    }
+    const sessionId = meta.sessionBrowser?.sessionId;
+    if (sessionId && sessionSftpCapable) {
+      return {
+        checkWritable: (path) => sessionCheckWritable(sessionId, path),
+        realpath: (path) => sessionRealpath(sessionId, path),
+        writeElevated: (path, fileContent, password) =>
+          sessionWriteFileElevated(sessionId, path, fileContent, password),
+        writeContent: (path, fileContent) => sessionWriteFileContent(sessionId, path, fileContent),
+        download: (remotePath, localPath) => sessionDownload(sessionId, remotePath, localPath),
+      };
+    }
+    return null;
+  }, [meta.isRemote, meta.scratch, meta.sftpSessionId, meta.sessionBrowser, sessionSftpCapable]);
 
   // Re-derive Monaco theme when the settings theme changes (dark / light / system).
   useEffect(() => {
@@ -322,26 +398,66 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   ]);
 
   // Probe whether the remote connection can run remote commands (shell vs
-  // SFTP-only). Determines whether privilege-elevated writes will be offered.
+  // SFTP-only) and, for a session-layer tab, whether its backend is SFTP-backed
+  // at all (#2420). Determines whether privilege-elevated writes will be offered.
+  //
+  // For the legacy `sftpSessionId` path the connection is SFTP-backed by
+  // construction, so this only measures exec capability. For the session path the
+  // same probe doubles as the SFTP-capability signal: `session_has_exec_capability`
+  // resolves (with the exec boolean) only for an SFTP-backed session and rejects
+  // for a byte-based backend, so a resolve flips `sessionSftpCapable` on (unlocking
+  // the advanced affordances) and a reject leaves the tab on the byte-based
+  // read/write path with no advanced ops.
   useEffect(() => {
     let cancelled = false;
-    if (!meta.isRemote || !meta.sftpSessionId) {
-      setExecCapable(false);
-      return;
+    setExecCapable(false);
+    setSessionSftpCapable(false);
+    if (!meta.isRemote || meta.scratch) return;
+
+    const sftpId = meta.sftpSessionId;
+    if (sftpId) {
+      sftpHasExecCapability(sftpId)
+        .then((capable) => {
+          if (cancelled) return;
+          setExecCapable(capable);
+          frontendLog("file_editor", `exec capability for sftp session ${sftpId}: ${capable}`);
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setExecCapable(false);
+          frontendLog(
+            "file_editor",
+            `exec capability probe failed for sftp session ${sftpId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        });
+      return () => {
+        cancelled = true;
+      };
     }
-    const sessionId = meta.sftpSessionId;
-    sftpHasExecCapability(sessionId)
+
+    const sessionId = meta.sessionBrowser?.sessionId;
+    if (!sessionId) return;
+    sessionHasExecCapability(sessionId)
       .then((capable) => {
         if (cancelled) return;
+        // Resolved → the session is SFTP-backed; the boolean is its exec capability.
+        setSessionSftpCapable(true);
         setExecCapable(capable);
-        frontendLog("file_editor", `exec capability for sftp session ${sessionId}: ${capable}`);
+        frontendLog(
+          "file_editor",
+          `session ${sessionId} is SFTP-backed; exec capability: ${capable}`
+        );
       })
       .catch((err) => {
         if (cancelled) return;
+        // Rejected → not SFTP-backed (byte-based backend); keep read/write only.
+        setSessionSftpCapable(false);
         setExecCapable(false);
         frontendLog(
           "file_editor",
-          `exec capability probe failed for sftp session ${sessionId}: ${
+          `session ${sessionId} is not SFTP-backed; advanced editor ops disabled: ${
             err instanceof Error ? err.message : String(err)
           }`
         );
@@ -349,39 +465,38 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     return () => {
       cancelled = true;
     };
-  }, [meta.isRemote, meta.sftpSessionId]);
+  }, [meta.isRemote, meta.scratch, meta.sftpSessionId, meta.sessionBrowser]);
 
   // Resolve the connecting user's remote home directory so the "Save a copy…"
-  // dialog can default to a likely-writable destination there (#1535). Passing
-  // "." to realpath yields the session's home. Best-effort: a failure just
-  // leaves home null and the dialog falls back to a same-directory sibling.
+  // dialog can default to a likely-writable destination there (#1535). Uses the
+  // tab's SFTP-advanced transport (sftp or session, #2420); passing "." to
+  // realpath yields the session's home. Best-effort: a failure just leaves home
+  // null and the dialog falls back to a same-directory sibling.
   useEffect(() => {
     let cancelled = false;
-    if (!meta.isRemote || !meta.sftpSessionId || meta.scratch) {
+    if (!advancedOps) {
       setRemoteHome(null);
       return;
     }
-    const sessionId = meta.sftpSessionId;
-    sftpRealpath(sessionId, ".")
+    advancedOps
+      .realpath(".")
       .then((home) => {
         if (cancelled) return;
         setRemoteHome(home);
-        frontendLog("file_editor", `resolved remote home for sftp session ${sessionId}: ${home}`);
+        frontendLog("file_editor", `resolved remote home: ${home}`);
       })
       .catch((err) => {
         if (cancelled) return;
         setRemoteHome(null);
         frontendLog(
           "file_editor",
-          `remote home resolution failed for sftp session ${sessionId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `remote home resolution failed: ${err instanceof Error ? err.message : String(err)}`
         );
       });
     return () => {
       cancelled = true;
     };
-  }, [meta.isRemote, meta.sftpSessionId, meta.scratch]);
+  }, [advancedOps]);
 
   // Probe the connecting user's actual write access to this remote file, in
   // parallel with the content read (it never blocks the load; a failure just
@@ -390,13 +505,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   useEffect(() => {
     let cancelled = false;
     setReadonlyBannerDismissed(false);
-    if (!meta.isRemote || !meta.sftpSessionId || meta.scratch) {
+    if (!advancedOps) {
       setWritable("unknown");
       return;
     }
-    const sessionId = meta.sftpSessionId;
     const filePath = meta.filePath;
-    sftpCheckWritable(sessionId, filePath)
+    advancedOps
+      .checkWritable(filePath)
       .then((result) => {
         if (cancelled) return;
         const mapped = result === "readOnly" ? false : result === "writable" ? true : "unknown";
@@ -416,7 +531,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     return () => {
       cancelled = true;
     };
-  }, [meta.isRemote, meta.sftpSessionId, meta.filePath, meta.scratch]);
+  }, [advancedOps, meta.filePath]);
 
   // An unsaved scratch buffer has no on-disk copy, so it is always considered
   // dirty (closing it would lose the captured content) until saved via Save As.
@@ -427,15 +542,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // "Save": a remote file the probe reported read-only, on an exec-capable
   // (shell) connection, before the session has been elevated. Once elevated the
   // normal Save button returns (it routes through the sudo path).
-  const offerEditWithSudo =
-    meta.isRemote && !!meta.sftpSessionId && writable === false && execCapable && !elevated;
+  const offerEditWithSudo = !!advancedOps && writable === false && execCapable && !elevated;
   // Whether a failed direct save can be retried with sudo (a shell exists).
-  const canRetryWithSudo = meta.isRemote && !!meta.sftpSessionId && execCapable && !elevated;
+  const canRetryWithSudo = !!advancedOps && execCapable && !elevated;
   // SFTP-only read-only file (#1330): read-only on a connection with no exec
   // channel, so no sudo path exists. The direct Save stays disabled; the user is
   // offered "Save a copy" (to a writable remote path) or a local download.
-  const sftpOnlyReadonly =
-    meta.isRemote && !!meta.sftpSessionId && writable === false && !execCapable;
+  const sftpOnlyReadonly = !!advancedOps && writable === false && !execCapable;
 
   // Sync dirty state to the store (drives the tab dirty dot and close prompt).
   useEffect(() => {
@@ -753,20 +866,14 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // in the #969 banner here; the password is never logged.
   const attemptElevatedWrite = useCallback(
     async (password: string, bufferContent: string): Promise<"success" | "wrong" | "error"> => {
-      const sessionId = meta.sftpSessionId;
-      if (!sessionId) return "error";
+      if (!advancedOps) return "error";
       frontendLog(
         "file_editor",
         `elevated save attempt for ${meta.filePath} on ${hostLabel ?? "unknown host"}`
       );
       let result: ElevatedWriteResult;
       try {
-        result = await sftpWriteFileContentElevated(
-          sessionId,
-          meta.filePath,
-          bufferContent,
-          password
-        );
+        result = await advancedOps.writeElevated(meta.filePath, bufferContent, password);
       } catch (err) {
         frontendLog(
           "file_editor",
@@ -783,7 +890,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       setSaveError(`Save failed: ${result.message}`);
       return "error";
     },
-    [meta.sftpSessionId, meta.filePath, hostLabel]
+    [advancedOps, meta.filePath, hostLabel]
   );
 
   // Save via the elevated (sudo) path, prompting only when needed. Tries the
@@ -901,11 +1008,11 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // buffer's dirty state is intentionally left as-is.
   const handleSaveCopySubmit = useCallback(
     async (destPath: string) => {
-      if (content === null || !meta.sftpSessionId) return;
+      if (content === null || !advancedOps) return;
       setSaveCopyBusy(true);
       const toastId = toast.loading(`Saving a copy to ${destPath}…`);
       try {
-        await sftpWriteFileContent(meta.sftpSessionId, destPath, content);
+        await advancedOps.writeContent(destPath, content);
         toast.success(`Saved a copy to ${destPath}`, { id: toastId });
         setSaveCopyDialogOpen(false);
         frontendLog("file_editor", `saved a copy of ${meta.filePath} to ${destPath}`);
@@ -917,7 +1024,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         setSaveCopyBusy(false);
       }
     },
-    [content, meta.sftpSessionId, meta.filePath]
+    [content, advancedOps, meta.filePath]
   );
 
   // Download the read-only remote file to a user-chosen local path (#1330). The
@@ -925,12 +1032,12 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // (useTransferEvents); here we only show the pending toast and surface an
   // early failure that never produced a transfer event.
   const handleDownloadCopy = useCallback(async () => {
-    if (!meta.sftpSessionId) return;
+    if (!advancedOps) return;
     const localPath = await save({ title: "Download a copy…", defaultPath: fileName });
     if (!localPath) return;
     const toastId = toast.loading(`Downloading ${fileName}…`);
     try {
-      await sftpDownload(meta.sftpSessionId, meta.filePath, localPath);
+      await advancedOps.download(meta.filePath, localPath);
       toast.dismiss(toastId);
       frontendLog("file_editor", `downloaded ${meta.filePath} to ${localPath}`);
     } catch (err) {
@@ -943,14 +1050,15 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       toast.error(`Download failed: ${message}`, { id: toastId });
       frontendLog("file_editor", `download of ${meta.filePath} failed: ${message}`);
     }
-  }, [meta.sftpSessionId, meta.filePath, fileName]);
+  }, [advancedOps, meta.filePath, fileName]);
 
   const handleSave = useCallback(async () => {
     if (content === null || saving) return;
 
     // Read-only remote file that has a shell, or an already-elevated session:
-    // route through the sudo path instead of the direct SFTP write.
-    if (meta.isRemote && meta.sftpSessionId && (elevated || (writable === false && execCapable))) {
+    // route through the sudo path instead of the direct write. Applies to both
+    // SFTP-advanced transports (legacy sftp and SFTP-backed session, #2420).
+    if (advancedOps && (elevated || (writable === false && execCapable))) {
       await saveElevated();
       return;
     }
@@ -998,6 +1106,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     meta.isRemote,
     meta.sftpSessionId,
     meta.sessionBrowser,
+    advancedOps,
     tabId,
     renameTab,
     elevated,
