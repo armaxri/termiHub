@@ -1637,6 +1637,131 @@ export async function sessionMkdir(sessionId: string, path: string): Promise<voi
   await invoke("session_mkdir", { sessionId, path });
 }
 
+// --- Session-scoped SFTP advanced operations & transfers (#2312, #2313) ---
+//
+// Session-path mirrors of the standalone `sftp_*` advanced ops, routed through
+// the session's `ConnectionType` file browser rather than a separate
+// `SftpManager` UUID session. They only succeed for an SFTP-backed (SSH)
+// session; other backends return a "does not support SFTP advanced operations"
+// error. Part of the #2307 convergence: they let SSH file browsing / editing
+// resolve its core `SftpFileBrowser` from the session id, retiring the frontend
+// `sftpSessionId` model (#2313) without removing the backend `SftpManager`
+// registry (that is #2314).
+
+/**
+ * Resolve a remote path to its canonical absolute form via a session's SFTP
+ * realpath. Session-path mirror of {@link sftpRealpath} (#2312).
+ *
+ * Pass `"."` to resolve the session's home directory instead of guessing
+ * `/home/<user>`.
+ */
+export async function sessionRealpath(sessionId: string, path: string): Promise<string> {
+  return await invoke<string>("session_realpath", { sessionId, path });
+}
+
+/**
+ * Probe whether the connecting user can write a specific remote file, via a
+ * non-destructive SFTP write-open probe on a session. Session-path mirror of
+ * {@link sftpCheckWritable} (#2312); the probe never modifies the file.
+ */
+export async function sessionCheckWritable(
+  sessionId: string,
+  remotePath: string
+): Promise<Writability> {
+  return await invoke<Writability>("session_check_writable", { sessionId, remotePath });
+}
+
+/**
+ * Write a string to a remote file with `sudo`-elevated privileges over a
+ * session's SFTP connection. Session-path mirror of
+ * {@link sftpWriteFileContentElevated} (#2312): returns a typed
+ * {@link ElevatedWriteResult} rather than throwing on an authorization failure,
+ * so the caller can re-prompt on `incorrectPassword`. The temp file is always
+ * cleaned up and the password is never logged on the backend.
+ */
+export async function sessionWriteFileElevated(
+  sessionId: string,
+  remotePath: string,
+  content: string,
+  sudoPassword: string
+): Promise<ElevatedWriteResult> {
+  return await invoke<ElevatedWriteResult>("session_write_file_elevated", {
+    sessionId,
+    remotePath,
+    content,
+    sudoPassword,
+  });
+}
+
+/**
+ * Report whether a session's SFTP connection can open an exec channel (i.e. run
+ * remote commands such as `sudo`). Session-path mirror of
+ * {@link sftpHasExecCapability} (#2312): `true` for a normal SSH+shell
+ * connection, `false` for an SFTP-only / relayed connection.
+ */
+export async function sessionHasExecCapability(sessionId: string): Promise<boolean> {
+  return await invoke<boolean>("session_has_exec_capability", { sessionId });
+}
+
+/**
+ * Download a remote file to a local path over a session's SFTP connection.
+ *
+ * Session-path mirror of {@link sftpDownload} (#2312): registers a background
+ * transfer on a **dedicated** channel and resolves with the bytes transferred
+ * once it completes (#1245), so listing / navigating the same session stays live
+ * during the transfer. `onRegistered` fires once with the backend `transferId`
+ * the instant the start command returns, for seeding the Transfer Queue ahead of
+ * any progress event (#1632).
+ */
+export async function sessionDownload(
+  sessionId: string,
+  remotePath: string,
+  localPath: string,
+  onRegistered?: (transferId: string) => void
+): Promise<number> {
+  const transferId = await invoke<string>("session_download", {
+    sessionId,
+    remotePath,
+    localPath,
+  });
+  onRegistered?.(transferId);
+  return await awaitTransfer(transferId);
+}
+
+/**
+ * Upload a local file to a remote path over a session's SFTP connection.
+ *
+ * Session-path mirror of {@link sftpUpload} (#2312): registers a background
+ * transfer on a dedicated channel and resolves with the bytes transferred once
+ * it completes (#1245). See {@link sessionDownload} for `onRegistered`.
+ */
+export async function sessionUpload(
+  sessionId: string,
+  localPath: string,
+  remotePath: string,
+  onRegistered?: (transferId: string) => void
+): Promise<number> {
+  const transferId = await invoke<string>("session_upload", {
+    sessionId,
+    localPath,
+    remotePath,
+  });
+  onRegistered?.(transferId);
+  return await awaitTransfer(transferId);
+}
+
+/**
+ * Open a remote file in VS Code over a session's SFTP connection: download, open
+ * with `--wait`, re-upload on close. Session-path mirror of
+ * {@link vscodeOpenRemote} (#2383).
+ */
+export async function sessionVscodeOpenRemote(
+  sessionId: string,
+  remotePath: string
+): Promise<void> {
+  await invoke("session_vscode_open_remote", { sessionId, remotePath });
+}
+
 // --- VS Code integration ---
 
 /** Check if VS Code CLI (`code`) is available on PATH. */
