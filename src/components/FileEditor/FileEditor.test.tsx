@@ -929,16 +929,27 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(true);
   });
 
-  it("marks the tab remote but offers no SFTP-only affordances", async () => {
+  it("offers no SFTP-advanced affordances for a byte-based (non-SFTP) backend", async () => {
+    // A byte-based session backend (FTP here) rejects the SFTP-advanced probe —
+    // exactly how the backend's SessionManager::sftp_transfer_browser behaves for
+    // a non-SFTP browser. That reject is the capability signal (#2420): the tab
+    // stays on the plain read/write path with none of the advanced affordances,
+    // and even a read-only verdict would never be probed for.
+    const calls: string[] = [];
     mockedInvoke.mockImplementation((cmd) => {
+      calls.push(String(cmd));
       if (cmd === "session_read_file") return Promise.resolve(bytes("body\n"));
+      if (cmd === "session_has_exec_capability")
+        return Promise.reject(
+          new Error("Session file browser does not support SFTP advanced operations")
+        );
       // Were these ever reached, they would light up the sudo / fallback UI.
-      if (cmd === "sftp_has_exec_capability") return Promise.resolve(true);
-      if (cmd === "sftp_check_writable") return Promise.resolve("readOnly");
+      if (cmd === "session_check_writable") return Promise.resolve("readOnly");
       return Promise.resolve(undefined);
     });
 
     render(SESSION_META);
+    await flush();
     await flush();
 
     // The session layer exposes read/write only: no writability probe, no sudo,
@@ -948,6 +959,12 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
     expect(query("file-editor-edit-with-sudo")).toBeNull();
     expect(query("file-editor-save-copy")).toBeNull();
     expect(query("file-editor-download")).toBeNull();
+    // The advanced ops are gated off the failed probe: no writability / realpath
+    // round-trip is made once the backend reports it is not SFTP-backed.
+    expect(calls).not.toContain("session_check_writable");
+    expect(calls).not.toContain("session_realpath");
+    // The SFTP-family commands are never used on the session path either.
+    expect(calls.filter((c) => c.startsWith("sftp_"))).toEqual([]);
   });
 
   it("surfaces a session read failure as a load error", async () => {
@@ -960,5 +977,234 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
     await flush();
 
     expect(container.textContent ?? "").toMatch(/no such file/i);
+  });
+});
+
+describe("FileEditor — SFTP-backed session tab reaches SFTP parity (#2420)", () => {
+  // A session-layer tab whose backend IS SFTP-backed (SSH). The
+  // `session_has_exec_capability` probe resolves for it (rather than rejecting as
+  // a byte-based backend would), which is the capability signal that unlocks the
+  // SFTP-advanced affordances on the session path.
+  const SESSION_SSH_META: EditorTabMeta = {
+    filePath: "/etc/hosts",
+    isRemote: true,
+    sessionBrowser: { sessionId: "sess-ssh-1", connectionType: "ssh" },
+    permissions: "-rw-r--r--",
+  };
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState({ ...useAppStore.getInitialState() });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  function docQuery(testId: string): HTMLElement | null {
+    return document.querySelector(`[data-testid="${testId}"]`);
+  }
+
+  function typeInto(el: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    act(() => {
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  /** Encode text the way session_read_file returns it: a plain byte array. */
+  function bytes(text: string): number[] {
+    return Array.from(new TextEncoder().encode(text));
+  }
+
+  /**
+   * Mock a session-backed SFTP connection through the `session_*` twins, so the
+   * advanced ops resolve exactly as they would for an SSH-backed session.
+   */
+  function mockSessionSftp(opts: {
+    execCapable?: boolean;
+    writable?: "writable" | "readOnly" | "unknown";
+    home?: string;
+    elevatedResults?: unknown[];
+  }): {
+    calls: string[];
+    elevatedCalls: Array<Record<string, unknown>>;
+    writeCalls: Array<Record<string, unknown>>;
+    downloadCalls: Array<Record<string, unknown>>;
+  } {
+    const { execCapable = true, writable = "readOnly", home, elevatedResults = [] } = opts;
+    const calls: string[] = [];
+    const elevatedCalls: Array<Record<string, unknown>> = [];
+    const writeCalls: Array<Record<string, unknown>> = [];
+    const downloadCalls: Array<Record<string, unknown>> = [];
+    const queue = [...elevatedResults];
+    mockedInvoke.mockImplementation((cmd, args) => {
+      calls.push(String(cmd));
+      if (cmd === "session_read_file") return Promise.resolve(bytes("127.0.0.1 localhost\n"));
+      // The probe resolves (does not reject) → the session is SFTP-backed.
+      if (cmd === "session_has_exec_capability") return Promise.resolve(execCapable);
+      if (cmd === "session_check_writable") return Promise.resolve(writable);
+      if (cmd === "session_realpath") {
+        return home !== undefined
+          ? Promise.resolve(home)
+          : Promise.reject(new Error("no realpath"));
+      }
+      if (cmd === "session_write_file_elevated") {
+        elevatedCalls.push((args ?? {}) as Record<string, unknown>);
+        return Promise.resolve(queue.shift() ?? { kind: "success" });
+      }
+      if (cmd === "session_write_file") {
+        writeCalls.push((args ?? {}) as Record<string, unknown>);
+        return Promise.resolve(undefined);
+      }
+      if (cmd === "session_download") {
+        downloadCalls.push((args ?? {}) as Record<string, unknown>);
+        return Promise.resolve("transfer-1");
+      }
+      return Promise.resolve(undefined);
+    });
+    return { calls, elevatedCalls, writeCalls, downloadCalls };
+  }
+
+  it("probes writability over the session path and shows the read-only badge", async () => {
+    const { calls } = mockSessionSftp({ execCapable: false, writable: "readOnly" });
+    render(SESSION_SSH_META);
+    await flush();
+    await flush();
+
+    // Writability was probed via the session twin, never the SftpManager path.
+    expect(calls).toContain("session_check_writable");
+    expect(calls.filter((c) => c.startsWith("sftp_"))).toEqual([]);
+    const badge = query("file-editor-readonly-badge");
+    expect(badge).not.toBeNull();
+    expect(badge?.getAttribute("title") ?? "").toContain("rw-r--r--");
+  });
+
+  it("offers 'Edit with sudo' for a read-only file on an exec-capable session", async () => {
+    mockSessionSftp({ execCapable: true, writable: "readOnly" });
+    render(SESSION_SSH_META);
+    await flush();
+    await flush();
+
+    expect(query("file-editor-edit-with-sudo")).not.toBeNull();
+    expect(query("file-editor-save")).toBeNull();
+  });
+
+  it("routes an authorized elevated save through session_write_file_elevated", async () => {
+    const { elevatedCalls } = mockSessionSftp({
+      execCapable: true,
+      writable: "readOnly",
+      elevatedResults: [{ kind: "success" }],
+    });
+    render(SESSION_SSH_META);
+    await flush();
+    await flush();
+
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    typeInto(docQuery("sudo-prompt-input") as HTMLInputElement, "sudo-pw");
+    await act(async () => {
+      (docQuery("sudo-prompt-submit") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(elevatedCalls).toHaveLength(1);
+    expect(elevatedCalls[0].sessionId).toBe("sess-ssh-1");
+    expect(elevatedCalls[0].remotePath).toBe("/etc/hosts");
+    expect(elevatedCalls[0].sudoPassword).toBe("sudo-pw");
+    expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
+    expect(query("file-editor-sudo-badge")).not.toBeNull();
+  });
+
+  it("offers the SFTP-only copy/download fallback when the session has no shell", async () => {
+    mockSessionSftp({ execCapable: false, writable: "readOnly" });
+    render(SESSION_SSH_META);
+    await flush();
+    await flush();
+
+    const banner = query("file-editor-readonly-banner");
+    expect(banner?.textContent ?? "").toMatch(/sudo elevation isn't available/i);
+    expect(query("file-editor-edit-with-sudo")).toBeNull();
+    expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    expect(query("file-editor-save-copy")).not.toBeNull();
+    expect(query("file-editor-download")).not.toBeNull();
+  });
+
+  it("writes a copy to a writable path via the session layer", async () => {
+    const { writeCalls } = mockSessionSftp({ execCapable: false, writable: "readOnly" });
+    render(SESSION_SSH_META);
+    await flush();
+    await flush();
+    editContent("127.0.0.1 localhost\nmy edit\n");
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-save-copy") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    typeInto(docQuery("save-copy-input") as HTMLInputElement, "/home/user/hosts.copy");
+    await act(async () => {
+      (docQuery("save-copy-submit") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // Save-a-copy on the session path writes bytes through session_write_file.
+    expect(writeCalls).toHaveLength(1);
+    expect(writeCalls[0].sessionId).toBe("sess-ssh-1");
+    expect(writeCalls[0].path).toBe("/home/user/hosts.copy");
+    expect(new TextDecoder().decode(new Uint8Array(writeCalls[0].data as number[]))).toBe(
+      "127.0.0.1 localhost\nmy edit\n"
+    );
+  });
+
+  it("pre-fills Save a copy under the session realpath home", async () => {
+    mockSessionSftp({ execCapable: false, writable: "readOnly", home: "/home/user" });
+    render(SESSION_SSH_META);
+    await flush();
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-save-copy") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect((docQuery("save-copy-input") as HTMLInputElement).value).toBe("/home/user/hosts");
+  });
+
+  it("downloads the file via session_download", async () => {
+    const { downloadCalls } = mockSessionSftp({ execCapable: false, writable: "readOnly" });
+    vi.mocked(save).mockResolvedValueOnce("/local/hosts.txt");
+    render(SESSION_SSH_META);
+    await flush();
+    await flush();
+
+    await act(async () => {
+      (query("file-editor-download") as HTMLButtonElement).click();
+    });
+    await flush();
+    await flush();
+
+    expect(downloadCalls).toHaveLength(1);
+    expect(downloadCalls[0].sessionId).toBe("sess-ssh-1");
+    expect(downloadCalls[0].remotePath).toBe("/etc/hosts");
+    expect(downloadCalls[0].localPath).toBe("/local/hosts.txt");
   });
 });
