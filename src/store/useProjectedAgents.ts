@@ -1,74 +1,54 @@
 /**
- * `useProjectedAgents` — the agent sidebar & Open Connections cut to the projected
- * `agents` region (#2226 render cut, part of #2139).
+ * `useProjectedAgents` — the agent sidebar & Open Connections read the
+ * **authoritative** `agents` projection region (#2226 hook-authoritative cut / PR A,
+ * part of #2139).
  *
  * The agent sidebar renders the ordered remote-agent list (each agent's connection
  * status plus its live sessions, saved definitions and folders) and Open
  * Connections renders one row per connected/establishing agent and its sessions.
- * Through the shadow step both read `appStore`'s agents slice (`remoteAgents` /
- * `agentSessions` / `agentDefinitions` / `agentFolders`) directly. This hook makes
- * them source that slice from the shared `agents` projection region instead — the
- * direct analog of {@link import("./useProjectedMonitors").useProjectedMonitors}
- * (#2224) and {@link import("./useSessionLifecycle").useSessionAutoReconnect}
- * (#2204).
+ * They source that slice from the shared `agents` projection region, which is now
+ * **authoritative**: the backend {@link import("../../src-tauri/src/agents_projection/store").AgentsStore}
+ * is fed at the source — agent status / CRUD streams fold every transition (#2388)
+ * and the server owns agent entry-creation + the startup list-load (#2403) — so the
+ * region is populated from boot and reflects every backend transition. The direct
+ * analog of {@link import("./useProjectedConnections").useProjectedConnections}
+ * (#2225) and {@link import("./useProjectedSettings").useProjectedSettings} (#2227).
  *
- * # Safety (strangler)
- *
- * - **Gated** by {@link agentRenderFromProjectionEnabled} (on by default). Flag
- *   off ⇒ the hook returns `appStore`'s slice verbatim.
- * - **Faithful-mirror gate.** The projection sources the render only when it
- *   deep-equals the `appStore` slice ({@link agentsViewMirrors}); otherwise the
- *   hook falls back to `appStore` (never a stale view). While `appStore` stays
- *   authoritative (the mutation cut is a later step) the region is kept a mirror
- *   by {@link seedAgentsRegion}, so it is always populated — making the cut
- *   parity-safe and independent of the mutation flag.
+ * The hook subscribes to the region (one shared subscription, fanned out by the
+ * bridge) and returns the latest projected view, re-rendering on every diff. It
+ * seeds from {@link currentAgentsView} so a consumer mounting after the first diff
+ * already has the current picture, and from {@link EMPTY_AGENTS_VIEW} before any
+ * diff has arrived. There is no `appStore` seed, mirror gate, or fallback — the
+ * region is the source of truth.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { useAppStore } from "@/store/appStore";
 import {
-  agentRenderFromProjectionEnabled,
-  agentsViewMirrors,
   currentAgentsView,
+  EMPTY_AGENTS_VIEW,
   ensureAgentsSubscribed,
   logAgentBridgeFallback,
   onAgentsView,
-  seedAgentsRegion,
   type AgentsView,
 } from "@/store/agentsBridge";
 
 /**
- * The effective agents slice for rendering: the ordered `remoteAgents` list plus
- * the per-agent `agentSessions` / `agentDefinitions` / `agentFolders` maps, sourced
- * from the projected `agents` region when it faithfully mirrors `appStore`,
- * otherwise `appStore`'s slice verbatim (flag off, region not yet caught up, or a
- * transport that cannot subscribe).
+ * The current agents slice for rendering — the ordered `remoteAgents` list plus the
+ * per-agent `agentSessions` / `agentDefinitions` / `agentFolders` maps — sourced
+ * from the authoritative `agents` projection region.
  */
 export function useProjectedAgents(): AgentsView {
-  const remoteAgents = useAppStore((s) => s.remoteAgents);
-  const agentSessions = useAppStore((s) => s.agentSessions);
-  const agentDefinitions = useAppStore((s) => s.agentDefinitions);
-  const agentFolders = useAppStore((s) => s.agentFolders);
+  const [view, setView] = useState<AgentsView>(() => currentAgentsView() ?? EMPTY_AGENTS_VIEW);
 
-  // Read the flag once at mount: it flips only via dev tooling, and the
-  // subscription lifecycle is keyed off it below.
-  const [enabled] = useState(() => agentRenderFromProjectionEnabled());
-
-  const [view, setView] = useState<AgentsView | undefined>(undefined);
-
-  // Subscribe to the shared agents region while enabled; a transport that cannot
-  // subscribe (non-Tauri without a socket) just leaves the UI on the appStore
-  // fallback.
   useEffect(() => {
-    if (!enabled) return;
     let cancelled = false;
     const unsubscribe = onAgentsView((next) => {
       if (!cancelled) setView(next);
     });
     // `ensureAgentsSubscribed` builds the transport eagerly, so a non-Tauri env
     // without a socket throws synchronously (not just a rejection) — guard both so
-    // the UI silently stays on the appStore fallback.
+    // the hook silently stays on the last-known (or empty) view.
     try {
       ensureAgentsSubscribed()
         .then(() => {
@@ -82,23 +62,7 @@ export function useProjectedAgents(): AgentsView {
       cancelled = true;
       unsubscribe();
     };
-  }, [enabled]);
+  }, []);
 
-  const matches =
-    enabled && agentsViewMirrors(view, remoteAgents, agentSessions, agentDefinitions, agentFolders);
-
-  // Keep the region a faithful mirror of appStore's slice. Only once a view has
-  // arrived (so we are subscribed) and it is not already a mirror; de-duped inside
-  // `seedAgentsRegion` so a settled slice is not re-seeded on every render.
-  useEffect(() => {
-    if (!enabled || matches || view === undefined) return;
-    seedAgentsRegion(remoteAgents, agentSessions, agentDefinitions, agentFolders).catch((err) =>
-      logAgentBridgeFallback("seed", err)
-    );
-  }, [enabled, matches, view, remoteAgents, agentSessions, agentDefinitions, agentFolders]);
-
-  return useMemo(() => {
-    if (matches && view) return view;
-    return { remoteAgents, agentSessions, agentDefinitions, agentFolders };
-  }, [matches, view, remoteAgents, agentSessions, agentDefinitions, agentFolders]);
+  return view;
 }

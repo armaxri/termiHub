@@ -1,33 +1,31 @@
 /**
- * Agents projection bridge — Phase 5 render cut of the Agents domain (#2226,
- * part of #2139).
+ * Agents projection bridge — the agent sidebar & Open Connections read the
+ * **authoritative** `agents` projection region (#2226 hook-authoritative cut / PR A,
+ * part of #2153 / #2139).
  *
- * The Agents **shadow** (PR #2232) landed a backend-authoritative
- * [`AgentsStore`](../../src-tauri/src/agents_projection/store.rs) served as the
- * shared `agents` projection region, with `agent.*` intents, but nothing in the
- * UI touched it. This step makes the **agent sidebar** and **Open Connections**
- * source the agent list, connection status and per-agent
- * sessions/definitions/folders from that region — the parity-safe render cut (the
- * direct analog of the system-monitor render cut
- * {@link import("./systemMonitorBridge")}, #2224, and the session render cut
- * {@link import("./useSessionLifecycle")}, #2204).
+ * The shared `agents` projection region, backed by the Rust
+ * [`AgentsStore`](../../src-tauri/src/agents_projection/store.rs), is the source of
+ * truth for the ordered remote-agent list, each agent's connection status, and its
+ * live sessions, saved definitions and folders. The backend feeds it **at the
+ * source**: agent status / CRUD streams fold every transition (#2388 / PR #2392) and
+ * the server owns agent entry-creation + the startup list-load (#2403), so the region
+ * is populated from boot and reflects every backend transition without a client
+ * round-trip. The agent sidebar
+ * ({@link import("../components/Sidebar/ConnectionList").ConnectionList} /
+ * {@link import("../components/Sidebar/AgentNode").AgentNode}) and Open Connections
+ * therefore read the region directly through
+ * {@link import("./useProjectedAgents").useProjectedAgents}, with no `appStore` seed,
+ * mirror gate, or fallback — the direct analog of the authoritative connections bridge
+ * ({@link import("./connectionsBridge")}, #2225) and settings bridge
+ * ({@link import("./settingsBridge")}, #2227).
  *
- * # Strangler safety — flag-gated, on by default, faithful-mirror gate
+ * # Scope of this step (PR A)
  *
- * The `appStore` agents slice is still authoritative (the mutation cut is a later
- * step). To keep the render cut parity-safe **independent of any mutation flag**,
- * the region is kept a faithful copy of `appStore` by {@link seedAgentsRegion} (an
- * `agent.replace` mirror, the analog of the monitor bridge's `monitor.replace`
- * seed), and the UI renders from the region **only when it faithfully mirrors**
- * `appStore` ({@link agentsViewMirrors}); otherwise it falls back to `appStore`
- * verbatim. Because the gate guarantees the projected view deep-equals `appStore`'s
- * slice, the rendered output is byte-identical to the pre-cut path.
- *
- * Gated by {@link agentRenderFromProjectionEnabled} — **on by default**.
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_AGENT_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.agentRenderFromProjection"]` (set `"false"` to render
- * straight from `appStore`).
+ * Only the render readers are authoritative. The `appStore` agents slice is still
+ * held for the other, not-yet-migrated readers, and the mutation reducers keep
+ * mirroring their transitions through the granular `agent.*` intents
+ * ({@link mirrorAgentIntent}, still gated by {@link agentIntentsEnabled}). Migrating
+ * those remaining readers and removing the `appStore` reducers is PR B (#2409).
  */
 
 import {
@@ -52,7 +50,7 @@ export const AGENTS_REGION = "agents";
  * per-agent live sessions, saved definitions and folders. The projected records
  * match the frontend {@link RemoteAgentDefinition} / {@link AgentSessionInfo} /
  * {@link AgentDefinitionInfo} / {@link AgentFolderInfo} shapes one-to-one, so the
- * render cut is a pure parity swap.
+ * read is a pure parity swap.
  */
 export interface AgentsView {
   remoteAgents: RemoteAgentDefinition[];
@@ -62,7 +60,7 @@ export interface AgentsView {
 }
 
 /** The empty view a fresh region reports (twin of the empty store snapshot). */
-const EMPTY_VIEW: AgentsView = {
+export const EMPTY_AGENTS_VIEW: AgentsView = {
   remoteAgents: [],
   agentSessions: {},
   agentDefinitions: {},
@@ -92,56 +90,6 @@ function toView(raw: AgentsRegionSnapshot): AgentsView {
   };
 }
 
-// ── Render-cut feature flag (runtime-flippable, on by default) ─────────────────
-
-let renderFlagOverride: boolean | null = null;
-
-interface AgentRenderFlagWindow {
-  __TERMIHUB_AGENT_RENDER_FROM_PROJECTION__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the render-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
- */
-export function setAgentRenderFromProjectionEnabled(value: boolean | null): void {
-  renderFlagOverride = value;
-}
-
-/**
- * Whether the agent sidebar and Open Connections render the agent list,
- * connection status and per-agent sessions/definitions/folders from the projected
- * `agents` region instead of reading `appStore`'s agents slice directly.
- *
- * **On by default** — the render cut is parity-safe: the UI renders from the
- * region only when it faithfully mirrors `appStore` ({@link agentsViewMirrors}),
- * and otherwise falls back to `appStore` verbatim, so the output is byte-identical
- * to the pre-cut path. Independent of the (later) mutation cut: the region is kept
- * a mirror of `appStore` by {@link seedAgentsRegion}, so it is always populated.
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_AGENT_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.agentRenderFromProjection"]`.
- */
-export function agentRenderFromProjectionEnabled(): boolean {
-  if (renderFlagOverride !== null) return renderFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as AgentRenderFlagWindow;
-      if (typeof w.__TERMIHUB_AGENT_RENDER_FROM_PROJECTION__ === "boolean") {
-        return w.__TERMIHUB_AGENT_RENDER_FROM_PROJECTION__;
-      }
-      const ls = w.localStorage?.getItem("termihub.agentRenderFromProjection");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
-
 // ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
 
 let mutationFlagOverride: boolean | null = null;
@@ -165,19 +113,18 @@ export function setAgentIntentsEnabled(value: boolean | null): void {
  * toggleExpanded/connect/disconnect/shutdown/status/setCapabilities/refresh/
  * clearSessions and the definition/folder CRUD) dispatch granular `agent.*`
  * intents so the backend {@link import("../../src-tauri/src/agents_projection/store").AgentsStore}
- * is authoritative — instead of only the render-cut {@link seedAgentsRegion}
- * `agent.replace` mirror driving the region.
+ * tracks each transition (the backend also folds the persisted mutation
+ * server-side, #2388 / #2403).
  *
  * **On by default** (#2226 mutation cut). When on, each action mirrors its
  * transition through an `agent.*` intent (via {@link mirrorAgentIntent}), and the
- * render-cut hook ({@link import("./useProjectedAgents").useProjectedAgents})
- * reflects the region back into the UI. The local `appStore` reducer path stays in
- * place as the render source and as a resilience / rollback fallback — any dispatch
- * failure is logged and the local mutation continues, so a backend hiccup can never
- * break the agent sidebar (the reducer removal is a later step). When off,
- * `appStore` drives the slice purely locally (the pre-cut path). The flip was taken
- * on the automated parity tests plus the instant local fallback, mirroring the
- * monitor mutation cut (#2224). Overridable at runtime for rollback / tests via
+ * render readers ({@link import("./useProjectedAgents").useProjectedAgents})
+ * reflect the region back into the UI. The local `appStore` reducer path stays in
+ * place as the render source for the not-yet-migrated readers and as a resilience /
+ * rollback fallback — any dispatch failure is logged and the local mutation
+ * continues, so a backend hiccup can never break the agent sidebar (the reducer
+ * removal is PR B). When off, `appStore` drives the slice purely locally (the
+ * pre-cut path). Overridable at runtime for rollback / tests via
  * `window.__TERMIHUB_AGENT_INTENTS__` or `localStorage["termihub.agentIntents"]`
  * (set `"false"` to restore the pre-cut local-mutation path; `"true"` to force on).
  */
@@ -199,7 +146,7 @@ export function agentIntentsEnabled(): boolean {
   return true;
 }
 
-// ── Transport + shared region client (lazy, mirrors the monitor slice) ─────────
+// ── Transport + shared region client (lazy, mirrors the connections slice) ─────
 
 let transportInstance: Transport | null = null;
 let regionClient: ProjectionClient | null = null;
@@ -211,13 +158,13 @@ let startPromise: Promise<ProjectionClient> | null = null;
 const clientId = newClientId();
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription / seed dedup. */
+ * drops any active subscription / view + seed dedup state. */
 export function setAgentTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
   startPromise = null;
   transportInstance = t;
-  lastView = EMPTY_VIEW;
+  resetViewState();
   lastSeededSignature = null;
 }
 
@@ -234,7 +181,49 @@ function transport(): Transport {
 export type AgentsViewListener = (view: AgentsView) => void;
 
 const viewListeners = new Set<AgentsViewListener>();
-let lastView: AgentsView = EMPTY_VIEW;
+// The last projected view received, defaulting to the empty baseline so a
+// synchronous read before the first diff still returns a valid view.
+let lastView: AgentsView = EMPTY_AGENTS_VIEW;
+// A content signature of `lastView`, so an identical-content diff (e.g. a resync
+// re-delivering the same view with a fresh object identity) does not churn the
+// view identity or re-notify subscribers — which would trigger needless re-renders.
+let lastViewSignature: string = JSON.stringify(EMPTY_AGENTS_VIEW);
+// The monotonic region version of `lastView`. A projected view older than this is
+// stale (e.g. an initial subscribe snapshot delivered late, after a newer diff has
+// already landed) and is ignored, so it can never clobber the current view.
+let lastAppliedVersion = -1;
+
+/** Reset the fan-out state to the empty baseline (tests / re-init). */
+function resetViewState(): void {
+  lastView = EMPTY_AGENTS_VIEW;
+  lastViewSignature = JSON.stringify(EMPTY_AGENTS_VIEW);
+  lastAppliedVersion = -1;
+}
+
+/**
+ * Commit a projected view (at its region `version`) as the current view and notify
+ * subscribers — but only when it is not stale and its content actually changed.
+ * Ignoring an older version stops a late-delivered snapshot from overwriting a
+ * newer view (the agents region is live — status streams push diffs continuously,
+ * so a late subscribe snapshot racing a fresh diff is a real case); preserving
+ * identity for unchanged content keeps the reader hooks' value referentially stable
+ * across resyncs.
+ */
+function commitAgentsView(view: AgentsView, version: number): void {
+  if (version < lastAppliedVersion) return;
+  lastAppliedVersion = version;
+  const signature = JSON.stringify(view);
+  if (signature === lastViewSignature) return;
+  lastView = view;
+  lastViewSignature = signature;
+  for (const listener of viewListeners) {
+    try {
+      listener(view);
+    } catch (err) {
+      logAgentBridgeFallback("reconcile", err);
+    }
+  }
+}
 
 /**
  * Register a listener, invoked with the projected view on every diff. Returns an
@@ -249,21 +238,16 @@ export function onAgentsView(listener: AgentsViewListener): () => void {
  * Ensure the shared `agents` region client is subscribed so projected diffs are
  * received and fanned out to the {@link onAgentsView} listeners. Idempotent and
  * de-duplicated across concurrent callers; a transport/subscribe failure is logged
- * and rethrown so the caller can fall back to `appStore`.
+ * and rethrown so the caller can react.
  */
 export function ensureAgentsSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);
   if (!startPromise) {
     const client = new ProjectionClient(transport(), AGENTS_REGION);
     client.onChange((state) => {
-      lastView = toView((state.view ?? {}) as AgentsRegionSnapshot);
-      for (const listener of viewListeners) {
-        try {
-          listener(lastView);
-        } catch (err) {
-          logAgentBridgeFallback("reconcile", err);
-        }
-      }
+      // `state.version` is the region's monotonic version (used for the stale-diff
+      // guard), independent of any field inside the projected view.
+      commitAgentsView(toView((state.view ?? {}) as AgentsRegionSnapshot), state.version);
     });
     startPromise = client
       .start()
@@ -285,29 +269,49 @@ export function stopAgentsSubscription(): void {
   regionClient?.stop();
   regionClient = null;
   startPromise = null;
-  lastView = EMPTY_VIEW;
+  resetViewState();
   lastSeededSignature = null;
 }
 
-/** The last view fanned out (for a hook that subscribes after the first diff). */
+/**
+ * The last projected view received (for a hook that subscribes after the first
+ * diff, and for synchronous reads). Since the region is authoritative and the
+ * backend feeds every transition at the source (#2388 / #2403), this is the
+ * frontend's current picture of the agents domain; before the first diff it is the
+ * {@link EMPTY_AGENTS_VIEW} baseline.
+ */
 export function currentAgentsView(): AgentsView {
   return lastView;
 }
 
-// ── Seed: keep the region a faithful mirror of appStore (agent.replace) ────────
+/**
+ * Test-only: synchronously set the projected view (at a region `version`) and notify
+ * subscribers, without the async transport subscribe round-trip. The agents region
+ * test harness uses this to mirror an `appStore`-driven test's slice into the region
+ * immediately, so a reader that renders (or re-renders on a mutation) sees the slice
+ * without an explicit flush — matching the synchronous behaviour the removed
+ * `appStore` fallback used to provide. Never call this from production code.
+ */
+export function __emitAgentsViewForTest(view: AgentsView, version: number): void {
+  commitAgentsView(view, version);
+}
+
+// ── Seed: reliably push appStore's slice into the region (agent.replace) ───────
 
 let lastSeededSignature: string | null = null;
 
 /**
- * Seed the shared region with `appStore`'s whole agents slice via an
- * `agent.replace` intent, so the projection tracks `appStore`'s current state
- * while `appStore` stays authoritative (the render-side counterpart to the monitor
- * bridge's seed). The payload is keyed to the Rust snapshot shape
+ * Push `appStore`'s whole agents slice into the shared region via an `agent.replace`
+ * intent. The backend now feeds the region at the source (#2388 / #2403), so this is
+ * no longer part of the render path — it remains as a **reliable** appStore→region
+ * mirror for the test harness (and any diagnostic re-seed): the returned promise
+ * resolves only once the region has accepted the replace and rejects on a rejected
+ * ack or a transport failure, so a caller can await the mirror rather than
+ * fire-and-forget. The payload is keyed to the Rust snapshot shape
  * (`agents/sessions/definitions/folders`). De-duplicated: a slice identical to the
- * last seeded one is not re-dispatched. Never throws synchronously — a transport
- * that cannot dispatch surfaces as a rejected promise the caller logs and ignores
- * (staying on the `appStore` fallback). Idempotent server-side: replacing with the
- * same content yields no diff.
+ * last seeded one is not re-dispatched (a repeated no-op is idempotent server-side
+ * anyway). On any failure the dedup signature is cleared so a later change retries
+ * the mirror.
  */
 export function seedAgentsRegion(
   remoteAgents: RemoteAgentDefinition[],
@@ -323,8 +327,7 @@ export function seedAgentsRegion(
   };
   const signature = JSON.stringify(payload);
   if (signature === lastSeededSignature) return Promise.resolve();
-  // Set before dispatching so concurrent callers (sidebar + Open Connections) do
-  // not double-dispatch the same seed.
+  // Set before dispatching so concurrent callers do not double-dispatch the seed.
   lastSeededSignature = signature;
   try {
     return transport()
@@ -356,9 +359,9 @@ export function seedAgentsRegion(
 
 /**
  * The granular `agent.*` intent kinds the mutation cut dispatches (twins of the
- * Rust routes). Excludes `agent.replace`, which is the render-cut whole-slice
- * mirror ({@link seedAgentsRegion}); the mutation cut drives the region through
- * these per-transition intents instead so the store becomes authoritative.
+ * Rust routes). Excludes `agent.replace`, which is the whole-slice mirror
+ * ({@link seedAgentsRegion}); the mutation cut drives the region through these
+ * per-transition intents so the store tracks each transition.
  */
 export type AgentIntentKind =
   | "agent.add"
@@ -394,7 +397,7 @@ export function dispatchAgentIntent(
  * mutation cut is disabled ({@link agentIntentsEnabled} off — the rollback path).
  * Never throws — a synchronous transport-construction failure (non-Tauri, no
  * socket) is caught and logged, leaving the UI on the local slice. The twin of the
- * monitor bridge's {@link import("./systemMonitorBridge").dispatchMonitorIntentBestEffort}.
+ * connections bridge's {@link import("./connectionsBridge").mirrorConnectionIntent}.
  */
 export function mirrorAgentIntent(kind: AgentIntentKind, payload: Record<string, unknown>): void {
   if (!agentIntentsEnabled()) return;
@@ -409,61 +412,6 @@ export function mirrorAgentIntent(kind: AgentIntentKind, payload: Record<string,
   } catch (err) {
     logAgentBridgeFallback(kind, err);
   }
-}
-
-// ── Faithful-mirror gate ───────────────────────────────────────────────────────
-
-/**
- * Whether a projected `view` faithfully mirrors `appStore`'s agents slice — the
- * gate deciding whether the UI may render from the projection (true) or must fall
- * back to `appStore` (false). A deep value comparison of the ordered agent list
- * and the per-agent sessions/definitions/folders maps; because the projected
- * records match the frontend shapes one-to-one, a mirroring view is
- * value-identical to the `appStore` slice, so rendering from it can never diverge.
- *
- * The twin of the monitor render cut's `monitorsViewMirrors`.
- */
-export function agentsViewMirrors(
-  view: AgentsView | undefined,
-  remoteAgents: RemoteAgentDefinition[],
-  agentSessions: Record<string, AgentSessionInfo[]>,
-  agentDefinitions: Record<string, AgentDefinitionInfo[]>,
-  agentFolders: Record<string, AgentFolderInfo[]>
-): boolean {
-  if (!view) return false;
-  return (
-    deepEqual(view.remoteAgents, remoteAgents) &&
-    deepEqual(view.agentSessions, agentSessions) &&
-    deepEqual(view.agentDefinitions, agentDefinitions) &&
-    deepEqual(view.agentFolders, agentFolders)
-  );
-}
-
-/**
- * A structural deep-equal for the JSON-ish agents view model (objects, arrays, and
- * primitives — no functions/dates/maps). Numbers compare with `===`, so an integer
- * that round-tripped through JSON as a float (`40` vs `40.0`) still matches.
- * Exported for the bridge's parity tests.
- */
-export function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== typeof b) return false;
-  if (a === null || b === null) return a === b;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => deepEqual(v, b[i]));
-  }
-  if (typeof a === "object" && typeof b === "object") {
-    const ao = a as Record<string, unknown>;
-    const bo = b as Record<string, unknown>;
-    const aKeys = Object.keys(ao);
-    const bKeys = Object.keys(bo);
-    if (aKeys.length !== bKeys.length) return false;
-    return aKeys.every(
-      (k) => Object.prototype.hasOwnProperty.call(bo, k) && deepEqual(ao[k], bo[k])
-    );
-  }
-  return false;
 }
 
 /** Log a bridge fallback so the appStore-path recovery is visible in the LogViewer. */
