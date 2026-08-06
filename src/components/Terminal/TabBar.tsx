@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
 import type { WindowInfo } from "@/types/window";
@@ -103,7 +104,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     // closing it — it merely detaches, leaving the process running. Show a
     // one-time reassuring notice (unless opted out) instead of the live-session
     // warning, which would wrongly imply the session ends (#1930).
-    if (tab.persistentConnectionId && state.settings.confirmCloseAttachedTab !== false) {
+    if (tab.persistentConnectionId && currentSettingsView().confirmCloseAttachedTab !== false) {
       setPendingAttachedTabCloseConfirm({ tabId, panelId, label: tab.title });
       return;
     }
@@ -115,7 +116,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
       terminalExitedTabs: state.terminalExitedTabs,
       terminalSpawnErrors: state.terminalSpawnErrors,
     });
-    if (isLive && state.settings.confirmCloseLiveSession !== false) {
+    if (isLive && currentSettingsView().confirmCloseLiveSession !== false) {
       setPendingSessionCloseConfirm({
         kind: "tab",
         tabId,

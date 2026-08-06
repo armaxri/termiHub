@@ -23,6 +23,7 @@ import {
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { getXtermTheme } from "@/themes";
 import {
@@ -215,7 +216,7 @@ async function pushLineEnding(tabId: string, sessionId: string): Promise<void> {
   const s = useAppStore.getState();
   const ending = resolveLineEnding(
     s.tabTerminalOptions[tabId]?.lineEnding,
-    s.settings.defaultLineEnding
+    currentSettingsView().defaultLineEnding
   );
   try {
     await setSessionLineEnding(sessionId, ending);
@@ -990,7 +991,7 @@ export function Terminal({
     (engine: SyntaxHighlightingEngine) => {
       const state = useAppStore.getState();
       const resolved = resolveHighlightingConfig(
-        state.settings.syntaxHighlighting,
+        currentSettingsView().syntaxHighlighting,
         state.tabTerminalOptions[tabId]?.syntaxHighlighting
       );
       const sessionId = sessionIdRef.current;
@@ -1067,7 +1068,7 @@ export function Terminal({
     // Park the element so xterm.open() has a DOM parent
     parkingRef.current?.appendChild(el);
 
-    const appSettings = useAppStore.getState().settings;
+    const appSettings = currentSettingsView();
     const tabOpts = useAppStore.getState().tabTerminalOptions[tabId];
     const baseFontSize = tabOpts?.fontSize ?? appSettings.fontSize ?? DEFAULT_FONT_SIZE;
     const xterm = new XTerm({
@@ -1187,7 +1188,7 @@ export function Terminal({
       // Pass-through: keys reserved by the shell/tmux/vim/SSH-to-remote bypass
       // shortcut matching entirely so they reach the PTY untouched. Users can
       // turn this off in Settings → Keyboard Shortcuts.
-      const passthroughEnabled = useAppStore.getState().settings.terminalKeyPassthrough !== false;
+      const passthroughEnabled = currentSettingsView().terminalKeyPassthrough !== false;
       if (passthroughEnabled && isShellReservedKey(e)) {
         return true;
       }

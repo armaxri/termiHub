@@ -8,6 +8,7 @@ import {
   removeHistoryEntry as apiRemoveHistoryEntry,
   clearSessionHistory as apiClearSessionHistory,
 } from "@/services/sessionHistoryApi";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { ConnectionConfig } from "@/types/terminal";
 import { SessionHistoryEntry } from "@/types/sessionHistory";
 import { frontendLog } from "@/utils/frontendLog";
@@ -61,8 +62,7 @@ export interface SessionHistorySlice {
 }
 
 export const createSessionHistorySlice: StateCreator<AppState, [], [], SessionHistorySlice> = (
-  set,
-  get
+  set
 ) => ({
   sessionHistory: [],
 
@@ -79,7 +79,7 @@ export const createSessionHistorySlice: StateCreator<AppState, [], [], SessionHi
   },
 
   recordSession: async (connectionType, config) => {
-    const settings = get().settings;
+    const settings = currentSettingsView();
     if (settings.sessionHistoryEnabled === false) return;
     // Privacy: passwords/passphrases are NEVER written to history, regardless
     // of the connection's savePassword flag (they live in the credential store).

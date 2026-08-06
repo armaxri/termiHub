@@ -272,7 +272,11 @@ import {
 } from "@/store/connectionsBridge";
 import { mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
-import { mirrorSettingsIntent } from "@/store/settingsBridge";
+import {
+  currentSettingsView,
+  ensureSettingsSubscribed,
+  mirrorSettingsIntent,
+} from "@/store/settingsBridge";
 import { mirrorBroadcastIntent } from "@/store/broadcastBridge";
 import {
   expectProjectedRestoreSettlement,
@@ -854,9 +858,14 @@ export interface AppState
   // via `useProjectedConnections()` / `currentConnectionsView()`. `appStore` holds
   // no connections/folders slice; the lifecycle actions below are thin
   // backend-command wrappers.
-  settings: AppSettings;
-  /** Last settings object that was successfully persisted to disk (or loaded from disk). */
-  savedSettings: AppSettings;
+
+  // Settings — the persisted `AppSettings` document is region-authoritative
+  // (#2404): it lives only in the shared `settings` projection region, read via
+  // `useProjectedSettings()` / `currentSettingsView()`. `appStore` holds no
+  // settings/savedSettings slice; the setters below (updateSettings /
+  // updateShellIntegration / skipUpdate / clearSkippedUpdateVersion) are thin
+  // command wrappers that dispatch the optimistic `settings.*` intent and persist,
+  // relying on the server-side fold (#2386 / #2407).
 
   // Layout
   layoutConfig: LayoutConfig;
@@ -916,11 +925,10 @@ export interface AppState
   updateSettings: (settings: AppSettings) => Promise<void>;
   /**
    * Persist edited shell-integration settings through the dedicated
-   * `save_shell_integration_settings` command, keeping `settings` and
-   * `savedSettings` in lockstep (as {@link updateSettings} does for general
-   * settings). Optimistically writes `nextSi` into both, then on backend
-   * failure rolls both back to the previously-persisted shell-integration value
-   * and re-throws so the caller can surface the error. Resolves with the
+   * `save_shell_integration_settings` command. Optimistically patches `nextSi`
+   * into the authoritative `settings` region (a `settings.patch`), then on backend
+   * failure rolls the region back to the previously-projected shell-integration
+   * value and re-throws so the caller can surface the error. Resolves with the
    * refreshed {@link ShellIntegrationStatus} reporting the recomputed
    * registration / staleness state.
    */
@@ -3890,7 +3898,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         });
         const hsEnabled =
           terminalOptions?.horizontalScrolling ??
-          get().settings.defaultHorizontalScrolling ??
+          currentSettingsView().defaultHorizontalScrolling ??
           false;
         const tabColor = terminalOptions?.color;
         // Store per-tab terminal options (excluding horizontalScrolling and color which are tracked separately)
@@ -4776,30 +4784,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     // Connections — the saved-connection / folder tree is region-authoritative
     // (#2401); no `appStore` slice. See the `connections` projection region.
-    settings: {
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: true,
-      confirmCloseTabOnShortcut: true,
-      confirmCloseLiveSession: true,
-      confirmCloseAttachedTab: true,
-      askOpenSavedFileInTab: true,
-      warnLargePortScan: true,
-      warnLargePingSweep: true,
-    },
-    savedSettings: {
-      version: "1",
-      externalConnectionFiles: [],
-      powerMonitoringEnabled: true,
-      fileBrowserEnabled: true,
-      confirmCloseTabOnShortcut: true,
-      confirmCloseLiveSession: true,
-      confirmCloseAttachedTab: true,
-      askOpenSavedFileInTab: true,
-      warnLargePortScan: true,
-      warnLargePingSweep: true,
-    },
+    // Settings — the persisted document is region-authoritative (#2404); no
+    // `appStore` slice. See the `settings` projection region (read via
+    // `useProjectedSettings()` / `currentSettingsView()`).
 
     // Layout
     layoutConfig: DEFAULT_LAYOUT,
@@ -4863,8 +4850,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set({ layoutConfig: updated });
       if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
       layoutPersistTimer = setTimeout(() => {
-        const current = get();
-        persistSettings({ ...current.settings, layout: updated }).catch((err) =>
+        persistSettings({ ...currentSettingsView(), layout: updated }).catch((err) =>
           frontendLog(
             "app_store",
             `Failed to persist layout config: ${err instanceof Error ? err.message : String(err)}`
@@ -4879,8 +4865,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set({ layoutConfig: config });
       if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
       layoutPersistTimer = setTimeout(() => {
-        const current = get();
-        persistSettings({ ...current.settings, layout: config }).catch((err) =>
+        persistSettings({ ...currentSettingsView(), layout: config }).catch((err) =>
           frontendLog(
             "app_store",
             `Failed to persist layout preset: ${err instanceof Error ? err.message : String(err)}`
@@ -4904,8 +4889,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       set({ layoutConfig: updated, ...(shouldCollapse ? { sidebarCollapsed: true } : {}) });
       if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
       layoutPersistTimer = setTimeout(() => {
-        const current = get();
-        persistSettings({ ...current.settings, layout: updated }).catch((err) =>
+        persistSettings({ ...currentSettingsView(), layout: updated }).catch((err) =>
           frontendLog(
             "app_store",
             `Failed to persist layout config: ${err instanceof Error ? err.message : String(err)}`
@@ -4934,6 +4918,23 @@ export const useAppStore = create<AppState>((set, get, store) => {
             `connections region subscribe failed: ${subErr instanceof Error ? subErr.message : String(subErr)}`
           );
         }
+        // The persisted settings document is region-authoritative (#2404): the
+        // backend seeds the `settings` region from the persisted document at
+        // startup (#2386), so prime the region subscription here so
+        // `currentSettingsView()` is populated for the store's own imperative reads
+        // (connect / restore / line-ending). Best-effort — the eager transport
+        // build throws synchronously in a non-Tauri env, so guard throw + rejection.
+        try {
+          await ensureSettingsSubscribed();
+        } catch (subErr) {
+          frontendLog(
+            "app_store",
+            `settings region subscribe failed: ${subErr instanceof Error ? subErr.message : String(subErr)}`
+          );
+        }
+        // Still read the persisted document directly: it drives one-time startup
+        // side-effects that do not live in the region view (theme apply, layout /
+        // sidebar hydration, keybinding overrides, language packages / grammars).
         const settings = await getSettings();
         // Hydrate agents: add ephemeral state (disconnected, collapsed)
         const remoteAgents = agents.map((a) => ({
@@ -4952,8 +4953,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const sidebarView: SidebarView = persistedView === "files" ? "connections" : persistedView;
         const sidebarCollapsed = layoutConfig.sidebarCollapsed ?? false;
         set({
-          settings,
-          savedSettings: settings,
           remoteAgents,
           layoutConfig,
           sidebarView,
@@ -5085,12 +5084,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     updateSettings: async (newSettings) => {
       try {
-        const oldSettings = get().settings;
+        // The settings document is region-authoritative (#2404): read the
+        // previous document from the projection to drive the side-effect diffs.
+        const oldSettings = currentSettingsView();
         await persistSettings(newSettings);
-        set({ settings: newSettings, savedSettings: newSettings });
-        // Mutation cut (#2227): make the backend SettingsStore authoritative by
-        // mirroring the whole-document save as a settings.replace intent. Persist
-        // above is untouched; the render-cut hook reflects the region back.
+        // Optimistic whole-document write into the authoritative region. The
+        // persist above folds `save_settings` into the region server-side (#2386);
+        // this dispatch reflects it client-side instantly, and `useProjectedSettings`
+        // renders it back. There is no `appStore` slice to set any more.
         mirrorSettingsIntent("settings.replace", { settings: newSettings });
 
         // Re-apply when the selection changes or when the active custom theme's
@@ -5146,24 +5147,19 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     updateShellIntegration: async (nextSi) => {
-      // Capture the previously-persisted value for rollback. Both the optimistic
-      // write and the rollback merge into the CURRENT settings (read at call
-      // time), so a concurrent general-settings edit landing mid-persist is
-      // preserved rather than clobbered.
-      const prevSi = get().settings.shellIntegration;
-      const optimistic = { ...get().settings, shellIntegration: nextSi };
-      set({ settings: optimistic, savedSettings: optimistic });
-      // Mutation cut (#2227): the shell-integration write is a targeted field
-      // patch, so mirror it as a settings.patch (shallow-merge) rather than a
-      // whole-document replace — keeping a concurrent general-settings edit intact.
-      // The backend `settings.patch` route reads the partial from a `{ patch }`
-      // envelope (see settings_projection/projection.rs), so wrap the field there.
+      // Capture the previously-projected value for rollback. The shell-integration
+      // write is a targeted field patch, so dispatch it as a `settings.patch`
+      // (shallow-merge) rather than a whole-document replace — keeping a concurrent
+      // general-settings edit intact. The backend `settings.patch` route reads the
+      // partial from a `{ patch }` envelope (settings_projection/projection.rs), so
+      // wrap the field there. This is the optimistic write into the authoritative
+      // region (#2404); the persist below also folds server-side (#2407).
+      const prevSi = currentSettingsView().shellIntegration;
       mirrorSettingsIntent("settings.patch", { patch: { shellIntegration: nextSi } });
       try {
         return await saveShellIntegrationSettings(nextSi);
       } catch (err) {
-        const rolledBack = { ...get().settings, shellIntegration: prevSi };
-        set({ settings: rolledBack, savedSettings: rolledBack });
+        // Roll the region back to the previously-projected shell-integration value.
         mirrorSettingsIntent("settings.patch", { patch: { shellIntegration: prevSi } });
         throw err;
       }
@@ -7526,7 +7522,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // opt-in defaults off, so it lands here and is gated exactly like any
       // other untrusted program.
       const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = async (program, args) => {
-        const settings = get().settings;
+        const settings = currentSettingsView();
         if (!settings.workflowLocalProcessEnabled) {
           toast.error("Local process execution is disabled", {
             description:
@@ -7547,7 +7543,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
         if (decision === "cancel") return false;
         if (decision === "always") {
-          const current = get().settings;
+          const current = currentSettingsView();
           const nextAllowlist = [...(current.workflowLocalProcessAllowlist ?? [])];
           if (!nextAllowlist.includes(program)) nextAllowlist.push(program);
           await get().updateSettings({
@@ -8135,7 +8131,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const state = get();
       // Respect the setting at save time so toggling it takes effect immediately.
       // "never" means the user does not want a session kept, so skip the write.
-      if ((await resolveRestoreMode(state.settings)) === "never") return;
+      if ((await resolveRestoreMode(currentSettingsView())) === "never") return;
       const ownGroups = captureAllTabGroups(
         state.tabGroups,
         state.activeTabGroupId,
@@ -8326,7 +8322,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const state = get();
       if (remember) {
         await state.updateSettings({
-          ...state.settings,
+          ...currentSettingsView(),
           restoreLastSessionMode: "always",
         });
       }
@@ -8338,7 +8334,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const state = get();
       if (remember) {
         await state.updateSettings({
-          ...state.settings,
+          ...currentSettingsView(),
           restoreLastSessionMode: "never",
         });
       }
@@ -8417,7 +8413,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       try {
         const info = await apiCheckForUpdates(force);
         if (info.available) {
-          const currentSettings = get().settings;
+          const currentSettings = currentSettingsView();
           const skippedVersion = currentSettings.updates?.skippedVersion;
           // If the update is available but the user previously skipped this exact
           // version (and it's not a security patch), keep the dot visible but don't
@@ -8444,13 +8440,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (!updateInfo) return;
       try {
         await apiSkipUpdateVersion(updateInfo.latestVersion);
-        // Refresh the settings in the store so skippedVersion is current.
+        // Refresh the persisted settings so skippedVersion is current, then reflect
+        // it into the authoritative region (#2404) — no `appStore` slice to set.
         const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
-        set({
-          settings: updatedSettings,
-          savedSettings: updatedSettings,
-          updateNotificationDismissed: true,
-        });
+        set({ updateNotificationDismissed: true });
         mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
       } catch (err) {
         frontendLog("update", `Failed to skip version: ${err}`);
@@ -8460,7 +8453,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       try {
         await apiClearSkippedVersion();
         const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
-        set({ settings: updatedSettings, savedSettings: updatedSettings });
+        // Reflect the refreshed persisted document into the authoritative region
+        // (#2404) — no `appStore` slice to set.
         mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
       } catch (err) {
         frontendLog("update", `Failed to clear skipped version: ${err}`);

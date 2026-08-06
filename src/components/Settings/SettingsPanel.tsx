@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { applyTheme } from "@/themes/engine";
 import { AppSettings } from "@/types/connection";
@@ -112,7 +113,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     const toSave = pendingSettingsRef.current;
     if (toSave) {
       pendingSettingsRef.current = null;
-      useAppStore.setState({ savedSettings: toSave });
+      // The persisted document is region-authoritative (#2404): `updateSettings`
+      // persists and folds it into the region — no `appStore` slice to mark saved.
       updateSettings(toSave);
     }
   }, [updateSettings]);
@@ -157,17 +159,16 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       if (newSettings.theme !== settings.theme) {
         applyTheme(newSettings.theme);
       }
-      // Update local state immediately via store for responsive UI
-      useAppStore.setState({ settings: newSettings });
 
       if (saveTimerRef.current) {
         clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
 
-      // Only dirty if the new value actually differs from the last persisted state
-      const isDirty =
-        JSON.stringify(newSettings) !== JSON.stringify(useAppStore.getState().savedSettings);
+      // Only dirty if the new value actually differs from the last persisted state.
+      // The persisted document is region-authoritative (#2404): compare against the
+      // projected view (the current persisted settings), not a removed appStore slice.
+      const isDirty = JSON.stringify(newSettings) !== JSON.stringify(currentSettingsView());
 
       if (isDirty) {
         pendingSettingsRef.current = newSettings;
@@ -177,7 +178,6 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           const toSave = pendingSettingsRef.current;
           if (toSave) {
             pendingSettingsRef.current = null;
-            useAppStore.setState({ savedSettings: toSave });
             updateSettings(toSave);
             setEditorDirty(tabId, false);
             acknowledgeSaved();

@@ -39,6 +39,7 @@ import { useWebviewZoom } from "@/hooks/useWebviewZoom";
 import { useReportWindowTabCount } from "@/hooks/useReportWindowTabCount";
 import { useSidebarResize } from "@/hooks/useSidebarResize";
 import { useAppStore } from "@/store/appStore";
+import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { getCliWorkspace } from "@/services/workspaceApi";
 import { resolveRestoreMode } from "@/utils/restoreMode";
@@ -154,7 +155,7 @@ function App() {
       }
 
       const store = useAppStore.getState();
-      const restoreMode = await resolveRestoreMode(store.settings);
+      const restoreMode = await resolveRestoreMode(currentSettingsView());
       if (restoreMode === "never") {
         // Never restore: drop any stale stored session from a previous run.
         await store.clearLastSession();
