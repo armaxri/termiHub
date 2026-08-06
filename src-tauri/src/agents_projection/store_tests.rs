@@ -6,7 +6,9 @@
 
 use serde_json::json;
 
-use super::{AgentConnectionState, AgentDefinition, AgentFolder, AgentSession, AgentsStore};
+use super::{
+    AgentConnectionState, AgentDefinition, AgentFolder, AgentSession, AgentsStore, SavedAgentSeed,
+};
 
 /// A deterministic agent config blob.
 fn config(host: &str) -> serde_json::Value {
@@ -49,6 +51,17 @@ fn session(id: &str) -> AgentSession {
         status: "running".to_string(),
         attached: true,
         definition_id: None,
+    }
+}
+
+/// A persisted-list seed (id / name / config / settings) — the input to
+/// `reflect_saved_agents`, carrying only the persisted fields the backend owns.
+fn seed(id: &str, name: &str, host: &str) -> SavedAgentSeed {
+    SavedAgentSeed {
+        id: id.to_string(),
+        name: name.to_string(),
+        config: config(host),
+        agent_settings: settings(),
     }
 }
 
@@ -511,6 +524,113 @@ fn replace_with_empty_maps_clears_everything() {
         Default::default(),
     );
 
+    assert_eq!(
+        store.snapshot(),
+        json!({ "agents": [], "sessions": {}, "definitions": {}, "folders": {} })
+    );
+}
+
+// ── reflect_saved_agents — server-owned list-membership (#2403) ────────────────
+
+#[test]
+fn reflect_saved_agents_creates_entries_on_an_empty_store() {
+    let store = AgentsStore::new();
+    // The list-load path feeds the whole persisted list; entries are created.
+    store.reflect_saved_agents(vec![seed("a1", "One", "h1"), seed("a2", "Two", "h2")]);
+
+    assert_eq!(store.agent_ids(), vec!["a1", "a2"]);
+    let a1 = store.get("a1").expect("a1 created");
+    assert_eq!(a1.name, "One");
+    assert_eq!(a1.config, config("h1"));
+    // A freshly reflected agent starts disconnected/collapsed (live status is
+    // store-owned, never carried by the persisted list).
+    assert_eq!(a1.connection_state, AgentConnectionState::Disconnected);
+    assert!(!a1.is_expanded);
+    assert_eq!(a1.capabilities, None);
+}
+
+#[test]
+fn reflect_saved_agents_preserves_live_status_of_surviving_ids() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    // Give a1 live status + sub-state that only lives in the store.
+    store.set_status("a1", AgentConnectionState::Connected, None);
+    store.set_capabilities("a1", json!({ "maxSessions": 4 }));
+    store.toggle_expanded("a1");
+    store.refresh(
+        "a1",
+        vec![session("s1")],
+        vec![definition("d1", None)],
+        vec![folder("f1")],
+    );
+
+    // A reload reflects the persisted list; a1 survives with a renamed config.
+    store.reflect_saved_agents(vec![seed("a1", "One Renamed", "h1-new")]);
+
+    let a1 = store.get("a1").expect("a1 survives");
+    // Persisted fields refreshed…
+    assert_eq!(a1.name, "One Renamed");
+    assert_eq!(a1.config, config("h1-new"));
+    // …live status preserved.
+    assert_eq!(a1.connection_state, AgentConnectionState::Connected);
+    assert_eq!(a1.capabilities, Some(json!({ "maxSessions": 4 })));
+    assert!(a1.is_expanded);
+    // Sub-state preserved for the surviving id.
+    assert_eq!(store.definitions_of("a1").len(), 1);
+    assert_eq!(store.folders_of("a1").len(), 1);
+    assert_eq!(
+        store.snapshot()["sessions"]["a1"].as_array().unwrap().len(),
+        1
+    );
+}
+
+#[test]
+fn reflect_saved_agents_drops_ids_absent_from_the_list() {
+    let store = AgentsStore::new();
+    store.reflect_saved_agents(vec![seed("a1", "One", "h1"), seed("a2", "Two", "h2")]);
+    store.refresh(
+        "a2",
+        vec![session("s1")],
+        vec![definition("d1", None)],
+        vec![],
+    );
+
+    // a2 is deleted from the persisted list → gone from the region, sub-state too.
+    store.reflect_saved_agents(vec![seed("a1", "One", "h1")]);
+
+    assert_eq!(store.agent_ids(), vec!["a1"]);
+    assert!(store.get("a2").is_none());
+    let view = store.snapshot();
+    assert!(view["sessions"].get("a2").is_none());
+    assert!(view["definitions"].get("a2").is_none());
+}
+
+#[test]
+fn reflect_saved_agents_follows_the_persisted_list_order() {
+    let store = AgentsStore::new();
+    store.reflect_saved_agents(vec![seed("a1", "One", "h1"), seed("a2", "Two", "h2")]);
+    // The persisted order (what `reorderRemoteAgents` writes back) is reflected.
+    store.reflect_saved_agents(vec![seed("a2", "Two", "h2"), seed("a1", "One", "h1")]);
+    assert_eq!(store.agent_ids(), vec!["a2", "a1"]);
+}
+
+#[test]
+fn reflect_saved_agents_is_idempotent() {
+    let store = AgentsStore::new();
+    let list = vec![seed("a1", "One", "h1"), seed("a2", "Two", "h2")];
+    store.reflect_saved_agents(list.clone());
+    let first = store.snapshot();
+    store.reflect_saved_agents(list);
+    // Reflecting the same list twice yields the identical view (no drift alongside
+    // the still-present client mirror).
+    assert_eq!(store.snapshot(), first);
+}
+
+#[test]
+fn reflect_saved_agents_with_an_empty_list_clears_membership() {
+    let store = AgentsStore::new();
+    store.reflect_saved_agents(vec![seed("a1", "One", "h1")]);
+    store.reflect_saved_agents(Vec::new());
     assert_eq!(
         store.snapshot(),
         json!({ "agents": [], "sessions": {}, "definitions": {}, "folders": {} })

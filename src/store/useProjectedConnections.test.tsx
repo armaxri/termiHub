@@ -1,10 +1,9 @@
 /**
- * `useProjectedConnections` — the connection tree sidebar cut to the projected
- * `connections` region (#2225 render cut). Drives the hook against an in-memory
- * substrate double and asserts: flag-off returns the appStore slice and dispatches
- * nothing; flag-on seeds the region (a `connection.replace` mirror) and then
- * renders the slice from the projection, value-identical to appStore; and a region
- * that has not caught up falls back to the appStore slice.
+ * `useProjectedConnections` — the connection tree sidebar reads the authoritative
+ * `connections` region (#2225, PR A). Drives the hook against an in-memory
+ * substrate double and asserts: it renders the server-fed region view directly,
+ * re-renders on every region diff, and never reads the `appStore` slice (no seed,
+ * no mirror gate, no fallback).
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -24,7 +23,6 @@ import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 
 import {
   CONNECTIONS_REGION,
-  setConnectionRenderFromProjectionEnabled,
   setConnectionTransportForTest,
   stopConnectionsSubscription,
   type ConnectionsView,
@@ -57,28 +55,23 @@ function folder(id: string, parentId: string | null = null, isExpanded = true): 
   return { id, name: `F ${id}`, parentId, isExpanded };
 }
 
-/** In-memory substrate double: applies `connection.replace` and fans a snapshot. */
+/** In-memory substrate double: feeds the region via {@link seed} and fans snapshots. */
 class FakeTransport implements Transport {
   dispatched: Intent[] = [];
-  /** When false, `connection.replace` acks but does NOT advance the region. */
-  applyReplace = true;
   private view: Record<string, unknown> = { folders: [], connections: [] };
   private version = 0;
   private handlers: FrameHandler[] = [];
 
+  /** Feed the region as the server-side fold would, and fan the diff out. */
+  seed(view: ConnectionsView): void {
+    this.view = { folders: view.folders, connections: view.connections };
+    this.version += 1;
+    this.fan();
+  }
+
   async dispatch(intent: Intent): Promise<IntentAck> {
     this.dispatched.push(intent);
-    if (intent.kind === "connection.replace" && this.applyReplace) {
-      const p = intent.payload as Record<string, unknown>;
-      this.view = { folders: p.folders ?? [], connections: p.connections ?? [] };
-      this.version += 1;
-      this.fan();
-    }
-    return {
-      intentId: intent.intentId,
-      status: "accepted",
-      produced: [{ region: CONNECTIONS_REGION, version: this.version }],
-    };
+    return { intentId: intent.intentId, status: "accepted", produced: [] };
   }
 
   async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
@@ -131,59 +124,54 @@ beforeEach(() => {
 afterEach(() => {
   stopConnectionsSubscription();
   setConnectionTransportForTest(null);
-  setConnectionRenderFromProjectionEnabled(null);
 });
 
 const flush = () => act(async () => await Promise.resolve());
 
 describe("useProjectedConnections", () => {
-  it("flag off: returns the appStore slice and dispatches nothing", async () => {
-    setConnectionRenderFromProjectionEnabled(false);
-    useAppStore.setState({
-      folders: [folder("Work")],
-      connections: [connection("Work/A", "Work")],
-    });
+  it("renders the server-fed region view directly", async () => {
+    const folders = [folder("Work")];
+    const connections = [connection("Work/A", "Work")];
+    transport.seed({ folders, connections });
 
     const hook = renderHook();
     await flush();
 
-    expect(hook.get().folders[0].id).toBe("Work");
-    expect(hook.get().connections).toHaveLength(1);
+    expect(hook.get().folders).toEqual(folders);
+    expect(hook.get().connections).toEqual(connections);
+    // The authoritative read dispatches nothing (no appStore seed).
     expect(transport.dispatched).toHaveLength(0);
     hook.unmount();
   });
 
-  it("flag on: seeds the region then renders the slice from the projection", async () => {
-    const folders = [folder("Work")];
-    const connections = [connection("Work/A", "Work")];
-    useAppStore.setState({ folders, connections });
-
+  it("re-renders when the region diffs after mount", async () => {
     const hook = renderHook();
     await flush();
+    expect(hook.get().connections).toHaveLength(0);
+
+    act(() => transport.seed({ folders: [folder("A")], connections: [connection("A/1", "A")] }));
     await flush();
 
-    // The hook seeded appStore's slice via connection.replace…
-    expect(transport.dispatched.some((d) => d.kind === "connection.replace")).toBe(true);
-    // …and now renders a value-identical slice (sourced from the projection).
-    expect(hook.get().folders).toEqual(folders);
-    expect(hook.get().connections).toEqual(connections);
+    expect(hook.get().folders[0].id).toBe("A");
+    expect(hook.get().connections[0].id).toBe("A/1");
     hook.unmount();
   });
 
-  it("region not caught up: falls back to the appStore slice", async () => {
-    transport.applyReplace = false; // the replace acks but never advances the region
-    const folders = [folder("Solo", null, false)];
-    const connections = [connection("root-a")];
-    useAppStore.setState({ folders, connections });
+  it("ignores the appStore slice entirely (region is the source of truth)", async () => {
+    // appStore holds a divergent slice; the hook must not read it.
+    useAppStore.setState({
+      folders: [folder("Stale")],
+      connections: [connection("stale-1")],
+    });
+    const regionFolders = [folder("Live")];
+    const regionConnections = [connection("live-1", "Live")];
+    transport.seed({ folders: regionFolders, connections: regionConnections });
 
     const hook = renderHook();
     await flush();
-    await flush();
 
-    // The projection stays empty, so the gate rejects it and the hook renders the
-    // appStore slice verbatim — parity preserved.
-    expect(hook.get().folders).toEqual(folders);
-    expect(hook.get().connections).toEqual(connections);
+    expect(hook.get().folders).toEqual(regionFolders);
+    expect(hook.get().connections).toEqual(regionConnections);
     hook.unmount();
   });
 });

@@ -14,6 +14,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 import { resolveCredential, storeCredential, isSshKeyEncrypted } from "@/services/api";
@@ -103,6 +104,8 @@ afterEach(() => {
   });
   container.remove();
 });
+
+setupConnectionsRegionFromAppStore();
 
 describe("ConnectionList — password dialog conditions", () => {
   it("shows dialog for password auth when no credential is stored", async () => {

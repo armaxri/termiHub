@@ -923,12 +923,24 @@ pub fn run() {
                         store.snapshot(),
                     );
                 }
-                // Seed the shared `agents` region with the (empty) store baseline
-                // at version 0, so a subscriber attaches to a real region before
-                // the first `agent.*` intent (#2226).
+                // Seed the shared `agents` region from the persisted
+                // `ConnectionManager` agent list (#2403), so the shadow store — and
+                // the region a subscriber attaches to before the first `agent.*`
+                // intent — reflects the real agent list-membership from startup
+                // rather than an empty baseline. Seeding the persisted list here is
+                // the startup counterpart to `fold_agents_from_manager`, which keeps
+                // the store's list-membership in sync on every later add / delete /
+                // reorder / reload (#2226). The per-agent live status stays store-
+                // owned and starts disconnected.
                 if let Some(store) =
                     app.handle().try_state::<Arc<agents_projection::AgentsStore>>()
                 {
+                    if let Some(manager) = app.handle().try_state::<ConnectionManager>() {
+                        agents_projection::projection::seed_agents_from_manager(
+                            store.inner().as_ref(),
+                            manager.inner(),
+                        );
+                    }
                     projection_state.projector.register_region(
                         agents_projection::projection::AGENTS_REGION,
                         store.snapshot(),

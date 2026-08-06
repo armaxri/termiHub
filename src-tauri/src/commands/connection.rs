@@ -34,6 +34,7 @@ pub struct ExternalFileError {
 /// Load all saved connections, folders, and agents (unified view).
 #[tauri::command]
 pub fn load_connections_and_folders(
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<ConnectionData, String> {
     info!("Loading connections and folders");
@@ -41,6 +42,12 @@ pub fn load_connections_and_folders(
     // `ConnectionsStore` server-side, #2394), so the command and the projection
     // region cannot drift.
     let view = manager.load_unified_view().map_err(|e| e.to_string())?;
+
+    // Server-authority fold (#2403): reflect the loaded agent list-membership into
+    // the shadow `AgentsStore` at the source, so the `agents` region tracks the
+    // persisted list on a reload — not only the client seed. Additive; no
+    // user-facing change.
+    crate::agents_projection::projection::fold_agents_from_manager(&app);
 
     Ok(ConnectionData {
         connections: view.connections,
@@ -228,29 +235,42 @@ pub fn reload_external_connections(
 #[tauri::command]
 pub fn save_remote_agent(
     agent: SavedRemoteAgent,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
-    manager.save_agent(agent).map_err(|e| e.to_string())
+    manager.save_agent(agent).map_err(|e| e.to_string())?;
+    // Server-authority fold (#2403): reflect the persisted agent list-membership
+    // into the shadow `AgentsStore` at the source, so a newly-added agent's identity
+    // enters the `agents` region without a client `agent.add`. Additive; no
+    // user-facing change.
+    crate::agents_projection::projection::fold_agents_from_manager(&app);
+    Ok(())
 }
 
 /// Delete a remote agent definition by ID.
 #[tauri::command]
 pub fn delete_remote_agent(
     id: String,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
-    manager.delete_agent(&id).map_err(|e| e.to_string())
+    manager.delete_agent(&id).map_err(|e| e.to_string())?;
+    crate::agents_projection::projection::fold_agents_from_manager(&app);
+    Ok(())
 }
 
 /// Reorder remote agents by providing a list of agent IDs in the desired order.
 #[tauri::command]
 pub fn reorder_remote_agents(
     agent_ids: Vec<String>,
+    app: AppHandle,
     manager: State<'_, ConnectionManager>,
 ) -> Result<(), String> {
     manager
         .reorder_agents(&agent_ids)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    crate::agents_projection::projection::fold_agents_from_manager(&app);
+    Ok(())
 }
 
 /// Export connections with optional encrypted credentials.

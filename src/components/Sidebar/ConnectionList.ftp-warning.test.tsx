@@ -12,6 +12,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ConnectionList } from "./ConnectionList";
+import { setupConnectionsRegionFromAppStore } from "@/test/connectionsRegionTestHarness";
 import { TooltipProvider } from "@/components/ui";
 import type { SavedConnection, RemoteAgentDefinition } from "@/types/connection";
 
@@ -105,6 +106,8 @@ afterEach(() => {
   });
   container.remove();
 });
+
+setupConnectionsRegionFromAppStore();
 
 describe("ConnectionList — insecure-FTP warning modal", () => {
   it("shows the modal before connecting for plain FTP", async () => {
