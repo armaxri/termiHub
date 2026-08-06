@@ -44,6 +44,7 @@ from termihub_harness import (
     ConnectionsUi,
     FilesUi,
     PasswordPromptUi,
+    ProjectionHarness,
     SidebarUi,
     SshUi,
     SystemTest,
@@ -94,13 +95,28 @@ def progress(**overrides) -> dict:
     return payload
 
 
-class TransferQueueReads:
-    """Shared readers over the Transfer Queue store slice and panel."""
+class TransferQueueReads(ProjectionHarness):
+    """Shared readers over the authoritative ``transfers`` projection region.
+
+    Since #2229 the Transfer Queue panel is **region-authoritative**: the backend
+    feeds the shared ``transfers`` region at the source (#2387) and ``appStore`` no
+    longer holds the queue slice, so the panel state is read from the projection
+    region (via a live ``ProjectionClient`` cache), not from ``get_state``.
+    """
+
+    _transfers_sub_id: str | None = None
+
+    def _transfers_queue(self) -> dict:
+        """The region's ``queue`` map, read live from the projection cache."""
+        if self._transfers_sub_id is None:
+            self._transfers_sub_id = self.projection_subscribe("transfers")["subscriptionId"]
+        cache = self.driver.projection_state(self._transfers_sub_id).get("cache") or {}
+        view = cache.get("view") or {}
+        return view.get("queue") or {}
 
     def queue_entries(self) -> list[dict]:
-        """The `transferQueue` slice as a list (the panel renders its values)."""
-        queue = self.driver.get_state("transferQueue") or {}
-        return list(queue.values())
+        """The queue rows as a list (the panel renders its values)."""
+        return list(self._transfers_queue().values())
 
     def entry_states(self) -> list[str]:
         return [e["state"] for e in self.queue_entries()]
@@ -327,8 +343,16 @@ class TestTransferQueuePanel(TransferQueueReads, SystemTest):
 
     # -- helpers ---------------------------------------------------------------
     def emit_progress(self, **overrides) -> None:
-        """Inject one ``transfer-progress`` event on the real Tauri bus."""
-        self.driver.emit_event("transfer-progress", progress(**overrides))
+        """Fold one ``transfer-progress`` sample into the authoritative region.
+
+        Since #2229 the Transfer Queue is region-authoritative and the backend
+        folds the live progress stream at the source (#2387); a frontend
+        ``emit_event`` no longer reaches the queue. To drive the panel states this
+        suite pins, dispatch the ``transfer.progress`` intent (the same
+        ``TransferProgress`` payload the backend fold parses) straight into the
+        shared ``transfers`` region, which the region-authoritative panel renders.
+        """
+        self.projection_dispatch_intent("transfer.progress", {"progress": progress(**overrides)})
 
     def restore_panel(self) -> None:
         """Un-minimize the panel via its indicator (the store has no direct setter)."""

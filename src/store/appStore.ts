@@ -136,22 +136,8 @@ import {
 } from "@/utils/windowPersistence";
 import type { CapturedWindowLayout, WindowRestorePlanEntry } from "@/utils/windowPersistence";
 import { classifyWindowCloseSessions, windowCloseWouldLoseData } from "@/utils/windowClose";
-import type {
-  ConnectionTypeInfo,
-  ContainerSpawn,
-  ShellSpawn,
-  TransferProgress,
-  TransferSnapshot,
-} from "@/services/api";
+import type { ConnectionTypeInfo, ContainerSpawn, ShellSpawn } from "@/services/api";
 import type { SpawnRequestPayload } from "@/services/events";
-import {
-  isTerminalTransferState,
-  transferEntryFromProgress,
-  transferEntryFromSeed,
-  transferEntryFromSnapshot,
-  type TransferEntry,
-  type TransferSeed,
-} from "@/types/transfer";
 import { RemoteAgentConfig } from "@/types/terminal";
 import { createTunnelSlice, TunnelSlice } from "./slices/tunnelSlice";
 import { createEmbeddedServersSlice, EmbeddedServersSlice } from "./slices/embedded-serversSlice";
@@ -281,7 +267,7 @@ import {
 import { mirrorAgentIntent } from "@/store/agentsBridge";
 import { mirrorConnectionIntent } from "@/store/connectionsBridge";
 import { mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
-import { mirrorTransferIntent } from "@/store/transfersBridge";
+import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { mirrorBroadcastIntent } from "@/store/broadcastBridge";
 import {
@@ -1018,44 +1004,28 @@ export interface AppState
   cancelTransfer: (transferId: string) => Promise<void>;
 
   /**
-   * Transfer Queue panel rows keyed by `transferId` (Transfer Queue panel,
-   * Epic #1331 / #1337). Unlike {@link transfers} (which clears terminal rows),
-   * this queue **retains** completed/failed/cancelled rows until the user clears
-   * or removes them, so the panel can offer Retry / Remove / Clear Completed.
-   * Fed by the same `transfer-progress` event via
-   * {@link applyTransferProgressToQueue}.
+   * The **Transfer Queue panel** slice (rows keyed by `transferId` + the
+   * panel-minimized flag) is no longer held in `appStore`. Since #2229 the shared
+   * `transfers` projection region is authoritative — the backend folds the live
+   * `transfer-progress` stream into it at the source (#2387) — so the panel reads
+   * the rows via {@link import("./useProjectedTransfers").useProjectedTransfers}
+   * and the panel-only mutations below dispatch client `transfer.*` intents
+   * against that region. The transient {@link transfers} map (above) is separate
+   * and stays authoritative in `appStore`.
+   *
+   * Remove a single queue row (per-row Remove control) via `transfer.remove`.
    */
-  transferQueue: Record<string, TransferEntry>;
-  /** Whether the Transfer Queue panel is collapsed to its status-bar indicator. */
-  transferQueueMinimized: boolean;
-  /** Insert (or replace) a queue row keyed by its id. */
-  addTransfer: (entry: TransferEntry) => void;
-  /** Merge a partial patch into an existing queue row (no-op for unknown ids). */
-  updateTransfer: (id: string, patch: Partial<TransferEntry>) => void;
-  /** Remove a single queue row (per-row Remove control). */
   removeTransfer: (id: string) => void;
-  /** Remove every `completed` row (footer Clear Completed); failed/cancelled stay. */
+  /**
+   * Remove every `completed` row (footer Clear Completed) via
+   * `transfer.clearCompleted`; failed/cancelled stay.
+   */
   clearCompleted: () => void;
-  /** Collapse/expand the panel to/from its status-bar indicator. */
+  /**
+   * Collapse/expand the panel to/from its status-bar indicator via
+   * `transfer.setMinimized`.
+   */
   setTransferQueueMinimized: (minimized: boolean) => void;
-  /** Fold a `transfer-progress` event into the queue (upsert, retaining terminal rows). */
-  applyTransferProgressToQueue: (progress: TransferProgress) => void;
-  /**
-   * Seed a `queued` queue row from a transfer's registration snapshot (#1632),
-   * so the panel opens without waiting for a `transfer-progress` event that may
-   * be dropped/delayed under memory pressure. Idempotent: a no-op when a row for
-   * the id already exists, so it never clobbers a further-along event-fed row.
-   */
-  seedTransferQueue: (seed: TransferSeed) => void;
-  /**
-   * Reconcile the queue against a backend `transfer_list` snapshot (#1645), the
-   * backstop for a dropped *terminal* `transfer-progress` event. Settles any
-   * still-open row whose backend snapshot reports a terminal state to that
-   * state. Idempotent and conservative: it never resurrects a removed row,
-   * never clobbers an already-terminal row, and never moves a live (active)
-   * row — event delivery owns live progress; this only settles stuck rows.
-   */
-  reconcileTransferQueue: (snapshots: TransferSnapshot[]) => void;
 
   // Per-tab CWD tracking
   tabCwds: Record<string, string>;
@@ -2524,64 +2494,55 @@ function tabTransferSessionIds(
 }
 
 /**
- * Build the hand-off record for `tab`, attaching the Transfer Queue rows that
- * belong to its session(s) so they follow the tab to the destination window
- * (#1951). Returns both the record and the transfer session ids, so the caller
- * can drop the moved rows from the source queue and mark the sessions released.
+ * Build the hand-off record for `tab`, returning the transfer session ids that
+ * belong to it so the caller can release them from this window's transient
+ * `transfers` map (#1951 / #1964).
+ *
+ * The persistent Transfer Queue rows are **no longer carried** across the window
+ * boundary: since #2229 the queue lives in the shared, authoritative `transfers`
+ * projection region, so the destination window already sees the same rows — there
+ * is nothing to ferry. The transient `transfers` map (Open Connections / footer /
+ * status bar) is still per-window, so its session ids are released here and
+ * re-folded from live events in the destination.
  */
 function buildTransferAwareHandoff(
-  state: {
-    sftpSessions: Record<string, SftpSessionEntry>;
-    transferQueue: Record<string, TransferEntry>;
-  },
+  state: { sftpSessions: Record<string, SftpSessionEntry> },
   tab: TerminalTab
-): { record: TabHandoffRecord; transferSessionIds: string[]; movedTransferIds: string[] } {
+): { record: TabHandoffRecord; transferSessionIds: string[] } {
   const transferSessionIds = tabTransferSessionIds(state, tab);
-  const carried = Object.values(state.transferQueue).filter((t) =>
-    transferSessionIds.includes(t.sessionId)
-  );
-  const record: TabHandoffRecord = {
-    tab: {
-      ...serializeHandoffTab(tab),
-      ...(carried.length ? { transfers: carried } : {}),
-    },
-  };
-  return { record, transferSessionIds, movedTransferIds: carried.map((t) => t.id) };
+  const record: TabHandoffRecord = { tab: serializeHandoffTab(tab) };
+  return { record, transferSessionIds };
 }
 
 /**
  * Source-side state changes when a tab's transfers are handed to another window
- * (#1951): drop the moved rows from the persistent {@link AppState.transferQueue}
- * and the transient {@link AppState.transfers} map, and add their session ids to
- * {@link AppState.releasedTransferSessions} so broadcast progress events can no
- * longer re-create the rows in this window. Returns a partial state slice.
+ * (#1951): drop the transient {@link AppState.transfers} rows for the moved
+ * session(s) and add their session ids to {@link AppState.releasedTransferSessions}
+ * so broadcast progress events can no longer re-create those transient rows in
+ * this window. Returns a partial state slice.
+ *
+ * The persistent Transfer Queue is region-authoritative and shared (#2229), so it
+ * is not touched here — only the per-window transient `transfers` map is.
  */
 function removeTransferSessionsFromWindow(
   state: {
-    transferQueue: Record<string, TransferEntry>;
     transfers: Record<string, TransferState>;
     releasedTransferSessions: string[];
   },
-  transferSessionIds: string[],
-  movedTransferIds: string[]
+  transferSessionIds: string[]
 ): Partial<{
-  transferQueue: Record<string, TransferEntry>;
   transfers: Record<string, TransferState>;
   releasedTransferSessions: string[];
 }> {
   if (transferSessionIds.length === 0) return {};
   const releaseSet = new Set(transferSessionIds);
-  const transferQueue = movedTransferIds.reduce(
-    (acc, id) => (id in acc ? omitKey(acc, id) : acc),
-    state.transferQueue
-  );
   const transfers = Object.fromEntries(
     Object.entries(state.transfers).filter(([, t]) => !releaseSet.has(t.sessionId))
   );
   const releasedTransferSessions = Array.from(
     new Set([...state.releasedTransferSessions, ...transferSessionIds])
   );
-  return { transferQueue, transfers, releasedTransferSessions };
+  return { transfers, releasedTransferSessions };
 }
 
 /** State slice needed to decide whether this window renders/owns a session. */
@@ -2635,34 +2596,29 @@ function windowOwnsTransferSession(state: OwnershipView, sessionId: string): boo
 }
 
 /**
- * Drop transient {@link AppState.transfers} and persistent
- * {@link AppState.transferQueue} rows for sessions a fresh ownership snapshot
- * shows are owned by a *different* window (#1964) — the belt-and-suspenders that
- * clears a row this window may have folded before it learned another window owns
- * the session. Rows this window renders locally are always kept, so a stale
- * snapshot can never evict a live row.
+ * Drop transient {@link AppState.transfers} rows for sessions a fresh ownership
+ * snapshot shows are owned by a *different* window (#1964) — the
+ * belt-and-suspenders that clears a row this window may have folded before it
+ * learned another window owns the session. Rows this window renders locally are
+ * always kept, so a stale snapshot can never evict a live row.
+ *
+ * The persistent Transfer Queue is region-authoritative and shared (#2229), so it
+ * is not pruned here — only the per-window transient `transfers` map is.
  */
 function pruneForeignTransfers(
   state: OwnershipView & {
     transfers: Record<string, TransferState>;
-    transferQueue: Record<string, TransferEntry>;
   },
   owners: Record<string, string>
-): Partial<Pick<AppState, "transfers" | "transferQueue">> {
+): Partial<Pick<AppState, "transfers">> {
   const view: OwnershipView = { ...state, sessionOwners: owners };
   const isForeign = (sessionId: string) => !windowOwnsTransferSession(view, sessionId);
   const transfers = Object.fromEntries(
     Object.entries(state.transfers).filter(([, t]) => !isForeign(t.sessionId))
   );
-  const transferQueue = Object.fromEntries(
-    Object.entries(state.transferQueue).filter(([, t]) => !isForeign(t.sessionId))
-  );
-  const result: Partial<Pick<AppState, "transfers" | "transferQueue">> = {};
+  const result: Partial<Pick<AppState, "transfers">> = {};
   if (Object.keys(transfers).length !== Object.keys(state.transfers).length) {
     result.transfers = transfers;
-  }
-  if (Object.keys(transferQueue).length !== Object.keys(state.transferQueue).length) {
-    result.transferQueue = transferQueue;
   }
   return result;
 }
@@ -3145,12 +3101,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const tab = sourceLeaf?.tabs.find((t) => t.id === tabId);
       if (!tab) return;
 
-      // Carry this tab's Transfer Queue rows so its transfers follow the tab to
-      // the destination window rather than staying orphaned here (#1951).
-      const { record, transferSessionIds, movedTransferIds } = buildTransferAwareHandoff(
-        get(),
-        tab
-      );
+      // Release this tab's transfer session ids from the source window's
+      // transient `transfers` map so its rows follow ownership (#1951). The
+      // Transfer Queue itself is region-authoritative and shared (#2229), so it
+      // needs no carrying — the destination already sees the same rows.
+      const { record, transferSessionIds } = buildTransferAwareHandoff(get(), tab);
       const sessionId = tab.sessionId;
 
       // Mark the live session as moving so the source window's Terminal does NOT
@@ -3201,14 +3156,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
             ? { ...g, rootPanel: newRootPanel, activePanelId: newActivePanelId }
             : g
         );
-        // Drop the moved tab's transfer rows and mark its sessions released so
-        // ongoing broadcast `transfer-progress` events do not re-adopt them here
-        // (#1951). The destination window seeds the carried rows on hydrate.
-        const transferMoved = removeTransferSessionsFromWindow(
-          state,
-          transferSessionIds,
-          movedTransferIds
-        );
+        // Drop the moved tab's transient `transfers` rows and mark its sessions
+        // released so ongoing broadcast `transfer-progress` events do not
+        // re-adopt them into this window's transient map (#1951). The shared
+        // Transfer Queue region is unaffected — every window already sees it.
+        const transferMoved = removeTransferSessionsFromWindow(state, transferSessionIds);
         return {
           rootPanel: newRootPanel,
           tabGroups,
@@ -3252,28 +3204,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
           g.id === state.activeTabGroupId ? { ...g, rootPanel: newRootPanel } : g
         );
 
-        // Seed the transfers carried with the tab so they follow it into this
-        // window's queue (#1951). Existing rows win over carried ones — a
-        // broadcast event that already advanced a row here must not be clobbered
-        // by the (possibly staler) carried snapshot. The carried sessions are
-        // un-released so this window resumes folding their live progress events.
-        const carried = h.transfers ?? [];
-        const transferQueue = carried.length
-          ? { ...Object.fromEntries(carried.map((t) => [t.id, t])), ...state.transferQueue }
-          : state.transferQueue;
-        const unrelease = new Set(
-          [h.sessionId, ...carried.map((t) => t.sessionId)].filter((id): id is string => !!id)
-        );
-        const releasedTransferSessions =
-          unrelease.size > 0
-            ? state.releasedTransferSessions.filter((id) => !unrelease.has(id))
-            : state.releasedTransferSessions;
+        // Un-release the moved tab's session so this window resumes folding its
+        // live `transfer-progress` events into the transient `transfers` map
+        // (#1951 / #1964). The Transfer Queue itself is region-authoritative and
+        // shared (#2229), so nothing is seeded into a per-window queue on hydrate.
+        const releasedTransferSessions = h.sessionId
+          ? state.releasedTransferSessions.filter((id) => id !== h.sessionId)
+          : state.releasedTransferSessions;
 
         return {
           rootPanel: newRootPanel,
           tabGroups,
           activePanelId: targetLeaf.id,
-          transferQueue,
           releasedTransferSessions,
         };
       }),
@@ -3444,10 +3386,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
         movingSessionIds: Array.from(new Set([...state.movingSessionIds, ...sessionIds])),
       }));
 
-      // Carry each tab's Transfer Queue rows so its transfers follow it to the
-      // destination window rather than being lost when this window closes
-      // (#1951). This window is being emptied/torn down, so no source-side
-      // removal is needed — only the destination must receive them.
+      // Build a hand-off record per tab. The Transfer Queue is region-authoritative
+      // and shared (#2229), so no queue rows are carried — the destination window
+      // already sees them; this window is being torn down, so no source-side
+      // transient-map release is needed either.
       const state = get();
       const records: TabHandoffRecord[] = tabs.map(
         (tab) => buildTransferAwareHandoff(state, tab).record
@@ -5592,8 +5534,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
     sftpSessions: {},
     sftpLastConfig: null,
     transfers: {},
-    transferQueue: {},
-    transferQueueMinimized: false,
 
     setCurrentPath: (path) => set({ currentPath: path }),
     setFileEntries: (entries) => set({ fileEntries: entries }),
@@ -5801,110 +5741,25 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
     },
 
-    // --- Transfer Queue panel slice (#1337) ---
-
-    addTransfer: (entry: TransferEntry) =>
-      set((state) => ({ transferQueue: { ...state.transferQueue, [entry.id]: entry } })),
-
-    updateTransfer: (id: string, patch: Partial<TransferEntry>) =>
-      set((state) => {
-        const existing = state.transferQueue[id];
-        if (!existing) return {};
-        return { transferQueue: { ...state.transferQueue, [id]: { ...existing, ...patch } } };
-      }),
+    // --- Transfer Queue panel mutations (#1337, region-authoritative #2229) ---
+    //
+    // The Transfer Queue panel state lives in the shared, authoritative
+    // `transfers` projection region — the backend folds the live progress stream
+    // into it at the source (#2387). These panel-only actions have no live-engine
+    // data source, so they are reliable client `transfer.*` intents against that
+    // region (dispatch is best-effort: a bridge hiccup is swallowed and logged,
+    // never thrown out of a UI action). `appStore` holds no queue state.
 
     removeTransfer: (id: string) => {
-      set((state) => {
-        if (!(id in state.transferQueue)) return {};
-        return { transferQueue: omitKey(state.transferQueue, id) };
-      });
-      // Mutation cut (#2229): mirror the removal into the authoritative store.
-      // `transfer.remove` is idempotent server-side, so a removal of a row that
-      // was never present is a harmless no-op in both slices (parity holds).
-      mirrorTransferIntent("transfer.remove", { id });
+      dispatchTransferIntentBestEffort("transfer.remove", { id });
     },
 
     clearCompleted: () => {
-      set((state) => ({
-        transferQueue: Object.fromEntries(
-          Object.entries(state.transferQueue).filter(([, t]) => t.state !== "completed")
-        ),
-      }));
-      mirrorTransferIntent("transfer.clearCompleted", {});
+      dispatchTransferIntentBestEffort("transfer.clearCompleted", {});
     },
 
     setTransferQueueMinimized: (minimized: boolean) => {
-      set({ transferQueueMinimized: minimized });
-      mirrorTransferIntent("transfer.setMinimized", { minimized });
-    },
-
-    applyTransferProgressToQueue: (progress: TransferProgress) => {
-      let applied = false;
-      set((state) => {
-        // Ignore transfers whose session was handed to another window (#1951) so
-        // a moved-away queue row is not re-adopted from a broadcast event.
-        if (state.releasedTransferSessions.includes(progress.sessionId)) return {};
-        // Scope the fold to the owning window even without a move (#1964).
-        if (!windowOwnsTransferSession(state, progress.sessionId)) return {};
-        const prev = state.transferQueue[progress.transferId];
-        const entry = transferEntryFromProgress(progress, prev, Date.now());
-        applied = true;
-        return { transferQueue: { ...state.transferQueue, [entry.id]: entry } };
-      });
-      // Only mirror when the local reducer actually folded the event: the
-      // window-ownership gates (#1951 / #1964) are frontend presentation the
-      // backend store does not model, so dispatching for a released/unowned
-      // session would advance the shared region past this window's slice.
-      if (applied) mirrorTransferIntent("transfer.progress", { progress });
-    },
-
-    seedTransferQueue: (seed: TransferSeed) => {
-      set((state) => {
-        // Idempotent: never overwrite a row an event already advanced (#1632).
-        if (seed.id in state.transferQueue) return {};
-        const entry = transferEntryFromSeed(seed, Date.now());
-        // Starting a transfer for a session here means this window owns it again,
-        // so clear any stale "released" mark from a prior hand-off (#1951).
-        const releasedTransferSessions = state.releasedTransferSessions.includes(seed.sessionId)
-          ? state.releasedTransferSessions.filter((id) => id !== seed.sessionId)
-          : state.releasedTransferSessions;
-        return {
-          transferQueue: { ...state.transferQueue, [entry.id]: entry },
-          releasedTransferSessions,
-        };
-      });
-      // Mutation cut (#2229): mirror the seed. `transfer.seed` is idempotent
-      // server-side (it never overwrites an already-advanced row), so it stays a
-      // no-op in the region exactly when it is a no-op in `appStore`.
-      mirrorTransferIntent("transfer.seed", { seed });
-    },
-
-    reconcileTransferQueue: (snapshots: TransferSnapshot[]) => {
-      set((state) => {
-        const now = Date.now();
-        let next: Record<string, TransferEntry> | null = null;
-        for (const snap of snapshots) {
-          // Only a *genuinely settled* terminal snapshot settles a row. A live
-          // rich `failed` handle mid auto-retry (or awaiting a manual retry)
-          // reports `settled: false` though its state is `failed`, so a
-          // transient failure is never folded into a terminal row the reconcile
-          // guard would then never re-settle (#1657). Events own live progress,
-          // so a non-terminal snapshot must never move an active row anyway.
-          if (!snap.settled || !isTerminalTransferState(snap.state)) continue;
-          const prev = state.transferQueue[snap.transferId];
-          // Seed owns row creation; do not resurrect a row the user removed.
-          if (!prev) continue;
-          // Already settled (an event beat us here): idempotent no-op.
-          if (isTerminalTransferState(prev.state)) continue;
-          next ??= { ...state.transferQueue };
-          next[snap.transferId] = transferEntryFromSnapshot(snap, prev, now);
-        }
-        return next ? { transferQueue: next } : {};
-      });
-      // Mutation cut (#2229): mirror the reconcile. `transfer.reconcile` applies
-      // the same conservative terminal-only settle over an already-mirrored
-      // region, so it settles exactly the rows the local reducer did.
-      mirrorTransferIntent("transfer.reconcile", { snapshots });
+      dispatchTransferIntentBestEffort("transfer.setMinimized", { minimized });
     },
 
     retrySftp: async () => {

@@ -119,22 +119,29 @@ import { createRoot } from "react-dom/client";
 import { sftpUpload } from "@/services/api";
 import { useFileSystem } from "./useFileSystem";
 import { useAppStore } from "@/store/appStore";
+import { currentTransfersView, ensureTransfersSubscribed } from "@/store/transfersBridge";
+import { installTransferHarness, type FakeTransferTransport } from "@/test/transferHarness";
 
 describe("useFileSystem (SFTP) — uploadFileFromPath API call", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
+  let transport: FakeTransferTransport;
+  let teardown: () => void;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
+    ({ transport, teardown } = installTransferHarness());
+    await ensureTransfersSubscribed();
     vi.clearAllMocks();
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    teardown();
   });
 
   it("calls sftpUpload with the correct remote path", async () => {
@@ -196,7 +203,8 @@ describe("useFileSystem (SFTP) — uploadFileFromPath API call", () => {
 
     // Simulate the backend returning a transferId, but emitting NO
     // transfer-progress event (the memory-pressure drop). The row must still
-    // appear, proving panel-open no longer depends on the event stream.
+    // appear in the authoritative region, proving panel-open no longer depends
+    // on the event stream. The seed is a reliable `transfer.seed` intent (#2229).
     vi.mocked(sftpUpload).mockImplementationOnce(
       async (_sessionId, _localPath, remotePath, onRegistered) => {
         onRegistered?.("tid-1632");
@@ -216,9 +224,11 @@ describe("useFileSystem (SFTP) — uploadFileFromPath API call", () => {
     });
     await act(async () => {
       await uploadFn!("/local/report.pdf");
+      await Promise.resolve();
     });
 
-    expect(useAppStore.getState().transferQueue["tid-1632"]).toMatchObject({
+    expect(transport.kinds()).toContain("transfer.seed");
+    expect(currentTransfersView().queue["tid-1632"]).toMatchObject({
       id: "tid-1632",
       sessionId: "sess-1",
       direction: "upload",

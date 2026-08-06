@@ -14,6 +14,7 @@ import {
 import { FileEntry } from "@/types/connection";
 import { toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
+import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 
 /** Basename of a POSIX/Windows path (the file name the queue row displays). */
 function baseName(path: string): string {
@@ -85,38 +86,44 @@ export function useFileSystem() {
   const sftpError = useAppStore((s) => s.sftpError);
   const navigateSftp = useAppStore((s) => s.navigateSftp);
   const refreshSftp = useAppStore((s) => s.refreshSftp);
-  const seedTransferQueue = useAppStore((s) => s.seedTransferQueue);
 
   // Wrap the transfer helpers so every transfer seeds a `queued` Transfer Queue
   // row from the id the start command returns — the panel then opens without
   // waiting for a `transfer-progress` event, which can be dropped/delayed under
   // memory pressure (#1632). The row is keyed by the backend `transferId`, so a
-  // later event upserts (never duplicates) it.
+  // later event upserts (never duplicates) it. Since #2229 the `transfers` region
+  // is authoritative, so the seed is a reliable client `transfer.seed` intent
+  // against the shared store (idempotent server-side — it never overwrites an
+  // already-advanced row); a bridge hiccup is swallowed and logged.
   const startDownload = useCallback(
     (sessionId: string, remotePath: string, localPath: string) =>
       sftpDownload(sessionId, remotePath, localPath, (transferId) =>
-        seedTransferQueue({
-          id: transferId,
-          sessionId,
-          direction: "download",
-          name: baseName(remotePath),
-          path: remotePath,
+        dispatchTransferIntentBestEffort("transfer.seed", {
+          seed: {
+            id: transferId,
+            sessionId,
+            direction: "download",
+            name: baseName(remotePath),
+            path: remotePath,
+          },
         })
       ),
-    [seedTransferQueue]
+    []
   );
   const startUpload = useCallback(
     (sessionId: string, localPath: string, remotePath: string) =>
       sftpUpload(sessionId, localPath, remotePath, (transferId) =>
-        seedTransferQueue({
-          id: transferId,
-          sessionId,
-          direction: "upload",
-          name: baseName(remotePath),
-          path: remotePath,
+        dispatchTransferIntentBestEffort("transfer.seed", {
+          seed: {
+            id: transferId,
+            sessionId,
+            direction: "upload",
+            name: baseName(remotePath),
+            path: remotePath,
+          },
         })
       ),
-    [seedTransferQueue]
+    []
   );
 
   const navigateTo = useCallback(
