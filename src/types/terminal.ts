@@ -72,26 +72,20 @@ export interface EditorSessionRef {
 /**
  * Describes what an editor tab is editing.
  *
- * `isRemote` means "not on the local disk". Which remote transport backs the
- * tab is then decided by exactly one of two mutually exclusive fields:
+ * `isRemote` means "not on the local disk". A remote tab is backed by the
+ * protocol-agnostic session layer via {@link sessionBrowser} — every
+ * file-browser-capable type, including SSH since the SFTP convergence
+ * (#2313 / #2422), browses and edits through it. The SFTP-specific affordances
+ * (writability probes, exec capability, elevated/sudo writes, realpath,
+ * download) are offered when the backing session is SFTP-backed.
  *
- * - {@link sftpSessionId} — the legacy `SftpManager`/`sftp_*` path, used by SSH.
- *   It is the only path that offers the SFTP-specific affordances (writability
- *   probes, exec capability, elevated/sudo writes, realpath, download).
- * - {@link sessionBrowser} — the protocol-agnostic session layer, used by every
- *   other file-browser-capable type (#1557). It offers read and write only; the
- *   SFTP-specific affordances above are gated on `sftpSessionId` and therefore
- *   stay off for these tabs.
- *
- * A local tab (`isRemote: false`) carries neither.
+ * A local tab (`isRemote: false`) carries no `sessionBrowser`.
  */
 export interface EditorTabMeta {
   filePath: string;
   isRemote: boolean;
-  sftpSessionId?: string;
   /**
-   * Set when this remote editor tab is backed by the session layer rather than
-   * an `SftpManager` session. Mutually exclusive with {@link sftpSessionId}. (#1557)
+   * Set when this remote editor tab is backed by the session layer. (#1557)
    */
   sessionBrowser?: EditorSessionRef;
   /**
@@ -102,8 +96,6 @@ export interface EditorTabMeta {
    * reconnect of the same logical connection* but *distinct between different
    * connections*:
    *
-   * - SFTP tabs → the session's `hostLabel` (`user@host:port`); a reconnect to
-   *   the same host reuses the label.
    * - Session-layer tabs → the id of the terminal tab that owns the backing
    *   session; a reconnect swaps the session id but keeps the tab.
    *

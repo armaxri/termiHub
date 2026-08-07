@@ -6,36 +6,6 @@ import type { SyntaxHighlightingConfig } from "./syntaxHighlighting";
 import type { ThemeDefinition } from "@/themes/types";
 
 /**
- * Explicit lifecycle status of the single desktop SFTP session (audit gap A1).
- *
- * Replaces the previously-overloaded `sftpLoading` boolean, which could not
- * distinguish "connecting" from "listing"/"refreshing" from "idle". The UI reads
- * this to pick the right placeholder (e.g. "Connecting SFTP…" vs "Loading…").
- *
- * - `idle`      — no session, no error (initial / after disconnect)
- * - `connecting`— `connectSftp` in flight, no session yet
- * - `connected` — session established, no operation in flight
- * - `listing`   — a `navigateSftp` / `refreshSftp` list request is in flight
- * - `error`     — the last connect or list operation failed (see `sftpError`)
- */
-export type SftpStatus = "idle" | "connecting" | "connected" | "listing" | "error";
-
-/**
- * A live backend SFTP session tracked in the keyed session map (issue #1241).
- *
- * Sessions are keyed by their session-id / UUID; this record holds only the
- * display metadata and the binding needed for lifecycle cleanup.
- *
- * - `hostLabel`   — `user@host:port`, shown in the Open Connections panel
- * - `owningTabId` — the tab that opened the session; when that tab closes the
- *   session is closed (`sftp_close`) and removed (the L1 leak fix)
- */
-export interface SftpSessionEntry {
-  hostLabel: string;
-  owningTabId: string;
-}
-
-/**
  * Live state of a single in-flight SFTP transfer, keyed by its `transferId` in
  * the store's `transfers` map (concept "SFTP session tracking + transfers",
  * issue #1247). Built purely from `transfer-progress` events (#1245): a

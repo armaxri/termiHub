@@ -2,27 +2,25 @@
 //! shadow `file-browser@<clientId>` region (#2228, Phase 5 of #2139 / #2153).
 //!
 //! Models the file-browser UI state the frontend currently drives in
-//! `appStore.ts`: the three browser panes a client can open — **local**
-//! (`localFileEntries` / `localCurrentPath`), **sftp** (`fileEntries` /
-//! `currentPath`) and **session** (`sessionFileEntries` / `sessionCurrentPath`)
-//! — which pane is currently active (`fileBrowserMode`), and the copy/cut
-//! clipboard (`fileClipboard`). Each pane tracks the directory it is showing,
-//! its listing, and whether a directory list is in flight / failed.
+//! `appStore.ts`: the two browser panes a client can open — **local**
+//! (`localFileEntries` / `localCurrentPath`) and **session**
+//! (`sessionFileEntries` / `sessionCurrentPath`) — which pane is currently
+//! active (`fileBrowserMode`), and the copy/cut clipboard (`fileClipboard`).
+//! Each pane tracks the directory it is showing, its listing, and whether a
+//! directory list is in flight / failed. The legacy standalone SFTP pane was
+//! retired when SSH file browsing converged onto the session pane
+//! (#2313 / #2422).
 //!
-//! # Scope — the browser *view*, not the SFTP session model (#2236)
+//! # Scope — the browser *view*, not the session model
 //!
 //! This store owns only the **browser view**: which directory each pane shows,
 //! its entry listing, the in-flight/error status of a *directory list*, the
 //! active pane, and the clipboard. It deliberately does **not** model the
-//! backend SFTP/session lifecycle — the live `sftpSessions` map, the SFTP
-//! transport connect status (`sftpStatus`), the connected host, or transfers.
-//! That backend session model is governed by a separate, pending maintainer
-//! decision (`SftpManager` vs `SessionManager`, #2236) and is out of scope here.
-//! The line is clean: "is a directory listing in progress for this pane" is a
-//! browser-view concern; "is the SFTP transport connected" is the session model.
-//! A pane's `loading`/`error` here are the browser's own list-operation flags
-//! (mirroring `localFileLoading`/`localFileError` etc.), not the SFTP session
-//! status.
+//! backend session lifecycle — the live session ids, connect status, or
+//! transfers. The line is clean: "is a directory listing in progress for this
+//! pane" is a browser-view concern; "is the transport connected" is the session
+//! model. A pane's `loading`/`error` here are the browser's own list-operation
+//! flags (mirroring `localFileLoading`/`localFileError` etc.).
 //!
 //! # Client-scoped — Open Design Decision #4 / #6
 //!
@@ -50,17 +48,16 @@ use std::sync::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-/// The three file-browser panes a client can open, mirroring the frontend
+/// The two file-browser panes a client can open, mirroring the frontend
 /// `fileBrowserMode` variants (minus `"none"`, which is the *absence* of an
 /// active pane — see [`ClientState::mode`]). Also the `sourceMode` of a
-/// clipboard entry.
+/// clipboard entry. The legacy standalone SFTP pane was retired when SSH file
+/// browsing converged onto the session pane (#2313 / #2422).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum FileBrowserKind {
     /// The local-filesystem browser (`localFileEntries` / `localCurrentPath`).
     Local,
-    /// The SFTP browser (`fileEntries` / `currentPath`).
-    Sftp,
     /// The remote-session browser (`sessionFileEntries` / `sessionCurrentPath`).
     Session,
 }
@@ -106,8 +103,6 @@ pub struct Clipboard {
     pub operation: ClipboardOperation,
     pub source_mode: FileBrowserKind,
     pub source_path: String,
-    #[serde(default)]
-    pub sftp_session_id: Option<String>,
     #[serde(default)]
     pub terminal_session_id: Option<String>,
 }
@@ -162,7 +157,6 @@ pub enum ModeView {
     #[default]
     None,
     Local,
-    Sftp,
     Session,
 }
 
@@ -171,7 +165,6 @@ impl ModeView {
         match self {
             ModeView::None => None,
             ModeView::Local => Some(FileBrowserKind::Local),
-            ModeView::Sftp => Some(FileBrowserKind::Sftp),
             ModeView::Session => Some(FileBrowserKind::Session),
         }
     }
@@ -216,8 +209,8 @@ impl PaneView {
 
 /// A caller-supplied whole-client browser view for the render-cut seed
 /// (`fileBrowser.replace`) — the deserialize-only twin of the `{ mode, local,
-/// sftp, session, clipboard }` view model [`ClientState::to_view`] emits. Any
-/// field absent defaults to the idle baseline, so a seed that clears the view is
+/// session, clipboard }` view model [`ClientState::to_view`] emits. Any field
+/// absent defaults to the idle baseline, so a seed that clears the view is
 /// expressible; a present-but-malformed field is a `bad_payload` rejection.
 #[derive(Deserialize, Debug, Default)]
 #[serde(rename_all = "camelCase")]
@@ -226,8 +219,6 @@ pub struct ClientView {
     pub mode: ModeView,
     #[serde(default)]
     pub local: PaneView,
-    #[serde(default)]
-    pub sftp: PaneView,
     #[serde(default)]
     pub session: PaneView,
     #[serde(default)]
@@ -241,7 +232,6 @@ struct ClientState {
     /// `"none"`).
     mode: Option<FileBrowserKind>,
     local: Pane,
-    sftp: Pane,
     session: Pane,
     /// The copy/cut clipboard, or `None` when empty.
     clipboard: Option<Clipboard>,
@@ -252,7 +242,6 @@ impl ClientState {
     fn pane(&self, kind: FileBrowserKind) -> &Pane {
         match kind {
             FileBrowserKind::Local => &self.local,
-            FileBrowserKind::Sftp => &self.sftp,
             FileBrowserKind::Session => &self.session,
         }
     }
@@ -260,7 +249,6 @@ impl ClientState {
     fn pane_mut(&mut self, kind: FileBrowserKind) -> &mut Pane {
         match kind {
             FileBrowserKind::Local => &mut self.local,
-            FileBrowserKind::Sftp => &mut self.sftp,
             FileBrowserKind::Session => &mut self.session,
         }
     }
@@ -270,13 +258,11 @@ impl ClientState {
         let mode = match self.mode {
             None => "none",
             Some(FileBrowserKind::Local) => "local",
-            Some(FileBrowserKind::Sftp) => "sftp",
             Some(FileBrowserKind::Session) => "session",
         };
         json!({
             "mode": mode,
             "local": self.local.to_view(),
-            "sftp": self.sftp.to_view(),
             "session": self.session.to_view(),
             "clipboard": self.clipboard,
         })
@@ -305,7 +291,7 @@ impl FileBrowserStore {
     }
 
     /// The current render-ready view model for a client (seeding it if
-    /// unknown): `{ mode, local, sftp, session, clipboard }`.
+    /// unknown): `{ mode, local, session, clipboard }`.
     ///
     /// Pure with respect to browser state (never mutates beyond lazy seeding of
     /// an empty client), so the projector can safely diff two consecutive
@@ -391,7 +377,7 @@ impl FileBrowserStore {
     }
 
     /// `fileBrowser.replace` — overwrite a client's whole browser view (active
-    /// pane, the three panes, clipboard) with a caller-supplied snapshot. The
+    /// pane, the two panes, clipboard) with a caller-supplied snapshot. The
     /// frontend render-cut mirror (#2228) uses this whole-slice seed to keep the
     /// client's `file-browser@<clientId>` region a faithful copy of `appStore`'s
     /// file-browser UI-state slice while `appStore` stays authoritative (the
@@ -403,7 +389,6 @@ impl FileBrowserStore {
         let state = clients.entry(client_id.to_string()).or_default();
         state.mode = view.mode.to_kind();
         state.local = view.local.into_pane();
-        state.sftp = view.sftp.into_pane();
         state.session = view.session.into_pane();
         state.clipboard = view.clipboard;
     }

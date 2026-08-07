@@ -23,16 +23,16 @@
  * `broadcast` and `layout` regions, the region is `file-browser@<clientId>` — a
  * stable per-session client identity — and dispatched intents carry the same id.
  *
- * # Scope — the browser *view*, not the SFTP session model (#2236)
+ * # Scope — the browser *view*, not the session model
  *
  * This bridge mirrors only the **browser view**: which pane is active, each pane's
  * cwd / listing / list-operation loading+error, and the clipboard. It deliberately
- * leaves the backend SFTP/session model on `appStore` — the SFTP connect status
- * (`sftpStatus`), the live session ids (`sftpSessionId` / `sessionFileBrowserId`,
- * which gate `isConnected`), and transfers stay `appStore` reads. The SFTP pane's
- * `loading`/`error` mirrored here are the frontend's own derived list flags
- * (`sftpStatus`-derived + `sftpError`), carried through the region verbatim so the
- * render is a pure parity swap; the session model itself (#2236) is untouched.
+ * leaves the backend session model on `appStore` — the live session id
+ * (`sessionFileBrowserId`, which gates `isConnected`) and transfers stay `appStore`
+ * reads. Since the SFTP convergence (#2313 / #2422) SSH browses through the session
+ * pane like every other remote type; the legacy standalone SFTP pane and its
+ * `sftpSessionId` model were retired, so only the `local` and `session` panes
+ * remain.
  *
  * # Strangler safety — flag-gated, on by default, faithful-mirror gate
  *
@@ -67,7 +67,7 @@ import { frontendLog } from "@/utils/frontendLog";
 
 /** The active file-browser pane (twin of the Rust `mode` string; `"none"` is no
  * open browser). Mirrors the frontend `fileBrowserMode`. */
-export type FileBrowserMode = "none" | "local" | "sftp" | "session";
+export type FileBrowserMode = "none" | "local" | "session";
 
 /** One browser pane's view: the directory it shows, its listing, and the
  * in-flight/error status of a directory list. Twin of the Rust `Pane::to_view`. */
@@ -80,14 +80,13 @@ export interface FileBrowserPaneView {
 
 /**
  * The `file-browser@<clientId>` region view model — a twin of the Rust store
- * snapshot: the active pane, the three panes (local / sftp / session), and the
- * copy-cut clipboard. Each field matches the `appStore` slice one-to-one, so the
- * render cut is a pure parity swap.
+ * snapshot: the active pane, the two panes (local / session), and the copy-cut
+ * clipboard. Each field matches the `appStore` slice one-to-one, so the render
+ * cut is a pure parity swap.
  */
 export interface FileBrowsersView {
   mode: FileBrowserMode;
   local: FileBrowserPaneView;
-  sftp: FileBrowserPaneView;
   session: FileBrowserPaneView;
   clipboard: FileClipboard | null;
 }
@@ -104,7 +103,6 @@ export const EMPTY_PANE_VIEW: FileBrowserPaneView = {
 export const EMPTY_FILE_BROWSERS_VIEW: FileBrowsersView = {
   mode: "none",
   local: EMPTY_PANE_VIEW,
-  sftp: EMPTY_PANE_VIEW,
   session: EMPTY_PANE_VIEW,
   clipboard: null,
 };
@@ -197,12 +195,12 @@ export function setFileBrowsersIntentsEnabled(value: boolean | null): void {
  * automated parity tests plus the instant local fallback, mirroring the
  * connections (#2225) and agents (#2226) mutation cuts.
  *
- * Scope note (#2236): the SFTP list operations (`navigateSftp` / `refreshSftp`)
- * mirror only the browser *view* fields (path / listing / list flags); the SFTP
- * *session* model (connect status, live session ids, transfers) and the
- * connect / disconnect / session-death pane resets stay `appStore`-driven and are
- * carried into the region by the render-cut `fileBrowser.replace` mirror, pending
- * the entry-point/session-model decision (#2236).
+ * Scope note: the session list operations mirror only the browser *view* fields
+ * (path / listing / list flags); the backend session model (live session ids,
+ * transfers) stays `appStore`-driven and is carried into the region by the
+ * render-cut `fileBrowser.replace` mirror. Since the SFTP convergence
+ * (#2313 / #2422) the legacy standalone SFTP pane and its `sftpSessionId` session
+ * model were retired, leaving only the `local` and `session` panes.
  *
  * Overridable at runtime for rollback / tests via
  * `window.__TERMIHUB_FILE_BROWSERS_INTENTS__` or
@@ -291,7 +289,6 @@ function normalizeView(view: Partial<FileBrowsersView> | undefined): FileBrowser
   return {
     mode: view?.mode ?? "none",
     local: normalizePane(view?.local),
-    sftp: normalizePane(view?.sftp),
     session: normalizePane(view?.session),
     clipboard: view?.clipboard ?? null,
   };
@@ -373,7 +370,6 @@ export function seedFileBrowsersRegion(view: FileBrowsersView): Promise<void> {
         payload: {
           mode: view.mode,
           local: view.local,
-          sftp: view.sftp,
           session: view.session,
           clipboard: view.clipboard,
         },
@@ -404,7 +400,7 @@ export function seedFileBrowsersRegion(view: FileBrowsersView): Promise<void> {
  * {@link FileBrowserMode}, `"none"` is not a pane — it is the *absence* of an
  * active pane, expressed only through `fileBrowser.setMode`.
  */
-export type FileBrowserPane = "local" | "sftp" | "session";
+export type FileBrowserPane = "local" | "session";
 
 /**
  * The granular `fileBrowser.*` intent kinds the mutation cut dispatches (twins of

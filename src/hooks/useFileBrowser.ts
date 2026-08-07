@@ -1,4 +1,3 @@
-import { useFileSystem } from "./useFileSystem";
 import { useLocalFileSystem } from "./useLocalFileSystem";
 import { useSessionFileSystem } from "./useSessionFileSystem";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
@@ -20,30 +19,25 @@ function paneRenderState(pane: FileBrowserPaneView) {
 }
 
 /**
- * Unified file browser hook that delegates to local, SFTP, or session mode.
+ * Unified file browser hook that delegates to local or session mode.
  * All hooks are always called to satisfy Rules of Hooks.
  *
  * The active pane and each pane's per-render UI state (listing, cwd, loading,
  * error) are sourced from the projected client-scoped `file-browser` region via
  * {@link useProjectedFileBrowsers} — the parity-safe render cut (#2228). The region
  * faithfully mirrors `appStore` (and falls back to it when it does not), so the
- * output is value-identical to the pre-cut path. The file *actions* and the
- * session-model `isConnected` flag still come from the per-mode hooks, which keep
- * reading `appStore` directly (the mutation cut and the SFTP session model, #2236,
- * are out of scope here).
+ * output is value-identical to the pre-cut path. The file *actions* still come from
+ * the per-mode hooks, which keep reading `appStore` directly. Since the SFTP
+ * convergence (#2313 / #2422) SSH browses through the session mode like every other
+ * remote type — the legacy standalone SFTP browser is gone.
  */
 export function useFileBrowser() {
   const projected = useProjectedFileBrowsers();
-  const sftp = useFileSystem();
   const local = useLocalFileSystem();
   const session = useSessionFileSystem();
 
   if (projected.mode === "local") {
     return { ...local, ...paneRenderState(projected.local), mode: "local" as const };
-  }
-
-  if (projected.mode === "sftp") {
-    return { ...sftp, ...paneRenderState(projected.sftp), mode: "sftp" as const };
   }
 
   if (projected.mode === "session") {
