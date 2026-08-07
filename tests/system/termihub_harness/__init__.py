@@ -5,7 +5,13 @@ lifecycle of the app and agent processes — the foundation for system/resilienc
 tests that run identically on Linux, Windows, and macOS (issue #802).
 """
 
-from .bridge import Bridge, BridgeError, Driver, screenshot_to_png_bytes
+from .bridge import (
+    LIVE_CONNECT_REQUEST_TIMEOUT,
+    Bridge,
+    BridgeError,
+    Driver,
+    screenshot_to_png_bytes,
+)
 from .fixtures import (
     REMOTE_AGENT_PENDING_PORT,
     REMOTE_AGENT_PENDING_SERVICE,
@@ -89,6 +95,7 @@ __all__ = [
     "Bridge",
     "BridgeError",
     "Driver",
+    "LIVE_CONNECT_REQUEST_TIMEOUT",
     "screenshot_to_png_bytes",
     "AppInstance",
     "AgentInstance",

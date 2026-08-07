@@ -41,6 +41,7 @@ from __future__ import annotations
 import pytest
 
 from termihub_harness import (
+    LIVE_CONNECT_REQUEST_TIMEOUT,
     ConnectionsUi,
     FilesUi,
     PasswordPromptUi,
@@ -149,6 +150,11 @@ class TestTransferQueueLiveTransfer(
     so it does not pull in the ``ssh-keys`` image the broader ``ssh_fixtures``
     would build.
     """
+
+    # Live SFTP connect + transfer: raise the command timeout so a WKWebView
+    # JS thread starved by the always-on Docker/krunkit VMs still completes each
+    # verb instead of tripping the default 10s mid-negotiation (#2460).
+    request_timeout = LIVE_CONNECT_REQUEST_TIMEOUT
 
     # A size that is big enough for the 256 KiB chunk loop to emit several
     # throttled (~10 Hz) progress updates, but small enough that the paste

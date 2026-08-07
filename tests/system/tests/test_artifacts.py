@@ -32,13 +32,18 @@ class _StubDriver:
         self._state = state if state is not None else {"activePanelId": "p1"}
         self._terminal = terminal
         self._state_exc = state_exc
+        #: The last ``timeout`` the probes passed — so a test can assert the
+        #: failure path uses the long diagnostic timeout (#2460).
+        self.timeouts_seen: list = []
 
-    def get_state(self):
+    def get_state(self, *, timeout=None):
+        self.timeouts_seen.append(timeout)
         if self._state_exc is not None:
             raise self._state_exc
         return self._state
 
-    def read_terminal(self):
+    def read_terminal(self, *, timeout=None):
+        self.timeouts_seen.append(timeout)
         return self._terminal
 
 
@@ -50,7 +55,8 @@ class _ScreenshotDriver(_StubDriver):
         self._data_url = data_url
         self._screenshot_exc = screenshot_exc
 
-    def screenshot(self):
+    def screenshot(self, *, timeout=None):
+        self.timeouts_seen.append(timeout)
         if self._screenshot_exc is not None:
             raise self._screenshot_exc
         return self._data_url
@@ -121,6 +127,42 @@ def test_screenshot_capture_error_is_recorded_not_raised(tmp_path: Path):
     assert (dest / "screenshot.png.error.txt").read_text() == "RuntimeError: capture gone"
     # The other probes still ran independently.
     assert (dest / "terminal.txt").read_text() == "$ ls\n"
+
+
+def test_writes_probe_diagnostics_with_timed_records(tmp_path: Path):
+    # The bundle records a timed line per probe — the #2460 slow-vs-hung signal.
+    driver = _ScreenshotDriver(
+        data_url=f"data:image/png;base64,{_PNG_1X1}", terminal="$ ls\n"
+    )
+    app = _StubApp(log="app booted\n")
+    dest = write_failure_artifacts(tmp_path / "diag", driver, app)
+    text = (dest / "probe-diagnostics.txt").read_text()
+    for name in ("state.json", "terminal.txt", "screenshot.png", "app.log"):
+        assert f"{name}: ok in " in text
+    assert "#2460" in text
+
+
+def test_probe_diagnostics_records_a_failed_probe_as_timed(tmp_path: Path):
+    # A hung/slow probe that raises (e.g. a bridge timeout) is recorded as a
+    # timed FAILED line, not silently dropped — the definitive #2460 evidence.
+    driver = _StubDriver(state_exc=RuntimeError("command timed out after 60.0s"))
+    dest = write_failure_artifacts(tmp_path / "hung", driver, None)
+    text = (dest / "probe-diagnostics.txt").read_text()
+    assert "state.json: FAILED after" in text
+    assert "RuntimeError: command timed out after 60.0s" in text
+
+
+def test_probe_diagnostics_written_even_with_no_driver_or_app(tmp_path: Path):
+    dest = write_failure_artifacts(tmp_path / "empty", None, None)
+    assert (dest / "probe-diagnostics.txt").read_text().strip().endswith("no probes ran")
+
+
+def test_failure_probes_use_the_long_diagnostic_timeout(tmp_path: Path):
+    # The failure path must outlive the live path's own (possibly raised) command
+    # timeout, so every bridge probe runs with DIAGNOSTIC_PROBE_TIMEOUT (#2460).
+    driver = _ScreenshotDriver(data_url=f"data:image/png;base64,{_PNG_1X1}")
+    write_failure_artifacts(tmp_path / "to", driver, None, probe_timeout=42.0)
+    assert driver.timeouts_seen == [42.0, 42.0, 42.0]
 
 
 def test_save_manual_screenshot_writes_png_and_returns_a_path(tmp_path, monkeypatch):

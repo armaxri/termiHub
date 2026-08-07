@@ -25,6 +25,17 @@ import websockets
 from .protocol import Command, Response, decode_response, encode_request
 
 DEFAULT_REQUEST_TIMEOUT = 10.0
+#: Command timeout for the **live-connect / SFTP** suites (issue #2460). A real
+#: SSH session negotiates while the always-on Docker (``--cpus 10``) + podman
+#: ``krunkit`` VMs intermittently starve the macOS WKWebView JS thread for >10s,
+#: so the default 10s fires mid-negotiation and the whole live suite times out
+#: even though the backend is fine. 60s is deliberately generous: it is long
+#: enough to let a webview that is merely *slow under load* finish (the suite then
+#: passes), while a run that still times out at 60s is strong evidence the webview
+#: is *genuinely hung* rather than slow — the #2460 hypothesis test. Scoped to the
+#: live suites (via ``SystemTest.request_timeout``); it does **not** slow every
+#: verb globally.
+LIVE_CONNECT_REQUEST_TIMEOUT = 60.0
 DEFAULT_APP_WAIT_TIMEOUT = 30.0
 #: After the first app connection arrives, briefly prefer a newer one that shows
 #: up within this window. An app's webview can connect and then reconnect during
@@ -128,15 +139,19 @@ class Driver:
         self._loop = loop
         self._timeout = request_timeout
 
-    def _call(self, command: Command) -> Any:
+    def _call(self, command: Command, *, timeout: Optional[float] = None) -> Any:
         # Drop None-valued keys so the wire form matches the in-process client:
         # JSON.stringify omits `undefined`, and the dispatcher distinguishes an
         # absent optional (e.g. getState path) from an explicit null.
         command = {key: value for key, value in command.items() if value is not None}
+        # A per-call ``timeout`` overrides the Driver's default — used by the
+        # failure-artifact probes, which must outlive the live path's own timeout
+        # to capture evidence from a slow (not-yet-hung) webview (issue #2460).
+        effective_timeout = self._timeout if timeout is None else timeout
         cfut = asyncio.run_coroutine_threadsafe(
-            self._conn.send(command, self._timeout), self._loop
+            self._conn.send(command, effective_timeout), self._loop
         )
-        response = cfut.result(self._timeout + 5)
+        response = cfut.result(effective_timeout + 5)
         if not response.get("ok"):
             raise BridgeError(
                 response.get("action", command.get("action", "")),
@@ -288,14 +303,19 @@ class Driver:
         )
 
     def read_terminal(
-        self, tab_id: Optional[str] = None, join_full_width_rows: bool = False
+        self,
+        tab_id: Optional[str] = None,
+        join_full_width_rows: bool = False,
+        *,
+        timeout: Optional[float] = None,
     ) -> str:
         return self._call(
             {
                 "action": "readTerminal",
                 "tabId": tab_id,
                 "joinFullWidthRows": join_full_width_rows,
-            }
+            },
+            timeout=timeout,
         )
 
     def scroll_terminal(
@@ -327,10 +347,10 @@ class Driver:
         """
         return self._call({"action": "getTerminalViewport", "tabId": tab_id})
 
-    def get_state(self, path: Optional[str] = None) -> Any:
-        return self._call({"action": "getState", "path": path})
+    def get_state(self, path: Optional[str] = None, *, timeout: Optional[float] = None) -> Any:
+        return self._call({"action": "getState", "path": path}, timeout=timeout)
 
-    def screenshot(self) -> str:
+    def screenshot(self, *, timeout: Optional[float] = None) -> str:
         """Capture a PNG screenshot of the rendered app as a data URL.
 
         Returns a ``data:image/png;base64,…`` string produced by rasterizing the
@@ -339,8 +359,12 @@ class Driver:
         does **not** capture the xterm GPU canvas or native OS dialogs — read
         terminal text via :meth:`read_terminal` instead. Decode with
         :func:`screenshot_to_png_bytes`.
+
+        Pass ``timeout`` to override the Driver's default command timeout — the
+        failure-artifact path uses a generous one so a webview that is merely slow
+        under VM load can still return a screenshot (issue #2460).
         """
-        return self._call({"action": "screenshot"})
+        return self._call({"action": "screenshot"}, timeout=timeout)
 
     # ── Projection substrate (#2149 / harness #2164) ─────────────────────────
     def projection_subscribe(self, region: str) -> dict[str, Any]:
@@ -460,6 +484,8 @@ class Bridge:
         self,
         timeout: float = DEFAULT_APP_WAIT_TIMEOUT,
         settle: float = DEFAULT_APP_SETTLE,
+        *,
+        request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
     ) -> Driver:
         """Block until the next app connects out, returning a :class:`Driver`.
 
@@ -476,6 +502,10 @@ class Bridge:
         ``settle``, and if the current candidate has already closed it keeps
         waiting (up to ``timeout``) for the replacement. Pass ``settle=0`` to opt
         out (take the first arrival immediately). See :data:`DEFAULT_APP_SETTLE`.
+
+        ``request_timeout`` sets the returned Driver's default per-command timeout
+        — the live-connect / SFTP suites raise it via
+        :data:`LIVE_CONNECT_REQUEST_TIMEOUT` (issue #2460).
         """
         if self._loop is None or self._conn_queue is None:
             raise RuntimeError("bridge is not started")
@@ -488,7 +518,7 @@ class Bridge:
             raise TimeoutError(
                 f"no app connected to the bridge within {timeout}s"
             ) from exc
-        return Driver(connection, self._loop)
+        return Driver(connection, self._loop, request_timeout=request_timeout)
 
     async def _acquire_settled(self, timeout: float, settle: float) -> "_Connection":
         """Pop a connection, then prefer a newer/surviving one (see wait_for_app).
