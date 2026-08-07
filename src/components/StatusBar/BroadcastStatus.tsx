@@ -18,18 +18,15 @@ import { Tooltip } from "@/components/ui";
  * uncluttered.
  */
 export function BroadcastStatus() {
-  // Render cut (#2242): active + membership sourced from the projected broadcast
-  // region when it mirrors appStore, else appStore verbatim.
+  // Active + membership sourced from the authoritative broadcast region (#2206).
   const broadcast = useProjectedBroadcast();
   const broadcastActive = broadcast.active;
   // Total participating tabs (includes the source).
   const totalTargets = broadcast.targetTabIds.size;
   // Connected subset — the connected-terminal fan-out filter stays on appStore
-  // (it needs the live tab/session state); returning a number keeps re-renders
-  // limited to real count changes.
-  const connectedTargets = useAppStore((s) =>
-    s.broadcastActive ? s.getBroadcastTargetTabIds().length : 0
-  );
+  // (it needs the live tab/session state) and returns `[]` when the region is
+  // inactive; returning a number keeps re-renders limited to real count changes.
+  const connectedTargets = useAppStore((s) => s.getBroadcastTargetTabIds().length);
   const stopBroadcast = useAppStore((s) => s.stopBroadcast);
 
   if (!broadcastActive) return null;
