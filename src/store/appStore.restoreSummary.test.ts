@@ -60,11 +60,13 @@ import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { setupRestoreCohortRegion } from "@/test/restoreCohortHarness";
 import { loadLastSession } from "@/services/lastSessionApi";
 
 setupConnectionsRegion();
 setupSettingsRegion();
 setupAgentsRegion();
+const restore = setupRestoreCohortRegion();
 import { getAllLeaves } from "@/utils/panelTree";
 import type { LastSession } from "@/types/lastSession";
 
@@ -101,10 +103,7 @@ describe("partial-restore summary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockLoad.mockResolvedValue(null);
-    useAppStore.setState({
-      defaultShell: "bash",
-      restoreCohort: null,
-    });
+    useAppStore.setState({ defaultShell: "bash" });
     seedSettings({ restoreLastSessionOnStartup: true });
     seedConnectionsRegion({ connections: [] });
   });
@@ -129,6 +128,7 @@ describe("partial-restore summary", () => {
     expect(toastSuccess).not.toHaveBeenCalled();
 
     useAppStore.getState().setTerminalDisconnectWithError(ids[2], "connection refused");
+    await restore.flush();
 
     // Exactly one aggregate summary, and it is the partial (info) variant.
     expect(toastInfo).toHaveBeenCalledTimes(1);
@@ -147,8 +147,8 @@ describe("partial-restore summary", () => {
 
     useAppStore.getState().setTabSessionId(ids[0], "sess-a");
     useAppStore.getState().setTabSessionId(ids[1], "sess-b");
-    expect(toastSuccess).not.toHaveBeenCalled();
     useAppStore.getState().setTabSessionId(ids[2], "sess-c");
+    await restore.flush();
 
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(toastInfo).not.toHaveBeenCalled();
@@ -162,17 +162,20 @@ describe("partial-restore summary", () => {
     const ids = restoredTabIds();
 
     ids.forEach((id, i) => useAppStore.getState().setTabSessionId(id, `sess-${i}`));
+    await restore.flush();
     expect(toastSuccess).toHaveBeenCalledTimes(1);
 
-    // Later reconnect churn on the same tabs must not re-fire a summary.
+    // Later reconnect churn on the same tabs must not re-fire a summary: the region
+    // ignores a settle for a tab that is not pending in any cohort.
     useAppStore.getState().setTerminalDisconnectWithError(ids[0], "later drop");
     useAppStore.getState().setTabSessionId(ids[0], "sess-0b");
+    await restore.flush();
 
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(toastInfo).not.toHaveBeenCalled();
   });
 
-  it("does not summarize session-id changes that are outside a restore cohort", () => {
+  it("does not summarize session-id changes that are outside a restore cohort", async () => {
     // A plain manual tab, no restore cohort registered.
     seedConnectionsRegion({ connections: [] });
     useAppStore.getState().addTab("Shell", "local", { type: "local", config: { shell: "bash" } });
@@ -180,6 +183,7 @@ describe("partial-restore summary", () => {
 
     useAppStore.getState().setTabSessionId(id, "sess-manual");
     useAppStore.getState().setTerminalDisconnectWithError(id, "boom");
+    await restore.flush();
 
     expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastInfo).not.toHaveBeenCalled();

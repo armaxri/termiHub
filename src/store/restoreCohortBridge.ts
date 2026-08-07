@@ -1,42 +1,38 @@
 /**
- * Restore-cohort projection bridge — Phase 4 step 5a render + mutation cut of the
- * restore-cohort machine (#2241, part of #2206 / #2152 / #2139).
+ * Restore-cohort projection bridge — the restore-cohort machine is now
+ * **region-authoritative** (#2206, Phase 4 step 5; reducer removal after the
+ * render + mutation cut of #2241).
  *
- * The restore-cohort **shadow** (PR #2240) landed a backend-authoritative,
- * client-scoped [`RestoreCohortStore`](../../src-tauri/src/restore_cohort_projection/store.rs)
- * served as the `restore-cohort@<clientId>` projection region, with `restore.*`
- * intents (`restore.beginCohort` / `restore.settleTab`), but nothing in the UI
- * touched it. This step cuts the live UI over to it — the direct analog of the
- * session render cut ({@link import("./useSessionLifecycle")}, #2204), the monitor
- * render + mutation cuts ({@link import("./systemMonitorBridge")}, #2224) and the
- * agents cut ({@link import("./agentsBridge")}, #2226).
+ * The client-scoped [`RestoreCohortStore`](../../src-tauri/src/restore_cohort_projection/store.rs)
+ * served as the `restore-cohort@<clientId>` projection region is the sole source
+ * of truth for the aggregate restore/launch feedback (#1146 / #1227): it owns the
+ * in-flight cohort, the captured failed-tab set, and the monotonic settlement
+ * summary. `appStore` holds no cohort slice — its `beginRestoreCohort` /
+ * `settleRestoreTab` actions are thin dispatchers of the `restore.beginCohort` /
+ * `restore.settleTab` intents, and the aggregate summary toast is fired from the
+ * projected settlement diff (the direct analog of the monitors reducer removal,
+ * {@link import("./systemMonitorBridge")}, #2385, and the transfers one,
+ * {@link import("./transfersBridge")}, #2399).
  *
- * Unlike the declarative render cuts (agents/monitors read a slice from the region
- * every render), the restore-cohort render surface is a single **fire-once side
- * effect**: the aggregate summary toast raised when a restore/launch cohort
- * settles. So the "render cut" here is a projection subscriber that fires the toast
- * exactly once per new monotonic settlement `seq`, driven by the region.
+ * # Render surface: a fire-once settlement side effect
  *
- * # Two independent flags, both on by default
+ * Unlike the declarative render cuts (agents/monitors read a slice every render),
+ * the restore-cohort render surface is a single **fire-once side effect**: the
+ * aggregate summary toast raised when a restore/launch cohort settles. So instead
+ * of a `useProjected*` hook, the bridge fires the toast exactly once per new
+ * monotonic settlement `seq` via a renderer the store registers
+ * ({@link setRestoreSettlementRenderer}). The renderer lives in `appStore` because
+ * firing the toast and intersecting the retry set with the live terminal tabs both
+ * need the tab registry — concerns that deliberately stay frontend-side.
  *
- * - {@link restoreRenderFromProjectionEnabled} (render cut) — when on, the summary
- *   toast is fired under the projected settlement `seq` (validated to faithfully
- *   mirror the locally-computed summary) instead of straight from the local
- *   reducer. Parity-safe: the fired content is the gate-validated local summary, so
- *   it is byte-identical to the pre-cut toast, and any dispatch failure falls back
- *   to firing locally **synchronously**, so the toast can never be lost.
- * - {@link restoreIntentsEnabled} (mutation cut) — when on, the cohort transitions
- *   dispatch `restore.beginCohort` / `restore.settleTab` so the backend store is
- *   authoritative. The local `appStore` reducers stay in place as the resilience /
- *   rollback fallback (removal is a later step).
+ * # What stays frontend
  *
- * The region is populated by these same begin/settle intents, dispatched whenever
- * **either** flag is on ({@link shouldMirrorRestore}); that keeps the render cut
- * independent of the mutation flag (the region is always populated when rendering
- * from it). Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_RESTORE_RENDER__` / `localStorage["termihub.restoreRender"]`
- * and `window.__TERMIHUB_RESTORE_INTENTS__` / `localStorage["termihub.restoreIntents"]`
- * (set `"false"` to restore the pre-cut local path).
+ * - **The toast itself.** The backend produces the settlement summary (tallies +
+ *   raw retry set + `seq`); rendering it as a `sonner` toast is presentation.
+ * - **The live-terminal filter.** The store keeps the raw failed-tab set; the
+ *   frontend intersects it with its live terminal tabs when it renders the retry
+ *   action and when {@link import("./appStore").AppState.reconnectFailedRestoreTabs}
+ *   re-drives — exactly as before.
  */
 
 import {
@@ -86,97 +82,12 @@ export interface RestoreCohortView {
   settlement: ProjectedSettlement | null;
 }
 
-// ── Feature flags (runtime-flippable so a dev build can verify either path) ────
-
-interface RestoreFlagWindow {
-  __TERMIHUB_RESTORE_RENDER__?: boolean;
-  __TERMIHUB_RESTORE_INTENTS__?: boolean;
-  localStorage?: Storage;
-}
-
-let renderFlagOverride: boolean | null = null;
-let intentsFlagOverride: boolean | null = null;
-
-/** Programmatic override for the render-cut flag (tests, runtime toggle). `null`
- * clears it and falls back to the window/localStorage signal, then the default. */
-export function setRestoreRenderFromProjectionEnabled(value: boolean | null): void {
-  renderFlagOverride = value;
-}
-
-/** Programmatic override for the mutation-cut flag (tests, runtime toggle). */
-export function setRestoreIntentsEnabled(value: boolean | null): void {
-  intentsFlagOverride = value;
-}
-
-/** Read a boolean feature signal from `window`/`localStorage`, else `dflt`. */
-function readFlag(
-  override: boolean | null,
-  windowKey: keyof RestoreFlagWindow,
-  storageKey: string,
-  dflt: boolean
-): boolean {
-  if (override !== null) return override;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as RestoreFlagWindow;
-      const wv = w[windowKey];
-      if (typeof wv === "boolean") return wv;
-      const ls = w.localStorage?.getItem(storageKey);
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return dflt;
-}
-
-/**
- * Whether the aggregate restore-cohort summary toast is fired under the projected
- * settlement `seq` (render cut) instead of straight from the local reducer.
- *
- * **On by default.** Parity-safe: the fired content is the local summary validated
- * to faithfully mirror the projected settlement, so the toast is byte-identical to
- * the pre-cut path; a dispatch failure falls back to firing locally. Independent of
- * the mutation cut — the region is populated whenever either flag is on. Overridable
- * via `window.__TERMIHUB_RESTORE_RENDER__` / `localStorage["termihub.restoreRender"]`.
- */
-export function restoreRenderFromProjectionEnabled(): boolean {
-  return readFlag(
-    renderFlagOverride,
-    "__TERMIHUB_RESTORE_RENDER__",
-    "termihub.restoreRender",
-    true
-  );
-}
-
-/**
- * Whether the cohort transitions (`beginRestoreCohort` / `settleRestoreTab`)
- * dispatch `restore.beginCohort` / `restore.settleTab` intents so the backend
- * {@link import("../../src-tauri/src/restore_cohort_projection/store").RestoreCohortStore}
- * is authoritative (mutation cut).
- *
- * **On by default.** The local `appStore` reducers stay in place as the render
- * source and the resilience / rollback fallback (removal is a later step) — a
- * dispatch failure is logged and the local mutation continues, so a backend hiccup
- * can never break restore feedback. Overridable via
- * `window.__TERMIHUB_RESTORE_INTENTS__` / `localStorage["termihub.restoreIntents"]`.
- */
-export function restoreIntentsEnabled(): boolean {
-  return readFlag(
-    intentsFlagOverride,
-    "__TERMIHUB_RESTORE_INTENTS__",
-    "termihub.restoreIntents",
-    true
-  );
-}
-
-/** The begin/settle intents are dispatched whenever either flag is on: the
- * mutation cut needs them for authority, and the render cut needs them to keep the
- * region populated (making the render cut independent of the mutation flag). */
-function shouldMirrorRestore(): boolean {
-  return restoreIntentsEnabled() || restoreRenderFromProjectionEnabled();
-}
+/** The empty view returned before the first projection diff lands. */
+export const EMPTY_RESTORE_COHORT_VIEW: RestoreCohortView = {
+  cohort: null,
+  failedTabIds: [],
+  settlement: null,
+};
 
 // ── Transport + client-scoped region client (lazy, mirrors the layout slice) ───
 
@@ -190,15 +101,19 @@ let transportInstance: Transport | null = null;
 let regionClient: ProjectionClient | null = null;
 let startPromise: Promise<ProjectionClient> | null = null;
 
+/** The last projected view received — the frontend's current picture of the
+ * authoritative cohort state, read synchronously by the store's cohort actions. */
+let lastView: RestoreCohortView = EMPTY_RESTORE_COHORT_VIEW;
+
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription and pending settlement. */
+ * drops any active subscription and cached view. */
 export function setRestoreTransportForTest(t: Transport | null): void {
   regionClient?.stop();
   regionClient = null;
   startPromise = null;
   transportInstance = t;
   lastObservedSeq = 0;
-  pendingSettlement = null;
+  lastView = EMPTY_RESTORE_COHORT_VIEW;
 }
 
 function transport(): Transport {
@@ -212,7 +127,7 @@ function transport(): Transport {
  * Ensure the `restore-cohort@<clientId>` region client is subscribed so settlement
  * diffs are received and the summary toast can be fired from them. Idempotent and
  * de-duplicated across concurrent callers; a transport/subscribe failure is logged
- * and rethrown so the caller can fall back to the local reducer.
+ * and rethrown so the caller can log a bridge fallback.
  */
 export function ensureRestoreSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);
@@ -240,94 +155,47 @@ export function stopRestoreSubscription(): void {
   regionClient = null;
   startPromise = null;
   lastObservedSeq = 0;
-  pendingSettlement = null;
+  lastView = EMPTY_RESTORE_COHORT_VIEW;
+}
+
+/**
+ * The current projected restore-cohort view. Since the region is authoritative,
+ * this is the frontend's picture of the cohort state — read by
+ * {@link import("./appStore").AppState.reconnectFailedRestoreTabs} for the captured
+ * failed-tab set. Empty until the first projection diff lands.
+ */
+export function currentRestoreCohortView(): RestoreCohortView {
+  return lastView;
 }
 
 // ── Fire-once settlement rendering ─────────────────────────────────────────────
 
-/**
- * A settlement awaiting its toast: the local closure that fires it (using the
- * gate-validated local summary) plus the expected numbers used to check the
- * projection faithfully mirrors it. Set by {@link expectProjectedRestoreSettlement}
- * when the render cut is on; consumed exactly once — by the projection subscriber
- * on the matching `seq` (the happy path) or by {@link firePendingRestoreFallback}
- * on a dispatch failure (the fallback). Whichever runs first clears it, so the
- * toast fires exactly once.
- */
-interface PendingSettlement {
-  fire: () => void;
-  expected: { total: number; restored: number; failed: number; retryTabIds: string[] };
-}
+/** Renders a settled cohort's aggregate summary (fires the toast, intersecting the
+ * retry set with the live terminal tabs). Registered by `appStore`, which owns the
+ * tab registry the render needs. */
+export type RestoreSettlementRenderer = (settlement: ProjectedSettlement) => void;
 
-let pendingSettlement: PendingSettlement | null = null;
+let settlementRenderer: RestoreSettlementRenderer | null = null;
 let lastObservedSeq = 0;
 
-/**
- * Register the local summary to be fired under the projected settlement `seq`
- * (render cut). Called by `appStore.settleRestoreCohort` when the render flag is on,
- * in place of firing the toast directly. The subsequent begin/settle mirror
- * dispatch drives the region; its diff fires this via {@link onRegionChange}, or a
- * dispatch failure fires it via {@link firePendingRestoreFallback}.
- */
-export function expectProjectedRestoreSettlement(
-  fire: () => void,
-  expected: { total: number; restored: number; failed: number; retryTabIds: string[] }
-): void {
-  pendingSettlement = { fire, expected };
+/** Register the settlement renderer (the store's toast + live-filter logic). `null`
+ * clears it (tests). Called once at store init. */
+export function setRestoreSettlementRenderer(fn: RestoreSettlementRenderer | null): void {
+  settlementRenderer = fn;
 }
 
-/** Whether the projected settlement faithfully mirrors the locally-computed one:
- * identical tallies and the same raw failed-tab set (the backend keeps the retry
- * set raw; the frontend live-filters it, so compare against the raw expectation). */
-function settlementMirrors(
-  settlement: ProjectedSettlement,
-  expected: PendingSettlement["expected"]
-): boolean {
-  return (
-    settlement.total === expected.total &&
-    settlement.restored === expected.restored &&
-    settlement.failed === expected.failed &&
-    sameSet(settlement.retryTabIds, expected.retryTabIds)
-  );
-}
-
-/** Unordered set equality over two string arrays. */
-function sameSet(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  const set = new Set(a);
-  return b.every((id) => set.has(id));
-}
-
-/** React to a region diff: fire the pending settlement once per new `seq`. */
+/** React to a region diff: cache the view, and fire the settlement renderer once
+ * per new monotonic `seq` so the aggregate summary toast appears exactly once. */
 function onRegionChange(state: ProjectionCacheState): void {
-  const view = state.view as RestoreCohortView | undefined;
-  const settlement = view?.settlement;
+  const view = (state.view as RestoreCohortView | undefined) ?? EMPTY_RESTORE_COHORT_VIEW;
+  lastView = view;
+  const settlement = view.settlement;
   if (!settlement || settlement.seq <= lastObservedSeq) return;
   lastObservedSeq = settlement.seq;
-  const pending = pendingSettlement;
-  if (!pending) return; // already fired locally, or nothing awaiting render
-  pendingSettlement = null;
-  if (!settlementMirrors(settlement, pending.expected)) {
-    // Not a faithful mirror — still fire the local summary (never lose the toast),
-    // but log the divergence so the render-cut drift is visible.
-    logRestoreBridgeFallback("settlement", new Error("projected settlement diverged from local"));
-  }
-  pending.fire();
+  settlementRenderer?.(settlement);
 }
 
-/** Fire a pending settlement's local toast now (the fallback path), if one is
- * awaiting. Called when a begin/settle mirror dispatch cannot reach the region
- * (synchronous transport failure, rejected ack, or async error), so the projected
- * `seq` will never arrive — the toast must still fire. No-op if already consumed. */
-function firePendingRestoreFallback(reason: string, err: unknown): void {
-  const pending = pendingSettlement;
-  if (!pending) return;
-  pendingSettlement = null;
-  logRestoreBridgeFallback(reason, err);
-  pending.fire();
-}
-
-// ── Mutation cut: begin/settle intent dispatch (also seeds the render region) ──
+// ── Mutation: begin/settle intent dispatch (also seeds the render region) ──────
 
 /** Dispatch a `restore.*` intent, resolving with the ack (parity tests). */
 export function dispatchRestoreIntent(
@@ -337,26 +205,21 @@ export function dispatchRestoreIntent(
   return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
 }
 
-/** Fire a `restore.*` mirror intent, keeping the backend store authoritative and
- * the render region populated. Any failure falls back to firing the pending
- * settlement's local toast so a bridge hiccup never loses the summary and never
- * disrupts the local reducer path. A no-op when both flags are off (pure rollback).
- * A synchronous transport-construction failure (non-Tauri, no socket) fires the
- * fallback synchronously — preserving the pre-cut synchronous toast in that env. */
+/** Fire a `restore.*` intent against the authoritative region and keep the
+ * subscription warm so the settlement diff (and its toast) arrives. Best-effort:
+ * any failure is logged and swallowed so a bridge/transport hiccup never throws out
+ * of a store action. A synchronous transport-construction failure (non-Tauri, no
+ * socket) is caught the same way. */
 function mirrorRestore(
   kind: "restore.beginCohort" | "restore.settleTab",
   payload: Record<string, unknown>
 ): void {
-  if (!shouldMirrorRestore()) {
-    // Both flags off: the local reducer already fired the toast; nothing to mirror.
-    return;
-  }
   // Keep the subscription warm so settlement diffs are received. Guarded because a
   // non-Tauri env without a socket throws *synchronously* from transport
-  // construction (not as a rejection) — the dispatch below then fires the fallback.
+  // construction (not as a rejection) — logged via the dispatch catch below.
   try {
     void ensureRestoreSubscribed().catch(() => {
-      /* logged in ensureRestoreSubscribed; fallback handled per-dispatch below */
+      /* logged in ensureRestoreSubscribed */
     });
   } catch {
     /* handled by the dispatch try/catch below */
@@ -365,22 +228,19 @@ function mirrorRestore(
   try {
     dispatchPromise = dispatchRestoreIntent(kind, payload);
   } catch (err) {
-    // Synchronous transport-construction failure — fire the fallback now so the
-    // toast still appears synchronously (the pre-cut behaviour without a transport).
-    firePendingRestoreFallback(kind, err);
+    logRestoreBridgeFallback(kind, err);
     return;
   }
   void dispatchPromise
     .then((ack) => {
       if (ack.status === "rejected") {
-        firePendingRestoreFallback(kind, new Error(ack.error?.message ?? "rejected"));
+        logRestoreBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
       }
-      // Accepted: the region diff will fire the pending settlement via onRegionChange.
     })
-    .catch((err) => firePendingRestoreFallback(kind, err));
+    .catch((err) => logRestoreBridgeFallback(kind, err));
 }
 
-/** Mirror `restore.beginCohort` (register a restore/launch cohort). */
+/** Dispatch `restore.beginCohort` (register a restore/launch cohort). */
 export function mirrorRestoreBegin(payload: {
   pendingTabIds: string[];
   preFailedCount: number;
@@ -394,7 +254,7 @@ export function mirrorRestoreBegin(payload: {
   mirrorRestore("restore.beginCohort", body);
 }
 
-/** Mirror `restore.settleTab` (settle one tab of the active cohort). */
+/** Dispatch `restore.settleTab` (settle one tab of the active cohort). */
 export function mirrorRestoreSettle(payload: {
   tabId: string;
   outcome: "connected" | "failed";
@@ -402,8 +262,8 @@ export function mirrorRestoreSettle(payload: {
   mirrorRestore("restore.settleTab", { tabId: payload.tabId, outcome: payload.outcome });
 }
 
-/** Log a bridge fallback so the local-path recovery is visible in the LogViewer. */
+/** Log a bridge failure so a dropped restore summary is visible in the LogViewer. */
 export function logRestoreBridgeFallback(kind: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
-  frontendLog("restore_cohort_bridge", `${kind} fell back to local restore summary: ${message}`);
+  frontendLog("restore_cohort_bridge", `${kind} restore intent failed: ${message}`);
 }

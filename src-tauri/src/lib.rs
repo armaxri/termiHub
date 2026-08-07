@@ -57,12 +57,12 @@ mod plugin_protocol;
 /// versioned diff channels with multi-subscriber fan-out. Public so integration
 /// tests can drive the projector directly.
 pub mod projection;
-/// Shadow restore-cohort authority (#2206, Phase 4 step 5 of #2139): the
-/// client-scoped `restore-cohort@<clientId>` projection region + `restore.*`
+/// Authoritative restore-cohort state machine (#2206, Phase 4 step 5 of #2139):
+/// the client-scoped `restore-cohort@<clientId>` projection region + `restore.*`
 /// intents, modelling the startup restore/launch cohort aggregation (#1146 /
 /// #1227) on top of the ported restore-decision engine (`termihub_core::restore_mode`,
-/// #2145). Registered and served but not yet driving the live UI — see
-/// [`restore_cohort_projection`].
+/// #2145). The sole source of truth driving the live UI's aggregate summary toast
+/// (reducer removal) — see [`restore_cohort_projection`].
 mod restore_cohort_projection;
 pub mod run_location;
 mod session;
@@ -749,16 +749,15 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
-                // Shadow RestoreCohortStore (#2206, Phase 4 step 5): the
-                // client-scoped `restore-cohort@<clientId>` region + `restore.*`
-                // intents modelling the startup restore/launch cohort aggregation
-                // (#1146 / #1227). Managed authoritative state that serves intents,
-                // but nothing in the live UI subscribes to or renders the region
-                // yet — a pure shadow foundation (later steps cut rendering, then
-                // the mutations, over to it, keeping the appStore reducers as the
-                // parity-safe fallback). No client region is seeded here: like
-                // layout, restore-cohort regions are client-scoped and created
-                // lazily on a client's first `restore.*` intent.
+                // RestoreCohortStore (#2206, Phase 4 step 5): the client-scoped
+                // `restore-cohort@<clientId>` region + `restore.*` intents
+                // modelling the startup restore/launch cohort aggregation (#1146 /
+                // #1227). Now the sole source of truth (reducer removal): the live
+                // UI renders the aggregate summary toast from the projected
+                // settlement and routes begin/settle through the intents; the
+                // appStore cohort reducers were removed. No client region is seeded
+                // here: like layout, restore-cohort regions are client-scoped and
+                // created lazily on a client's first `restore.*` intent.
                 app.manage(Arc::new(restore_cohort_projection::RestoreCohortStore::new()));
                 restore_cohort_projection::projection::register_restore_intents(
                     &mut registry,

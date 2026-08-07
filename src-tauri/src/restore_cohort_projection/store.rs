@@ -1,8 +1,8 @@
 //! The authoritative, client-scoped restore-cohort state machine behind the
-//! shadow `restore-cohort@<clientId>` region (#2206, Phase 4 step 5 of #2139).
+//! `restore-cohort@<clientId>` region (#2206, Phase 4 step 5 of #2139).
 //!
-//! Models the aggregate restore/launch feedback the frontend currently drives
-//! (`appStore` `restoreCohort` + `failedRestoreTabIds`, #1146 / #1227): a cohort
+//! Models the aggregate restore/launch feedback (formerly the `appStore`
+//! `restoreCohort` + `failedRestoreTabIds` reducers, #1146 / #1227): a cohort
 //! of tab ids placed by one restore, settled tab-by-tab, that raises a single
 //! summary and remembers which tabs failed so they can be bulk-reconnected. This
 //! module owns only the cohort **orchestration** state per client — not tab
@@ -17,18 +17,18 @@
 //! infrastructure, so the store keys everything by `clientId` and projects one
 //! `restore-cohort@<clientId>` region per client — mirroring `layout`.
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative — the sole source of truth
 //!
-//! This step is deliberately **not authoritative**. The store exists, accepts
-//! `restore.*` intents, and projects diffs, but nothing in the live UI
-//! subscribes to or renders a `restore-cohort` region, and no frontend code
-//! dispatches `restore.*` intents yet. The `appStore` cohort reducers and the
-//! toast feedback remain authoritative.
+//! This store is authoritative (#2206, reducer removal). The `appStore` cohort
+//! reducers were removed: its `beginRestoreCohort` / `settleRestoreTab` actions
+//! now only dispatch `restore.*` intents, the live UI subscribes to the
+//! `restore-cohort@<clientId>` region, and the aggregate summary toast is fired
+//! from the projected [`CohortSettlement`].
 //!
 //! ## What stays frontend
 //!
-//! Two concerns deliberately stay on the frontend at the render/mutation cut,
-//! keeping a clean per-domain boundary:
+//! Two concerns deliberately stay on the frontend, keeping a clean per-domain
+//! boundary:
 //!
 //! - **The toast itself.** The store produces the *settlement summary*
 //!   ([`CohortSettlement`], carrying a monotonic `seq` so a render can fire the
