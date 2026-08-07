@@ -4,9 +4,9 @@ import React from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
 import { FileEditor } from "./FileEditor";
-import type { EditorTabMeta } from "@/types/terminal";
+import type { EditorTabMeta, LeafPanel, TerminalTab } from "@/types/terminal";
 
 // Render Monaco as a plain textarea so the editor mounts in jsdom and we can
 // drive content changes through its onChange.
@@ -582,6 +582,245 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
 
     expect(query("file-editor-save-error")).not.toBeNull();
     expect(query("file-editor-save-error-retry-sudo")).not.toBeNull();
+  });
+});
+
+describe("FileEditor — sudo host label from the session (#2424 / #2426)", () => {
+  // A session-backed SSH editor tab (no legacy `sftpSessionId`). Read-only +
+  // exec-capable so it reaches the sudo path.
+  const SSH_META: EditorTabMeta = {
+    filePath: "/etc/hosts",
+    isRemote: true,
+    sessionBrowser: { sessionId: "sftp-sess-1", connectionType: "ssh" },
+    sessionKey: "session:term-owner",
+    permissions: "-rw-r--r--",
+  };
+
+  /**
+   * Seed the owning terminal tab whose connection config supplies the host
+   * label. `sessionId` defaults to the editor tab's live session id; pass a
+   * different one to simulate a reconnect (the tab id / `sessionKey` stays put).
+   */
+  function seedOwningTab(
+    opts: {
+      tabId?: string;
+      sessionId?: string;
+      config?: Record<string, unknown>;
+      type?: string;
+    } = {}
+  ): void {
+    const {
+      tabId = "term-owner",
+      sessionId = "sftp-sess-1",
+      config = { username: "pi", host: "raspberrypi", port: 22 },
+      type = "ssh",
+    } = opts;
+    const tab = {
+      id: tabId,
+      sessionId,
+      title: "owner",
+      connectionType: type,
+      contentType: "terminal",
+      config: { type, config },
+      panelId: "leaf-1",
+      isActive: true,
+    } as unknown as TerminalTab;
+    const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
+    useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
+  }
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState({ ...useAppStore.getInitialState() });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  function docQuery(testId: string): HTMLElement | null {
+    return document.querySelector(`[data-testid="${testId}"]`);
+  }
+
+  function typeInto(el: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    act(() => {
+      setter.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  /**
+   * Mock the elevated backend and capture credential-store calls. `resolvePw`
+   * seeds a stored sudo password returned by `resolve_credential`.
+   */
+  function mockBackend(opts: { resolvePw?: string | null; unlocked?: boolean } = {}): {
+    elevatedCalls: Array<Record<string, unknown>>;
+    credentialCalls: Array<{ cmd: string; args: Record<string, unknown> }>;
+  } {
+    const { resolvePw = null } = opts;
+    const elevatedCalls: Array<Record<string, unknown>> = [];
+    const credentialCalls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
+    mockedInvoke.mockImplementation((cmd, args) => {
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_has_exec_capability") return Promise.resolve(true);
+      if (cmd === "session_check_writable") return Promise.resolve("readOnly");
+      if (cmd === "session_write_file_elevated") {
+        elevatedCalls.push((args ?? {}) as Record<string, unknown>);
+        return Promise.resolve({ kind: "success" });
+      }
+      if (cmd === "store_credential") {
+        credentialCalls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+        return Promise.resolve(undefined);
+      }
+      if (cmd === "resolve_credential") {
+        credentialCalls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+        return Promise.resolve(resolvePw);
+      }
+      if (cmd === "remove_credential") {
+        credentialCalls.push({ cmd, args: (args ?? {}) as Record<string, unknown> });
+        return Promise.resolve(undefined);
+      }
+      return Promise.resolve(undefined);
+    });
+    return { elevatedCalls, credentialCalls };
+  }
+
+  function unlockCredentialStore(): void {
+    act(() => {
+      useAppStore.setState({
+        credentialStoreStatus: { status: "unlocked", mode: "master_password" },
+      });
+    });
+  }
+
+  it("derives the legacy `user@host:port` label from the owning tab config", () => {
+    seedOwningTab();
+    const label = deriveEditorHostLabel(useAppStore.getState(), SSH_META);
+    expect(label).toBe("pi@raspberrypi:22");
+  });
+
+  it("stays reconnect-stable: resolves via the owning tab id after the session id changes", () => {
+    // A reconnect swapped the live session id, but the owning tab id (and its
+    // config) is unchanged — the stale `sessionBrowser.sessionId` no longer
+    // matches any tab, yet the label must still resolve via `sessionKey`.
+    seedOwningTab({ sessionId: "sftp-sess-RECONNECTED" });
+    const label = deriveEditorHostLabel(useAppStore.getState(), SSH_META);
+    expect(label).toBe("pi@raspberrypi:22");
+  });
+
+  it("returns null for a byte-based backend (no host) → path fallback", () => {
+    // A Docker/agent-style session has no user@host:port in its config.
+    seedOwningTab({ type: "docker", config: { image: "alpine" } });
+    const label = deriveEditorHostLabel(useAppStore.getState(), {
+      ...SSH_META,
+      sessionBrowser: { sessionId: "sftp-sess-1", connectionType: "docker" },
+    });
+    expect(label).toBeNull();
+  });
+
+  it("returns null when the owning terminal tab is gone", () => {
+    // No tab seeded → nothing to source the label from.
+    expect(deriveEditorHostLabel(useAppStore.getState(), SSH_META)).toBeNull();
+  });
+
+  it("names the host in the sudo prompt for a session-backed SSH tab", async () => {
+    mockBackend();
+    seedOwningTab();
+    render(SSH_META);
+    await flush();
+
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // Prompt shows the host, not the file path.
+    expect(docQuery("sudo-prompt-host")?.textContent).toBe("raspberrypi:22");
+    expect(docQuery("sudo-prompt-user")?.textContent).toBe("pi");
+  });
+
+  it("falls back to the file path in the sudo prompt when no host label resolves", async () => {
+    mockBackend();
+    // No owning tab seeded → hostLabel null → file-path fallback.
+    render(SSH_META);
+    await flush();
+
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    expect(docQuery("sudo-prompt-host")?.textContent).toBe("/etc/hosts");
+  });
+
+  it("namespaces the persisted sudo password under the host label", async () => {
+    const { credentialCalls } = mockBackend();
+    seedOwningTab();
+    render(SSH_META);
+    await flush();
+    unlockCredentialStore();
+    await flush();
+
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    typeInto(docQuery("sudo-prompt-input") as HTMLInputElement, "sudo-pw");
+    // Opt into persisting to the credential store.
+    await act(async () => {
+      (docQuery("sudo-prompt-persist") as HTMLElement).click();
+    });
+    await act(async () => {
+      (docQuery("sudo-prompt-submit") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    const store = credentialCalls.find((c) => c.cmd === "store_credential");
+    expect(store).toBeDefined();
+    // The credential is keyed by the host label, not the file path.
+    expect(store?.args.connectionId).toBe("pi@raspberrypi:22");
+    expect(store?.args.credentialType).toBe("sudo_password");
+  });
+
+  it("resolves a saved sudo password under the host label without prompting", async () => {
+    const { elevatedCalls, credentialCalls } = mockBackend({ resolvePw: "stored-pw" });
+    seedOwningTab();
+    render(SSH_META);
+    await flush();
+    unlockCredentialStore();
+    await flush();
+
+    editContent("127.0.0.1 localhost\nedited\n");
+    await flush();
+    await act(async () => {
+      (query("file-editor-edit-with-sudo") as HTMLButtonElement).click();
+    });
+    await flush();
+
+    // The stored password satisfied the save; no prompt was shown.
+    expect(docQuery("sudo-prompt-dialog")).toBeNull();
+    expect(elevatedCalls).toHaveLength(1);
+    expect(elevatedCalls[0].sudoPassword).toBe("stored-pw");
+    const resolve = credentialCalls.find((c) => c.cmd === "resolve_credential");
+    expect(resolve?.args.connectionId).toBe("pi@raspberrypi:22");
   });
 });
 
