@@ -102,6 +102,20 @@ pub struct SessionLifecycle {
     /// otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reconnect_error: Option<String>,
+    /// The **backend** session id the frontend should currently be attached to
+    /// for this tab, when known (#2457). The region is keyed by the frontend
+    /// *tab* id (stable across a reconnect); this carries the *backend* session
+    /// id that id currently maps to, so a backend-driven reconnect redrive
+    /// (#2454) — which mints a **new** backend session id after tearing the old
+    /// `SessionEntry` down — can hand the frontend the id to re-attach terminal
+    /// I/O to, without the client calling `create_connection`. Set on a
+    /// successful (re)connect via
+    /// [`SessionLifecycleStore::set_backend_session_id`]; cleared the moment the
+    /// session is torn down (drop / disconnect / reconnect-loop start /
+    /// connect-failure / cancel) so the region never advertises a dead id.
+    /// `None` whenever there is no live backend session for the tab.
+    #[serde(rename = "sessionId", skip_serializing_if = "Option::is_none")]
+    pub backend_session_id: Option<String>,
 }
 
 impl SessionLifecycle {
@@ -113,6 +127,7 @@ impl SessionLifecycle {
             end_reason: None,
             error: None,
             reconnect_error: None,
+            backend_session_id: None,
         }
     }
 }
@@ -239,6 +254,8 @@ impl SessionLifecycleStore {
         entry.end_reason = Some(EndReason::Error);
         entry.error = error;
         entry.reconnect_error = None;
+        // The connect never established a session; nothing to re-attach to (#2457).
+        entry.backend_session_id = None;
     }
 
     /// `session.disconnect` — a user-initiated graceful disconnect. Stops any
@@ -254,6 +271,9 @@ impl SessionLifecycleStore {
         entry.end_reason = Some(EndReason::User);
         entry.error = None;
         entry.reconnect_error = None;
+        // The session is torn down; drop the re-attach id so the region never
+        // advertises a dead backend session (#2457).
+        entry.backend_session_id = None;
     }
 
     /// `session.dropped` — the link dropped without the user asking. Lands in
@@ -271,6 +291,9 @@ impl SessionLifecycleStore {
         entry.end_reason = Some(EndReason::Unexpected);
         entry.error = error;
         entry.reconnect_error = None;
+        // The backend session is gone on a genuine drop; drop the re-attach id
+        // (#2457). A backend-driven redrive sets the new id once it reconnects.
+        entry.backend_session_id = None;
     }
 
     /// `session.reconnect` — begin (or restart) the auto-reconnect loop. Feeds
@@ -289,6 +312,10 @@ impl SessionLifecycleStore {
         entry.reconnect = reconnect;
         entry.end_reason = None;
         entry.reconnect_error = None;
+        // The loop is (re)starting from a dead session; drop the stale re-attach
+        // id so the frontend never re-attaches to a corpse (#2457). The redrive
+        // repopulates it via `set_backend_session_id` once an attempt succeeds.
+        entry.backend_session_id = None;
     }
 
     /// `session.reconnectAttempt` — the backoff timer fired; start an attempt.
@@ -338,6 +365,9 @@ impl SessionLifecycleStore {
             entry.reconnect = INITIAL_RECONNECT_STATE;
             entry.end_reason = Some(EndReason::User);
             entry.reconnect_error = None;
+            // Loop cancelled; the session is not coming back — drop the re-attach
+            // id (#2457).
+            entry.backend_session_id = None;
         }
     }
 
@@ -356,6 +386,25 @@ impl SessionLifecycleStore {
         let mut inner = self.lock();
         if let Some(entry) = inner.sessions.get_mut(session_id) {
             entry.reconnect_error = error;
+        }
+    }
+
+    /// Record (or clear) the **backend** session id the frontend should attach
+    /// terminal I/O to for a tab (#2457). `session_id` is the region key (the
+    /// frontend tab id); `backend_session_id` is the id of the live backend
+    /// session that tab currently maps to (`None` clears it). This is a pure
+    /// metadata write — it does not touch `status`, the reconnect engine or the
+    /// backend timer.
+    ///
+    /// Called at the source the instant a (re)connect establishes a session: the
+    /// initial-connect fold (`create_connection`) and, later, the backend
+    /// reconnect redrive (#2454). A no-op for an unknown session (mirrors
+    /// [`set_reconnect_trigger`](Self::set_reconnect_trigger)): the id is only
+    /// ever set for a tab whose lifecycle the store already tracks.
+    pub fn set_backend_session_id(&self, session_id: &str, backend_session_id: Option<String>) {
+        let mut inner = self.lock();
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.backend_session_id = backend_session_id;
         }
     }
 

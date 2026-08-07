@@ -282,3 +282,91 @@ fn reconnect_trigger_cause_is_serialized_only_when_set() {
         serde_json::json!("why")
     );
 }
+
+#[test]
+fn set_backend_session_id_records_and_clears_the_id() {
+    // #2457: the backend session id is region-owned, set/cleared by its own pure
+    // metadata write without perturbing status or the reconnect engine.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.set_backend_session_id("s1", Some("backend-42".to_string()));
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.backend_session_id.as_deref(), Some("backend-42"));
+    // Status / reconnect detail untouched — this is pure metadata.
+    assert_eq!(s.status, SessionStatus::Connected);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+    // A None clears it.
+    store.set_backend_session_id("s1", None);
+    assert_eq!(store.get("s1").unwrap().backend_session_id, None);
+}
+
+#[test]
+fn set_backend_session_id_is_a_no_op_for_an_unknown_session() {
+    let store = deterministic_store();
+    store.set_backend_session_id("ghost", Some("backend-1".to_string()));
+    assert!(store.get("ghost").is_none());
+}
+
+#[test]
+fn backend_session_id_is_serialized_only_when_set() {
+    // Twin of the Rust field `backend_session_id`, serialized as `sessionId`.
+    let store = deterministic_store();
+    store.connect("s1");
+    assert!(store.snapshot()["sessions"]["s1"]
+        .get("sessionId")
+        .is_none());
+    store.set_backend_session_id("s1", Some("backend-7".to_string()));
+    assert_eq!(
+        store.snapshot()["sessions"]["s1"]["sessionId"],
+        serde_json::json!("backend-7")
+    );
+}
+
+#[test]
+fn teardown_transitions_clear_the_backend_session_id() {
+    // The re-attach id must never outlive the live session it names, so the
+    // region never advertises a dead backend session (#2457). Each teardown
+    // transition drops it.
+    for teardown in [
+        SessionLifecycleStore::disconnect as fn(&SessionLifecycleStore, &str),
+        SessionLifecycleStore::reconnect,
+        SessionLifecycleStore::cancel_reconnect,
+    ] {
+        let store = deterministic_store();
+        store.connect("s1");
+        store.connected("s1");
+        store.set_backend_session_id("s1", Some("backend-live".to_string()));
+        teardown(&store, "s1");
+        assert_eq!(
+            store.get("s1").unwrap().backend_session_id,
+            None,
+            "teardown transition should clear the backend session id"
+        );
+    }
+    // dropped / connect_failed take a message arg — exercise them separately.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.set_backend_session_id("s1", Some("backend-live".to_string()));
+    store.dropped("s1", Some("link lost".to_string()));
+    assert_eq!(store.get("s1").unwrap().backend_session_id, None);
+
+    let store = deterministic_store();
+    store.connect("s2");
+    store.set_backend_session_id("s2", Some("backend-live".to_string()));
+    store.connect_failed("s2", Some("auth denied".to_string()));
+    assert_eq!(store.get("s2").unwrap().backend_session_id, None);
+}
+
+#[test]
+fn a_fresh_connect_starts_without_a_stale_backend_session_id() {
+    // `connect` replaces the whole entry, so a prior id never leaks into a new
+    // connect cycle for a reused tab id (#2457).
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.set_backend_session_id("s1", Some("old-backend".to_string()));
+    store.connect("s1");
+    assert_eq!(store.get("s1").unwrap().backend_session_id, None);
+}
