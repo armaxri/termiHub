@@ -36,6 +36,7 @@ use super::line_ending::{normalize_line_endings, LineEnding};
 use super::monitoring_controller::MonitoringController;
 use super::persistent_controller::PersistentController;
 use super::remote_proxy::RemoteProxy;
+use super::retained_request::{RetainedConnectionRequest, RetainedRequestStore};
 use super::session_log::{default_session_log_path, desktop_clock};
 
 /// Maximum number of concurrent sessions.
@@ -393,6 +394,12 @@ pub struct SessionManager {
     /// [`SessionTabIds`]. Populated in [`Self::create_connection`] from the
     /// caller's `connect_id`, cleared on every session-removal path.
     pub(super) session_tab_ids: SessionTabIds,
+    /// Per-tab retained connection requests for the resilient-reconnect loop
+    /// (#2454, retention Model A). Populated in [`Self::create_connection`] for a
+    /// resilient **direct** session, and dropped + zeroized on every
+    /// terminal-loop / session-end path (the mandatory secret-lifetime
+    /// mitigation). See [`super::retained_request`].
+    pub(super) retained_requests: RetainedRequestStore,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -472,6 +479,7 @@ impl SessionManager {
             output_buffers: Arc::new(StdMutex::new(HashMap::new())),
             session_loggers: Arc::new(StdMutex::new(HashMap::new())),
             session_tab_ids: Arc::new(StdMutex::new(HashMap::new())),
+            retained_requests: RetainedRequestStore::new(),
         }
     }
 
@@ -805,10 +813,31 @@ impl SessionManager {
                 .insert(
                     session_id.clone(),
                     TabBinding {
-                        tab_id,
+                        tab_id: tab_id.clone(),
                         resilient: resilient_reconnect,
                     },
                 );
+
+            // Retain the connection request for the resilient-reconnect loop
+            // (#2454, retention Model A) so the backend redrive (follow-up) can
+            // re-establish the transport itself. Scoped to **resilient DIRECT**
+            // (non-agent) sessions — agent silent-retry is #2455 and a
+            // non-resilient tab never reconnects, so neither retains a secret.
+            // Refreshed on every (re)connect of the tab; dropped + zeroized on
+            // any terminal-loop / session-end path (see the module docs and the
+            // `clear_retained_request` call sites). A no-op for the internal
+            // agent-setup session, which carries no `connect_id` / tab id.
+            if resilient_reconnect && agent_id.is_none() {
+                self.retained_requests.retain(
+                    &tab_id,
+                    RetainedConnectionRequest {
+                        type_id: type_id.to_string(),
+                        settings: settings.clone(),
+                        agent_id: None,
+                        resilient: true,
+                    },
+                );
+            }
         }
 
         // Determine if we should wait for screen clear (initial command).
@@ -984,16 +1013,42 @@ impl SessionManager {
         // never sees a binding and never folds a `dropped`/`reconnect` for it. Only
         // a *genuine* spontaneous drop — where no `close_session` ran — leaves the
         // binding intact to arm that fold.
-        self.session_tab_ids
+        let removed_binding = self
+            .session_tab_ids
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(session_id);
+        // Drop + zeroize the tab's retained connection request (#2454): a
+        // deliberate close of a *live* session ends its reconnect loop, so no
+        // resolved secret must linger. (A close after a spontaneous drop finds no
+        // binding here — the drop already removed it — so the post-drop terminal
+        // states clear the retained request via the lifecycle-intent routes.)
+        if let Some(binding) = &removed_binding {
+            self.retained_requests.clear(&binding.tab_id);
+        }
         let mut sessions = self.sessions.lock().await;
         if let Some(mut entry) = sessions.remove(session_id) {
             entry.connection.disconnect().await.ok();
             info!(session_id, "Closed session");
         }
         Ok(())
+    }
+
+    /// Drop + zeroize the retained connection request for a tab (#2454, retention
+    /// Model A). The security-mitigation scrub point invoked by every
+    /// terminal-loop / session-end path that the manager itself does not observe
+    /// — the give-up, user-cancel, graceful-disconnect and remove lifecycle
+    /// transitions (routed through [`crate::session_projection::projection`]).
+    /// Idempotent: clearing a tab with no retained request is a no-op.
+    pub fn clear_retained_request(&self, tab_id: &str) {
+        self.retained_requests.clear(tab_id);
+    }
+
+    /// Whether a resilient-reconnect connection request is currently retained for
+    /// a tab (#2454). Used by tests and the (follow-up) backend redrive.
+    #[allow(dead_code)] // consumed by the retention tests and the follow-up backend redrive
+    pub fn has_retained_request(&self, tab_id: &str) -> bool {
+        self.retained_requests.contains(tab_id)
     }
 
     /// The frontend `tab_id` that owns a backend `session_id`, or `None` for a
@@ -2677,6 +2732,101 @@ mod tests {
             None,
             "closing a session clears its identity-bridge entry"
         );
+    }
+
+    #[tokio::test]
+    async fn create_connection_retains_request_for_resilient_direct_session() {
+        let manager = make_test_manager();
+        manager
+            .create_connection(
+                "mock",
+                serde_json::json!({ "password": "secret" }),
+                None, // direct (no agent)
+                Some("tab-r:0"),
+                false,
+                true, // resilient
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("session should open");
+        assert!(
+            manager.has_retained_request("tab-r"),
+            "a resilient direct session retains its connection request (#2454 Model A)"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_connection_does_not_retain_for_non_resilient_session() {
+        let manager = make_test_manager();
+        manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                Some("tab-nr:0"),
+                false,
+                false, // not resilient
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("session should open");
+        assert!(
+            !manager.has_retained_request("tab-nr"),
+            "a non-resilient tab never reconnects, so nothing is retained"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_connection_without_tab_retains_nothing() {
+        let manager = make_test_manager();
+        manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                None, // no connect_id → no tab id to key by
+                false,
+                true,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("session should open");
+        assert!(!manager.has_retained_request(""));
+    }
+
+    #[tokio::test]
+    async fn close_session_clears_the_retained_request() {
+        let manager = make_test_manager();
+        let session_id = manager
+            .create_connection(
+                "mock",
+                serde_json::json!({ "password": "secret" }),
+                None,
+                Some("tab-c:0"),
+                false,
+                true,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("session should open");
+        assert!(manager.has_retained_request("tab-c"));
+
+        manager
+            .close_session(&session_id)
+            .await
+            .expect("close should succeed");
+        assert!(
+            !manager.has_retained_request("tab-c"),
+            "closing a live session drops + zeroizes its retained request (#2454)"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_retained_request_is_idempotent() {
+        let manager = make_test_manager();
+        // Clearing a tab that never retained anything is a safe no-op.
+        manager.clear_retained_request("never-seen");
+        assert!(!manager.has_retained_request("never-seen"));
     }
 
     #[tokio::test]
