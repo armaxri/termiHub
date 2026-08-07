@@ -478,23 +478,70 @@ mod tests {
     //   docker compose -f tests/docker/docker-compose.yml up -d ssh-password
     //
     // The test is pinned to **password auth** against the `ssh-password` container.
-    // The port is read from `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default 2201) so a
-    // sharded / parallel run can point at a separate container instance, and every
-    // upload targets a UUID-suffixed remote path so concurrent tests never collide
-    // on the remote `/tmp` file. (The per-checkout `dev_agent_port` sshd from
-    // `dev.local.json` is key-auth only — `PasswordAuthentication no` — so it is
-    // deliberately not a target here.)
+    // The port is per-checkout offset aware (see below) so parallel checkouts each
+    // target *their own* ssh-password container instead of colliding on the shared
+    // base 2201 (#2448), and every upload targets a UUID-suffixed remote path so
+    // concurrent tests never collide on the remote `/tmp` file. (The per-checkout
+    // `dev_agent_port` sshd from `dev.local.json` is key-auth only —
+    // `PasswordAuthentication no` — so it is deliberately not a target here.)
 
-    /// Default host port of the shared `ssh-password` container (`tests/docker`).
+    /// Base host port of the shared `ssh-password` container (`tests/docker`).
     const DEFAULT_SSH_PASSWORD_PORT: u16 = 2201;
 
-    /// Resolve the `ssh-password` container port, allowing an env override so
-    /// parallel runs can target distinct container instances.
+    /// Resolve the `ssh-password` container port (per-checkout offset aware),
+    /// matching `core/tests/common`'s `resolve_port` / `port_ssh_password` and
+    /// `src-tauri/tests/sftp_transfer.rs`'s `sftp_stress_port`. An explicit
+    /// `TERMIHUB_TEST_SSH_PASSWORD_PORT` wins; otherwise the base plus
+    /// `TERMIHUB_TEST_PORT_OFFSET` (default offset `0`, i.e. historical 2201).
+    /// Both env vars are exported from this checkout's `dev.local.json` by
+    /// `scripts/internal/dev-local-env.sh` — see `docs/testing.md` → "Parallel
+    /// test isolation". Without them (a lone checkout / bare `cargo test`) the
+    /// port falls back to 2201, so single-checkout behaviour is unchanged.
     fn ssh_password_port() -> u16 {
-        std::env::var("TERMIHUB_TEST_SSH_PASSWORD_PORT")
+        if let Some(p) = std::env::var("TERMIHUB_TEST_SSH_PASSWORD_PORT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_SSH_PASSWORD_PORT)
+        {
+            return p;
+        }
+        let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        DEFAULT_SSH_PASSWORD_PORT + offset
+    }
+
+    /// Register a process-wide host-key verifier that trusts the local Docker
+    /// fixture containers, so this test connects deterministically under the
+    /// strict default host-key policy (#1969, #2032). Opening a session goes
+    /// through the same strict host-key path as the rest of the app: with no
+    /// verifier registered it trusts only keys already in the runner's
+    /// `~/.ssh/known_hosts` and refuses everything else with "Unknown server
+    /// key". CI runners (and any freshly-(re)built fixture image) never have the
+    /// generated fixture key recorded, so the handshake fails pre-auth (#2105).
+    /// This test connects only to the loopback `ssh-password` fixture, where
+    /// there is no man-in-the-middle to guard against, so a test-only verifier
+    /// that trusts every fixture key is safe and deterministic. Mirrors core's
+    /// `trust_fixture_host_keys()` (`core/tests/common/mod.rs`) and the sibling
+    /// desktop `src-tauri/tests/sftp_transfer.rs`. Registration is set-once and
+    /// idempotent (first call wins), so calling it here is harmless.
+    fn trust_fixture_host_keys() {
+        use std::sync::Arc;
+        use termihub_core::backends::ssh::host_key::{
+            set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+        };
+
+        struct TrustLocalFixtures;
+
+        #[async_trait::async_trait]
+        impl HostKeyVerifier for TrustLocalFixtures {
+            async fn verify(&self, _info: &HostKeyInfo) -> bool {
+                true
+            }
+        }
+
+        // First registration wins; any later call is a harmless no-op.
+        let _ = set_host_key_verifier(Arc::new(TrustLocalFixtures));
     }
 
     /// Returns `true` if a TCP connection to the SSH server succeeds quickly.
@@ -518,6 +565,11 @@ mod tests {
             );
             return;
         }
+
+        // Trust the loopback fixture host key before connecting, so the strict
+        // default host-key policy (#1969) does not refuse the fixture container
+        // with "Unknown server key" (#2032/#2105).
+        trust_fixture_host_keys();
 
         // Run the whole deploy SFTP path on a `spawn_blocking` thread, exactly as
         // the agent-setup background phase now does (#837). This is the context
