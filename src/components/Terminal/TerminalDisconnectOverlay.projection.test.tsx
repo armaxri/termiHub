@@ -137,6 +137,47 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     expect(overlay?.textContent).toContain("Reconnecting");
   });
 
+  it("renders the reconnect-trigger error sourced from a mirroring region snapshot (#2442)", async () => {
+    useAppStore.setState({
+      terminalReconnectingTabs: { [TAB]: true },
+      terminalReconnectTriggerErrors: { [TAB]: "connection reset" },
+    });
+    transport.setSession(
+      TAB,
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }, "connection reset")
+    );
+
+    act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
+    await flush();
+
+    expect(transport.subscribeCount).toBeGreaterThan(0);
+    const errorBox = container.querySelector(
+      "[data-testid='terminal-disconnect-trigger-error-box']"
+    );
+    expect(errorBox?.textContent).toContain("connection reset");
+  });
+
+  it("keeps the trigger error identical to appStore when the region diverges (fallback parity, #2442)", async () => {
+    useAppStore.setState({
+      terminalReconnectingTabs: { [TAB]: true },
+      terminalReconnectTriggerErrors: { [TAB]: "local cause" },
+    });
+    // The region carries a stale/divergent trigger error; the gate must reject it.
+    transport.setSession(
+      TAB,
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }, "stale cause")
+    );
+
+    act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
+    await flush();
+
+    const errorBox = container.querySelector(
+      "[data-testid='terminal-disconnect-trigger-error-box']"
+    );
+    expect(errorBox?.textContent).toContain("local cause");
+    expect(errorBox?.textContent).not.toContain("stale cause");
+  });
+
   it("renders the disconnect error sourced from a mirroring failed snapshot", async () => {
     useAppStore.setState({ terminalDisconnectErrors: { [TAB]: "auth failed" } });
     transport.setSession(TAB, failed("auth failed"));

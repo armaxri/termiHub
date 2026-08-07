@@ -161,9 +161,19 @@ export function connected(): ProjectedSessionLifecycle {
   return { status: "connected", reconnect: idleReconnect() };
 }
 
-/** A `reconnecting` projected lifecycle carrying the loop detail. */
-export function reconnecting(reconnect: ProjectedReconnect): ProjectedSessionLifecycle {
-  return { status: "reconnecting", reconnect };
+/**
+ * A `reconnecting` projected lifecycle carrying the loop detail and, optionally,
+ * the region-owned reconnect-trigger cause (#2442).
+ */
+export function reconnecting(
+  reconnect: ProjectedReconnect,
+  reconnectError?: string
+): ProjectedSessionLifecycle {
+  return {
+    status: "reconnecting",
+    reconnect,
+    ...(reconnectError !== undefined ? { reconnectError } : {}),
+  };
 }
 
 /** A terminal `failed` projected lifecycle carrying the disconnect error. */

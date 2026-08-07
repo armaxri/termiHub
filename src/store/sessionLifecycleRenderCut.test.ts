@@ -19,6 +19,7 @@ import {
   effectiveDisconnectErrorMap,
   effectiveReconnecting,
   effectiveReconnectingMap,
+  effectiveReconnectTriggerError,
   setSessionRenderFromProjectionEnabled,
   type ProjectedSessionLifecycle,
 } from "@/store/sessionBridge";
@@ -30,6 +31,14 @@ function life(
   error?: string
 ): ProjectedSessionLifecycle {
   return { status, reconnect: idle, ...(error !== undefined ? { error } : {}) };
+}
+
+/** A projected lifecycle carrying a region-owned reconnect-trigger cause (#2442). */
+function withTrigger(
+  status: ProjectedSessionLifecycle["status"],
+  reconnectError?: string
+): ProjectedSessionLifecycle {
+  return { status, reconnect: idle, ...(reconnectError !== undefined ? { reconnectError } : {}) };
 }
 
 afterEach(() => {
@@ -83,6 +92,39 @@ describe("effectiveDisconnectError", () => {
 
   it("returns undefined when neither has an error", () => {
     expect(effectiveDisconnectError(undefined, life("connected"))).toBeUndefined();
+  });
+});
+
+describe("effectiveReconnectTriggerError (#2442)", () => {
+  it("sources the trigger error from a mirroring region reconnectError field", () => {
+    expect(effectiveReconnectTriggerError("reset", withTrigger("reconnecting", "reset"))).toBe(
+      "reset"
+    );
+    // Read directly off the field, independent of status.
+    expect(effectiveReconnectTriggerError("reset", withTrigger("connected", "reset"))).toBe(
+      "reset"
+    );
+  });
+
+  it("falls back to the local error when the strings diverge or the region is silent", () => {
+    expect(effectiveReconnectTriggerError("reset", withTrigger("reconnecting", "different"))).toBe(
+      "reset"
+    );
+    // Region has no reconnectError (not yet mirrored) but local does — local wins.
+    expect(effectiveReconnectTriggerError("reset", withTrigger("reconnecting"))).toBe("reset");
+    expect(effectiveReconnectTriggerError("reset", undefined)).toBe("reset");
+  });
+
+  it("returns undefined when neither carries a trigger error", () => {
+    expect(effectiveReconnectTriggerError(undefined, withTrigger("reconnecting"))).toBeUndefined();
+  });
+
+  it("returns the local value verbatim when the render cut is off", () => {
+    setSessionRenderFromProjectionEnabled(false);
+    // A divergent region value must be ignored with the flag off.
+    expect(effectiveReconnectTriggerError("reset", withTrigger("reconnecting", "other"))).toBe(
+      "reset"
+    );
   });
 });
 

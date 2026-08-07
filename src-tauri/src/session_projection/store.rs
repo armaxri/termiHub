@@ -90,6 +90,18 @@ pub struct SessionLifecycle {
     /// session carried one); `None` otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The cause that *triggered* the current reconnect — the error an agent
+    /// reported when its link dropped and started re-establishing the session
+    /// (#2442). Distinct from [`error`](Self::error): that is the terminal
+    /// `Failed` / dropped message, whereas this is the supplementary "why we are
+    /// reconnecting" note the disconnect overlay shows *while* a session is
+    /// reconnecting. Carried on the shared record because the drop cause is a
+    /// property of the session (every client observing it sees the same cause),
+    /// not a per-client presentation affordance. Cleared by any lifecycle
+    /// resolution (connect / connected / disconnect / dropped / …); `None`
+    /// otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reconnect_error: Option<String>,
 }
 
 impl SessionLifecycle {
@@ -100,6 +112,7 @@ impl SessionLifecycle {
             reconnect: INITIAL_RECONNECT_STATE,
             end_reason: None,
             error: None,
+            reconnect_error: None,
         }
     }
 }
@@ -210,6 +223,7 @@ impl SessionLifecycleStore {
         entry.reconnect = reconnect;
         entry.end_reason = None;
         entry.error = None;
+        entry.reconnect_error = None;
     }
 
     /// `session.connectFailed` — the initial connect errored. Terminal `Failed`
@@ -224,6 +238,7 @@ impl SessionLifecycleStore {
         entry.reconnect = INITIAL_RECONNECT_STATE;
         entry.end_reason = Some(EndReason::Error);
         entry.error = error;
+        entry.reconnect_error = None;
     }
 
     /// `session.disconnect` — a user-initiated graceful disconnect. Stops any
@@ -238,6 +253,7 @@ impl SessionLifecycleStore {
         entry.reconnect = INITIAL_RECONNECT_STATE;
         entry.end_reason = Some(EndReason::User);
         entry.error = None;
+        entry.reconnect_error = None;
     }
 
     /// `session.dropped` — the link dropped without the user asking. Lands in
@@ -254,6 +270,7 @@ impl SessionLifecycleStore {
         entry.reconnect = INITIAL_RECONNECT_STATE;
         entry.end_reason = Some(EndReason::Unexpected);
         entry.error = error;
+        entry.reconnect_error = None;
     }
 
     /// `session.reconnect` — begin (or restart) the auto-reconnect loop. Feeds
@@ -271,6 +288,7 @@ impl SessionLifecycleStore {
         entry.status = SessionStatus::Reconnecting;
         entry.reconnect = reconnect;
         entry.end_reason = None;
+        entry.reconnect_error = None;
     }
 
     /// `session.reconnectAttempt` — the backoff timer fired; start an attempt.
@@ -319,6 +337,25 @@ impl SessionLifecycleStore {
             entry.status = SessionStatus::Disconnected;
             entry.reconnect = INITIAL_RECONNECT_STATE;
             entry.end_reason = Some(EndReason::User);
+            entry.reconnect_error = None;
+        }
+    }
+
+    /// `session.reconnectTrigger` — record (or clear) the cause that triggered a
+    /// reconnect for a session (#2442). `Some(msg)` sets the supplementary
+    /// "why we are reconnecting" note the disconnect overlay shows while a session
+    /// is reconnecting; `None` clears it. This is a pure metadata write: it does
+    /// **not** touch `status`, the reconnect engine or the backend timer — the
+    /// agent-managed reconnect it accompanies is distinct from the agentless
+    /// backoff loop (`reconnect` / `reconnectAttempt`), and every lifecycle
+    /// resolution already clears `reconnect_error`. A no-op for an unknown session
+    /// (mirrors [`reconnect_attempt`](Self::reconnect_attempt) /
+    /// [`reconnect_failed`](Self::reconnect_failed)): the record is only ever set
+    /// for a session that has already connected.
+    pub fn set_reconnect_trigger(&self, session_id: &str, error: Option<String>) {
+        let mut inner = self.lock();
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.reconnect_error = error;
         }
     }
 
