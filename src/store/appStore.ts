@@ -1986,6 +1986,55 @@ function resolveEditorSessionKey(
 }
 
 /**
+ * Derive the sudo host label (`user@host:port`) for a session-backed remote
+ * editor tab, or `null` when none applies.
+ *
+ * The file editor's sudo flow uses this label to (a) name the host in the
+ * sudo-password prompt and (b) namespace the optional credential-store entry for
+ * a remembered sudo password. Two properties are load-bearing (#2424 / #2426):
+ *
+ * - **Reconnect-stable** — the saved sudo password must keep resolving after the
+ *   owning terminal reconnects. The owning tab is therefore located by its
+ *   *stable id* (encoded in the editor tab's reconnect-stable `sessionKey`,
+ *   `session:<owningTabId>`), falling back to the live `sessionBrowser.sessionId`
+ *   only when no `sessionKey` is present. A reconnect swaps the session id but
+ *   keeps the tab (and its connection config), so the label value is unchanged.
+ * - **Byte-identical to the legacy SFTP label** — before SSH file editing
+ *   converged onto the session path (#2420 / #2421) and the `sftpSessionId` model
+ *   was retired (#2422), this label came from `sftpSessions[id].hostLabel`, built
+ *   as `${username}@${host}:${port}` from the connection config. Reproducing that
+ *   exact string here means sudo passwords saved before the convergence still
+ *   resolve — the migration does not orphan them.
+ *
+ * Returns `null` for local tabs, tabs whose owning terminal cannot be found, and
+ * non-labelable backends (e.g. Docker / FTP / agent, which carry no
+ * `user@host:port`); callers then fall back to the file path, preserving the
+ * pre-convergence graceful-degradation behaviour.
+ */
+export function deriveEditorHostLabel(
+  state: { rootPanel: PanelNode },
+  meta: Pick<EditorTabMeta, "isRemote" | "sessionBrowser" | "sessionKey">
+): string | null {
+  if (!meta.isRemote || !meta.sessionBrowser) return null;
+  const tabs = getAllLeaves(state.rootPanel).flatMap((l) => l.tabs);
+  const owningTabId = meta.sessionKey?.startsWith("session:")
+    ? meta.sessionKey.slice("session:".length)
+    : undefined;
+  const owner =
+    (owningTabId ? tabs.find((t) => t.id === owningTabId) : undefined) ??
+    tabs.find((t) => t.sessionId === meta.sessionBrowser?.sessionId);
+  if (!owner) return null;
+  const cfg = owner.config.config;
+  const { username, host, port } = cfg;
+  // A labelable connection (SSH) carries all three; byte-based backends
+  // (Docker / FTP / agent) don't, so they fall through to the path fallback.
+  if (typeof host !== "string" || host === "" || typeof username !== "string" || port == null) {
+    return null;
+  }
+  return `${username}@${host}:${port}`;
+}
+
+/**
  * Enumerate every live tab across all tab groups (the active group is
  * represented by the live `rootPanel`, the others by their stored trees). Used
  * by the bulk-reconnect control to filter captured failed ids down to tabs that
