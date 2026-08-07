@@ -111,6 +111,49 @@ describe("dispatchCommand select against the Select primitive", () => {
     document.querySelector('.ui-select__item[data-value="serial"]')?.remove();
   });
 
+  it("still resolves when requestAnimationFrame is paused (occluded WebView)", async () => {
+    // Regression for #2460: a real WKWebView *has* rAF but throttles or fully
+    // pauses it when its window is occluded/backgrounded (aggravated by
+    // concurrent build load). The `select` verb polls the portal mount via
+    // `nextFrame`, so an rAF-only yield stalls with no frames delivered and the
+    // command hangs until the bridge's 10s timeout — the reported symptom. With
+    // the wall-clock fallback in `nextFrame`, a single dispatch must still locate
+    // and click a late-mounting option even while rAF never fires.
+    const realRaf = globalThis.requestAnimationFrame;
+    // Paused rAF: registers callbacks but never invokes them.
+    globalThis.requestAnimationFrame = (() => 0) as typeof requestAnimationFrame;
+    try {
+      const trigger = document.createElement("button");
+      trigger.setAttribute("data-testid", "sel");
+      trigger.className = "ui-select__trigger";
+      document.body.appendChild(trigger);
+
+      const clicked = vi.fn();
+      trigger.addEventListener("keydown", (e) => {
+        if ((e as KeyboardEvent).key !== "Enter") return;
+        setTimeout(() => {
+          const opt = document.createElement("div");
+          opt.className = "ui-select__item";
+          opt.setAttribute("data-value", "serial");
+          opt.addEventListener("click", () => clicked());
+          document.body.appendChild(opt);
+        }, 0);
+      });
+
+      const res = await dispatchCommand(
+        { action: "select", testId: "sel", value: "serial" },
+        deps()
+      );
+
+      expect(res.ok).toBe(true);
+      expect(clicked).toHaveBeenCalledTimes(1);
+      trigger.remove();
+      document.querySelector('.ui-select__item[data-value="serial"]')?.remove();
+    } finally {
+      globalThis.requestAnimationFrame = realRaf;
+    }
+  });
+
   it("reports an error when the requested option is absent", async () => {
     act(() => {
       root.render(<Select data-testid="sel" value="local" onChange={() => {}} options={OPTIONS} />);
