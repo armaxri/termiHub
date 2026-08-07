@@ -39,6 +39,7 @@ import {
   effectiveDisconnectErrorMap,
   effectiveReconnecting,
   effectiveReconnectingMap,
+  effectiveReconnectTriggerError,
   ensureSessionSubscribed,
   logSessionBridgeFallback,
   onSessionView,
@@ -109,6 +110,9 @@ export interface ProjectedSessionLifecycleSlice {
   reconnecting: boolean;
   /** The failed-(re)connect error, if any (mirrors `terminalDisconnectErrors`). */
   disconnectError: string | undefined;
+  /** The reconnect-trigger cause shown while reconnecting, if any (mirrors
+   * `terminalReconnectTriggerErrors`, #2442). */
+  reconnectTriggerError: string | undefined;
 }
 
 /**
@@ -127,6 +131,7 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
   const connectingLocal = useAppStore((s) => s.terminalConnecting[tabId] ?? false);
   const reconnectingLocal = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
   const disconnectErrorLocal = useAppStore((s) => s.terminalDisconnectErrors[tabId]);
+  const reconnectTriggerErrorLocal = useAppStore((s) => s.terminalReconnectTriggerErrors[tabId]);
 
   // Read the flag once at mount: it flips only via dev tooling, and the
   // subscription lifecycle is keyed off it below.
@@ -165,6 +170,7 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
     connecting: effectiveConnecting(connectingLocal, p),
     reconnecting: effectiveReconnecting(reconnectingLocal, p),
     disconnectError: effectiveDisconnectError(disconnectErrorLocal, p),
+    reconnectTriggerError: effectiveReconnectTriggerError(reconnectTriggerErrorLocal, p),
   };
 }
 

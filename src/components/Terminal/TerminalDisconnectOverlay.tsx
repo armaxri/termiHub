@@ -139,18 +139,18 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
   const setTerminalExited = useAppStore((s) => s.setTerminalExited);
-  // Render cut (#2205 PR-A): the disconnect error and reconnect flag are sourced
-  // from the projected `session-lifecycle` region (falls back to appStore when it
-  // does not mirror). `terminalReconnectTriggerErrors` stays on appStore — the
-  // region has no distinct field for a manual-reconnect-trigger error, so PR-A
-  // cannot faithfully mirror it (see #2205 PR-A notes).
+  // Render cut (#2205 PR-A / #2442): the disconnect error, reconnect flag and the
+  // reconnect-trigger error are all sourced from the projected `session-lifecycle`
+  // region (falls back to appStore when it does not mirror). #2442 added the
+  // region's distinct `reconnectError` field + `session.reconnectTrigger` intent
+  // so the trigger error is region-owned rather than read from appStore directly.
   const lifecycle = useProjectedSessionLifecycle(tabId);
   const disconnectError = lifecycle.disconnectError;
   const isReconnecting = lifecycle.reconnecting;
+  const reconnectTriggerError = lifecycle.reconnectTriggerError;
   // The auto-reconnect gate reads the same projected-with-fallback loop detail as
   // the countdown overlay itself, so the region drives which variant shows (#2204).
   const autoReconnectWaiting = useSessionAutoReconnect(tabId)?.phase === "waiting";
-  const reconnectTriggerError = useAppStore((s) => s.terminalReconnectTriggerErrors[tabId]);
   const exitInfo = useAppStore((s) => s.terminalExitInfo[tabId]);
 
   const handleReconnect = useCallback(() => {

@@ -78,6 +78,10 @@ export interface ProjectedSessionLifecycle {
   reconnect: ProjectedReconnect;
   endReason?: ProjectedEndReason;
   error?: string;
+  /** The cause that triggered the current reconnect — the supplementary "why we
+   * are reconnecting" note shown while a session is reconnecting (#2442). Twin of
+   * the Rust `reconnect_error`. Distinct from `error` (the terminal failure msg). */
+  reconnectError?: string;
 }
 
 /** The `session-lifecycle` region view model: `{ sessions: { <id>: … } }`. */
@@ -96,6 +100,7 @@ export type SessionIntentKind =
   | "session.reconnectAttempt"
   | "session.reconnectFailed"
   | "session.cancelReconnect"
+  | "session.reconnectTrigger"
   | "session.remove";
 
 // ── Feature flag (runtime-flippable, off by default) ───────────────────────────
@@ -534,6 +539,28 @@ export function effectiveDisconnectError(
 ): string | undefined {
   if (!sessionRenderFromProjectionEnabled()) return local;
   const projectedError = projected?.status === "failed" ? projected.error : undefined;
+  if (projectedError !== local) return local;
+  return projectedError;
+}
+
+/**
+ * Effective `terminalReconnectTriggerErrors[tabId]` for rendering (#2442): the
+ * projected `reconnectError` when it mirrors the local trigger error exactly,
+ * otherwise the local value verbatim (`undefined` ⇒ no error).
+ *
+ * Unlike the status-keyed gates above, this reads the region's `reconnectError`
+ * field directly rather than off a status: the reconnect-trigger cause is written
+ * by its own `session.reconnectTrigger` intent and is meaningful alongside the
+ * agent-managed reconnecting phase (which the region does not itself model as a
+ * status). The disconnect overlay only surfaces it inside the reconnecting
+ * variant, so the value is byte-identical to the pre-cut `appStore` read.
+ */
+export function effectiveReconnectTriggerError(
+  local: string | undefined,
+  projected: ProjectedSessionLifecycle | undefined
+): string | undefined {
+  if (!sessionRenderFromProjectionEnabled()) return local;
+  const projectedError = projected?.reconnectError;
   if (projectedError !== local) return local;
   return projectedError;
 }

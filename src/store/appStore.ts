@@ -5644,7 +5644,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
         get().reconnectTerminal(id);
       }
     },
-    setTerminalReconnecting: (tabId, reconnecting) =>
+    setTerminalReconnecting: (tabId, reconnecting) => {
+      // Session-intents cut (#2442): reconnecting ending clears the region's
+      // reconnect-trigger cause too, keeping the projected `reconnectError`
+      // field in lockstep with the local slice (the two clear together).
+      if (!reconnecting && sessionIntentsEnabled()) {
+        mirrorSessionIntent("session.reconnectTrigger", tabId);
+      }
       set((state) =>
         reconnecting
           ? { terminalReconnectingTabs: { ...state.terminalReconnectingTabs, [tabId]: true } }
@@ -5652,20 +5658,28 @@ export const useAppStore = create<AppState>((set, get, store) => {
               terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
               terminalReconnectTriggerErrors: omitKey(state.terminalReconnectTriggerErrors, tabId),
             }
-      ),
+      );
+    },
     setTerminalReattaching: (tabId, reattaching) =>
       set((state) => ({
         terminalReattaching: reattaching
           ? { ...state.terminalReattaching, [tabId]: true }
           : omitKey(state.terminalReattaching, tabId),
       })),
-    setTerminalReconnectTriggerError: (tabId, error) =>
+    setTerminalReconnectTriggerError: (tabId, error) => {
+      // Session-intents cut (#2442): the reconnect-trigger cause is region-owned.
+      // Mirror it to the shared `session-lifecycle` region so the disconnect
+      // overlay can read it from the projection (a null error clears the field).
+      if (sessionIntentsEnabled()) {
+        mirrorSessionIntent("session.reconnectTrigger", tabId, error ?? undefined);
+      }
       set((state) => ({
         terminalReconnectTriggerErrors:
           error === null
             ? omitKey(state.terminalReconnectTriggerErrors, tabId)
             : { ...state.terminalReconnectTriggerErrors, [tabId]: error },
-      })),
+      }));
+    },
     dismissTerminalDisconnect: (tabId) =>
       set((state) => ({
         // Keep terminalExitedTabs[tabId] = true so the banner can detect the dead session;
