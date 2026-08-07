@@ -232,6 +232,19 @@ type OutputBuffers = Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>>;
 /// session without disturbing the reader.
 type SessionLoggers = Arc<StdMutex<HashMap<String, Arc<StdMutex<SessionLogger>>>>>;
 
+/// Backend `session_id` (uuid) → frontend `tab_id` identity bridge (#2431).
+///
+/// The shared `session-lifecycle` projection region is keyed by the **frontend
+/// tab id** (deliberately — it survives a reconnect even as the backend
+/// `session_id` changes; see `src/store/sessionBridge.ts`). Backend sources of
+/// lifecycle transitions (`create_connection`, the `terminal-exit` emission,
+/// `close_session`) only know the uuid `session_id` / the caller's `connect_id`,
+/// so without this map the server could not address a session's tab-id-keyed
+/// region entry. `create_connection` records the mapping (parsing the tab id from
+/// `connect_id = ${tabId}:${retryCount}`), and every session-removal path clears
+/// it, so the map tracks exactly the live sessions that carry a tab id.
+type SessionTabIds = Arc<StdMutex<HashMap<String, String>>>;
+
 /// Status of a session's output logging, returned to the frontend.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -286,6 +299,10 @@ pub struct SessionManager {
     /// each emitted chunk through the matching logger, so a session's transcript
     /// captures exactly what the frontend receives — for every session type.
     pub(super) session_loggers: SessionLoggers,
+    /// Backend `session_id` → frontend `tab_id` identity bridge (#2431). See
+    /// [`SessionTabIds`]. Populated in [`Self::create_connection`] from the
+    /// caller's `connect_id`, cleared on every session-removal path.
+    pub(super) session_tab_ids: SessionTabIds,
 }
 
 /// Removes a `connect_id` from the [`SessionManager::connecting`] map when the
@@ -302,6 +319,21 @@ impl Drop for ConnectingGuard {
             map.remove(&self.id);
         }
     }
+}
+
+/// Extract the frontend `tab_id` from a `connect_id` of the form
+/// `${tabId}:${retryCount}` (#2431).
+///
+/// The frontend builds `connect_id = ${tabId}:${retryCount}` (`Terminal.tsx`);
+/// the retry count is a trailing numeric segment, so the tab id is everything
+/// before the last `:`. A `connect_id` with no `:` (an unexpected form) yields
+/// `None` rather than guessing. An empty tab id is likewise rejected.
+fn tab_id_from_connect_id(connect_id: &str) -> Option<String> {
+    connect_id
+        .rsplit_once(':')
+        .map(|(tab_id, _retry)| tab_id)
+        .filter(|tab_id| !tab_id.is_empty())
+        .map(str::to_string)
 }
 
 impl SessionManager {
@@ -335,6 +367,7 @@ impl SessionManager {
             connecting: Arc::new(StdMutex::new(HashMap::new())),
             output_buffers: Arc::new(StdMutex::new(HashMap::new())),
             session_loggers: Arc::new(StdMutex::new(HashMap::new())),
+            session_tab_ids: Arc::new(StdMutex::new(HashMap::new())),
         }
     }
 
@@ -626,6 +659,19 @@ impl SessionManager {
             );
         }
 
+        // Record the backend `session_id` → frontend `tab_id` identity bridge
+        // (#2431) so server-side lifecycle sources can address this session's
+        // tab-id-keyed `session-lifecycle` region entry. The tab id is the
+        // `connect_id` up to its trailing `:${retryCount}` (see `Terminal.tsx`);
+        // a session created without a `connect_id` (e.g. the internal agent-setup
+        // session) carries no tab and is simply not mapped.
+        if let Some(tab_id) = connect_id.and_then(tab_id_from_connect_id) {
+            self.session_tab_ids
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(session_id.clone(), tab_id);
+        }
+
         // Determine if we should wait for screen clear (initial command).
         let has_initial_command = settings
             .get("initialCommand")
@@ -637,6 +683,7 @@ impl SessionManager {
         let capture = self.ensure_output_buffer(&session_id);
         let output_buffers = self.output_buffers.clone();
         let session_loggers = self.session_loggers.clone();
+        let session_tab_ids = self.session_tab_ids.clone();
         let sid = session_id.clone();
         tokio::spawn(async move {
             Self::run_output_reader(
@@ -648,6 +695,7 @@ impl SessionManager {
                 capture,
                 output_buffers,
                 session_loggers,
+                session_tab_ids,
             )
             .await;
         });
@@ -793,7 +841,33 @@ impl SessionManager {
             entry.connection.disconnect().await.ok();
             info!(session_id, "Closed session");
         }
+        // Clear the identity bridge entry (#2431) — the session is gone, so its
+        // tab mapping must not linger.
+        self.session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
         Ok(())
+    }
+
+    /// The frontend `tab_id` that owns a backend `session_id`, or `None` for a
+    /// session created without a `connect_id` (no tab) or already removed (#2431).
+    ///
+    /// The lookup backing the server-authoritative `session-lifecycle` fold: a
+    /// backend lifecycle source that knows only the uuid `session_id` (the
+    /// `terminal-exit` emission, `close_session`) resolves it to the tab id the
+    /// region is keyed by. The initial-connect fold (`create_connection`) reads
+    /// the tab id straight off the `connect_id`, so this uuid→tab lookup is only
+    /// consumed by the *deferred* drop / disconnect folds (see #2205 and the
+    /// follow-up); the map it reads is populated and cleaned up live, and the
+    /// lookup is covered by unit tests.
+    #[allow(dead_code)] // staged API: the deferred drop / disconnect folds consume this (#2205).
+    pub fn tab_id_for(&self, session_id: &str) -> Option<String> {
+        self.session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(session_id)
+            .cloned()
     }
 
     /// List all active sessions.
@@ -1261,6 +1335,7 @@ impl SessionManager {
     /// Coalesces pending output chunks into a single event (up to
     /// `MAX_COALESCE_BYTES`) to reduce IPC overhead.
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_output_reader<E: EventEmitter>(
         session_id: String,
         mut output_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
@@ -1270,6 +1345,7 @@ impl SessionManager {
         capture: Arc<StdMutex<RingBuffer>>,
         output_buffers: OutputBuffers,
         session_loggers: SessionLoggers,
+        session_tab_ids: SessionTabIds,
     ) {
         // Phase 1: optionally buffer until the screen-clear sequence.
         if wait_for_clear {
@@ -1302,6 +1378,7 @@ impl SessionManager {
                             &sessions,
                             &output_buffers,
                             &session_loggers,
+                            &session_tab_ids,
                         )
                         .await;
                         return;
@@ -1360,6 +1437,7 @@ impl SessionManager {
             &sessions,
             &output_buffers,
             &session_loggers,
+            &session_tab_ids,
         )
         .await;
     }
@@ -1382,6 +1460,7 @@ impl SessionManager {
     /// connection drops, the daemon process on the remote host survives. The
     /// `PersistentRecord` must be kept so that the next `attach_persistent_tab`
     /// call can re-create the `RemoteProxy` and reconnect to the surviving daemon.
+    #[allow(clippy::too_many_arguments)]
     async fn emit_and_cleanup<E: EventEmitter>(
         session_id: &str,
         data: Vec<u8>,
@@ -1389,6 +1468,7 @@ impl SessionManager {
         sessions: &Arc<Mutex<HashMap<String, SessionEntry>>>,
         output_buffers: &OutputBuffers,
         session_loggers: &SessionLoggers,
+        session_tab_ids: &SessionTabIds,
     ) {
         if !data.is_empty() {
             let event = TerminalOutputEvent {
@@ -1412,6 +1492,14 @@ impl SessionManager {
         // Drop the session's scrollback capture buffer (#1900) so a dead
         // session's 1 MiB ring does not linger.
         output_buffers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
+
+        // Clear the identity bridge entry (#2431) — mirrors the explicit
+        // `close_session` cleanup for the natural-exit / dropped path, so a
+        // session's tab mapping is released whichever way the session ends.
+        session_tab_ids
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(session_id);
@@ -1565,6 +1653,11 @@ mod tests {
 
     /// A fresh, empty `session_loggers` map for the logging path (#1960).
     fn new_session_loggers() -> SessionLoggers {
+        Arc::new(StdMutex::new(HashMap::new()))
+    }
+
+    /// A fresh, empty `session_tab_ids` identity-bridge map (#2431).
+    fn new_session_tab_ids() -> SessionTabIds {
         Arc::new(StdMutex::new(HashMap::new()))
     }
 
@@ -1841,6 +1934,7 @@ mod tests {
             &sessions,
             &output_buffers,
             &new_session_loggers(),
+            &new_session_tab_ids(),
         )
         .await;
 
@@ -1866,6 +1960,7 @@ mod tests {
             &sessions,
             &output_buffers,
             &new_session_loggers(),
+            &new_session_tab_ids(),
         )
         .await;
 
@@ -1897,6 +1992,7 @@ mod tests {
             capture.clone(),
             output_buffers,
             new_session_loggers(),
+            new_session_tab_ids(),
         )
         .await;
 
@@ -1967,6 +2063,7 @@ mod tests {
             new_capture(),
             new_output_buffers(),
             session_loggers.clone(),
+            new_session_tab_ids(),
         )
         .await;
 
@@ -2003,6 +2100,7 @@ mod tests {
             new_capture(),
             new_output_buffers(),
             new_session_loggers(),
+            new_session_tab_ids(),
         )
         .await;
 
@@ -2042,6 +2140,7 @@ mod tests {
             &sessions,
             &new_output_buffers(),
             &new_session_loggers(),
+            &new_session_tab_ids(),
         )
         .await;
 

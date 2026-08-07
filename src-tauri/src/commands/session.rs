@@ -20,6 +20,7 @@ use crate::session::line_ending::LineEnding;
 use crate::session::manager::{
     PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager,
 };
+use crate::session_projection::projection::fold_session_transition;
 use crate::system_monitor_projection::projection::fold_monitor_transition;
 use crate::utils::errors::TerminalError;
 use crate::utils::fs::file_name_of;
@@ -59,16 +60,51 @@ pub async fn create_connection(
     conn_manager
         .resolve_jump_host_refs(&mut settings, None)
         .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
-    manager
+
+    // Server-authority fold (#2431): make the *initial* connect's lifecycle
+    // server-authoritative in the shared `session-lifecycle` region, keyed by the
+    // frontend tab id this attempt carries in its `connect_id`. Only the initial
+    // attempt (`retryCount == 0`) is folded: a reconnect attempt's lifecycle is
+    // owned by the client + backend reconnect timer (#2203), and a failed connect
+    // is deliberately left to the client — the frontend silently auto-retries an
+    // agent connect without an intent, so folding `connect_failed` here would
+    // diverge. The `connect` → `connected` edge, by contrast, converges exactly
+    // with the client's `session.connect` / `session.connected` dispatch, so both
+    // running is a benign convergent double-write. Additive; see
+    // `fold_session_transition`.
+    let initial_tab_id = initial_connect_tab_id(connect_id.as_deref());
+    if let Some(tab_id) = &initial_tab_id {
+        fold_session_transition(&app_handle, |store| store.connect(tab_id));
+    }
+
+    let result = manager
         .create_connection(
             &type_id,
             settings,
             agent_id.as_deref(),
             connect_id.as_deref(),
             spawned.unwrap_or(false),
-            app_handle,
+            app_handle.clone(),
         )
-        .await
+        .await;
+
+    if let (Some(tab_id), Ok(_)) = (&initial_tab_id, &result) {
+        fold_session_transition(&app_handle, |store| store.connected(tab_id));
+    }
+    result
+}
+
+/// The frontend `tab_id` to fold an *initial*-connect lifecycle edge for, parsed
+/// from a `connect_id` of the form `${tabId}:${retryCount}` (#2431).
+///
+/// Returns `Some(tab_id)` only for the initial attempt (`retryCount == 0`).
+/// Reconnect attempts (`retryCount > 0`) and any `connect_id` not carrying the
+/// tab-id form (e.g. the internal agent-setup session, which passes `None`) yield
+/// `None`: those lifecycle edges are owned by the client and the backend reconnect
+/// timer, not this fold.
+fn initial_connect_tab_id(connect_id: Option<&str>) -> Option<String> {
+    let (tab_id, retry) = connect_id?.rsplit_once(':')?;
+    (retry == "0" && !tab_id.is_empty()).then(|| tab_id.to_string())
 }
 
 /// Cancel an in-flight (still connecting) session by its `connect_id`.
