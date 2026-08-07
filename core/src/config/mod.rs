@@ -595,15 +595,11 @@ impl ShellConfig {
     }
 }
 
-impl WslConfig {
-    /// Return a copy with all `${VAR}` placeholders and `~` expanded.
-    pub fn expand(mut self) -> Self {
-        self.distribution = expand_config_value(&self.distribution);
-        self.starting_directory = self.starting_directory.map(|s| expand_config_value(&s));
-        self.initial_command = self.initial_command.map(|s| expand_config_value(&s));
-        self
-    }
-}
+// NOTE: WslConfig intentionally has no `expand()`. WSL values are passed to the
+// guest literally: the connect path (`core/src/backends/wsl.rs`) never expands
+// them, and host-side expansion (`expand_config_value` resolves `~` / `${VAR}`
+// against the Windows host) would corrupt a Linux path. See the concept
+// `docs/concepts/backlog/wsl-path-expansion-semantics.html`.
 
 impl TelnetConfig {
     /// Return a copy with all `${VAR}` placeholders and `~` expanded.
@@ -1890,35 +1886,6 @@ mod tests {
                 .unwrap()
                 .starts_with('~'),
             "tilde should be expanded in working directory"
-        );
-    }
-
-    #[test]
-    fn wsl_config_expand_replaces_placeholders() {
-        temp_env::with_vars(
-            [
-                ("TERMIHUB_TEST_WSL_DISTRO", Some("Ubuntu")),
-                ("TERMIHUB_TEST_WSL_CMD", Some("echo hello")),
-            ],
-            || {
-                let cfg = WslConfig {
-                    distribution: "${TERMIHUB_TEST_WSL_DISTRO}".into(),
-                    starting_directory: Some("~/projects".into()),
-                    initial_command: Some("${TERMIHUB_TEST_WSL_CMD}".into()),
-                    ..WslConfig::default()
-                };
-                let expanded = cfg.expand();
-                assert_eq!(expanded.distribution, "Ubuntu");
-                assert!(
-                    !expanded
-                        .starting_directory
-                        .as_ref()
-                        .unwrap()
-                        .starts_with('~'),
-                    "tilde should be expanded in starting directory"
-                );
-                assert_eq!(expanded.initial_command, Some("echo hello".into()));
-            },
         );
     }
 
