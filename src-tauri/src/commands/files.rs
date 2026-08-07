@@ -1,114 +1,14 @@
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
-use termihub_core::backends::ssh::{
-    parse_ssh_settings, SftpAdvancedOps, SftpFileBrowser, SftpTransferChannel,
-};
+use termihub_core::backends::ssh::{SftpFileBrowser, SftpTransferChannel};
 use termihub_core::files::FileBrowser;
-use tracing::{debug, info};
+use tracing::debug;
 
-use crate::connection::manager::ConnectionManager;
-use crate::files::sftp::{sftp_op_error, ElevatedWriteResult, SftpManager, Writability};
-use crate::files::transfer::{self, TransferContext, TransferDirection, TransferRegistry};
+use crate::files::sftp::sftp_op_error;
+use crate::files::transfer::TransferRegistry;
 use crate::files::FileEntry;
 use crate::utils::errors::TerminalError;
-use crate::utils::fs::file_name_of;
 use crate::utils::vscode;
-
-/// Open a new SFTP session. Returns the session ID.
-///
-/// Accepts raw JSON settings (same shape the frontend stores) and parses
-/// them with `parse_ssh_settings` so that array-encoded `env` fields
-/// (from the `keyValueList` schema type) are handled correctly.
-#[tauri::command]
-pub async fn sftp_open(
-    mut config: serde_json::Value,
-    manager: State<'_, SftpManager>,
-    conn_manager: State<'_, ConnectionManager>,
-) -> Result<String, TerminalError> {
-    // Expand saved-connection jump-host references to inline hops before core
-    // parses the chain (it only connects with inline hops) — #940.
-    conn_manager
-        .resolve_jump_host_refs(&mut config, None)
-        .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
-    let config = parse_ssh_settings(&config);
-    info!(host = %config.host, port = config.port, "Opening SFTP session");
-    // The core SFTP browser is fully async (russh), so the connect is awaited
-    // directly on the command thread — no `spawn_blocking` / `block_in_place`
-    // bridging is needed, exactly as the `ConnectionType` file-browser path does.
-    manager.open_session(&config).await
-}
-
-/// Close an SFTP session.
-#[tauri::command]
-pub fn sftp_close(session_id: String, manager: State<'_, SftpManager>) {
-    info!(session_id, "Closing SFTP session");
-    manager.close_session(&session_id);
-}
-
-/// List directory contents via SFTP.
-#[tauri::command]
-pub async fn sftp_list_dir(
-    session_id: String,
-    path: String,
-    manager: State<'_, SftpManager>,
-) -> Result<Vec<FileEntry>, TerminalError> {
-    debug!(session_id, path, "SFTP list directory");
-    let browser = manager.get_session(&session_id)?;
-    browser.list_dir(&path).await.map_err(sftp_op_error)
-}
-
-/// Get metadata (size, mtime, permissions) for a single remote file via SFTP.
-///
-/// Backs the editor's remote external-change detection (#1627): the frontend
-/// re-stats the open file on an interval and compares `modified`/`size` to spot
-/// an out-of-band change. A stat is a single metadata round-trip — far cheaper
-/// than re-reading the file — so this is the lightweight poll primitive.
-#[tauri::command]
-pub async fn sftp_stat(
-    session_id: String,
-    path: String,
-    manager: State<'_, SftpManager>,
-) -> Result<FileEntry, TerminalError> {
-    debug!(session_id, path, "SFTP stat");
-    let browser = manager.get_session(&session_id)?;
-    browser.stat(&path).await.map_err(sftp_op_error)
-}
-
-/// Resolve a remote path to its canonical absolute form via SFTP realpath.
-///
-/// Passing `"."` yields the session's home directory so the file browser can
-/// land there without guessing `/home/<user>` (audit GAP C2, issue #1143).
-#[tauri::command]
-pub async fn sftp_realpath(
-    session_id: String,
-    path: String,
-    manager: State<'_, SftpManager>,
-) -> Result<String, TerminalError> {
-    debug!(session_id, path, "SFTP realpath");
-    let browser = manager.get_session(&session_id)?;
-    browser.realpath(&path).await.map_err(sftp_op_error)
-}
-
-/// Authoritatively check whether a remote file is writable by the connecting
-/// user, via a non-destructive SFTP write-open probe (issue #1324).
-///
-/// Returns [`Writability::Writable`] / [`Writability::ReadOnly`] /
-/// [`Writability::Unknown`]; the probe never modifies the file and never errors
-/// out for the ambiguous case (that maps to `Unknown`). This catches the
-/// owner-mismatch case the cheap `FileEntry.writable` hint cannot.
-#[tauri::command]
-pub async fn sftp_check_writable(
-    session_id: String,
-    remote_path: String,
-    manager: State<'_, SftpManager>,
-) -> Result<Writability, TerminalError> {
-    debug!(session_id, "SFTP check writable");
-    let browser = manager.get_session(&session_id)?;
-    browser
-        .check_writable(&remote_path)
-        .await
-        .map_err(sftp_op_error)
-}
 
 /// Open a dedicated [`SftpTransferChannel`] off `browser` and (for downloads)
 /// stat the remote size. Both are awaited directly on the async core browser —
@@ -129,173 +29,12 @@ pub(crate) async fn open_transfer_channel(
     Ok((dedicated, total))
 }
 
-/// Start a download (remote → local). Registers a `transfer_id`, runs a chunked
-/// copy on a dedicated SFTP channel in the background, and returns the id
-/// immediately (issue #1245).
-///
-/// Progress and completion are reported via `transfer-progress` events; the
-/// copy does not hold the session mutex, so listing / navigating the same
-/// session stays live during the transfer.
-#[tauri::command]
-pub async fn sftp_download(
-    session_id: String,
-    remote_path: String,
-    local_path: String,
-    manager: State<'_, SftpManager>,
-    registry: State<'_, TransferRegistry>,
-    app_handle: tauri::AppHandle,
-) -> Result<String, TerminalError> {
-    debug!(session_id, remote_path, local_path, "SFTP download");
-    let browser = manager.get_session(&session_id)?;
-    let (dedicated, total) = open_transfer_channel(browser, Some(remote_path.clone())).await?;
-
-    let transfer_id = uuid::Uuid::new_v4().to_string();
-    let file_name = file_name_of(&remote_path);
-    let token = registry.register(
-        &transfer_id,
-        &session_id,
-        TransferDirection::Download,
-        &file_name,
-        &remote_path,
-        total,
-    );
-    let ctx = TransferContext {
-        transfer_id: transfer_id.clone(),
-        session_id,
-        direction: TransferDirection::Download,
-        file_name,
-        path: remote_path.clone(),
-        total,
-    };
-    let registry = (*registry).clone();
-    let sink = transfer::app_progress_sink(app_handle);
-    tauri::async_runtime::spawn(async move {
-        transfer::run_download(
-            dedicated,
-            remote_path,
-            local_path,
-            ctx,
-            token,
-            registry,
-            sink,
-        )
-        .await;
-    });
-    Ok(transfer_id)
-}
-
-/// Start an upload (local → remote). Registers a `transfer_id`, runs a chunked
-/// copy on a dedicated SFTP channel in the background, and returns the id
-/// immediately (issue #1245). Mirrors [`sftp_download`].
-#[tauri::command]
-pub async fn sftp_upload(
-    session_id: String,
-    local_path: String,
-    remote_path: String,
-    manager: State<'_, SftpManager>,
-    registry: State<'_, TransferRegistry>,
-    app_handle: tauri::AppHandle,
-) -> Result<String, TerminalError> {
-    debug!(session_id, local_path, remote_path, "SFTP upload");
-    let browser = manager.get_session(&session_id)?;
-    let (dedicated, _total) = open_transfer_channel(browser, None).await?;
-
-    // Local files are cheap to stat, so we can report a real total for uploads.
-    let total = tokio::fs::metadata(&local_path)
-        .await
-        .map(|m| m.len())
-        .unwrap_or(0);
-
-    let transfer_id = uuid::Uuid::new_v4().to_string();
-    let file_name = file_name_of(&remote_path);
-    let token = registry.register(
-        &transfer_id,
-        &session_id,
-        TransferDirection::Upload,
-        &file_name,
-        &remote_path,
-        total,
-    );
-    let ctx = TransferContext {
-        transfer_id: transfer_id.clone(),
-        session_id,
-        direction: TransferDirection::Upload,
-        // Named for the *remote* path, not the local one, so the name always
-        // agrees with the `path` this row displays (#1573). Every honest
-        // upload caller builds `remote_path` as `<dir>/<basename of local>`,
-        // so this is unchanged for them — but an SFTP→SFTP paste uploads from
-        // a local temp copy (`/tmp/termihub-paste-<ts>-<name>`), and the
-        // destination name is the one the user actually knows the file by.
-        file_name,
-        path: remote_path.clone(),
-        total,
-    };
-    let registry = (*registry).clone();
-    let sink = transfer::app_progress_sink(app_handle);
-    tauri::async_runtime::spawn(async move {
-        transfer::run_upload(
-            dedicated,
-            local_path,
-            remote_path,
-            ctx,
-            token,
-            registry,
-            sink,
-        )
-        .await;
-    });
-    Ok(transfer_id)
-}
-
 /// Cancel an in-flight transfer by id. Unknown / already-finished ids are a
 /// harmless no-op (issue #1245).
 #[tauri::command]
 pub fn sftp_cancel_transfer(transfer_id: String, registry: State<'_, TransferRegistry>) {
     debug!(transfer_id, "SFTP cancel transfer");
     registry.cancel(&transfer_id);
-}
-
-/// Create a directory on the remote host.
-#[tauri::command]
-pub async fn sftp_mkdir(
-    session_id: String,
-    path: String,
-    manager: State<'_, SftpManager>,
-) -> Result<(), TerminalError> {
-    let browser = manager.get_session(&session_id)?;
-    browser.mkdir(&path).await.map_err(sftp_op_error)
-}
-
-/// Delete a file or empty directory on the remote host.
-///
-/// `is_directory` is retained for the frontend IPC shape; the core browser's
-/// `delete` self-detects a directory via `stat` and picks `rmdir`/`unlink`
-/// accordingly, so the flag is advisory only.
-#[tauri::command]
-pub async fn sftp_delete(
-    session_id: String,
-    path: String,
-    is_directory: bool,
-    manager: State<'_, SftpManager>,
-) -> Result<(), TerminalError> {
-    let _ = is_directory;
-    let browser = manager.get_session(&session_id)?;
-    browser.delete(&path).await.map_err(sftp_op_error)
-}
-
-/// Rename a file or directory on the remote host.
-#[tauri::command]
-pub async fn sftp_rename(
-    session_id: String,
-    old_path: String,
-    new_path: String,
-    manager: State<'_, SftpManager>,
-) -> Result<(), TerminalError> {
-    let browser = manager.get_session(&session_id)?;
-    browser
-        .rename(&old_path, &new_path)
-        .await
-        .map_err(sftp_op_error)
 }
 
 // --- Local filesystem commands ---
@@ -405,79 +144,6 @@ pub fn unwatch_local_dir(
     manager.unwatch(&watch_id);
 }
 
-/// Read a remote file's contents as a UTF-8 string via SFTP.
-#[tauri::command]
-pub async fn sftp_read_file_content(
-    session_id: String,
-    remote_path: String,
-    manager: State<'_, SftpManager>,
-) -> Result<String, TerminalError> {
-    let browser = manager.get_session(&session_id)?;
-    let data = browser
-        .read_file(&remote_path)
-        .await
-        .map_err(sftp_op_error)?;
-    String::from_utf8(data)
-        .map_err(|e| TerminalError::SftpError(format!("read failed: invalid UTF-8: {e}")))
-}
-
-/// Write a string to a remote file via SFTP.
-#[tauri::command]
-pub async fn sftp_write_file_content(
-    session_id: String,
-    remote_path: String,
-    content: String,
-    manager: State<'_, SftpManager>,
-) -> Result<(), TerminalError> {
-    let browser = manager.get_session(&session_id)?;
-    browser
-        .write_file(&remote_path, content.as_bytes())
-        .await
-        .map_err(sftp_op_error)
-}
-
-/// Write a string to a remote file with `sudo`-elevated privileges (#1328).
-///
-/// Uploads the buffer to a termiHub-generated temp path via SFTP, then rewrites
-/// the destination in place via `sudo -S` over the exec channel with the
-/// password supplied on stdin. Returns a typed [`ElevatedWriteResult`]
-/// (`success` / `incorrectPassword` / `other`) rather than erroring on an
-/// authorization failure, so the caller can re-prompt. The temp file is always
-/// cleaned up, and the password is never logged.
-#[tauri::command]
-pub async fn sftp_write_file_content_elevated(
-    session_id: String,
-    remote_path: String,
-    content: String,
-    sudo_password: String,
-    manager: State<'_, SftpManager>,
-) -> Result<ElevatedWriteResult, TerminalError> {
-    // Do not log `sudo_password`.
-    debug!(session_id, remote_path, "SFTP elevated write");
-    let browser = manager.get_session(&session_id)?;
-    browser
-        .write_file_content_elevated(&remote_path, &content, &sudo_password)
-        .await
-        .map_err(sftp_op_error)
-}
-
-/// Report whether the SFTP session's SSH connection can open an exec channel
-/// (i.e. run remote commands such as `sudo`).
-///
-/// Returns `true` for a normal SSH+shell connection and `false` for an
-/// SFTP-only (`ForceCommand internal-sftp`) or relayed connection. Used by the
-/// file editor to know whether privilege-elevated writes are possible.
-#[tauri::command]
-pub async fn sftp_has_exec_capability(
-    session_id: String,
-    manager: State<'_, SftpManager>,
-) -> Result<bool, TerminalError> {
-    let browser = manager.get_session(&session_id)?;
-    // A dropped / SFTP-only connection maps to `false` (as before) rather than
-    // surfacing an error to the editor.
-    Ok(browser.has_exec_capability().await.unwrap_or(false))
-}
-
 // --- VS Code integration ---
 
 #[derive(Clone, Serialize)]
@@ -500,34 +166,16 @@ pub fn vscode_open_local(path: String) -> Result<(), TerminalError> {
     vscode::open_in_vscode(&path).map_err(|e| TerminalError::EditorError(e.to_string()))
 }
 
-/// Open a remote file in VS Code: download, open with --wait, re-upload on close.
-///
-/// The SFTP read/write go through the fully-async core browser and are awaited
-/// directly. Only VS Code's blocking `--wait` is run on a `spawn_blocking` thread
-/// inside the background task; the re-upload afterwards is a normal `.await` on
-/// the core browser. Mirrors `monitoring_open`. See #828.
-#[tauri::command]
-pub async fn vscode_open_remote(
-    session_id: String,
-    remote_path: String,
-    manager: State<'_, SftpManager>,
-    app_handle: tauri::AppHandle,
-) -> Result<(), TerminalError> {
-    // Clone the session browser Arc before spawning the background task.
-    let browser = manager.get_session(&session_id)?;
-    open_remote_in_vscode(browser, remote_path, app_handle).await
-}
-
 /// Download `remote_path` from `browser` to a temp file, open it in VS Code with
 /// `--wait`, and re-upload on close, emitting a `vscode-edit-complete` event.
 ///
-/// Shared by the standalone `SftpManager` path ([`vscode_open_remote`]) and the
-/// session/`ConnectionType` path
-/// ([`session_vscode_open_remote`](crate::commands::session::session_vscode_open_remote))
-/// so both drive the identical download → edit → re-upload flow on the one core
-/// [`SftpFileBrowser`], differing only in how they resolve the browser handle
-/// (part of the #2307 SFTP-session convergence). The initial download is awaited
-/// here; the `--wait` + re-upload run in a spawned background task.
+/// Drives the download → edit → re-upload flow on the one core
+/// [`SftpFileBrowser`] for the session/`ConnectionType` path
+/// ([`session_vscode_open_remote`](crate::commands::session::session_vscode_open_remote)),
+/// which resolves the browser handle from the session (part of the #2307
+/// SFTP-session convergence; the standalone `SftpManager` path was retired in
+/// #2314). The initial download is awaited here; the `--wait` + re-upload run in
+/// a spawned background task.
 pub(crate) async fn open_remote_in_vscode(
     browser: std::sync::Arc<SftpFileBrowser>,
     remote_path: String,

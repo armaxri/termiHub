@@ -27,9 +27,9 @@ mod embedded_servers;
 /// clipboard). Registered and served but not yet driving the live UI — a pure
 /// shadow foundation. See [`file_browser_projection`].
 mod file_browser_projection;
-/// File-system access: local FS, SFTP sessions, and the cancellable transfer
-/// subsystem (public so integration tests can drive `SftpManager` /
-/// `TransferRegistry` directly — issue #1245).
+/// File-system access: local FS, session-scoped SFTP ops, and the cancellable
+/// transfer subsystem (public so integration tests can drive the transfer
+/// subsystem / `TransferRegistry` directly — issue #1245).
 pub mod files;
 /// Shadow `LayoutStore` (#2151, Phase 3 step 1 of #2139): the client-scoped
 /// `layout@<clientId>` projection region + `layout.*` intents, built on the
@@ -124,7 +124,6 @@ use connection::manager::ConnectionManager;
 use connection::recovery::RecoveryWarning;
 use connection::settings::{AppSettings, SettingsStorage};
 use credential::{AutoLockTimer, CredentialManager, StorageMode};
-use files::sftp::SftpManager;
 use files::transfer::TransferRegistry;
 use network::NetworkManager;
 use session::manager::SessionManager;
@@ -259,11 +258,9 @@ fn run_app_teardown(app_handle: &tauri::AppHandle) {
         if let Some(reg) = handle.try_state::<TransferRegistry>() {
             reg.cancel_all();
         }
-        // Close every open SFTP session so no SSH+SFTP connection is left
-        // dangling on the server until it times out (#1244).
-        if let Some(mgr) = handle.try_state::<SftpManager>() {
-            mgr.close_all();
-        }
+        // Session-scoped SSH+SFTP connections are torn down with their owning
+        // sessions by `SessionManager`, so there is no standalone SFTP session
+        // registry to close here since the UUID `SftpManager` was retired (#2314).
     });
 }
 
@@ -348,7 +345,6 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_cli::init())
-        .manage(SftpManager::new())
         .manage(TransferRegistry::new())
         .manage(files::watcher::FileWatchManager::new())
         .manage(NetworkManager::new())
@@ -1387,15 +1383,9 @@ pub fn run() {
             commands::connection::preview_import,
             commands::connection::import_connections_with_credentials,
             commands::connection::get_recovery_warnings,
-            // SFTP (kept temporarily — will migrate to session-based file browsing)
-            commands::files::sftp_open,
-            commands::files::sftp_close,
-            commands::files::sftp_list_dir,
-            commands::files::sftp_stat,
-            commands::files::sftp_realpath,
-            commands::files::sftp_check_writable,
-            commands::files::sftp_download,
-            commands::files::sftp_upload,
+            // SFTP transfer cancellation (shared transfer-registry model; #1245).
+            // The standalone UUID `sftp_*` session commands were retired in #2314;
+            // SSH file browsing/transfer now goes through the `session_*` path.
             commands::files::sftp_cancel_transfer,
             // Generic transfer-queue controls (shared model; #1336)
             commands::transfer::transfer_pause,
@@ -1405,9 +1395,6 @@ pub fn run() {
             commands::transfer::transfer_list,
             commands::transfer::ftp_download,
             commands::transfer::ftp_upload,
-            commands::files::sftp_mkdir,
-            commands::files::sftp_delete,
-            commands::files::sftp_rename,
             commands::files::get_home_dir,
             commands::files::local_list_dir,
             commands::files::local_copy,
@@ -1420,13 +1407,8 @@ pub fn run() {
             commands::files::unwatch_local_file,
             commands::files::watch_local_dir,
             commands::files::unwatch_local_dir,
-            commands::files::sftp_read_file_content,
-            commands::files::sftp_write_file_content,
-            commands::files::sftp_write_file_content_elevated,
-            commands::files::sftp_has_exec_capability,
             commands::files::vscode_available,
             commands::files::vscode_open_local,
-            commands::files::vscode_open_remote,
             commands::files::write_cheatsheet,
             // Agent management
             commands::agent::connect_agent,
