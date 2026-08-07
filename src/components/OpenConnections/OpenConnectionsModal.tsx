@@ -37,6 +37,7 @@ import { MONITORING_INTERVAL_OPTIONS, DEFAULT_MONITORING_INTERVAL_MS } from "@/t
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
+import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
 import { getAllLeaves } from "@/utils/panelTree";
 import {
   listLocalSessions,
@@ -125,7 +126,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const httpMonitors = useAppStore((s) => s.httpMonitors);
   const setHttpMonitors = useAppStore((s) => s.setHttpMonitors);
   const rootPanel = useAppStore((s) => s.rootPanel);
-  const terminalConnecting = useAppStore((s) => s.terminalConnecting);
+  // Render cut (#2205 PR-A): connecting flags sourced from the projected
+  // `session-lifecycle` region (falls back to appStore per key when not mirrored).
+  const { terminalConnecting } = useProjectedSessionLifecycleMaps();
   const closeTab = useAppStore((s) => s.closeTab);
   const markSessionKilled = useAppStore((s) => s.markSessionKilled);
 
