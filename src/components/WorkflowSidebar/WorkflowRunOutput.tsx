@@ -46,9 +46,9 @@ function describeOutcome(run: WorkflowRunOutputState): string | null {
  * backend channel. Nothing renders when there is no run output to show.
  */
 export function WorkflowRunOutput() {
-  // Render cut (#2243): the panel's identity + status are sourced from the
-  // projected `workflow-run` region when it faithfully mirrors appStore, else from
-  // appStore verbatim; the streamed lines/exitCode/timedOut always stay frontend.
+  // The panel's identity + status are sourced from the authoritative projected
+  // `workflow-run` region (#2206 reducer-removal); the streamed lines/exitCode/
+  // timedOut are merged in from the bridge's frontend-owned content store.
   const { workflowRunOutput: run } = useProjectedWorkflowRun();
   const dismiss = useAppStore((s) => s.dismissWorkflowRunOutput);
   const cancelRun = useAppStore((s) => s.cancelWorkflowRun);

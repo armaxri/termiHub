@@ -73,8 +73,8 @@ export function WorkflowSidebar() {
   const importWorkflows = useAppStore((s) => s.importWorkflows);
   const runWorkflow = useAppStore((s) => s.runWorkflow);
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
-  // Render cut (#2243): the per-workflow "running" badge reads run progress from
-  // the projected `workflow-run` region when it mirrors appStore, else appStore.
+  // The per-workflow "running" badge reads run progress from the authoritative
+  // projected `workflow-run` region (#2206 reducer-removal).
   const { workflowRun } = useProjectedWorkflowRun();
 
   const [query, setQuery] = useState("");
