@@ -68,13 +68,18 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
  * `spawned` marks a CLI/context-menu spawn session (#1446, #1466) so the backend
  * records it on the session registry — the source of truth the Open Connections
  * panel groups "Spawned Containers" from, surviving a tab close.
+ *
+ * `resilientReconnect` carries the tab's `isResilientReconnectTab` determination
+ * (#2439) so the backend can fold a genuine drop server-side as `session.reconnect`
+ * (resilient) vs `session.dropped` (non-resilient), converging with the client.
  */
 export async function createConnection(
   typeId: string,
   settings: Record<string, unknown>,
   agentId?: string,
   connectId?: string,
-  spawned?: boolean
+  spawned?: boolean,
+  resilientReconnect?: boolean
 ): Promise<SessionId> {
   return await invoke<string>("create_connection", {
     typeId,
@@ -82,6 +87,7 @@ export async function createConnection(
     agentId: agentId ?? null,
     connectId: connectId ?? null,
     spawned: spawned ?? false,
+    resilientReconnect: resilientReconnect ?? false,
   });
 }
 
@@ -167,11 +173,17 @@ export async function importInventoryHosts(path: string): Promise<InventoryHost[
  * records the spawned origin on the session registry (the Open Connections panel
  * groups from it, surviving a tab close). Spawn sessions are never
  * `remote-session`, so the flag only applies to the local path.
+ *
+ * `resilientReconnect` is the tab's resilient-reconnect determination (#2439),
+ * forwarded to the backend so a genuine drop is folded server-side as
+ * `session.reconnect` vs `session.dropped`. Only plain-SSH tabs opt in; the
+ * `remote-session` (agent) path is never resilient, so it is not forwarded there.
  */
 export async function createTerminal(
   config: ConnectionConfig,
   connectId?: string,
-  spawned?: boolean
+  spawned?: boolean,
+  resilientReconnect?: boolean
 ): Promise<SessionId> {
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
@@ -181,7 +193,14 @@ export async function createTerminal(
     };
     return await createConnection(sessionType, rest, agentId, connectId);
   }
-  return await createConnection(config.type, config.config, undefined, connectId, spawned);
+  return await createConnection(
+    config.type,
+    config.config,
+    undefined,
+    connectId,
+    spawned,
+    resilientReconnect
+  );
 }
 
 /**

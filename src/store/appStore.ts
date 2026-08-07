@@ -2054,6 +2054,19 @@ function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
 }
 
 /**
+ * Whether the tab identified by `tabId` is a resilient-reconnect tab, resolved
+ * from the live store exactly as `setTerminalExited`'s drop classification does
+ * (#2439). Passed to the backend at connect time (via `createTerminal`) so a
+ * genuine drop can be folded server-side — `session.reconnect` for a resilient
+ * tab, `session.dropped` otherwise — converging with the client mirror. An
+ * unknown/closed tab is not resilient.
+ */
+export function isResilientReconnectTabId(tabId: string): boolean {
+  const tab = collectLiveTabs(useAppStore.getState()).find((t) => t.id === tabId);
+  return isResilientReconnectTab(tab);
+}
+
+/**
  * The trimmed on-reconnect command configured for a tab's connection (#1978), or
  * `undefined` when none is set. This is the command run once in the fresh remote
  * shell after a *successful* automatic reconnect to recover some server-side

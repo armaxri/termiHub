@@ -22,7 +22,7 @@ import {
 } from "@/services/api";
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, isResilientReconnectTabId } from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
@@ -563,7 +563,17 @@ export function Terminal({
               // attempt's token instead of its own (#1125).
               connectInFlightRef.current.add(connectId);
               try {
-                resolved = await createTerminal(sessionConfig, connectId, spawned);
+                // Pass the tab's resilient-reconnect determination (#2439) so a
+                // genuine drop is folded server-side as `session.reconnect` vs
+                // `session.dropped`, converging with `setTerminalExited`. Computed
+                // from the live store the same way the client's drop path does.
+                const resilientReconnect = isResilientReconnectTabId(tabId);
+                resolved = await createTerminal(
+                  sessionConfig,
+                  connectId,
+                  spawned,
+                  resilientReconnect
+                );
               } finally {
                 connectInFlightRef.current.delete(connectId);
               }

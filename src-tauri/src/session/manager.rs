@@ -147,6 +147,15 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
 
     /// Emit a persistent session state change. Default no-op for test implementations.
     fn emit_persistent_state(&self, _event: &PersistentSessionStateEvent) {}
+
+    /// Fold a genuine-drop session-lifecycle transition **server-side** (#2439).
+    ///
+    /// Called from the `terminal-exit` source ([`SessionManager::emit_and_cleanup`])
+    /// for a genuine drop, keyed by the frontend `tab_id`. Default no-op for test
+    /// emitters (no projection store); the production `AppHandle` folds into the
+    /// managed `session-lifecycle` store — a benign convergent double-write with
+    /// the client's `setTerminalExited` mirror (like the connect/kill folds).
+    fn fold_session_drop(&self, _tab_id: &str, _fold: DropFold) {}
 }
 
 impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
@@ -160,6 +169,14 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
 
     fn emit_persistent_state(&self, event: &PersistentSessionStateEvent) {
         let _ = self.emit("persistent-session-state-changed", event);
+    }
+
+    fn fold_session_drop(&self, tab_id: &str, fold: DropFold) {
+        use crate::session_projection::projection::fold_session_transition;
+        match fold {
+            DropFold::Reconnect => fold_session_transition(self, |store| store.reconnect(tab_id)),
+            DropFold::Dropped => fold_session_transition(self, |store| store.dropped(tab_id, None)),
+        }
     }
 }
 
@@ -243,7 +260,55 @@ type SessionLoggers = Arc<StdMutex<HashMap<String, Arc<StdMutex<SessionLogger>>>
 /// region entry. `create_connection` records the mapping (parsing the tab id from
 /// `connect_id = ${tabId}:${retryCount}`), and every session-removal path clears
 /// it, so the map tracks exactly the live sessions that carry a tab id.
-type SessionTabIds = Arc<StdMutex<HashMap<String, String>>>;
+///
+/// The value is a [`TabBinding`], not a bare tab id: it also carries the tab's
+/// **resilient-reconnect** determination (#2439), so a genuine drop observed at
+/// the `terminal-exit` source can be folded as `reconnect` (resilient) vs
+/// `dropped` (non-resilient) server-side, converging with the client.
+type SessionTabIds = Arc<StdMutex<HashMap<String, TabBinding>>>;
+
+/// A live session's frontend identity + drop classification (#2431, #2439).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TabBinding {
+    /// The frontend tab id the `session-lifecycle` region is keyed by.
+    pub(super) tab_id: String,
+    /// Whether the owning tab is a resilient-reconnect tab — the client's
+    /// `isResilientReconnectTab` computed at connect time and passed to the
+    /// backend (#2439). Decides a genuine drop's server-side fold:
+    /// `reconnect` when `true`, `dropped` when `false`.
+    pub(super) resilient: bool,
+}
+
+/// The session-lifecycle transition to fold for a **genuine** (non-killed) exit
+/// observed at the `terminal-exit` source, mirroring the client's
+/// `setTerminalExited` classification exactly (#2439). Returned by
+/// [`drop_fold_for`]; `None` means fold nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DropFold {
+    /// A resilient-reconnect tab's drop → `session.reconnect` (→ Reconnecting).
+    Reconnect,
+    /// A non-resilient tab's drop → `session.dropped` (→ Disconnected).
+    Dropped,
+}
+
+/// The server-side fold for a genuine (non-killed) terminal exit, mirroring the
+/// client's `setTerminalExited` reason classification (#2439).
+///
+/// The client computes `reason = exitCode === 0 ? "clean" : "dropped"` for a
+/// non-killed exit, then folds `session.reconnect` for a resilient-reconnect
+/// tab's drop, `session.dropped` for a non-resilient drop, and **nothing** for a
+/// clean exit. This reproduces that: `Some(0)` → `None` (clean folds neither);
+/// any other code (or an unknown `None`, which the desktop `terminal-exit`
+/// currently always emits) → a drop, resilient-gated. The *killed* case never
+/// reaches here — a deliberate close clears the tab binding before the exit
+/// fires (see `close_session`), so this is only called for genuine drops.
+pub(super) fn drop_fold_for(exit_code: Option<i32>, resilient: bool) -> Option<DropFold> {
+    match exit_code {
+        Some(0) => None,
+        _ if resilient => Some(DropFold::Reconnect),
+        _ => Some(DropFold::Dropped),
+    }
+}
 
 /// Status of a session's output logging, returned to the frontend.
 #[derive(Debug, Clone, Serialize)]
@@ -557,6 +622,10 @@ impl SessionManager {
     /// Containers" from this backend marker rather than the frontend tab flag.
     ///
     /// Returns the session ID on success.
+    // The parameters mirror the `create_connection` IPC surface (type + settings +
+    // routing flags + the connect-time signals: spawn origin #1466, resilient
+    // reconnect #2439); grouping them into a struct would only obscure the call.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_connection<E: EventEmitter>(
         &self,
         type_id: &str,
@@ -564,6 +633,7 @@ impl SessionManager {
         agent_id: Option<&str>,
         connect_id: Option<&str>,
         spawned: bool,
+        resilient_reconnect: bool,
         emitter: E,
     ) -> Result<String, TerminalError> {
         // Enforce session limit.
@@ -664,12 +734,21 @@ impl SessionManager {
         // tab-id-keyed `session-lifecycle` region entry. The tab id is the
         // `connect_id` up to its trailing `:${retryCount}` (see `Terminal.tsx`);
         // a session created without a `connect_id` (e.g. the internal agent-setup
-        // session) carries no tab and is simply not mapped.
+        // session) carries no tab and is simply not mapped. The `resilient_reconnect`
+        // flag (the client's `isResilientReconnectTab` at connect time) is recorded
+        // alongside so a genuine drop can be folded server-side as `reconnect` vs
+        // `dropped` at the `terminal-exit` source (#2439).
         if let Some(tab_id) = connect_id.and_then(tab_id_from_connect_id) {
             self.session_tab_ids
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(session_id.clone(), tab_id);
+                .insert(
+                    session_id.clone(),
+                    TabBinding {
+                        tab_id,
+                        resilient: resilient_reconnect,
+                    },
+                );
         }
 
         // Determine if we should wait for screen clear (initial command).
@@ -836,17 +915,24 @@ impl SessionManager {
     /// — notably Serial, which clears `output_tx` to stop its reader thread —
     /// are cleaned up immediately.
     pub async fn close_session(&self, session_id: &str) -> Result<(), TerminalError> {
+        // Clear the identity bridge entry (#2431) **before** disconnecting — the
+        // session is gone, so its tab mapping must not linger. Clearing it *first*
+        // is what makes the map's presence at the `terminal-exit` source a
+        // race-free discriminator for the drop fold (#2439): a deliberate close
+        // (a user kill via `close_terminal`, or a tab close) drops the tab binding
+        // before `disconnect()` triggers the reader's EOF, so `emit_and_cleanup`
+        // never sees a binding and never folds a `dropped`/`reconnect` for it. Only
+        // a *genuine* spontaneous drop — where no `close_session` ran — leaves the
+        // binding intact to arm that fold.
+        self.session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
         let mut sessions = self.sessions.lock().await;
         if let Some(mut entry) = sessions.remove(session_id) {
             entry.connection.disconnect().await.ok();
             info!(session_id, "Closed session");
         }
-        // Clear the identity bridge entry (#2431) — the session is gone, so its
-        // tab mapping must not linger.
-        self.session_tab_ids
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(session_id);
         Ok(())
     }
 
@@ -861,14 +947,14 @@ impl SessionManager {
     /// close/kill path: `close_terminal` resolves it to fold the graceful
     /// `session.disconnect` for a user-initiated kill (#2439). The map it reads is
     /// populated and cleaned up live, and the lookup is covered by unit tests. The
-    /// genuine-drop `session.dropped` fold at `terminal-exit` is still deferred
-    /// (needs the resilient-reconnect signal — see #2439).
+    /// genuine-drop `reconnect`/`dropped` fold at the `terminal-exit` source reads
+    /// the full binding directly (see `emit_and_cleanup`), keyed off the same map.
     pub fn tab_id_for(&self, session_id: &str) -> Option<String> {
         self.session_tab_ids
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(session_id)
-            .cloned()
+            .map(|binding| binding.tab_id.clone())
     }
 
     /// List all active sessions.
@@ -1485,6 +1571,25 @@ impl SessionManager {
         };
         emitter.emit_exit(&exit_event);
 
+        // Capture-and-clear the identity bridge entry (#2431/#2439). A binding
+        // still present here means this exit is a **genuine spontaneous drop** — a
+        // deliberate close (kill/tab-close) clears the binding before disconnecting
+        // (see `close_session`), so those never carry a binding to this point. Fold
+        // the drop server-side, keyed by the tab id, mirroring the client's
+        // `setTerminalExited` classification exactly (#2439): a resilient-reconnect
+        // tab folds `session.reconnect` (→ Reconnecting), a non-resilient tab
+        // `session.dropped` (→ Disconnected); a clean exit-code-0 exit folds
+        // nothing. Convergent double-write with the still-live client mirror.
+        let drop_binding = session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id);
+        if let Some(binding) = &drop_binding {
+            if let Some(fold) = drop_fold_for(exit_event.exit_code, binding.resilient) {
+                emitter.fold_session_drop(&binding.tab_id, fold);
+            }
+        }
+
         {
             let mut sessions = sessions.lock().await;
             sessions.remove(session_id);
@@ -1497,13 +1602,8 @@ impl SessionManager {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .remove(session_id);
 
-        // Clear the identity bridge entry (#2431) — mirrors the explicit
-        // `close_session` cleanup for the natural-exit / dropped path, so a
-        // session's tab mapping is released whichever way the session ends.
-        session_tab_ids
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(session_id);
+        // (The identity bridge entry for this session was already captured and
+        // removed above, where its presence gated the genuine-drop fold — #2439.)
 
         // Flush and drop the session's output logger (#1960) so the transcript's
         // tail is persisted and its file handle is released when the session ends.
@@ -2451,6 +2551,7 @@ mod tests {
                 None,
                 Some("tab-42:0"),
                 false,
+                false,
                 MockEventEmitter::new(),
             )
             .await
@@ -2469,6 +2570,7 @@ mod tests {
                 serde_json::json!({}),
                 None,
                 None,
+                false,
                 false,
                 MockEventEmitter::new(),
             )
@@ -2490,6 +2592,7 @@ mod tests {
                 serde_json::json!({}),
                 None,
                 Some("tab-7:0"),
+                false,
                 false,
                 MockEventEmitter::new(),
             )
@@ -2513,10 +2616,13 @@ mod tests {
         let emitter = MockEventEmitter::new();
         let sessions = sessions_with_mock("sess-tab").await;
         let session_tab_ids = new_session_tab_ids();
-        session_tab_ids
-            .lock()
-            .unwrap()
-            .insert("sess-tab".to_string(), "tab-9".to_string());
+        session_tab_ids.lock().unwrap().insert(
+            "sess-tab".to_string(),
+            TabBinding {
+                tab_id: "tab-9".to_string(),
+                resilient: false,
+            },
+        );
 
         SessionManager::emit_and_cleanup(
             "sess-tab",
@@ -2533,6 +2639,50 @@ mod tests {
             !session_tab_ids.lock().unwrap().contains_key("sess-tab"),
             "the natural-exit / dropped path clears the identity-bridge entry"
         );
+    }
+
+    #[tokio::test]
+    async fn create_connection_records_the_resilient_reconnect_flag() {
+        let manager = make_test_manager();
+        let session_id = manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                Some("tab-r:0"),
+                false,
+                true, // resilient-reconnect tab
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("session should open");
+
+        let binding = manager
+            .session_tab_ids
+            .lock()
+            .unwrap()
+            .get(&session_id)
+            .cloned()
+            .expect("a connect_id-bearing session records a binding");
+        assert_eq!(binding.tab_id, "tab-r");
+        assert!(
+            binding.resilient,
+            "the client's resilient-reconnect determination is recorded on the binding (#2439)"
+        );
+    }
+
+    #[test]
+    fn drop_fold_classifies_a_genuine_exit_like_the_client() {
+        // Clean exit (code 0) folds nothing — mirrors the client's `"clean"` reason.
+        assert_eq!(drop_fold_for(Some(0), false), None);
+        assert_eq!(drop_fold_for(Some(0), true), None);
+        // A non-zero code is a drop: resilient → reconnect, otherwise dropped.
+        assert_eq!(drop_fold_for(Some(1), false), Some(DropFold::Dropped));
+        assert_eq!(drop_fold_for(Some(1), true), Some(DropFold::Reconnect));
+        // An unknown code (`None`) — what the desktop `terminal-exit` always emits —
+        // is a drop too, resilient-gated.
+        assert_eq!(drop_fold_for(None, false), Some(DropFold::Dropped));
+        assert_eq!(drop_fold_for(None, true), Some(DropFold::Reconnect));
     }
 
     /// A connection whose `connect_cancellable` blocks until its token fires —
@@ -2626,6 +2776,7 @@ mod tests {
                     None,
                     Some("c1"),
                     false,
+                    false,
                     MockEventEmitter::new(),
                 )
                 .await
@@ -2668,6 +2819,7 @@ mod tests {
                 None,
                 None,
                 true,
+                false,
                 MockEventEmitter::new(),
             )
             .await
@@ -2679,6 +2831,7 @@ mod tests {
                 serde_json::json!({}),
                 None,
                 None,
+                false,
                 false,
                 MockEventEmitter::new(),
             )
