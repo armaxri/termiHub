@@ -6,6 +6,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { TerminalPortalProvider, useTerminalRegistry } from "./TerminalRegistry";
 import { sendInput } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
+import { ensureBroadcastSubscribed } from "@/store/broadcastBridge";
+import { installBroadcastHarness } from "@/test/broadcastHarness";
 import type { TerminalTab } from "@/types/terminal";
 
 vi.mock("@/themes", () => ({
@@ -380,6 +382,9 @@ describe("pasteToTerminal", () => {
   it("broadcasts paste to all connected targets when broadcast is active (#1981)", async () => {
     vi.mocked(sendInput).mockClear();
     mockReadClipboard.mockResolvedValueOnce("cfg");
+    // Broadcast membership is sourced from the authoritative region (#2206).
+    const harness = installBroadcastHarness();
+    await ensureBroadcastSubscribed();
     const mkTab = (id: string): TerminalTab => ({
       id,
       sessionId: `session-${id}`,
@@ -402,10 +407,13 @@ describe("pasteToTerminal", () => {
         activeTabId: "src",
       },
       activePanelId: "leaf-1",
-      broadcastActive: true,
-      broadcastSourceTabId: "src",
-      broadcastScope: "all",
-      broadcastTargetTabIds: new Set(["src", "t2"]),
+    });
+    // Broadcast active from the source over both connected terminals.
+    harness.transport.seed({
+      active: true,
+      sourceTabId: "src",
+      scope: "all",
+      targetTabIds: ["src", "t2"],
     });
     act(() => {
       registryActions.registerSession("src", "session-src");
@@ -420,6 +428,7 @@ describe("pasteToTerminal", () => {
     expect(sendInput).toHaveBeenCalledWith("session-src", "cfg");
     expect(sendInput).toHaveBeenCalledWith("session-t2", "cfg");
     expect(sendInput).toHaveBeenCalledTimes(2);
+    harness.teardown();
   });
 });
 

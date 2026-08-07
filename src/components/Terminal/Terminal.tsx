@@ -23,6 +23,7 @@ import {
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
@@ -862,7 +863,8 @@ export function Terminal({
           // normal single-session path below. Context-menu/native paste flows
           // through onData and is broadcast here; keyboard-shortcut paste is
           // preventDefault'd and broadcast in pasteToTerminal instead (#1981).
-          if (store.broadcastActive && store.broadcastSourceTabId === tabId) {
+          const bcView = currentBroadcastView();
+          if (bcView.active && bcView.sourceTabId === tabId) {
             for (const targetTabId of store.getBroadcastTargetTabIds()) {
               const targetSessionId = getSessionId(targetTabId);
               // Fire-and-forget, dispatched in parallel; line-ending

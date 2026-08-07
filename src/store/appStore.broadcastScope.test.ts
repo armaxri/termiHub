@@ -6,7 +6,7 @@
  * including non-terminal exclusion) and the `refreshBroadcastMembership` rule
  * that auto-adds terminals opened during an active broadcast per scope.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // The store pulls in the full service graph on import; stub the modules with
 // side effects at load time (mirrors the sibling broadcast-slice suite).
@@ -38,6 +38,8 @@ vi.mock("@/themes", () => ({
 }));
 
 import { useAppStore, resolveBroadcastTargetTabIds } from "./appStore";
+import { currentBroadcastView, ensureBroadcastSubscribed } from "./broadcastBridge";
+import { installBroadcastHarness } from "@/test/broadcastHarness";
 import type {
   LeafPanel,
   PanelNode,
@@ -177,14 +179,22 @@ describe("resolveBroadcastTargetTabIds (#1956)", () => {
 });
 
 describe("refreshBroadcastMembership — dynamic add on open (#1956)", () => {
-  beforeEach(() => {
+  let harness: ReturnType<typeof installBroadcastHarness>;
+
+  beforeEach(async () => {
     useAppStore.setState(useAppStore.getInitialState());
+    harness = installBroadcastHarness();
+    await ensureBroadcastSubscribed();
+  });
+
+  afterEach(() => {
+    harness.teardown();
   });
 
   it("no-op when broadcast is inactive", () => {
     seed(leaf("leaf-1", [makeTab({ id: "src" })]));
     useAppStore.getState().refreshBroadcastMembership();
-    expect(useAppStore.getState().broadcastTargetTabIds.size).toBe(0);
+    expect(currentBroadcastView().targetTabIds).toHaveLength(0);
   });
 
   it("'all' auto-adds a terminal opened during broadcast", () => {
@@ -195,7 +205,7 @@ describe("refreshBroadcastMembership — dynamic add on open (#1956)", () => {
     seed(leaf("leaf-1", [makeTab({ id: "src" }), makeTab({ id: "t2" }), makeTab({ id: "t3" })]));
     useAppStore.getState().refreshBroadcastMembership();
 
-    expect([...useAppStore.getState().broadcastTargetTabIds].sort()).toEqual(["src", "t2", "t3"]);
+    expect([...currentBroadcastView().targetTabIds].sort()).toEqual(["src", "t2", "t3"]);
   });
 
   it("'all' does not add a non-terminal tab opened during broadcast", () => {
@@ -207,7 +217,7 @@ describe("refreshBroadcastMembership — dynamic add on open (#1956)", () => {
     );
     useAppStore.getState().refreshBroadcastMembership();
 
-    expect([...useAppStore.getState().broadcastTargetTabIds]).toEqual(["src"]);
+    expect([...currentBroadcastView().targetTabIds]).toEqual(["src"]);
   });
 
   it("'panel' auto-adds only terminals opened in the source panel", () => {
@@ -240,7 +250,7 @@ describe("refreshBroadcastMembership — dynamic add on open (#1956)", () => {
     useAppStore.getState().refreshBroadcastMembership();
 
     // Only the terminal opened in the source panel (leaf-1) is added.
-    expect([...useAppStore.getState().broadcastTargetTabIds].sort()).toEqual(["src", "t2"]);
+    expect([...currentBroadcastView().targetTabIds].sort()).toEqual(["src", "t2"]);
   });
 
   it("'custom' never auto-adds a terminal opened during broadcast", () => {
@@ -250,7 +260,7 @@ describe("refreshBroadcastMembership — dynamic add on open (#1956)", () => {
     seed(leaf("leaf-1", [makeTab({ id: "src" }), makeTab({ id: "t2" }), makeTab({ id: "t3" })]));
     useAppStore.getState().refreshBroadcastMembership();
 
-    expect([...useAppStore.getState().broadcastTargetTabIds].sort()).toEqual(["src", "t2"]);
+    expect([...currentBroadcastView().targetTabIds].sort()).toEqual(["src", "t2"]);
   });
 
   it("addTab wires the auto-add: opening a terminal under 'all' extends the set", () => {
@@ -261,6 +271,6 @@ describe("refreshBroadcastMembership — dynamic add on open (#1956)", () => {
       .getState()
       .addTab("Terminal", "local", { type: "local", config: {} }, { panelId: "leaf-1" });
 
-    expect(useAppStore.getState().broadcastTargetTabIds.has(newId)).toBe(true);
+    expect(currentBroadcastView().targetTabIds).toContain(newId);
   });
 });

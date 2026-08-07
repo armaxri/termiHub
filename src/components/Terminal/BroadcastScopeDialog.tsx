@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Modal, Button, Field, Select, Checkbox } from "@/components/ui";
 import { useAppStore, resolveBroadcastTargetTabIds } from "@/store/appStore";
+import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { BroadcastScope, ConnectionType, TerminalTab } from "@/types/terminal";
 import "./BroadcastScopeDialog.css";
@@ -51,7 +52,8 @@ export function BroadcastScopeDialog({
   const rootPanel = useAppStore((s) => s.rootPanel);
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
-  const lastBroadcastScope = useAppStore((s) => s.lastBroadcastScope);
+  // Remembered scope sourced from the authoritative broadcast region (#2206).
+  const lastBroadcastScope = useProjectedBroadcast().lastScope;
   const startBroadcast = useAppStore((s) => s.startBroadcast);
 
   // Resolve broadcast membership against the source's own group tree (#1980),

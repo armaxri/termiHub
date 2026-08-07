@@ -275,7 +275,7 @@ import {
   ensureSettingsSubscribed,
   mirrorSettingsIntent,
 } from "@/store/settingsBridge";
-import { mirrorBroadcastIntent } from "@/store/broadcastBridge";
+import { currentBroadcastView, dispatchBroadcastIntentBestEffort } from "@/store/broadcastBridge";
 import {
   expectProjectedRestoreSettlement,
   mirrorRestoreBegin,
@@ -1348,16 +1348,11 @@ export interface AppState
   // Macro recording (#1674) + playback (#1675) — provided by MacrosSlice (#2114).
 
   // Broadcast input (#1955) — mirror typed input from a source terminal to many.
-  /** Whether broadcast mode is currently active. */
-  broadcastActive: boolean;
-  /** The tab ID of the source terminal (where the user types). */
-  broadcastSourceTabId: string | null;
-  /** The scope used for the current broadcast session. */
-  broadcastScope: BroadcastScope;
-  /** Set of tab IDs that are broadcast targets (includes the source). */
-  broadcastTargetTabIds: Set<string>;
-  /** Last used scope, retained for the keyboard-shortcut toggle (#1958). */
-  lastBroadcastScope: BroadcastScope;
+  // The membership state (`active` / `sourceTabId` / `scope` / `targetTabIds` /
+  // `lastScope`) lives in the authoritative `broadcast@<clientId>` projection
+  // region (#2206), read via `useProjectedBroadcast` / `currentBroadcastView`; the
+  // actions below dispatch `broadcast.*` intents. `appStore` holds no broadcast
+  // state — these methods only orchestrate against the live tab tree.
   /** Enter broadcast mode with the given scope, source tab, and target tabs. */
   startBroadcast: (scope: BroadcastScope, sourceTabId: string, targetTabIds: string[]) => void;
   /** Leave broadcast mode and clear the source/target selection. */
@@ -1365,10 +1360,10 @@ export interface AppState
   /**
    * Toggle broadcast from the keyboard shortcut (#1958). When broadcast is
    * active it stops; otherwise it starts against the active terminal tab using
-   * the remembered {@link lastBroadcastScope} — skipping the scope dropdown. A
-   * remembered `"custom"` scope cannot be reconstructed without the picker, so
-   * the shortcut falls back to `"all"`. Emits a hint toast when no terminal tab
-   * is focused (nothing to broadcast from).
+   * the remembered last scope — skipping the scope dropdown. A remembered
+   * `"custom"` scope cannot be reconstructed without the picker, so the shortcut
+   * falls back to `"all"`. Emits a hint toast when no terminal tab is focused
+   * (nothing to broadcast from).
    */
   toggleBroadcast: () => void;
   /** Add a tab to the broadcast target set (no-op when inactive). */
@@ -1378,17 +1373,16 @@ export interface AppState
   /** Whether the given tab is currently a broadcast target. */
   isBroadcastTarget: (tabId: string) => boolean;
   /**
-   * The subset of {@link broadcastTargetTabIds} that are *connected* terminal
-   * tabs — the tabs the `onData` fan-out should mirror input to. Disconnected,
+   * The subset of the broadcast target set that are *connected* terminal tabs —
+   * the tabs the `onData` fan-out should mirror input to. Disconnected,
    * connecting, and non-terminal tabs are filtered out silently. Returns `[]`
    * when broadcast is inactive. Resolution of each tab id to a live session id
    * is done by the terminal registry at the dispatch seam.
    */
   getBroadcastTargetTabIds: () => string[];
   /**
-   * Recompute the broadcast target set for the active {@link broadcastScope} so
-   * membership tracks tabs opening during an active broadcast (#1956). No-op
-   * when inactive.
+   * Recompute the broadcast target set for the active scope so membership tracks
+   * tabs opening during an active broadcast (#1956). No-op when inactive.
    *
    * - `"all"` / `"panel"` — re-derive members from the scope, so a terminal
    *   opened in range is auto-added and one no longer in range drops out.
@@ -4307,13 +4301,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
       clearAutoReconnectTimer(tabId);
 
       // Broadcast (#1955): closing the source tab ends broadcast entirely;
-      // closing a plain target silently drops it from the set.
-      const bc = get();
-      if (bc.broadcastActive) {
-        if (bc.broadcastSourceTabId === tabId) {
-          bc.stopBroadcast();
-        } else if (bc.broadcastTargetTabIds.has(tabId)) {
-          bc.removeBroadcastTarget(tabId);
+      // closing a plain target silently drops it from the set. Membership is
+      // sourced from the authoritative region (#2206).
+      const bcView = currentBroadcastView();
+      if (bcView.active) {
+        if (bcView.sourceTabId === tabId) {
+          get().stopBroadcast();
+        } else if (bcView.targetTabIds.includes(tabId)) {
+          get().removeBroadcastTarget(tabId);
         }
       }
     },
@@ -6687,50 +6682,32 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     // Macro recording (#1674) + playback (#1675) provided by createMacrosSlice (#2114).
 
-    // Broadcast input (#1955)
-    broadcastActive: false,
-    broadcastSourceTabId: null,
-    broadcastScope: "all",
-    broadcastTargetTabIds: new Set<string>(),
-    lastBroadcastScope: "all",
+    // Broadcast input (#1955) — the membership state lives in the authoritative
+    // `broadcast@<clientId>` region (#2206); these actions dispatch `broadcast.*`
+    // intents and read `currentBroadcastView()`. `appStore` holds no broadcast
+    // state (reducer removal, #2206). Broadcast has no server data source, so the
+    // dispatched intents are the only path that mutates the machine.
 
     startBroadcast: (scope, sourceTabId, targetTabIds) => {
-      set({
-        broadcastActive: true,
-        broadcastScope: scope,
-        lastBroadcastScope: scope,
-        broadcastSourceTabId: sourceTabId,
-        // The source is just another target — keeping the fan-out loop uniform.
-        broadcastTargetTabIds: new Set<string>([sourceTabId, ...targetTabIds]),
-      });
-      // Mutation cut (#2242): mirror the start into the authoritative region. The
-      // store reproduces `{source} ∪ targets` from the same args, so pass the raw
-      // resolved targets (not the source-prefixed set). A no-op / logged fallback
-      // when the flag is off or the transport is unavailable — the local slice
-      // above already applied.
-      mirrorBroadcastIntent("broadcast.start", { scope, sourceTabId, targetTabIds });
+      // The store reproduces `{source} ∪ targets` from the same args, so pass the
+      // raw resolved targets (not a source-prefixed set).
+      dispatchBroadcastIntentBestEffort("broadcast.start", { scope, sourceTabId, targetTabIds });
     },
 
     stopBroadcast: () => {
-      set({
-        broadcastActive: false,
-        broadcastSourceTabId: null,
-        broadcastTargetTabIds: new Set<string>(),
-      });
-      // Mutation cut (#2242): leave broadcast in the region too (scope/lastScope
-      // retained by the store for the keyboard toggle, exactly as the slice).
-      mirrorBroadcastIntent("broadcast.stop", {});
+      // The store retains scope/lastScope across the stop for the keyboard toggle.
+      dispatchBroadcastIntentBestEffort("broadcast.stop", {});
     },
 
     toggleBroadcast: () => {
-      const state = get();
       // Second press (or any press while active) turns broadcast off, regardless
       // of which tab is focused — mirrors the toolbar toggle and the status-bar
       // Stop pill.
-      if (state.broadcastActive) {
+      if (currentBroadcastView().active) {
         get().stopBroadcast();
         return;
       }
+      const state = get();
       const source = getActiveTab(state);
       if (!source || source.contentType !== "terminal") {
         toast.info("Focus a terminal to start broadcasting input");
@@ -6739,43 +6716,30 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Reuse the last scope, skipping the dropdown. A remembered "custom"
       // selection lives only in the picker and cannot be rebuilt here, so it
       // degrades to "all terminals" (#1958).
-      const scope: BroadcastScope =
-        state.lastBroadcastScope === "custom" ? "all" : state.lastBroadcastScope;
+      const lastScope = currentBroadcastView().lastScope;
+      const scope: BroadcastScope = lastScope === "custom" ? "all" : lastScope;
       const targets = resolveBroadcastTargetTabIds(state, scope, source.id);
       get().startBroadcast(scope, source.id, targets);
     },
 
     addBroadcastTarget: (tabId) => {
-      // Read-then-set so the mirror fires only on a real change (a no-op add must
-      // not dispatch a redundant intent), matching the store's pure set-insert.
-      if (get().broadcastTargetTabIds.has(tabId)) return;
-      set((state) => {
-        if (state.broadcastTargetTabIds.has(tabId)) return {};
-        const next = new Set(state.broadcastTargetTabIds);
-        next.add(tabId);
-        return { broadcastTargetTabIds: next };
-      });
-      // Mutation cut (#2242): mirror the membership add into the region.
-      mirrorBroadcastIntent("broadcast.addTarget", { tabId });
+      // Read-then-dispatch so the intent fires only on a real change (a no-op add
+      // must not dispatch a redundant intent), matching the store's pure set-insert.
+      if (currentBroadcastView().targetTabIds.includes(tabId)) return;
+      dispatchBroadcastIntentBestEffort("broadcast.addTarget", { tabId });
     },
 
     removeBroadcastTarget: (tabId) => {
-      if (!get().broadcastTargetTabIds.has(tabId)) return;
-      set((state) => {
-        if (!state.broadcastTargetTabIds.has(tabId)) return {};
-        const next = new Set(state.broadcastTargetTabIds);
-        next.delete(tabId);
-        return { broadcastTargetTabIds: next };
-      });
-      // Mutation cut (#2242): mirror the membership removal into the region.
-      mirrorBroadcastIntent("broadcast.removeTarget", { tabId });
+      if (!currentBroadcastView().targetTabIds.includes(tabId)) return;
+      dispatchBroadcastIntentBestEffort("broadcast.removeTarget", { tabId });
     },
 
-    isBroadcastTarget: (tabId) => get().broadcastTargetTabIds.has(tabId),
+    isBroadcastTarget: (tabId) => currentBroadcastView().targetTabIds.includes(tabId),
 
     getBroadcastTargetTabIds: () => {
+      const view = currentBroadcastView();
+      if (!view.active) return [];
       const state = get();
-      if (!state.broadcastActive) return [];
       const statusMaps: TabStatusMaps = {
         terminalConnecting: state.terminalConnecting,
         terminalReconnectingTabs: state.terminalReconnectingTabs,
@@ -6785,7 +6749,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       };
       const tabsById = new Map(collectLiveTabs(state).map((t) => [t.id, t]));
       const result: string[] = [];
-      for (const tabId of state.broadcastTargetTabIds) {
+      for (const tabId of view.targetTabIds) {
         const tab = tabsById.get(tabId);
         // Only connected terminal sessions receive input. Disconnected/
         // connecting sessions and non-terminal tabs are skipped silently.
@@ -6797,27 +6761,28 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     refreshBroadcastMembership: () => {
-      const state = get();
-      if (!state.broadcastActive) return;
-      const source = state.broadcastSourceTabId;
+      const view = currentBroadcastView();
+      if (!view.active) return;
+      const source = view.sourceTabId;
       if (!source) return;
       // Custom selection is frozen at pick time — never auto-add. Removal of
       // closed targets is handled at the tab-close seam.
-      if (state.broadcastScope === "custom") return;
-      const resolved = resolveBroadcastTargetTabIds(state, state.broadcastScope, source);
+      if (view.scope === "custom") return;
+      const state = get();
+      const resolved = resolveBroadcastTargetTabIds(state, view.scope, source);
       const next = new Set<string>([source, ...resolved]);
-      const prev = state.broadcastTargetTabIds;
-      // Skip the update (and its re-render) when membership is unchanged.
+      const prev = new Set(view.targetTabIds);
+      // Skip the work (and its intents) when membership is unchanged.
       if (next.size === prev.size && [...next].every((id) => prev.has(id))) return;
-      set({ broadcastTargetTabIds: next });
-      // Mutation cut (#2242): the store owns no bulk-set intent, so reconcile the
-      // region to the recomputed membership via granular add/remove intents for the
-      // delta (mirroring the connected-terminal refresh at the fan-out seam).
+      // The store owns no bulk-set intent, so reconcile the region to the
+      // recomputed membership via granular add/remove intents for the delta
+      // (mirroring the connected-terminal refresh at the fan-out seam).
       for (const id of next) {
-        if (!prev.has(id)) mirrorBroadcastIntent("broadcast.addTarget", { tabId: id });
+        if (!prev.has(id)) dispatchBroadcastIntentBestEffort("broadcast.addTarget", { tabId: id });
       }
       for (const id of prev) {
-        if (!next.has(id)) mirrorBroadcastIntent("broadcast.removeTarget", { tabId: id });
+        if (!next.has(id))
+          dispatchBroadcastIntentBestEffort("broadcast.removeTarget", { tabId: id });
       }
     },
 

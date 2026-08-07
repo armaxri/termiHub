@@ -20,6 +20,7 @@ import { sendInput } from "@/services/api";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { SessionId } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
+import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { frontendLog } from "@/utils/frontendLog";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
@@ -349,7 +350,8 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
         // paste into every connected target — matching the onData fan-out and the
         // context-menu paste path — not just the source session.
         const store = useAppStore.getState();
-        if (store.broadcastActive && store.broadcastSourceTabId === tabId) {
+        const bcView = currentBroadcastView();
+        if (bcView.active && bcView.sourceTabId === tabId) {
           await Promise.all(
             store.getBroadcastTargetTabIds().flatMap((targetTabId) => {
               const targetSessionId = getSessionId(targetTabId);

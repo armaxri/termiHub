@@ -1,12 +1,15 @@
 /**
- * Tests for the broadcast-input Zustand slice (#1955).
+ * Tests for the broadcast-input store actions (#1955) against the authoritative
+ * `broadcast@<clientId>` region (#2206).
  *
- * Pins the store foundation for broadcast input: the start/stop/add/remove/
- * isTarget actions, the connected-only target resolution the `onData` fan-out
- * relies on (`getBroadcastTargetTabIds`), the source-inclusion invariant, and
- * the source-close teardown wired into `closeTab`.
+ * Pins the broadcast actions now that the region is the single source of truth
+ * (the appStore reducers are gone): start/stop/add/remove/isTarget dispatch
+ * `broadcast.*` intents, and the state is asserted via `currentBroadcastView()`.
+ * Also covers the connected-only target resolution the `onData` fan-out relies on
+ * (`getBroadcastTargetTabIds`), the source-inclusion invariant, and the
+ * source-close teardown wired into `closeTab`.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // The store pulls in the full service graph on import; stub the modules with
 // side effects at load time (mirrors the sibling macro-slice suites).
@@ -38,6 +41,8 @@ vi.mock("@/themes", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { currentBroadcastView, ensureBroadcastSubscribed } from "./broadcastBridge";
+import { installBroadcastHarness } from "@/test/broadcastHarness";
 import type { LeafPanel, TerminalTab, TabContentType } from "@/types/terminal";
 
 interface SeedTab {
@@ -66,69 +71,80 @@ function seedTabs(tabs: TerminalTab[], activeTabId = tabs[0]?.id ?? null) {
   useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
 }
 
-describe("appStore — broadcast input slice (#1955)", () => {
-  beforeEach(() => {
+describe("appStore — broadcast input actions (#1955, region-authoritative #2206)", () => {
+  let harness: ReturnType<typeof installBroadcastHarness>;
+
+  beforeEach(async () => {
     useAppStore.setState(useAppStore.getInitialState());
+    harness = installBroadcastHarness();
+    // Subscribe so the actions' dispatched intents round-trip into
+    // `currentBroadcastView()` synchronously (the fake transport folds + fans
+    // synchronously, and ProjectionClient applies frames synchronously).
+    await ensureBroadcastSubscribed();
+  });
+
+  afterEach(() => {
+    harness.teardown();
   });
 
   it("starts inactive with the default 'all' scope and empty target set", () => {
-    const s = useAppStore.getState();
-    expect(s.broadcastActive).toBe(false);
-    expect(s.broadcastSourceTabId).toBeNull();
-    expect(s.broadcastScope).toBe("all");
-    expect(s.lastBroadcastScope).toBe("all");
-    expect(s.broadcastTargetTabIds.size).toBe(0);
+    const v = currentBroadcastView();
+    expect(v.active).toBe(false);
+    expect(v.sourceTabId).toBeNull();
+    expect(v.scope).toBe("all");
+    expect(v.lastScope).toBe("all");
+    expect(v.targetTabIds).toHaveLength(0);
   });
 
   it("startBroadcast activates, sets source/scope, and includes the source as a target", () => {
     useAppStore.getState().startBroadcast("all", "src", ["t2", "t3"]);
 
-    const s = useAppStore.getState();
-    expect(s.broadcastActive).toBe(true);
-    expect(s.broadcastSourceTabId).toBe("src");
-    expect(s.broadcastScope).toBe("all");
-    expect(s.lastBroadcastScope).toBe("all");
+    const v = currentBroadcastView();
+    expect(v.active).toBe(true);
+    expect(v.sourceTabId).toBe("src");
+    expect(v.scope).toBe("all");
+    expect(v.lastScope).toBe("all");
     // Source is just another target — the fan-out loop stays uniform.
-    expect([...s.broadcastTargetTabIds].sort()).toEqual(["src", "t2", "t3"]);
+    expect([...v.targetTabIds].sort()).toEqual(["src", "t2", "t3"]);
   });
 
   it("stopBroadcast clears active/source/targets", () => {
     useAppStore.getState().startBroadcast("all", "src", ["t2"]);
     useAppStore.getState().stopBroadcast();
 
-    const s = useAppStore.getState();
-    expect(s.broadcastActive).toBe(false);
-    expect(s.broadcastSourceTabId).toBeNull();
-    expect(s.broadcastTargetTabIds.size).toBe(0);
+    const v = currentBroadcastView();
+    expect(v.active).toBe(false);
+    expect(v.sourceTabId).toBeNull();
+    expect(v.targetTabIds).toHaveLength(0);
   });
 
   it("remembers the last scope after stopping (for the shortcut toggle)", () => {
     useAppStore.getState().startBroadcast("panel", "src", []);
     useAppStore.getState().stopBroadcast();
-    expect(useAppStore.getState().lastBroadcastScope).toBe("panel");
+    expect(currentBroadcastView().lastScope).toBe("panel");
   });
 
   it("add/remove/isBroadcastTarget mutate the target set", () => {
     const store = useAppStore.getState();
     store.startBroadcast("all", "src", []);
 
-    expect(useAppStore.getState().isBroadcastTarget("t2")).toBe(false);
+    expect(store.isBroadcastTarget("t2")).toBe(false);
     store.addBroadcastTarget("t2");
-    expect(useAppStore.getState().isBroadcastTarget("t2")).toBe(true);
-    expect(useAppStore.getState().broadcastTargetTabIds.has("src")).toBe(true);
+    expect(store.isBroadcastTarget("t2")).toBe(true);
+    expect(currentBroadcastView().targetTabIds).toContain("src");
 
     store.removeBroadcastTarget("t2");
-    expect(useAppStore.getState().isBroadcastTarget("t2")).toBe(false);
+    expect(store.isBroadcastTarget("t2")).toBe(false);
   });
 
-  it("addBroadcastTarget is idempotent (no duplicate, no needless replacement)", () => {
+  it("addBroadcastTarget is idempotent (a no-op add dispatches nothing)", () => {
     const store = useAppStore.getState();
     store.startBroadcast("all", "src", ["t2"]);
-    const before = useAppStore.getState().broadcastTargetTabIds;
+    harness.transport.dispatched.length = 0;
     store.addBroadcastTarget("t2");
-    // No-op returns the same Set reference (guards against needless re-renders).
-    expect(useAppStore.getState().broadcastTargetTabIds).toBe(before);
-    expect(useAppStore.getState().broadcastTargetTabIds.size).toBe(2);
+    // Already a target → no redundant intent, no duplicate in the region.
+    expect(harness.transport.kinds()).toEqual([]);
+    expect(currentBroadcastView().targetTabIds).toHaveLength(2);
   });
 
   describe("getBroadcastTargetTabIds — connected-only filtering", () => {
@@ -177,8 +193,8 @@ describe("appStore — broadcast input slice (#1955)", () => {
     // this terminal is the source; every other case falls through to the normal
     // single-session send. This mirrors that predicate against store state.
     const shouldBroadcast = (tabId: string) => {
-      const s = useAppStore.getState();
-      return s.broadcastActive && s.broadcastSourceTabId === tabId;
+      const v = currentBroadcastView();
+      return v.active && v.sourceTabId === tabId;
     };
 
     beforeEach(() => {
@@ -210,10 +226,10 @@ describe("appStore — broadcast input slice (#1955)", () => {
 
       useAppStore.getState().closeTab("src", "leaf-1");
 
-      const s = useAppStore.getState();
-      expect(s.broadcastActive).toBe(false);
-      expect(s.broadcastSourceTabId).toBeNull();
-      expect(s.broadcastTargetTabIds.size).toBe(0);
+      const v = currentBroadcastView();
+      expect(v.active).toBe(false);
+      expect(v.sourceTabId).toBeNull();
+      expect(v.targetTabIds).toHaveLength(0);
     });
 
     it("closing a plain target drops it from the set but keeps broadcast active", () => {
@@ -222,11 +238,11 @@ describe("appStore — broadcast input slice (#1955)", () => {
 
       useAppStore.getState().closeTab("t2", "leaf-1");
 
-      const s = useAppStore.getState();
-      expect(s.broadcastActive).toBe(true);
-      expect(s.broadcastSourceTabId).toBe("src");
-      expect(s.broadcastTargetTabIds.has("t2")).toBe(false);
-      expect(s.broadcastTargetTabIds.has("src")).toBe(true);
+      const v = currentBroadcastView();
+      expect(v.active).toBe(true);
+      expect(v.sourceTabId).toBe("src");
+      expect(v.targetTabIds).not.toContain("t2");
+      expect(v.targetTabIds).toContain("src");
     });
   });
 });

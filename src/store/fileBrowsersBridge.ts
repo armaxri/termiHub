@@ -460,8 +460,8 @@ export function mirrorFileBrowserIntent(
  * fall back to `appStore` (false). A deep value comparison of the active pane, the
  * three panes and the clipboard; because the projected records match the frontend
  * shapes one-to-one, a mirroring view is value-identical to the `appStore` slice,
- * so rendering from it can never diverge. The twin of the broadcast render cut's
- * `broadcastViewMirrors`.
+ * so rendering from it can never diverge. The same faithful-mirror-gate idiom the
+ * other domain render cuts use.
  */
 export function fileBrowsersViewMirrors(
   view: FileBrowsersView | undefined,
