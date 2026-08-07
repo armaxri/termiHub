@@ -21,8 +21,10 @@
 //! a clean per-domain boundary.
 
 pub mod projection;
+pub mod redrive;
 pub mod store;
 pub mod timer;
 
+pub use redrive::AppReconnectRedrive;
 pub use store::SessionLifecycleStore;
-pub use timer::{ReconnectTimerDriver, TokioReconnectScheduler};
+pub use timer::{ReconnectRedrive, ReconnectTimerDriver, TokioReconnectScheduler};

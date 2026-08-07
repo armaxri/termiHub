@@ -52,6 +52,32 @@ use crate::session_projection::store::SessionLifecycleStore;
 /// The action a fired timer runs: advance the store and fan the diff out.
 type FireTask = Box<dyn FnOnce() + Send>;
 
+/// The **backend-driven reconnect redrive** hook (#2454), invoked on the
+/// `Waiting → Attempt` edge after the store has advanced to `Connecting`.
+///
+/// Where [`ReconnectTimerDriver`] owns only the loop's *timing*, this owns the
+/// *transport*: for a tab that opted into backend reattach (the retained
+/// request's `backend_reattach` gate, threaded from the client's
+/// `sessionBackendReattach` flag), the production implementation re-establishes
+/// the connection itself from the retained request, mints a new backend session,
+/// folds the attempt's outcome (`connected` + the new `sessionId`, or
+/// `reconnectFailed`) at the source, re-syncs this timer, and zeroizes the
+/// retained request on give-up.
+///
+/// It is deliberately abstracted so the timer module stays free of the
+/// `SessionManager` / `AppHandle` machinery (that lives in
+/// [`crate::session_projection::redrive`]) and so tests can inject a recording
+/// double. A tab that did **not** opt in is a no-op here: the fired attempt's
+/// `Connecting` diff still fans out and the **client** drives the redrive exactly
+/// as on `develop` — the sole gate that keeps the flag-off path byte-identical.
+pub trait ReconnectRedrive: Send + Sync {
+    /// Attempt a backend-driven reconnect for `tab_id`. Called from
+    /// [`ReconnectTimerDriver::fire`] after the store advanced `Waiting →
+    /// Connecting`. Must itself check the opt-in gate and no-op when the tab is
+    /// client-driven. Cheap/non-blocking: any real connect work is spawned.
+    fn redrive(&self, tab_id: &str);
+}
+
 /// A cancellable, per-key one-shot timer — the wall-clock behind the reconnect
 /// loop, abstracted so tests inject a deterministic double.
 ///
@@ -120,10 +146,20 @@ pub struct ReconnectTimerDriver {
     /// Fan the advanced region out after a fired timer mutates the store. In
     /// production this republishes the shared `session-lifecycle` region.
     publish: Arc<dyn Fn() + Send + Sync>,
+    /// The optional backend-driven reconnect redrive (#2454). Present once the
+    /// production wiring ([`crate::session_projection::redrive`]) is installed;
+    /// `None` in shadow-only setups and plain timer unit tests, where a fired
+    /// timer only advances the store + publishes and the client drives the
+    /// redrive. When present, it is invoked on every fired attempt but no-ops for
+    /// a tab that did not opt into backend reattach.
+    redrive: Option<Arc<dyn ReconnectRedrive>>,
 }
 
 impl ReconnectTimerDriver {
     /// Build a driver over a store, a scheduler, and a publish hook.
+    ///
+    /// The backend redrive hook is absent by default (client-driven / shadow);
+    /// install it with [`Self::with_redrive`].
     pub fn new(
         store: Arc<SessionLifecycleStore>,
         scheduler: Arc<dyn ReconnectScheduler>,
@@ -133,7 +169,16 @@ impl ReconnectTimerDriver {
             store,
             scheduler,
             publish,
+            redrive: None,
         }
+    }
+
+    /// Install the backend-driven reconnect redrive hook (#2454). Consuming
+    /// builder so the driver can be constructed and then `manage`d as-is in
+    /// `setup()`.
+    pub fn with_redrive(mut self, redrive: Arc<dyn ReconnectRedrive>) -> Self {
+        self.redrive = Some(redrive);
+        self
     }
 
     /// Reconcile the timer for `session_id` with the store's current reconnect
@@ -168,6 +213,16 @@ impl ReconnectTimerDriver {
     fn fire(&self, session_id: &str) {
         self.store.reconnect_attempt(session_id);
         (self.publish)();
+        // Backend-driven redrive (#2454): with the hook installed, re-establish
+        // the transport for a tab that opted into backend reattach. The hook
+        // itself checks the opt-in gate and no-ops for a client-driven tab, so a
+        // flag-off tab sees exactly the pre-#2454 behavior (advance + publish;
+        // the client drives the attempt). Ordered after the publish so a
+        // subscriber sees the `Connecting` edge before the redrive's own
+        // outcome diff lands.
+        if let Some(redrive) = &self.redrive {
+            redrive.redrive(session_id);
+        }
     }
 }
 
