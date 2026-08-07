@@ -156,6 +156,24 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
     /// managed `session-lifecycle` store — a benign convergent double-write with
     /// the client's `setTerminalExited` mirror (like the connect/kill folds).
     fn fold_session_drop(&self, _tab_id: &str, _fold: DropFold) {}
+
+    /// Fold an **initial** connect failure server-side (#2439, part of #2205).
+    ///
+    /// Called from the [`SessionManager::create_connection`] source for a
+    /// **genuine** (non-cancelled), **initial** (`retryCount == 0`), **direct**
+    /// (non-agent) connect failure, keyed by the frontend `tab_id`. It is the
+    /// symmetric third arm of the command's connect/connected fold: a failed
+    /// initial direct connect settles the tab-keyed region entry `Failed`. Default
+    /// no-op for test emitters (no projection store); the production `AppHandle`
+    /// folds `session.connectFailed` into the managed `session-lifecycle` store.
+    ///
+    /// Deliberately **not** folded here (each still owned by the client, so folding
+    /// would diverge): a **cancellation** (a Stop, not a failure — gated on the
+    /// connect token by the caller); a **reconnect attempt** (`retryCount > 0`,
+    /// owned by the client reconnect loop + the backend timer #2203, whose
+    /// give-up is not yet source-foldable); and an **agent** connect (the frontend
+    /// silently auto-retries it without an intent).
+    fn fold_connect_failed(&self, _tab_id: &str, _error: &str) {}
 }
 
 impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
@@ -177,6 +195,13 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
             DropFold::Reconnect => fold_session_transition(self, |store| store.reconnect(tab_id)),
             DropFold::Dropped => fold_session_transition(self, |store| store.dropped(tab_id, None)),
         }
+    }
+
+    fn fold_connect_failed(&self, tab_id: &str, error: &str) {
+        use crate::session_projection::projection::fold_session_transition;
+        fold_session_transition(self, |store| {
+            store.connect_failed(tab_id, Some(error.to_string()))
+        });
     }
 }
 
@@ -399,6 +424,20 @@ fn tab_id_from_connect_id(connect_id: &str) -> Option<String> {
         .map(|(tab_id, _retry)| tab_id)
         .filter(|tab_id| !tab_id.is_empty())
         .map(str::to_string)
+}
+
+/// The frontend `tab_id` to fold a `session.connectFailed` for when an **initial**
+/// connect fails, parsed from `connect_id = ${tabId}:${retryCount}` (#2439).
+///
+/// Returns `Some(tab_id)` only for the initial attempt (`retryCount == 0`) of a
+/// session carrying the tab-id form. A **reconnect attempt** (`retryCount > 0`,
+/// owned by the client reconnect loop + the backend timer #2203) or a `connect_id`
+/// not carrying the tab-id form (e.g. the internal agent-setup session, `None`)
+/// yields `None`. The **agent** and **cancellation** exclusions are applied by the
+/// caller (the non-agent branch, gated on the connect token), not here.
+fn initial_connect_failed_tab_id(connect_id: Option<&str>) -> Option<String> {
+    let (tab_id, retry) = connect_id?.rsplit_once(':')?;
+    (retry == "0" && !tab_id.is_empty()).then(|| tab_id.to_string())
 }
 
 impl SessionManager {
@@ -694,9 +733,30 @@ impl SessionManager {
                         .create(type_id)
                         .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?
                 };
-                conn.connect_cancellable(settings.clone(), cancel_token.clone())
+                if let Err(e) = conn
+                    .connect_cancellable(settings.clone(), cancel_token.clone())
                     .await
-                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                {
+                    // Server-authority fold (#2439, part of #2205): a **genuine**
+                    // (non-cancelled) **initial** direct-connect failure is a terminal
+                    // `session.connectFailed`, folded at the source keyed by the tab id —
+                    // the symmetric third arm of the command's connect/connected fold.
+                    // Left to the client (as before, so no divergence): a **cancellation**
+                    // (a Stop, not a failure — the token fired); a **reconnect attempt**
+                    // (retry>0, owned by the client loop + backend timer #2203, whose
+                    // give-up is not yet source-foldable); and **agent** connects (this is
+                    // the non-agent branch — an agent connect silently auto-retries
+                    // client-side without an intent). Additive, shadow-only.
+                    let cancelled = cancel_token
+                        .as_ref()
+                        .is_some_and(CancellationToken::is_cancelled);
+                    if !cancelled {
+                        if let Some(tab_id) = initial_connect_failed_tab_id(connect_id) {
+                            emitter.fold_connect_failed(&tab_id, &e.to_string());
+                        }
+                    }
+                    return Err(TerminalError::SpawnFailed(e.to_string()));
+                }
                 (conn, None)
             };
 
@@ -1791,6 +1851,8 @@ mod tests {
     struct MockEventEmitter {
         outputs: std::sync::Arc<std::sync::Mutex<Vec<TerminalOutputEvent>>>,
         exits: std::sync::Arc<std::sync::Mutex<Vec<TerminalExitEvent>>>,
+        /// Recorded `fold_connect_failed` calls as `(tab_id, error)` (#2439).
+        connect_faileds: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
         fail_output: bool,
     }
 
@@ -1816,6 +1878,12 @@ mod tests {
         }
         fn emit_exit(&self, event: &TerminalExitEvent) {
             self.exits.lock().unwrap().push(event.clone());
+        }
+        fn fold_connect_failed(&self, tab_id: &str, error: &str) {
+            self.connect_faileds
+                .lock()
+                .unwrap()
+                .push((tab_id.to_string(), error.to_string()));
         }
     }
 
@@ -2683,6 +2751,204 @@ mod tests {
         // is a drop too, resilient-gated.
         assert_eq!(drop_fold_for(None, false), Some(DropFold::Dropped));
         assert_eq!(drop_fold_for(None, true), Some(DropFold::Reconnect));
+    }
+
+    #[test]
+    fn initial_connect_failed_tab_id_folds_only_the_initial_attempt() {
+        // Initial attempt (retry 0) of a tab-bearing connect → fold that tab.
+        assert_eq!(
+            initial_connect_failed_tab_id(Some("tab-1:0")),
+            Some("tab-1".to_string())
+        );
+        // A reconnect attempt (retry > 0) is owned by the client loop + backend timer.
+        assert_eq!(initial_connect_failed_tab_id(Some("tab-1:2")), None);
+        // No connect_id (e.g. internal agent-setup session) → None.
+        assert_eq!(initial_connect_failed_tab_id(None), None);
+        // A connect_id not carrying the tab-id:retry form → None.
+        assert_eq!(initial_connect_failed_tab_id(Some("no-colon")), None);
+        // An empty tab id is rejected rather than guessed.
+        assert_eq!(initial_connect_failed_tab_id(Some(":0")), None);
+    }
+
+    /// A connection whose `connect_cancellable` fails **immediately** (no token
+    /// wait) — lets us exercise a genuine, non-cancelled connect failure (#2439).
+    #[derive(Default)]
+    struct ImmediateFailConnect;
+
+    #[async_trait::async_trait]
+    impl ConnectionType for ImmediateFailConnect {
+        fn type_id(&self) -> &str {
+            "failing"
+        }
+        fn display_name(&self) -> &str {
+            "Failing"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                monitoring: false,
+                file_browser: false,
+                graphical: false,
+                resize: true,
+                persistent: false,
+                terminal: true,
+            }
+        }
+        async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+            Err(SessionError::SpawnFailed("connection refused".to_string()))
+        }
+        async fn connect_cancellable(
+            &mut self,
+            _settings: serde_json::Value,
+            _cancel: Option<CancellationToken>,
+        ) -> Result<(), SessionError> {
+            // Fails at once regardless of the token, so the cancel token is never
+            // fired — a genuine failure, not a cancellation.
+            Err(SessionError::SpawnFailed("connection refused".to_string()))
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            false
+        }
+        fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            None
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            None
+        }
+    }
+
+    fn failing_manager() -> Arc<SessionManager> {
+        let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+        registry.register(
+            "failing",
+            "Failing",
+            "mock",
+            Box::new(|| Box::new(ImmediateFailConnect)),
+        );
+        Arc::new(SessionManager::new(registry, Arc::new(NullAgent)))
+    }
+
+    /// A genuine (non-cancelled) **initial** **direct** connect failure folds
+    /// `session.connectFailed` server-side, keyed by the tab id (#2439). The
+    /// symmetric third arm of the command's connect/connected fold.
+    #[tokio::test]
+    async fn create_connection_folds_connect_failed_for_a_genuine_initial_direct_failure() {
+        let manager = failing_manager();
+        let emitter = MockEventEmitter::new();
+        let result = manager
+            .create_connection(
+                "failing",
+                serde_json::json!({}),
+                None,            // no agent → direct connect
+                Some("tab-f:0"), // initial attempt
+                false,
+                false,
+                emitter.clone(),
+            )
+            .await;
+        assert!(result.is_err(), "the connect must fail");
+
+        let folds = emitter.connect_faileds.lock().unwrap();
+        assert_eq!(
+            folds.len(),
+            1,
+            "exactly one connect_failed fold for a genuine initial direct failure"
+        );
+        assert_eq!(folds[0].0, "tab-f", "keyed by the frontend tab id");
+        assert!(
+            folds[0].1.contains("connection refused"),
+            "the failure error is carried into the fold"
+        );
+    }
+
+    /// A **reconnect attempt** (`retryCount > 0`) is owned by the client loop +
+    /// backend timer, so its failure is **not** folded as `connect_failed` (#2439).
+    #[tokio::test]
+    async fn create_connection_does_not_fold_connect_failed_for_a_reconnect_attempt() {
+        let manager = failing_manager();
+        let emitter = MockEventEmitter::new();
+        let _ = manager
+            .create_connection(
+                "failing",
+                serde_json::json!({}),
+                None,
+                Some("tab-f:2"), // a reconnect attempt
+                false,
+                false,
+                emitter.clone(),
+            )
+            .await;
+        assert!(
+            emitter.connect_faileds.lock().unwrap().is_empty(),
+            "a reconnect attempt's failure is not source-folded (client loop owns it)"
+        );
+    }
+
+    /// A **cancellation** (a Stop mid-connect) is not a failure, so it folds no
+    /// `connect_failed` even though the connect returns an error (#2439/#952).
+    #[tokio::test]
+    async fn create_connection_does_not_fold_connect_failed_on_cancellation() {
+        let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+        registry.register(
+            "blocking",
+            "Blocking",
+            "mock",
+            Box::new(|| Box::new(BlockingConnect)),
+        );
+        let manager = Arc::new(SessionManager::new(registry, Arc::new(NullAgent)));
+        let emitter = MockEventEmitter::new();
+
+        let spawned = manager.clone();
+        let spawned_emitter = emitter.clone();
+        let join = tokio::spawn(async move {
+            spawned
+                .create_connection(
+                    "blocking",
+                    serde_json::json!({}),
+                    None,
+                    Some("tab-c:0"), // initial attempt, but cancelled
+                    false,
+                    false,
+                    spawned_emitter,
+                )
+                .await
+        });
+
+        // Poll until the connect registers its token, then fire the cancel.
+        let mut cancelled = false;
+        for _ in 0..200 {
+            if manager.cancel_connecting("tab-c:0") {
+                cancelled = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(
+            cancelled,
+            "the connecting session should have been cancellable"
+        );
+        let result = join.await.expect("join");
+        assert!(result.is_err(), "a cancelled connect returns an error");
+
+        assert!(
+            emitter.connect_faileds.lock().unwrap().is_empty(),
+            "a cancellation is a Stop, not a failure — no connect_failed fold"
+        );
     }
 
     /// A connection whose `connect_cancellable` blocks until its token fires —
