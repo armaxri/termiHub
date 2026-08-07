@@ -276,9 +276,29 @@ class ConnectionsUi(HarnessMixin):
                 what="the Save credentials toggle",
             )
             self.driver.click("field-savePassword")
-        self.driver.click(
-            "connection-editor-save-connect" if connect else "connection-editor-save"
+        self._click_editor_save(connect)
+
+    def _click_editor_save(self, connect: bool) -> None:
+        """Click Save / Save & Connect once the form reports itself valid.
+
+        The editor gates both buttons on ``canSave``, which is recomputed
+        asynchronously: the schema-driven form validates (react-hook-form + zod)
+        and reports validity up through an effect, so it trails the last field we
+        type by a render or two. The buttons are ``aria-disabled``/``data-invalid``
+        rather than natively ``disabled``, so a bridge click still dispatches — but
+        ``handleSaveAndConnect``/``handleSave`` early-return on ``!canSave`` (they
+        just focus the first invalid field). A click that lands in that window is
+        therefore a silent no-op: the editor stays open and — on the connect path —
+        the SSH password prompt never appears. Gate on the button clearing its
+        ``data-invalid`` flag (``data-invalid={!canSave || undefined}``, so absent
+        once valid) before clicking, so the click is never swallowed.
+        """
+        button = "connection-editor-save-connect" if connect else "connection-editor-save"
+        self.wait(
+            lambda: self.driver.get_attribute(button, "data-invalid") is None,
+            what="the connection form to report itself valid",
         )
+        self.driver.click(button)
 
     def create_telnet_connection(
         self,
