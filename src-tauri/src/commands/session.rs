@@ -102,8 +102,18 @@ pub async fn create_connection(
         )
         .await;
 
-    if let (Some(tab_id), Ok(_)) = (&initial_tab_id, &result) {
-        fold_session_transition(&app_handle, |store| store.connected(tab_id));
+    if let (Some(tab_id), Ok(session_id)) = (&initial_tab_id, &result) {
+        // Also propagate the backend session id into the shared region (#2457):
+        // the region is keyed by tab id, so carrying the current backend session
+        // id lets the frontend re-attach terminal I/O to a backend-chosen id after
+        // a server-side reconnect redrive (#2454) mints a new one. On the initial
+        // connect the frontend already learns this id from the return value, so
+        // this is the mechanism being established, not a behavior change — nothing
+        // reads it unless the (default-off) backend-reattach flag is on.
+        fold_session_transition(&app_handle, |store| {
+            store.connected(tab_id);
+            store.set_backend_session_id(tab_id, Some(session_id.clone()));
+        });
     }
     result
 }
