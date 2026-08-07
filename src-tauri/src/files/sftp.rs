@@ -1,17 +1,10 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
-
-use tracing::info;
-
-use termihub_core::backends::ssh::SftpFileBrowser;
-
-use crate::terminal::backend::SshConfig;
 use crate::utils::errors::TerminalError;
 
 /// The privilege-elevated write outcome and the writability verdict now live in
 /// [`termihub_core::backends::ssh::sftp_ops`] so a single implementation backs
 /// both the core `FileBrowser` path and this desktop command layer (#2104).
-/// Re-exported here so the command layer and its callers keep their import paths.
+/// Re-exported here so the session-scoped SFTP command layer and its callers
+/// keep their import paths.
 pub use termihub_core::backends::ssh::sftp_ops::{ElevatedWriteResult, Writability};
 
 /// Map a core [`FileError`](termihub_core::errors::FileError) from an SFTP
@@ -19,8 +12,12 @@ pub use termihub_core::backends::ssh::sftp_ops::{ElevatedWriteResult, Writabilit
 /// operation-specific message (`readdir failed: …`, `realpath failed: …`, etc.)
 /// rather than double-wrapping it behind the generic "Operation failed:" prefix.
 ///
-/// Shared by every `sftp_*` Tauri command so they map the core browser's errors
-/// uniformly (#2104).
+/// Shared by the session-scoped SFTP ops (`session/file_ops.rs`) and the
+/// transfer/VS-Code command helpers so they map the core browser's errors
+/// uniformly (#2104). The standalone UUID-keyed `SftpManager` session model this
+/// once also served was retired in #2314 — SSH file browsing/transfer now resolve
+/// their core [`SftpFileBrowser`](termihub_core::backends::ssh::SftpFileBrowser)
+/// from the `ConnectionType`/session path.
 pub(crate) fn sftp_op_error(err: termihub_core::errors::FileError) -> TerminalError {
     match err {
         termihub_core::errors::FileError::OperationFailed(msg) => TerminalError::SftpError(msg),
@@ -28,129 +25,14 @@ pub(crate) fn sftp_op_error(err: termihub_core::errors::FileError) -> TerminalEr
     }
 }
 
-/// Lock the session map, mapping a poisoned lock to a recoverable
-/// [`TerminalError`] instead of panicking.
-///
-/// A prior operation that panicked while holding the lock poisons the `Mutex`;
-/// a raw `.lock().unwrap()` would then abort the whole process on every
-/// subsequent command. Mapping the error keeps the manager recoverable
-/// (audit GAP C1, issue #1143). The guard is only ever held for the brief,
-/// non-async map mutation (insert / remove / clone-out), never across an
-/// `.await`.
-fn lock_sessions(
-    sessions: &Mutex<HashMap<String, Arc<SftpFileBrowser>>>,
-) -> Result<MutexGuard<'_, HashMap<String, Arc<SftpFileBrowser>>>, TerminalError> {
-    sessions
-        .lock()
-        .map_err(|_| TerminalError::SftpError("SFTP session map lock poisoned".to_string()))
-}
-
-/// Drain every entry from a keyed session map, poison-safe, and drop the values.
-///
-/// Recovers the guard even if the map mutex is poisoned — draining is cleanup
-/// (e.g. on app quit) and must never itself panic, mirroring
-/// [`SftpManager::close_session`]'s handling (audit GAP C1, issues #1143/#1244).
-/// Returns the number of sessions removed. Values are dropped as the map clears,
-/// tearing down each underlying connection.
-fn drain_sessions<V>(sessions: &Mutex<HashMap<String, V>>) -> usize {
-    let mut guard = sessions
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let count = guard.len();
-    guard.clear();
-    count
-}
-
-/// Manages the desktop file-browser/transfer command layer's SFTP sessions,
-/// keyed by UUID.
-///
-/// Each session is a single core [`SftpFileBrowser`] — the **one** SFTP
-/// implementation, shared with the core
-/// [`ConnectionType::file_browser()`](termihub_core::connection::ConnectionType::file_browser)
-/// path. The desktop no longer wraps it in a synchronous adapter: the `sftp_*`
-/// Tauri commands drive the fully-async browser directly with `.await`, exactly
-/// as [`session::file_ops`](crate::session) does for session-scoped browsing
-/// (#2104). Because the browser connects through the core `connect_target`, every
-/// session reaches jump-host (`ProxyJump`) targets through their pooled gateway
-/// (#939).
-///
-/// `Clone` (the session map is behind an `Arc`) so commands can hold a handle;
-/// the browser is itself `Send + Sync` and serialises concurrent operations on
-/// its own async mutex, so no per-session outer lock is needed.
-#[derive(Clone)]
-pub struct SftpManager {
-    sessions: Arc<Mutex<HashMap<String, Arc<SftpFileBrowser>>>>,
-}
-
-impl Default for SftpManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SftpManager {
-    pub fn new() -> Self {
-        Self {
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-        }
-    }
-
-    /// Open a new SFTP session to the given SSH host and return its UUID.
-    ///
-    /// Eagerly connects (jump-host aware, via the core browser) so `sftp_open`
-    /// fails loudly on a bad host / auth here rather than deferring the error to
-    /// the first listing. The connection is fully async — no `spawn_blocking` /
-    /// `block_in_place` bridging is needed (the core browser is what the
-    /// `ConnectionType` path already awaits directly).
-    pub async fn open_session(&self, config: &SshConfig) -> Result<String, TerminalError> {
-        info!(host = %config.host, port = config.port, "Opening SFTP session");
-        let browser = SftpFileBrowser::new(config.clone());
-        browser.connect().await.map_err(sftp_op_error)?;
-        let id = uuid::Uuid::new_v4().to_string();
-        let mut sessions = lock_sessions(&self.sessions)?;
-        sessions.insert(id.clone(), Arc::new(browser));
-        Ok(id)
-    }
-
-    /// Close and drop an SFTP session, tearing down its SSH+SFTP connection.
-    pub fn close_session(&self, id: &str) {
-        info!(session_id = id, "Closing SFTP session");
-        // Recover the guard even if the map mutex is poisoned — removing a
-        // session is cleanup and must not itself panic (audit GAP C1, #1143).
-        let mut sessions = self
-            .sessions
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        sessions.remove(id);
-    }
-
-    /// Close and drop every open SFTP session, tearing down each SSH+SFTP
-    /// connection.
-    ///
-    /// Called on app quit so no session is left dangling on the server until it
-    /// times out. Poison-safe: a prior panic that poisoned the sessions mutex
-    /// does not abort teardown (mirrors [`Self::close_session`], issue #1244).
-    pub fn close_all(&self) {
-        let count = drain_sessions(&self.sessions);
-        info!(session_count = count, "Closing all SFTP sessions");
-    }
-
-    /// Get the [`SftpFileBrowser`] for a session for use outside the manager
-    /// lock. Clones the `Arc`, so the returned handle keeps the session alive and
-    /// its operations run on the shared async browser.
-    pub fn get_session(&self, id: &str) -> Result<Arc<SftpFileBrowser>, TerminalError> {
-        let sessions = lock_sessions(&self.sessions)?;
-        sessions
-            .get(id)
-            .cloned()
-            .ok_or_else(|| TerminalError::SftpSessionNotFound(id.to_string()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
+    use std::sync::Arc;
+
+    use termihub_core::backends::ssh::SftpFileBrowser;
+
+    use crate::terminal::backend::SshConfig;
 
     // The pure command-composition and classification unit tests for the
     // elevated (sudo) save and the writability probe live beside the single core
@@ -446,84 +328,5 @@ mod tests {
             "file must be unchanged when sudo is unavailable"
         );
         assert_eq!(leftover, 0, "temp upload must be cleaned up on failure");
-    }
-
-    /// The session-map lock helper must map a poisoned mutex to a recoverable
-    /// `TerminalError` instead of panicking (audit GAP C1, #1143).
-    #[test]
-    fn lock_sessions_maps_poisoned_mutex_to_error() {
-        let sessions: Arc<Mutex<HashMap<String, Arc<SftpFileBrowser>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
-
-        // Poison the mutex by panicking while holding the lock.
-        let poisoner = Arc::clone(&sessions);
-        let handle = thread::spawn(move || {
-            let _guard = poisoner.lock().expect("first lock should succeed");
-            panic!("intentional panic to poison the mutex");
-        });
-        assert!(handle.join().is_err(), "poisoning thread should panic");
-
-        // A raw `.lock().unwrap()` would panic here; the helper must not. The
-        // Ok variant holds a `MutexGuard` that is not `Debug`, so match by hand
-        // rather than `unwrap_err()`.
-        let err = match lock_sessions(&sessions) {
-            Ok(_) => panic!("poisoned lock should return a recoverable error, got Ok"),
-            Err(e) => e,
-        };
-        assert!(
-            matches!(err, TerminalError::SftpError(_)),
-            "poisoned lock should return a recoverable SftpError"
-        );
-        // The failure is an SFTP-session error, not a generic SSH error (#2094).
-        let rendered = err.to_string();
-        assert!(
-            rendered.starts_with("SFTP error:"),
-            "SFTP session errors must carry the SFTP label, got {rendered:?}"
-        );
-    }
-
-    /// On a healthy mutex the helper returns a usable guard.
-    #[test]
-    fn lock_sessions_returns_guard_when_healthy() {
-        let sessions: Mutex<HashMap<String, Arc<SftpFileBrowser>>> = Mutex::new(HashMap::new());
-        let guard = lock_sessions(&sessions).expect("healthy lock should succeed");
-        assert!(guard.is_empty());
-    }
-
-    /// `close_all`'s drain must empty the map even when the map mutex is
-    /// poisoned by a prior panic — teardown on quit must never itself abort
-    /// (mirrors `close_session`'s poison handling, issue #1244). Uses a
-    /// `String`-valued map so no real SSH/SFTP session is required.
-    #[test]
-    fn drain_sessions_empties_map_despite_poisoned_mutex() {
-        let sessions: Arc<Mutex<HashMap<String, String>>> = Arc::new(Mutex::new(HashMap::new()));
-        {
-            let mut guard = sessions
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            guard.insert("session-a".to_string(), "a".to_string());
-            guard.insert("session-b".to_string(), "b".to_string());
-        }
-
-        // Poison the sessions mutex by panicking while holding the lock.
-        let poisoner = Arc::clone(&sessions);
-        let handle = thread::spawn(move || {
-            let _guard = poisoner.lock().expect("first lock should succeed");
-            panic!("intentional panic to poison the sessions mutex");
-        });
-        assert!(handle.join().is_err(), "poisoning thread should panic");
-
-        // A raw `.lock().unwrap()` inside the drain would panic here.
-        let drained = drain_sessions(&sessions);
-        assert_eq!(drained, 2, "drain should report the two removed sessions");
-
-        let guard = sessions
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        assert!(
-            guard.is_empty(),
-            "drain should empty the sessions map, still had {} entries",
-            guard.len()
-        );
     }
 }

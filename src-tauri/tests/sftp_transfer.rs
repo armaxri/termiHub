@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser, SftpTransferChannel};
 use termihub_core::config::SshConfig;
 use termihub_core::files::FileBrowser;
-use termihub_lib::files::sftp::{SftpManager, Writability};
+use termihub_lib::files::sftp::Writability;
 use termihub_lib::files::transfer::{
     run_download, ProgressSink, TransferContext, TransferDirection, TransferPhase,
     TransferProgress, TransferRegistry,
@@ -139,19 +139,20 @@ impl RecordingSink {
     }
 }
 
-/// Open a session against the container and return the manager (kept alive) and
-/// the session's core SFTP browser.
-async fn connect() -> (SftpManager, Arc<SftpFileBrowser>) {
-    let manager = SftpManager::new();
+/// Connect a core [`SftpFileBrowser`] against the container and return it, ready
+/// to drive the transfer subsystem.
+///
+/// Constructs the browser directly and eagerly connects it — the same path the
+/// session's `ConnectionType` file browser resolves to — now that the standalone
+/// UUID `SftpManager` session model has been retired (#2314).
+async fn connect() -> Arc<SftpFileBrowser> {
     let config = stress_config(sftp_stress_port());
-    let session_id = manager
-        .open_session(&config)
+    let browser = SftpFileBrowser::new(config);
+    browser
+        .connect()
         .await
-        .expect("SFTP session should open");
-    let session = manager
-        .get_session(&session_id)
-        .expect("session should exist");
-    (manager, session)
+        .expect("SFTP session should connect");
+    Arc::new(browser)
 }
 
 /// Open a dedicated [`SftpTransferChannel`] off `session` (mirrors the command
@@ -170,7 +171,7 @@ async fn cancel_mid_transfer_cleans_up_partial_file() {
     let port = sftp_stress_port();
     require_sftp_stress!(port);
 
-    let (_manager, session) = connect().await;
+    let session = connect().await;
     let dedicated = open_dedicated(session).await;
 
     let dest = std::env::temp_dir().join(format!("termihub-cancel-{}.bin", uuid::Uuid::new_v4()));
@@ -244,7 +245,7 @@ async fn check_writable_distinguishes_owner_from_root_owned() {
     let port = sftp_stress_port();
     require_sftp_stress!(port);
 
-    let (_manager, session) = connect().await;
+    let session = connect().await;
 
     // A file the connecting user owns: create it fresh under $HOME, probe it,
     // then clean up. The probe must never truncate it.
@@ -299,7 +300,7 @@ async fn browsing_stays_live_during_transfer() {
     let port = sftp_stress_port();
     require_sftp_stress!(port);
 
-    let (_manager, session) = connect().await;
+    let session = connect().await;
     let dedicated = open_dedicated(session.clone()).await;
 
     let dest = std::env::temp_dir().join(format!("termihub-live-{}.bin", uuid::Uuid::new_v4()));
