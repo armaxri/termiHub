@@ -33,11 +33,38 @@ vi.mock("@/services/api", () => ({
   sessionDeleteFile: vi.fn(() => Promise.resolve()),
   sessionRenameFile: vi.fn(() => Promise.resolve()),
   sessionMkdir: vi.fn(() => Promise.resolve()),
+  sessionDownload: vi.fn(() => Promise.resolve(0)),
+  sessionUpload: vi.fn(() => Promise.resolve(0)),
+  sessionVscodeOpenRemote: vi.fn(() => Promise.resolve()),
+  // Default: reject → session is byte-based (Docker / FTP / agent). The
+  // SFTP-backed suite overrides this to resolve.
+  sessionHasExecCapability: vi.fn(() => Promise.reject(new Error("not sftp-backed"))),
+  // The real marker class so `error instanceof TransferTerminalError` in
+  // runTransfer resolves correctly (#1286).
+  TransferTerminalError: class TransferTerminalError extends Error {
+    readonly phase: "cancelled" | "error";
+    constructor(phase: "cancelled" | "error", message: string) {
+      super(message);
+      this.name = "TransferTerminalError";
+      this.phase = phase;
+    }
+  },
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn(() => Promise.resolve(null)),
-  save: vi.fn(() => Promise.resolve(null)),
+  save: vi.fn(() => Promise.resolve("/local/save.txt")),
+}));
+
+vi.mock("@/components/ui", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    loading: vi.fn(),
+    promise: vi.fn(),
+    dismiss: vi.fn(),
+  },
 }));
 
 vi.mock("@tauri-apps/plugin-fs", () => ({
@@ -212,5 +239,150 @@ describe("useSessionFileSystem — store integration", () => {
     expect(sessionFileBrowserId).toBeNull();
     // isConnected = sessionFileBrowserId !== null
     expect(sessionFileBrowserId !== null).toBe(false);
+  });
+});
+
+// SFTP-capability gating (#2421): an SFTP-backed session (SSH) drives the
+// dedicated transfer channel + VS Code remote open; a byte-based backend
+// (Docker / FTP / agent) falls back to session_read_file / session_write_file
+// and has no VS Code remote open. The transport is detected by the
+// session_has_exec_capability probe (resolve → SFTP-backed, reject → byte-based).
+import {
+  sessionDownload,
+  sessionUpload,
+  sessionVscodeOpenRemote,
+  sessionReadFile,
+  sessionHasExecCapability,
+} from "@/services/api";
+
+describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    // Resolve → the session is SFTP-backed (the boolean is exec capability).
+    vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  type SessionFs = ReturnType<typeof useSessionFileSystem>;
+
+  async function mountHook(): Promise<SessionFs> {
+    useAppStore.setState({ sessionFileBrowserId: "ssh-1", sessionCurrentPath: "/remote/dir" });
+    let api: SessionFs | undefined;
+    function Harness() {
+      api = useSessionFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    // Flush the capability probe so sftpCapable settles before the action runs.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    return api!;
+  }
+
+  it("routes downloadFile through the dedicated session_download channel", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.downloadFile("/remote/dir/file.txt", "file.txt");
+    });
+    expect(vi.mocked(sessionDownload)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/remote/dir/file.txt",
+      "/local/save.txt",
+      expect.any(Function)
+    );
+    expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
+  });
+
+  it("routes uploadFileFromPath through the dedicated session_upload channel", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.uploadFileFromPath("/local/data.csv");
+    });
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/local/data.csv",
+      "/remote/dir/data.csv",
+      expect.any(Function)
+    );
+  });
+
+  it("wires openInVscode to session_vscode_open_remote", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.openInVscode("/remote/dir/file.txt");
+    });
+    expect(vi.mocked(sessionVscodeOpenRemote)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/remote/dir/file.txt"
+    );
+  });
+});
+
+describe("useSessionFileSystem — byte-based transport (probe rejects)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    // Reject → the session is byte-based (Docker / FTP / agent).
+    vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  type SessionFs = ReturnType<typeof useSessionFileSystem>;
+
+  async function mountHook(): Promise<SessionFs> {
+    useAppStore.setState({ sessionFileBrowserId: "docker-1", sessionCurrentPath: "/remote/dir" });
+    let api: SessionFs | undefined;
+    function Harness() {
+      api = useSessionFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    return api!;
+  }
+
+  it("falls back to session_read_file for downloadFile (no dedicated channel)", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.downloadFile("/remote/dir/file.txt", "file.txt");
+    });
+    expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("docker-1", "/remote/dir/file.txt");
+    expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
+  });
+
+  it("makes openInVscode a no-op (VS Code remote open unavailable)", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.openInVscode("/remote/dir/file.txt");
+    });
+    expect(vi.mocked(sessionVscodeOpenRemote)).not.toHaveBeenCalled();
   });
 });
