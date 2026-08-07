@@ -741,12 +741,27 @@ mod tests {
         );
         let endpoint = transport::session_endpoint(&session_id);
 
-        // Mock daemon: accept, send Ready, then close the connection the instant
-        // it receives MSG_DETACH — exactly what the real daemon does, EOFing the
-        // client's reader.
         let mut listener = transport::DaemonListener::bind(&endpoint)
             .await
             .expect("bind mock daemon");
+
+        // Mock daemon. The real daemon only closes the connection *in response* to
+        // MSG_DETACH, so the resulting EOF reaches the client well after detach's
+        // (asynchronous) reader-task abort has landed. The original mock instead
+        // dropped its halves the instant it saw MSG_DETACH — a tighter schedule
+        // than production that raced the abort and made this test flaky on macOS
+        // CI (#2459). Reproduce production's ordering *deterministically*: do not
+        // EOF the client until its reader task is actually gone. The reader task
+        // owns the client's read half, so once a correct detach aborts it (and
+        // detach has dropped the client's write half) the client socket is fully
+        // closed and any write from us fails; probe for exactly that. While the
+        // reader still lives, empty MSG_OUTPUT frames are accepted and ignored.
+        //
+        // `reader_gone` reports whether the reader was gone *before* we closed —
+        // the direct #2437 property. A correct detach makes it true quickly; the
+        // pre-#2437 ordering leaves the reader live, so the probe never fails and
+        // the generous deadline trips it to false.
+        let (reader_gone_tx, reader_gone_rx) = tokio::sync::oneshot::channel::<bool>();
         let server = tokio::spawn(async move {
             let (mut reader, mut writer) = listener.accept().await.expect("accept");
             protocol::write_frame_async(&mut writer, MSG_READY, &[])
@@ -757,7 +772,23 @@ mod tests {
                     break;
                 }
             }
-            // Drop both halves → the client's reader half observes EOF.
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            let reader_gone = loop {
+                if protocol::write_frame_async(&mut writer, MSG_OUTPUT, &[])
+                    .await
+                    .is_err()
+                {
+                    break true;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    break false;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            };
+            let _ = reader_gone_tx.send(reader_gone);
+            // Only now drop our halves. On a correct detach the client's reader is
+            // already gone, so this EOF reaches no one; on the pre-#2437 ordering
+            // it is what finally trips the still-live reader's exit path.
             drop(writer);
             drop(reader);
             listener.cleanup();
@@ -773,9 +804,16 @@ mod tests {
 
         client.detach().await;
 
-        // Give any stray reader activity a chance to (wrongly) fire first.
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
+        // Deterministic synchronization (replaces the old fixed 100 ms sleep): the
+        // mock only closes the connection once the reader task is gone, so it can
+        // never deliver a detach-induced EOF to a live reader.
+        let reader_gone = reader_gone_rx
+            .await
+            .expect("mock daemon reported reader state");
+        assert!(
+            reader_gone,
+            "detach must abort the reader before the daemon connection closes (#2437)"
+        );
         assert!(
             client.is_alive(),
             "a clean detach must not mark the still-alive session dead (#2437)"

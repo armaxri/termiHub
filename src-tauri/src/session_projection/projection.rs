@@ -47,9 +47,11 @@ use std::sync::Arc;
 
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
+use termihub_core::reconnect_backoff::ReconnectPhase;
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::session::manager::SessionManager;
 use crate::session_projection::store::SessionLifecycleStore;
 use crate::session_projection::timer::ReconnectTimerDriver;
 
@@ -154,6 +156,9 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         store.disconnect(&id);
         let produced = publish_sessions(projector, &store);
         sync_timer(&handle, &id);
+        // A graceful user disconnect ends the session; scrub its retained request
+        // so no resolved secret lingers (#2454 Model A mitigation).
+        clear_retained_request(&handle, &id);
         Ok(produced)
     });
 
@@ -194,6 +199,13 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         store.reconnect_failed(&id, optional_str(intent, "error"));
         let produced = publish_sessions(projector, &store);
         sync_timer(&handle, &id);
+        // If this failure exhausted the loop (give-up → Failed), the tab is no
+        // longer reconnecting: scrub its retained request (#2454 Model A
+        // mitigation). A failure that only backs off keeps it for the next
+        // attempt.
+        if store.reconnect_state(&id).map(|s| s.phase) == Some(ReconnectPhase::Gaveup) {
+            clear_retained_request(&handle, &id);
+        }
         Ok(produced)
     });
 
@@ -204,6 +216,9 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         store.cancel_reconnect(&id);
         let produced = publish_sessions(projector, &store);
         sync_timer(&handle, &id);
+        // The user stopped the loop: scrub the retained request (#2454 Model A
+        // mitigation) — the session is no longer active or reconnecting.
+        clear_retained_request(&handle, &id);
         Ok(produced)
     });
 
@@ -222,8 +237,24 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         store.remove(&id);
         let produced = publish_sessions(projector, &store);
         sync_timer(&handle, &id);
+        // The tab/session is gone: scrub any retained request (#2454 Model A
+        // mitigation).
+        clear_retained_request(&handle, &id);
         Ok(produced)
     });
+}
+
+/// Drop + zeroize the retained connection request for a tab (#2454, retention
+/// Model A), when the `SessionManager` is managed. Called from the lifecycle
+/// routes that end a session's reconnect loop — give-up, user-cancel, graceful
+/// disconnect, remove — so no resolved secret outlives an active/reconnecting
+/// session. `tab_id` is the region key (the intent's `sessionId`, which the
+/// bridge keys by tab id). Off-path no-op when the manager is not managed (e.g. a
+/// headless projection unit-test app), matching [`sync_timer`].
+fn clear_retained_request(app_handle: &AppHandle, tab_id: &str) {
+    if let Some(manager) = app_handle.try_state::<SessionManager>() {
+        manager.clear_retained_request(tab_id);
+    }
 }
 
 /// Reconcile the backend reconnect timer for a session after a transition, when
