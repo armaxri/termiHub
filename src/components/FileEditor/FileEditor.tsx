@@ -17,7 +17,7 @@ import {
 import { Button, toast } from "@/components/ui";
 import { save } from "@tauri-apps/plugin-dialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { resolveLanguage } from "@/utils/languageMapping";
 import { getBasename } from "@/utils/formatters";
@@ -175,12 +175,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // user explicitly switches between dark / light / system in the settings.
   const themeSetting = projectedSettings.theme;
   // Host label (`user@host:port`) that names the host in the sudo prompt and keys
-  // the (optional) credential-store entry. The legacy `SftpManager` session that
-  // carried this label was retired when SSH file editing converged onto the
-  // session path (#2422); a session-backed tab has no host label wired here yet,
-  // so this stays null and the sudo prompt / credential namespacing falls back to
-  // the file path (see follow-up).
-  const hostLabel: string | null = null;
+  // the (optional) credential-store entry. Sourced from the owning terminal tab's
+  // connection config, reconnect-stable and byte-identical to the label the legacy
+  // SFTP path used, so sudo passwords saved before the sftp→session convergence
+  // (#2422) still resolve (#2424 / #2426). Null for local tabs and non-labelable
+  // session backends (Docker / FTP / agent) — the sudo prompt / credential
+  // namespacing then falls back to the file path.
+  const hostLabel = useAppStore((s) => deriveEditorHostLabel(s, meta));
   // Live credential-store status — the "save in credential store" option only
   // appears when it is unlocked.
   const credentialStoreUnlocked = useAppStore(
