@@ -223,12 +223,31 @@ impl DaemonClient {
     }
 
     /// Detach from the daemon without killing it.
+    ///
+    /// Order matters here (#2437). A clean detach makes the daemon drop its
+    /// writer to us (`agent_writer = None` on `MSG_DETACH`), which surfaces to
+    /// our reader task as an EOF. If the reader observed that EOF it would run
+    /// the exit path and clear `alive` — even though the session is still very
+    /// much alive on the daemon — and `settle_exited` would then flip the
+    /// session to a *terminal* `Exited`, so the next re-attach fails with
+    /// "Session not running". The daemon only closes us in response to the
+    /// `MSG_DETACH` we send here, so aborting the reader *before* sending it
+    /// guarantees the reader is gone before that EOF can ever arrive. A genuine
+    /// `MSG_EXITED` that arrived earlier was already handled on its own, so this
+    /// ordering does not weaken natural-exit detection.
     pub async fn detach(&mut self) {
-        // Send Detach frame if connected
-        if let Some(ref mut writer) = *self.writer.lock().await {
+        // Stop observing the transport first, so the detach-induced EOF below is
+        // never mistaken for the shell exiting.
+        if let Some(task) = self.reader_task.take() {
+            task.abort();
+        }
+        // Ask the daemon to keep the session but drop this connection.
+        let mut writer_guard = self.writer.lock().await;
+        if let Some(ref mut writer) = *writer_guard {
             let _ = protocol::write_frame_async(writer, MSG_DETACH, &[]).await;
         }
-        self.disconnect().await;
+        // Drop our writer half (closes our end of the socket).
+        *writer_guard = None;
         debug!("Detached from session {}", self.session_id);
     }
 
@@ -696,5 +715,76 @@ mod tests {
             ran.load(Ordering::SeqCst),
             "exit hook must run when the daemon connection reaches EOF"
         );
+    }
+
+    /// Regression for #2437: a clean [`DaemonClient::detach`] must leave the
+    /// daemon-backed session reported as **alive**.
+    ///
+    /// The real daemon drops its writer to us the moment it receives
+    /// `MSG_DETACH` (`agent_writer = None`), which reaches the client's reader
+    /// task as an EOF. If the reader observed that EOF it would run the
+    /// natural-exit path and clear `alive`; `settle_exited` then flips the
+    /// session to a *terminal* `Exited`, and the next re-attach fails with
+    /// `-32001 Session not running`. `detach` aborts the reader **before**
+    /// sending `MSG_DETACH`, so the reader is gone before that EOF can arrive.
+    /// A genuine `MSG_EXITED` that arrived earlier is handled on its own, so
+    /// this ordering does not weaken natural-exit detection.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn detach_keeps_session_alive_when_daemon_closes_connection() {
+        let session_id = format!(
+            "itest-detach-alive-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let endpoint = transport::session_endpoint(&session_id);
+
+        // Mock daemon: accept, send Ready, then close the connection the instant
+        // it receives MSG_DETACH — exactly what the real daemon does, EOFing the
+        // client's reader.
+        let mut listener = transport::DaemonListener::bind(&endpoint)
+            .await
+            .expect("bind mock daemon");
+        let server = tokio::spawn(async move {
+            let (mut reader, mut writer) = listener.accept().await.expect("accept");
+            protocol::write_frame_async(&mut writer, MSG_READY, &[])
+                .await
+                .expect("send ready");
+            while let Ok(Some(frame)) = protocol::read_frame_async(&mut reader).await {
+                if frame.msg_type == MSG_DETACH {
+                    break;
+                }
+            }
+            // Drop both halves → the client's reader half observes EOF.
+            drop(writer);
+            drop(reader);
+            listener.cleanup();
+        });
+
+        let (on_exit, exit_ran) = recording_exit_hook();
+        let mut client =
+            DaemonClient::connect(session_id.clone(), endpoint.clone(), make_notification_tx())
+                .await
+                .expect("client connect");
+        client.set_exit_hook(on_exit.get().cloned().expect("hook installed"));
+        assert!(client.is_alive(), "freshly connected session must be alive");
+
+        client.detach().await;
+
+        // Give any stray reader activity a chance to (wrongly) fire first.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        assert!(
+            client.is_alive(),
+            "a clean detach must not mark the still-alive session dead (#2437)"
+        );
+        assert!(
+            !exit_ran.load(Ordering::SeqCst),
+            "the detach-induced EOF must not be mistaken for a natural exit (#2437)"
+        );
+
+        server.await.expect("mock daemon task");
     }
 }
