@@ -346,7 +346,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     // Tag the kill as intentional so the terminal-exit handler suppresses the
     // "unexpected disconnect" overlay for the owning tab (#1121).
     markSessionKilled(id);
-    await closeTerminal(id).catch(() => {});
+    await closeTerminal(id, true).catch(() => {});
     setLocalSessions((prev) => prev.filter((s) => s.id !== id));
   };
 
@@ -356,7 +356,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const killSessions = async (sessions: LocalSessionInfo[]) => {
     const ids = new Set(sessions.map((s) => s.id));
     sessions.forEach((s) => markSessionKilled(s.id));
-    await Promise.all(sessions.map((s) => closeTerminal(s.id).catch(() => {})));
+    await Promise.all(sessions.map((s) => closeTerminal(s.id, true).catch(() => {})));
     setLocalSessions((prev) => prev.filter((s) => !ids.has(s.id)));
   };
 
@@ -423,7 +423,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
   const handleKillProxy = async (agentId: string, id: string) => {
     markSessionKilled(id);
-    await closeTerminal(id).catch(() => {});
+    await closeTerminal(id, true).catch(() => {});
     setProxySessions((prev) => ({
       ...prev,
       [agentId]: (prev[agentId] ?? []).filter((s) => s.id !== id),
@@ -433,7 +433,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const handleKillAllProxy = async (agentId: string) => {
     const sessions = proxySessions[agentId] ?? [];
     sessions.forEach((s) => markSessionKilled(s.id));
-    await Promise.all(sessions.map((s) => closeTerminal(s.id).catch(() => {})));
+    await Promise.all(sessions.map((s) => closeTerminal(s.id, true).catch(() => {})));
     setProxySessions((prev) => ({ ...prev, [agentId]: [] }));
   };
 

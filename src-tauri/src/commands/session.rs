@@ -184,13 +184,57 @@ pub async fn resize_terminal(
 }
 
 /// Close a session.
+///
+/// `intentional` marks a **user-initiated kill** (the Open Connections panel's
+/// kill actions, which the frontend also tags via `markSessionKilled`) — as
+/// opposed to a tab close or resource-cleanup close. It is the kill-intent signal
+/// plumbed to the backend for the server-authoritative `session-lifecycle`
+/// migration (#2439, part of #2205): with it the backend can classify a
+/// terminal's end as *killed* rather than *dropped*, and fold the graceful
+/// `session.disconnect` transition server-side (see below). Defaults to `false`
+/// when the frontend omits it (a normal, non-kill close).
 #[tauri::command]
 pub async fn close_terminal(
     session_id: String,
+    intentional: Option<bool>,
+    app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
-    info!(session_id, "Closing session");
-    manager.close_session(&session_id).await
+    let intentional = intentional.unwrap_or(false);
+    info!(session_id, intentional, "Closing session");
+
+    // Server-authority fold (#2439, part of #2205): a user-initiated kill is the
+    // one exit the backend can classify *before* the session ends — the frontend
+    // tagged it `intentional`. Resolve the frontend tab id through the identity
+    // bridge (#2431) **before** the close clears the mapping, so the fold can
+    // address the tab-id-keyed region. Only the **convergent** kill edge is folded
+    // here: the client mirrors a `killed` exit as `session.disconnect`, so folding
+    // `disconnect` server-side is a benign convergent double-write (like the
+    // initial connect's `connect`/`connected` fold in `create_connection`).
+    //
+    // The genuine-drop → `session.dropped` fold is deliberately **not** done here:
+    // for a resilient-reconnect tab the client resolves an unexpected drop to
+    // `session.reconnect` (not `dropped`), and the backend cannot yet distinguish a
+    // resilient tab (that signal is step 2, #2439). Folding `dropped` for all
+    // non-killed drops would therefore conflict with the client's `reconnect` on
+    // the ventilator hot path, so it waits for the resilient-reconnect signal.
+    let killed_tab_id = killed_disconnect_tab_id(intentional, manager.tab_id_for(&session_id));
+    let result = manager.close_session(&session_id).await;
+    if let (Ok(()), Some(tab_id)) = (&result, &killed_tab_id) {
+        fold_session_transition(&app_handle, |store| store.disconnect(tab_id));
+    }
+    result
+}
+
+/// The frontend `tab_id` to fold a `session.disconnect` for when a session is
+/// closed, or `None` when no fold should happen (#2439).
+///
+/// Returns `Some(tab_id)` only for an **intentional** (user-kill) close of a
+/// session that carries a tab mapping. A non-intentional close (tab close,
+/// cleanup) or a session with no tab (`tab_id` is `None`) yields `None`: those
+/// ends are either owned by the client mirror or have no region entry to address.
+fn killed_disconnect_tab_id(intentional: bool, tab_id: Option<String>) -> Option<String> {
+    intentional.then_some(tab_id).flatten()
 }
 
 /// List all active local sessions.
@@ -911,4 +955,42 @@ pub async fn get_agent_session_buffer(
         .get_remote_session_buffer(&session_id)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{initial_connect_tab_id, killed_disconnect_tab_id};
+
+    #[test]
+    fn killed_disconnect_folds_only_for_an_intentional_kill_with_a_tab() {
+        // Intentional kill of a tab-bearing session → fold disconnect for that tab.
+        assert_eq!(
+            killed_disconnect_tab_id(true, Some("tab-1".to_string())),
+            Some("tab-1".to_string())
+        );
+        // Non-intentional close (tab close / cleanup) → never fold, even with a tab.
+        assert_eq!(
+            killed_disconnect_tab_id(false, Some("tab-1".to_string())),
+            None
+        );
+        // Intentional kill of a session with no tab mapping → nothing to address.
+        assert_eq!(killed_disconnect_tab_id(true, None), None);
+        // Non-intentional close of a tabless session → None.
+        assert_eq!(killed_disconnect_tab_id(false, None), None);
+    }
+
+    #[test]
+    fn initial_connect_tab_id_folds_only_the_initial_attempt() {
+        // Initial attempt (retry 0) of a tab-bearing connect → fold that tab.
+        assert_eq!(
+            initial_connect_tab_id(Some("tab-1:0")),
+            Some("tab-1".to_string())
+        );
+        // A reconnect attempt (retry > 0) is owned by the client + backend timer.
+        assert_eq!(initial_connect_tab_id(Some("tab-1:2")), None);
+        // No connect_id (e.g. internal agent-setup session) → None.
+        assert_eq!(initial_connect_tab_id(None), None);
+        // A connect_id not carrying the tab-id:retry form → None.
+        assert_eq!(initial_connect_tab_id(Some("no-colon")), None);
+    }
 }

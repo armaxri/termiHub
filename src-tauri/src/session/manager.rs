@@ -857,11 +857,12 @@ impl SessionManager {
     /// backend lifecycle source that knows only the uuid `session_id` (the
     /// `terminal-exit` emission, `close_session`) resolves it to the tab id the
     /// region is keyed by. The initial-connect fold (`create_connection`) reads
-    /// the tab id straight off the `connect_id`, so this uuid→tab lookup is only
-    /// consumed by the *deferred* drop / disconnect folds (see #2205 and the
-    /// follow-up); the map it reads is populated and cleaned up live, and the
-    /// lookup is covered by unit tests.
-    #[allow(dead_code)] // staged API: the deferred drop / disconnect folds consume this (#2205).
+    /// the tab id straight off the `connect_id`, so this uuid→tab lookup backs the
+    /// close/kill path: `close_terminal` resolves it to fold the graceful
+    /// `session.disconnect` for a user-initiated kill (#2439). The map it reads is
+    /// populated and cleaned up live, and the lookup is covered by unit tests. The
+    /// genuine-drop `session.dropped` fold at `terminal-exit` is still deferred
+    /// (needs the resilient-reconnect signal — see #2439).
     pub fn tab_id_for(&self, session_id: &str) -> Option<String> {
         self.session_tab_ids
             .lock()

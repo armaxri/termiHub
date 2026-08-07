@@ -524,9 +524,17 @@ export async function resizeTerminal(
   await invoke("resize_terminal", { sessionId, cols, rows });
 }
 
-/** Close a terminal session */
-export async function closeTerminal(sessionId: SessionId): Promise<void> {
-  await invoke("close_terminal", { sessionId });
+/**
+ * Close a terminal session.
+ *
+ * `intentional` tags a user-initiated kill (the Open Connections panel's kill
+ * actions) as opposed to a tab close or resource cleanup. It is the kill-intent
+ * signal the backend uses to classify the terminal's end as *killed* rather than
+ * *dropped* and fold the graceful `session.disconnect` transition server-side
+ * (#2439, part of #2205). Defaults to `false` for a normal, non-kill close.
+ */
+export async function closeTerminal(sessionId: SessionId, intentional = false): Promise<void> {
+  await invoke("close_terminal", { sessionId, intentional });
 }
 
 // --- Remote-desktop (graphical) commands (#1680) ---
