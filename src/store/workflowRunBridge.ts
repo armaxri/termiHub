@@ -49,10 +49,7 @@ import {
   type ProjectionCacheState,
   type Transport,
 } from "@/services/transport";
-import type {
-  WorkflowRunOutputLine,
-  WorkflowRunOutputStatus,
-} from "@/store/appStore";
+import type { WorkflowRunOutputLine, WorkflowRunOutputStatus } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 
 /** The projection region id for a client's workflow run

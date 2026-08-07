@@ -4,6 +4,10 @@ import { createRoot, Root } from "react-dom/client";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore, type WorkflowRunOutputState } from "@/store/appStore";
+import {
+  setWorkflowOutputContentForTest,
+  setWorkflowRunViewForTest,
+} from "@/store/workflowRunBridge";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -36,16 +40,18 @@ describe("WorkflowRunOutput", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     vi.clearAllMocks();
-    useAppStore.setState({
-      workflowRunOutput: null,
-      dismissWorkflowRunOutput,
-      cancelWorkflowRun,
-    });
+    // The dismiss/cancel actions remain appStore methods; the panel's live state
+    // is projected (region view) + frontend-owned streamed content (bridge store).
+    useAppStore.setState({ dismissWorkflowRunOutput, cancelWorkflowRun });
+    setWorkflowRunViewForTest({ run: null, output: null });
+    setWorkflowOutputContentForTest(null);
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    setWorkflowRunViewForTest({ run: null, output: null });
+    setWorkflowOutputContentForTest(null);
   });
 
   function render() {
@@ -54,9 +60,32 @@ describe("WorkflowRunOutput", () => {
     });
   }
 
+  /** Drive the panel by splitting a run-output state into its projected status
+   * seam (region view) and its frontend-owned streamed content (bridge store). */
   function setRun(run: WorkflowRunOutputState | null) {
     act(() => {
-      useAppStore.setState({ workflowRunOutput: run });
+      if (!run) {
+        setWorkflowRunViewForTest({ run: null, output: null });
+        setWorkflowOutputContentForTest(null);
+        return;
+      }
+      setWorkflowRunViewForTest({
+        run: null,
+        output: {
+          workflowId: run.workflowId,
+          workflowName: run.workflowName,
+          program: run.program,
+          args: run.args,
+          status: run.status,
+          error: run.error ?? null,
+        },
+      });
+      setWorkflowOutputContentForTest({
+        workflowId: run.workflowId,
+        lines: run.lines,
+        exitCode: run.exitCode,
+        timedOut: run.timedOut,
+      });
     });
   }
 

@@ -1,11 +1,10 @@
 /**
- * `useProjectedWorkflowRun` — the Workflow Manager cut to the projected
- * `workflow-run@<clientId>` region (#2243 render cut). Drives the hook against an
- * in-memory substrate double and asserts: flag-off returns the appStore slice;
- * flag-on renders run progress + output status from the projection when it mirrors
- * appStore (byte-identical); a region that has not caught up (diverges from
- * appStore) falls back to the appStore slice; and the frontend-owned streamed
- * lines/exitCode/timedOut are always kept from appStore.
+ * `useProjectedWorkflowRun` — the Workflow Manager reading the authoritative
+ * `workflow-run@<clientId>` region (#2206 reducer-removal). Drives the hook
+ * against an in-memory substrate double and asserts: an empty region renders
+ * nothing; a dispatched `workflow.runStarted` surfaces the run progress; the
+ * output panel merges the projected identity/status with the bridge's
+ * frontend-owned streamed content; and there is no appStore involvement.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -20,11 +19,10 @@ import type {
   Subscription,
   Transport,
 } from "@/services/transport";
-import { useAppStore, type WorkflowRunOutputState, type WorkflowRunState } from "@/store/appStore";
 
 import {
   dispatchWorkflowIntent,
-  setWorkflowRenderFromProjectionEnabled,
+  setWorkflowOutputContentForTest,
   setWorkflowTransportForTest,
   stopWorkflowSubscription,
 } from "./workflowRunBridge";
@@ -146,107 +144,121 @@ function renderHook(): { get: () => ProjectedWorkflowRunSlice; unmount: () => vo
   return { get: () => latest, unmount: () => act(() => root.unmount()) };
 }
 
-const run = (over: Partial<WorkflowRunState> = {}): WorkflowRunState => ({
-  workflowId: "w1",
-  workflowName: "Deploy",
-  tabId: "tab-1",
-  total: 3,
-  completed: 0,
-  ...over,
-});
-
 let transport: FakeTransport;
 
 beforeEach(() => {
   transport = new FakeTransport();
   setWorkflowTransportForTest(transport);
-  useAppStore.setState({ workflowRun: null, workflowRunOutput: null });
 });
 
 afterEach(() => {
   stopWorkflowSubscription();
   setWorkflowTransportForTest(null);
-  setWorkflowRenderFromProjectionEnabled(null);
 });
 
 const flush = () => act(async () => await Promise.resolve());
 
 describe("useProjectedWorkflowRun", () => {
-  it("flag off: returns the appStore slice and does not subscribe", async () => {
-    setWorkflowRenderFromProjectionEnabled(false);
-    useAppStore.setState({ workflowRun: run({ completed: 2 }) });
-
+  it("renders nothing when the region is empty", async () => {
     const hook = renderHook();
     await flush();
-
-    expect(hook.get().workflowRun?.completed).toBe(2);
+    expect(hook.get()).toEqual({ workflowRun: null, workflowRunOutput: null });
     hook.unmount();
   });
 
-  it("flag on: renders run progress from the projection when it mirrors appStore", async () => {
-    const r = run();
-    useAppStore.setState({ workflowRun: r });
-    // Populate the region to match appStore's run.
-    await dispatchWorkflowIntent("workflow.runStarted", {
-      workflowId: r.workflowId,
-      workflowName: r.workflowName,
-      tabId: r.tabId,
-      total: r.total,
-    });
-
+  it("renders run progress from the projected region after runStarted", async () => {
     const hook = renderHook();
     await flush();
-    await flush();
-
-    expect(hook.get().workflowRun).toEqual(r);
-    hook.unmount();
-  });
-
-  it("region diverged from appStore: falls back to the appStore slice", async () => {
-    // Region says total 5; appStore says total 3 → gate rejects, hook shows appStore.
     await dispatchWorkflowIntent("workflow.runStarted", {
       workflowId: "w1",
       workflowName: "Deploy",
       tabId: "tab-1",
-      total: 5,
+      total: 3,
     });
-    useAppStore.setState({ workflowRun: run({ total: 3 }) });
-
-    const hook = renderHook();
-    await flush();
     await flush();
 
-    expect(hook.get().workflowRun?.total).toBe(3);
+    expect(hook.get().workflowRun).toEqual({
+      workflowId: "w1",
+      workflowName: "Deploy",
+      tabId: "tab-1",
+      total: 3,
+      completed: 0,
+    });
     hook.unmount();
   });
 
-  it("keeps frontend-owned streamed content while rendering projected status", async () => {
-    const output: WorkflowRunOutputState = {
-      workflowId: "w1",
-      workflowName: "Deploy",
-      program: "echo",
-      args: ["hi"],
-      lines: [{ id: 0, stream: "stdout", text: "hi" }],
-      status: "running",
-      exitCode: null,
-      timedOut: false,
-    };
-    useAppStore.setState({ workflowRunOutput: output });
+  it("merges the projected output status with the frontend-owned streamed content", async () => {
+    const hook = renderHook();
+    await flush();
     await dispatchWorkflowIntent("workflow.outputOpened", {
       workflowId: "w1",
       workflowName: "Deploy",
       program: "echo",
       args: ["hi"],
     });
-
-    const hook = renderHook();
     await flush();
+    act(() => {
+      setWorkflowOutputContentForTest({
+        workflowId: "w1",
+        lines: [{ id: 0, stream: "stdout", text: "hi" }],
+        exitCode: 0,
+        timedOut: false,
+      });
+    });
     await flush();
 
     const got = hook.get().workflowRunOutput;
-    // Status + identity from the projection; streamed lines kept from appStore.
+    // Identity + status from the projection; streamed content from the bridge.
     expect(got?.status).toBe("running");
-    expect(got?.lines).toEqual(output.lines);
+    expect(got?.program).toBe("echo");
+    expect(got?.lines).toEqual([{ id: 0, stream: "stdout", text: "hi" }]);
+    expect(got?.exitCode).toBe(0);
+    hook.unmount();
+  });
+
+  it("shows an empty stream until the content buffer opens (panel gated on projection)", async () => {
+    const hook = renderHook();
+    await flush();
+    await dispatchWorkflowIntent("workflow.outputOpened", {
+      workflowId: "w1",
+      workflowName: "Deploy",
+      program: "echo",
+      args: ["hi"],
+    });
+    await flush();
+
+    // The projected panel is present; streamed content has not arrived yet.
+    const got = hook.get().workflowRunOutput;
+    expect(got).not.toBeNull();
+    expect(got?.lines).toEqual([]);
+    expect(got?.exitCode).toBeNull();
+    hook.unmount();
+  });
+
+  it("ignores streamed content whose workflow id does not match the projected panel", async () => {
+    const hook = renderHook();
+    await flush();
+    await dispatchWorkflowIntent("workflow.outputOpened", {
+      workflowId: "w1",
+      workflowName: "Deploy",
+      program: "echo",
+      args: ["hi"],
+    });
+    await flush();
+    act(() => {
+      setWorkflowOutputContentForTest({
+        workflowId: "other",
+        lines: [{ id: 0, stream: "stdout", text: "stale" }],
+        exitCode: 9,
+        timedOut: true,
+      });
+    });
+    await flush();
+
+    const got = hook.get().workflowRunOutput;
+    expect(got?.lines).toEqual([]);
+    expect(got?.exitCode).toBeNull();
+    expect(got?.timedOut).toBe(false);
     hook.unmount();
   });
 });
