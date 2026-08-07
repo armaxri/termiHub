@@ -275,10 +275,7 @@ import {
   ensureSettingsSubscribed,
   mirrorSettingsIntent,
 } from "@/store/settingsBridge";
-import {
-  currentBroadcastView,
-  dispatchBroadcastIntentBestEffort,
-} from "@/store/broadcastBridge";
+import { currentBroadcastView, dispatchBroadcastIntentBestEffort } from "@/store/broadcastBridge";
 import {
   expectProjectedRestoreSettlement,
   mirrorRestoreBegin,

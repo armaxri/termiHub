@@ -9,6 +9,8 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { currentBroadcastView, ensureBroadcastSubscribed } from "@/store/broadcastBridge";
+import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { TooltipProvider } from "@/components/ui";
 import { BroadcastStatus } from "./BroadcastStatus";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
@@ -36,17 +38,23 @@ function seedTabs(tabs: TerminalTab[]) {
 describe("BroadcastStatus (#1957)", () => {
   let container: HTMLDivElement;
   let root: Root;
+  let harness: ReturnType<typeof installBroadcastHarness>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
+    harness = installBroadcastHarness();
+    // Subscribe up front so a `startBroadcast` before render lands in
+    // `currentBroadcastView()` synchronously (region-authoritative, #2206).
+    await ensureBroadcastSubscribed();
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    harness.teardown();
   });
 
   const render = () =>
@@ -95,13 +103,13 @@ describe("BroadcastStatus (#1957)", () => {
     seedTabs([makeTab("src"), makeTab("t2")]);
     useAppStore.getState().startBroadcast("all", "src", ["t2"]);
     render();
-    expect(useAppStore.getState().broadcastActive).toBe(true);
+    expect(currentBroadcastView().active).toBe(true);
 
     act(() => {
       (pill() as HTMLButtonElement).click();
     });
 
-    expect(useAppStore.getState().broadcastActive).toBe(false);
+    expect(currentBroadcastView().active).toBe(false);
     // Re-render reflects the stopped state: the pill disappears.
     render();
     expect(pill()).toBeNull();

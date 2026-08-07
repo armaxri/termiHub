@@ -5,7 +5,7 @@
  * the remembered scope (skipping the dropdown), stopping on a second press
  * regardless of focus, the "custom" → "all" fallback, and the no-terminal hint.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 // The store pulls in the full service graph on import; stub the modules with
 // side effects at load time (mirrors the sibling broadcast-slice suite).
@@ -37,6 +37,8 @@ vi.mock("@/themes", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { currentBroadcastView, ensureBroadcastSubscribed } from "./broadcastBridge";
+import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { toast } from "@/components/ui";
 import type { LeafPanel, TerminalTab, TabContentType } from "@/types/terminal";
 
@@ -69,10 +71,18 @@ function seedTabs(tabs: TerminalTab[], activeTabId = tabs[0]?.id ?? null) {
   useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
 }
 
-describe("appStore — toggleBroadcast (#1958)", () => {
-  beforeEach(() => {
+describe("appStore — toggleBroadcast (#1958, region-authoritative #2206)", () => {
+  let harness: ReturnType<typeof installBroadcastHarness>;
+
+  beforeEach(async () => {
     useAppStore.setState(useAppStore.getInitialState());
+    harness = installBroadcastHarness();
+    await ensureBroadcastSubscribed();
     toastInfo.mockClear();
+  });
+
+  afterEach(() => {
+    harness.teardown();
   });
 
   it("starts broadcast against the active terminal using the default 'all' scope", () => {
@@ -80,12 +90,12 @@ describe("appStore — toggleBroadcast (#1958)", () => {
 
     useAppStore.getState().toggleBroadcast();
 
-    const s = useAppStore.getState();
-    expect(s.broadcastActive).toBe(true);
-    expect(s.broadcastSourceTabId).toBe("src");
-    expect(s.broadcastScope).toBe("all");
+    const v = currentBroadcastView();
+    expect(v.active).toBe(true);
+    expect(v.sourceTabId).toBe("src");
+    expect(v.scope).toBe("all");
     // All terminals in the group become targets (source included).
-    expect([...s.broadcastTargetTabIds].sort()).toEqual(["src", "t2", "t3"]);
+    expect([...v.targetTabIds].sort()).toEqual(["src", "t2", "t3"]);
     expect(toastInfo).not.toHaveBeenCalled();
   });
 
@@ -94,27 +104,27 @@ describe("appStore — toggleBroadcast (#1958)", () => {
     // A previous session left the scope as "panel".
     useAppStore.getState().startBroadcast("panel", "src", ["src"]);
     useAppStore.getState().stopBroadcast();
-    expect(useAppStore.getState().lastBroadcastScope).toBe("panel");
+    expect(currentBroadcastView().lastScope).toBe("panel");
 
     useAppStore.getState().toggleBroadcast();
 
-    expect(useAppStore.getState().broadcastActive).toBe(true);
-    expect(useAppStore.getState().broadcastScope).toBe("panel");
+    expect(currentBroadcastView().active).toBe(true);
+    expect(currentBroadcastView().scope).toBe("panel");
   });
 
   it("stops broadcast on a second press, regardless of focus", () => {
     seedTabs([makeTab({ id: "src" }), makeTab({ id: "t2" })]);
     useAppStore.getState().toggleBroadcast();
-    expect(useAppStore.getState().broadcastActive).toBe(true);
+    expect(currentBroadcastView().active).toBe(true);
 
     // Move focus to a non-terminal tab — stopping must still work.
     seedTabs([makeTab({ id: "src" }), makeTab({ id: "editor", contentType: "editor" })], "editor");
     useAppStore.getState().toggleBroadcast();
 
-    const s = useAppStore.getState();
-    expect(s.broadcastActive).toBe(false);
-    expect(s.broadcastSourceTabId).toBeNull();
-    expect(s.broadcastTargetTabIds.size).toBe(0);
+    const v = currentBroadcastView();
+    expect(v.active).toBe(false);
+    expect(v.sourceTabId).toBeNull();
+    expect(v.targetTabIds).toHaveLength(0);
   });
 
   it("falls back to 'all' when the remembered scope is 'custom'", () => {
@@ -123,14 +133,14 @@ describe("appStore — toggleBroadcast (#1958)", () => {
     // reconstruct it — it must degrade to "all".
     useAppStore.getState().startBroadcast("custom", "src", ["src"]);
     useAppStore.getState().stopBroadcast();
-    expect(useAppStore.getState().lastBroadcastScope).toBe("custom");
+    expect(currentBroadcastView().lastScope).toBe("custom");
 
     useAppStore.getState().toggleBroadcast();
 
-    const s = useAppStore.getState();
-    expect(s.broadcastActive).toBe(true);
-    expect(s.broadcastScope).toBe("all");
-    expect([...s.broadcastTargetTabIds].sort()).toEqual(["src", "t2"]);
+    const v = currentBroadcastView();
+    expect(v.active).toBe(true);
+    expect(v.scope).toBe("all");
+    expect([...v.targetTabIds].sort()).toEqual(["src", "t2"]);
   });
 
   it("does nothing but hint when the active tab is not a terminal", () => {
@@ -138,7 +148,7 @@ describe("appStore — toggleBroadcast (#1958)", () => {
 
     useAppStore.getState().toggleBroadcast();
 
-    expect(useAppStore.getState().broadcastActive).toBe(false);
+    expect(currentBroadcastView().active).toBe(false);
     expect(toastInfo).toHaveBeenCalledTimes(1);
   });
 });

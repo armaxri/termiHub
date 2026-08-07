@@ -37,6 +37,8 @@ vi.mock("@/themes", () => ({
 
 import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
 import { useAppStore } from "@/store/appStore";
+import { currentBroadcastView, ensureBroadcastSubscribed } from "@/store/broadcastBridge";
+import { installBroadcastHarness } from "@/test/broadcastHarness";
 import type {
   LeafPanel,
   TerminalTab,
@@ -47,6 +49,7 @@ import type {
 
 let container: HTMLDivElement;
 let root: Root;
+let harness: ReturnType<typeof installBroadcastHarness>;
 
 function render(ui: React.ReactElement) {
   act(() => {
@@ -73,27 +76,28 @@ function makeTab(
 
 function seed(tabs: TerminalTab[], scope: BroadcastScope = "all") {
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs, activeTabId: "src" };
-  useAppStore.setState({
-    rootPanel: leaf,
-    activePanelId: "leaf-1",
-    lastBroadcastScope: scope,
-  });
+  useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
+  // The remembered scope lives in the authoritative broadcast region (#2206).
+  harness.transport.seed({ lastScope: scope });
 }
 
 const q = (sel: string) => document.querySelector(sel);
 const click = (el: Element | null) => act(() => (el as HTMLElement).click());
 
 describe("BroadcastScopeDialog (#1956)", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     useAppStore.setState(useAppStore.getInitialState());
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    harness = installBroadcastHarness();
+    await ensureBroadcastSubscribed();
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    harness.teardown();
     vi.clearAllMocks();
   });
 
@@ -116,12 +120,12 @@ describe("BroadcastScopeDialog (#1956)", () => {
 
     click(q('[data-testid="broadcast-scope-confirm"]'));
 
-    const s = useAppStore.getState();
-    expect(s.broadcastActive).toBe(true);
-    expect(s.broadcastScope).toBe("all");
-    expect(s.lastBroadcastScope).toBe("all");
+    const v = currentBroadcastView();
+    expect(v.active).toBe(true);
+    expect(v.scope).toBe("all");
+    expect(v.lastScope).toBe("all");
     // Non-terminal "editor" tab is excluded.
-    expect([...s.broadcastTargetTabIds].sort()).toEqual(["src", "t2"]);
+    expect([...v.targetTabIds].sort()).toEqual(["src", "t2"]);
   });
 
   it("custom picker lists only terminal tabs, never non-terminal ones", () => {
@@ -156,10 +160,10 @@ describe("BroadcastScopeDialog (#1956)", () => {
     click(q('[data-testid="broadcast-target-t3"]'));
     click(q('[data-testid="broadcast-scope-confirm"]'));
 
-    const s = useAppStore.getState();
-    expect(s.broadcastActive).toBe(true);
-    expect(s.broadcastScope).toBe("custom");
-    expect([...s.broadcastTargetTabIds].sort()).toEqual(["src", "t2"]);
+    const v = currentBroadcastView();
+    expect(v.active).toBe(true);
+    expect(v.scope).toBe("custom");
+    expect([...v.targetTabIds].sort()).toEqual(["src", "t2"]);
   });
 
   it("Cancel closes without starting broadcast", () => {
@@ -170,6 +174,6 @@ describe("BroadcastScopeDialog (#1956)", () => {
     click(q('[data-testid="broadcast-scope-cancel"]'));
 
     expect(onOpenChange).toHaveBeenCalledWith(false);
-    expect(useAppStore.getState().broadcastActive).toBe(false);
+    expect(currentBroadcastView().active).toBe(false);
   });
 });
