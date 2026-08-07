@@ -35,6 +35,11 @@ import {
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
+import {
+  useProjectedSessionLifecycle,
+  useProjectedSessionLifecycleMaps,
+  useSessionAutoReconnect,
+} from "@/store/useSessionLifecycle";
 import { useLayoutRenderTree } from "@/store/useLayoutRenderTree";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab, isWindowEmpty, normalizeSizes } from "@/utils/panelTree";
@@ -86,7 +91,9 @@ export function SplitView() {
   const zoomedTabId = useAppStore((s) => s.zoomedTabId);
   const setZoomedTabId = useAppStore((s) => s.setZoomedTabId);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
-  const terminalConnecting = useAppStore((s) => s.terminalConnecting);
+  // Render cut (#2205 PR-A): connecting flags sourced from the projected
+  // `session-lifecycle` region (falls back to appStore per key when not mirrored).
+  const { terminalConnecting } = useProjectedSessionLifecycleMaps();
   const terminalAutoRetryCountZoom = useAppStore((s) => s.terminalAutoRetryCount);
   const terminalWaitingForAgentZoom = useAppStore((s) => s.terminalWaitingForAgent);
   const terminalReattachingZoom = useAppStore((s) => s.terminalReattaching);
@@ -630,7 +637,9 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   const tabColors = useAppStore((s) => s.tabColors);
   const setTabColor = useAppStore((s) => s.setTabColor);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
-  const terminalConnecting = useAppStore((s) => s.terminalConnecting);
+  // Render cut (#2205 PR-A): connecting flags sourced from the projected
+  // `session-lifecycle` region (falls back to appStore per key when not mirrored).
+  const { terminalConnecting } = useProjectedSessionLifecycleMaps();
   const terminalAutoRetryCount = useAppStore((s) => s.terminalAutoRetryCount);
   const terminalWaitingForAgent = useAppStore((s) => s.terminalWaitingForAgent);
   const terminalReattaching = useAppStore((s) => s.terminalReattaching);
@@ -963,13 +972,14 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
   const isExited = useAppStore((s) => s.terminalExitedTabs[tabId] ?? false);
   const isViewMode = useAppStore((s) => s.terminalViewMode[tabId] ?? false);
-  const isReconnecting = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
+  // Render cut (#2205 PR-A / #2204): the reconnect flag and the auto-reconnect
+  // countdown gate are sourced from the projected `session-lifecycle` region (both
+  // fall back to appStore when it does not mirror).
+  const isReconnecting = useProjectedSessionLifecycle(tabId).reconnecting;
   const isReconnectPromptVisible = useAppStore((s) => s.terminalReconnectPrompt[tabId] ?? false);
   // Agentless resilient reconnect (#1962): the backoff countdown overlay must
   // show even after the first attempt cleared the exited flag mid-loop.
-  const isAutoReconnectWaiting = useAppStore(
-    (s) => s.terminalAutoReconnect[tabId]?.phase === "waiting"
-  );
+  const isAutoReconnectWaiting = useSessionAutoReconnect(tabId)?.phase === "waiting";
 
   useEffect(() => {
     const slotEl = slotRef.current;

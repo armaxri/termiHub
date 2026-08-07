@@ -4,23 +4,17 @@ import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
-import type {
-  FrameHandler,
-  Intent,
-  IntentAck,
-  ProjectionFrame,
-  SnapshotFrame,
-  Subscription,
-  Transport,
-} from "@/services/transport";
 import {
-  SESSION_LIFECYCLE_REGION,
   setSessionIntentsEnabled,
   setSessionRenderFromProjectionEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
-  type ProjectedSessionLifecycle,
 } from "@/store/sessionBridge";
+import {
+  failed,
+  FakeSessionTransport,
+  reconnecting,
+} from "@/test/sessionLifecycleRegionTestHarness";
 import type { TerminalAutoReconnectState } from "@/types/terminal";
 
 // Stub lucide-react icons used in the overlay.
@@ -32,54 +26,6 @@ vi.mock("lucide-react", () => ({
   Loader2: () => null,
   CheckCircle2: () => null,
 }));
-
-/**
- * An in-memory `session-lifecycle` region double: holds one view and fans a fresh
- * snapshot to every subscriber on each mutation, so the overlay's render can be
- * driven by projected snapshots without a backend (#2204, reusing the #2164
- * harness idea from `sessionBridge.test.ts`).
- */
-class FakeTransport implements Transport {
-  private view: { sessions: Record<string, ProjectedSessionLifecycle> } = { sessions: {} };
-  private version = 0;
-  private handlers: FrameHandler[] = [];
-  subscribeCount = 0;
-
-  async dispatch(intent: Intent): Promise<IntentAck> {
-    return { intentId: intent.intentId, status: "accepted", produced: [] };
-  }
-
-  async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
-    this.subscribeCount += 1;
-    this.handlers.push(onFrame);
-    return {
-      snapshot: this.snapshot(region),
-      unsubscribe: () => {
-        this.handlers = this.handlers.filter((h) => h !== onFrame);
-      },
-    };
-  }
-
-  async resync(): Promise<SnapshotFrame | null> {
-    return null;
-  }
-
-  /** Set a session's projected lifecycle and fan the snapshot out. */
-  setSession(id: string, life: ProjectedSessionLifecycle): void {
-    this.view.sessions[id] = life;
-    this.version += 1;
-    this.fan();
-  }
-
-  private snapshot(region: string): SnapshotFrame {
-    return { kind: "snapshot", region, version: this.version, view: structuredClone(this.view) };
-  }
-
-  private fan(): void {
-    const frame: ProjectionFrame = this.snapshot(SESSION_LIFECYCLE_REGION);
-    for (const h of this.handlers) h(frame);
-  }
-}
 
 const TAB = "tab-1";
 
@@ -94,12 +40,6 @@ function record(over: Partial<TerminalAutoReconnectState> = {}): TerminalAutoRec
   };
 }
 
-function reconnecting(
-  reconnect: ProjectedSessionLifecycle["reconnect"]
-): ProjectedSessionLifecycle {
-  return { status: "reconnecting", reconnect };
-}
-
 /** Flush the bridge's async subscribe + fan-out so the projected snapshot lands. */
 async function flush(): Promise<void> {
   await act(async () => {
@@ -111,13 +51,13 @@ async function flush(): Promise<void> {
 describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (#2204)", () => {
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
-  let transport: FakeTransport;
+  let transport: FakeSessionTransport;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    transport = new FakeTransport();
+    transport = new FakeSessionTransport();
     setSessionTransportForTest(transport);
     setSessionRenderFromProjectionEnabled(true);
     setSessionIntentsEnabled(true);
@@ -182,6 +122,30 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     expect(countdown?.textContent).toContain("Attempt 4 of 10");
     // With the cut off the hook never subscribes to the region.
     expect(transport.subscribeCount).toBe(0);
+  });
+
+  it("renders the reconnecting spinner sourced from a mirroring projected snapshot", async () => {
+    useAppStore.setState({ terminalReconnectingTabs: { [TAB]: true } });
+    transport.setSession(TAB, reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
+
+    act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
+    await flush();
+
+    expect(transport.subscribeCount).toBeGreaterThan(0);
+    // The reconnecting variant shows its Stop affordance (no countdown variant).
+    const overlay = container.querySelector("[data-testid='terminal-disconnect-overlay']");
+    expect(overlay?.textContent).toContain("Reconnecting");
+  });
+
+  it("renders the disconnect error sourced from a mirroring failed snapshot", async () => {
+    useAppStore.setState({ terminalDisconnectErrors: { [TAB]: "auth failed" } });
+    transport.setSession(TAB, failed("auth failed"));
+
+    act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
+    await flush();
+
+    const overlay = container.querySelector("[data-testid='terminal-disconnect-overlay']");
+    expect(overlay?.textContent).toContain("auth failed");
   });
 
   it("shows no auto-reconnect overlay when there is no local loop, whatever the region says", async () => {

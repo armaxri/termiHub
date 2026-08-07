@@ -27,11 +27,18 @@
  *   making the cut parity-safe and independent of the mutation flag.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useAppStore } from "@/store/appStore";
 import {
+  currentSessionView,
   effectiveAutoReconnect,
+  effectiveConnecting,
+  effectiveConnectingMap,
+  effectiveDisconnectError,
+  effectiveDisconnectErrorMap,
+  effectiveReconnecting,
+  effectiveReconnectingMap,
   ensureSessionSubscribed,
   logSessionBridgeFallback,
   onSessionView,
@@ -87,4 +94,148 @@ export function useSessionAutoReconnect(tabId: string): TerminalAutoReconnectSta
   }, [enabled, tabId]);
 
   return effectiveAutoReconnect(record, enabled ? projected : undefined);
+}
+
+/**
+ * The per-tab session-status slice the terminal overlays render: the connect /
+ * reconnect flags and the disconnect error, sourced from the projected
+ * `session-lifecycle` region when it faithfully mirrors `appStore` and otherwise
+ * from `appStore` verbatim (#2205 PR-A render cut).
+ */
+export interface ProjectedSessionLifecycleSlice {
+  /** True while an initial connect is in flight (mirrors `terminalConnecting`). */
+  connecting: boolean;
+  /** True while the agent is actively reconnecting (mirrors `terminalReconnectingTabs`). */
+  reconnecting: boolean;
+  /** The failed-(re)connect error, if any (mirrors `terminalDisconnectErrors`). */
+  disconnectError: string | undefined;
+}
+
+/**
+ * `useProjectedSessionLifecycle` — the per-tab render cut for the terminal
+ * lifecycle overlays (#2205 PR-A). Returns the connect / reconnect flags and the
+ * disconnect error for one tab, sourced from the shared `session-lifecycle`
+ * projection region under the faithful-mirror gate, with an `appStore` fallback so
+ * the rendered output is byte-identical to the pre-cut path. The direct analog of
+ * {@link useSessionAutoReconnect} for the coarse status fields.
+ *
+ * `appStore` remains the authoritative writer (its slices, the
+ * `driveAutoReconnect` engine and the client `session.*` dispatch are untouched by
+ * PR-A) — this hook only changes where components *read*.
+ */
+export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLifecycleSlice {
+  const connectingLocal = useAppStore((s) => s.terminalConnecting[tabId] ?? false);
+  const reconnectingLocal = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
+  const disconnectErrorLocal = useAppStore((s) => s.terminalDisconnectErrors[tabId]);
+
+  // Read the flag once at mount: it flips only via dev tooling, and the
+  // subscription lifecycle is keyed off it below.
+  const [enabled] = useState(() => sessionRenderFromProjectionEnabled());
+
+  const [projected, setProjected] = useState<ProjectedSessionLifecycle | undefined>(undefined);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const unsubscribe = onSessionView((next) => {
+      if (!cancelled) setProjected(next[tabId]);
+    });
+    // `ensureSessionSubscribed` builds the transport eagerly, so a non-Tauri env
+    // without a socket throws synchronously (not just a rejection) — guard both so
+    // the reader silently stays on the appStore fallback.
+    try {
+      ensureSessionSubscribed()
+        .then((client) => {
+          if (cancelled) return;
+          const view = client.state.view as SessionLifecycleView | undefined;
+          setProjected(view?.sessions?.[tabId]);
+        })
+        .catch((err) => logSessionBridgeFallback("subscribe", err));
+    } catch (err) {
+      logSessionBridgeFallback("subscribe", err);
+    }
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [enabled, tabId]);
+
+  const p = enabled ? projected : undefined;
+  return {
+    connecting: effectiveConnecting(connectingLocal, p),
+    reconnecting: effectiveReconnecting(reconnectingLocal, p),
+    disconnectError: effectiveDisconnectError(disconnectErrorLocal, p),
+  };
+}
+
+/**
+ * The tab-id-keyed session-status maps the list consumers render: the tab-strip
+ * status dot ({@link import("@/utils/tabStatus").deriveTabStatus}), Open
+ * Connections' connecting filter and the split-panel overlay gates all read the
+ * whole maps rather than a single tab. Same fields, same faithful-mirror gate as
+ * {@link useProjectedSessionLifecycle}, sourced from the region view.
+ */
+export interface ProjectedSessionLifecycleMaps {
+  terminalConnecting: Record<string, boolean>;
+  terminalReconnectingTabs: Record<string, boolean>;
+  terminalDisconnectErrors: Record<string, string>;
+}
+
+/**
+ * `useProjectedSessionLifecycleMaps` — the map-level render cut for the list
+ * consumers (#2205 PR-A). Subscribes to the shared `session-lifecycle` region once
+ * and returns the connect / reconnect / disconnect-error maps sourced through the
+ * faithful-mirror gate, falling back to `appStore` per key. Byte-identical to the
+ * pre-cut `appStore` reads; the analog of
+ * {@link import("./useLayoutRenderTree").useLayoutRenderTree} for the lifecycle
+ * status maps.
+ */
+export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMaps {
+  const connectingLocal = useAppStore((s) => s.terminalConnecting);
+  const reconnectingLocal = useAppStore((s) => s.terminalReconnectingTabs);
+  const disconnectErrorsLocal = useAppStore((s) => s.terminalDisconnectErrors);
+
+  const [enabled] = useState(() => sessionRenderFromProjectionEnabled());
+
+  const [view, setView] = useState<Record<string, ProjectedSessionLifecycle>>(() =>
+    currentSessionView()
+  );
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    const unsubscribe = onSessionView((next) => {
+      if (!cancelled) setView(next);
+    });
+    try {
+      ensureSessionSubscribed()
+        .then((client) => {
+          if (cancelled) return;
+          const clientView = client.state.view as SessionLifecycleView | undefined;
+          setView(clientView?.sessions ?? {});
+        })
+        .catch((err) => logSessionBridgeFallback("subscribe", err));
+    } catch (err) {
+      logSessionBridgeFallback("subscribe", err);
+    }
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, [enabled]);
+
+  return useMemo(() => {
+    if (!enabled) {
+      return {
+        terminalConnecting: connectingLocal,
+        terminalReconnectingTabs: reconnectingLocal,
+        terminalDisconnectErrors: disconnectErrorsLocal,
+      };
+    }
+    return {
+      terminalConnecting: effectiveConnectingMap(connectingLocal, view),
+      terminalReconnectingTabs: effectiveReconnectingMap(reconnectingLocal, view),
+      terminalDisconnectErrors: effectiveDisconnectErrorMap(disconnectErrorsLocal, view),
+    };
+  }, [enabled, connectingLocal, reconnectingLocal, disconnectErrorsLocal, view]);
 }

@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
+import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
 import { TerminalTab } from "@/types/terminal";
 import type { WindowInfo } from "@/types/window";
 import { listWindows } from "@/services/api";
@@ -41,10 +42,13 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
   const setPendingAttachedTabCloseConfirm = useAppStore((s) => s.setPendingAttachedTabCloseConfirm);
   // Tab-id-keyed lifecycle maps that drive the per-tab connection status dot.
-  const terminalConnecting = useAppStore((s) => s.terminalConnecting);
-  const terminalReconnectingTabs = useAppStore((s) => s.terminalReconnectingTabs);
+  // Render cut (#2205 PR-A): the session-lifecycle maps (connecting / reconnecting
+  // / disconnect errors) are sourced from the projected region (falls back to
+  // appStore per key when not mirrored); spawn errors and exited tabs stay on
+  // appStore (not part of the session-lifecycle region).
+  const { terminalConnecting, terminalReconnectingTabs, terminalDisconnectErrors } =
+    useProjectedSessionLifecycleMaps();
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
-  const terminalDisconnectErrors = useAppStore((s) => s.terminalDisconnectErrors);
   const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
   // Broadcast participation (#1957): the badge shows on every tab in the target
   // set, active or not, so participation is visible at a glance. Render cut

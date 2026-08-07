@@ -469,6 +469,120 @@ export function effectiveAutoReconnect(
   return projectedToAutoReconnect(projected!, now0, record.onReconnectCommand) ?? record;
 }
 
+// ── Render cut: status / disconnect-error fields (#2205 PR-A) ───────────────────
+//
+// Phase 4 step 4 (#2205) flips the terminal lifecycle *readers* — the overlays,
+// the tab-strip status dot, the split-panel overlay gates and Open Connections —
+// off the `appStore` status slices (`terminalConnecting`,
+// `terminalReconnectingTabs`, `terminalDisconnectErrors`) and onto the projected
+// `session-lifecycle` region. PR-A is the render cut only: the readers consult the
+// region, `appStore` keeps its slices + the `driveAutoReconnect` engine + the
+// client `session.*` dispatch, and the reducer / authority removal is PR-B.
+//
+// Each field uses the same faithful-mirror gate as {@link effectiveAutoReconnect}:
+// the region sources the render only when its status agrees with `appStore`'s
+// slice; otherwise the reader falls back to `appStore` verbatim. Because the gate
+// guarantees agreement, the rendered value is byte-identical to the pre-cut path,
+// independent of {@link sessionIntentsEnabled} and of the deferred server-side
+// folds (#2439) — a region that has not (yet) observed a drop / disconnect /
+// connect-failure simply falls back to `appStore`.
+
+/** The last-known reconciled `session-lifecycle` view (the `sessions` map), for a
+ * consumer seeding before its first diff arrives. */
+export function currentSessionView(): Record<string, ProjectedSessionLifecycle> {
+  return lastSessions;
+}
+
+/**
+ * Effective `terminalConnecting[tabId]` for rendering: `true` when the projected
+ * status is `connecting` and it mirrors the local `terminalConnecting` bool,
+ * otherwise the local bool verbatim (flag off, or the region does not mirror).
+ */
+export function effectiveConnecting(
+  local: boolean,
+  projected: ProjectedSessionLifecycle | undefined
+): boolean {
+  if (!sessionRenderFromProjectionEnabled()) return local;
+  const projectedConnecting = projected?.status === "connecting";
+  if (projectedConnecting !== local) return local;
+  return projectedConnecting;
+}
+
+/**
+ * Effective `terminalReconnectingTabs[tabId]` for rendering: `true` when the
+ * projected status is `reconnecting` and it mirrors the local bool, otherwise the
+ * local bool verbatim.
+ */
+export function effectiveReconnecting(
+  local: boolean,
+  projected: ProjectedSessionLifecycle | undefined
+): boolean {
+  if (!sessionRenderFromProjectionEnabled()) return local;
+  const projectedReconnecting = projected?.status === "reconnecting";
+  if (projectedReconnecting !== local) return local;
+  return projectedReconnecting;
+}
+
+/**
+ * Effective `terminalDisconnectErrors[tabId]` for rendering: the projected error
+ * when the status is `failed` and the error string mirrors the local one exactly,
+ * otherwise the local error verbatim (`undefined` ⇒ no error).
+ */
+export function effectiveDisconnectError(
+  local: string | undefined,
+  projected: ProjectedSessionLifecycle | undefined
+): string | undefined {
+  if (!sessionRenderFromProjectionEnabled()) return local;
+  const projectedError = projected?.status === "failed" ? projected.error : undefined;
+  if (projectedError !== local) return local;
+  return projectedError;
+}
+
+/**
+ * Effective `terminalConnecting` map for the list consumers (the tab-strip status
+ * dot, Open Connections, the split-panel overlay gates): each `true` key sourced
+ * through {@link effectiveConnecting} against the projected view. Byte-identical to
+ * `local` — the gate only ever sources a key the local map already carries.
+ */
+export function effectiveConnectingMap(
+  local: Record<string, boolean>,
+  view: Record<string, ProjectedSessionLifecycle>
+): Record<string, boolean> {
+  if (!sessionRenderFromProjectionEnabled()) return local;
+  const out: Record<string, boolean> = {};
+  for (const id of Object.keys(local)) {
+    if (effectiveConnecting(local[id] ?? false, view[id])) out[id] = true;
+  }
+  return out;
+}
+
+/** Effective `terminalReconnectingTabs` map, sourced through {@link effectiveReconnecting}. */
+export function effectiveReconnectingMap(
+  local: Record<string, boolean>,
+  view: Record<string, ProjectedSessionLifecycle>
+): Record<string, boolean> {
+  if (!sessionRenderFromProjectionEnabled()) return local;
+  const out: Record<string, boolean> = {};
+  for (const id of Object.keys(local)) {
+    if (effectiveReconnecting(local[id] ?? false, view[id])) out[id] = true;
+  }
+  return out;
+}
+
+/** Effective `terminalDisconnectErrors` map, sourced through {@link effectiveDisconnectError}. */
+export function effectiveDisconnectErrorMap(
+  local: Record<string, string>,
+  view: Record<string, ProjectedSessionLifecycle>
+): Record<string, string> {
+  if (!sessionRenderFromProjectionEnabled()) return local;
+  const out: Record<string, string> = {};
+  for (const id of Object.keys(local)) {
+    const eff = effectiveDisconnectError(local[id], view[id]);
+    if (eff !== undefined) out[id] = eff;
+  }
+  return out;
+}
+
 /** Log a bridge fallback so the local-path recovery is visible in the LogViewer. */
 export function logSessionBridgeFallback(kind: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);

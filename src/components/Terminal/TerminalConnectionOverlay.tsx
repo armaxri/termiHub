@@ -4,6 +4,7 @@ import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manage
 import { Button } from "@/components/ui/Button";
 import { toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { useElapsed } from "@/hooks/useElapsed";
 import { getPlatform } from "@/utils/platform";
 import { backendFamilyFromSessionType, connectionErrorHint } from "@/utils/connectionErrorHints";
@@ -113,7 +114,9 @@ export function TerminalConnectionOverlay({
   const retryTerminalSpawn = useAppStore((s) => s.retryTerminalSpawn);
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const abortTerminalConnect = useAppStore((s) => s.abortTerminalConnect);
-  const isConnecting = useAppStore((s) => s.terminalConnecting[tabId] ?? false);
+  // Render cut (#2205 PR-A): the connect flag is sourced from the projected
+  // `session-lifecycle` region (falls back to appStore when it does not mirror).
+  const isConnecting = useProjectedSessionLifecycle(tabId).connecting;
   const autoRetryCount = useAppStore((s) => s.terminalAutoRetryCount[tabId] ?? 0);
   const waitingForAgent = useAppStore((s) => s.terminalWaitingForAgent[tabId]);
   const isReattaching = useAppStore((s) => s.terminalReattaching[tabId] ?? false);
