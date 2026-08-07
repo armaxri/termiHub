@@ -283,11 +283,16 @@ import {
   restoreRenderFromProjectionEnabled,
 } from "@/store/restoreCohortBridge";
 import {
-  mirrorWorkflowDismissOutput,
-  mirrorWorkflowOutputOpened,
-  mirrorWorkflowRunSettled,
-  mirrorWorkflowRunStarted,
-  mirrorWorkflowStepAdvanced,
+  appendWorkflowOutputLine,
+  clearWorkflowOutputContent,
+  dispatchWorkflowDismissOutput,
+  dispatchWorkflowOutputOpened,
+  dispatchWorkflowRunSettled,
+  dispatchWorkflowRunStarted,
+  dispatchWorkflowStepAdvanced,
+  ensureWorkflowSubscribed,
+  openWorkflowOutputContent,
+  setWorkflowOutputProcessResult,
 } from "@/store/workflowRunBridge";
 
 export type SidebarView =
@@ -1418,8 +1423,6 @@ export interface AppState
    * step so the caller can surface a security warning.
    */
   importWorkflows: (json: string) => Promise<WorkflowImportResult>;
-  /** Metadata for the in-flight workflow run, or `null` when nothing is running. */
-  workflowRun: WorkflowRunState | null;
   /**
    * Run a stored workflow's steps against a target terminal, dispatching each
    * step through the shared `send_input` seam and surfacing live progress.
@@ -1431,14 +1434,9 @@ export interface AppState
   runWorkflow: (workflowId: string, opts?: RunWorkflowOptions) => Promise<void>;
   /** Cancel the in-flight workflow run, if any. Idempotent. */
   cancelWorkflowRun: () => void;
-  /**
-   * Inline output surface for a `run-local-process` step (#1865): the streamed
-   * stdout/stderr and the final exit outcome, kept visible after the run ends
-   * until dismissed. `null` when no local process has run this session (or the
-   * surface was dismissed).
-   */
-  workflowRunOutput: WorkflowRunOutputState | null;
-  /** Dismiss the inline run-output surface. */
+  /** Dismiss the inline run-output surface (clears the projected panel + streamed
+   * content). The panel's live state is projected — see {@link
+   * import("@/store/useProjectedWorkflowRun").useProjectedWorkflowRun}. */
   dismissWorkflowRunOutput: () => void;
   /**
    * Pending authorization prompt for a guarded `run-local-process` step (#1857),
@@ -1650,13 +1648,6 @@ const LOCAL_PROCESS_TIMEOUT_MS = 60_000;
 
 /** How often (ms) a running local process polls the workflow cancel signal. */
 const LOCAL_PROCESS_CANCEL_POLL_MS = 200;
-
-/**
- * Cap on retained inline run-output lines (#1865). A chatty process can emit
- * thousands of lines; the surface keeps only the most recent so run state cannot
- * grow unbounded. The full stream still lands in the LogViewer.
- */
-const WORKFLOW_RUN_OUTPUT_MAX_LINES = 1000;
 
 /**
  * Handle for the currently-running workflow, held at module scope so
@@ -6870,8 +6861,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } satisfies WorkflowImportResult;
     },
 
-    workflowRun: null,
-
     runWorkflow: async (workflowId, opts) => {
       const state = get();
       const workflow = state.workflows.find((w) => w.id === workflowId);
@@ -6981,23 +6970,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // Open the inline run-output surface for this spawn (#1865). A fresh
         // spawn owns the panel — its program/args and a clean line buffer — so a
         // second run-local-process step shows its own process, not the prior one.
+        // The panel's identity + status are authoritative in the projected region
+        // (dispatched below); its streamed lines/exitCode/timedOut are frontend-
+        // owned and live in the bridge's content store (#2206 reducer-removal).
         let lineSeq = 0;
-        set({
-          workflowRunOutput: {
-            workflowId,
-            workflowName: workflow.name,
-            program,
-            args,
-            lines: [],
-            status: "running",
-            exitCode: null,
-            timedOut: false,
-          },
+        openWorkflowOutputContent(workflowId);
+        await dispatchWorkflowOutputOpened({
+          workflowId,
+          workflowName: workflow.name,
+          program,
+          args,
         });
-        // Mutation + render cut (#2243): mirror the panel open (its status seam)
-        // to the store + region. The streamed lines/exitCode/timedOut stay
-        // frontend (#1865) — the store models only the panel's identity + status.
-        mirrorWorkflowOutputOpened({ workflowId, workflowName: workflow.name, program, args });
 
         // Reuse the exact streamed-output events #1857 already emits (keyed by
         // run id): each line lands in the LogViewer AND the inline surface.
@@ -7008,16 +6991,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
             stream: chunk.stream,
             text: chunk.line,
           };
-          set((s) => {
-            if (!s.workflowRunOutput) return {};
-            const lines = [...s.workflowRunOutput.lines, nextLine];
-            // Keep only the most recent lines so a chatty process stays bounded.
-            const trimmed =
-              lines.length > WORKFLOW_RUN_OUTPUT_MAX_LINES
-                ? lines.slice(lines.length - WORKFLOW_RUN_OUTPUT_MAX_LINES)
-                : lines;
-            return { workflowRunOutput: { ...s.workflowRunOutput, lines: trimmed } };
-          });
+          // Frontend-owned streamed content — appended to the bridge's content
+          // store (bounded there), not the projection.
+          appendWorkflowOutputLine(nextLine);
         });
         // Poll the run's cancel signal and forward it to the backend so a
         // long-running process is killed when the run is cancelled.
@@ -7039,31 +7015,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
             `local process finished: exitCode=${outcome.exitCode ?? "null"} ` +
               `timedOut=${outcome.timedOut} cancelled=${outcome.cancelled}`
           );
-          // Record the process outcome on the inline surface. The overall run
-          // status (completed / cancelled / failed) is stamped once the run
-          // resolves; here we surface only the raw exit code / timeout (#1865).
-          set((s) =>
-            s.workflowRunOutput
-              ? {
-                  workflowRunOutput: {
-                    ...s.workflowRunOutput,
-                    exitCode: outcome.exitCode,
-                    timedOut: outcome.timedOut,
-                  },
-                }
-              : {}
-          );
+          // Record the process outcome on the inline surface (frontend-owned
+          // streamed content). The overall run status (completed / cancelled /
+          // failed) is stamped on the projected panel once the run resolves; here
+          // we surface only the raw exit code / timeout (#1865).
+          setWorkflowOutputProcessResult(outcome.exitCode, outcome.timedOut);
           return outcome;
         } catch (err) {
           // A backend rejection (e.g. opt-in disabled at the trust boundary)
           // surfaces as a failed step rather than crashing the run.
           const message = err instanceof Error ? err.message : String(err);
           frontendLog("workflow", `local process error: ${message}`);
-          set((s) =>
-            s.workflowRunOutput
-              ? { workflowRunOutput: { ...s.workflowRunOutput, exitCode: 1, timedOut: false } }
-              : {}
-          );
+          setWorkflowOutputProcessResult(1, false);
           return { exitCode: 1, timedOut: false, cancelled: false };
         } finally {
           window.clearInterval(poll);
@@ -7077,22 +7040,22 @@ export const useAppStore = create<AppState>((set, get, store) => {
         id: toastId,
         description: `0 / ${total} steps`,
       });
-      set({
-        workflowRun: {
-          workflowId,
-          workflowName: workflow.name,
-          tabId: targetTabId,
-          total,
-          completed: 0,
-        },
-        // Clear any prior run's output panel when a fresh run starts; it is
-        // recreated lazily only if this run spawns a local process (#1865).
-        workflowRunOutput: null,
-      });
-      // Mutation + render cut (#2243): mirror the run start to the backend
-      // `WorkflowRunStore` and the render region. Off/failure falls back to the
-      // local reducers, which already ran above.
-      mirrorWorkflowRunStarted({
+      // Clear any prior run's frontend-owned streamed content when a fresh run
+      // starts; a new panel is created lazily only if this run spawns a local
+      // process (#1865). The projected panel is reset by `runStarted` below.
+      clearWorkflowOutputContent();
+      // The workflow-run region is authoritative (#2206 reducer-removal): the run
+      // progress + output-panel status are driven solely by dispatching the
+      // `workflow.*` intents. Keep the subscription warm so the render hook
+      // receives the resulting diffs.
+      try {
+        void ensureWorkflowSubscribed().catch(() => {
+          /* logged in the bridge; render simply stays on the last-known view */
+        });
+      } catch {
+        /* non-Tauri env without a socket — dispatch logs + no-ops */
+      }
+      await dispatchWorkflowRunStarted({
         workflowId,
         workflowName: workflow.name,
         tabId: targetTabId,
@@ -7104,16 +7067,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
         { send, runMacro, readScriptFile: localReadFile, authorizeLocalProcess, runLocalProcess },
         {
           onProgress: (completed, stepTotal) => {
-            set((s) =>
-              s.workflowRun &&
-              s.workflowRun.workflowId === workflowId &&
-              s.workflowRun.tabId === targetTabId
-                ? { workflowRun: { ...s.workflowRun, completed } }
-                : {}
-            );
-            // Mutation + render cut (#2243): mirror the progress to the store +
-            // region (guarded server-side to the still-current run).
-            mirrorWorkflowStepAdvanced({ workflowId, tabId: targetTabId, completed });
+            // Advance the authoritative run progress (guarded server-side to the
+            // still-current run). Fire-and-forget: the intent is submitted
+            // synchronously, so successive advances apply in order.
+            void dispatchWorkflowStepAdvanced({ workflowId, tabId: targetTabId, completed });
             toast.loading(`Running workflow "${workflow.name}"…`, {
               id: toastId,
               description: `${completed} / ${stepTotal} steps`,
@@ -7125,27 +7082,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
       const result = await handle.done;
 
-      // Only clear shared state when this run is still the current one — a newer
-      // runWorkflow may have replaced it while this one was cancelled.
+      // Only settle the run when it is still the current one — a newer
+      // runWorkflow may have replaced it while this one was cancelled. The settle
+      // clears the projected run and stamps the terminal status onto the projected
+      // output panel; the frontend streamed content (exit code / lines) is kept.
       if (activeWorkflowRun === handle) {
         activeWorkflowRun = null;
-        set((s) => ({
-          workflowRun: null,
-          // Stamp the run's terminal status onto the inline surface so its exit
-          // outcome stays visible after the run ends (#1865). Left untouched when
-          // no local process ran (surface is null).
-          workflowRunOutput: s.workflowRunOutput
-            ? {
-                ...s.workflowRunOutput,
-                status: result.status,
-                error: result.status === "failed" ? result.error : undefined,
-              }
-            : null,
-        }));
-        // Mutation + render cut (#2243): mirror the run's terminal outcome to the
-        // store + region (settles the run and stamps the panel status). Only for
-        // the still-current run — matching the `activeWorkflowRun === handle` guard.
-        mirrorWorkflowRunSettled(
+        await dispatchWorkflowRunSettled(
           result.status,
           result.status === "failed" ? result.error : undefined
         );
@@ -7173,11 +7116,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
     },
 
-    workflowRunOutput: null,
     dismissWorkflowRunOutput: () => {
-      set({ workflowRunOutput: null });
-      // Mutation + render cut (#2243): mirror the dismissal to the store + region.
-      mirrorWorkflowDismissOutput();
+      // Clear the frontend-owned streamed content and dismiss the projected panel
+      // (the region is authoritative for the panel's presence + status).
+      clearWorkflowOutputContent();
+      void dispatchWorkflowDismissOutput();
     },
 
     localProcessPrompt: null,
