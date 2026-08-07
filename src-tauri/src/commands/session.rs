@@ -39,6 +39,13 @@ use crate::window::WindowManager;
 /// Containers" from this authoritative marker, which survives the tab close that
 /// would otherwise strip the frontend-only `spawned` tab flag. Defaults to
 /// `false` when the frontend omits it (normal local/agent connections).
+///
+/// `resilient_reconnect` carries the client's `isResilientReconnectTab`
+/// determination for the owning tab (#2439, part of #2205). Recorded on the
+/// session's tab binding so a **genuine drop** observed at the `terminal-exit`
+/// source can be folded server-side as `session.reconnect` (resilient) vs
+/// `session.dropped` (non-resilient) — converging with the client's
+/// `setTerminalExited` classification. Defaults to `false`.
 // Tauri command: the argument list is the IPC surface (typed params + injected
 // State), so it cannot be collapsed into a struct without losing the command
 // binding — the arity lint does not apply here.
@@ -50,6 +57,7 @@ pub async fn create_connection(
     agent_id: Option<String>,
     connect_id: Option<String>,
     spawned: Option<bool>,
+    resilient_reconnect: Option<bool>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
     conn_manager: State<'_, ConnectionManager>,
@@ -84,6 +92,7 @@ pub async fn create_connection(
             agent_id.as_deref(),
             connect_id.as_deref(),
             spawned.unwrap_or(false),
+            resilient_reconnect.unwrap_or(false),
             app_handle.clone(),
         )
         .await;

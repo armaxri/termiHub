@@ -100,6 +100,7 @@ describe("api service", () => {
         agentId: null,
         connectId: null,
         spawned: false,
+        resilientReconnect: false,
       });
       expect(result).toBe("session-456");
     });
@@ -115,6 +116,7 @@ describe("api service", () => {
         agentId: "agent-1",
         connectId: null,
         spawned: false,
+        resilientReconnect: false,
       });
       expect(result).toBe("session-789");
     });
@@ -130,6 +132,7 @@ describe("api service", () => {
         agentId: null,
         connectId: "tab-7",
         spawned: false,
+        resilientReconnect: false,
       });
     });
 
@@ -145,6 +148,7 @@ describe("api service", () => {
         agentId: null,
         connectId: "tab-9",
         spawned: false,
+        resilientReconnect: false,
       });
     });
 
@@ -160,6 +164,23 @@ describe("api service", () => {
         agentId: null,
         connectId: "tab-s",
         spawned: true,
+        resilientReconnect: false,
+      });
+    });
+
+    it("createTerminal forwards resilientReconnect to create_connection (#2439)", async () => {
+      mockedInvoke.mockResolvedValue("session-r");
+      const config = { type: "ssh", config: { host: "h", resilientReconnect: true } };
+
+      await createTerminal(config, "tab-r", false, true);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "ssh",
+        settings: { host: "h", resilientReconnect: true },
+        agentId: null,
+        connectId: "tab-r",
+        spawned: false,
+        resilientReconnect: true,
       });
     });
 
@@ -196,6 +217,7 @@ describe("api service", () => {
         agentId: null,
         connectId: null,
         spawned: false,
+        resilientReconnect: false,
       });
       expect(result).toBe("session-123");
     });
@@ -220,6 +242,7 @@ describe("api service", () => {
         agentId: "agent-1",
         connectId: null,
         spawned: false,
+        resilientReconnect: false,
       });
       expect(result).toBe("session-remote");
     });

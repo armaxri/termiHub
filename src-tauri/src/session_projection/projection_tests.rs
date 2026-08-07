@@ -22,6 +22,7 @@ use crate::projection::{
     apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
     ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
+use crate::session::manager::{DropFold, EventEmitter};
 use crate::session_projection::projection::{
     fold_session_transition, publish_sessions, SESSION_LIFECYCLE_REGION,
 };
@@ -543,5 +544,145 @@ fn server_side_kill_disconnect_fold_matches_the_client_session_disconnect_route(
         server.snapshot(),
         client.snapshot(),
         "the server kill fold reproduces the client disconnect route's transition exactly"
+    );
+}
+
+/// A genuine drop of a **resilient-reconnect** tab folds `session.reconnect`
+/// server-side via the production `AppHandle::fold_session_drop` (the exact call
+/// `emit_and_cleanup` makes at the `terminal-exit` source): the session enters
+/// `Reconnecting` and one region diff fans out — no client dispatch (#2439).
+#[test]
+fn server_side_resilient_drop_fold_starts_reconnecting() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    store.connect("tab-1");
+    store.connected("tab-1");
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    // The genuine-drop path folds `reconnect` for a resilient tab at the source —
+    // the same transition the client mirrors via `startAutoReconnect`.
+    app.handle().fold_session_drop("tab-1", DropFold::Reconnect);
+
+    assert_eq!(
+        store.get("tab-1").map(|s| s.status),
+        Some(crate::session_projection::store::SessionStatus::Reconnecting)
+    );
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side reconnect fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view["sessions"]["tab-1"]["status"],
+        json!("reconnecting")
+    );
+}
+
+/// A genuine drop of a **non-resilient** tab folds `session.dropped` server-side
+/// via the production `AppHandle::fold_session_drop`: the session lands idle
+/// `Disconnected` with reason `Unexpected`, and one region diff fans out (#2439).
+#[test]
+fn server_side_nonresilient_drop_fold_settles_disconnected() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.connect("tab-1");
+    store.connected("tab-1");
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    app.handle().fold_session_drop("tab-1", DropFold::Dropped);
+
+    assert_eq!(
+        store.get("tab-1").map(|s| s.status),
+        Some(crate::session_projection::store::SessionStatus::Disconnected)
+    );
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side dropped fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view["sessions"]["tab-1"]["status"],
+        json!("disconnected")
+    );
+    assert_eq!(
+        cache.view["sessions"]["tab-1"]["endReason"],
+        json!("unexpected")
+    );
+}
+
+/// The server-side drop folds reproduce the client `session.reconnect` /
+/// `session.dropped` route transitions exactly — so the convergent double-write
+/// (server fold + still-present client mirror) never drifts for a genuine drop.
+#[test]
+fn server_side_drop_folds_match_the_client_routes() {
+    // Resilient drop → reconnect parity.
+    let server_r = SessionLifecycleStore::new();
+    server_r.set_rand_for_test(Box::new(|| 0.5));
+    server_r.connect("tab-1");
+    server_r.connected("tab-1");
+    server_r.reconnect("tab-1");
+
+    let client_r = Arc::new(SessionLifecycleStore::new());
+    client_r.set_rand_for_test(Box::new(|| 0.5));
+    client_r.connect("tab-1");
+    client_r.connected("tab-1");
+    let projector_r = Arc::new(Projector::new());
+    projector_r.register_region(SESSION_LIFECYCLE_REGION, client_r.snapshot());
+    let dispatcher_r = Dispatcher::new(projector_r, Arc::new(registry_for(client_r.clone())));
+    assert_eq!(
+        dispatcher_r
+            .dispatch(intent("session.reconnect", json!({ "sessionId": "tab-1" })))
+            .status,
+        IntentStatus::Accepted
+    );
+    assert_eq!(
+        server_r.snapshot(),
+        client_r.snapshot(),
+        "the server reconnect fold reproduces the client reconnect route exactly"
+    );
+
+    // Non-resilient drop → dropped parity.
+    let server_d = SessionLifecycleStore::new();
+    server_d.connect("tab-2");
+    server_d.connected("tab-2");
+    server_d.dropped("tab-2", None);
+
+    let client_d = Arc::new(SessionLifecycleStore::new());
+    client_d.connect("tab-2");
+    client_d.connected("tab-2");
+    let projector_d = Arc::new(Projector::new());
+    projector_d.register_region(SESSION_LIFECYCLE_REGION, client_d.snapshot());
+    let dispatcher_d = Dispatcher::new(projector_d, Arc::new(registry_for(client_d.clone())));
+    assert_eq!(
+        dispatcher_d
+            .dispatch(intent("session.dropped", json!({ "sessionId": "tab-2" })))
+            .status,
+        IntentStatus::Accepted
+    );
+    assert_eq!(
+        server_d.snapshot(),
+        client_d.snapshot(),
+        "the server dropped fold reproduces the client dropped route exactly"
     );
 }

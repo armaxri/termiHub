@@ -86,7 +86,7 @@ impl<'a> PersistentController<'a> {
 
         let session_id = self
             .manager
-            .create_connection(type_id, settings, agent_id, None, false, emitter.clone())
+            .create_connection(type_id, settings, agent_id, None, false, false, emitter.clone())
             .await?;
 
         // Capture the agent-side remote session ID so that attach_persistent_tab
