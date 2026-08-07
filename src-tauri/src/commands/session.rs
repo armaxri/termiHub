@@ -46,6 +46,13 @@ use crate::window::WindowManager;
 /// source can be folded server-side as `session.reconnect` (resilient) vs
 /// `session.dropped` (non-resilient) — converging with the client's
 /// `setTerminalExited` classification. Defaults to `false`.
+///
+/// `backend_reattach` carries the client's `sessionBackendReattach` flag (#2454,
+/// default-off). It is recorded on the tab's retained connection request as the
+/// sole gate on whether the backend reconnect timer re-establishes the transport
+/// itself (the server-side redrive) — the counterpart to the frontend re-attach
+/// (#2457) the same flag switches on. Defaults to `false`: the client drives the
+/// reconnect redrive exactly as on `develop`.
 // Tauri command: the argument list is the IPC surface (typed params + injected
 // State), so it cannot be collapsed into a struct without losing the command
 // binding — the arity lint does not apply here.
@@ -58,6 +65,7 @@ pub async fn create_connection(
     connect_id: Option<String>,
     spawned: Option<bool>,
     resilient_reconnect: Option<bool>,
+    backend_reattach: Option<bool>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
     conn_manager: State<'_, ConnectionManager>,
@@ -98,6 +106,7 @@ pub async fn create_connection(
             connect_id.as_deref(),
             spawned.unwrap_or(false),
             resilient_reconnect.unwrap_or(false),
+            backend_reattach.unwrap_or(false),
             app_handle.clone(),
         )
         .await;

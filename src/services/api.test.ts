@@ -101,6 +101,7 @@ describe("api service", () => {
         connectId: null,
         spawned: false,
         resilientReconnect: false,
+        backendReattach: false,
       });
       expect(result).toBe("session-456");
     });
@@ -117,6 +118,7 @@ describe("api service", () => {
         connectId: null,
         spawned: false,
         resilientReconnect: false,
+        backendReattach: false,
       });
       expect(result).toBe("session-789");
     });
@@ -133,6 +135,7 @@ describe("api service", () => {
         connectId: "tab-7",
         spawned: false,
         resilientReconnect: false,
+        backendReattach: false,
       });
     });
 
@@ -149,6 +152,7 @@ describe("api service", () => {
         connectId: "tab-9",
         spawned: false,
         resilientReconnect: false,
+        backendReattach: false,
       });
     });
 
@@ -165,6 +169,7 @@ describe("api service", () => {
         connectId: "tab-s",
         spawned: true,
         resilientReconnect: false,
+        backendReattach: false,
       });
     });
 
@@ -181,6 +186,24 @@ describe("api service", () => {
         connectId: "tab-r",
         spawned: false,
         resilientReconnect: true,
+        backendReattach: false,
+      });
+    });
+
+    it("createTerminal forwards backendReattach to create_connection (#2454)", async () => {
+      mockedInvoke.mockResolvedValue("session-br");
+      const config = { type: "ssh", config: { host: "h" } };
+
+      await createTerminal(config, "tab-br", false, true, true);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "ssh",
+        settings: { host: "h" },
+        agentId: null,
+        connectId: "tab-br",
+        spawned: false,
+        resilientReconnect: true,
+        backendReattach: true,
       });
     });
 
@@ -218,6 +241,7 @@ describe("api service", () => {
         connectId: null,
         spawned: false,
         resilientReconnect: false,
+        backendReattach: false,
       });
       expect(result).toBe("session-123");
     });
@@ -243,6 +267,7 @@ describe("api service", () => {
         connectId: null,
         spawned: false,
         resilientReconnect: false,
+        backendReattach: false,
       });
       expect(result).toBe("session-remote");
     });

@@ -93,6 +93,7 @@ impl<'a> PersistentController<'a> {
                 None,
                 false,
                 false,
+                false,
                 emitter.clone(),
             )
             .await?;

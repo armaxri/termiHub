@@ -1019,16 +1019,29 @@ pub fn run() {
                     let store: Arc<session_projection::SessionLifecycleStore> = (*store).clone();
                     let projector = projection_state.projector.clone();
                     let store_for_publish = store.clone();
-                    let driver = Arc::new(session_projection::ReconnectTimerDriver::new(
-                        store,
-                        Arc::new(session_projection::TokioReconnectScheduler::new()),
-                        Arc::new(move || {
-                            session_projection::projection::publish_sessions(
-                                &projector,
-                                &store_for_publish,
-                            );
-                        }),
-                    ));
+                    // Backend-driven reconnect redrive (#2454): on the fired
+                    // attempt the backend re-establishes the transport itself for
+                    // a tab that opted into `sessionBackendReattach`, mints a new
+                    // session and publishes its id for the frontend to re-attach
+                    // to (#2457). Resolves managed state lazily, so it can be fed
+                    // back into the very driver that invokes it without a cycle.
+                    // No-op for a client-driven (flag-off) tab.
+                    let redrive: Arc<dyn session_projection::ReconnectRedrive> = Arc::new(
+                        session_projection::AppReconnectRedrive::new(app.handle().clone()),
+                    );
+                    let driver = Arc::new(
+                        session_projection::ReconnectTimerDriver::new(
+                            store,
+                            Arc::new(session_projection::TokioReconnectScheduler::new()),
+                            Arc::new(move || {
+                                session_projection::projection::publish_sessions(
+                                    &projector,
+                                    &store_for_publish,
+                                );
+                            }),
+                        )
+                        .with_redrive(redrive),
+                    );
                     app.manage(driver);
                 }
                 app.manage(projection_state);

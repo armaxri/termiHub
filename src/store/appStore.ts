@@ -254,6 +254,7 @@ import {
   logSessionBridgeFallback,
   mirrorSessionIntent,
   onSessionView,
+  sessionBackendReattachEnabled,
   sessionIntentsEnabled,
   type SessionIntentKind,
 } from "@/store/sessionBridge";
@@ -2235,8 +2236,21 @@ function driveAutoReconnect(
   // `attempt` event is not mirrored here: under the cut, an attempt originates
   // from the backend timer (reconciled below), so re-dispatching it would be a
   // redundant no-op against the store already in `Connecting`.
+  //
+  // Backend-reattach authority cut (#2454): when `sessionBackendReattach` is on,
+  // the backend redrive owns the attempt OUTCOME — it folds `connected` /
+  // `reconnectFailed` at the source. The client must NOT also mirror those, since
+  // the reconnect engine is non-idempotent (a double `failure` would
+  // double-count the attempt and give up early). So `success` / `failure` are
+  // suppressed here under the flag; the local record still settles for the
+  // overlay, but the intent is the backend's to drive. `drop` (idempotent, also
+  // folded server-side) and `cancel` (user-originated — the backend cannot
+  // observe it otherwise, and it is how a user stop reaches `cancelReconnect`)
+  // stay client-driven.
   const cutOn = sessionIntentsEnabled();
-  if (cutOn && event !== "attempt") {
+  const backendOwnsOutcome =
+    sessionBackendReattachEnabled() && (event === "success" || event === "failure");
+  if (cutOn && event !== "attempt" && !backendOwnsOutcome) {
     mirrorAutoReconnectEvent(tabId, event, error);
   }
 

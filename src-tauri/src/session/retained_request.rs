@@ -67,6 +67,16 @@ pub(crate) struct RetainedConnectionRequest {
     pub(crate) agent_id: Option<String>,
     /// The tab's resilient-reconnect determination at connect time.
     pub(crate) resilient: bool,
+    /// Whether the owning tab opted into the **backend-driven** reconnect redrive
+    /// (#2454) — the client's `sessionBackendReattach` flag at connect time,
+    /// threaded through `create_connection`. The backend reconnect timer only
+    /// re-establishes the transport itself for a tab whose retained request
+    /// carries `true`; when `false` (the default-off flag) the timer fires the
+    /// `Waiting → Attempt` edge and the **client** drives the redrive exactly as
+    /// on `develop`. This is the sole gate that keeps the flag-off path
+    /// byte-identical while the two halves (backend redrive here, frontend
+    /// re-attach #2457) share one flag.
+    pub(crate) backend_reattach: bool,
 }
 
 impl Drop for RetainedConnectionRequest {
@@ -181,6 +191,7 @@ mod tests {
                 settings: json!({ "host": "h", "password": "p" }),
                 agent_id: None,
                 resilient: true,
+                backend_reattach: false,
             },
         );
         assert!(store.contains("tab-1"));
@@ -208,6 +219,7 @@ mod tests {
                 settings: json!({ "password": "old" }),
                 agent_id: None,
                 resilient: true,
+                backend_reattach: false,
             },
         );
         store.retain(
@@ -217,6 +229,7 @@ mod tests {
                 settings: json!({ "password": "new" }),
                 agent_id: None,
                 resilient: true,
+                backend_reattach: false,
             },
         );
         assert_eq!(
