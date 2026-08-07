@@ -93,6 +93,11 @@ fn registry_for(store: Arc<SessionLifecycleStore>) -> HandlerRegistry {
         s.cancel_reconnect(&required_id(intent)?);
         Ok(publish_sessions(projector, &s))
     });
+    let s = store.clone();
+    registry.route("session.reconnectTrigger", move |intent, projector| {
+        s.set_reconnect_trigger(&required_id(intent)?, opt_error(intent));
+        Ok(publish_sessions(projector, &s))
+    });
     let s = store;
     registry.route("session.remove", move |intent, projector| {
         s.remove(&required_id(intent)?);
@@ -297,6 +302,46 @@ fn a_full_reconnect_loop_advances_monotonically_and_converges() {
     assert_eq!(cache.version, 6);
     assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
     assert_eq!(cache.view["sessions"]["s2"]["status"], json!("connected"));
+}
+
+#[test]
+fn a_reconnect_trigger_intent_projects_the_cause_and_a_clear_removes_it() {
+    // #2442: `session.reconnectTrigger` records the region-owned reconnect-trigger
+    // cause without touching status, and a clear (no `error`) removes it.
+    let store = seeded_store();
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    // s2 was connected; carry a trigger cause onto it.
+    let ack = dispatcher.dispatch(intent(
+        "session.reconnectTrigger",
+        json!({ "sessionId": "s2", "error": "connection reset" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    // A clear (no error) removes it again.
+    let ack = dispatcher.dispatch(intent(
+        "session.reconnectTrigger",
+        json!({ "sessionId": "s2" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 2, "set + clear each change the view");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view["sessions"]["s2"]["reconnectError"],
+        json!("connection reset")
+    );
+    // Status is unaffected by the pure-metadata write.
+    assert_eq!(cache.view["sessions"]["s2"]["status"], json!("connected"));
+    cache.apply(&diffs[1]);
+    assert!(cache.view["sessions"]["s2"].get("reconnectError").is_none());
+    assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
 }
 
 #[test]

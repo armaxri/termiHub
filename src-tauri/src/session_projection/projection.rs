@@ -31,6 +31,7 @@
 //! | `session.reconnectAttempt`  | `{ sessionId }`             | backoff timer fired; start an attempt          |
 //! | `session.reconnectFailed`   | `{ sessionId, error? }`     | the attempt failed (back off or give up)       |
 //! | `session.cancelReconnect`   | `{ sessionId }`             | user stopped the retry loop                    |
+//! | `session.reconnectTrigger`  | `{ sessionId, error? }`     | record/clear the reconnect-trigger cause       |
 //! | `session.remove`            | `{ sessionId }`             | session/tab gone; drop it from the region      |
 //!
 //! # Shadow mode
@@ -204,6 +205,14 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         let produced = publish_sessions(projector, &store);
         sync_timer(&handle, &id);
         Ok(produced)
+    });
+
+    let handle = app_handle.clone();
+    registry.route("session.reconnectTrigger", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let id = required_str(intent, "sessionId")?;
+        store.set_reconnect_trigger(&id, optional_str(intent, "error"));
+        Ok(publish_sessions(projector, &store))
     });
 
     let handle = app_handle;

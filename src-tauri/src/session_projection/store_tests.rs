@@ -217,3 +217,68 @@ fn status_and_reconnect_phase_stay_consistent_through_a_full_loop() {
     assert_eq!(s.status, SessionStatus::Connected);
     assert_eq!(s.reconnect.phase, ReconnectPhase::Connected);
 }
+
+#[test]
+fn set_reconnect_trigger_records_and_clears_the_cause() {
+    // #2442: the reconnect-trigger cause is region-owned, set/cleared by its own
+    // pure-metadata write without perturbing status or the reconnect engine.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.set_reconnect_trigger("s1", Some("connection reset".to_string()));
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.reconnect_error.as_deref(), Some("connection reset"));
+    // Status / reconnect detail untouched — this is not the agentless backoff loop.
+    assert_eq!(s.status, SessionStatus::Connected);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+    // A None clears it.
+    store.set_reconnect_trigger("s1", None);
+    assert_eq!(store.get("s1").unwrap().reconnect_error, None);
+}
+
+#[test]
+fn set_reconnect_trigger_is_a_no_op_for_an_unknown_session() {
+    let store = deterministic_store();
+    store.set_reconnect_trigger("ghost", Some("boom".to_string()));
+    assert!(store.get("ghost").is_none());
+}
+
+#[test]
+fn lifecycle_resolutions_clear_the_reconnect_trigger_cause() {
+    // Any resolution transition clears reconnect_error so a stale cause never
+    // lingers into the next connect cycle (the guarantee #2205 PR-B relies on).
+    for resolve in [
+        SessionLifecycleStore::connected as fn(&SessionLifecycleStore, &str),
+        SessionLifecycleStore::disconnect,
+    ] {
+        let store = deterministic_store();
+        store.connect("s1");
+        store.connected("s1");
+        store.set_reconnect_trigger("s1", Some("cause".to_string()));
+        resolve(&store, "s1");
+        assert_eq!(store.get("s1").unwrap().reconnect_error, None);
+    }
+    // dropped / connect_failed carry their own message into `error`, not `reconnect_error`.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.set_reconnect_trigger("s1", Some("cause".to_string()));
+    store.dropped("s1", Some("link lost".to_string()));
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.reconnect_error, None);
+    assert_eq!(s.error.as_deref(), Some("link lost"));
+}
+
+#[test]
+fn reconnect_trigger_cause_is_serialized_only_when_set() {
+    let store = deterministic_store();
+    store.connect("s1");
+    assert!(store.snapshot()["sessions"]["s1"]
+        .get("reconnectError")
+        .is_none());
+    store.set_reconnect_trigger("s1", Some("why".to_string()));
+    assert_eq!(
+        store.snapshot()["sessions"]["s1"]["reconnectError"],
+        serde_json::json!("why")
+    );
+}
