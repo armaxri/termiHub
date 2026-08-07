@@ -247,13 +247,25 @@ describe("api service", () => {
       });
     });
 
-    it("closeTerminal invokes with session ID", async () => {
+    it("closeTerminal invokes with session ID (non-kill close by default)", async () => {
       mockedInvoke.mockResolvedValue(undefined);
 
       await closeTerminal("session-1");
 
       expect(mockedInvoke).toHaveBeenCalledWith("close_terminal", {
         sessionId: "session-1",
+        intentional: false,
+      });
+    });
+
+    it("closeTerminal forwards the intentional kill-intent flag (#2439)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await closeTerminal("session-1", true);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("close_terminal", {
+        sessionId: "session-1",
+        intentional: true,
       });
     });
 

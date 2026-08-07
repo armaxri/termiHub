@@ -18,7 +18,7 @@ import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab } from "@/types/terminal";
 import type { LocalSessionInfo } from "@/services/api";
 
-const closeTerminal = vi.fn((_id: string) => Promise.resolve());
+const closeTerminal = vi.fn((_id: string, _intentional?: boolean) => Promise.resolve());
 const listLocalSessions = vi.fn<() => Promise<LocalSessionInfo[]>>();
 
 vi.mock("@/services/api", () => ({
@@ -26,7 +26,7 @@ vi.mock("@/services/api", () => ({
   focusWindow: vi.fn(() => Promise.resolve()),
   listLocalSessions: () => listLocalSessions(),
   listAgentSessions: vi.fn(() => Promise.resolve([])),
-  closeTerminal: (id: string) => closeTerminal(id),
+  closeTerminal: (id: string, intentional?: boolean) => closeTerminal(id, intentional),
   closeAgentSession: vi.fn(() => Promise.resolve()),
   cancelConnecting: vi.fn(() => Promise.resolve(true)),
   cancelConnectAgent: vi.fn(() => Promise.resolve()),
@@ -162,7 +162,8 @@ describe("OpenConnectionsModal — Spawned Containers section", () => {
       killBtn.click();
       await Promise.resolve();
     });
-    expect(closeTerminal).toHaveBeenCalledWith("sess-spawn");
+    // The kill routes the intentional kill-intent flag to the backend (#2439).
+    expect(closeTerminal).toHaveBeenCalledWith("sess-spawn", true);
   });
 
   it("groups a spawned session from the backend marker alone (no spawned tab flag)", async () => {
@@ -199,6 +200,7 @@ describe("OpenConnectionsModal — Spawned Containers section", () => {
       killBtn.click();
       await Promise.resolve();
     });
-    expect(closeTerminal).toHaveBeenCalledWith("sess-spawn");
+    // The kill routes the intentional kill-intent flag to the backend (#2439).
+    expect(closeTerminal).toHaveBeenCalledWith("sess-spawn", true);
   });
 });

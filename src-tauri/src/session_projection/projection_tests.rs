@@ -472,3 +472,76 @@ fn server_side_connect_fold_matches_the_client_session_connect_route() {
         "the server fold reproduces the client route's transition exactly"
     );
 }
+
+/// A user-initiated kill (`close_terminal` with `intentional = true`) folds the
+/// graceful `session.disconnect` server-side under the tab id: the session lands
+/// idle `Disconnected` with reason `User`, and the region diff fans out — no
+/// client dispatch (#2439, part of #2205).
+#[test]
+fn server_side_kill_disconnect_fold_settles_the_session_disconnected() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.connect("tab-1");
+    store.connected("tab-1");
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    // The kill path folds the graceful disconnect at the source, keyed by the tab
+    // id — the same transition the client mirrors for a `killed` exit.
+    fold_session_transition(app.handle(), |s| s.disconnect("tab-1"));
+
+    assert_eq!(
+        store.get("tab-1").map(|s| s.status),
+        Some(crate::session_projection::store::SessionStatus::Disconnected)
+    );
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side kill fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view["sessions"]["tab-1"]["status"],
+        json!("disconnected")
+    );
+    assert_eq!(cache.view["sessions"]["tab-1"]["endReason"], json!("user"));
+}
+
+/// The server-side kill-disconnect fold reproduces the client `session.disconnect`
+/// route's store transition exactly — so the convergent double-write (server fold
+/// + still-present client mirror) never drifts for a `killed` exit.
+#[test]
+fn server_side_kill_disconnect_fold_matches_the_client_session_disconnect_route() {
+    // (a) Server-side fold.
+    let server = SessionLifecycleStore::new();
+    server.connect("tab-1");
+    server.connected("tab-1");
+    server.disconnect("tab-1");
+
+    // (b) Client route: the `session.disconnect` intent through the production registry.
+    let client = Arc::new(SessionLifecycleStore::new());
+    client.connect("tab-1");
+    client.connected("tab-1");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SESSION_LIFECYCLE_REGION, client.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(client.clone())));
+    let ack = dispatcher.dispatch(intent(
+        "session.disconnect",
+        json!({ "sessionId": "tab-1" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    assert_eq!(
+        server.snapshot(),
+        client.snapshot(),
+        "the server kill fold reproduces the client disconnect route's transition exactly"
+    );
+}
