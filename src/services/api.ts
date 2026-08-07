@@ -72,6 +72,12 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
  * `resilientReconnect` carries the tab's `isResilientReconnectTab` determination
  * (#2439) so the backend can fold a genuine drop server-side as `session.reconnect`
  * (resilient) vs `session.dropped` (non-resilient), converging with the client.
+ *
+ * `backendReattach` carries the client's `sessionBackendReattach` flag (#2454,
+ * default-off) so the backend records it on the tab's retained request — the sole
+ * gate on whether the backend reconnect timer re-establishes the transport itself
+ * (the redrive), the counterpart to the frontend re-attach (#2457) the same flag
+ * switches on. Omitted / `false` ⇒ the client drives the redrive, as on `develop`.
  */
 export async function createConnection(
   typeId: string,
@@ -79,7 +85,8 @@ export async function createConnection(
   agentId?: string,
   connectId?: string,
   spawned?: boolean,
-  resilientReconnect?: boolean
+  resilientReconnect?: boolean,
+  backendReattach?: boolean
 ): Promise<SessionId> {
   return await invoke<string>("create_connection", {
     typeId,
@@ -88,6 +95,7 @@ export async function createConnection(
     connectId: connectId ?? null,
     spawned: spawned ?? false,
     resilientReconnect: resilientReconnect ?? false,
+    backendReattach: backendReattach ?? false,
   });
 }
 
@@ -178,12 +186,18 @@ export async function importInventoryHosts(path: string): Promise<InventoryHost[
  * forwarded to the backend so a genuine drop is folded server-side as
  * `session.reconnect` vs `session.dropped`. Only plain-SSH tabs opt in; the
  * `remote-session` (agent) path is never resilient, so it is not forwarded there.
+ *
+ * `backendReattach` is the client's `sessionBackendReattach` flag (#2454), passed
+ * on the direct path only so the backend records it on the retained request as the
+ * redrive gate. The `remote-session` (agent) path is out of scope (#2455), so it
+ * is not forwarded there.
  */
 export async function createTerminal(
   config: ConnectionConfig,
   connectId?: string,
   spawned?: boolean,
-  resilientReconnect?: boolean
+  resilientReconnect?: boolean,
+  backendReattach?: boolean
 ): Promise<SessionId> {
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
@@ -199,7 +213,8 @@ export async function createTerminal(
     undefined,
     connectId,
     spawned,
-    resilientReconnect
+    resilientReconnect,
+    backendReattach
   );
 }
 
