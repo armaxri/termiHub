@@ -1,64 +1,32 @@
 /**
- * Unit tests for the restore-cohort bridge flags + region id (#2241).
+ * Unit tests for the restore-cohort bridge region id + default view (#2206).
  *
- * Behavioural coverage (mirror dispatch, projected-settlement rendering, and the
- * local fallback) lives in `appStore.restoreCohortMutationCut.test.ts` and
- * `appStore.restoreCohortRenderCut.test.ts`, which drive the bridge through the
- * real `appStore` actions.
+ * Behavioural coverage (intent dispatch, projected-settlement rendering, and the
+ * captured failed-tab set) lives in `appStore.restoreCohortMutationCut.test.ts`,
+ * `appStore.restoreCohortRenderCut.test.ts`, `appStore.restoreSummary.test.ts` and
+ * `appStore.bulkReconnect.test.ts`, which drive the bridge through the real
+ * `appStore` actions and the in-memory region twin.
  */
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 import {
+  currentRestoreCohortView,
+  EMPTY_RESTORE_COHORT_VIEW,
   restoreCohortRegion,
-  restoreIntentsEnabled,
-  restoreRenderFromProjectionEnabled,
-  setRestoreIntentsEnabled,
-  setRestoreRenderFromProjectionEnabled,
 } from "./restoreCohortBridge";
-
-interface RestoreFlagWindow {
-  __TERMIHUB_RESTORE_INTENTS__?: boolean;
-  __TERMIHUB_RESTORE_RENDER__?: boolean;
-}
-
-afterEach(() => {
-  setRestoreIntentsEnabled(null);
-  setRestoreRenderFromProjectionEnabled(null);
-  const w = window as unknown as RestoreFlagWindow;
-  delete w.__TERMIHUB_RESTORE_INTENTS__;
-  delete w.__TERMIHUB_RESTORE_RENDER__;
-});
-
-describe("restoreCohortBridge flags", () => {
-  it("both flags default on", () => {
-    expect(restoreIntentsEnabled()).toBe(true);
-    expect(restoreRenderFromProjectionEnabled()).toBe(true);
-  });
-
-  it("programmatic overrides win, and null restores the default", () => {
-    setRestoreIntentsEnabled(false);
-    setRestoreRenderFromProjectionEnabled(false);
-    expect(restoreIntentsEnabled()).toBe(false);
-    expect(restoreRenderFromProjectionEnabled()).toBe(false);
-
-    setRestoreIntentsEnabled(null);
-    setRestoreRenderFromProjectionEnabled(null);
-    expect(restoreIntentsEnabled()).toBe(true);
-    expect(restoreRenderFromProjectionEnabled()).toBe(true);
-  });
-
-  it("a window override flips a flag off (rollback switch)", () => {
-    const w = window as unknown as RestoreFlagWindow;
-    w.__TERMIHUB_RESTORE_INTENTS__ = false;
-    w.__TERMIHUB_RESTORE_RENDER__ = false;
-    expect(restoreIntentsEnabled()).toBe(false);
-    expect(restoreRenderFromProjectionEnabled()).toBe(false);
-  });
-});
 
 describe("restoreCohortRegion", () => {
   it("is client-scoped, matching the Rust region id", () => {
     expect(restoreCohortRegion("abc123")).toBe("restore-cohort@abc123");
+  });
+});
+
+describe("currentRestoreCohortView", () => {
+  it("is the empty view before any projection diff", () => {
+    expect(currentRestoreCohortView()).toEqual(EMPTY_RESTORE_COHORT_VIEW);
+    expect(currentRestoreCohortView().cohort).toBeNull();
+    expect(currentRestoreCohortView().failedTabIds).toEqual([]);
+    expect(currentRestoreCohortView().settlement).toBeNull();
   });
 });
