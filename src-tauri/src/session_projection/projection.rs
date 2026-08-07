@@ -47,6 +47,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
+use crate::commands::projection::ProjectionState;
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 use crate::session_projection::store::SessionLifecycleStore;
 use crate::session_projection::timer::ReconnectTimerDriver;
@@ -68,6 +69,42 @@ pub fn publish_sessions(
             version,
         }],
         None => Vec::new(),
+    }
+}
+
+/// Fold a session-lifecycle transition into the managed [`SessionLifecycleStore`]
+/// **server-side** and fan the resulting `session-lifecycle` region diff out to
+/// every subscriber (#2431, prerequisite for #2205).
+///
+/// This is the server-authority counterpart to [`register_session_intents`]: the
+/// same store transitions the frontend currently mirrors via `session.*` intents
+/// are applied here **at the source** — the instant a backend lifecycle source
+/// (`create_connection`, and later the `terminal-exit` / `close_session` paths)
+/// observes a transition — so the store is fed server-side, addressed by the
+/// **frontend tab id** the region is keyed by (resolved through the
+/// [`SessionManager`](crate::session::manager::SessionManager) identity bridge,
+/// #2431). It is **additive**: the frontend `session.*` mirror stays in place, so
+/// this changes no user-facing behavior — the coarse status field it writes is not
+/// yet rendered from the region (that inversion is #2205). The `apply` closure
+/// must therefore only drive transitions that **converge** with the client's
+/// same-event dispatch (e.g. the initial connect's `connect` / `connected`), never
+/// one the client would resolve differently for the same event.
+///
+/// Best-effort and non-fatal: if the store or the projection state is not managed
+/// (e.g. a headless unit-test app that never ran `setup()`), the fold is skipped
+/// rather than erroring — the client mirror still drives the region. The `apply`
+/// closure runs to completion synchronously before the publish, so the store lock
+/// is never held across an await.
+pub fn fold_session_transition<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    apply: impl FnOnce(&SessionLifecycleStore),
+) {
+    let Some(store) = app_handle.try_state::<Arc<SessionLifecycleStore>>() else {
+        return;
+    };
+    apply(store.inner().as_ref());
+    if let Some(projection) = app_handle.try_state::<ProjectionState>() {
+        publish_sessions(&projection.projector, store.inner().as_ref());
     }
 }
 

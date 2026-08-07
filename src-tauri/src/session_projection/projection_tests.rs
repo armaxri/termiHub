@@ -15,12 +15,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
+use tauri::Manager;
 
+use crate::commands::projection::ProjectionState;
 use crate::projection::{
     apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
     ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
-use crate::session_projection::projection::{publish_sessions, SESSION_LIFECYCLE_REGION};
+use crate::session_projection::projection::{
+    fold_session_transition, publish_sessions, SESSION_LIFECYCLE_REGION,
+};
 use crate::session_projection::store::SessionLifecycleStore;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -353,5 +357,118 @@ fn a_dead_subscriber_is_reaped_on_publish() {
         projector.subscriber_count(SESSION_LIFECYCLE_REGION),
         1,
         "the dead subscriber was reaped"
+    );
+}
+
+// ── Server-authority fold (#2431, prerequisite for #2205) ─────────────────────
+//
+// These drive the *production* `fold_session_transition` end to end against a
+// `tauri::test::mock_app()` with the same managed state `lib.rs::setup()` wires:
+// an `Arc<SessionLifecycleStore>` and a `ProjectionState`. They prove the store
+// is fed **server-side** — the instant `create_connection` produces an initial
+// connect / connected transition — addressed by the **frontend tab id** the
+// region is keyed by, with no `session.*` client dispatch, and that the fold
+// reproduces the client route's store transition exactly (parity, no drift).
+
+/// A server-folded initial connect creates the tab-id-keyed `connecting` entry in
+/// the shared store and fans the `session-lifecycle` region diff out — without any
+/// client dispatch.
+#[test]
+fn server_side_connect_fold_creates_the_tab_keyed_entry_without_client_dispatch() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SessionLifecycleStore::new());
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    // The server folds the initial connect at the source, keyed by the tab id —
+    // no `session.connect` intent is dispatched.
+    fold_session_transition(app.handle(), |s| s.connect("tab-1"));
+
+    // The store is authoritative server-side, under the tab-id key.
+    assert_eq!(
+        store.get("tab-1").map(|s| s.status),
+        Some(crate::session_projection::store::SessionStatus::Connecting)
+    );
+
+    // Exactly one region diff fanned out; the client cache converges on the server
+    // truth with no round-trip.
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "one diff from the server-side fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view["sessions"]["tab-1"]["status"],
+        json!("connecting")
+    );
+}
+
+/// A server-folded `connected` settles the tab-keyed session live and publishes
+/// the region diff.
+#[test]
+fn server_side_connected_fold_settles_the_session_live() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.connect("tab-1");
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    fold_session_transition(app.handle(), |s| s.connected("tab-1"));
+
+    assert_eq!(
+        store.get("tab-1").map(|s| s.status),
+        Some(crate::session_projection::store::SessionStatus::Connected)
+    );
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1);
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view["sessions"]["tab-1"]["status"],
+        json!("connected")
+    );
+}
+
+/// The server-side connect fold reproduces the client `session.connect` route's
+/// store transition exactly — identical snapshots, so there is no drift when the
+/// fold and the (still-present, additive) client mirror both run for the initial
+/// connect.
+#[test]
+fn server_side_connect_fold_matches_the_client_session_connect_route() {
+    // (a) Server-side fold: the store method the fold applies at the source.
+    let server = SessionLifecycleStore::new();
+    server.set_rand_for_test(Box::new(|| 0.5));
+    server.connect("tab-1");
+
+    // (b) Client route: the `session.connect` intent through the production registry.
+    let client = Arc::new(SessionLifecycleStore::new());
+    client.set_rand_for_test(Box::new(|| 0.5));
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SESSION_LIFECYCLE_REGION, client.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(client.clone())));
+    let ack = dispatcher.dispatch(intent("session.connect", json!({ "sessionId": "tab-1" })));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    assert_eq!(
+        server.snapshot(),
+        client.snapshot(),
+        "the server fold reproduces the client route's transition exactly"
     );
 }

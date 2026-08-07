@@ -306,6 +306,7 @@ impl<'a> PersistentController<'a> {
                     let capture = self.manager.ensure_output_buffer(&session_id);
                     let output_buffers = self.manager.output_buffers.clone();
                     let session_loggers = self.manager.session_loggers.clone();
+                    let session_tab_ids = self.manager.session_tab_ids.clone();
                     let sid = session_id.clone();
                     tokio::spawn(async move {
                         SessionManager::run_output_reader(
@@ -317,6 +318,7 @@ impl<'a> PersistentController<'a> {
                             capture,
                             output_buffers,
                             session_loggers,
+                            session_tab_ids,
                         )
                         .await;
                     });
