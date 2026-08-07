@@ -13,11 +13,23 @@ logic is unit-testable with stub driver/app objects, no app launch needed.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 #: Where bundles are written (git-ignored). One subdir per failing test node id.
 ARTIFACT_ROOT = Path(__file__).resolve().parents[1] / "artifacts"
+
+#: Command timeout for the failure-path diagnostic probes (issue #2460). A bridge
+#: verb that times out is exactly when the bundle matters most, but the probes run
+#: on the *same* webview that just hung — so with the normal (possibly already
+#: raised) command timeout they would time out again and capture nothing. This
+#: generous ceiling lets a webview that is merely **slow under VM load** still
+#: return a screenshot / state late, and turns a genuinely **hung** one into a
+#: definitive timed "FAILED after Ns" record (see :func:`write_failure_artifacts`
+#: and ``probe-diagnostics.txt``) rather than silence — the #2460 slow-vs-hung
+#: verdict.
+DIAGNOSTIC_PROBE_TIMEOUT = 60.0
 
 
 def sanitize_nodeid(nodeid: str) -> str:
@@ -64,16 +76,20 @@ def _safe_write_bytes(path: Path, produce: Callable[[], bytes]) -> None:
         _record_probe_error(path, exc)
 
 
-def _capture_screenshot_png(driver: Any) -> bytes:
+def _capture_screenshot_png(driver: Any, *, timeout: Optional[float] = None) -> bytes:
     """Capture a PNG screenshot via the bridge and decode it to raw bytes.
 
     Imported lazily so this module keeps no hard dependency on the bridge for its
     unit tests, and so a driver stub without ``screenshot`` is simply skipped by
     the ``hasattr`` guard in :func:`write_failure_artifacts`.
+
+    ``timeout`` overrides the driver's default command timeout — the failure path
+    passes :data:`DIAGNOSTIC_PROBE_TIMEOUT` so a slow (not-yet-hung) webview can
+    still return a screenshot (issue #2460).
     """
     from .bridge import screenshot_to_png_bytes
 
-    return screenshot_to_png_bytes(driver.screenshot())
+    return screenshot_to_png_bytes(driver.screenshot(timeout=timeout))
 
 
 def save_manual_screenshot(
@@ -103,7 +119,42 @@ def save_manual_screenshot(
     return dest if dest.exists() else None
 
 
-def write_failure_artifacts(dest: Path, driver: Optional[Any], app: Optional[Any]) -> Path:
+def _timed_probe(
+    dest: Path, name: str, produce: Callable[[], Any], *, binary: bool = False
+) -> str:
+    """Run one capture probe, timing it, and return a one-line diagnostic record.
+
+    Writes ``produce()`` to ``dest/name`` on success (text, or bytes when
+    ``binary``), or records its error beside the target on failure — capture is
+    best-effort and must never raise (a broken bridge during a failure is exactly
+    when the bundle matters most). The returned record — ``"<name>: ok in Ns"`` or
+    ``"<name>: FAILED after Ns — Type: msg"`` — is the #2460 slow-vs-hung signal:
+    a probe that returns *late* means the webview was slow-not-hung; one that
+    times out at the probe ceiling means it is genuinely hung.
+    """
+    target = dest / name
+    start = time.monotonic()
+    try:
+        output = produce()
+        elapsed = time.monotonic() - start
+        if binary:
+            target.write_bytes(output)
+        else:
+            target.write_text(output, encoding="utf-8")
+        return f"{name}: ok in {elapsed:.1f}s"
+    except Exception as exc:  # noqa: BLE001 — capture is best-effort by design
+        elapsed = time.monotonic() - start
+        _record_probe_error(target, exc)
+        return f"{name}: FAILED after {elapsed:.1f}s — {type(exc).__name__}: {exc}"
+
+
+def write_failure_artifacts(
+    dest: Path,
+    driver: Optional[Any],
+    app: Optional[Any],
+    *,
+    probe_timeout: float = DIAGNOSTIC_PROBE_TIMEOUT,
+) -> Path:
     """Snapshot whatever app-side state is reachable into ``dest``; return ``dest``.
 
     ``driver`` / ``app`` may be ``None`` (e.g. a non-integration test) — each
@@ -113,19 +164,61 @@ def write_failure_artifacts(dest: Path, driver: Optional[Any], app: Optional[Any
     - ``driver.read_terminal()`` → ``terminal.txt``
     - ``driver.screenshot()`` → ``screenshot.png`` (when the bridge supports it)
     - ``app.read_log()`` → ``app.log``
+    - a timed record of every probe → ``probe-diagnostics.txt``
+
+    The bridge probes run with ``probe_timeout`` (default
+    :data:`DIAGNOSTIC_PROBE_TIMEOUT`), *not* the driver's normal command timeout:
+    a live-connect verb that just timed out did so on the same webview, so the
+    probes need to outlive that to capture anything from a slow-but-alive webview.
+    ``probe-diagnostics.txt`` records how long each probe took and whether it
+    returned or timed out — the #2460 slow-vs-hung verdict (issue #2460).
     """
     dest.mkdir(parents=True, exist_ok=True)
+    records: list[str] = []
     if driver is not None:
-        _safe_write(
-            dest / "state.json",
-            lambda: json.dumps(driver.get_state(), indent=2, default=str, sort_keys=True),
+        records.append(
+            _timed_probe(
+                dest,
+                "state.json",
+                lambda: json.dumps(
+                    driver.get_state(timeout=probe_timeout),
+                    indent=2,
+                    default=str,
+                    sort_keys=True,
+                ),
+            )
         )
-        _safe_write(dest / "terminal.txt", driver.read_terminal)
+        records.append(
+            _timed_probe(
+                dest, "terminal.txt", lambda: driver.read_terminal(timeout=probe_timeout)
+            )
+        )
         # The screenshot verb (#900) may be absent on older apps / driver stubs —
         # capture it only when present so the bundle gains visual evidence where
         # available without breaking where it is not.
         if hasattr(driver, "screenshot"):
-            _safe_write_bytes(dest / "screenshot.png", lambda: _capture_screenshot_png(driver))
+            records.append(
+                _timed_probe(
+                    dest,
+                    "screenshot.png",
+                    lambda: _capture_screenshot_png(driver, timeout=probe_timeout),
+                    binary=True,
+                )
+            )
     if app is not None:
-        _safe_write(dest / "app.log", app.read_log)
+        records.append(_timed_probe(dest, "app.log", app.read_log))
+    # Always leave the timed record — it is the #2460 evidence, and its header
+    # explains how to read a slow-vs-hung result even when no probe ran.
+    header = (
+        "# Failure-artifact probe diagnostics (issue #2460).\n"
+        f"# Bridge probes ran with a {probe_timeout:.0f}s timeout.\n"
+        "# 'ok in Ns' = the webview answered (late N => slow-not-hung);\n"
+        "# 'FAILED after ~{}s' at the ceiling => the webview is genuinely hung.\n".format(
+            int(probe_timeout)
+        )
+    )
+    _safe_write(
+        dest / "probe-diagnostics.txt",
+        lambda: header + ("\n".join(records) + "\n" if records else "# no probes ran\n"),
+    )
     return dest

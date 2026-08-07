@@ -5,9 +5,11 @@ correlation, the synchronous Driver, and sequential-connection / restart
 support) without depending on a real build, so they run anywhere and fast.
 """
 
+import time
+
 import pytest
 
-from termihub_harness import BridgeError
+from termihub_harness import LIVE_CONNECT_REQUEST_TIMEOUT, BridgeError
 from fake_app import FakeApp, dispatcher_like
 
 
@@ -253,3 +255,26 @@ def test_wait_for_app_settle_zero_takes_the_first_arrival(bridge):
     with first, second:
         driver = bridge.wait_for_app(timeout=5, settle=0)
         assert "first" in driver.read_terminal()
+
+
+def test_request_timeout_sets_the_driver_default(bridge):
+    # The live-connect suites raise the per-command timeout via this path (#2460).
+    with FakeApp(bridge.port, dispatcher_like()):
+        driver = bridge.wait_for_app(timeout=5, request_timeout=LIVE_CONNECT_REQUEST_TIMEOUT)
+        assert driver._timeout == LIVE_CONNECT_REQUEST_TIMEOUT
+
+
+def test_per_call_timeout_override_is_honored(bridge):
+    # A slow handler lets a tight per-call timeout fire while the driver default
+    # comfortably outlasts it — the mechanism the failure-artifact probes use to
+    # capture evidence with a longer timeout than the live path (#2460).
+    def slow_handler(command):
+        time.sleep(0.4)
+        return {"ok": True, "action": command.get("action"), "value": {}}
+
+    with FakeApp(bridge.port, slow_handler):
+        driver = bridge.wait_for_app(timeout=5)
+        with pytest.raises(BridgeError):
+            driver.get_state(timeout=0.05)
+        # The generous default (10s) rides out the same slow handler.
+        assert driver.get_state() == {}

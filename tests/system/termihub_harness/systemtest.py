@@ -35,7 +35,7 @@ from typing import Callable, ClassVar, Optional, TypeVar
 
 import pytest
 
-from .bridge import Bridge, BridgeError, Driver
+from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver
 from .display import ensure_local_display
 from .orchestrator import AppInstance
 
@@ -68,6 +68,15 @@ class SystemTest:
 
     #: Whether :meth:`delay4user` actually sleeps. Set from ``--delay4user``.
     _delay_enabled: ClassVar[bool] = False
+
+    #: Per-suite default for the bridge command timeout (seconds). The
+    #: live-SSH-connect / SFTP suites raise this to
+    #: :data:`~termihub_harness.bridge.LIVE_CONNECT_REQUEST_TIMEOUT` because a real
+    #: session negotiates while the always-on Docker/``krunkit`` VMs starve the
+    #: WKWebView JS thread for >10s, and the default fires mid-negotiation
+    #: (issue #2460). Left at the harness default for every other suite so it does
+    #: not slow the common path.
+    request_timeout: ClassVar[float] = DEFAULT_REQUEST_TIMEOUT
 
     @pytest.fixture(scope="class", autouse=True)
     @classmethod
@@ -106,7 +115,7 @@ class SystemTest:
         bridge = Bridge().start()
         try:
             app.start(bridge.port)
-            driver = bridge.wait_for_app()
+            driver = bridge.wait_for_app(request_timeout=request.cls.request_timeout)
         except BaseException:
             bridge.close()
             app.cleanup()
@@ -181,4 +190,6 @@ class SystemTest:
         :class:`~termihub_harness.ui.ConfigRecoveryUi`).
         """
         self.app.restart(between)
-        type(self).driver = self.bridge.wait_for_app()
+        type(self).driver = self.bridge.wait_for_app(
+            request_timeout=type(self).request_timeout
+        )

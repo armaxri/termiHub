@@ -16,6 +16,7 @@ import time
 import pytest
 
 from termihub_harness import (
+    LIVE_CONNECT_REQUEST_TIMEOUT,
     ConnectionsUi,
     MonitoringUi,
     PasswordPromptUi,
@@ -38,6 +39,10 @@ HOST = "127.0.0.1"
 @pytest.mark.usefixtures("ssh_fixtures")
 class TestSshPasswordAuth(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, SystemTest):
     """SSH-01: password authentication opens a working terminal tab."""
+
+    # Live SSH connect: the WKWebView JS thread is starved by the always-on
+    # Docker/krunkit VMs during negotiation, so raise the command timeout (#2460).
+    request_timeout = LIVE_CONNECT_REQUEST_TIMEOUT
 
     def test_connects_with_password_and_opens_a_tab(self):
         name = unique_name("ssh-pass")
@@ -243,6 +248,10 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
     (``terminal-exit`` with ``reason: "dropped"``) and shows the disconnect
     overlay rather than entering the calmer clean-exit / view-mode path.
     """
+
+    # Live SSH connect + disconnect: raise the command timeout to ride out the
+    # WKWebView JS-thread starvation under the always-on Docker/krunkit VMs (#2460).
+    request_timeout = LIVE_CONNECT_REQUEST_TIMEOUT
 
     def test_handles_server_disconnect(self):
         control = SshServerControl()
