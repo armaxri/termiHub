@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WSL Path-Expansion Semantics (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <div class="concept">
+      <header class="concept-header">
+        <h1>WSL Path-Expansion Semantics</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Backlog</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/2360">#2360</a></span
+          >
+          <span><code>docs/concepts/backlog/wsl-path-expansion-semantics.html</code></span>
+        </div>
+      </header>
+
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#ui-interface">UI Interface</a></li>
+          <li><a href="#general-handling">General Handling</a></li>
+          <li><a href="#states-sequences">States &amp; Sequences</a></li>
+          <li>
+            <a href="#preliminary-implementation-details">Preliminary Implementation Details</a>
+          </li>
+        </ol>
+      </nav>
+
+      <h2 id="overview">Overview</h2>
+      <p>
+        termiHub expands <code>${VAR}</code> / <code>$VAR</code> placeholders and a leading
+        <code>~</code> in connection settings at connect time, via
+        <code>expand_config_value</code> in <code>core/src/config/mod.rs</code>. Every PTY backend
+        calls its config's <code>.expand()</code> in the connect path —
+        <strong>except WSL</strong>. WSL's <code>connect()</code>
+        (<code>core/src/backends/wsl.rs</code>) parses the settings JSON and spawns
+        <code>wsl.exe</code> directly, never calling <code>WslConfig::expand()</code>. As a result,
+        WSL path and command values are already passed through <strong>literally</strong> today.
+      </p>
+      <p>
+        The problem is a <strong>schema/behaviour mismatch</strong>, not a runtime bug. WSL's
+        settings schema advertises expansion that never happens: the
+        <code>startingDirectory</code> field declares both
+        <code>supports_env_expansion</code> and <code>supports_tilde_expansion</code>, and
+        <code>initialCommand</code> and <code>env</code> both declare
+        <code>supports_env_expansion</code>. Those flags are a promise the connect path does not
+        keep. Worse, the "obvious fix" of just wiring <code>WslConfig::expand()</code> into
+        <code>connect()</code> would be actively wrong:
+      </p>
+      <blockquote>
+        <p>
+          <code>expand_config_value</code> resolves <code>~</code> and <code>${VAR}</code> against
+          the <strong>Windows host</strong> — host <code>home_directory()</code> (from
+          <code>USERPROFILE</code>) and the host process environment. But a WSL
+          <code>startingDirectory</code> is a <strong>Linux</strong> path handed to
+          <code>wsl --cd</code>. Host-side expansion would rewrite <code>~</code> to something like
+          <code>C:\Users\foo</code> and corrupt the path — a valid Linux directory would be
+          destroyed before it ever reached the guest.
+        </p>
+      </blockquote>
+      <p>
+        <strong>Maintainer decision (2026-08-07):</strong> leave WSL paths
+        <strong>literal</strong>. Host-side expansion does not apply to WSL, and the
+        <code>supports_env_expansion</code> / <code>supports_tilde_expansion</code> flags on WSL
+        fields are corrected to advertise <strong>no expansion</strong>, so the schema matches the
+        connect path. This concept documents that decision and specifies the exact code changes.
+      </p>
+      <h3 id="goals">Goals</h3>
+      <ul>
+        <li>
+          The WSL settings schema accurately reflects the connect path: <strong>no</strong> field
+          advertises expansion that does not happen.
+        </li>
+        <li>
+          WSL <code>startingDirectory</code>, <code>initialCommand</code>, and <code>env</code>
+          values are documented as passed through <strong>literally</strong> to the WSL guest.
+        </li>
+        <li>
+          The dead, never-called <code>WslConfig::expand()</code> is removed so no future change
+          can silently reintroduce host-side (path-corrupting) expansion.
+        </li>
+      </ul>
+      <h3 id="non-goals">Non-Goals</h3>
+      <ul>
+        <li>
+          <strong>Guest-side expansion</strong> — expanding <code>~</code> / <code>${VAR}</code>
+          against the WSL Linux distribution (its <code>$HOME</code> and its environment). Rejected;
+          see <a href="#general-handling">General Handling</a>.
+        </li>
+        <li>
+          Any change to expansion for the other backends (telnet, docker, ssh, serial, ftp,
+          local shell) — they expand against the host correctly and are unaffected.
+        </li>
+        <li>
+          Changing the shared <code>SettingsField</code> struct. The
+          <code>supports_*_expansion</code> fields stay; only WSL's values change to
+          <code>false</code>.
+        </li>
+      </ul>
+      <hr />
+
+      <h2 id="ui-interface">UI Interface</h2>
+      <p>
+        This is a backend semantics concept with <strong>no visible UI change</strong>. The WSL
+        connection form (rendered by <code>DynamicForm</code> from the schema) keeps the same
+        fields. The <code>supports_*_expansion</code> flags are advisory schema metadata; they are
+        carried in <code>src/types/schema.ts</code> but not currently rendered as an expansion hint
+        by any form component, so users see no on-screen difference. The correction is about the
+        contract the schema declares, not about pixels.
+      </p>
+      <p>
+        The one user-facing effect is behavioural honesty: a value like
+        <code>~/projects</code> in a WSL Starting Directory reaches
+        <code>wsl --cd ~/projects</code> verbatim, and WSL/the login shell resolve
+        <code>~</code> on the Linux side as they always have. termiHub does not — and now does not
+        claim to — pre-expand it.
+      </p>
+      <hr />
+
+      <h2 id="general-handling">General Handling</h2>
+      <h3 id="why-literal">Why literal (and not host-side expansion)</h3>
+      <p>
+        Host-side expansion is wrong for WSL because the namespaces differ. A WSL
+        <code>startingDirectory</code> lives in the Linux filesystem; expanding <code>~</code>
+        against the Windows <code>USERPROFILE</code> produces a Windows path that is meaningless (or
+        actively misdirecting) inside the distribution. Passing the value through literally lets the
+        Linux side own resolution: <code>wsl --cd</code> and the shell interpret the path in the
+        namespace that actually contains it.
+      </p>
+      <h3 id="rejected-guest-side">Rejected alternative: guest-side expansion</h3>
+      <p>
+        The considered alternative was to expand <code>~</code> / <code>${VAR}</code> against the
+        <strong>WSL guest</strong> — resolving the distribution's own <code>$HOME</code> and
+        environment before spawning. It was <strong>rejected</strong>:
+      </p>
+      <ul>
+        <li>
+          <strong>It duplicates what the guest already does.</strong> <code>wsl --cd</code> and the
+          login shell already resolve <code>~</code> and environment references on the Linux side.
+          Pre-expanding adds a second, redundant resolution path that can only drift from the
+          shell's own.
+        </li>
+        <li>
+          <strong>It needs a guest round-trip.</strong> Reading the distribution's
+          <code>$HOME</code>/env correctly means running a probe command inside WSL before the real
+          spawn (distributions, users, and env differ per distro), adding latency and a new failure
+          mode for no behaviour the guest does not already give for free.
+        </li>
+        <li>
+          <strong>Literal is already correct.</strong> The connect path never expanded, so shipping
+          "literal + honest schema" is a no-op on runtime behaviour and simply removes a false
+          promise — the lowest-risk outcome for a ventilator-grade release.
+        </li>
+      </ul>
+      <hr />
+
+      <h2 id="states-sequences">States &amp; Sequences</h2>
+      <div class="diagram">
+        <span class="diagram__caption">Connect path: WSL is literal, other backends expand</span>
+        <pre class="mermaid">
+flowchart TD
+    A[User connects a session] --> B{Backend?}
+    B -->|telnet / docker / ssh / serial / ftp / local shell| C["config.expand()<br/>host-side ~ / ${VAR}"]
+    C --> D[spawn with expanded values]
+    B -->|WSL| E["parse settings JSON<br/>NO expand() call"]
+    E --> F["wsl.exe --cd &lt;literal path&gt;<br/>env passed verbatim via WSLENV"]
+    F --> G["WSL guest / login shell<br/>resolves ~ and env itself"]
+        </pre>
+      </div>
+      <div class="diagram">
+        <span class="diagram__caption"
+          >What the decision changes: the schema flags, not the runtime</span
+        >
+        <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Before
+    Before: Before — schema lies
+    Before: connect() literal (never expands)
+    Before: schema advertises expansion (flags true)
+    Before --> After: drop WSL supports_*_expansion flags
+    After: After — schema honest
+    After: connect() literal (unchanged)
+    After: schema advertises NO expansion (flags false)
+    After: dead WslConfig::expand() removed
+    After --> [*]
+        </pre>
+      </div>
+      <hr />
+
+      <h2 id="preliminary-implementation-details">Preliminary Implementation Details</h2>
+      <p>
+        Based on the codebase at concept-creation time (verified against
+        <code>develop</code>). The shared <code>SettingsField</code> struct
+        (<code>core/src/connection/schema.rs</code>) keeps its
+        <code>supports_env_expansion</code> / <code>supports_tilde_expansion</code> fields — they are
+        used correctly by other backends. Only WSL's <em>values</em> change, and the never-called
+        WSL <code>expand()</code> is removed.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>File</th>
+              <th>Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>core/src/backends/wsl.rs</code> — <code>settings_schema()</code></td>
+              <td>
+                Set the expansion flags to <code>false</code> on every WSL field that currently
+                claims expansion:
+                <ul>
+                  <li>
+                    <code>startingDirectory</code>: <code>supports_env_expansion: true → false</code>
+                    and <code>supports_tilde_expansion: true → false</code>
+                  </li>
+                  <li>
+                    <code>initialCommand</code>:
+                    <code>supports_env_expansion: true → false</code> (tilde already
+                    <code>false</code>)
+                  </li>
+                  <li>
+                    <code>env</code>: <code>supports_env_expansion: true → false</code> (tilde
+                    already <code>false</code>)
+                  </li>
+                  <li>
+                    <code>distribution</code> and <code>shellIntegration</code> are already
+                    <code>false</code> for both — leave unchanged.
+                  </li>
+                </ul>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>core/src/backends/wsl.rs</code> — test
+                <code>schema_has_starting_directory</code>
+              </td>
+              <td>
+                Invert the two assertions that currently require the flags to be
+                <code>true</code>: <code>assert!(!f.supports_tilde_expansion)</code> and
+                <code>assert!(!f.supports_env_expansion)</code>. Consider adding equivalent
+                <code>false</code> assertions for <code>initialCommand</code> and <code>env</code> so
+                the literal contract is regression-guarded.
+              </td>
+            </tr>
+            <tr>
+              <td><code>core/src/config/mod.rs</code> — <code>WslConfig::expand()</code></td>
+              <td>
+                <strong>Remove</strong> the never-called <code>impl WslConfig { fn expand(..) }</code>
+                (host-side expansion that would corrupt Linux paths). Removing it prevents a future
+                change from re-wiring it into the connect path and silently reintroducing the bug.
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <code>core/src/config/mod.rs</code> — test
+                <code>wsl_config_expand_replaces_placeholders</code>
+              </td>
+              <td>
+                <strong>Remove</strong> this test — it exercises the deleted
+                <code>WslConfig::expand()</code>. No replacement is needed; the schema-flag
+                assertions in <code>wsl.rs</code> now guard the literal contract.
+              </td>
+            </tr>
+            <tr>
+              <td><code>docs/architecture.md</code></td>
+              <td>
+                Add a short note that WSL is the deliberate exception to per-field expansion: WSL
+                values are passed to the guest literally because host-side expansion would corrupt
+                Linux paths, and the WSL schema advertises no expansion. Natural spot: near the
+                ADR-8 line "Supports environment variable expansion (<code>${VAR}</code>) and tilde
+                expansion markers per field".
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="verification">Verification</h3>
+      <ul>
+        <li>
+          <code>cargo test -p termihub-core</code> — the updated
+          <code>schema_has_starting_directory</code> passes and the removed
+          <code>WslConfig::expand()</code> / its test no longer compile-block.
+        </li>
+        <li>
+          <code>cargo build --workspace</code> — confirm no remaining caller of
+          <code>WslConfig::expand()</code> (there are none in the connect path; the only reference
+          today is the test being removed).
+        </li>
+      </ul>
+    </div>
+
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
