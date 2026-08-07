@@ -260,19 +260,37 @@ function keyboardEvent(type: string, init: KeyboardEventInit, key: string): Keyb
 }
 
 /**
+ * Upper bound (ms) on how long {@link nextFrame} waits for its two rAF ticks
+ * before a wall-clock timer resolves it instead. See {@link nextFrame}.
+ */
+const FRAME_YIELD_FALLBACK_MS = 100;
+
+/**
  * Yield to the event loop so React can flush a render + effects between
  * synthetic pointer events. @dnd-kit's `DndContext` measures droppable rects in
  * a post-activation render/effect cycle; without a yield, every pointer event
  * fires in one task and collision detection never sees those rects (so a drag
  * ends with `over: null` and reorders nothing). Two frames clears the commit and
- * its follow-up effects; falls back to `setTimeout` where rAF is unavailable.
+ * its follow-up effects.
+ *
+ * Never resolves purely on `requestAnimationFrame`: a real WebView *has* rAF but
+ * **throttles or fully pauses it when its window is occluded or backgrounded**
+ * (a macOS WKWebView compositor behavior, aggravated by concurrent build load).
+ * A frame-poll that awaits rAF alone then stalls with no frames delivered, so
+ * the `select`/`dragTo` verbs that call this hang until the bridge's 10s command
+ * timeout fires — the #2460 symptom. So race the two rAF ticks against a
+ * wall-clock fallback: under a healthy rAF the double-tick (~32 ms) wins and
+ * dnd-kit still gets its two real frames; under a throttled/paused rAF the timer
+ * wins and the caller advances instead of hanging. Also covers environments with
+ * no rAF at all (falls back to the timer alone).
  */
 function nextFrame(): Promise<void> {
-  const raf: (cb: FrameRequestCallback) => unknown =
-    typeof requestAnimationFrame === "function"
-      ? requestAnimationFrame
-      : (cb) => setTimeout(() => cb(0), 0);
-  return new Promise((resolve) => raf(() => raf(() => resolve())));
+  const viaTimer = new Promise<void>((resolve) => setTimeout(resolve, FRAME_YIELD_FALLBACK_MS));
+  if (typeof requestAnimationFrame !== "function") return viaTimer;
+  const viaFrames = new Promise<void>((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+  );
+  return Promise.race([viaFrames, viaTimer]);
 }
 
 /** Walk a dot-path into a plain object, returning a sentinel when unresolvable. */

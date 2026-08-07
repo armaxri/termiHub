@@ -221,7 +221,7 @@ class ConnectionsUi(HarnessMixin):
             self.select_shell(shell)
         if starting_directory is not None:
             self._fill_starting_directory(starting_directory)
-        self.driver.click(self.EDITOR_SAVE_CONNECT if connect else self.EDITOR_SAVE)
+        self._click_editor_save(connect)
         self.require_connection(name)
         return name
 
@@ -281,6 +281,9 @@ class ConnectionsUi(HarnessMixin):
     def _click_editor_save(self, connect: bool) -> None:
         """Click Save / Save & Connect once the form reports itself valid.
 
+        Shared by every ``create_*_connection`` helper (SSH/local/telnet/serial/
+        FTP/WSL), which all previously fired an immediate click.
+
         The editor gates both buttons on ``canSave``, which is recomputed
         asynchronously: the schema-driven form validates (react-hook-form + zod)
         and reports validity up through an effect, so it trails the last field we
@@ -289,9 +292,9 @@ class ConnectionsUi(HarnessMixin):
         ``handleSaveAndConnect``/``handleSave`` early-return on ``!canSave`` (they
         just focus the first invalid field). A click that lands in that window is
         therefore a silent no-op: the editor stays open and — on the connect path —
-        the SSH password prompt never appears. Gate on the button clearing its
-        ``data-invalid`` flag (``data-invalid={!canSave || undefined}``, so absent
-        once valid) before clicking, so the click is never swallowed.
+        the session (and any password prompt) never opens. Gate on the button
+        clearing its ``data-invalid`` flag (``data-invalid={!canSave || undefined}``,
+        so absent once valid) before clicking, so the click is never swallowed.
         """
         button = "connection-editor-save-connect" if connect else "connection-editor-save"
         self.wait(
@@ -323,9 +326,7 @@ class ConnectionsUi(HarnessMixin):
         )
         self.driver.type("field-host", str(host))
         self.driver.type("field-port", str(port))
-        self.driver.click(
-            "connection-editor-save-connect" if connect else "connection-editor-save"
-        )
+        self._click_editor_save(connect)
 
     def create_ftp_connection(
         self,
@@ -358,9 +359,7 @@ class ConnectionsUi(HarnessMixin):
             self._select_when_available(
                 "field-tlsMode", tls_mode, what=f"the {tls_mode!r} TLS-mode option"
             )
-        self.driver.click(
-            "connection-editor-save-connect" if connect else "connection-editor-save"
-        )
+        self._click_editor_save(connect)
         self.require_connection(name)
 
     def open_serial_editor(self) -> None:
@@ -393,9 +392,7 @@ class ConnectionsUi(HarnessMixin):
         self.open_serial_editor()
         self.driver.type("connection-editor-name-input", name)
         self.driver.type("field-port", port)
-        self.driver.click(
-            "connection-editor-save-connect" if connect else "connection-editor-save"
-        )
+        self._click_editor_save(connect)
 
     def open_wsl_editor(self) -> None:
         """Open the editor and switch it to the WSL type, awaiting its fields.
@@ -437,7 +434,7 @@ class ConnectionsUi(HarnessMixin):
         )
         if starting_directory is not None:
             self._fill_starting_directory(starting_directory)
-        self.driver.click(self.EDITOR_SAVE_CONNECT if connect else self.EDITOR_SAVE)
+        self._click_editor_save(connect)
         self.require_connection(name)
         return name
 
