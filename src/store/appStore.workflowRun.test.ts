@@ -1,6 +1,7 @@
 /**
- * Tests for the workflow *run* Zustand slice (#1852) — the epic foundation's
- * end-to-end path.
+ * Tests for the workflow *run* orchestration (#1852) — the epic foundation's
+ * end-to-end path — now driving the **authoritative** `workflow-run@<clientId>`
+ * projection region (#2206 reducer-removal).
  *
  * Pins `runWorkflow` / `cancelWorkflowRun`: an authored `send-command` workflow
  * run against a connected terminal streams each command (with a trailing
@@ -9,11 +10,25 @@
  * workflow, empty workflow, no connected terminal, exited terminal) surface a
  * recoverable toast instead of injecting. Also covers the CRUD + import actions.
  * The injector, terminal, and backend are mocked so no real session is needed.
+ *
+ * The run progress + output-panel status are read from an in-memory twin of the
+ * Rust `WorkflowRunStore` (fed by the dispatched `workflow.*` intents); the
+ * output panel's streamed `lines` / `exitCode` / `timedOut` are read from the
+ * bridge's frontend-owned content store. appStore holds no workflow-run slice.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import type { Workflow, WorkflowStep } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
+import type {
+  FrameHandler,
+  Intent,
+  IntentAck,
+  ProjectionFrame,
+  SnapshotFrame,
+  Subscription,
+  Transport,
+} from "@/services/transport";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -80,6 +95,11 @@ vi.mock("@/services/localProcessApi", () => ({
 
 import { useAppStore } from "./appStore";
 import { currentSettingsView } from "./settingsBridge";
+import {
+  currentWorkflowOutputContent,
+  setWorkflowTransportForTest,
+  stopWorkflowSubscription,
+} from "./workflowRunBridge";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { serializeWorkflows } from "@/services/workflowIo";
@@ -87,6 +107,178 @@ import { resetOnConnectDispatchState } from "@/services/workflowTriggers";
 import { toast } from "@/components/ui";
 
 setupSettingsRegion();
+
+// ── In-memory twin of the Rust WorkflowRunStore (client-scoped) ────────────────
+
+interface Run {
+  workflowId: string;
+  workflowName: string;
+  tabId: string;
+  total: number;
+  completed: number;
+}
+interface Output {
+  workflowId: string;
+  workflowName: string;
+  program: string;
+  args: string[];
+  status: "running" | "completed" | "cancelled" | "failed";
+  error: string | null;
+}
+interface ClientState {
+  run: Run | null;
+  output: Output | null;
+}
+interface RegionView {
+  run: Run | null;
+  output: Output | null;
+}
+
+/** A transport double that applies `workflow.*` intents with the same semantics as
+ * the Rust `WorkflowRunStore`, keyed by `clientId`, fanning the client's region
+ * snapshot to subscribers on every mutation. */
+class WorkflowStoreTransport implements Transport {
+  dispatched: Intent[] = [];
+  private clients = new Map<string, ClientState>();
+  private version = 0;
+  private handlers = new Map<string, FrameHandler[]>();
+
+  async dispatch(intent: Intent): Promise<IntentAck> {
+    this.dispatched.push(intent);
+    this.apply(intent);
+    this.version += 1;
+    this.fan(intent.clientId);
+    return {
+      intentId: intent.intentId,
+      status: "accepted",
+      produced: [{ region: this.region(intent.clientId), version: this.version }],
+    };
+  }
+
+  private state(clientId: string): ClientState {
+    let s = this.clients.get(clientId);
+    if (!s) {
+      s = { run: null, output: null };
+      this.clients.set(clientId, s);
+    }
+    return s;
+  }
+
+  private apply(intent: Intent): void {
+    const p = intent.payload as Record<string, unknown>;
+    const s = this.state(intent.clientId);
+    switch (intent.kind) {
+      case "workflow.runStarted": {
+        s.run = {
+          workflowId: p.workflowId as string,
+          workflowName: p.workflowName as string,
+          tabId: p.tabId as string,
+          total: p.total as number,
+          completed: 0,
+        };
+        s.output = null;
+        break;
+      }
+      case "workflow.stepAdvanced": {
+        if (
+          s.run &&
+          s.run.workflowId === (p.workflowId as string) &&
+          s.run.tabId === (p.tabId as string)
+        ) {
+          s.run.completed = p.completed as number;
+        }
+        break;
+      }
+      case "workflow.outputOpened": {
+        s.output = {
+          workflowId: p.workflowId as string,
+          workflowName: p.workflowName as string,
+          program: p.program as string,
+          args: ((p.args as string[] | undefined) ?? []).slice(),
+          status: "running",
+          error: null,
+        };
+        break;
+      }
+      case "workflow.runCompleted":
+        this.finishRun(s, "completed", null);
+        break;
+      case "workflow.runCancelled":
+        this.finishRun(s, "cancelled", null);
+        break;
+      case "workflow.runFailed":
+        this.finishRun(s, "failed", (p.error as string | undefined) ?? null);
+        break;
+      case "workflow.dismissOutput":
+        s.output = null;
+        break;
+      default:
+        break;
+    }
+  }
+
+  private finishRun(
+    s: ClientState,
+    outcome: "completed" | "cancelled" | "failed",
+    error: string | null
+  ): void {
+    if (s.run === null) return; // no active run → leave the panel as-is
+    s.run = null;
+    if (s.output) {
+      s.output.status = outcome;
+      s.output.error = outcome === "failed" ? error : null;
+    }
+  }
+
+  regionView(clientId: string): RegionView {
+    const s = this.state(clientId);
+    return structuredClone({ run: s.run, output: s.output });
+  }
+
+  /** The single client's region view (there is one per-session client id). */
+  onlyRegionView(): RegionView {
+    const [clientId] = [...this.clients.keys()];
+    return this.regionView(clientId ?? "");
+  }
+
+  kinds(): string[] {
+    return this.dispatched.map((i) => i.kind);
+  }
+
+  private region(clientId: string): string {
+    return `workflow-run@${clientId}`;
+  }
+
+  async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
+    const list = this.handlers.get(region) ?? [];
+    list.push(onFrame);
+    this.handlers.set(region, list);
+    const clientId = region.slice("workflow-run@".length);
+    return {
+      snapshot: this.snapshot(region, clientId),
+      unsubscribe: () => {
+        this.handlers.set(
+          region,
+          (this.handlers.get(region) ?? []).filter((h) => h !== onFrame)
+        );
+      },
+    };
+  }
+
+  async resync(): Promise<SnapshotFrame | null> {
+    return null;
+  }
+
+  private snapshot(region: string, clientId: string): SnapshotFrame {
+    return { kind: "snapshot", region, version: this.version, view: this.regionView(clientId) };
+  }
+
+  private fan(clientId: string): void {
+    const region = this.region(clientId);
+    const frame: ProjectionFrame = this.snapshot(region, clientId);
+    for (const h of this.handlers.get(region) ?? []) h(frame);
+  }
+}
 
 const workflow = (id: string, steps: WorkflowStep[]): Workflow => ({
   id,
@@ -119,6 +311,10 @@ function seedConnectedTerminal(tabId = "tab-active", sessionId: string | null = 
 
 describe("appStore — workflow run slice (#1852)", () => {
   let injected: string[];
+  let transport: WorkflowStoreTransport;
+
+  /** The authoritative projected run/output-panel status (the twin's region). */
+  const regionView = (): RegionView => transport.onlyRegionView();
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
@@ -129,6 +325,8 @@ describe("appStore — workflow run slice (#1852)", () => {
     cancelLocalProcess.mockClear();
     subscribeLocalProcessOutput.mockClear();
     localProcessOutputHandler = null;
+    transport = new WorkflowStoreTransport();
+    setWorkflowTransportForTest(transport);
     registerTerminalInputInjector(async (_tabId, data) => {
       injected.push(data);
       return true;
@@ -141,6 +339,8 @@ describe("appStore — workflow run slice (#1852)", () => {
 
   afterEach(() => {
     registerTerminalInputInjector(null);
+    stopWorkflowSubscription();
+    setWorkflowTransportForTest(null);
     vi.restoreAllMocks();
     vi.useRealTimers();
   });
@@ -154,8 +354,16 @@ describe("appStore — workflow run slice (#1852)", () => {
     await useAppStore.getState().runWorkflow("w1");
 
     expect(injected).toEqual(["sudo -v\n", "git status\n", "exit\n"]);
-    // Run state is cleared once the run finishes.
-    expect(useAppStore.getState().workflowRun).toBeNull();
+    // The projected run is cleared once the run finishes; the full transition
+    // sequence was dispatched (start → 3 steps → completed).
+    expect(regionView().run).toBeNull();
+    expect(transport.kinds()).toEqual([
+      "workflow.runStarted",
+      "workflow.stepAdvanced",
+      "workflow.stepAdvanced",
+      "workflow.stepAdvanced",
+      "workflow.runCompleted",
+    ]);
     expect(toast.success).toHaveBeenCalled();
   });
 
@@ -195,14 +403,16 @@ describe("appStore — workflow run slice (#1852)", () => {
 
     const done = useAppStore.getState().runWorkflow("w1");
     await started;
-    expect(useAppStore.getState().workflowRun).not.toBeNull();
+    // runStarted is dispatched + awaited before the first step, so the region
+    // already reflects the in-flight run.
+    expect(regionView().run).not.toBeNull();
 
     useAppStore.getState().cancelWorkflowRun();
     release();
     await done;
 
     expect(injected).toEqual(["a\n"]);
-    expect(useAppStore.getState().workflowRun).toBeNull();
+    expect(regionView().run).toBeNull();
     expect(toast.info).toHaveBeenCalled();
   });
 
@@ -231,7 +441,7 @@ describe("appStore — workflow run slice (#1852)", () => {
 
     // run-script streams each line, then run-macro replays via the same injector.
     expect(injected).toEqual(["line1\n", "line2\n", "tail -f app.log\n"]);
-    expect(useAppStore.getState().workflowRun).toBeNull();
+    expect(regionView().run).toBeNull();
     expect(toast.success).toHaveBeenCalled();
   });
 
@@ -345,16 +555,18 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       await useAppStore.getState().runWorkflow("w1");
 
-      const out = useAppStore.getState().workflowRunOutput;
-      expect(out).not.toBeNull();
-      expect(out?.program).toBe("make");
-      expect(out?.lines.map((l) => [l.stream, l.text])).toEqual([
+      // The panel's identity + status are projected (authoritative); its streamed
+      // lines + exit code are frontend-owned (the bridge content store).
+      const panel = regionView().output;
+      expect(panel).not.toBeNull();
+      expect(panel?.program).toBe("make");
+      expect(panel?.status).toBe("completed");
+      const content = currentWorkflowOutputContent();
+      expect(content?.lines.map((l) => [l.stream, l.text])).toEqual([
         ["stdout", "compiling"],
         ["stderr", "warning: unused"],
       ]);
-      // The run finished cleanly — the surface reflects the terminal outcome.
-      expect(out?.status).toBe("completed");
-      expect(out?.exitCode).toBe(0);
+      expect(content?.exitCode).toBe(0);
     });
 
     it("marks the run-output surface failed with the exit code on a non-zero exit", async () => {
@@ -367,9 +579,9 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       await useAppStore.getState().runWorkflow("w1");
 
-      const out = useAppStore.getState().workflowRunOutput;
-      expect(out?.status).toBe("failed");
-      expect(out?.exitCode).toBe(2);
+      // The projected panel is stamped failed; the frontend content carries the code.
+      expect(regionView().output?.status).toBe("failed");
+      expect(currentWorkflowOutputContent()?.exitCode).toBe(2);
     });
 
     it("does not open a run-output surface for a terminal-native workflow", async () => {
@@ -378,20 +590,24 @@ describe("appStore — workflow run slice (#1852)", () => {
 
       await useAppStore.getState().runWorkflow("w1");
 
-      // No local process ran, so the inline surface stays null.
-      expect(useAppStore.getState().workflowRunOutput).toBeNull();
+      // No local process ran, so neither the projected panel nor the frontend
+      // content is opened.
+      expect(regionView().output).toBeNull();
+      expect(currentWorkflowOutputContent()).toBeNull();
     });
 
-    it("dismissWorkflowRunOutput clears the surface", async () => {
+    it("dismissWorkflowRunOutput clears the projected panel and streamed content", async () => {
       seedConnectedTerminal();
       enableLocalProcess(["make"]);
       useAppStore.setState({ workflows: [workflow("w1", [lp("make", ["build"])])] });
 
       await useAppStore.getState().runWorkflow("w1");
-      expect(useAppStore.getState().workflowRunOutput).not.toBeNull();
+      expect(regionView().output).not.toBeNull();
+      expect(currentWorkflowOutputContent()).not.toBeNull();
 
       useAppStore.getState().dismissWorkflowRunOutput();
-      expect(useAppStore.getState().workflowRunOutput).toBeNull();
+      expect(regionView().output).toBeNull();
+      expect(currentWorkflowOutputContent()).toBeNull();
     });
   });
 
@@ -434,7 +650,9 @@ describe("appStore — workflow run slice (#1852)", () => {
 
     expect(injected).toEqual([]);
     expect(toast.info).toHaveBeenCalled();
-    expect(useAppStore.getState().workflowRun).toBeNull();
+    // The empty-workflow guard returns before any run starts — no intent fired.
+    expect(regionView().run).toBeNull();
+    expect(transport.dispatched).toEqual([]);
   });
 
   it("cancelWorkflowRun is a no-op when nothing is running", () => {

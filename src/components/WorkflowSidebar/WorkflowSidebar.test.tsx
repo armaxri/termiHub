@@ -48,6 +48,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
 });
 
 import { useAppStore } from "@/store/appStore";
+import { setWorkflowRunViewForTest } from "@/store/workflowRunBridge";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 
 let container: HTMLDivElement;
@@ -103,10 +104,10 @@ describe("WorkflowSidebar", () => {
     root = createRoot(container);
     vi.clearAllMocks();
     seedConnectionsRegion({ connections: [] });
+    setWorkflowRunViewForTest({ run: null, output: null });
     useAppStore.setState({
       workflows: [],
       macros: [],
-      workflowRun: null,
       saveWorkflowToBackend: vi.fn().mockResolvedValue(undefined),
       deleteWorkflowFromBackend: vi.fn().mockResolvedValue(undefined),
       importWorkflows: vi
@@ -181,16 +182,17 @@ describe("WorkflowSidebar", () => {
 
   it("shows a stop affordance for the running workflow and cancels on click", () => {
     const cancelWorkflowRun = vi.fn();
-    useAppStore.setState({
-      workflows: sampleWorkflows,
-      cancelWorkflowRun,
-      workflowRun: {
+    useAppStore.setState({ workflows: sampleWorkflows, cancelWorkflowRun });
+    // The running badge is projected — drive it through the region view.
+    setWorkflowRunViewForTest({
+      run: {
         workflowId: "workflow-1",
         workflowName: "Prod login",
         tabId: "tab-1",
         total: 1,
         completed: 0,
       },
+      output: null,
     });
     render();
     expect(query("workflow-stop-workflow-1")).not.toBeNull();
