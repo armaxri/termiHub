@@ -75,7 +75,10 @@ describe("useProjectedSessionLifecycle (per tab)", () => {
       terminalReconnectingTabs: { [TAB]: true },
       terminalDisconnectErrors: {},
     });
-    harness.transport.setSession(TAB, reconnecting({ phase: "waiting", attempt: 1, delayMs: 3000 }));
+    harness.transport.setSession(
+      TAB,
+      reconnecting({ phase: "waiting", attempt: 1, delayMs: 3000 })
+    );
     let latest: ProjectedSessionLifecycleSlice | undefined;
     mount(<Probe onValue={(v) => (latest = v)} />);
     await flushSessionRegion();
@@ -137,7 +140,10 @@ describe("useProjectedSessionLifecycleMaps (list consumers)", () => {
       terminalDisconnectErrors: { c: "boom" },
     });
     harness.transport.setSession("a", connecting());
-    harness.transport.setSession("b", reconnecting({ phase: "waiting", attempt: 0, delayMs: 1000 }));
+    harness.transport.setSession(
+      "b",
+      reconnecting({ phase: "waiting", attempt: 0, delayMs: 1000 })
+    );
     harness.transport.setSession("c", failed("boom"));
     let latest: ProjectedSessionLifecycleMaps | undefined;
     mount(<Probe onValue={(v) => (latest = v)} />);

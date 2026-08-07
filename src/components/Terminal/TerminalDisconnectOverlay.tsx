@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { WifiOff, RefreshCw, X, AlertTriangle, Loader2, CheckCircle2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import {
-  useProjectedSessionLifecycle,
-  useSessionAutoReconnect,
-} from "@/store/useSessionLifecycle";
+import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
 import { Button, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import "./TerminalDisconnectOverlay.css";

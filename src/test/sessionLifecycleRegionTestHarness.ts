@@ -167,7 +167,10 @@ export function reconnecting(reconnect: ProjectedReconnect): ProjectedSessionLif
 }
 
 /** A terminal `failed` projected lifecycle carrying the disconnect error. */
-export function failed(error: string, endReason: ProjectedEndReason = "error"): ProjectedSessionLifecycle {
+export function failed(
+  error: string,
+  endReason: ProjectedEndReason = "error"
+): ProjectedSessionLifecycle {
   return { status: "failed", reconnect: idleReconnect(), endReason, error };
 }
 

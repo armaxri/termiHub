@@ -25,7 +25,10 @@ import {
 
 const idle = { phase: "idle" as const, attempt: 0, delayMs: 0 };
 
-function life(status: ProjectedSessionLifecycle["status"], error?: string): ProjectedSessionLifecycle {
+function life(
+  status: ProjectedSessionLifecycle["status"],
+  error?: string
+): ProjectedSessionLifecycle {
   return { status, reconnect: idle, ...(error !== undefined ? { error } : {}) };
 }
 
