@@ -474,6 +474,83 @@ fn server_side_connect_fold_matches_the_client_session_connect_route() {
     );
 }
 
+/// A server-folded initial connect failure settles the tab-keyed session `Failed`
+/// with reason `error` and the message, and fans the region diff out — without any
+/// client dispatch (#2439, part of #2205). The failure arm of the create-connection
+/// fold, symmetric with the connect/connected folds above.
+#[test]
+fn server_side_connect_failed_fold_settles_the_session_failed() {
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.connect("tab-1");
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SESSION_LIFECYCLE_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    app.manage(projection);
+
+    // The server folds a genuine initial connect failure at the source, keyed by
+    // the tab id — the same transition the client mirrors as `session.connectFailed`.
+    fold_session_transition(app.handle(), |s| {
+        s.connect_failed("tab-1", Some("Connection refused".to_string()))
+    });
+
+    assert_eq!(
+        store.get("tab-1").map(|s| s.status),
+        Some(crate::session_projection::store::SessionStatus::Failed)
+    );
+
+    let diffs = sink.diffs();
+    assert_eq!(
+        diffs.len(),
+        1,
+        "one diff from the server-side connect-failed fold"
+    );
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view["sessions"]["tab-1"]["status"], json!("failed"));
+    assert_eq!(cache.view["sessions"]["tab-1"]["endReason"], json!("error"));
+    assert_eq!(
+        cache.view["sessions"]["tab-1"]["error"],
+        json!("Connection refused")
+    );
+}
+
+/// The server-side connect-failed fold reproduces the client `session.connectFailed`
+/// route's store transition exactly — identical snapshots, so there is no drift
+/// between the source fold and the (still-present) client mirror.
+#[test]
+fn server_side_connect_failed_fold_matches_the_client_session_connect_failed_route() {
+    // (a) Server-side fold: the store method the fold applies at the source.
+    let server = SessionLifecycleStore::new();
+    server.set_rand_for_test(Box::new(|| 0.5));
+    server.connect_failed("tab-1", Some("boom".to_string()));
+
+    // (b) Client route: the `session.connectFailed` intent through the registry.
+    let client = Arc::new(SessionLifecycleStore::new());
+    client.set_rand_for_test(Box::new(|| 0.5));
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SESSION_LIFECYCLE_REGION, client.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(client.clone())));
+    let ack = dispatcher.dispatch(intent(
+        "session.connectFailed",
+        json!({ "sessionId": "tab-1", "error": "boom" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    assert_eq!(
+        server.snapshot(),
+        client.snapshot(),
+        "the server fold reproduces the client route's transition exactly"
+    );
+}
+
 /// A user-initiated kill (`close_terminal` with `intentional = true`) folds the
 /// graceful `session.disconnect` server-side under the tab id: the session lands
 /// idle `Disconnected` with reason `User`, and the region diff fans out — no

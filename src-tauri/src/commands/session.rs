@@ -72,14 +72,19 @@ pub async fn create_connection(
     // Server-authority fold (#2431): make the *initial* connect's lifecycle
     // server-authoritative in the shared `session-lifecycle` region, keyed by the
     // frontend tab id this attempt carries in its `connect_id`. Only the initial
-    // attempt (`retryCount == 0`) is folded: a reconnect attempt's lifecycle is
-    // owned by the client + backend reconnect timer (#2203), and a failed connect
-    // is deliberately left to the client — the frontend silently auto-retries an
-    // agent connect without an intent, so folding `connect_failed` here would
-    // diverge. The `connect` → `connected` edge, by contrast, converges exactly
-    // with the client's `session.connect` / `session.connected` dispatch, so both
-    // running is a benign convergent double-write. Additive; see
-    // `fold_session_transition`.
+    // attempt (`retryCount == 0`) is folded here: a reconnect attempt's lifecycle
+    // is owned by the client + backend reconnect timer (#2203). The `connect` →
+    // `connected` edge converges exactly with the client's `session.connect` /
+    // `session.connected` dispatch, so both running is a benign convergent
+    // double-write. Additive; see `fold_session_transition`.
+    //
+    // The failure arm is *not* folded here — a **genuine, non-cancelled, initial
+    // direct** connect failure is folded inside `manager.create_connection`
+    // (#2439, `EventEmitter::fold_connect_failed`), where the cancel token is
+    // visible so a Stop is not misread as a failure. An **agent** connect (silent
+    // client-side auto-retry) and a **reconnect attempt** (retry>0) stay
+    // client-owned; the reconnect-loop give-up is not yet source-foldable (its
+    // attempt redrive + outcome live in the client engine, part of #2205).
     let initial_tab_id = initial_connect_tab_id(connect_id.as_deref());
     if let Some(tab_id) = &initial_tab_id {
         fold_session_transition(&app_handle, |store| store.connect(tab_id));
