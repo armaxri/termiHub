@@ -478,23 +478,37 @@ mod tests {
     //   docker compose -f tests/docker/docker-compose.yml up -d ssh-password
     //
     // The test is pinned to **password auth** against the `ssh-password` container.
-    // The port is read from `TERMIHUB_TEST_SSH_PASSWORD_PORT` (default 2201) so a
-    // sharded / parallel run can point at a separate container instance, and every
-    // upload targets a UUID-suffixed remote path so concurrent tests never collide
-    // on the remote `/tmp` file. (The per-checkout `dev_agent_port` sshd from
-    // `dev.local.json` is key-auth only — `PasswordAuthentication no` — so it is
-    // deliberately not a target here.)
+    // The port is per-checkout offset aware (see below) so parallel checkouts each
+    // target *their own* ssh-password container instead of colliding on the shared
+    // base 2201 (#2448), and every upload targets a UUID-suffixed remote path so
+    // concurrent tests never collide on the remote `/tmp` file. (The per-checkout
+    // `dev_agent_port` sshd from `dev.local.json` is key-auth only —
+    // `PasswordAuthentication no` — so it is deliberately not a target here.)
 
-    /// Default host port of the shared `ssh-password` container (`tests/docker`).
+    /// Base host port of the shared `ssh-password` container (`tests/docker`).
     const DEFAULT_SSH_PASSWORD_PORT: u16 = 2201;
 
-    /// Resolve the `ssh-password` container port, allowing an env override so
-    /// parallel runs can target distinct container instances.
+    /// Resolve the `ssh-password` container port (per-checkout offset aware),
+    /// matching `core/tests/common`'s `resolve_port` / `port_ssh_password` and
+    /// `src-tauri/tests/sftp_transfer.rs`'s `sftp_stress_port`. An explicit
+    /// `TERMIHUB_TEST_SSH_PASSWORD_PORT` wins; otherwise the base plus
+    /// `TERMIHUB_TEST_PORT_OFFSET` (default offset `0`, i.e. historical 2201).
+    /// Both env vars are exported from this checkout's `dev.local.json` by
+    /// `scripts/internal/dev-local-env.sh` — see `docs/testing.md` → "Parallel
+    /// test isolation". Without them (a lone checkout / bare `cargo test`) the
+    /// port falls back to 2201, so single-checkout behaviour is unchanged.
     fn ssh_password_port() -> u16 {
-        std::env::var("TERMIHUB_TEST_SSH_PASSWORD_PORT")
+        if let Some(p) = std::env::var("TERMIHUB_TEST_SSH_PASSWORD_PORT")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_SSH_PASSWORD_PORT)
+        {
+            return p;
+        }
+        let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        DEFAULT_SSH_PASSWORD_PORT + offset
     }
 
     /// Returns `true` if a TCP connection to the SSH server succeeds quickly.
