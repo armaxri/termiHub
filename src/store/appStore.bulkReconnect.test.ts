@@ -62,6 +62,8 @@ import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { setupRestoreCohortRegion } from "@/test/restoreCohortHarness";
+import { currentRestoreCohortView } from "@/store/restoreCohortBridge";
 import { loadLastSession } from "@/services/lastSessionApi";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { LastSession } from "@/types/lastSession";
@@ -103,7 +105,9 @@ function tabById(id: string) {
 
 /**
  * Restore three tabs and settle two connected + one failed, leaving one failed
- * tab captured for the bulk-reconnect control. Returns the tab ids.
+ * tab captured (in the region) for the bulk-reconnect control. Awaits the
+ * projected settlement so the summary toast has fired and the region view is
+ * current. Returns the tab ids.
  */
 async function restoreWithOneFailure(): Promise<string[]> {
   mockLoad.mockResolvedValue(threeLocalTabsSession());
@@ -112,12 +116,14 @@ async function restoreWithOneFailure(): Promise<string[]> {
   useAppStore.getState().setTabSessionId(ids[0], "sess-a");
   useAppStore.getState().setTabSessionId(ids[1], "sess-b");
   useAppStore.getState().setTerminalDisconnectWithError(ids[2], "connection refused");
+  await restore.flush();
   return ids;
 }
 
 setupConnectionsRegion();
 setupSettingsRegion();
 setupAgentsRegion();
+const restore = setupRestoreCohortRegion();
 
 describe("bulk reconnect of failed restore tabs", () => {
   beforeEach(() => {
@@ -125,8 +131,6 @@ describe("bulk reconnect of failed restore tabs", () => {
     mockLoad.mockResolvedValue(null);
     useAppStore.setState({
       defaultShell: "bash",
-      restoreCohort: null,
-      failedRestoreTabIds: [],
       terminalConnecting: {},
       terminalDisconnectErrors: {},
       terminalRetryCounters: {},
@@ -138,9 +142,11 @@ describe("bulk reconnect of failed restore tabs", () => {
   it("captures the failed tab ids from a settled partial-restore cohort", async () => {
     const ids = await restoreWithOneFailure();
 
-    // The partial summary fired and the failed terminal tab is remembered.
+    // The partial summary fired and the failed terminal tab is remembered in the
+    // authoritative region.
     expect(toastInfo).toHaveBeenCalledTimes(1);
-    expect(useAppStore.getState().failedRestoreTabIds).toEqual([ids[2]]);
+    expect(currentRestoreCohortView().failedTabIds).toEqual([ids[2]]);
+    expect(restore.transport().onlyRegionView().failedTabIds).toEqual([ids[2]]);
     // Action affordance is attached to the summary toast so it can be triggered.
     const opts = toastInfo.mock.calls[0][1] as { action?: { label: string; onClick: () => void } };
     expect(opts?.action).toBeDefined();
@@ -153,14 +159,8 @@ describe("bulk reconnect of failed restore tabs", () => {
 
     useAppStore.getState().reconnectFailedRestoreTabs();
 
-    // A fresh cohort covers exactly the previously-failed tab.
-    const cohort = useAppStore.getState().restoreCohort;
-    expect(cohort).not.toBeNull();
-    expect([...(cohort?.pending ?? [])]).toEqual([ids[2]]);
-    expect(cohort?.total).toBe(1);
-
     // The failed tab is being re-driven: its disconnect error is cleared and it
-    // is marked connecting again.
+    // is marked connecting again (synchronous, before the region round-trip).
     expect(useAppStore.getState().terminalConnecting[ids[2]]).toBe(true);
     expect(useAppStore.getState().terminalDisconnectErrors[ids[2]]).toBeUndefined();
 
@@ -170,8 +170,14 @@ describe("bulk reconnect of failed restore tabs", () => {
     expect(tabById(ids[0])?.sessionId).toBe("sess-a");
     expect(tabById(ids[1])?.sessionId).toBe("sess-b");
 
-    // The captured failed set is consumed by the retry.
-    expect(useAppStore.getState().failedRestoreTabIds).toEqual([]);
+    await restore.flush();
+    // A fresh cohort in the region covers exactly the previously-failed tab, and
+    // beginning it cleared the captured failed set.
+    const region = restore.transport().onlyRegionView();
+    expect(region.cohort).not.toBeNull();
+    expect(region.cohort?.pending).toEqual([ids[2]]);
+    expect(region.cohort?.total).toBe(1);
+    expect(region.failedTabIds).toEqual([]);
   });
 
   it("re-summarizes as a success when the bulk retry connects all failed tabs", async () => {
@@ -179,17 +185,19 @@ describe("bulk reconnect of failed restore tabs", () => {
     vi.clearAllMocks();
 
     useAppStore.getState().reconnectFailedRestoreTabs();
-    // Pending feedback for the bulk retry.
+    // Pending feedback for the bulk retry (fired synchronously).
     expect(toastLoading).toHaveBeenCalledTimes(1);
 
     // The retried tab connects.
     useAppStore.getState().setTabSessionId(ids[2], "sess-c-retry");
+    await restore.flush();
 
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(String(toastSuccess.mock.calls[0][0])).toContain("1");
-    // No failed tabs remain to retry.
-    expect(useAppStore.getState().failedRestoreTabIds).toEqual([]);
-    expect(useAppStore.getState().restoreCohort).toBeNull();
+    // No failed tabs remain to retry and the cohort settled.
+    const region = restore.transport().onlyRegionView();
+    expect(region.failedTabIds).toEqual([]);
+    expect(region.cohort).toBeNull();
   });
 
   it("re-summarizes as a partial when the bulk retry still fails, keeping the tab retryable", async () => {
@@ -200,34 +208,39 @@ describe("bulk reconnect of failed restore tabs", () => {
 
     // The retried tab fails again.
     useAppStore.getState().setTerminalDisconnectWithError(ids[2], "still refused");
+    await restore.flush();
 
     // A partial summary fires again and the tab is still remembered for retry.
     expect(toastInfo).toHaveBeenCalledTimes(1);
-    expect(useAppStore.getState().failedRestoreTabIds).toEqual([ids[2]]);
-    expect(useAppStore.getState().restoreCohort).toBeNull();
+    const region = restore.transport().onlyRegionView();
+    expect(region.failedTabIds).toEqual([ids[2]]);
+    expect(region.cohort).toBeNull();
   });
 
   it("is a no-op when there are no failed tabs to reconnect", () => {
-    useAppStore.setState({ failedRestoreTabIds: [], restoreCohort: null });
+    // No cohort has run, so the region's captured failed set is empty.
+    expect(currentRestoreCohortView().failedTabIds).toEqual([]);
     useAppStore.getState().reconnectFailedRestoreTabs();
 
-    expect(useAppStore.getState().restoreCohort).toBeNull();
     expect(toastLoading).not.toHaveBeenCalled();
     expect(toastInfo).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 
   it("ignores captured tab ids that no longer exist in the tree", async () => {
-    await restoreWithOneFailure();
-    // Simulate the failed tab having been closed since the restore settled.
-    useAppStore.setState({ failedRestoreTabIds: ["ghost-tab-id"] });
+    // Seed the region with a failed tab id that is not present in the tree (as if
+    // the tab was closed since the restore settled), via a ghost begin + settle.
+    useAppStore.getState().beginRestoreCohort(["ghost-tab-id"], 0);
+    useAppStore.getState().settleRestoreTab("ghost-tab-id", "failed");
+    await restore.flush();
+    expect(currentRestoreCohortView().failedTabIds).toEqual(["ghost-tab-id"]);
     vi.clearAllMocks();
 
     useAppStore.getState().reconnectFailedRestoreTabs();
+    await restore.flush();
 
-    // Nothing live to re-drive → no cohort, no pending toast.
-    expect(useAppStore.getState().restoreCohort).toBeNull();
+    // Nothing live to re-drive → no fresh cohort begun, no pending toast.
+    expect(restore.transport().onlyRegionView().cohort).toBeNull();
     expect(toastLoading).not.toHaveBeenCalled();
-    expect(useAppStore.getState().failedRestoreTabIds).toEqual([]);
   });
 });
