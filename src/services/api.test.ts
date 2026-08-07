@@ -45,15 +45,7 @@ import {
   saveSettings,
   saveExternalFile,
   reloadExternalConnections,
-  sftpOpen,
-  sftpClose,
-  sftpListDir,
-  sftpDownload,
-  sftpUpload,
   sftpCancelTransfer,
-  sftpMkdir,
-  sftpDelete,
-  sftpRename,
   getHomeDir,
   localListDir,
   localMkdir,
@@ -61,8 +53,6 @@ import {
   localRename,
   localReadFile,
   localWriteFile,
-  sftpReadFileContent,
-  sftpWriteFileContent,
   sessionRealpath,
   sessionCheckWritable,
   sessionWriteFileElevated,
@@ -72,7 +62,6 @@ import {
   sessionVscodeOpenRemote,
   vscodeAvailable,
   vscodeOpenLocal,
-  vscodeOpenRemote,
   validateSshKey,
   checkDockerAvailable,
   listDockerImages,
@@ -435,159 +424,12 @@ describe("api service", () => {
     });
   });
 
-  describe("SFTP commands", () => {
-    it("sftpOpen invokes with SSH config", async () => {
-      mockedInvoke.mockResolvedValue("sftp-session-1");
-      const config = {
-        host: "pi.local",
-        port: 22,
-        username: "pi",
-        authMethod: "password",
-      };
-
-      const result = await sftpOpen(config);
-
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_open", { config });
-      expect(result).toBe("sftp-session-1");
-    });
-
-    it("sftpOpen passes config with array-style env to backend", async () => {
-      mockedInvoke.mockResolvedValue("sftp-session-2");
-      const config = {
-        host: "pi.local",
-        port: 22,
-        username: "pi",
-        authMethod: "password",
-        env: [
-          { key: "FOO", value: "bar" },
-          { key: "BAZ", value: "qux" },
-        ],
-      };
-
-      const result = await sftpOpen(config);
-
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_open", { config });
-      expect(result).toBe("sftp-session-2");
-    });
-
-    it("sftpClose invokes with session ID", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await sftpClose("sftp-session-1");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_close", { sessionId: "sftp-session-1" });
-    });
-
-    it("sftpListDir invokes with session ID and path", async () => {
-      const entries = [
-        {
-          name: "file.txt",
-          path: "/home/file.txt",
-          isDirectory: false,
-          size: 100,
-          modified: "2024-01-01",
-          permissions: "rw-r--r--",
-        },
-      ];
-      mockedInvoke.mockResolvedValue(entries);
-
-      const result = await sftpListDir("sftp-1", "/home");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_list_dir", {
-        sessionId: "sftp-1",
-        path: "/home",
-      });
-      expect(result).toEqual(entries);
-    });
-
-    // Wait until `awaitTransfer` has registered its `transfer-progress`
-    // listener (it does so after a dynamic import), then emit `payload`.
-    const fireWhenListening = async (payload: unknown) => {
-      for (let i = 0; i < 50 && !transferListener; i++) {
-        await flushMacrotask();
-      }
-      if (!transferListener) throw new Error("transfer listener never registered");
-      transferListener({ payload });
-    };
-
-    it("sftpDownload invokes with correct params and returns bytes on the done event", async () => {
-      // The command returns a transferId; completion arrives via the event.
-      mockedInvoke.mockResolvedValue("transfer-1");
-
-      const pending = sftpDownload("sftp-1", "/remote/file.txt", "/local/file.txt");
-      await fireWhenListening({
-        transferId: "transfer-1",
-        phase: "done",
-        transferred: 1024,
-      });
-
-      const result = await pending;
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_download", {
-        sessionId: "sftp-1",
-        remotePath: "/remote/file.txt",
-        localPath: "/local/file.txt",
-      });
-      expect(result).toBe(1024);
-    });
-
-    it("sftpUpload invokes with correct params and returns bytes on the done event", async () => {
-      mockedInvoke.mockResolvedValue("transfer-2");
-
-      const pending = sftpUpload("sftp-1", "/local/file.txt", "/remote/file.txt");
-      await fireWhenListening({
-        transferId: "transfer-2",
-        phase: "done",
-        transferred: 2048,
-      });
-
-      const result = await pending;
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_upload", {
-        sessionId: "sftp-1",
-        localPath: "/local/file.txt",
-        remotePath: "/remote/file.txt",
-      });
-      expect(result).toBe(2048);
-    });
-
-    it("sftpDownload fires onRegistered with the transfer id before completion (#1632)", async () => {
-      mockedInvoke.mockResolvedValue("transfer-seed-d");
-      const onRegistered = vi.fn();
-
-      const pending = sftpDownload("sftp-1", "/remote/file.txt", "/local/file.txt", onRegistered);
-      // onRegistered must fire from the command's synchronous return, ahead of
-      // any transfer-progress event (which may be dropped under memory pressure).
-      await vi.waitFor(() => expect(onRegistered).toHaveBeenCalledWith("transfer-seed-d"));
-
-      await fireWhenListening({ transferId: "transfer-seed-d", phase: "done", transferred: 1 });
-      await pending;
-      expect(onRegistered).toHaveBeenCalledTimes(1);
-    });
-
-    it("sftpUpload fires onRegistered with the transfer id before completion (#1632)", async () => {
-      mockedInvoke.mockResolvedValue("transfer-seed-u");
-      const onRegistered = vi.fn();
-
-      const pending = sftpUpload("sftp-1", "/local/file.txt", "/remote/file.txt", onRegistered);
-      await vi.waitFor(() => expect(onRegistered).toHaveBeenCalledWith("transfer-seed-u"));
-
-      await fireWhenListening({ transferId: "transfer-seed-u", phase: "done", transferred: 1 });
-      await pending;
-      expect(onRegistered).toHaveBeenCalledTimes(1);
-    });
-
-    it("sftpDownload rejects when the transfer is cancelled", async () => {
-      mockedInvoke.mockResolvedValue("transfer-3");
-
-      const pending = sftpDownload("sftp-1", "/remote/file.txt", "/local/file.txt");
-      await fireWhenListening({
-        transferId: "transfer-3",
-        phase: "cancelled",
-        transferred: 5,
-      });
-
-      await expect(pending).rejects.toThrow("Transfer cancelled");
-    });
-
+  // The standalone UUID `sftp_*` session commands (open/close/list/stat/…/
+  // download/upload/…) were retired in #2314; SSH file browsing/editing/transfer
+  // now goes through the `session_*` path (see "session-scoped SFTP advanced
+  // commands" below). Only the shared, protocol-agnostic transfer cancellation
+  // remains under the `sftp` name.
+  describe("SFTP transfer cancellation", () => {
     it("sftpCancelTransfer invokes with the transfer id", async () => {
       mockedInvoke.mockResolvedValue(undefined);
 
@@ -595,65 +437,6 @@ describe("api service", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("sftp_cancel_transfer", {
         transferId: "transfer-9",
-      });
-    });
-
-    it("sftpMkdir invokes with session ID and path", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await sftpMkdir("sftp-1", "/remote/newdir");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_mkdir", {
-        sessionId: "sftp-1",
-        path: "/remote/newdir",
-      });
-    });
-
-    it("sftpDelete invokes with session ID, path, and isDirectory flag", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await sftpDelete("sftp-1", "/remote/file.txt", false);
-
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_delete", {
-        sessionId: "sftp-1",
-        path: "/remote/file.txt",
-        isDirectory: false,
-      });
-    });
-
-    it("sftpRename invokes with session ID, old and new paths", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await sftpRename("sftp-1", "/remote/old.txt", "/remote/new.txt");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_rename", {
-        sessionId: "sftp-1",
-        oldPath: "/remote/old.txt",
-        newPath: "/remote/new.txt",
-      });
-    });
-
-    it("sftpReadFileContent invokes with session ID and remote path", async () => {
-      mockedInvoke.mockResolvedValue("file contents here");
-
-      const result = await sftpReadFileContent("sftp-1", "/remote/file.txt");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_read_file_content", {
-        sessionId: "sftp-1",
-        remotePath: "/remote/file.txt",
-      });
-      expect(result).toBe("file contents here");
-    });
-
-    it("sftpWriteFileContent invokes with session ID, path, and content", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await sftpWriteFileContent("sftp-1", "/remote/file.txt", "new content");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("sftp_write_file_content", {
-        sessionId: "sftp-1",
-        remotePath: "/remote/file.txt",
-        content: "new content",
       });
     });
   });
@@ -895,17 +678,6 @@ describe("api service", () => {
       await vscodeOpenLocal("/home/file.txt");
 
       expect(mockedInvoke).toHaveBeenCalledWith("vscode_open_local", { path: "/home/file.txt" });
-    });
-
-    it("vscodeOpenRemote invokes with session ID and remote path", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
-
-      await vscodeOpenRemote("sftp-1", "/remote/file.txt");
-
-      expect(mockedInvoke).toHaveBeenCalledWith("vscode_open_remote", {
-        sessionId: "sftp-1",
-        remotePath: "/remote/file.txt",
-      });
     });
   });
 

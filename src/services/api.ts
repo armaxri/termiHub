@@ -1115,43 +1115,15 @@ export async function reloadExternalConnections(): Promise<SavedConnection[]> {
   return await invoke<SavedConnection[]>("reload_external_connections");
 }
 
-// --- SFTP commands ---
-
-/** Open a new SFTP session. Returns session ID. */
-export async function sftpOpen(config: Record<string, unknown>): Promise<string> {
-  return await invoke<string>("sftp_open", { config });
-}
-
-/** Close an SFTP session. */
-export async function sftpClose(sessionId: string): Promise<void> {
-  await invoke("sftp_close", { sessionId });
-}
-
-/** List directory contents via SFTP. */
-export async function sftpListDir(sessionId: string, path: string): Promise<FileEntry[]> {
-  return await invoke<FileEntry[]>("sftp_list_dir", { sessionId, path });
-}
-
-/**
- * Get metadata (size, mtime, permissions) for a single remote file via SFTP.
- *
- * Backs the editor's remote external-change detection (#1627): a stat is a
- * single metadata round-trip, so it is the cheap poll primitive used to spot an
- * out-of-band change before deciding to re-read the file.
- */
-export async function sftpStat(sessionId: string, path: string): Promise<FileEntry> {
-  return await invoke<FileEntry>("sftp_stat", { sessionId, path });
-}
-
-/**
- * Resolve a remote path to its canonical absolute form via SFTP realpath.
- *
- * Pass `"."` to resolve the session's home directory instead of guessing
- * `/home/<user>` (audit GAP C2).
- */
-export async function sftpRealpath(sessionId: string, path: string): Promise<string> {
-  return await invoke<string>("sftp_realpath", { sessionId, path });
-}
+// --- SFTP transfer types & cancellation ---
+//
+// The standalone UUID `sftp_*` session commands (open/close/list/stat/realpath/
+// read/write/mkdir/delete/rename/download/upload/…) were retired in #2314. SSH
+// file browsing, editing, and transfers now go through the `session_*` /
+// `ConnectionType` path (see the session-scoped mirrors below and
+// `sessionListDir` / `sessionDownload` / …). Only the shared transfer-registry
+// cancellation (`sftpCancelTransfer`) and the transfer event/queue types remain
+// under the `sftp` name, as they are protocol-agnostic (SFTP and FTP).
 
 /** Lifecycle phase of an SFTP transfer (see `transfer-progress` event). */
 export type TransferPhase = "transferring" | "done" | "cancelled" | "error";
@@ -1284,58 +1256,6 @@ async function awaitTransfer(transferId: string): Promise<number> {
   });
 }
 
-/**
- * Download a remote file to a local path.
- *
- * Registers a background transfer on a dedicated channel and resolves with the
- * bytes transferred once it completes (#1245).
- *
- * `onRegistered` fires once with the backend `transferId` the instant the start
- * command returns — over the reliable request/response channel, before any
- * best-effort `transfer-progress` event. Callers use it to seed the Transfer
- * Queue so the panel opens even if progress events are dropped/delayed under
- * memory pressure (#1632).
- */
-export async function sftpDownload(
-  sessionId: string,
-  remotePath: string,
-  localPath: string,
-  onRegistered?: (transferId: string) => void
-): Promise<number> {
-  const transferId = await invoke<string>("sftp_download", {
-    sessionId,
-    remotePath,
-    localPath,
-  });
-  onRegistered?.(transferId);
-  return await awaitTransfer(transferId);
-}
-
-/**
- * Upload a local file to a remote path.
- *
- * Registers a background transfer on a dedicated channel and resolves with the
- * bytes transferred once it completes (#1245).
- *
- * `onRegistered` fires once with the backend `transferId` the instant the start
- * command returns (see {@link sftpDownload}), for seeding the Transfer Queue
- * ahead of any progress event (#1632).
- */
-export async function sftpUpload(
-  sessionId: string,
-  localPath: string,
-  remotePath: string,
-  onRegistered?: (transferId: string) => void
-): Promise<number> {
-  const transferId = await invoke<string>("sftp_upload", {
-    sessionId,
-    localPath,
-    remotePath,
-  });
-  onRegistered?.(transferId);
-  return await awaitTransfer(transferId);
-}
-
 /** Cancel an in-flight SFTP transfer. Unknown/finished ids are a no-op (#1245). */
 export async function sftpCancelTransfer(transferId: string): Promise<void> {
   await invoke("sftp_cancel_transfer", { transferId });
@@ -1402,29 +1322,6 @@ export async function ftpUpload(
     localPath,
     remotePath,
   });
-}
-
-/** Create a directory on the remote host. */
-export async function sftpMkdir(sessionId: string, path: string): Promise<void> {
-  await invoke("sftp_mkdir", { sessionId, path });
-}
-
-/** Delete a file or directory on the remote host. */
-export async function sftpDelete(
-  sessionId: string,
-  path: string,
-  isDirectory: boolean
-): Promise<void> {
-  await invoke("sftp_delete", { sessionId, path, isDirectory });
-}
-
-/** Rename a file or directory on the remote host. */
-export async function sftpRename(
-  sessionId: string,
-  oldPath: string,
-  newPath: string
-): Promise<void> {
-  await invoke("sftp_rename", { sessionId, oldPath, newPath });
 }
 
 // --- Local filesystem commands ---
@@ -1506,20 +1403,6 @@ export async function unwatchLocalDir(watchId: string): Promise<void> {
   await invoke("unwatch_local_dir", { watchId });
 }
 
-/** Read a remote file's contents as a UTF-8 string via SFTP. */
-export async function sftpReadFileContent(sessionId: string, remotePath: string): Promise<string> {
-  return await invoke<string>("sftp_read_file_content", { sessionId, remotePath });
-}
-
-/** Write a string to a remote file via SFTP. */
-export async function sftpWriteFileContent(
-  sessionId: string,
-  remotePath: string,
-  content: string
-): Promise<void> {
-  await invoke("sftp_write_file_content", { sessionId, remotePath, content });
-}
-
 /**
  * Outcome of a privilege-elevated (`sudo`) remote write.
  *
@@ -1532,58 +1415,6 @@ export type ElevatedWriteResult =
   | { kind: "success" }
   | { kind: "incorrectPassword" }
   | { kind: "other"; message: string };
-
-/**
- * Write a string to a remote file with `sudo`-elevated privileges.
- *
- * Uploads the buffer to a temp path via SFTP, then rewrites the destination in
- * place via `sudo -S` over the SSH exec channel (password on stdin). Returns a
- * typed {@link ElevatedWriteResult} rather than throwing on an authorization
- * failure, so the caller can re-prompt on `incorrectPassword`. The temp file is
- * always cleaned up and the password is never logged on the backend.
- */
-export async function sftpWriteFileContentElevated(
-  sessionId: string,
-  remotePath: string,
-  content: string,
-  sudoPassword: string
-): Promise<ElevatedWriteResult> {
-  return await invoke<ElevatedWriteResult>("sftp_write_file_content_elevated", {
-    sessionId,
-    remotePath,
-    content,
-    sudoPassword,
-  });
-}
-
-/**
- * Report whether the SFTP session's SSH connection can open an exec channel
- * (i.e. run remote commands such as `sudo`).
- *
- * Returns `true` for a normal SSH+shell connection and `false` for an
- * SFTP-only or relayed connection. Lets the editor know whether
- * privilege-elevated writes are possible.
- */
-export async function sftpHasExecCapability(sessionId: string): Promise<boolean> {
-  return await invoke<boolean>("sftp_has_exec_capability", { sessionId });
-}
-
-/**
- * Probe whether the connecting user can actually open a specific remote file
- * for writing, via a non-destructive SFTP write-open probe (issue #1324).
- *
- * Returns `"writable"` / `"readOnly"` / `"unknown"`; the probe never modifies
- * the file. `"unknown"` means the check was inconclusive — the caller treats it
- * as writable and attempts the save so a false negative never blocks editing.
- * This catches the owner-mismatch case the cheap `FileEntry.writable` hint
- * cannot detect.
- */
-export async function sftpCheckWritable(
-  sessionId: string,
-  remotePath: string
-): Promise<Writability> {
-  return await invoke<Writability>("sftp_check_writable", { sessionId, remotePath });
-}
 
 // --- Session-based file browsing commands ---
 // These work with any connection type that has file browser capability
@@ -1650,7 +1481,7 @@ export async function sessionMkdir(sessionId: string, path: string): Promise<voi
 
 /**
  * Resolve a remote path to its canonical absolute form via a session's SFTP
- * realpath. Session-path mirror of {@link sftpRealpath} (#2312).
+ * realpath. Mirror of the retired standalone `sftp_realpath` command (#2312, #2314).
  *
  * Pass `"."` to resolve the session's home directory instead of guessing
  * `/home/<user>`.
@@ -1661,8 +1492,8 @@ export async function sessionRealpath(sessionId: string, path: string): Promise<
 
 /**
  * Probe whether the connecting user can write a specific remote file, via a
- * non-destructive SFTP write-open probe on a session. Session-path mirror of
- * {@link sftpCheckWritable} (#2312); the probe never modifies the file.
+ * non-destructive SFTP write-open probe on a session (#2312); the probe never
+ * modifies the file.
  */
 export async function sessionCheckWritable(
   sessionId: string,
@@ -1673,8 +1504,7 @@ export async function sessionCheckWritable(
 
 /**
  * Write a string to a remote file with `sudo`-elevated privileges over a
- * session's SFTP connection. Session-path mirror of
- * {@link sftpWriteFileContentElevated} (#2312): returns a typed
+ * session's SFTP connection (#2312): returns a typed
  * {@link ElevatedWriteResult} rather than throwing on an authorization failure,
  * so the caller can re-prompt on `incorrectPassword`. The temp file is always
  * cleaned up and the password is never logged on the backend.
@@ -1695,8 +1525,7 @@ export async function sessionWriteFileElevated(
 
 /**
  * Report whether a session's SFTP connection can open an exec channel (i.e. run
- * remote commands such as `sudo`). Session-path mirror of
- * {@link sftpHasExecCapability} (#2312): `true` for a normal SSH+shell
+ * remote commands such as `sudo`) (#2312): `true` for a normal SSH+shell
  * connection, `false` for an SFTP-only / relayed connection.
  */
 export async function sessionHasExecCapability(sessionId: string): Promise<boolean> {
@@ -1706,7 +1535,7 @@ export async function sessionHasExecCapability(sessionId: string): Promise<boole
 /**
  * Download a remote file to a local path over a session's SFTP connection.
  *
- * Session-path mirror of {@link sftpDownload} (#2312): registers a background
+ * Registers a background (#2312, mirroring the retired standalone `sftp_download`):
  * transfer on a **dedicated** channel and resolves with the bytes transferred
  * once it completes (#1245), so listing / navigating the same session stays live
  * during the transfer. `onRegistered` fires once with the backend `transferId`
@@ -1731,7 +1560,7 @@ export async function sessionDownload(
 /**
  * Upload a local file to a remote path over a session's SFTP connection.
  *
- * Session-path mirror of {@link sftpUpload} (#2312): registers a background
+ * Registers a background (#2312, mirroring the retired standalone `sftp_upload`):
  * transfer on a dedicated channel and resolves with the bytes transferred once
  * it completes (#1245). See {@link sessionDownload} for `onRegistered`.
  */
@@ -1752,8 +1581,8 @@ export async function sessionUpload(
 
 /**
  * Open a remote file in VS Code over a session's SFTP connection: download, open
- * with `--wait`, re-upload on close. Session-path mirror of
- * {@link vscodeOpenRemote} (#2383).
+ * with `--wait`, re-upload on close (#2383). The standalone `vscode_open_remote`
+ * command it once mirrored was retired in #2314.
  */
 export async function sessionVscodeOpenRemote(
   sessionId: string,
@@ -1772,11 +1601,6 @@ export async function vscodeAvailable(): Promise<boolean> {
 /** Open a local file in VS Code (fire-and-forget). */
 export async function vscodeOpenLocal(path: string): Promise<void> {
   await invoke("vscode_open_local", { path });
-}
-
-/** Open a remote file in VS Code: download, edit, re-upload. */
-export async function vscodeOpenRemote(sessionId: string, remotePath: string): Promise<void> {
-  await invoke("vscode_open_remote", { sessionId, remotePath });
 }
 
 // --- Agent commands ---
