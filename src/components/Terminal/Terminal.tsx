@@ -49,6 +49,10 @@ import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
+import {
+  sessionBackendReattachEnabled,
+  waitForBackendReattachSessionId,
+} from "@/store/sessionBridge";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -439,9 +443,31 @@ export function Terminal({
         const isReconnect = (useAppStore.getState().terminalRetryCounters[tabId] ?? 0) > 0;
         let reattachSessionId: string | null;
         if (isReconnect) {
-          reattachSessionId = persistentConnectionId
-            ? await useAppStore.getState().restartPersistentSessionForTab(tabId)
-            : null;
+          if (persistentConnectionId) {
+            // Persistent/agent tab: restart the background session and reattach
+            // to its (possibly new) live id — never to the dead mount-time id.
+            reattachSessionId = await useAppStore.getState().restartPersistentSessionForTab(tabId);
+          } else if (sessionBackendReattachEnabled()) {
+            // Backend-driven direct reconnect (#2457): with the flag on, the
+            // reconnect redrive is server-side (#2454). The backend re-creates
+            // the connection itself — minting a NEW backend session id — and
+            // publishes it to the `session-lifecycle` region. Attach to that id
+            // instead of calling create_connection: the client redrive is
+            // suppressed here because the reconnect engine is non-idempotent, so
+            // it must be a real authority cut. The prior (now-dead) session id is
+            // excluded so a stale region value never reattaches to a corpse; a
+            // null result (backend not driving / timed out) falls through to the
+            // client redrive below, so a tab is never stranded.
+            reattachSessionId = await waitForBackendReattachSessionId(
+              tabId,
+              sessionIdRef.current,
+              isCanceled
+            );
+          } else {
+            // Direct tab, flag off: the dead session id is gone; fall through to
+            // a fresh create_connection (the client redrive) — develop behavior.
+            reattachSessionId = null;
+          }
           if (isCanceled()) return;
         } else {
           reattachSessionId = initialSessionIdRef.current ?? null;

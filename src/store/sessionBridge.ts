@@ -82,6 +82,14 @@ export interface ProjectedSessionLifecycle {
    * are reconnecting" note shown while a session is reconnecting (#2442). Twin of
    * the Rust `reconnect_error`. Distinct from `error` (the terminal failure msg). */
   reconnectError?: string;
+  /** The **backend** session id the frontend should attach terminal I/O to for
+   * this tab, when known (#2457). Twin of the Rust `SessionLifecycle.sessionId`
+   * (`backend_session_id`). The region is keyed by the stable tab id; this
+   * carries the backend session id that tab currently maps to, so a
+   * backend-driven reconnect redrive (#2454) can hand the frontend the new id to
+   * re-attach to without calling `create_connection`. `undefined` when there is
+   * no live backend session for the tab. */
+  sessionId?: string;
 }
 
 /** The `session-lifecycle` region view model: `{ sessions: { <id>: … } }`. */
@@ -205,6 +213,60 @@ export function sessionRenderFromProjectionEnabled(): boolean {
     // A missing/blocked window or storage just means "use the default".
   }
   return true;
+}
+
+// ── Backend-reattach feature flag (#2457 / #2454, off by default) ───────────────
+
+let backendReattachFlagOverride: boolean | null = null;
+
+interface SessionBackendReattachFlagWindow {
+  __TERMIHUB_SESSION_BACKEND_REATTACH__?: boolean;
+  localStorage?: Storage;
+}
+
+/**
+ * Programmatic override for the backend-reattach flag (tests, and a runtime
+ * toggle). `null` clears the override and falls back to the window/localStorage
+ * signal, then to the default (off).
+ */
+export function setSessionBackendReattachEnabled(value: boolean | null): void {
+  backendReattachFlagOverride = value;
+}
+
+/**
+ * Whether the reconnect redrive is server-side (#2454) and the frontend
+ * re-attaches terminal I/O to a backend-chosen session id instead of driving the
+ * reconnect itself via `create_connection` (#2457).
+ *
+ * **Off by default.** When on, a direct-connection reconnect no longer calls
+ * `create_connection`; instead {@link waitForBackendReattachSessionId} reads the
+ * new backend session id the server-side redrive publishes to the
+ * `session-lifecycle` region and the terminal re-attaches to it. When off (the
+ * default) the client redrive runs exactly as on `develop` — the terminal calls
+ * `create_connection` on every reconnect — so behavior is byte-identical.
+ *
+ * This is the same flag the backend redrive wiring (#2454's remainder) gates on:
+ * turning it on without both halves present would strand the reconnect, so it
+ * stays off until that lands. Overridable at runtime for rollout / tests via
+ * `window.__TERMIHUB_SESSION_BACKEND_REATTACH__` or
+ * `localStorage["termihub.sessionBackendReattach"]` (`"true"` to force on).
+ */
+export function sessionBackendReattachEnabled(): boolean {
+  if (backendReattachFlagOverride !== null) return backendReattachFlagOverride;
+  try {
+    if (typeof window !== "undefined") {
+      const w = window as unknown as SessionBackendReattachFlagWindow;
+      if (typeof w.__TERMIHUB_SESSION_BACKEND_REATTACH__ === "boolean") {
+        return w.__TERMIHUB_SESSION_BACKEND_REATTACH__;
+      }
+      const ls = w.localStorage?.getItem("termihub.sessionBackendReattach");
+      if (ls === "true") return true;
+      if (ls === "false") return false;
+    }
+  } catch {
+    // A missing/blocked window or storage just means "use the default".
+  }
+  return false;
 }
 
 // ── Transport + region client (lazy, mirrors the tunnel slice) ─────────────────
@@ -496,6 +558,85 @@ export function effectiveAutoReconnect(
  * consumer seeding before its first diff arrives. */
 export function currentSessionView(): Record<string, ProjectedSessionLifecycle> {
   return lastSessions;
+}
+
+// ── Backend-reattach: resolve the backend session id to attach to (#2457) ───────
+
+/**
+ * Resolve the **backend** session id a tab should re-attach terminal I/O to for a
+ * backend-driven reconnect (#2457), reading it from the projected
+ * `session-lifecycle` region. The server-side reconnect redrive (#2454) publishes
+ * the new backend session id to the region keyed by tab id; this awaits that id
+ * so the terminal can subscribe output/exit + `setTabSessionId` **without**
+ * calling `create_connection`.
+ *
+ * Resolves with the region's `sessionId` for `tabId` as soon as it is present and
+ * not equal to `excludeSessionId` (the prior, now-dead session id, so a stale
+ * region value is never mistaken for the fresh one — the store also clears the id
+ * on drop, so this is belt-and-suspenders). Resolves to `null` on `isCanceled()`
+ * (the effect torn down) or after `timeoutMs` with no id — the caller then falls
+ * back to the client redrive, which keeps a not-yet-driven reconnect from
+ * stranding the terminal. With #2454 present the redrive publishes the id
+ * promptly, so the wait settles at once and the timeout never bites.
+ *
+ * The region subscription is (re-)ensured so diffs arrive; the listener is
+ * registered before the fast-path read so no diff in between is missed.
+ */
+export function waitForBackendReattachSessionId(
+  tabId: string,
+  excludeSessionId: string | null | undefined,
+  isCanceled: () => boolean,
+  timeoutMs = 10000
+): Promise<string | null> {
+  const accept = (id: string | undefined): id is string =>
+    !!id && !(excludeSessionId != null && id === excludeSessionId);
+
+  return new Promise<string | null>((resolve) => {
+    let settled = false;
+    const cleanups: Array<() => void> = [];
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      for (const c of cleanups) c();
+      resolve(value);
+    };
+
+    // Register the listener first so a diff arriving between the fast-path read
+    // and the subscription is not lost.
+    cleanups.push(
+      onSessionView((next) => {
+        const id = next[tabId]?.sessionId;
+        if (accept(id)) finish(id);
+      })
+    );
+
+    // Ensure the region is subscribed; a subscribe failure leaves nothing to
+    // source the id, so fall back (null) rather than hang.
+    ensureSessionSubscribed().catch((err) => {
+      logSessionBridgeFallback("subscribe", err);
+      finish(null);
+    });
+
+    // Fast path: the id may already be in the last-known view.
+    const immediate = currentSessionView()[tabId]?.sessionId;
+    if (accept(immediate)) {
+      finish(immediate);
+      return;
+    }
+    if (isCanceled()) {
+      finish(null);
+      return;
+    }
+
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    cleanups.push(() => clearTimeout(timer));
+    // Poll cancellation so a torn-down effect stops waiting promptly rather than
+    // holding the promise open until the timeout.
+    const cancelPoll = setInterval(() => {
+      if (isCanceled()) finish(null);
+    }, 100);
+    cleanups.push(() => clearInterval(cancelPoll));
+  });
 }
 
 /**
