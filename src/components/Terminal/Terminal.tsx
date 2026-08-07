@@ -568,7 +568,12 @@ export function Terminal({
                 // `session.dropped`, converging with `setTerminalExited`. Computed
                 // from the live store the same way the client's drop path does.
                 const resilientReconnect = isResilientReconnectTabId(tabId);
-                resolved = await createTerminal(sessionConfig, connectId, spawned, resilientReconnect);
+                resolved = await createTerminal(
+                  sessionConfig,
+                  connectId,
+                  spawned,
+                  resilientReconnect
+                );
               } finally {
                 connectInFlightRef.current.delete(connectId);
               }

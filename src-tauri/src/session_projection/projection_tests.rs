@@ -581,7 +581,11 @@ fn server_side_resilient_drop_fold_starts_reconnecting() {
     );
 
     let diffs = sink.diffs();
-    assert_eq!(diffs.len(), 1, "one diff from the server-side reconnect fold");
+    assert_eq!(
+        diffs.len(),
+        1,
+        "one diff from the server-side reconnect fold"
+    );
     cache.apply(&diffs[0]);
     assert_eq!(
         cache.view["sessions"]["tab-1"]["status"],

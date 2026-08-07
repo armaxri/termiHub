@@ -622,6 +622,10 @@ impl SessionManager {
     /// Containers" from this backend marker rather than the frontend tab flag.
     ///
     /// Returns the session ID on success.
+    // The parameters mirror the `create_connection` IPC surface (type + settings +
+    // routing flags + the connect-time signals: spawn origin #1466, resilient
+    // reconnect #2439); grouping them into a struct would only obscure the call.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_connection<E: EventEmitter>(
         &self,
         type_id: &str,
