@@ -2425,6 +2425,115 @@ mod tests {
         SessionManager::new(registry, agent_manager)
     }
 
+    // ── Identity bridge: session_id → tab_id (#2431) ──────────────────
+
+    #[test]
+    fn tab_id_from_connect_id_parses_the_tab_prefix() {
+        assert_eq!(tab_id_from_connect_id("tab-1:0").as_deref(), Some("tab-1"));
+        // The parse is retry-count-agnostic: it strips only the trailing segment.
+        assert_eq!(tab_id_from_connect_id("tab-1:3").as_deref(), Some("tab-1"));
+        // A tab id containing a colon: only the last `:retry` is stripped.
+        assert_eq!(tab_id_from_connect_id("a:b:2").as_deref(), Some("a:b"));
+        // An unexpected form (no colon) or an empty tab yields no mapping rather
+        // than a guess.
+        assert_eq!(tab_id_from_connect_id("notacolon"), None);
+        assert_eq!(tab_id_from_connect_id(":0"), None);
+    }
+
+    #[tokio::test]
+    async fn create_connection_records_the_tab_id_identity_bridge() {
+        let manager = make_test_manager();
+        let session_id = manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                Some("tab-42:0"),
+                false,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("session should open");
+        // A synchronous read before the spawned reader task can run, so the
+        // mapping is observed exactly as create_connection recorded it.
+        assert_eq!(manager.tab_id_for(&session_id).as_deref(), Some("tab-42"));
+    }
+
+    #[tokio::test]
+    async fn create_connection_without_connect_id_records_no_tab() {
+        let manager = make_test_manager();
+        let session_id = manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                None,
+                false,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("session should open");
+        assert_eq!(
+            manager.tab_id_for(&session_id),
+            None,
+            "a session with no connect_id carries no tab"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_session_clears_the_tab_id_identity_bridge() {
+        let manager = make_test_manager();
+        let session_id = manager
+            .create_connection(
+                "mock",
+                serde_json::json!({}),
+                None,
+                Some("tab-7:0"),
+                false,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("session should open");
+        assert_eq!(manager.tab_id_for(&session_id).as_deref(), Some("tab-7"));
+
+        manager
+            .close_session(&session_id)
+            .await
+            .expect("close should succeed");
+        assert_eq!(
+            manager.tab_id_for(&session_id),
+            None,
+            "closing a session clears its identity-bridge entry"
+        );
+    }
+
+    #[tokio::test]
+    async fn emit_and_cleanup_clears_the_tab_id_identity_bridge() {
+        let emitter = MockEventEmitter::new();
+        let sessions = sessions_with_mock("sess-tab").await;
+        let session_tab_ids = new_session_tab_ids();
+        session_tab_ids
+            .lock()
+            .unwrap()
+            .insert("sess-tab".to_string(), "tab-9".to_string());
+
+        SessionManager::emit_and_cleanup(
+            "sess-tab",
+            Vec::new(),
+            &emitter,
+            &sessions,
+            &new_output_buffers(),
+            &new_session_loggers(),
+            &session_tab_ids,
+        )
+        .await;
+
+        assert!(
+            !session_tab_ids.lock().unwrap().contains_key("sess-tab"),
+            "the natural-exit / dropped path clears the identity-bridge entry"
+        );
+    }
+
     /// A connection whose `connect_cancellable` blocks until its token fires —
     /// lets us exercise mid-connect cancellation (#952) deterministically.
     #[derive(Default)]
