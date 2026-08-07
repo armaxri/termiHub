@@ -97,13 +97,9 @@ describe("appStore — settings toggles", () => {
     expect(mockSessionMonitoringClose).toHaveBeenCalledWith("mon-1");
   });
 
-  it("disabling file browser disconnects SFTP and switches sidebar to connections", async () => {
-    // Set up connected SFTP state and files sidebar view
-    useAppStore.setState({
-      sftpSessionId: "sftp-1",
-      sftpConnectedHost: "pi@pi.local:22",
-      sidebarView: "files",
-    });
+  it("disabling file browser switches sidebar from files to connections", async () => {
+    // Files sidebar view is open when the file browser is turned off.
+    useAppStore.setState({ sidebarView: "files" });
     seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
     await useAppStore
@@ -112,18 +108,12 @@ describe("appStore — settings toggles", () => {
 
     const state = useAppStore.getState();
     expect(currentSettingsView().fileBrowserEnabled).toBe(false);
-    expect(state.sftpSessionId).toBeNull();
     expect(state.sidebarView).toBe("connections");
-    expect(mockSftpClose).toHaveBeenCalledWith("sftp-1");
   });
 
   it("disabling one feature does not affect the other", async () => {
     await seedMonitor("mon-1", "pi@pi.local:22");
-    useAppStore.setState({
-      sftpSessionId: "sftp-1",
-      sftpConnectedHost: "pi@pi.local:22",
-      sidebarView: "files",
-    });
+    useAppStore.setState({ sidebarView: "files" });
     seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
     // Disable only power monitoring
@@ -134,10 +124,8 @@ describe("appStore — settings toggles", () => {
     const state = useAppStore.getState();
     // Monitoring disconnected via the backend close command.
     expect(mockSessionMonitoringClose).toHaveBeenCalledWith("mon-1");
-    // SFTP still connected
-    expect(state.sftpSessionId).toBe("sftp-1");
+    // File browser untouched: the files sidebar stays open.
     expect(state.sidebarView).toBe("files");
-    expect(mockSftpClose).not.toHaveBeenCalled();
   });
 
   it("does not disconnect when feature was already disabled", async () => {
@@ -198,10 +186,8 @@ describe("appStore — settings toggles", () => {
     expect(mockSessionMonitoringClose).not.toHaveBeenCalled();
   });
 
-  it("disabling global file browser keeps SFTP when active tab has explicit enableFileBrowser=true", async () => {
+  it("disabling global file browser keeps the files sidebar when active tab has explicit enableFileBrowser=true", async () => {
     useAppStore.setState({
-      sftpSessionId: "sftp-1",
-      sftpConnectedHost: "pi@pi.local:22",
       sidebarView: "files",
       ...sshTabPanel({ enableFileBrowser: true }),
     });
@@ -211,9 +197,7 @@ describe("appStore — settings toggles", () => {
       .getState()
       .updateSettings(settingsDoc({ powerMonitoringEnabled: true, fileBrowserEnabled: false }));
 
-    // SFTP should NOT be disconnected — the active tab has an explicit override
-    expect(mockSftpClose).not.toHaveBeenCalled();
-    expect(useAppStore.getState().sftpSessionId).toBe("sftp-1");
+    // Sidebar should NOT switch away — the active tab has an explicit override.
     expect(useAppStore.getState().sidebarView).toBe("files");
   });
 

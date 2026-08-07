@@ -28,8 +28,6 @@ import {
   SavedConnection,
   ConnectionFolder,
   FileEntry,
-  SftpStatus,
-  SftpSessionEntry,
   TransferState,
   AppSettings,
   RemoteAgentDefinition,
@@ -61,11 +59,7 @@ import {
 } from "@/services/storage";
 import { deriveTabStatus, type TabStatusMaps } from "@/utils/tabStatus";
 import {
-  sftpOpen,
-  sftpClose,
   sftpCancelTransfer,
-  sftpListDir,
-  sftpRealpath,
   sessionListFiles,
   localListDir,
   vscodeAvailable as checkVscode,
@@ -312,9 +306,8 @@ export type SidebarView =
 export interface FileClipboard {
   entries: FileEntry[];
   operation: "copy" | "cut";
-  sourceMode: "local" | "sftp" | "session";
+  sourceMode: "local" | "session";
   sourcePath: string;
-  sftpSessionId: string | null;
   /** Terminal session ID for session-mode clipboard entries. */
   terminalSessionId?: string | null;
 }
@@ -651,14 +644,12 @@ export interface AppState
   /**
    * Open (or focus) an editor tab for a file.
    *
-   * A remote tab is backed by exactly one transport: pass `sftpSessionId` for
-   * the legacy SFTP path (SSH), or `sessionBrowser` for the protocol-agnostic
-   * session layer (FTP, Docker, agent sessions — #1557).
+   * A remote tab is backed by the protocol-agnostic session layer via
+   * `sessionBrowser` (SSH, FTP, Docker, agent sessions — #1557 / #2422).
    */
   openEditorTab: (
     filePath: string,
     isRemote: boolean,
-    sftpSessionId?: string,
     permissions?: string | null,
     sessionBrowser?: EditorSessionRef
   ) => void;
@@ -951,52 +942,12 @@ export interface AppState
   bulkMoveConnectionsToFolder: (connectionIds: string[], folderId: string | null) => void;
   moveConnectionToFile: (connectionId: string, targetSource: string | null) => Promise<void>;
 
-  // File browser / SFTP
-  fileEntries: FileEntry[];
-  currentPath: string;
-  sftpSessionId: string | null;
-  /**
-   * Explicit SFTP session lifecycle status (audit gap A1). Replaces the
-   * overloaded `sftpLoading` boolean so the UI can tell "connecting" apart from
-   * "listing"/"refreshing" and "idle".
-   */
-  sftpStatus: SftpStatus;
-  sftpError: string | null;
-  /**
-   * Host label (`user@host:port`) of the session the browser is currently
-   * viewing. Derived from `sftpSessions[sftpSessionId]`; kept as its own field
-   * so the file browser and status UI can read the active host cheaply.
-   */
-  sftpConnectedHost: string | null;
-  /**
-   * Every live backend SFTP session, keyed by its session-id / UUID (Decision 1
-   * of the sftp-session-and-transfers concept, issue #1241). `hostLabel` is
-   * display metadata; `owningTabId` binds the session to the tab that opened it
-   * so it can be closed when that tab closes (the L1 leak fix). `sftpSessionId`
-   * above is the derived "active" pointer into this map for the current browser.
-   */
-  sftpSessions: Record<string, SftpSessionEntry>;
-  /**
-   * The last config passed to `connectSftp`, retained so a failed connect can be
-   * retried (audit gap S1). Cleared on `disconnectSftp`.
-   */
-  sftpLastConfig: Record<string, unknown> | null;
-  setCurrentPath: (path: string) => void;
-  setFileEntries: (entries: FileEntry[]) => void;
-  connectSftp: (config: Record<string, unknown>, owningTabId?: string) => Promise<void>;
-  disconnectSftp: () => Promise<void>;
-  navigateSftp: (path: string) => Promise<void>;
-  refreshSftp: () => Promise<void>;
-  /** Re-invoke `connectSftp` with the persisted last config (audit gap S1). */
-  retrySftp: () => Promise<void>;
-  /** Clear the SFTP error so the failed-connect placeholder resets (audit gap S1). */
-  dismissSftpError: () => void;
-  /**
-   * Close a single tracked SFTP session (`sftp_close`) and drop it from
-   * `sftpSessions`. When it is the active browser session, the browser is reset
-   * to idle. Drives the per-session Kill in the Open Connections panel (#1241).
-   */
-  closeSftpSession: (sessionId: string) => Promise<void>;
+  // File browser — SFTP transfers
+  //
+  // The legacy `SftpManager`/`sftpSessionId` browser session model was retired
+  // once SSH file browsing + editing converged onto the session path
+  // (#2313 / #2421 / #2422); the SFTP-backed session now drives file ops and its
+  // transfers register on the `transfers` map below keyed by the session id.
 
   /**
    * Live in-flight SFTP transfers keyed by `transferId` (concept "SFTP session
@@ -1310,8 +1261,8 @@ export interface AppState
   setSessionFileBrowserId: (sessionId: string | null) => void;
 
   // File browser mode
-  fileBrowserMode: "local" | "sftp" | "session" | "none";
-  setFileBrowserMode: (mode: "local" | "sftp" | "session" | "none") => void;
+  fileBrowserMode: "local" | "session" | "none";
+  setFileBrowserMode: (mode: "local" | "session" | "none") => void;
 
   // File clipboard (copy/cut)
   fileClipboard: FileClipboard | null;
@@ -2012,26 +1963,19 @@ function raiseRestoreSummary(
  * connections, so opening the same path on two different hosts yields two tabs
  * while reconnecting one host refreshes its tab:
  *
- * - SFTP (`sftpSessionId`) → the session's `hostLabel` (`user@host:port`). A
- *   reconnect mints a new session id under the same label.
  * - Session layer (`sessionBrowser`) → the id of the terminal tab that owns the
  *   session. A reconnect swaps the session id but keeps the same tab.
  *
  * Returns `undefined` for local tabs and for remote tabs whose identity cannot
- * be resolved (unknown host, or no owning tab found); callers then fall back to
- * path-only dedup, preserving the pre-#1599 behaviour.
+ * be resolved (no owning tab found); callers then fall back to path-only dedup,
+ * preserving the pre-#1599 behaviour.
  */
 function resolveEditorSessionKey(
-  state: { rootPanel: PanelNode; sftpSessions: Record<string, SftpSessionEntry> },
+  state: { rootPanel: PanelNode },
   isRemote: boolean,
-  sftpSessionId?: string,
   sessionBrowser?: EditorSessionRef
 ): string | undefined {
   if (!isRemote) return undefined;
-  if (sftpSessionId) {
-    const hostLabel = state.sftpSessions[sftpSessionId]?.hostLabel;
-    return hostLabel ? `sftp:${hostLabel}` : undefined;
-  }
   if (sessionBrowser) {
     const owner = getAllLeaves(state.rootPanel)
       .flatMap((l) => l.tabs)
@@ -2483,21 +2427,14 @@ function serializeHandoffTab(tab: TerminalTab): HandoffTab {
 
 /**
  * The backend session ids whose transfers belong to `tab` (#1951): the tab's own
- * `sessionId` (FTP `file-browser` tabs transfer on the tab session directly) plus
- * every SFTP sidebar session bound to the tab via `sftpSessions[…].owningTabId`
- * (an SSH tab's SFTP browser runs on a separate session). A Transfer Queue row is
- * attributed to `tab` when its `sessionId` is in this set, so the rows can follow
- * the tab across a window move.
+ * `sessionId`. Since the SFTP convergence (#2421 / #2422) a file browser transfers
+ * on the tab's own session id — there is no separate SFTP sidebar session — so a
+ * Transfer Queue row is attributed to `tab` when its `sessionId` matches, and the
+ * rows follow the tab across a window move.
  */
-function tabTransferSessionIds(
-  state: { sftpSessions: Record<string, SftpSessionEntry> },
-  tab: TerminalTab
-): string[] {
+function tabTransferSessionIds(tab: TerminalTab): string[] {
   const ids = new Set<string>();
   if (tab.sessionId) ids.add(tab.sessionId);
-  for (const [sid, entry] of Object.entries(state.sftpSessions)) {
-    if (entry.owningTabId === tab.id) ids.add(sid);
-  }
   return [...ids];
 }
 
@@ -2513,11 +2450,11 @@ function tabTransferSessionIds(
  * status bar) is still per-window, so its session ids are released here and
  * re-folded from live events in the destination.
  */
-function buildTransferAwareHandoff(
-  state: { sftpSessions: Record<string, SftpSessionEntry> },
-  tab: TerminalTab
-): { record: TabHandoffRecord; transferSessionIds: string[] } {
-  const transferSessionIds = tabTransferSessionIds(state, tab);
+function buildTransferAwareHandoff(tab: TerminalTab): {
+  record: TabHandoffRecord;
+  transferSessionIds: string[];
+} {
+  const transferSessionIds = tabTransferSessionIds(tab);
   const record: TabHandoffRecord = { tab: serializeHandoffTab(tab) };
   return { record, transferSessionIds };
 }
@@ -2558,28 +2495,24 @@ type OwnershipView = {
   tabGroups: TabGroup[];
   activeTabGroupId: string;
   rootPanel: PanelNode;
-  sftpSessions: Record<string, SftpSessionEntry>;
   sessionOwners: Record<string, string>;
   windowLabel: string;
 };
 
 /**
  * Whether this window renders `sessionId` locally (#1964): a live tab in any of
- * this window's tab groups is bound to it, or it is an SFTP sidebar session in
- * this window's store. This is authoritative for *this* window regardless of how
- * fresh {@link AppState.sessionOwners} is, so the owning window never suppresses
- * (nor prunes) a row for a session it is actually showing.
+ * this window's tab groups is bound to it. This is authoritative for *this*
+ * window regardless of how fresh {@link AppState.sessionOwners} is, so the owning
+ * window never suppresses (nor prunes) a row for a session it is actually showing.
  */
 function windowRendersSession(
   state: {
     tabGroups: TabGroup[];
     activeTabGroupId: string;
     rootPanel: PanelNode;
-    sftpSessions: Record<string, SftpSessionEntry>;
   },
   sessionId: string
 ): boolean {
-  if (sessionId in state.sftpSessions) return true;
   return collectLiveTabs(state).some((t) => t.sessionId === sessionId);
 }
 
@@ -2676,39 +2609,6 @@ let groupCounter = 0;
 function generateGroupId(): string {
   groupCounter++;
   return `group-${Date.now()}-${groupCounter}-${Math.random().toString(36).slice(2, 6)}`;
-}
-
-// Monotonic sequencer for SFTP directory-list requests (GAP R1, #1143).
-// navigateSftp/refreshSftp await sftpListDir with no ordering guarantee, so when
-// two navigations overlap the response that resolves LAST wins currentPath/
-// fileEntries — leaving the path and displayed list desynced. Each list request
-// captures the next seq; a response only commits state if it is still the latest
-// request, so a stale (superseded) response is ignored.
-let _sftpListSeq = 0;
-
-/** @internal Reset the SFTP list sequencer — for tests only. */
-export function _resetSftpListSeq(): void {
-  _sftpListSeq = 0;
-}
-
-// Detects a mid-browse failure that means the underlying SFTP session is dead
-// (audit gap S2): the Rust side raises "SFTP session not found" when the slot is
-// gone, and russh reports channel/transport drops with these phrasings. On such
-// an error the front end must stop pretending it is connected (clear
-// sftpSessionId) so the auto-connect effect can re-establish and a Reconnect
-// control is offered — as opposed to a recoverable per-directory error (e.g.
-// "permission denied") which must leave the session intact.
-function isSftpSessionDeadError(message: string): boolean {
-  const m = message.toLowerCase();
-  return (
-    m.includes("session not found") ||
-    m.includes("channel") ||
-    m.includes("disconnected") ||
-    m.includes("connection reset") ||
-    m.includes("broken pipe") ||
-    m.includes("not connected") ||
-    m.includes("transport")
-  );
 }
 
 export const useAppStore = create<AppState>((set, get, store) => {
@@ -3036,7 +2936,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // transient `transfers` map so its rows follow ownership (#1951). The
       // Transfer Queue itself is region-authoritative and shared (#2229), so it
       // needs no carrying — the destination already sees the same rows.
-      const { record, transferSessionIds } = buildTransferAwareHandoff(get(), tab);
+      const { record, transferSessionIds } = buildTransferAwareHandoff(tab);
       const sessionId = tab.sessionId;
 
       // Mark the live session as moving so the source window's Terminal does NOT
@@ -3322,10 +3222,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // and shared (#2229), so no queue rows are carried — the destination window
       // already sees them; this window is being torn down, so no source-side
       // transient-map release is needed either.
-      const state = get();
-      const records: TabHandoffRecord[] = tabs.map(
-        (tab) => buildTransferAwareHandoff(state, tab).record
-      );
+      const records: TabHandoffRecord[] = tabs.map((tab) => buildTransferAwareHandoff(tab).record);
       try {
         if (target.kind === "new") {
           // Create the destination window seeded with the first tab, then queue
@@ -4025,14 +3922,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
         return { rootPanel, activePanelId: targetPanelId };
       }),
 
-    openEditorTab: (filePath, isRemote, sftpSessionId, permissions, sessionBrowser) =>
+    openEditorTab: (filePath, isRemote, permissions, sessionBrowser) =>
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
         // Stable identity of the backing session, so the same path opened from
         // two different remote sessions gets two tabs while a reconnect of the
         // same connection refreshes one (#1599).
-        const sessionKey = resolveEditorSessionKey(state, isRemote, sftpSessionId, sessionBrowser);
+        const sessionKey = resolveEditorSessionKey(state, isRemote, sessionBrowser);
 
         // Look for an existing editor tab for this file on the same session.
         for (const leaf of allLeaves) {
@@ -4049,27 +3946,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
               tabs: l.tabs.map((t) => {
                 if (t.id !== existing.id) return { ...t, isActive: false };
                 // Refresh the backing session so a reconnected session works.
-                // Only the transport actually supplied is refreshed, and the
-                // other is cleared with it: a tab must never carry both an
-                // sftpSessionId and a sessionBrowser, or the editor's
-                // SFTP-first branch would shadow the session-layer one. (#1557)
                 let updatedMeta = t.editorMeta;
-                if (isRemote && t.editorMeta) {
-                  if (sftpSessionId) {
-                    updatedMeta = {
-                      ...t.editorMeta,
-                      sftpSessionId,
-                      sessionBrowser: undefined,
-                      sessionKey,
-                    };
-                  } else if (sessionBrowser) {
-                    updatedMeta = {
-                      ...t.editorMeta,
-                      sessionBrowser,
-                      sftpSessionId: undefined,
-                      sessionKey,
-                    };
-                  }
+                if (isRemote && t.editorMeta && sessionBrowser) {
+                  updatedMeta = {
+                    ...t.editorMeta,
+                    sessionBrowser,
+                    sessionKey,
+                  };
                 }
                 return { ...t, isActive: true, editorMeta: updatedMeta };
               }),
@@ -4088,7 +3971,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const editorMeta: EditorTabMeta = {
           filePath,
           isRemote,
-          sftpSessionId,
           permissions,
           sessionBrowser,
           sessionKey,
@@ -4265,19 +4147,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         bestEffortOwnership(() => releaseSession(closingSessionId));
       }
 
-      // Close every SFTP session owned by this tab and drop it from the map —
-      // the L1 leak fix (#1241). Fire the async closes here (fire-and-forget)
-      // so the state updater below stays pure; the entries are removed regardless.
-      const ownedSftp = Object.entries(useAppStore.getState().sftpSessions)
-        .filter(([, entry]) => entry.owningTabId === tabId)
-        .map(([sessionId]) => sessionId);
-      ownedSftp.forEach((sessionId) => {
-        sftpClose(sessionId).catch(() => {});
-        // Relinquish each SFTP session's window ownership (#1964), mirroring the
-        // tab-session release above. Best-effort.
-        bestEffortOwnership(() => releaseSession(sessionId));
-      });
-
       set((state) => {
         // Clean up per-tab state for the closed tab
         const remainingCwds = omitKey(state.tabCwds, tabId);
@@ -4300,25 +4169,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const remainingAutoRetry = omitKey(state.terminalAutoRetryCount, tabId);
         const remainingWaiting = omitKey(state.terminalWaitingForAgent, tabId);
         const remainingAutoReconnect = omitKey(state.terminalAutoReconnect, tabId);
-
-        // Drop the SFTP sessions owned by this tab (closed above) from the map,
-        // and reset the browser when the active session was one of them (#1241).
-        const remainingSftp = ownedSftp.reduce(
-          (acc, sessionId) => omitKey(acc, sessionId),
-          state.sftpSessions
-        );
-        const activeSftpClosed =
-          state.sftpSessionId != null && ownedSftp.includes(state.sftpSessionId);
-        const sftpBrowserReset = activeSftpClosed
-          ? {
-              sftpSessionId: null,
-              sftpConnectedHost: null,
-              sftpStatus: "idle" as SftpStatus,
-              fileEntries: [],
-              currentPath: "/",
-              sftpError: null,
-            }
-          : {};
 
         // Remove this tab from any persistent session's attachedTabIds
         const persistentSessions = { ...state.persistentSessions };
@@ -4372,8 +4222,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
             terminalAutoRetryCount: remainingAutoRetry,
             terminalWaitingForAgent: remainingWaiting,
             terminalAutoReconnect: remainingAutoReconnect,
-            sftpSessions: remainingSftp,
-            ...sftpBrowserReset,
           };
         }
 
@@ -4401,8 +4249,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
           terminalAutoRetryCount: remainingAutoRetry,
           terminalWaitingForAgent: remainingWaiting,
           terminalAutoReconnect: remainingAutoReconnect,
-          sftpSessions: remainingSftp,
-          ...sftpBrowserReset,
         };
       });
 
@@ -5076,7 +4922,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
           const tabCfg = activeTab?.config.config as unknown as Record<string, unknown> | undefined;
           const hasOverride = tabCfg?.enableFileBrowser === true;
           if (!hasOverride) {
-            get().disconnectSftp();
             if (get().sidebarView === "files") {
               set({ sidebarView: "connections" });
             }
@@ -5416,187 +5261,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       });
     },
 
-    // File browser / SFTP
-    fileEntries: [],
-    currentPath: "/",
-    sftpSessionId: null,
-    sftpStatus: "idle",
-    sftpError: null,
-    sftpConnectedHost: null,
-    sftpSessions: {},
-    sftpLastConfig: null,
+    // File browser — SFTP transfers
     transfers: {},
-
-    setCurrentPath: (path) => set({ currentPath: path }),
-    setFileEntries: (entries) => set({ fileEntries: entries }),
-
-    connectSftp: async (config: Record<string, unknown>, owningTabId?: string) => {
-      // Host switch: do not silently overwrite the previous active session.
-      // Close it only when its owning tab is gone (orphan cleanup); otherwise
-      // leave it registered so it stays visible/killable (issue #1241, L1).
-      const prev = useAppStore.getState();
-      const prevId = prev.sftpSessionId;
-      if (prevId) {
-        const prevEntry = prev.sftpSessions[prevId];
-        const ownerAlive =
-          prevEntry != null && collectLiveTabs(prev).some((t) => t.id === prevEntry.owningTabId);
-        if (!ownerAlive) {
-          try {
-            await sftpClose(prevId);
-          } catch {
-            // Ignore close errors — the entry is dropped regardless.
-          }
-          // Relinquish this SFTP session's window ownership (#1964) so its
-          // transfers stop being attributed to this window (mirrors #1939 for
-          // tab sessions). Best-effort.
-          bestEffortOwnership(() => releaseSession(prevId));
-          set((state) => ({ sftpSessions: omitKey(state.sftpSessions, prevId) }));
-        }
-      }
-      // Retain the config so a failed connect can be retried (audit gap S1).
-      set({ sftpStatus: "connecting", sftpError: null, sftpLastConfig: config });
-      try {
-        const sessionId = await sftpOpen(config);
-        // Resolve the real remote home via SFTP realpath(".") instead of the
-        // fragile /home/<user> guess, which is wrong for non-Linux layouts and
-        // custom home paths (audit GAP C2, issue #1143). Fall back to root if
-        // realpath is unsupported or the resolved home cannot be listed.
-        let entries: FileEntry[];
-        let activePath = "/";
-        try {
-          const homePath = await sftpRealpath(sessionId, ".");
-          entries = await sftpListDir(sessionId, homePath);
-          activePath = homePath;
-        } catch (homeErr) {
-          frontendLog(
-            "sftp",
-            `connectSftp: home resolution failed, falling back to root: ${
-              homeErr instanceof Error ? homeErr.message : String(homeErr)
-            }`
-          );
-          entries = await sftpListDir(sessionId, "/");
-        }
-        const hostLabel = `${config.username as string}@${config.host as string}:${config.port as number}`;
-        // One SFTP session per owning tab: close any prior session the same tab
-        // owned (e.g. revisiting the tab or reconnecting to a new host) so
-        // sessions don't accumulate for a single browser (#1241).
-        const staleForTab = owningTabId
-          ? Object.entries(useAppStore.getState().sftpSessions)
-              .filter(([sid, e]) => e.owningTabId === owningTabId && sid !== sessionId)
-              .map(([sid]) => sid)
-          : [];
-        staleForTab.forEach((sid) => {
-          sftpClose(sid).catch(() => {});
-          bestEffortOwnership(() => releaseSession(sid));
-        });
-        set((state) => {
-          let sessions = state.sftpSessions;
-          if (owningTabId) {
-            sessions = staleForTab.reduce((acc, sid) => omitKey(acc, sid), sessions);
-            sessions = { ...sessions, [sessionId]: { hostLabel, owningTabId } };
-          }
-          return {
-            sftpSessionId: sessionId,
-            sftpStatus: "connected" as SftpStatus,
-            currentPath: activePath,
-            fileEntries: entries,
-            sftpConnectedHost: hostLabel,
-            sftpSessions: sessions,
-          };
-        });
-        // Claim window ownership of the tracked SFTP session (#1964) so its
-        // broadcast `transfer-progress` events fold only in this window, even
-        // without a tab move. Only sessions bound to an owning tab are tracked in
-        // the map (and thus attributable); an untracked ad-hoc session stays
-        // unclaimed and folds everywhere as before. Best-effort (see #1939).
-        if (owningTabId) {
-          bestEffortOwnership(() => claimSession(sessionId));
-        }
-      } catch (err) {
-        set({
-          sftpStatus: "error",
-          sftpError: err instanceof Error ? err.message : String(err),
-        });
-      }
-    },
-
-    disconnectSftp: async () => {
-      const sessionId = useAppStore.getState().sftpSessionId;
-      if (sessionId) {
-        try {
-          await sftpClose(sessionId);
-        } catch {
-          // Ignore close errors
-        }
-        // Relinquish this SFTP session's window ownership (#1964). Best-effort.
-        bestEffortOwnership(() => releaseSession(sessionId));
-      }
-      set((state) => ({
-        sftpSessionId: null,
-        sftpStatus: "idle",
-        fileEntries: [],
-        currentPath: "/",
-        sftpError: null,
-        sftpConnectedHost: null,
-        sftpLastConfig: null,
-        sftpSessions: sessionId ? omitKey(state.sftpSessions, sessionId) : state.sftpSessions,
-      }));
-    },
-
-    closeSftpSession: async (sessionId: string) => {
-      // Kill-cascade (concept "Edge cases"): cancel every in-flight transfer
-      // owned by this session *before* closing it, so no transfer keeps a dead
-      // session's channel alive. The `cancelled` events D1 emits back clear the
-      // rows; we also drop them optimistically below.
-      const owned = Object.values(useAppStore.getState().transfers).filter(
-        (t) => t.sessionId === sessionId
-      );
-      await Promise.all(
-        owned.map((t) =>
-          sftpCancelTransfer(t.transferId).catch((err) => {
-            frontendLog(
-              "sftp_transfer",
-              `closeSftpSession: cancel of ${t.transferId} failed: ${
-                err instanceof Error ? err.message : String(err)
-              }`
-            );
-          })
-        )
-      );
-      if (owned.length > 0) {
-        const cancelledIds = new Set(owned.map((t) => t.transferId));
-        set((state) => ({
-          transfers: Object.fromEntries(
-            Object.entries(state.transfers).filter(([id]) => !cancelledIds.has(id))
-          ),
-        }));
-      }
-      try {
-        await sftpClose(sessionId);
-      } catch {
-        // Ignore close errors — the entry is dropped regardless.
-      }
-      // Relinquish this SFTP session's window ownership (#1964). Best-effort.
-      bestEffortOwnership(() => releaseSession(sessionId));
-      set((state) => {
-        const isActive = state.sftpSessionId === sessionId;
-        return {
-          sftpSessions: omitKey(state.sftpSessions, sessionId),
-          // When the killed session was the one the browser is viewing, reset
-          // the browser to idle so it stops looking connected.
-          ...(isActive
-            ? {
-                sftpSessionId: null,
-                sftpConnectedHost: null,
-                sftpStatus: "idle" as SftpStatus,
-                fileEntries: [],
-                currentPath: "/",
-                sftpError: null,
-              }
-            : {}),
-        };
-      });
-    },
 
     applyTransferProgress: (progress: TransferState) =>
       set((state) => {
@@ -5652,115 +5318,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     setTransferQueueMinimized: (minimized: boolean) => {
       dispatchTransferIntentBestEffort("transfer.setMinimized", { minimized });
-    },
-
-    retrySftp: async () => {
-      const config = useAppStore.getState().sftpLastConfig;
-      if (!config) {
-        frontendLog("sftp", "retrySftp: no persisted config to retry with");
-        return;
-      }
-      frontendLog("sftp", "retrySftp: re-attempting SFTP connect");
-      await useAppStore.getState().connectSftp(config);
-    },
-
-    dismissSftpError: () =>
-      // Clearing the error must also leave a coherent status: fall back to
-      // `connected` when a live session survived the error (a recoverable
-      // listing error), otherwise `idle`. Leaving it on `error` would keep the
-      // failed-connect placeholder up even after the message is dismissed.
-      set((state) => ({
-        sftpError: null,
-        sftpStatus: state.sftpSessionId ? "connected" : "idle",
-      })),
-
-    navigateSftp: async (path: string) => {
-      const sessionId = useAppStore.getState().sftpSessionId;
-      if (!sessionId) return;
-      const seq = ++_sftpListSeq;
-      set({ sftpStatus: "listing", sftpError: null });
-      // Browser-view mirror (#2228): the SFTP list flags map to the pane's
-      // loadStarted/loadSucceeded/loadFailed; the session model (sftpStatus,
-      // session ids) stays appStore-driven (#2236).
-      mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "sftp" });
-      try {
-        const entries = await sftpListDir(sessionId, path);
-        // Ignore a stale response: a newer navigate/refresh superseded this one.
-        if (seq !== _sftpListSeq) {
-          frontendLog("sftp", `navigateSftp: dropping stale list for ${path} (seq ${seq})`);
-          return;
-        }
-        set({ fileEntries: entries, currentPath: path, sftpStatus: "connected" });
-        mirrorFileBrowserIntent("fileBrowser.loadSucceeded", { pane: "sftp", path, entries });
-      } catch (err) {
-        if (seq !== _sftpListSeq) return;
-        const message = err instanceof Error ? err.message : String(err);
-        // A dead session (audit gap S2) must drop sftpSessionId so the UI stops
-        // looking connected and the auto-connect effect / Reconnect can recover.
-        const sessionDead = isSftpSessionDeadError(message);
-        if (sessionDead) {
-          frontendLog("sftp", `navigateSftp: session appears dead — clearing session (${message})`);
-          // Relinquish the dead SFTP session's window ownership (#1964).
-          bestEffortOwnership(() => releaseSession(sessionId));
-        }
-        set((state) => ({
-          sftpStatus: "error",
-          sftpError: message,
-          ...(sessionDead
-            ? {
-                sftpSessionId: null,
-                sftpConnectedHost: null,
-                sftpSessions: omitKey(state.sftpSessions, sessionId),
-              }
-            : {}),
-        }));
-        mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "sftp", error: message });
-      }
-    },
-
-    refreshSftp: async () => {
-      const { sftpSessionId, currentPath } = useAppStore.getState();
-      if (!sftpSessionId) return;
-      const seq = ++_sftpListSeq;
-      set({ sftpStatus: "listing", sftpError: null });
-      mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "sftp" });
-      try {
-        const entries = await sftpListDir(sftpSessionId, currentPath);
-        // Ignore a stale response: a newer navigate/refresh superseded this one.
-        if (seq !== _sftpListSeq) {
-          frontendLog("sftp", `refreshSftp: dropping stale list for ${currentPath} (seq ${seq})`);
-          return;
-        }
-        set({ fileEntries: entries, sftpStatus: "connected" });
-        mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
-          pane: "sftp",
-          path: currentPath,
-          entries,
-        });
-      } catch (err) {
-        if (seq !== _sftpListSeq) return;
-        const message = err instanceof Error ? err.message : String(err);
-        const sessionDead = isSftpSessionDeadError(message);
-        if (sessionDead) {
-          frontendLog("sftp", `refreshSftp: session appears dead — clearing session (${message})`);
-          // Relinquish the dead SFTP session's window ownership (#1964).
-          bestEffortOwnership(() => releaseSession(sftpSessionId));
-        }
-        set((state) => ({
-          sftpStatus: "error",
-          sftpError: message,
-          ...(sessionDead
-            ? {
-                sftpSessionId: null,
-                sftpConnectedHost: null,
-                sftpSessions: sftpSessionId
-                  ? omitKey(state.sftpSessions, sftpSessionId)
-                  : state.sftpSessions,
-              }
-            : {}),
-        }));
-        mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "sftp", error: message });
-      }
     },
 
     // Per-tab CWD tracking

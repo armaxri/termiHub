@@ -3,7 +3,6 @@ import {
   Terminal,
   Server,
   ArrowLeftRight,
-  FolderOpen,
   Activity,
   MonitorStop,
   MonitorCog,
@@ -103,8 +102,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // Live single source of truth for tunnel status (kept in sync by tunnel
   // events); the panel reads it directly so it never drifts from the sidebar.
   const tunnelStates = useAppStore((s) => s.tunnelStates);
-  const sftpSessions = useAppStore((s) => s.sftpSessions);
-  const closeSftpSession = useAppStore((s) => s.closeSftpSession);
   const transfers = useAppStore((s) => s.transfers);
   const cancelTransfer = useAppStore((s) => s.cancelTransfer);
   const tabGroups = useAppStore((s) => s.tabGroups);
@@ -144,10 +141,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     getAllLeaves(g.id === activeTabGroupId ? rootPanel : g.rootPanel).flatMap((leaf) => leaf.tabs)
   );
 
-  // Every live tab id — used to flag orphaned SFTP sessions whose owning tab no
-  // longer exists (#1241, orphan safety net).
-  const liveTabIds = new Set(allTabs.map((t) => t.id));
-
   // Session ids of spawned containers whose tab is still live (#1446): tabs
   // opened from an external `termiHub spawn` with no saved connection id. This
   // is now a FALLBACK for sessions predating the backend marker (#1466) — the
@@ -156,14 +149,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const spawnedTabSessionIds = new Set(
     allTabs.filter((t) => t.spawned && t.sessionId).map((t) => t.sessionId as string)
   );
-
-  // One entry per live backend SFTP session, keyed by its UUID. Orphaned
-  // sessions (owning tab gone) still surface here so they stay killable.
-  const sftpSessionEntries = Object.entries(sftpSessions).map(([id, entry]) => ({
-    id,
-    hostLabel: entry.hostLabel,
-    orphaned: !liveTabIds.has(entry.owningTabId),
-  }));
 
   // Live in-flight SFTP transfers (#1247). The store keeps only `transferring`
   // rows; terminal-phase transfers are auto-removed, so every value here is live.
@@ -286,7 +271,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     Object.values(agentSessions).reduce((s, arr) => s + arr.length, 0) +
     activeTunnels.length +
     transferList.length +
-    sftpSessionEntries.length +
     openMonitors.length +
     httpMonitors.length +
     (showXServer ? 1 : 0);
@@ -472,26 +456,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
   const handleKillAllTunnels = async () => {
     await Promise.all(activeTunnels.map((t) => stopTunnel(t.id)));
-  };
-
-  const handleKillSftp = async (sessionId: string) => {
-    try {
-      await closeSftpSession(sessionId);
-      toast.success("SFTP session closed");
-    } catch (err) {
-      frontendLog("open_connections", `Failed to close SFTP session: ${err}`);
-      toast.error(`Failed to close SFTP session: ${err}`);
-    }
-  };
-
-  const handleKillAllSftp = async () => {
-    try {
-      await Promise.all(sftpSessionEntries.map((s) => closeSftpSession(s.id)));
-      toast.success("All SFTP sessions closed");
-    } catch (err) {
-      frontendLog("open_connections", `Failed to close SFTP sessions: ${err}`);
-      toast.error(`Failed to close SFTP sessions: ${err}`);
-    }
   };
 
   const handleCancelTransfer = async (transferId: string) => {
@@ -915,30 +879,6 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 key={t.transferId}
                 transfer={t}
                 onCancel={() => handleCancelTransfer(t.transferId)}
-              />
-            ))}
-          </Section>
-        )}
-
-        {/* SFTP — one row per live backend session (#1241). Orphaned sessions
-            (owning tab gone) surface with a warning badge so nothing is ever
-            invisible/unkillable. */}
-        {sftpSessionEntries.length > 0 && (
-          <Section
-            title="SFTP"
-            icon={<FolderOpen size={14} />}
-            count={sftpSessionEntries.length}
-            onKillAll={handleKillAllSftp}
-            data-testid="open-connections-sftp-section"
-          >
-            {sftpSessionEntries.map((s) => (
-              <ConnectionRow
-                key={s.id}
-                icon={<FolderOpen size={14} />}
-                title={s.hostLabel}
-                detail={s.orphaned ? "orphaned — owning tab closed" : undefined}
-                badge={s.orphaned ? "orphaned" : "connected"}
-                onKill={() => handleKillSftp(s.id)}
               />
             ))}
           </Section>

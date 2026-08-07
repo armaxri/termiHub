@@ -12,15 +12,14 @@
  * {@link import("./useProjectedBroadcast").useProjectedBroadcast} (#2242) and
  * {@link import("./useProjectedConnections").useProjectedConnections} (#2225).
  *
- * # Scope — the browser *view*, not the SFTP session model (#2236)
+ * # Scope — the browser *view*, not the session model
  *
  * The projected view mirrors only the browser *view*: the active pane, each pane's
  * cwd / listing / list-operation loading+error, and the clipboard. The backend
- * SFTP/session model — the SFTP connect status, the live session ids that gate
- * `isConnected`, and transfers — stays an `appStore` read in the per-mode hooks;
- * this hook does not touch it. The SFTP pane's `loading`/`error` mirrored here are
- * the frontend's own derived list flags (`sftpStatus`-derived + `sftpError`),
- * carried through the region verbatim so the render is a pure parity swap.
+ * session model — the live session id that gates `isConnected` and transfers —
+ * stays an `appStore` read in the per-mode hooks; this hook does not touch it.
+ * Since the SFTP convergence (#2313 / #2422) SSH browses through the `session`
+ * pane, so only the `local` and `session` panes remain.
  *
  * # Safety (strangler)
  *
@@ -49,8 +48,8 @@ import {
 } from "@/store/fileBrowsersBridge";
 
 /**
- * The effective file-browsers slice for rendering: the active pane, the three
- * panes (local / sftp / session) and the clipboard, sourced from the projected
+ * The effective file-browsers slice for rendering: the active pane, the two panes
+ * (local / session) and the clipboard, sourced from the projected
  * `file-browser@<clientId>` region when it faithfully mirrors `appStore`, otherwise
  * `appStore`'s slice verbatim (flag off, region not yet caught up, or a transport
  * that cannot subscribe).
@@ -63,11 +62,6 @@ export function useProjectedFileBrowsers(): FileBrowsersView {
   const localLoading = useAppStore((s) => s.localFileLoading);
   const localError = useAppStore((s) => s.localFileError);
 
-  const sftpEntries = useAppStore((s) => s.fileEntries);
-  const sftpPath = useAppStore((s) => s.currentPath);
-  const sftpStatus = useAppStore((s) => s.sftpStatus);
-  const sftpError = useAppStore((s) => s.sftpError);
-
   const sessionEntries = useAppStore((s) => s.sessionFileEntries);
   const sessionPath = useAppStore((s) => s.sessionCurrentPath);
   const sessionLoading = useAppStore((s) => s.sessionFileLoading);
@@ -76,17 +70,10 @@ export function useProjectedFileBrowsers(): FileBrowsersView {
   const clipboard = useAppStore((s) => s.fileClipboard);
 
   // The `appStore`-shaped slice, matching the Rust region view model one-to-one.
-  // The SFTP pane's `loading` mirrors `useFileSystem`'s derived flag exactly.
   const slice = useMemo<FileBrowsersView>(
     () => ({
       mode,
       local: { path: localPath, entries: localEntries, loading: localLoading, error: localError },
-      sftp: {
-        path: sftpPath,
-        entries: sftpEntries,
-        loading: sftpStatus === "connecting" || sftpStatus === "listing",
-        error: sftpError,
-      },
       session: {
         path: sessionPath,
         entries: sessionEntries,
@@ -101,10 +88,6 @@ export function useProjectedFileBrowsers(): FileBrowsersView {
       localEntries,
       localLoading,
       localError,
-      sftpPath,
-      sftpEntries,
-      sftpStatus,
-      sftpError,
       sessionPath,
       sessionEntries,
       sessionLoading,

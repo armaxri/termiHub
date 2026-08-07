@@ -569,13 +569,16 @@ describe("appStore — connections, folders, and special tabs", () => {
       expect(leaf.tabs[0].editorMeta?.isRemote).toBe(false);
     });
 
-    it("creates an editor tab for remote file with SFTP session", () => {
-      useAppStore.getState().openEditorTab("/remote/config.json", true, "sftp-1");
+    it("creates an editor tab for remote file backed by a session browser", () => {
+      useAppStore.getState().openEditorTab("/remote/config.json", true, undefined, {
+        sessionId: "sftp-1",
+        connectionType: "ssh",
+      });
 
       const state = useAppStore.getState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs[0].editorMeta?.isRemote).toBe(true);
-      expect(leaf.tabs[0].editorMeta?.sftpSessionId).toBe("sftp-1");
+      expect(leaf.tabs[0].editorMeta?.sessionBrowser?.sessionId).toBe("sftp-1");
     });
 
     it("reuses existing editor tab for the same file", () => {

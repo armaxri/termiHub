@@ -136,22 +136,6 @@ describe("appStore — transient transfer ownership follows a moved tab (#1951 /
       expect(useAppStore.getState().transfers["keep"]).toBeDefined();
     });
 
-    it("releases an SFTP sidebar session bound to the tab via owningTabId", async () => {
-      const { tabId, panelId } = seedLiveTab("term-1");
-      // SFTP sidebar runs on a separate session id, bound to the tab.
-      useAppStore.setState({
-        sftpSessions: { "sftp-1": { hostLabel: "alice@host:22", owningTabId: tabId } },
-      });
-      useAppStore
-        .getState()
-        .applyTransferProgress(liveTransfer({ transferId: "t1", sessionId: "sftp-1" }));
-
-      await useAppStore.getState().moveTabToWindow(tabId, panelId, { kind: "new" });
-
-      expect(useAppStore.getState().transfers["t1"]).toBeUndefined();
-      expect(useAppStore.getState().releasedTransferSessions).toContain("sftp-1");
-    });
-
     it("still releases the session when the tab has no transfers", async () => {
       const { tabId, panelId } = seedLiveTab("sess-1");
 

@@ -256,7 +256,6 @@ export function useSessionFileSystem() {
         operation: "copy",
         sourceMode: "session",
         sourcePath: sessionCurrentPath,
-        sftpSessionId: null,
         terminalSessionId: sessionFileBrowserId,
       });
     },
@@ -270,7 +269,6 @@ export function useSessionFileSystem() {
         operation: "cut",
         sourceMode: "session",
         sourcePath: sessionCurrentPath,
-        sftpSessionId: null,
         terminalSessionId: sessionFileBrowserId,
       });
     },

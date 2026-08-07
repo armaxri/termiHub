@@ -2,17 +2,18 @@
 //! (#2228, part of #2153 / #2139).
 //!
 //! Moves the file-browser **UI state** the frontend drives in `appStore.ts` —
-//! the three browser panes (**local**, **sftp**, **session**), each with its
-//! current directory and listing; which pane is active (`fileBrowserMode`); and
-//! the copy/cut clipboard (`fileClipboard`) — into a Rust authority on the
-//! projection substrate ([`crate::projection`]).
+//! the two browser panes (**local**, **session**), each with its current
+//! directory and listing; which pane is active (`fileBrowserMode`); and the
+//! copy/cut clipboard (`fileClipboard`) — into a Rust authority on the projection
+//! substrate ([`crate::projection`]). Since the SFTP convergence (#2313 / #2422)
+//! SSH browses through the `session` pane, so the legacy standalone `sftp` pane
+//! is gone.
 //!
-//! This is the **browser view**, not the SFTP/session *session* model: the live
-//! `sftpSessions` map, the SFTP transport connect status, the connected host and
-//! transfers stay out of scope (governed by the pending `SftpManager` vs
-//! `SessionManager` decision, #2236). The store owns only which directory each
-//! pane shows, its listing, the in-flight/error status of a *directory list*,
-//! the active pane, and the clipboard. See [`store`] for the scope boundary.
+//! This is the **browser view**, not the session model: the live session ids,
+//! connect status, connected host and transfers stay out of scope. The store owns
+//! only which directory each pane shows, its listing, the in-flight/error status
+//! of a *directory list*, the active pane, and the clipboard. See [`store`] for
+//! the scope boundary.
 //!
 //! # Client-scoped region — Open Design Decision #4 / #6
 //!

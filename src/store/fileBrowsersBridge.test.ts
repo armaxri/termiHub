@@ -50,7 +50,6 @@ function view(over: Partial<FileBrowsersView> = {}): FileBrowsersView {
   return {
     mode: "local",
     local: { path: "/home", entries: [entry("a")], loading: false, error: null },
-    sftp: { path: "/var", entries: [entry("log", true)], loading: true, error: null },
     session: { path: "/", entries: [], loading: false, error: "gone" },
     clipboard: null,
     ...over,
@@ -139,7 +138,7 @@ describe("fileBrowsersViewMirrors gate", () => {
   });
 
   it("rejects on any field divergence", () => {
-    expect(fileBrowsersViewMirrors(view({ mode: "sftp" }), view())).toBe(false);
+    expect(fileBrowsersViewMirrors(view({ mode: "session" }), view())).toBe(false);
     expect(
       fileBrowsersViewMirrors(
         view({ local: { path: "/x", entries: [], loading: false, error: null } }),
@@ -150,7 +149,7 @@ describe("fileBrowsersViewMirrors gate", () => {
     expect(
       fileBrowsersViewMirrors(
         view({
-          sftp: { path: "/var", entries: [entry("other", true)], loading: true, error: null },
+          session: { path: "/", entries: [entry("other", true)], loading: false, error: "gone" },
         }),
         view()
       )
@@ -164,7 +163,6 @@ describe("fileBrowsersViewMirrors gate", () => {
             operation: "copy",
             sourceMode: "local",
             sourcePath: "/home",
-            sftpSessionId: null,
           },
         }),
         view()

@@ -18,13 +18,12 @@
 //!
 //! ```json
 //! {
-//!   "mode": "none" | "local" | "sftp" | "session",
+//!   "mode": "none" | "local" | "session",
 //!   "local":   { "path": "/", "entries": [ …FileEntry ], "loading": false, "error": null },
-//!   "sftp":    { … }, "session": { … },
+//!   "session": { … },
 //!   "clipboard": null | { "entries": [ …FileEntry ], "operation": "copy" | "cut",
-//!                         "sourceMode": "local" | "sftp" | "session",
-//!                         "sourcePath": "…", "sftpSessionId": "…"?,
-//!                         "terminalSessionId": "…"? }
+//!                         "sourceMode": "local" | "session",
+//!                         "sourcePath": "…", "terminalSessionId": "…"? }
 //! }
 //! ```
 //!
@@ -32,13 +31,13 @@
 //!
 //! | kind                        | payload                                | effect                                              |
 //! | --------------------------- | -------------------------------------- | --------------------------------------------------- |
-//! | `fileBrowser.setMode`       | `{ mode }`                             | set the active pane (`local`/`sftp`/`session`/`none`) |
+//! | `fileBrowser.setMode`       | `{ mode }`                             | set the active pane (`local`/`session`/`none`)      |
 //! | `fileBrowser.loadStarted`   | `{ pane }`                             | mark the pane loading, clear its error              |
 //! | `fileBrowser.loadSucceeded` | `{ pane, path, entries }`              | commit the pane's path + listing, clear loading     |
 //! | `fileBrowser.loadFailed`    | `{ pane, error? }`                     | clear loading, record the error, keep last listing  |
 //! | `fileBrowser.reset`         | `{ pane }`                             | reset the pane to the idle baseline (`/`, empty)    |
 //! | `fileBrowser.setClipboard`  | `{ clipboard }` (`null` clears)        | set / clear the copy-cut clipboard                  |
-//! | `fileBrowser.replace`       | `{ mode?, local?, sftp?, session?, clipboard? }` | overwrite the whole client view (render-cut mirror) |
+//! | `fileBrowser.replace`       | `{ mode?, local?, session?, clipboard? }` | overwrite the whole client view (render-cut mirror) |
 //!
 //! `fileBrowser.replace` is the whole-slice seed the frontend render cut (#2228)
 //! uses to keep the client's region a faithful copy of `appStore`'s file-browser
@@ -46,13 +45,14 @@
 //! connections bridge's `connection.replace`. The per-transition intents above
 //! drive the store for the (later) mutation cut.
 //!
-//! `pane` is the concrete browser being acted on (`local` / `sftp` / `session`);
-//! `mode` is which pane is *active* and additionally accepts `"none"`. The
-//! directory-list side-effects (the actual `localListDir` / `sftpListDir` /
-//! `sessionListFiles` calls) stay frontend orchestration; the store learns of a
-//! list only through these `loadStarted` → `loadSucceeded` / `loadFailed`
-//! intents. The backend SFTP/session *session* model (`sftpSessions`, connect
-//! status, transfers) is out of scope (#2236); see
+//! `pane` is the concrete browser being acted on (`local` / `session`); `mode` is
+//! which pane is *active* and additionally accepts `"none"`. Since the SFTP
+//! convergence (#2313 / #2422) SSH browses through the `session` pane, so the
+//! legacy standalone `sftp` pane is gone. The directory-list side-effects (the
+//! actual `localListDir` / `sessionListFiles` calls) stay frontend orchestration;
+//! the store learns of a list only through these `loadStarted` → `loadSucceeded`
+//! / `loadFailed` intents. The backend session model (live session ids, connect
+//! status, transfers) is out of scope; see
 //! [`crate::file_browser_projection::store`].
 //!
 //! # Shadow only (#2228)
@@ -176,13 +176,12 @@ fn store_of(app_handle: &AppHandle) -> Result<Arc<FileBrowserStore>, (String, St
         })
 }
 
-/// Parse the active-mode field (`"local"` / `"sftp"` / `"session"` / `"none"`)
-/// into an optional [`FileBrowserKind`] (`"none"` → `None`).
+/// Parse the active-mode field (`"local"` / `"session"` / `"none"`) into an
+/// optional [`FileBrowserKind`] (`"none"` → `None`).
 fn parse_mode(intent: &Intent) -> Result<Option<FileBrowserKind>, (String, String)> {
     match intent.payload.get("mode").and_then(Value::as_str) {
         Some("none") => Ok(None),
         Some("local") => Ok(Some(FileBrowserKind::Local)),
-        Some("sftp") => Ok(Some(FileBrowserKind::Sftp)),
         Some("session") => Ok(Some(FileBrowserKind::Session)),
         Some(_) => Err(("bad_payload".to_string(), "invalid 'mode'".to_string())),
         None => Err(("bad_payload".to_string(), "missing 'mode'".to_string())),
@@ -194,7 +193,6 @@ fn parse_mode(intent: &Intent) -> Result<Option<FileBrowserKind>, (String, Strin
 fn parse_pane(intent: &Intent) -> Result<FileBrowserKind, (String, String)> {
     match intent.payload.get("pane").and_then(Value::as_str) {
         Some("local") => Ok(FileBrowserKind::Local),
-        Some("sftp") => Ok(FileBrowserKind::Sftp),
         Some("session") => Ok(FileBrowserKind::Session),
         Some(_) => Err(("bad_payload".to_string(), "invalid 'pane'".to_string())),
         None => Err(("bad_payload".to_string(), "missing 'pane'".to_string())),
@@ -214,7 +212,7 @@ fn parse_entries(intent: &Intent) -> Result<Vec<FileEntry>, (String, String)> {
 
 /// Parse a `fileBrowser.replace` payload into a whole-client [`ClientView`] — the
 /// render-cut mirror's snapshot of `appStore`'s file-browser slice (`{ mode,
-/// local, sftp, session, clipboard }`, the shape of the region view model). Any
+/// local, session, clipboard }`, the shape of the region view model). Any
 /// field absent defaults to the idle baseline; a present-but-malformed field is a
 /// `bad_payload` rejection that advances nothing.
 fn parse_view(intent: &Intent) -> Result<ClientView, (String, String)> {

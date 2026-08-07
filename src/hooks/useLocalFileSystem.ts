@@ -8,7 +8,6 @@ import {
   localWriteFile,
   localCopyFile,
   vscodeOpenLocal,
-  sftpDownload,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 
@@ -122,7 +121,6 @@ export function useLocalFileSystem() {
         operation: "copy",
         sourceMode: "local",
         sourcePath: currentPath,
-        sftpSessionId: null,
       });
     },
     [currentPath]
@@ -135,7 +133,6 @@ export function useLocalFileSystem() {
         operation: "cut",
         sourceMode: "local",
         sourcePath: currentPath,
-        sftpSessionId: null,
       });
     },
     [currentPath]
@@ -157,12 +154,11 @@ export function useLocalFileSystem() {
         } else {
           await localCopyFile(clipEntry.path, destPath, clipEntry.isDirectory);
         }
-      } else {
-        // sftp→local: download remote file to local destination
-        if (clipboard.sftpSessionId) {
-          await sftpDownload(clipboard.sftpSessionId, clipEntry.path, destPath);
-        }
       }
+      // A session→local paste is not supported here (the remote source lives on
+      // the session transport, not the local disk); the session pane handles its
+      // own paste. The legacy sftp→local download path was retired with the
+      // standalone SFTP browser (#2422).
     }
 
     if (clipboard.operation === "cut") {

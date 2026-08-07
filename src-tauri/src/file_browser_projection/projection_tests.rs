@@ -203,7 +203,7 @@ fn a_load_succeeded_intent_produces_one_diff_fanned_to_two_subscribers() {
     let ack = dispatcher.dispatch(intent(
         "fileBrowser.loadSucceeded",
         "A",
-        json!({ "pane": "sftp", "path": "/var", "entries": [entry_json("log", true)] }),
+        json!({ "pane": "session", "path": "/var", "entries": [entry_json("log", true)] }),
     ));
     assert_eq!(ack.status, IntentStatus::Accepted);
     assert_eq!(
@@ -222,8 +222,8 @@ fn a_load_succeeded_intent_produces_one_diff_fanned_to_two_subscribers() {
 
     cache_a.apply(&diffs_a[0]);
     assert_eq!(cache_a.view, store.snapshot("A"), "cache converges");
-    assert_eq!(cache_a.view["sftp"]["path"], json!("/var"));
-    assert_eq!(cache_a.view["sftp"]["entries"][0]["name"], json!("log"));
+    assert_eq!(cache_a.view["session"]["path"], json!("/var"));
+    assert_eq!(cache_a.view["session"]["entries"][0]["name"], json!("log"));
 }
 
 #[test]
@@ -253,7 +253,6 @@ fn a_full_browsing_session_advances_monotonically_and_converges() {
                 "operation": "copy",
                 "sourceMode": "local",
                 "sourcePath": "/home",
-                "sftpSessionId": null,
             }}),
         ),
         ("fileBrowser.reset", json!({ "pane": "local" })),
@@ -297,10 +296,9 @@ fn a_replace_seed_produces_one_diff_that_converges_on_the_whole_view() {
         "fileBrowser.replace",
         "A",
         json!({
-            "mode": "sftp",
+            "mode": "session",
             "local": { "path": "/home", "entries": [entry_json("a", false)], "loading": false, "error": null },
-            "sftp": { "path": "/var", "entries": [entry_json("log", true)], "loading": true, "error": null },
-            "session": { "path": "/", "entries": [], "loading": false, "error": null },
+            "session": { "path": "/var", "entries": [entry_json("log", true)], "loading": true, "error": null },
             "clipboard": null,
         }),
     ));
@@ -314,20 +312,19 @@ fn a_replace_seed_produces_one_diff_that_converges_on_the_whole_view() {
         store.snapshot("A"),
         "cache converges on authority"
     );
-    assert_eq!(cache.view["mode"], json!("sftp"));
+    assert_eq!(cache.view["mode"], json!("session"));
     assert_eq!(cache.view["local"]["entries"][0]["name"], json!("a"));
-    assert_eq!(cache.view["sftp"]["path"], json!("/var"));
-    assert_eq!(cache.view["sftp"]["loading"], json!(true));
+    assert_eq!(cache.view["session"]["path"], json!("/var"));
+    assert_eq!(cache.view["session"]["loading"], json!(true));
 
     // Re-seeding with identical content is idempotent — no second diff.
     let ack2 = dispatcher.dispatch(intent(
         "fileBrowser.replace",
         "A",
         json!({
-            "mode": "sftp",
+            "mode": "session",
             "local": { "path": "/home", "entries": [entry_json("a", false)], "loading": false, "error": null },
-            "sftp": { "path": "/var", "entries": [entry_json("log", true)], "loading": true, "error": null },
-            "session": { "path": "/", "entries": [], "loading": false, "error": null },
+            "session": { "path": "/var", "entries": [entry_json("log", true)], "loading": true, "error": null },
             "clipboard": null,
         }),
     ));
@@ -485,7 +482,7 @@ fn a_dead_subscriber_is_reaped_on_publish() {
     dispatcher.dispatch(intent(
         "fileBrowser.setMode",
         "A",
-        json!({ "mode": "sftp" }),
+        json!({ "mode": "session" }),
     ));
 
     assert_eq!(

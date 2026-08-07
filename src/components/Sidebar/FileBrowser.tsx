@@ -12,7 +12,6 @@ import {
   RefreshCw,
   Upload,
   FolderPlus,
-  Unplug,
   Loader2,
   AlertCircle,
   Download,
@@ -554,13 +553,10 @@ function useFileBrowserSync() {
   const sidebarView = useAppStore((s) => s.sidebarView);
   const setFileBrowserMode = useAppStore((s) => s.setFileBrowserMode);
   const navigateLocal = useAppStore((s) => s.navigateLocal);
-  const navigateSftp = useAppStore((s) => s.navigateSftp);
   const navigateSession = useAppStore((s) => s.navigateSession);
   const setSessionFileBrowserId = useAppStore((s) => s.setSessionFileBrowserId);
-  const sftpSessionId = useAppStore((s) => s.sftpSessionId);
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
   const localCurrentPath = useAppStore((s) => s.localCurrentPath);
-  const sftpCurrentPath = useAppStore((s) => s.currentPath);
   const sessionCurrentPath = useAppStore((s) => s.sessionCurrentPath);
   const { remoteAgents } = useProjectedAgents();
   const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
@@ -607,14 +603,12 @@ function useFileBrowserSync() {
       return;
     }
     if (activeTabContentType === "editor") {
-      // Editor tabs: derive mode from the transport the tab was opened with.
-      // A session-backed tab must not fall into "sftp" mode — there is no
-      // SftpManager session behind it, so the browser would show nothing. (#1557)
+      // Editor tabs: derive mode from the transport the tab was opened with. A
+      // remote tab is session-backed (SSH since the convergence #2422, plus FTP /
+      // Docker / agent); a local tab browses the local disk.
       if (activeTabEditorMeta?.sessionBrowser) {
         setSessionFileBrowserId(activeTabEditorMeta.sessionBrowser.sessionId);
         setFileBrowserMode("session");
-      } else if (activeTabEditorMeta?.isRemote) {
-        setFileBrowserMode("sftp");
       } else {
         setFileBrowserMode("local");
       }
@@ -690,12 +684,12 @@ function useFileBrowserSync() {
   useEffect(() => {
     if (sidebarView !== "files") return;
 
-    // Editor tabs: navigate to the file's parent directory
+    // Editor tabs: navigate to the file's parent directory. A remote editor tab
+    // is session-backed and navigates through the session-mode effects below; only
+    // a local editor tab drives the local pane here.
     if (activeTabContentType === "editor" && activeTabEditorMeta) {
       const parentDir = activeTabEditorMeta.filePath.replace(/\/[^/]+$/, "") || "/";
-      if (activeTabEditorMeta.isRemote && sftpSessionId) {
-        navigateSftp(parentDir);
-      } else if (!activeTabEditorMeta.isRemote) {
+      if (!activeTabEditorMeta.isRemote) {
         navigateLocal(parentDir);
       }
       return;
@@ -712,8 +706,6 @@ function useFileBrowserSync() {
           .then((home) => navigateLocal(home))
           .catch(() => navigateLocal("/"));
       }
-    } else if (currentMode === "sftp" && sftpSessionId && cwd) {
-      navigateSftp(cwd);
     } else if (currentMode === "session" && sessionFileBrowserId && cwd) {
       navigateSession(sessionFileBrowserId, cwd);
     }
@@ -725,9 +717,7 @@ function useFileBrowserSync() {
     activeTabContentType,
     activeTabEditorMeta,
     navigateLocal,
-    navigateSftp,
     navigateSession,
-    sftpSessionId,
     sessionFileBrowserId,
   ]);
 
@@ -759,11 +749,10 @@ function useFileBrowserSync() {
     navigateSession(sessionFileBrowserId, cwd ?? "~");
   }, [fileBrowserMode, sessionFileBrowserId, navigateSession, cwd]);
 
-  // (Removed in #2421) The SSH-specific SFTP auto-connect effect that opened a
-  // separate SftpManager session when a file-browser-capable tab entered "sftp"
-  // mode. SSH now browses through the session layer (mode "session"), so no tab
-  // enters "sftp" mode and the standalone connect is dead. The legacy sftp store
-  // model itself is retired in #2422.
+  // (Removed in #2421 / #2422) The SSH-specific standalone SFTP browser and its
+  // auto-connect effect. SSH now browses through the session layer (mode
+  // "session") like every other remote type, and the legacy `sftpSessionId` store
+  // model has been retired.
 
   // Callback to jump the file browser back to the terminal's current CWD.
   const navigateToCwd = useCallback(() => {
@@ -771,10 +760,8 @@ function useFileBrowserSync() {
     const currentMode = useAppStore.getState().fileBrowserMode;
     if (currentMode === "local") {
       navigateLocal(wslDistro ? wslToWindowsPath(cwd, wslDistro) : cwd);
-    } else if (currentMode === "sftp" && sftpSessionId) {
-      navigateSftp(cwd);
     }
-  }, [cwd, wslDistro, navigateLocal, navigateSftp, sftpSessionId]);
+  }, [cwd, wslDistro, navigateLocal]);
 
   // Callback to send "cd <current-file-browser-path>" to the active terminal.
   const cdToCurrentPath = useCallback(async () => {
@@ -786,8 +773,6 @@ function useFileBrowserSync() {
     if (fileBrowserMode === "local") {
       // Convert Windows-style WSL paths back to Linux paths for the WSL terminal
       path = wslDistro ? windowsToWslPath(localCurrentPath) : localCurrentPath;
-    } else if (fileBrowserMode === "sftp") {
-      path = sftpCurrentPath;
     } else if (fileBrowserMode === "session") {
       path = sessionCurrentPath;
     } else {
@@ -799,7 +784,7 @@ function useFileBrowserSync() {
       ? `cd "${path.replace(/"/g, '\\"')}"` // Windows path: double quotes
       : `cd -- '${path.replace(/'/g, "'\\''")}'`; // Unix path: single quotes
     await sendInput(sessionId, cdCmd + "\n");
-  }, [activeTab?.sessionId, localCurrentPath, sftpCurrentPath, sessionCurrentPath, wslDistro]);
+  }, [activeTab?.sessionId, localCurrentPath, sessionCurrentPath, wslDistro]);
 
   const canCd =
     !!activeTab?.sessionId && fileBrowserMode !== "none" && activeTab?.contentType !== "editor";
@@ -852,12 +837,6 @@ export function FileBrowser() {
   // toolbar Refresh button stays as a manual backstop.
   useLocalDirWatch(mode === "local", mode === "local" ? currentPath : null, refresh);
 
-  const disconnectSftp = useAppStore((s) => s.disconnectSftp);
-  const retrySftp = useAppStore((s) => s.retrySftp);
-  const dismissSftpError = useAppStore((s) => s.dismissSftpError);
-  // Explicit SFTP lifecycle status (audit gap A1) — used to pick the SFTP
-  // placeholder label without inferring it from isConnected + isLoading.
-  const sftpStatus = useAppStore((s) => s.sftpStatus);
   // In-flight SFTP transfers (#1247); the footer shows those owned by the
   // active browser session, and Cancel fires sftp_cancel_transfer.
   const transfers = useAppStore((s) => s.transfers);
@@ -999,7 +978,6 @@ export function FileBrowser() {
     );
   }, []);
 
-  const sftpSessionId = useAppStore((s) => s.sftpSessionId);
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
 
@@ -1007,27 +985,19 @@ export function FileBrowser() {
     (entry: FileEntry, action: string) => {
       switch (action) {
         case "edit":
-          if (mode === "local" || mode === "sftp") {
-            useAppStore
-              .getState()
-              .openEditorTab(
-                entry.path,
-                mode === "sftp",
-                mode === "sftp" ? (sftpSessionId ?? undefined) : undefined,
-                mode === "sftp" ? entry.permissions : undefined
-              );
+          if (mode === "local") {
+            useAppStore.getState().openEditorTab(entry.path, false);
           } else if (mode === "session" && sessionFileBrowserId) {
             // Session-layer browsing (FTP, Docker, agent sessions): the editor
-            // reads and writes through session_read_file / session_write_file
-            // rather than an SftpManager session. (#1557)
-            useAppStore.getState().openEditorTab(entry.path, true, undefined, entry.permissions, {
+            // reads and writes through session_read_file / session_write_file. (#1557)
+            useAppStore.getState().openEditorTab(entry.path, true, entry.permissions, {
               sessionId: sessionFileBrowserId,
               connectionType: activeTabConnectionType ?? "remote-session",
             });
           }
           break;
         case "download":
-          // downloadFile surfaces its own success/error toast (see useFileSystem).
+          // downloadFile surfaces its own success/error toast.
           void downloadFile(entry.path, entry.name);
           break;
         case "vscode":
@@ -1078,7 +1048,6 @@ export function FileBrowser() {
     },
     [
       mode,
-      sftpSessionId,
       sessionFileBrowserId,
       activeTabConnectionType,
       downloadFile,
@@ -1299,59 +1268,14 @@ export function FileBrowser() {
     );
   }
 
-  // SFTP not yet connected — show loading/error state
-  if (mode === "sftp" && !isConnected) {
-    return (
-      <div className="file-browser">
-        <div className="file-browser__placeholder" data-testid="file-browser-sftp-connecting">
-          {sftpStatus === "connecting" ? (
-            <>
-              <Loader2 size={20} className="file-browser__spinner" />
-              <span>Connecting SFTP...</span>
-            </>
-          ) : error ? (
-            <>
-              <AlertCircle size={20} />
-              <span>{error}</span>
-              {/* Recovery controls for a failed connect (audit gap S1). */}
-              <div className="file-browser__error-actions">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  icon={<RefreshCw size={14} />}
-                  onClick={() => retrySftp()}
-                  data-testid="file-browser-sftp-retry"
-                >
-                  Retry
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<X size={14} />}
-                  onClick={dismissSftpError}
-                  data-testid="file-browser-sftp-dismiss"
-                >
-                  Dismiss
-                </Button>
-              </div>
-            </>
-          ) : (
-            <span>Waiting for SFTP connection...</span>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   // In-flight transfers owned by the session this browser is showing (#1247).
   // Only these belong in the footer; other sessions' transfers live in the Open
-  // Connections panel. The list above stays live regardless. Both transport
-  // shapes register on the `transfers` map keyed by session id: the legacy SFTP
-  // browser by `sftpSessionId`, and — since the convergence (#2421) — an
-  // SFTP-backed session browser (SSH) by its `sessionFileBrowserId`. A byte-based
-  // session backend (Docker / FTP / agent) registers no transfers, so its footer
-  // stays empty as before.
-  const footerSessionId = sftpSessionId ?? sessionFileBrowserId;
+  // Connections panel. The list above stays live regardless. Since the SFTP
+  // convergence (#2421 / #2422) an SFTP-backed session browser (SSH) registers its
+  // transfers on the `transfers` map keyed by its `sessionFileBrowserId`. A
+  // byte-based session backend (Docker / FTP / agent) registers no transfers, so
+  // its footer stays empty as before.
+  const footerSessionId = sessionFileBrowserId;
   const activeTransfers = footerSessionId
     ? Object.values(transfers).filter((t) => t.sessionId === footerSessionId)
     : [];
@@ -1425,7 +1349,7 @@ export function FileBrowser() {
               data-testid="file-browser-refresh"
             />
           </Tooltip>
-          {(mode === "sftp" || mode === "session") && (
+          {mode === "session" && (
             <Tooltip content="Upload File" side="top">
               <Button
                 variant="ghost"
@@ -1477,18 +1401,6 @@ export function FileBrowser() {
               data-testid="file-browser-new-folder"
             />
           </Tooltip>
-          {mode === "sftp" && (
-            <Tooltip content="Disconnect" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<Unplug size={14} />}
-                onClick={disconnectSftp}
-                aria-label="Disconnect SFTP"
-                data-testid="file-browser-disconnect"
-              />
-            </Tooltip>
-          )}
         </div>
       </div>
 

@@ -116,7 +116,7 @@ const LOCAL_META: EditorTabMeta = {
 const REMOTE_META: EditorTabMeta = {
   filePath: "/etc/hosts",
   isRemote: true,
-  sftpSessionId: "sftp-sess-1",
+  sessionBrowser: { sessionId: "sftp-sess-1", connectionType: "ssh" },
 };
 
 const INITIAL = "line one\n";

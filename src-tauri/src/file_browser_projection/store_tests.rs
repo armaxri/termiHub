@@ -2,7 +2,7 @@
 //! authority matches the frontend `appStore` reducers: the per-pane load
 //! lifecycle (`loadStarted` → `loadSucceeded` / `loadFailed`), the idle-baseline
 //! reset, the active-mode selection, the copy/cut clipboard, the independence of
-//! the three panes, and the per-client isolation the client-scoped region needs.
+//! the two panes, and the per-client isolation the client-scoped region needs.
 
 use super::*;
 
@@ -29,7 +29,7 @@ fn a_fresh_client_is_the_idle_baseline() {
     let store = FileBrowserStore::new();
     let view = store.snapshot(C);
     assert_eq!(view["mode"], json!("none"));
-    for pane in ["local", "sftp", "session"] {
+    for pane in ["local", "session"] {
         assert_eq!(view[pane]["path"], json!("/"), "{pane} path");
         assert_eq!(view[pane]["entries"], json!([]), "{pane} entries");
         assert_eq!(view[pane]["loading"], json!(false), "{pane} loading");
@@ -41,8 +41,8 @@ fn a_fresh_client_is_the_idle_baseline() {
 #[test]
 fn set_mode_selects_the_active_pane_and_none_clears_it() {
     let store = FileBrowserStore::new();
-    store.set_mode(C, Some(FileBrowserKind::Sftp));
-    assert_eq!(store.snapshot(C)["mode"], json!("sftp"));
+    store.set_mode(C, Some(FileBrowserKind::Session));
+    assert_eq!(store.snapshot(C)["mode"], json!("session"));
     store.set_mode(C, Some(FileBrowserKind::Local));
     assert_eq!(store.snapshot(C)["mode"], json!("local"));
     store.set_mode(C, None);
@@ -64,23 +64,23 @@ fn load_started_marks_loading_and_clears_a_prior_error() {
 #[test]
 fn load_succeeded_commits_path_and_listing_and_clears_loading() {
     let store = FileBrowserStore::new();
-    store.load_started(C, FileBrowserKind::Sftp);
+    store.load_started(C, FileBrowserKind::Session);
     store.load_succeeded(
         C,
-        FileBrowserKind::Sftp,
+        FileBrowserKind::Session,
         "/var/log",
         vec![entry("syslog", false), entry("nginx", true)],
     );
     let view = store.snapshot(C);
-    assert_eq!(view["sftp"]["path"], json!("/var/log"));
-    assert_eq!(view["sftp"]["loading"], json!(false));
-    assert_eq!(view["sftp"]["error"], Value::Null);
-    assert_eq!(view["sftp"]["entries"][0]["name"], json!("syslog"));
-    assert_eq!(view["sftp"]["entries"][0]["isDirectory"], json!(false));
-    assert_eq!(view["sftp"]["entries"][1]["name"], json!("nginx"));
-    assert_eq!(view["sftp"]["entries"][1]["isDirectory"], json!(true));
+    assert_eq!(view["session"]["path"], json!("/var/log"));
+    assert_eq!(view["session"]["loading"], json!(false));
+    assert_eq!(view["session"]["error"], Value::Null);
+    assert_eq!(view["session"]["entries"][0]["name"], json!("syslog"));
+    assert_eq!(view["session"]["entries"][0]["isDirectory"], json!(false));
+    assert_eq!(view["session"]["entries"][1]["name"], json!("nginx"));
+    assert_eq!(view["session"]["entries"][1]["isDirectory"], json!(true));
     assert_eq!(
-        store.pane_state(C, FileBrowserKind::Sftp),
+        store.pane_state(C, FileBrowserKind::Session),
         Some(("/var/log".to_string(), 2, false))
     );
 }
@@ -125,18 +125,16 @@ fn set_clipboard_stores_a_copy_and_null_clears_it() {
         Some(Clipboard {
             entries: vec![entry("f", false)],
             operation: ClipboardOperation::Copy,
-            source_mode: FileBrowserKind::Sftp,
+            source_mode: FileBrowserKind::Session,
             source_path: "/src".to_string(),
-            sftp_session_id: Some("sess-1".to_string()),
-            terminal_session_id: None,
+            terminal_session_id: Some("term-1".to_string()),
         }),
     );
     let view = store.snapshot(C);
     assert_eq!(view["clipboard"]["operation"], json!("copy"));
-    assert_eq!(view["clipboard"]["sourceMode"], json!("sftp"));
+    assert_eq!(view["clipboard"]["sourceMode"], json!("session"));
     assert_eq!(view["clipboard"]["sourcePath"], json!("/src"));
-    assert_eq!(view["clipboard"]["sftpSessionId"], json!("sess-1"));
-    assert_eq!(view["clipboard"]["terminalSessionId"], Value::Null);
+    assert_eq!(view["clipboard"]["terminalSessionId"], json!("term-1"));
     assert_eq!(view["clipboard"]["entries"][0]["name"], json!("f"));
 
     store.set_clipboard(C, None);
@@ -153,33 +151,24 @@ fn a_cut_clipboard_records_the_cut_operation() {
             operation: ClipboardOperation::Cut,
             source_mode: FileBrowserKind::Local,
             source_path: "/a".to_string(),
-            sftp_session_id: None,
-            terminal_session_id: Some("term-9".to_string()),
+            terminal_session_id: None,
         }),
     );
     let view = store.snapshot(C);
     assert_eq!(view["clipboard"]["operation"], json!("cut"));
     assert_eq!(view["clipboard"]["sourceMode"], json!("local"));
-    assert_eq!(view["clipboard"]["terminalSessionId"], json!("term-9"));
-    assert_eq!(view["clipboard"]["sftpSessionId"], Value::Null);
+    assert_eq!(view["clipboard"]["terminalSessionId"], Value::Null);
 }
 
 #[test]
-fn the_three_panes_are_independent() {
+fn the_two_panes_are_independent() {
     let store = FileBrowserStore::new();
     store.load_succeeded(C, FileBrowserKind::Local, "/l", vec![entry("l", false)]);
-    store.load_succeeded(
-        C,
-        FileBrowserKind::Sftp,
-        "/s",
-        vec![entry("s1", false), entry("s2", false)],
-    );
     store.load_started(C, FileBrowserKind::Session);
     let view = store.snapshot(C);
-    // Local committed, sftp committed with two, session still loading at baseline.
+    // Local committed; session still loading at baseline.
     assert_eq!(view["local"]["path"], json!("/l"));
-    assert_eq!(view["sftp"]["path"], json!("/s"));
-    assert_eq!(view["sftp"]["entries"].as_array().unwrap().len(), 2);
+    assert_eq!(view["local"]["entries"].as_array().unwrap().len(), 1);
     assert_eq!(view["session"]["path"], json!("/"));
     assert_eq!(view["session"]["loading"], json!(true));
 }
@@ -197,29 +186,26 @@ fn replace_overwrites_the_whole_view_from_a_seed() {
     );
 
     let view: ClientView = serde_json::from_value(json!({
-        "mode": "sftp",
+        "mode": "session",
         "local": { "path": "/home", "entries": [], "loading": false, "error": null },
-        "sftp": {
+        "session": {
             "path": "/var",
             "entries": [{ "name": "log", "path": "/var/log", "isDirectory": true, "size": 0 }],
             "loading": true,
             "error": null,
         },
-        "session": { "path": "/", "entries": [], "loading": false, "error": "gone" },
         "clipboard": null,
     }))
     .unwrap();
     store.replace(C, view);
 
     let out = store.snapshot(C);
-    assert_eq!(out["mode"], json!("sftp"));
-    assert_eq!(out["sftp"]["path"], json!("/var"));
-    assert_eq!(out["sftp"]["loading"], json!(true));
-    assert_eq!(out["sftp"]["entries"][0]["name"], json!("log"));
-    assert_eq!(out["session"]["error"], json!("gone"));
+    assert_eq!(out["mode"], json!("session"));
+    assert_eq!(out["session"]["path"], json!("/var"));
+    assert_eq!(out["session"]["loading"], json!(true));
+    assert_eq!(out["session"]["entries"][0]["name"], json!("log"));
     // The prior session listing is gone — replace overwrites, never merges.
-    assert_eq!(out["session"]["path"], json!("/"));
-    assert_eq!(out["session"]["entries"], json!([]));
+    assert_eq!(out["session"]["entries"].as_array().unwrap().len(), 1);
     assert_eq!(out["local"]["path"], json!("/home"));
 }
 
@@ -236,7 +222,6 @@ fn replace_round_trips_the_snapshot_shape() {
             operation: ClipboardOperation::Cut,
             source_mode: FileBrowserKind::Local,
             source_path: "/l".to_string(),
-            sftp_session_id: None,
             terminal_session_id: None,
         }),
     );
@@ -251,32 +236,32 @@ fn replace_round_trips_the_snapshot_shape() {
 #[test]
 fn replace_defaults_absent_fields_to_the_idle_baseline() {
     let store = FileBrowserStore::new();
-    store.set_mode(C, Some(FileBrowserKind::Sftp));
+    store.set_mode(C, Some(FileBrowserKind::Session));
     // An empty payload clears the whole view back to baseline.
     let view: ClientView = serde_json::from_value(json!({})).unwrap();
     store.replace(C, view);
     let out = store.snapshot(C);
     assert_eq!(out["mode"], json!("none"));
     assert_eq!(out["local"]["path"], json!("/"));
-    assert_eq!(out["sftp"]["path"], json!("/"));
+    assert_eq!(out["session"]["path"], json!("/"));
     assert_eq!(out["clipboard"], Value::Null);
 }
 
 #[test]
 fn browser_state_is_isolated_per_client() {
     let store = FileBrowserStore::new();
-    store.set_mode("a", Some(FileBrowserKind::Sftp));
-    store.load_succeeded("a", FileBrowserKind::Sftp, "/a", vec![entry("a", false)]);
+    store.set_mode("a", Some(FileBrowserKind::Session));
+    store.load_succeeded("a", FileBrowserKind::Session, "/a", vec![entry("a", false)]);
     store.set_mode("b", Some(FileBrowserKind::Local));
 
     // Client b is untouched by client a's mutations.
     let vb = store.snapshot("b");
     assert_eq!(vb["mode"], json!("local"));
-    assert_eq!(vb["sftp"]["path"], json!("/"));
-    assert_eq!(vb["sftp"]["entries"], json!([]));
+    assert_eq!(vb["session"]["path"], json!("/"));
+    assert_eq!(vb["session"]["entries"], json!([]));
 
     // ...and a keeps its own state.
     let va = store.snapshot("a");
-    assert_eq!(va["mode"], json!("sftp"));
-    assert_eq!(va["sftp"]["path"], json!("/a"));
+    assert_eq!(va["mode"], json!("session"));
+    assert_eq!(va["session"]["path"], json!("/a"));
 }
