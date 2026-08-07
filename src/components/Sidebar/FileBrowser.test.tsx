@@ -725,7 +725,6 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
         operation: "copy",
         sourceMode: "local",
         sourcePath: "/home",
-        sftpSessionId: null,
       },
     });
 
@@ -758,7 +757,6 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       operation: "copy",
       sourceMode: "local",
       sourcePath: "/home",
-      sftpSessionId: null,
     });
 
     const clipboard = useAppStore.getState().fileClipboard;
@@ -783,7 +781,6 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       operation: "cut",
       sourceMode: "local",
       sourcePath: "/home",
-      sftpSessionId: null,
     });
 
     const clipboard = useAppStore.getState().fileClipboard;
@@ -808,7 +805,6 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       operation: "copy",
       sourceMode: "local",
       sourcePath: "/home",
-      sftpSessionId: null,
     });
     expect(useAppStore.getState().fileClipboard).not.toBeNull();
 
@@ -1563,37 +1559,6 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
 
     expect(useAppStore.getState().localCurrentPath).toBe("/home/user/projects");
   });
-
-  it("does not disconnect the existing SFTP session when an editor tab with isRemote is activated", async () => {
-    // Simulate: user had an SSH terminal → SFTP auto-connected → user opened a
-    // remote file → editor tab is now active.  The auto-connect effect must NOT
-    // call disconnectSftp() because the editor tab carries a dummy local config.
-    const editorTab = makeTab({
-      contentType: "editor",
-      connectionType: "local",
-      config: { type: "local", config: { shell: "zsh" } },
-      editorMeta: { filePath: "/remote/file.txt", isRemote: true, sftpSessionId: "session-xyz" },
-    });
-    setActiveTab(editorTab);
-
-    // Pre-seed the store as if an SFTP session was already established.
-    useAppStore.setState({
-      sftpSessionId: "session-xyz",
-      sftpConnectedHost: "user@host:22",
-    });
-
-    await act(async () => {
-      root.render(
-        <TooltipProvider delayDuration={0}>
-          <FileBrowser />
-        </TooltipProvider>
-      );
-    });
-    await flushAsync();
-
-    // The SFTP session must still be alive — not disconnected by the auto-connect effect.
-    expect(useAppStore.getState().sftpSessionId).toBe("session-xyz");
-  });
 });
 
 // (Removed in #2421) The SFTP failed-connect recovery UI (S1) tests covered the
@@ -1996,20 +1961,6 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
     expect(useAppStore.getState().sessionFileBrowserId).toBe("ftp-sess-1");
   });
 
-  it("keeps an SFTP-backed editor tab in 'sftp' mode", () => {
-    setActiveTab(
-      makeEditorTab({
-        filePath: "/etc/hosts",
-        isRemote: true,
-        sftpSessionId: "sftp-sess-1",
-      })
-    );
-
-    renderBrowser();
-
-    expect(useAppStore.getState().fileBrowserMode).toBe("sftp");
-  });
-
   it("keeps a local editor tab in 'local' mode", () => {
     setActiveTab(makeEditorTab({ filePath: "/home/me/notes.txt", isRemote: false }));
 
@@ -2077,7 +2028,5 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
       permissions: "-rw-r--r--",
       sessionBrowser: { sessionId: "ftp-sess-1", connectionType: "ftp" },
     });
-    // The session layer has no SftpManager session behind it.
-    expect(editorTab?.editorMeta?.sftpSessionId).toBeUndefined();
   });
 });

@@ -18,11 +18,11 @@
  *
  * # Scope (#2236)
  *
- * The SFTP list operations (`navigateSftp` / `refreshSftp`) mirror only the
- * browser *view* fields (path / listing / list flags); the SFTP session model
- * (`sftpStatus`, session ids) and the connect / disconnect / session-death pane
- * resets stay `appStore`-driven and out of this cut, carried into the region by
- * the render-cut `fileBrowser.replace` mirror instead.
+ * The per-pane list operations mirror only the browser *view* fields (path /
+ * listing / list flags); the session model (live session ids, connect /
+ * disconnect / session-death pane resets) stays `appStore`-driven and out of this
+ * cut, carried into the region by the render-cut `fileBrowser.replace` mirror
+ * instead.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -54,7 +54,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore, type FileClipboard } from "./appStore";
-import { localListDir, sessionListFiles, sftpListDir } from "@/services/api";
+import { localListDir, sessionListFiles } from "@/services/api";
 import {
   FILE_BROWSERS_REGION,
   setFileBrowsersIntentsEnabled,
@@ -109,7 +109,6 @@ class FileBrowserStoreTransport implements Transport {
   dispatched: Intent[] = [];
   private mode = "none";
   private local = emptyPane();
-  private sftp = emptyPane();
   private session = emptyPane();
   private clipboard: FileClipboard | null = null;
   private version = 0;
@@ -129,7 +128,6 @@ class FileBrowserStoreTransport implements Transport {
 
   private paneOf(name: string): Pane {
     if (name === "local") return this.local;
-    if (name === "sftp") return this.sftp;
     return this.session;
   }
 
@@ -174,7 +172,6 @@ class FileBrowserStoreTransport implements Transport {
     return structuredClone({
       mode: this.mode as FileBrowsersView["mode"],
       local: this.local,
-      sftp: this.sftp,
       session: this.session,
       clipboard: this.clipboard,
     });
@@ -212,8 +209,8 @@ let transport: FileBrowserStoreTransport;
 
 /**
  * The `appStore` file-browser view in the region's shape, mirroring
- * `useProjectedFileBrowsers` exactly (including the SFTP pane's `sftpStatus`-derived
- * `loading`), so the region the intents reconstruct can be asserted equal to it.
+ * `useProjectedFileBrowsers` exactly, so the region the intents reconstruct can be
+ * asserted equal to it.
  */
 function sliceOf(): FileBrowsersView {
   const s = useAppStore.getState();
@@ -224,12 +221,6 @@ function sliceOf(): FileBrowsersView {
       entries: s.localFileEntries,
       loading: s.localFileLoading,
       error: s.localFileError,
-    },
-    sftp: {
-      path: s.currentPath,
-      entries: s.fileEntries,
-      loading: s.sftpStatus === "connecting" || s.sftpStatus === "listing",
-      error: s.sftpError,
     },
     session: {
       path: s.sessionCurrentPath,
@@ -338,49 +329,12 @@ describe("file-browsers mutation cut — cut-vs-local parity (flag on)", () => {
     expect(transport.regionView().session.entries.map((e) => e.name)).toEqual(["s", "t"]);
   });
 
-  it("navigateSftp commits the sftp pane path + listing (view fields only)", async () => {
-    useAppStore.setState({ sftpSessionId: "sftp-1" });
-    vi.mocked(sftpListDir).mockResolvedValue([entry("f")]);
-
-    await useAppStore.getState().navigateSftp("/var/log");
-
-    expect(transport.kinds()).toEqual(["fileBrowser.loadStarted", "fileBrowser.loadSucceeded"]);
-    expectParity();
-    expect(transport.regionView().sftp.path).toBe("/var/log");
-    expect(transport.regionView().sftp.entries.map((e) => e.name)).toEqual(["f"]);
-    expect(transport.regionView().sftp.loading).toBe(false);
-  });
-
-  it("navigateSftp records the sftp pane error on a non-fatal failure", async () => {
-    useAppStore.setState({ sftpSessionId: "sftp-1" });
-    vi.mocked(sftpListDir).mockRejectedValue(new Error("boom"));
-
-    await useAppStore.getState().navigateSftp("/var/log");
-
-    expect(transport.kinds()).toEqual(["fileBrowser.loadStarted", "fileBrowser.loadFailed"]);
-    expectParity();
-    expect(transport.regionView().sftp.error).toBe("boom");
-    expect(transport.regionView().sftp.loading).toBe(false);
-  });
-
-  it("refreshSftp re-lists the current sftp path", async () => {
-    useAppStore.setState({ sftpSessionId: "sftp-1", currentPath: "/etc" });
-    vi.mocked(sftpListDir).mockResolvedValue([entry("hosts")]);
-
-    await useAppStore.getState().refreshSftp();
-
-    expectParity();
-    expect(transport.regionView().sftp.path).toBe("/etc");
-    expect(transport.regionView().sftp.entries.map((e) => e.name)).toEqual(["hosts"]);
-  });
-
   it("setFileClipboard sets then clears the clipboard", () => {
     const clipboard: FileClipboard = {
       entries: [entry("c")],
       operation: "copy",
       sourceMode: "local",
       sourcePath: "/home",
-      sftpSessionId: null,
     };
 
     useAppStore.getState().setFileClipboard(clipboard);
@@ -410,7 +364,6 @@ describe("file-browsers mutation cut — cut-vs-local parity (flag on)", () => {
       operation: "cut",
       sourceMode: "local",
       sourcePath: "/home",
-      sftpSessionId: null,
     });
     expectParity();
     useAppStore.getState().setFileClipboard(null);
@@ -433,7 +386,6 @@ describe("file-browsers mutation cut — flag off (rollback path)", () => {
       operation: "copy",
       sourceMode: "local",
       sourcePath: "/home",
-      sftpSessionId: null,
     });
 
     // No mirror reached the region — the pre-cut local path is intact.

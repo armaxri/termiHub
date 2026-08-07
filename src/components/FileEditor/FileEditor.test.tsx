@@ -39,11 +39,19 @@ globalThis.ResizeObserver = class {
 
 const mockedInvoke = vi.mocked(invoke);
 
+/** Encode text the way session_read_file returns it: a plain byte array. */
+function toBytes(text: string): number[] {
+  return Array.from(new TextEncoder().encode(text));
+}
+
 const TAB_ID = "tab-fe-1";
+// A remote editor tab is backed by the session layer (#2422). An SFTP-backed
+// session (SSH) reads/writes through the `session_*` commands and, once its
+// exec-capability probe resolves, unlocks the SFTP-advanced affordances.
 const REMOTE_META: EditorTabMeta = {
   filePath: "/etc/hosts",
   isRemote: true,
-  sftpSessionId: "sftp-sess-1",
+  sessionBrowser: { sessionId: "sftp-sess-1", connectionType: "ssh" },
 };
 
 let container: HTMLDivElement;
@@ -97,8 +105,8 @@ describe("FileEditor — save error handling (#969)", () => {
 
   it("surfaces a permission-denied save failure and keeps the buffer dirty", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("127.0.0.1 localhost\n");
-      if (cmd === "sftp_write_file_content")
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_write_file")
         return Promise.reject(new Error("create remote file: permission denied"));
       return Promise.resolve(undefined);
     });
@@ -133,9 +141,8 @@ describe("FileEditor — save error handling (#969)", () => {
 
   it("shows a generic save-failed message for non-permission errors", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("data\n");
-      if (cmd === "sftp_write_file_content")
-        return Promise.reject(new Error("disk quota exceeded"));
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("data\n"));
+      if (cmd === "session_write_file") return Promise.reject(new Error("disk quota exceeded"));
       return Promise.resolve(undefined);
     });
 
@@ -156,8 +163,8 @@ describe("FileEditor — save error handling (#969)", () => {
   it("clears a prior save error when a later save succeeds", async () => {
     let failNext = true;
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("v1\n");
-      if (cmd === "sftp_write_file_content") {
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("v1\n"));
+      if (cmd === "session_write_file") {
         if (failNext) return Promise.reject(new Error("permission denied"));
         return Promise.resolve(undefined);
       }
@@ -206,7 +213,7 @@ describe("FileEditor — close while in error state (#971)", () => {
 
   it("clears the dirty flag when the file fails to load, so the tab is closable", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.reject(new Error("ssh session closed"));
+      if (cmd === "session_read_file") return Promise.reject(new Error("ssh session closed"));
       return Promise.resolve(undefined);
     });
     // Simulate a tab that was dirty before the connection dropped.
@@ -223,7 +230,7 @@ describe("FileEditor — close while in error state (#971)", () => {
 
   it("resolves an already-pending close request by closing the failed tab", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.reject(new Error("ssh session closed"));
+      if (cmd === "session_read_file") return Promise.reject(new Error("ssh session closed"));
       return Promise.resolve(undefined);
     });
     const closeTabSpy = vi.fn();
@@ -244,7 +251,7 @@ describe("FileEditor — read-only badge + banner (#1325)", () => {
   const REMOTE_RO_META: EditorTabMeta = {
     filePath: "/etc/hosts",
     isRemote: true,
-    sftpSessionId: "sftp-sess-1",
+    sessionBrowser: { sessionId: "sftp-sess-1", connectionType: "ssh" },
     permissions: "-rw-r--r--",
   };
   const LOCAL_META: EditorTabMeta = {
@@ -270,9 +277,12 @@ describe("FileEditor — read-only badge + banner (#1325)", () => {
 
   function mockWritability(result: "writable" | "readOnly" | "unknown"): void {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("127.0.0.1 localhost\n");
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
       if (cmd === "local_read_file") return Promise.resolve("local body\n");
-      if (cmd === "sftp_check_writable") return Promise.resolve(result);
+      // A resolved exec-capability probe marks the session SFTP-backed, unlocking
+      // the writability probe (#2420). Detection only here — no exec channel.
+      if (cmd === "session_has_exec_capability") return Promise.resolve(false);
+      if (cmd === "session_check_writable") return Promise.resolve(result);
       return Promise.resolve(undefined);
     });
   }
@@ -327,7 +337,7 @@ describe("FileEditor — read-only badge + banner (#1325)", () => {
     render(LOCAL_META);
     await flush();
 
-    const probed = mockedInvoke.mock.calls.some(([cmd]) => cmd === "sftp_check_writable");
+    const probed = mockedInvoke.mock.calls.some(([cmd]) => cmd === "session_check_writable");
     expect(probed).toBe(false);
     expect(query("file-editor-readonly-badge")).toBeNull();
     expect(query("file-editor-readonly-banner")).toBeNull();
@@ -338,7 +348,7 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
   const REMOTE_RO_META: EditorTabMeta = {
     filePath: "/etc/hosts",
     isRemote: true,
-    sftpSessionId: "sftp-sess-1",
+    sessionBrowser: { sessionId: "sftp-sess-1", connectionType: "ssh" },
     permissions: "-rw-r--r--",
   };
 
@@ -348,10 +358,6 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState({ ...useAppStore.getInitialState() });
-    // A host label so the dialog can name the target and derive a credential key.
-    useAppStore.setState({
-      sftpSessions: { "sftp-sess-1": { hostLabel: "pi@raspberrypi:22", owningTabId: TAB_ID } },
-    });
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
@@ -380,7 +386,7 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
 
   /**
    * Mock the backend for elevated flows. `elevatedResults` is consumed one entry
-   * per `sftp_write_file_content_elevated` call so a test can script
+   * per `session_write_file_elevated` call so a test can script
    * incorrect→incorrect→success sequences.
    */
   function mockBackend(opts: {
@@ -393,10 +399,11 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
     const elevatedCalls: Array<Record<string, unknown>> = [];
     const queue = [...elevatedResults];
     mockedInvoke.mockImplementation((cmd, args) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("127.0.0.1 localhost\n");
-      if (cmd === "sftp_has_exec_capability") return Promise.resolve(execCapable);
-      if (cmd === "sftp_check_writable") return Promise.resolve(readOnly ? "readOnly" : "writable");
-      if (cmd === "sftp_write_file_content_elevated") {
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_has_exec_capability") return Promise.resolve(execCapable);
+      if (cmd === "session_check_writable")
+        return Promise.resolve(readOnly ? "readOnly" : "writable");
+      if (cmd === "session_write_file_elevated") {
         elevatedCalls.push((args ?? {}) as Record<string, unknown>);
         return Promise.resolve(queue.shift() ?? { kind: "success" });
       }
@@ -557,10 +564,10 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
   it("adds a 'Retry with sudo' action to the #969 banner after a failed direct save", async () => {
     // Writability unknown → direct save attempted → permission denied → banner.
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("body\n");
-      if (cmd === "sftp_has_exec_capability") return Promise.resolve(true);
-      if (cmd === "sftp_check_writable") return Promise.resolve("unknown");
-      if (cmd === "sftp_write_file_content") return Promise.reject(new Error("permission denied"));
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("body\n"));
+      if (cmd === "session_has_exec_capability") return Promise.resolve(true);
+      if (cmd === "session_check_writable") return Promise.resolve("unknown");
+      if (cmd === "session_write_file") return Promise.reject(new Error("permission denied"));
       return Promise.resolve(undefined);
     });
     render(REMOTE_RO_META);
@@ -597,7 +604,7 @@ describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
 
   it("renders the Save action as a shared Button primitive", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("data\n");
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("data\n"));
       return Promise.resolve(undefined);
     });
     render();
@@ -610,8 +617,8 @@ describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
 
   it("renders the save-error dismiss as a shared Button primitive", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("data\n");
-      if (cmd === "sftp_write_file_content") return Promise.reject(new Error("permission denied"));
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("data\n"));
+      if (cmd === "session_write_file") return Promise.reject(new Error("permission denied"));
       return Promise.resolve(undefined);
     });
     render();
@@ -633,7 +640,7 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
   const REMOTE_RO_META: EditorTabMeta = {
     filePath: "/etc/hosts",
     isRemote: true,
-    sftpSessionId: "sftp-sess-1",
+    sessionBrowser: { sessionId: "sftp-sess-1", connectionType: "ssh" },
     permissions: "-rw-r--r--",
   };
 
@@ -680,19 +687,19 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
     const writeCalls: Array<Record<string, unknown>> = [];
     const downloadCalls: Array<Record<string, unknown>> = [];
     mockedInvoke.mockImplementation((cmd, args) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("127.0.0.1 localhost\n");
-      if (cmd === "sftp_has_exec_capability") return Promise.resolve(false);
-      if (cmd === "sftp_check_writable") return Promise.resolve("readOnly");
-      if (cmd === "sftp_realpath") {
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_has_exec_capability") return Promise.resolve(false);
+      if (cmd === "session_check_writable") return Promise.resolve("readOnly");
+      if (cmd === "session_realpath") {
         return home !== undefined
           ? Promise.resolve(home)
           : Promise.reject(new Error("no realpath"));
       }
-      if (cmd === "sftp_write_file_content") {
+      if (cmd === "session_write_file") {
         writeCalls.push((args ?? {}) as Record<string, unknown>);
         return Promise.resolve(undefined);
       }
-      if (cmd === "sftp_download") {
+      if (cmd === "session_download") {
         downloadCalls.push((args ?? {}) as Record<string, unknown>);
         return Promise.resolve("transfer-1");
       }
@@ -777,8 +784,10 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
     await flush();
 
     expect(writeCalls).toHaveLength(1);
-    expect(writeCalls[0].remotePath).toBe("/home/user/hosts.copy");
-    expect(writeCalls[0].content).toBe("127.0.0.1 localhost\nmy edit\n");
+    expect(writeCalls[0].path).toBe("/home/user/hosts.copy");
+    expect(new TextDecoder().decode(new Uint8Array(writeCalls[0].data as number[]))).toBe(
+      "127.0.0.1 localhost\nmy edit\n"
+    );
   });
 
   it("downloads the file to a chosen local path via Download", async () => {
@@ -800,9 +809,9 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
 
   it("keeps the exec-capable Edit-with-sudo path (no fallback) when a shell exists", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "sftp_read_file_content") return Promise.resolve("body\n");
-      if (cmd === "sftp_has_exec_capability") return Promise.resolve(true);
-      if (cmd === "sftp_check_writable") return Promise.resolve("readOnly");
+      if (cmd === "session_read_file") return Promise.resolve(toBytes("body\n"));
+      if (cmd === "session_has_exec_capability") return Promise.resolve(true);
+      if (cmd === "session_check_writable") return Promise.resolve("readOnly");
       return Promise.resolve(undefined);
     });
     render(REMOTE_RO_META);

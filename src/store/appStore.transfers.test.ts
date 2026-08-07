@@ -36,12 +36,15 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import {
-  sftpClose,
-  sftpCancelTransfer,
-  listSessionOwners,
-  type TransferProgress,
-} from "@/services/api";
+import { getAllLeaves } from "@/utils/panelTree";
+import { sftpCancelTransfer, listSessionOwners, type TransferProgress } from "@/services/api";
+
+/** Seed one live terminal tab bound to `sessionId` so this window renders it locally. */
+function seedLiveTab(sessionId: string): void {
+  useAppStore.getState().addTab("bash", "local");
+  const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+  useAppStore.getState().setTabSessionId(leaf.tabs[0].id, sessionId);
+}
 
 function progress(overrides: Partial<TransferProgress> = {}): TransferProgress {
   return {
@@ -60,7 +63,6 @@ describe("appStore — SFTP transfer progress (S2/D3)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
-    vi.mocked(sftpClose).mockResolvedValue(undefined);
     vi.mocked(sftpCancelTransfer).mockResolvedValue(undefined);
   });
 
@@ -144,13 +146,10 @@ describe("appStore — SFTP transfer progress (S2/D3)", () => {
     });
 
     it("folds a transfer this window renders locally even if a stale map says otherwise", () => {
-      // An SFTP sidebar session in this window's own store is authoritative for
-      // this window, regardless of how stale the ownership snapshot is.
-      useAppStore.setState({
-        windowLabel: "main",
-        sessionOwners: { "sess-a": "win-1" },
-        sftpSessions: { "sess-a": { hostLabel: "alice@a:22", owningTabId: "tab-1" } },
-      });
+      // A live tab in this window binds sess-a, so this window renders it locally
+      // and is authoritative regardless of how stale the ownership snapshot is.
+      seedLiveTab("sess-a");
+      useAppStore.setState({ windowLabel: "main", sessionOwners: { "sess-a": "win-1" } });
       useAppStore.getState().applyTransferProgress(progress({ sessionId: "sess-a" }));
       expect(useAppStore.getState().transfers["t1"]).toBeDefined();
     });
@@ -167,10 +166,9 @@ describe("appStore — SFTP transfer progress (S2/D3)", () => {
     });
 
     it("keeps rows for sessions this window owns or renders locally", () => {
-      useAppStore.setState({
-        windowLabel: "main",
-        sftpSessions: { "sess-local": { hostLabel: "alice@a:22", owningTabId: "tab-1" } },
-      });
+      // A live tab binds sess-local, so this window renders it locally.
+      seedLiveTab("sess-local");
+      useAppStore.setState({ windowLabel: "main" });
       const store = useAppStore.getState();
       store.applyTransferProgress(progress({ transferId: "t-own", sessionId: "sess-own" }));
       store.applyTransferProgress(progress({ transferId: "t-local", sessionId: "sess-local" }));
@@ -218,52 +216,6 @@ describe("appStore — SFTP transfer progress (S2/D3)", () => {
       useAppStore.getState().applyTransferProgress(progress());
       await useAppStore.getState().cancelTransfer("t1");
       expect(sftpCancelTransfer).toHaveBeenCalledWith("t1");
-    });
-  });
-
-  describe("kill-cascade: closeSftpSession cancels the session's transfers first", () => {
-    it("cancels every transfer owned by the session before closing it", async () => {
-      const order: string[] = [];
-      vi.mocked(sftpCancelTransfer).mockImplementation((id: string) => {
-        order.push(`cancel:${id}`);
-        return Promise.resolve();
-      });
-      vi.mocked(sftpClose).mockImplementation((id: string) => {
-        order.push(`close:${id}`);
-        return Promise.resolve();
-      });
-
-      useAppStore.setState({
-        sftpSessions: { "sess-a": { hostLabel: "alice@a:22", owningTabId: "tab-gone" } },
-      });
-      const store = useAppStore.getState();
-      store.applyTransferProgress(progress({ transferId: "t1", sessionId: "sess-a" }));
-      store.applyTransferProgress(progress({ transferId: "t2", sessionId: "sess-a" }));
-      // A transfer on a different session must not be cancelled.
-      store.applyTransferProgress(progress({ transferId: "t3", sessionId: "sess-b" }));
-
-      await useAppStore.getState().closeSftpSession("sess-a");
-
-      expect(sftpCancelTransfer).toHaveBeenCalledWith("t1");
-      expect(sftpCancelTransfer).toHaveBeenCalledWith("t2");
-      expect(sftpCancelTransfer).not.toHaveBeenCalledWith("t3");
-      // Cancel of the session's transfers happens before the session is closed.
-      expect(order.indexOf("cancel:t1")).toBeLessThan(order.indexOf("close:sess-a"));
-      expect(order.indexOf("cancel:t2")).toBeLessThan(order.indexOf("close:sess-a"));
-
-      // The unrelated transfer survives.
-      expect(useAppStore.getState().transfers["t3"]).toBeDefined();
-    });
-
-    it("closes a session with no transfers without cancelling anything", async () => {
-      useAppStore.setState({
-        sftpSessions: { "sess-a": { hostLabel: "alice@a:22", owningTabId: "tab-gone" } },
-      });
-
-      await useAppStore.getState().closeSftpSession("sess-a");
-
-      expect(sftpCancelTransfer).not.toHaveBeenCalled();
-      expect(sftpClose).toHaveBeenCalledWith("sess-a");
     });
   });
 });

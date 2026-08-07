@@ -101,10 +101,13 @@ globalThis.ResizeObserver = class {
 const mockedInvoke = vi.mocked(invoke);
 
 const TAB_ID = "tab-fe-remote-1";
+// An SFTP-backed session tab (SSH). Since the convergence (#2422) SSH file
+// editing is backed by the session layer like every other remote transport, so
+// even an SFTP-backed tab reads/stats through the `session_*` commands.
 const SFTP_META: EditorTabMeta = {
   filePath: "/etc/app.conf",
   isRemote: true,
-  sftpSessionId: "sftp-sess-1",
+  sessionBrowser: { sessionId: "sftp-sess-1", connectionType: "ssh" },
 };
 const SESSION_META: EditorTabMeta = {
   filePath: "/etc/app.conf",
@@ -126,18 +129,15 @@ function statEntry() {
 function installInvoke() {
   mockedInvoke.mockImplementation((cmd) => {
     switch (cmd) {
-      case "sftp_read_file_content":
-        return Promise.resolve(diskContent);
       case "session_read_file":
         return Promise.resolve(Array.from(new TextEncoder().encode(diskContent)));
-      case "sftp_stat":
       case "session_stat":
         return Promise.resolve(statEntry());
-      case "sftp_check_writable":
+      case "session_check_writable":
         return Promise.resolve("unknown");
-      case "sftp_has_exec_capability":
+      case "session_has_exec_capability":
         return Promise.resolve(false);
-      case "sftp_realpath":
+      case "session_realpath":
         return Promise.resolve("/home/user");
       default:
         return Promise.resolve(undefined);
@@ -227,11 +227,11 @@ describe("FileEditor — remote external-change poll (#1627)", () => {
     // No OS file watch for remote files.
     expect(countInvokes("watch_local_file")).toBe(0);
     // Seeds the baseline (immediate stat) on mount…
-    const seeded = countInvokes("sftp_stat");
+    const seeded = countInvokes("session_stat");
     expect(seeded).toBeGreaterThan(0);
     // …and keeps polling on the interval.
     await pollOnce();
-    expect(countInvokes("sftp_stat")).toBeGreaterThan(seeded);
+    expect(countInvokes("session_stat")).toBeGreaterThan(seeded);
   });
 
   it("reflects the new content on an SFTP mtime/size change with a clean buffer", async () => {
@@ -268,14 +268,14 @@ describe("FileEditor — remote external-change poll (#1627)", () => {
   it("does not re-read the file when mtime/size is unchanged", async () => {
     render(SFTP_META);
     await flush();
-    const readsAfterLoad = countInvokes("sftp_read_file_content");
+    const readsAfterLoad = countInvokes("session_read_file");
 
     // Several polls with no remote change.
     await pollOnce();
     await pollOnce();
 
     // Stat kept polling, but no extra content reads happened.
-    expect(countInvokes("sftp_read_file_content")).toBe(readsAfterLoad);
+    expect(countInvokes("session_read_file")).toBe(readsAfterLoad);
     expect(query("file-editor-disk-changed-banner")).toBeNull();
   });
 
@@ -283,7 +283,7 @@ describe("FileEditor — remote external-change poll (#1627)", () => {
     render(SFTP_META, /* isVisible */ false);
     await flush();
     await pollOnce();
-    expect(countInvokes("sftp_stat")).toBe(0);
+    expect(countInvokes("session_stat")).toBe(0);
   });
 
   it("reflects an external change for a session-layer (Docker/FTP/agent) file", async () => {

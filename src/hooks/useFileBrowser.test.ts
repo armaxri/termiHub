@@ -31,29 +31,6 @@ vi.mock("@/services/api", () => ({
 }));
 
 // Mock the sub-hooks to isolate routing logic
-vi.mock("./useFileSystem", () => ({
-  useFileSystem: vi.fn(() => ({
-    fileEntries: [{ name: "sftp-file.txt", path: "/sftp-file.txt", isDirectory: false }],
-    currentPath: "/sftp",
-    isConnected: true,
-    isLoading: false,
-    error: null,
-    navigateTo: vi.fn(),
-    navigateUp: vi.fn(),
-    refresh: vi.fn(),
-    downloadFile: vi.fn(),
-    uploadFile: vi.fn(),
-    createDirectory: vi.fn(),
-    createFile: vi.fn(),
-    deleteEntry: vi.fn(),
-    renameEntry: vi.fn(),
-    openInVscode: vi.fn(),
-    copyEntry: vi.fn(),
-    cutEntry: vi.fn(),
-    pasteEntry: vi.fn(),
-  })),
-}));
-
 vi.mock("./useLocalFileSystem", () => ({
   useLocalFileSystem: vi.fn(() => ({
     fileEntries: [{ name: "local-file.txt", path: "/local-file.txt", isDirectory: false }],
@@ -126,9 +103,6 @@ describe("useFileBrowser routing", () => {
     useAppStore.setState({ fileBrowserMode: "local" });
     expect(useAppStore.getState().fileBrowserMode).toBe("local");
 
-    useAppStore.setState({ fileBrowserMode: "sftp" });
-    expect(useAppStore.getState().fileBrowserMode).toBe("sftp");
-
     useAppStore.setState({ fileBrowserMode: "session" });
     expect(useAppStore.getState().fileBrowserMode).toBe("session");
 
@@ -199,19 +173,6 @@ describe("useFileBrowser hook (mode routing)", () => {
     expect(result!.mode).toBe("local");
     expect(result!.fileEntries[0].name).toBe("local-file.txt");
     // The actions/isConnected still come from the per-mode hook.
-    expect(result!.isConnected).toBe(true);
-  });
-
-  it('returns mode "sftp" with SFTP file entries', () => {
-    useAppStore.setState({ fileBrowserMode: "sftp", fileEntries: listing("sftp-file.txt") });
-    let result: ReturnType<typeof useFileBrowser> | undefined;
-
-    act(() => {
-      root.render(createElement(FileBrowserHarness, { onResult: (r) => (result = r) }));
-    });
-
-    expect(result!.mode).toBe("sftp");
-    expect(result!.fileEntries[0].name).toBe("sftp-file.txt");
     expect(result!.isConnected).toBe(true);
   });
 

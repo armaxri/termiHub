@@ -410,8 +410,11 @@ describe("appStore", () => {
   });
 
   describe("openEditorTab", () => {
-    it("creates a new editor tab with the given session ID", () => {
-      useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-abc");
+    it("creates a new editor tab backed by a session browser", () => {
+      useAppStore.getState().openEditorTab("/remote/file.txt", true, undefined, {
+        sessionId: "session-abc",
+        connectionType: "ssh",
+      });
 
       const state = useAppStore.getState();
       const leaves = getAllLeaves(state.rootPanel);
@@ -419,28 +422,20 @@ describe("appStore", () => {
       expect(tab).toBeDefined();
       expect(tab!.editorMeta?.filePath).toBe("/remote/file.txt");
       expect(tab!.editorMeta?.isRemote).toBe(true);
-      expect(tab!.editorMeta?.sftpSessionId).toBe("session-abc");
-    });
-
-    it("refreshes sftpSessionId on existing remote editor tab when reopened with a new session", () => {
-      // Open the file for the first time with session "old-session"
-      useAppStore.getState().openEditorTab("/remote/file.txt", true, "old-session");
-
-      // Simulate reconnect: open the same file again with "new-session"
-      useAppStore.getState().openEditorTab("/remote/file.txt", true, "new-session");
-
-      const state = useAppStore.getState();
-      const leaves = getAllLeaves(state.rootPanel);
-      const tabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "editor");
-      // Still only one tab
-      expect(tabs).toHaveLength(1);
-      // Session ID must be updated to the new one
-      expect(tabs[0].editorMeta?.sftpSessionId).toBe("new-session");
+      expect(tab!.editorMeta?.sessionBrowser?.sessionId).toBe("session-abc");
     });
 
     it("does not create duplicate tabs for the same remote file", () => {
-      useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-1");
-      useAppStore.getState().openEditorTab("/remote/file.txt", true, "session-2");
+      // No owning terminal tab exists for either session, so dedup falls back to
+      // path-only (the pre-#1599 behaviour) and reuses the single editor tab.
+      useAppStore.getState().openEditorTab("/remote/file.txt", true, undefined, {
+        sessionId: "session-1",
+        connectionType: "ssh",
+      });
+      useAppStore.getState().openEditorTab("/remote/file.txt", true, undefined, {
+        sessionId: "session-2",
+        connectionType: "ssh",
+      });
 
       const state = useAppStore.getState();
       const leaves = getAllLeaves(state.rootPanel);
@@ -459,49 +454,6 @@ describe("appStore", () => {
       expect(tabs).toHaveLength(1);
     });
 
-    it("opens two tabs for the same path on two different SFTP hosts (#1599)", () => {
-      // Two live SFTP sessions to different hosts.
-      useAppStore.setState({
-        sftpSessions: {
-          "sess-a": { hostLabel: "user@host-a:22", owningTabId: "" },
-          "sess-b": { hostLabel: "user@host-b:22", owningTabId: "" },
-        },
-      });
-
-      useAppStore.getState().openEditorTab("/etc/hosts", true, "sess-a");
-      useAppStore.getState().openEditorTab("/etc/hosts", true, "sess-b");
-
-      const state = useAppStore.getState();
-      const tabs = getAllLeaves(state.rootPanel)
-        .flatMap((l) => l.tabs)
-        .filter((t) => t.contentType === "editor");
-      // Different hosts => two independent tabs, each backed by its own session.
-      expect(tabs).toHaveLength(2);
-      const sessionIds = tabs.map((t) => t.editorMeta?.sftpSessionId).sort();
-      expect(sessionIds).toEqual(["sess-a", "sess-b"]);
-    });
-
-    it("refreshes one SFTP tab when the same host reconnects with a new session id (#1599)", () => {
-      // A reconnect mints a new SFTP session id but keeps the same host label.
-      useAppStore.setState({
-        sftpSessions: {
-          "sess-old": { hostLabel: "user@host-a:22", owningTabId: "" },
-          "sess-new": { hostLabel: "user@host-a:22", owningTabId: "" },
-        },
-      });
-
-      useAppStore.getState().openEditorTab("/etc/hosts", true, "sess-old");
-      useAppStore.getState().openEditorTab("/etc/hosts", true, "sess-new");
-
-      const state = useAppStore.getState();
-      const tabs = getAllLeaves(state.rootPanel)
-        .flatMap((l) => l.tabs)
-        .filter((t) => t.contentType === "editor");
-      // Same host, new session => the existing tab is refreshed, not duplicated.
-      expect(tabs).toHaveLength(1);
-      expect(tabs[0].editorMeta?.sftpSessionId).toBe("sess-new");
-    });
-
     it("opens two tabs for the same path on two different session-layer connections (#1599)", () => {
       // Two live session-layer terminals (e.g. an FTP host and a Docker
       // container), each owning its own session id.
@@ -517,11 +469,11 @@ describe("appStore", () => {
           { sessionId: "docker-sess" }
         );
 
-      useAppStore.getState().openEditorTab("/app/config.yml", true, undefined, undefined, {
+      useAppStore.getState().openEditorTab("/app/config.yml", true, undefined, {
         sessionId: "ftp-sess",
         connectionType: "ftp",
       });
-      useAppStore.getState().openEditorTab("/app/config.yml", true, undefined, undefined, {
+      useAppStore.getState().openEditorTab("/app/config.yml", true, undefined, {
         sessionId: "docker-sess",
         connectionType: "docker",
       });
@@ -542,7 +494,7 @@ describe("appStore", () => {
         .flatMap((l) => l.tabs)
         .find((t) => t.sessionId === "ftp-sess-1")!.id;
 
-      useAppStore.getState().openEditorTab("/app/config.yml", true, undefined, undefined, {
+      useAppStore.getState().openEditorTab("/app/config.yml", true, undefined, {
         sessionId: "ftp-sess-1",
         connectionType: "ftp",
       });
@@ -550,7 +502,7 @@ describe("appStore", () => {
       // Reconnect: same tab, new backing session id.
       useAppStore.getState().setTabSessionId(ftpTabId, "ftp-sess-2");
 
-      useAppStore.getState().openEditorTab("/app/config.yml", true, undefined, undefined, {
+      useAppStore.getState().openEditorTab("/app/config.yml", true, undefined, {
         sessionId: "ftp-sess-2",
         connectionType: "ftp",
       });
