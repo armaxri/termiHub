@@ -1371,6 +1371,7 @@ flowchart LR
 - New connection types render automatically without any frontend changes
 - Conditional visibility (`visibleWhen`) handles dependent fields (e.g., show "Key Path" only when "Auth Method" is "key")
 - Supports environment variable expansion (`${VAR}`) and tilde expansion markers per field
+  - **WSL is the deliberate exception:** its `startingDirectory`, `env`, and `initialCommand` fields advertise **no** expansion (`supports_*_expansion: false`) and are passed to the guest literally. `expand_config_value` resolves `~` / `${VAR}` against the **Windows host**, so host-side expansion would corrupt a Linux path (`~` → `C:\Users\…`). The WSL connect path never expands; the guest / `wsl --cd` / login shell resolve these values in the Linux namespace that actually contains them. See `docs/concepts/backlog/wsl-path-expansion-semantics.html` (#2360).
 - The schema is serializable as JSON — enables remote agents to report their available types and schemas to the desktop
 - Plugin-provided connection types (future) can declare schemas without shipping frontend code
 

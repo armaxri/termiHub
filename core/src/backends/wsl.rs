@@ -628,8 +628,13 @@ impl ConnectionType for Wsl {
                         required: false,
                         default: None,
                         placeholder: Some("~ (home directory)".to_string()),
-                        supports_env_expansion: true,
-                        supports_tilde_expansion: true,
+                        // WSL paths are literal: values are handed to `wsl --cd`
+                        // and resolved by the Linux guest, so host-side `~` /
+                        // `${VAR}` expansion (which resolves against the Windows
+                        // host) would corrupt a valid Linux path. See
+                        // docs/concepts/backlog/wsl-path-expansion-semantics.html.
+                        supports_env_expansion: false,
+                        supports_tilde_expansion: false,
                         visible_when: None,
                     },
                     SettingsField {
@@ -641,7 +646,8 @@ impl ConnectionType for Wsl {
                         required: false,
                         default: None,
                         placeholder: None,
-                        supports_env_expansion: true,
+                        // Literal: passed verbatim to the WSL guest (see startingDirectory).
+                        supports_env_expansion: false,
                         supports_tilde_expansion: false,
                         visible_when: None,
                     },
@@ -685,7 +691,8 @@ impl ConnectionType for Wsl {
                         required: false,
                         default: None,
                         placeholder: None,
-                        supports_env_expansion: true,
+                        // Literal: values cross into the guest verbatim via WSLENV.
+                        supports_env_expansion: false,
                         supports_tilde_expansion: false,
                         visible_when: None,
                     },
@@ -1046,8 +1053,32 @@ mod tests {
         assert!(dir_field.is_some());
         let f = dir_field.unwrap();
         assert!(!f.required);
-        assert!(f.supports_tilde_expansion);
-        assert!(f.supports_env_expansion);
+        // WSL values are literal — the connect path never expands them, and
+        // host-side expansion would corrupt Linux paths. The schema must
+        // advertise no expansion so it matches the connect path.
+        assert!(!f.supports_tilde_expansion);
+        assert!(!f.supports_env_expansion);
+    }
+
+    #[test]
+    fn schema_wsl_fields_advertise_no_expansion() {
+        // Regression guard for the literal-path contract: no WSL field may
+        // claim host-side expansion (see wsl-path-expansion-semantics concept).
+        let wsl = Wsl::new();
+        let schema = wsl.settings_schema();
+        let fields = &schema.groups[0].fields;
+        for f in fields {
+            assert!(
+                !f.supports_env_expansion,
+                "WSL field `{}` must not advertise env expansion",
+                f.key
+            );
+            assert!(
+                !f.supports_tilde_expansion,
+                "WSL field `{}` must not advertise tilde expansion",
+                f.key
+            );
+        }
     }
 
     #[test]
