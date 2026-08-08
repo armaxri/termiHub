@@ -22,6 +22,13 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from .base import HarnessMixin
 
+#: Projection region id for the agents domain (region-authoritative since #2409;
+#: twin of the frontend ``AGENTS_REGION`` const). Its cache is the raw store
+#: snapshot keyed ``agents`` / ``sessions`` / ``definitions`` / ``folders`` —
+#: **not** the ``appStore``-named ``remoteAgents`` / ``agentSessions`` / … slices,
+#: which no longer exist on the store.
+AGENTS_REGION = "agents"
+
 
 class AgentUi(HarnessMixin):
     """Create remote agents and drive their menu, error dialog, and setup wizard."""
@@ -75,7 +82,10 @@ class AgentUi(HarnessMixin):
 
     # ── lookups ─────────────────────────────────────────────────────────────────
     def remote_agents(self) -> list[dict[str, Any]]:
-        value = self.driver.get_state("remoteAgents")
+        # Region-authoritative (#2409): read the `agents` projection region, whose
+        # raw cache lists the agents under the `agents` key (the old
+        # get_state("remoteAgents") path no longer resolves — #2479).
+        value = self.projection_region_cache(AGENTS_REGION).get("agents")
         return [a for a in value if isinstance(a, dict)] if isinstance(value, list) else []
 
     def find_agent(self, name: str) -> Optional[dict[str, Any]]:
@@ -201,21 +211,26 @@ class AgentUi(HarnessMixin):
         shells = capabilities.get("availableShells")
         return [s for s in shells if isinstance(s, str)] if isinstance(shells, list) else []
 
-    def _agent_keyed_dicts(self, state_key: str, agent_id: str) -> list[dict[str, Any]]:
-        """The dict entries of a ``Record<agentId, list>`` store keyed by ``agent_id``."""
-        value = self.driver.get_state(state_key)
+    def _agent_keyed_dicts(self, region_key: str, agent_id: str) -> list[dict[str, Any]]:
+        """The dict entries of a ``Record<agentId, list>`` map in the agents region.
+
+        Region-authoritative (#2409): the per-agent lists live under the raw
+        ``agents``-region keys (``sessions`` / ``definitions`` / ``folders``), not
+        the old ``appStore`` slices, so this reads the region cache (#2479).
+        """
+        value = self.projection_region_cache(AGENTS_REGION).get(region_key)
         items = value.get(agent_id) if isinstance(value, dict) else None
         return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
 
     # ── agent-side sessions ──────────────────────────────────────────────────────
     def agent_sessions(self, agent_id: str) -> list[dict[str, Any]]:
-        """The live sessions the agent reports for ``agent_id`` (``agentSessions``)."""
-        return self._agent_keyed_dicts("agentSessions", agent_id)
+        """The live sessions the agent reports for ``agent_id`` (region ``sessions``)."""
+        return self._agent_keyed_dicts("sessions", agent_id)
 
     # ── saved definitions + persistent sessions ─────────────────────────────────
     def agent_definitions(self, agent_id: str) -> list[dict[str, Any]]:
-        """Saved connection definitions under ``agent_id`` (``agentDefinitions``)."""
-        return self._agent_keyed_dicts("agentDefinitions", agent_id)
+        """Saved connection definitions under ``agent_id`` (region ``definitions``)."""
+        return self._agent_keyed_dicts("definitions", agent_id)
 
     def create_agent_definition(
         self, agent_name: str, def_name: str, *, persistent: bool = False

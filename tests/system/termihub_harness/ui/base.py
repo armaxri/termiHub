@@ -44,6 +44,30 @@ class HarnessMixin:
         """
         return self.driver.get_attribute(test_id, "disabled") is not None
 
+    def projection_region_cache(self, region: str) -> dict[str, Any]:
+        """The current projected cache of a ``region``, read through the substrate.
+
+        Some domains are **region-authoritative** — their state lives in a
+        projection region, not in ``appStore`` — so a ``get_state("<slice>")`` read
+        no longer resolves (agents since #2409, settings since #2227). This reads
+        the live region cache instead: it subscribes once per region (reused across
+        calls on the same test via a per-instance map) and returns the substrate's
+        current cache dict on every call, so a poll always sees the latest diff.
+
+        Returns ``{}`` when the region has no cache yet (never subscribed content),
+        so a ``.get(...)`` on the result is always safe.
+        """
+        subs = getattr(self, "_projection_region_subs", None)
+        if subs is None:
+            subs = {}
+            self._projection_region_subs = subs
+        sub_id = subs.get(region)
+        if sub_id is None:
+            sub_id = self.driver.projection_subscribe(region)["subscriptionId"]
+            subs[region] = sub_id
+        cache = self.driver.projection_state(sub_id).get("cache")
+        return cache if isinstance(cache, dict) else {}
+
     def open_named_context_menu(
         self,
         *,

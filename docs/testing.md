@@ -1293,6 +1293,45 @@ a Unix agent host (the exec-replace is Unix-only). See PR #1352.
 5. **Dismiss.** Press **Dismiss** on the banner. Expect: the banner hides for the
    session and no update is requested.
 
+### Backend-driven agent reconnect across a prolonged transport drop (#2476)
+
+Verifies the backend-driven agent reconnect redrive under the
+`sessionBackendReattach` flag: an agent-hosted session whose transport is
+severed for a prolonged outage reconnects **backend-driven** (the terminal
+re-attaches to a new backend session, the client engine suppressed, no
+double-connect, never stranded), and a permanent drop settles Disconnected. This
+grade cannot run headlessly — macOS occlusion-throttles the WKWebView with no
+foreground display (#957, #2460) — so it is a turnkey manual test with a real
+display. Unix/macOS only (the dev agent is a loopback sshd). See PR for #2476;
+harness residual tracked in #2480.
+
+Run once (from a dev checkout — builds if stale, starts the dev agent + app with
+the flag on, prints the checklist):
+
+```bash
+scripts/internal/verify-agent-reconnect.sh
+```
+
+Then, in a **second terminal**, `scripts/internal/agent-reconnect-transport.sh
+{drop|restore}` severs / restores this checkout's dev-agent transport with one
+keystroke (kills the dev-agent sshd master + connection children by port, then
+relaunches it reusing the same host key so the reconnect is not blocked on a
+trust prompt).
+
+1. **Connect + open a session.** In the Connections sidebar, connect the
+   pre-registered dev agent (accept the host-key prompt if shown), then **New
+   Shell Session**; run `echo hello`. Expect: a live shell.
+2. **Drop.** Run `agent-reconnect-transport.sh drop`. Expect: within a few
+   seconds the agent tab shows **Reconnecting** — the terminal must not close,
+   exit, or vanish.
+3. **Prolonged outage + restore.** Wait ~30s (the backend parks + retries), then
+   run `agent-reconnect-transport.sh restore`. Expect: the agent reconnects
+   backend-driven and the **same** shell tab re-attaches to a fresh backend
+   session; `echo hello2` prints. No duplicate tab, no second connection.
+4. **Permanent drop.** Run `drop` again and do **not** restore. Expect: after the
+   backend gives up retrying, the agent/tab settles **Disconnected** — it must
+   not spin forever and must not be left stranded.
+
 ### Coordinated desktop-push Update deploy (#1616)
 
 Verifies that triggering an **Update** (the desktop-push deploy, not just the
