@@ -14,7 +14,7 @@
 //! The binary is built automatically by cargo before the tests run.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
@@ -374,10 +374,75 @@ fn spawn_ready_listener(
     );
 }
 
+// ── Client connect with bounded retry ────────────────────────────────────────
+
+/// Per-attempt connect timeout for [`connect_with_retry`] and [`probe_once`].
+///
+/// A bare `TcpStream::connect` uses the OS default connect timeout, which on
+/// **Windows** is a long, unforgiving SYN-retransmit sequence (~21s). Under
+/// heavy parallel CI load a *ready* loopback listener's accept backlog can fill
+/// for a beat, so Windows silently drops the client SYN and a single `connect`
+/// hangs the whole way to that default — surfacing as
+/// `Os { code: 10060, kind: TimedOut }`, the #2490 / #1579 flake that reds a
+/// random agent-integration test each run. Capping each attempt short turns that
+/// one long hang into a fast poll: abandon a stalled SYN quickly and re-attempt
+/// on the backoff schedule. On unix a bare connect refuses fast, so the cap is
+/// only ever exercised there in pathological cases; it is harmless.
+const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(750);
+
+/// Resolve a `host:port` string to a single `SocketAddr` for `connect_timeout`.
+///
+/// A malformed address is a test bug, not a transient condition, so this panics
+/// rather than feeding a retry loop that could never succeed.
+fn resolve_addr(addr: &str) -> SocketAddr {
+    addr.to_socket_addrs()
+        .unwrap_or_else(|e| panic!("could not parse agent addr {addr}: {e}"))
+        .next()
+        .unwrap_or_else(|| panic!("agent addr {addr} resolved to no socket address"))
+}
+
+/// Connect a client to a *ready* agent listener, retrying short-timeout connects
+/// with bounded backoff until the listener accepts or [`ready_timeout`] elapses.
+///
+/// [`spawn_ready_listener`] already proves the accept loop is live before a test
+/// runs, so this normally succeeds on the first attempt and never sleeps. Its job
+/// is to survive the transient Windows-CI window described on
+/// [`CONNECT_ATTEMPT_TIMEOUT`]: it polls on **connect success** (per the #2459
+/// hardening lesson — never a fixed sleep-then-assume-ready) instead of betting
+/// the whole test on one `connect` that can hang for ~21s.
+///
+/// The deadline is bounded and the **read side is untouched**: a listener that
+/// never accepts still fails the test once the budget elapses — this only widens
+/// the connect window, it does not mask a genuine hang or weaken any readiness
+/// assertion.
+fn connect_with_retry(addr: &str) -> TcpStream {
+    let socket_addr = resolve_addr(addr);
+    let deadline = Instant::now() + ready_timeout();
+    let mut backoff = readiness_backoff();
+    loop {
+        match TcpStream::connect_timeout(&socket_addr, CONNECT_ATTEMPT_TIMEOUT) {
+            Ok(stream) => return stream,
+            Err(e) => {
+                if Instant::now() >= deadline {
+                    panic!(
+                        "could not connect to agent at {addr} within {:?} — last error: {e}",
+                        ready_timeout()
+                    );
+                }
+            }
+        }
+        std::thread::sleep(backoff.next_delay().unwrap_or(READINESS_BACKOFF_CAP));
+    }
+}
+
 /// One FIN-readiness probe. Returns `None` on success (EOF observed), or
 /// `Some(reason)` describing a transient failure so the caller can retry.
 fn probe_once(addr: &str, deadline: &Instant) -> Option<String> {
-    let mut stream = match TcpStream::connect(addr) {
+    // Use a short per-attempt connect timeout (see [`CONNECT_ATTEMPT_TIMEOUT`]):
+    // a bare `connect` here would hang ~21s on a Windows SYN drop, stalling the
+    // whole readiness backoff loop before it could retry.
+    let mut stream = match TcpStream::connect_timeout(&resolve_addr(addr), CONNECT_ATTEMPT_TIMEOUT)
+    {
         Ok(stream) => stream,
         Err(e) => return Some(format!("connect: {e}")),
     };
@@ -466,7 +531,7 @@ fn agent_starts_and_accepts_connections() {
 #[test]
 fn agent_responds_to_initialize() {
     let agent = LocalAgent::spawn();
-    let mut stream = TcpStream::connect(&agent.addr).expect("connect failed");
+    let mut stream = connect_with_retry(&agent.addr);
     stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
 
     let response = rpc(
@@ -488,7 +553,7 @@ fn agent_responds_to_initialize() {
 #[test]
 fn agent_returns_error_for_unknown_method_before_initialize() {
     let agent = LocalAgent::spawn();
-    let mut stream = TcpStream::connect(&agent.addr).expect("connect failed");
+    let mut stream = connect_with_retry(&agent.addr);
     stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
 
     let response = rpc(
@@ -512,7 +577,7 @@ fn agent_handles_multiple_sequential_connections() {
     let agent = LocalAgent::spawn();
 
     for i in 0..3 {
-        let mut stream = TcpStream::connect(&agent.addr).expect("connect failed");
+        let mut stream = connect_with_retry(&agent.addr);
         stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
 
         let response = rpc(
@@ -561,7 +626,10 @@ struct AgentClient {
 
 impl AgentClient {
     fn connect(addr: &str) -> Self {
-        let stream = TcpStream::connect(addr).expect("connect failed");
+        // Retry the connect with bounded backoff so a transient Windows-CI SYN
+        // drop against a ready listener does not 10060 the test (#2490/#1579);
+        // see [`connect_with_retry`].
+        let stream = connect_with_retry(addr);
         // Match the simple `rpc()` helper's generous per-round-trip budget: a
         // loaded CI runner can momentarily take several seconds to answer an
         // RPC, and a 10s ceiling flaked under that load (#1398). The read still
