@@ -880,7 +880,19 @@ impl SessionManager {
                 continue;
             }
 
-            match DaemonClient::connect(id.clone(), endpoint, self.notification_tx.clone()).await {
+            // Recovery must fast-fail a dead daemon whose socket file merely
+            // lingers (the `endpoint_alive` file check above cannot tell a live
+            // daemon from a stale socket file). Using the spawn-path connect here
+            // would retry `ConnectionRefused` for the full 30s per dead session,
+            // stalling the fresh agent's startup — and thus the desktop's
+            // `initialize` handshake — after a reconnect (#2476).
+            match DaemonClient::connect_for_recovery(
+                id.clone(),
+                endpoint,
+                self.notification_tx.clone(),
+            )
+            .await
+            {
                 Ok(client) => {
                     // A recovered daemon session must also promptly apply a
                     // staged self-update when it later exits on its own (#2381).
