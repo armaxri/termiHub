@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { settingsSchemaToZod } from "./settingsSchemaToZod";
-import type { SettingsSchema } from "@/types/schema";
+import type { FieldType, SettingsSchema } from "@/types/schema";
 
 function makeSchema(fields: SettingsSchema["groups"][0]["fields"]): SettingsSchema {
   return { groups: [{ key: "g", label: "Group", fields }] };
@@ -165,6 +165,64 @@ describe("settingsSchemaToZod", () => {
       expect(zod.safeParse({ volumes: [{ host: "/a", container: "/b" }] }).success).toBe(true);
       expect(zod.safeParse({ volumes: [] }).success).toBe(true);
       expect(zod.safeParse({}).success).toBe(true);
+    });
+  });
+
+  // Regression for #2467: when the connection type changes, ConnectionSettingsForm
+  // clears every field to `null` (not `undefined`) so react-hook-form's per-name
+  // value cache cannot leak the previous type's value (#1820). A bare
+  // `.optional()` accepts only `undefined`, so those `null`-cleared optional
+  // fields (e.g. SSH Advanced `shell` / `connectTimeoutSecs`) failed validation
+  // as "Invalid input", leaving Save & Connect permanently disabled for SSH.
+  // Optional fields must therefore also accept `null`.
+  describe("optional fields accept null (type-switch clears to null, #2467)", () => {
+    it("optional text/password/filePath/serialPort accept null", () => {
+      const types: FieldType["type"][] = ["text", "password", "filePath", "serialPort"];
+      for (const type of types) {
+        const zod = settingsSchemaToZod(
+          makeSchema([{ key: "f", label: "F", fieldType: { type } as FieldType, required: false }])
+        );
+        expect(zod.safeParse({ f: null }).success).toBe(true);
+      }
+    });
+
+    it("optional number accepts null", () => {
+      const zod = settingsSchemaToZod(
+        makeSchema([
+          { key: "n", label: "N", fieldType: { type: "number", min: 0 }, required: false },
+        ])
+      );
+      expect(zod.safeParse({ n: null }).success).toBe(true);
+    });
+
+    it("optional port accepts null", () => {
+      const zod = settingsSchemaToZod(
+        makeSchema([{ key: "port", label: "Port", fieldType: { type: "port" }, required: false }])
+      );
+      expect(zod.safeParse({ port: null }).success).toBe(true);
+    });
+
+    it("boolean/keyValueList/objectList accept null", () => {
+      const zod = settingsSchemaToZod(
+        makeSchema([
+          { key: "flag", label: "Flag", fieldType: { type: "boolean" }, required: false },
+          { key: "env", label: "Env", fieldType: { type: "keyValueList" }, required: false },
+          {
+            key: "vols",
+            label: "Vols",
+            fieldType: { type: "objectList", fields: [] },
+            required: false,
+          },
+        ])
+      );
+      expect(zod.safeParse({ flag: null, env: null, vols: null }).success).toBe(true);
+    });
+
+    it("a required field still rejects null", () => {
+      const zod = settingsSchemaToZod(
+        makeSchema([{ key: "host", label: "Host", fieldType: { type: "text" }, required: true }])
+      );
+      expect(zod.safeParse({ host: null }).success).toBe(false);
     });
   });
 
