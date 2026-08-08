@@ -192,9 +192,26 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
 
     fn fold_session_drop(&self, tab_id: &str, fold: DropFold) {
         use crate::session_projection::projection::fold_session_transition;
+        use crate::session_projection::ReconnectTimerDriver;
+        use tauri::Manager;
         match fold {
             DropFold::Reconnect => fold_session_transition(self, |store| store.reconnect(tab_id)),
             DropFold::Dropped => fold_session_transition(self, |store| store.dropped(tab_id, None)),
+        }
+        // Reconcile the backend reconnect timer at the **authoritative source**
+        // fold (#2476): a resilient drop (`Reconnect` → `Waiting`) must ARM the
+        // backend timer so the backend redrive drives the reconnect itself — it
+        // is the sole driver of an agent reconnect and must not depend on the
+        // client's `session.reconnect` mirror to start its own loop. Without this
+        // the source fold set the store to `Reconnecting` but left the timer
+        // unarmed (every `session.*` intent route calls `sync`, this fold did
+        // not), so if the client mirror did not fire/reach the backend the tab
+        // sat in `Reconnecting` forever with no attempt ever driven. `Dropped`
+        // (terminal) cancels any pending timer. Idempotent with the client
+        // mirror's own `sync` — a convergent double-arm. Off-path no-op when the
+        // driver is not managed (headless projection unit tests).
+        if let Some(driver) = self.try_state::<Arc<ReconnectTimerDriver>>() {
+            (*driver).sync(tab_id);
         }
     }
 
