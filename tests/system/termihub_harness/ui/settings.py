@@ -10,8 +10,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..bridge import BridgeError
 from .base import HarnessMixin
+
+#: Projection region id for the settings domain (region-authoritative since #2227;
+#: twin of the frontend ``SETTINGS_REGION`` const). Its cache is the persisted
+#: ``AppSettings`` document one-to-one, so its fields are read directly — the old
+#: ``get_state("settings.…")`` path no longer resolves (``appStore`` has no
+#: ``settings`` slice).
+SETTINGS_REGION = "settings"
 
 
 class SettingsUi(HarnessMixin):
@@ -42,12 +48,12 @@ class SettingsUi(HarnessMixin):
         self.switch_to_connections_sidebar()
 
     def _experimental_enabled(self) -> bool:
-        # The setting is absent from the store until first set, so a missing path
-        # (BridgeError) means "off".
-        try:
-            return bool(self.driver.get_state("settings.experimentalFeaturesEnabled"))
-        except BridgeError:
-            return False
+        # Region-authoritative (#2227): read the flag from the projected `settings`
+        # document. It is absent until first set, so a missing key reads as "off"
+        # (the region cache always returns a dict, so no BridgeError to catch).
+        return bool(
+            self.projection_region_cache(SETTINGS_REGION).get("experimentalFeaturesEnabled")
+        )
 
     def open_settings_category(self, category: str) -> None:
         """Open Settings and select a category nav item (e.g. ``external-files``).

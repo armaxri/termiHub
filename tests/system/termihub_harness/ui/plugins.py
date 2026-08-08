@@ -35,8 +35,8 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from ..bridge import BridgeError
 from .base import HarnessMixin
+from .settings import SETTINGS_REGION
 
 #: Id of the seeded fixture plugin (also its install directory name).
 SANDBOX_PLUGIN_ID = "termihub-sandbox-probe"
@@ -53,8 +53,9 @@ PARSER_OUTPUT_TOKEN = "sbxparserhit"
 #: The ``data-testid`` on the experimental frontend-plugin gate toggle
 #: (``FrontendPluginGateSettings.tsx``), under the *plugins* settings category.
 GATE_TOGGLE_TESTID = "settings-frontend-plugins-enabled"
-#: Store path of the gate setting (default-off; absent from the store until set).
-GATE_STATE_PATH = "settings.frontendPluginsEnabled"
+#: Key of the gate setting in the projected ``settings`` document (default-off;
+#: absent from the document until first set).
+GATE_SETTING_KEY = "frontendPluginsEnabled"
 
 #: The fixture's ``manifest.json`` (camelCase; ``deny_unknown_fields`` on the Rust
 #: side, so only known fields). ``apiVersion`` matches
@@ -184,13 +185,11 @@ class PluginsUi(HarnessMixin):
     def frontend_plugin_gate_enabled(self) -> bool:
         """Whether the experimental frontend-plugin gate is on.
 
-        The setting is absent from the store until first set, so a missing path
-        (``BridgeError``) means "off" — mirroring ``SettingsUi._experimental_enabled``.
+        Region-authoritative (#2227): read ``frontendPluginsEnabled`` from the
+        projected ``settings`` document — mirroring ``SettingsUi._experimental_enabled``.
+        The key is absent until first set, so a missing key reads as "off" (#2479).
         """
-        try:
-            return bool(self.driver.get_state(GATE_STATE_PATH))
-        except BridgeError:
-            return False
+        return bool(self.projection_region_cache(SETTINGS_REGION).get(GATE_SETTING_KEY))
 
     def write_gate_setting(self, enabled: bool) -> None:
         """Set ``frontendPluginsEnabled`` in the on-disk ``settings.json``.

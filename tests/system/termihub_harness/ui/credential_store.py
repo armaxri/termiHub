@@ -20,6 +20,7 @@ from typing import Any, Optional, TYPE_CHECKING
 
 from ..bridge import BridgeError
 from .base import HarnessMixin
+from .settings import SETTINGS_REGION
 
 #: Status-bar indicator that toggles lock state (lock when unlocked, open the
 #: unlock dialog when locked) — only rendered in master-password mode.
@@ -181,7 +182,10 @@ class CredentialStoreUi(HarnessMixin):
         )
         self.driver.select("auto-lock-timeout", str(minutes))
         self.wait(
-            lambda: self.driver.get_state("settings.credentialAutoLockMinutes") == minutes,
+            # Region-authoritative (#2227): the persisted value lives in the
+            # projected `settings` document, not an appStore `settings` slice (#2479).
+            lambda: self.projection_region_cache(SETTINGS_REGION).get("credentialAutoLockMinutes")
+            == minutes,
             what=f"the auto-lock timeout to persist as {minutes}",
         )
         self.switch_to_connections_sidebar()
