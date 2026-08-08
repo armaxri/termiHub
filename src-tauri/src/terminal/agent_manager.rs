@@ -3267,13 +3267,27 @@ mod tests {
 // transport reconnect**: does [`reconnect_agent`] actually re-establish the
 // russh session after a real sshd returns, and can a *fresh* `connection.create`
 // then be driven over it so the session is usable again — the exact recovery
-// that failed live? These tests close that gap by standing up a **real local
+// that failed live? This test closes that gap by standing up a **real local
 // sshd** with the real `termihub-agent` binary reachable (the test-owned analog
 // of `scripts/dev.sh`'s dev agent and the Python `LocalAgentSshd`, #2481),
 // driving `reconnect_agent` against it, killing the sshd for a genuine
 // server-side transport drop, restoring it, and asserting the reconnect
 // re-establishes the transport and a fresh create yields a usable session —
 // all headless, no GUI/webview.
+//
+// WHAT THIS FOUND (#2476): `reconnect_agent`'s russh layer is correct — it
+// re-establishes the transport and drives a fresh create fine. But the drop
+// (kill the sshd tree) also kills the *setsid'd session daemon* (#995), leaving
+// its unix socket file behind. The fresh agent's startup `recover_sessions` then
+// passed its `endpoint_alive` gate (file exists) and connected via the 30s
+// **spawn-path** timeout, which retries `ConnectionRefused` for the full 30s on
+// the dead-but-lingering socket — **before** the stdio loop answers `initialize`.
+// So `reconnect_agent` sat blocked ~31s per dead session: "transport restored
+// but stuck Reconnecting". The maintainer's own psutil-recursive-kill harness
+// (#2481) destroys the setsid'd daemon the same way, so it hits this too. Fixed
+// by giving recovery a short connect timeout (`DaemonClient::connect_for_recovery`)
+// so a dead-but-lingering socket fast-fails instead of stalling startup. See the
+// hermetic transport-layer regression in `agent/src/daemon/transport.rs`.
 //
 // Registry isolation (#2489): the agent is pointed at a per-test
 // `TERMIHUB_REGISTRY_ENDPOINT` and `XDG_CONFIG_HOME` inside its own temp dir via
@@ -3284,18 +3298,29 @@ mod tests {
 mod russh_reconnect_tests {
     use super::*;
     use base64::engine::general_purpose::STANDARD as B64;
-    use std::io::Write as _;
     use std::net::TcpListener;
     use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Stdio};
     use std::time::{Duration, Instant};
 
-    /// Overall ceiling for the reconnect + fresh-create recovery. Generous so a
-    /// slow CI shell cold-start never flakes it; a genuine stall (the live
-    /// symptom) still trips it rather than wedging the suite. `reconnect_agent`
-    /// itself sleeps ~1s of backoff before its first attempt, so this must
-    /// comfortably clear that.
+    /// Overall ceiling for the fresh-create + echo round-trip after reconnect.
+    /// Generous so a slow CI shell cold-start never flakes it.
     const RECOVERY_CEILING: Duration = Duration::from_secs(45);
+
+    /// Tight ceiling on the `reconnect_agent` call itself — the regression guard
+    /// for the bug this test found and fixed (#2476).
+    ///
+    /// Before the fix, killing the sshd tree also killed the setsid'd session
+    /// daemon (leaving its socket file), so the fresh agent's startup
+    /// `recover_sessions` paid the full 30s spawn-path connect timeout on the
+    /// dead-but-lingering socket **before** answering `initialize` — so
+    /// `reconnect_agent` sat blocked ~31s (30s recovery + ~1s backoff), the
+    /// "transport restored but stuck Reconnecting" symptom. With recovery now
+    /// fast-failing the dead socket, reconnect settles in a few seconds. This
+    /// bound sits comfortably above that (SSH connect + agent cold-start +
+    /// backoff, with CI jitter) yet far below the pre-fix ~31s, so a regression
+    /// to the long recovery path trips it.
+    const RECONNECT_SETTLE_CEILING: Duration = Duration::from_secs(20);
 
     /// Locate a usable `sshd` binary, or `None` to skip.
     fn find_sshd() -> Option<PathBuf> {
@@ -3332,15 +3357,12 @@ mod russh_reconnect_tests {
         let exe = std::env::current_exe().ok()?;
         // exe = target/<profile>/deps/<test-bin>; profile dir is two up.
         let profile_dir = exe.parent()?.parent()?;
-        for cand in [
+        [
             profile_dir.join("termihub-agent"),
             exe.parent()?.join("termihub-agent"),
-        ] {
-            if cand.is_file() {
-                return Some(cand);
-            }
-        }
-        None
+        ]
+        .into_iter()
+        .find(|cand| cand.is_file())
     }
 
     /// Grab a currently-free loopback TCP port (best-effort; the caller retries a
@@ -3371,11 +3393,15 @@ mod russh_reconnect_tests {
     /// processes descended from our own sshd are touched (never a name pattern).
     fn kill_subtree(root: u32) {
         // pid -> ppid for every live process.
-        let out = match Command::new("ps").args(["-ax", "-o", "pid=,ppid="]).output() {
+        let out = match Command::new("ps")
+            .args(["-ax", "-o", "pid=,ppid="])
+            .output()
+        {
             Ok(o) => o,
             Err(_) => return,
         };
-        let mut children: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+        let mut children: std::collections::HashMap<u32, Vec<u32>> =
+            std::collections::HashMap::new();
         for line in String::from_utf8_lossy(&out.stdout).lines() {
             let mut it = line.split_whitespace();
             if let (Some(pid), Some(ppid)) = (it.next(), it.next()) {
@@ -3441,10 +3467,7 @@ mod russh_reconnect_tests {
                 if !status.success() {
                     return Err(std::io::Error::other("ssh-keygen failed"));
                 }
-                std::fs::set_permissions(
-                    key,
-                    std::os::unix::fs::PermissionsExt::from_mode(0o600),
-                )?;
+                std::fs::set_permissions(key, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
             }
 
             let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
@@ -3606,9 +3629,9 @@ mod russh_reconnect_tests {
                 Ok(jsonrpc::JsonRpcMessage::Response { id: rid, result }) if rid == id => {
                     return Ok(result)
                 }
-                Ok(jsonrpc::JsonRpcMessage::Error { id: rid, message, .. }) if rid == id => {
-                    return Err(message)
-                }
+                Ok(jsonrpc::JsonRpcMessage::Error {
+                    id: rid, message, ..
+                }) if rid == id => return Err(message),
                 _ => continue,
             }
         }
@@ -3774,7 +3797,7 @@ mod russh_reconnect_tests {
                 )
                 .await
                 {
-                    Ok(None) => break true, // channel closed — transport is down
+                    Ok(None) => break true,  // channel closed — transport is down
                     Ok(Some(_)) => continue, // drain any buffered line
                     Err(_) => continue,      // read timeout — keep polling
                 }
@@ -3804,9 +3827,11 @@ mod russh_reconnect_tests {
             )
         });
         assert!(
-            reconnect_elapsed < RECOVERY_CEILING,
-            "reconnect_agent took {reconnect_elapsed:?}, over the {RECOVERY_CEILING:?} ceiling — \
-             the russh transport reconnect appears to stall (#2476)"
+            reconnect_elapsed < RECONNECT_SETTLE_CEILING,
+            "reconnect_agent took {reconnect_elapsed:?}, over the \
+             {RECONNECT_SETTLE_CEILING:?} settle ceiling — the fresh agent's startup \
+             session recovery is stalling initialize again (the dead-but-lingering \
+             daemon-socket 30s connect-timeout regression, #2476)"
         );
 
         // ── The redrive drives a FRESH create over the re-established transport;
