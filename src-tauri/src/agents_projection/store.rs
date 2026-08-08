@@ -175,12 +175,102 @@ struct Inner {
     sessions: HashMap<String, Vec<AgentSession>>,
     definitions: HashMap<String, Vec<AgentDefinition>>,
     folders: HashMap<String, Vec<AgentFolder>>,
+    /// Per-agent folders/definitions that were created optimistically on the client
+    /// but not yet confirmed by a server snapshot (#2486). They protect a fresh
+    /// create from being clobbered by a **stale** whole-list snapshot
+    /// (`set_folders` / `set_definitions` / `refresh`) that was taken *before* the
+    /// create was persisted but delivered *after* it. An entry is dropped the moment
+    /// a snapshot confirms it (the snapshot now contains it), or the user deletes it
+    /// locally, or the agent is removed/disconnected — so a genuinely deleted item
+    /// is never resurrected.
+    pending_folders: HashMap<String, Vec<AgentFolder>>,
+    pending_definitions: HashMap<String, Vec<AgentDefinition>>,
 }
 
 impl Inner {
     /// Find one agent by id for in-place mutation.
     fn agent_mut(&mut self, id: &str) -> Option<&mut AgentEntry> {
         self.agents.iter_mut().find(|a| a.id == id)
+    }
+
+    /// Record a folder as an unconfirmed local create so a later stale snapshot
+    /// cannot drop it (upsert by id — a re-create of the same id replaces it).
+    fn track_pending_folder(&mut self, id: &str, folder: &AgentFolder) {
+        let list = self.pending_folders.entry(id.to_string()).or_default();
+        list.retain(|f| f.id != folder.id);
+        list.push(folder.clone());
+    }
+
+    /// Stop protecting a folder (confirmed by a snapshot, deleted locally, …).
+    fn untrack_pending_folder(&mut self, id: &str, folder_id: &str) {
+        if let Some(list) = self.pending_folders.get_mut(id) {
+            list.retain(|f| f.id != folder_id);
+            if list.is_empty() {
+                self.pending_folders.remove(id);
+            }
+        }
+    }
+
+    /// Record a definition as an unconfirmed local create (see
+    /// [`Self::track_pending_folder`]).
+    fn track_pending_definition(&mut self, id: &str, definition: &AgentDefinition) {
+        let list = self.pending_definitions.entry(id.to_string()).or_default();
+        list.retain(|d| d.id != definition.id);
+        list.push(definition.clone());
+    }
+
+    /// Stop protecting a definition.
+    fn untrack_pending_definition(&mut self, id: &str, definition_id: &str) {
+        if let Some(list) = self.pending_definitions.get_mut(id) {
+            list.retain(|d| d.id != definition_id);
+            if list.is_empty() {
+                self.pending_definitions.remove(id);
+            }
+        }
+    }
+
+    /// Reconcile a server folder snapshot with the agent's unconfirmed local
+    /// creates (#2486): take the snapshot as the authoritative base, confirm-and-drop
+    /// any pending folder the snapshot now contains, and append any pending folder
+    /// the snapshot is missing (a create the snapshot predates) so it survives. The
+    /// snapshot's own ordering is preserved; preserved creates follow it.
+    fn reconcile_folders(&mut self, id: &str, snapshot: Vec<AgentFolder>) -> Vec<AgentFolder> {
+        let snapshot_ids: HashSet<String> = snapshot.iter().map(|f| f.id.clone()).collect();
+        let mut merged = snapshot;
+        if let Some(pending) = self.pending_folders.get_mut(id) {
+            pending.retain(|f| !snapshot_ids.contains(&f.id));
+            merged.extend(pending.iter().cloned());
+            if pending.is_empty() {
+                self.pending_folders.remove(id);
+            }
+        }
+        merged
+    }
+
+    /// Reconcile a server definition snapshot with the agent's unconfirmed local
+    /// creates (see [`Self::reconcile_folders`]).
+    fn reconcile_definitions(
+        &mut self,
+        id: &str,
+        snapshot: Vec<AgentDefinition>,
+    ) -> Vec<AgentDefinition> {
+        let snapshot_ids: HashSet<String> = snapshot.iter().map(|d| d.id.clone()).collect();
+        let mut merged = snapshot;
+        if let Some(pending) = self.pending_definitions.get_mut(id) {
+            pending.retain(|d| !snapshot_ids.contains(&d.id));
+            merged.extend(pending.iter().cloned());
+            if pending.is_empty() {
+                self.pending_definitions.remove(id);
+            }
+        }
+        merged
+    }
+
+    /// Forget every unconfirmed local create for an agent (removal / disconnect /
+    /// whole-slice replace — the live view is being reset from an authority).
+    fn clear_pending(&mut self, id: &str) {
+        self.pending_folders.remove(id);
+        self.pending_definitions.remove(id);
     }
 }
 
@@ -282,10 +372,13 @@ impl AgentsStore {
             }
         }
         inner.agents = next;
-        // Drop the sub-state of agents no longer in the persisted list.
+        // Drop the sub-state of agents no longer in the persisted list (self-cleaning
+        // for any orphan folder/definition map created before its entry existed, #2486).
         inner.sessions.retain(|id, _| kept.contains(id));
         inner.definitions.retain(|id, _| kept.contains(id));
         inner.folders.retain(|id, _| kept.contains(id));
+        inner.pending_folders.retain(|id, _| kept.contains(id));
+        inner.pending_definitions.retain(|id, _| kept.contains(id));
     }
 
     /// `agent.update` — update one agent's persisted fields (name, config,
@@ -318,6 +411,7 @@ impl AgentsStore {
         inner.sessions.remove(id);
         inner.definitions.remove(id);
         inner.folders.remove(id);
+        inner.clear_pending(id);
     }
 
     /// `agent.reorder` — move the agent at `old_index` to `new_index`
@@ -382,6 +476,10 @@ impl AgentsStore {
         if known {
             inner.sessions.insert(id.to_string(), Vec::new());
             inner.folders.insert(id.to_string(), Vec::new());
+            // The live folder view is reset; the next connect's refresh reloads it
+            // from the server (which by then includes any persisted create), so no
+            // unconfirmed create should be re-applied across a disconnect (#2486).
+            inner.clear_pending(id);
         }
     }
 
@@ -402,6 +500,10 @@ impl AgentsStore {
             return;
         }
         inner.sessions.insert(id.to_string(), sessions);
+        // Reconcile the once-per-connect snapshot with unconfirmed local creates so a
+        // create racing this refresh survives it (#2486).
+        let definitions = inner.reconcile_definitions(id, definitions);
+        let folders = inner.reconcile_folders(id, folders);
         inner.definitions.insert(id.to_string(), definitions);
         inner.folders.insert(id.to_string(), folders);
     }
@@ -446,6 +548,8 @@ impl AgentsStore {
     pub fn set_definitions(&self, id: &str, definitions: Vec<AgentDefinition>) {
         let mut inner = self.lock();
         if inner.agent_mut(id).is_some() {
+            // Preserve unconfirmed local creates a stale snapshot would drop (#2486).
+            let definitions = inner.reconcile_definitions(id, definitions);
             inner.definitions.insert(id.to_string(), definitions);
         }
     }
@@ -456,6 +560,8 @@ impl AgentsStore {
     pub fn set_folders(&self, id: &str, folders: Vec<AgentFolder>) {
         let mut inner = self.lock();
         if inner.agent_mut(id).is_some() {
+            // Preserve unconfirmed local creates a stale snapshot would drop (#2486).
+            let folders = inner.reconcile_folders(id, folders);
             inner.folders.insert(id.to_string(), folders);
         }
     }
@@ -464,12 +570,17 @@ impl AgentsStore {
 
     /// `agent.saveDefinition` — upsert a saved definition on an agent
     /// (`saveAgentDef`): replace any existing entry with the same id, else append.
-    /// A no-op for an unknown agent id.
+    ///
+    /// Applies even when the agent entry is not (yet) present (#2486): the create is
+    /// recorded in the per-agent definition map (and as an unconfirmed pending
+    /// create) so that if the entry lands moments later — via the persisted-list fold
+    /// or the client `agent.add` mirror — the definition is already there and
+    /// renders, instead of being silently dropped by a bare unknown-id no-op. The
+    /// map key is self-cleaning: `reflect_saved_agents` drops sub-state for any id
+    /// that is not a real persisted agent.
     pub fn save_definition(&self, id: &str, definition: AgentDefinition) {
         let mut inner = self.lock();
-        if inner.agent_mut(id).is_none() {
-            return;
-        }
+        inner.track_pending_definition(id, &definition);
         let list = inner.definitions.entry(id.to_string()).or_default();
         list.retain(|d| d.id != definition.id);
         list.push(definition);
@@ -479,6 +590,15 @@ impl AgentsStore {
     /// (`updateAgentDef`). A no-op if the agent or definition is unknown.
     pub fn update_definition(&self, id: &str, definition: AgentDefinition) {
         let mut inner = self.lock();
+        // Keep an unconfirmed create's pending copy current so an edit made before a
+        // snapshot confirms it is not lost when a stale snapshot is reconciled (#2486).
+        if inner
+            .pending_definitions
+            .get(id)
+            .is_some_and(|list| list.iter().any(|d| d.id == definition.id))
+        {
+            inner.track_pending_definition(id, &definition);
+        }
         if let Some(list) = inner.definitions.get_mut(id) {
             if let Some(slot) = list.iter_mut().find(|d| d.id == definition.id) {
                 *slot = definition;
@@ -490,6 +610,8 @@ impl AgentsStore {
     /// (`deleteAgentDef`). A no-op if the agent or definition is unknown.
     pub fn delete_definition(&self, id: &str, definition_id: &str) {
         let mut inner = self.lock();
+        // A locally deleted definition must stay deleted — stop protecting it (#2486).
+        inner.untrack_pending_definition(id, definition_id);
         if let Some(list) = inner.definitions.get_mut(id) {
             list.retain(|d| d.id != definition_id);
         }
@@ -507,11 +629,14 @@ impl AgentsStore {
     /// server-assigned folder id — converge on one entry instead of duplicating
     /// it. Folder ids are unique, so legitimate creates never collide and see no
     /// behavior change.
+    ///
+    /// Applies even when the agent entry is not (yet) present (#2486): the folder is
+    /// recorded in the per-agent folder map (and as an unconfirmed pending create) so
+    /// a create that races the agent's entry-creation fold is not silently dropped —
+    /// it renders as soon as the entry lands. See [`Self::save_definition`].
     pub fn create_folder(&self, id: &str, folder: AgentFolder) {
         let mut inner = self.lock();
-        if inner.agent_mut(id).is_none() {
-            return;
-        }
+        inner.track_pending_folder(id, &folder);
         let list = inner.folders.entry(id.to_string()).or_default();
         list.retain(|f| f.id != folder.id);
         list.push(folder);
@@ -521,6 +646,14 @@ impl AgentsStore {
     /// (`updateAgentFolder` / `toggleAgentFolder`). A no-op if unknown.
     pub fn update_folder(&self, id: &str, folder: AgentFolder) {
         let mut inner = self.lock();
+        // Keep an unconfirmed create's pending copy current (see update_definition, #2486).
+        if inner
+            .pending_folders
+            .get(id)
+            .is_some_and(|list| list.iter().any(|f| f.id == folder.id))
+        {
+            inner.track_pending_folder(id, &folder);
+        }
         if let Some(list) = inner.folders.get_mut(id) {
             if let Some(slot) = list.iter_mut().find(|f| f.id == folder.id) {
                 *slot = folder;
@@ -533,6 +666,8 @@ impl AgentsStore {
     /// no-op if the agent or folder is unknown.
     pub fn delete_folder(&self, id: &str, folder_id: &str) {
         let mut inner = self.lock();
+        // A locally deleted folder must stay deleted — stop protecting it (#2486).
+        inner.untrack_pending_folder(id, folder_id);
         if let Some(list) = inner.folders.get_mut(id) {
             list.retain(|f| f.id != folder_id);
         }
@@ -566,6 +701,10 @@ impl AgentsStore {
         inner.sessions = sessions;
         inner.definitions = definitions;
         inner.folders = folders;
+        // The whole slice is replaced from an authority; unconfirmed creates it does
+        // not carry are subsumed by it (#2486).
+        inner.pending_folders.clear();
+        inner.pending_definitions.clear();
     }
 
     /// Read one agent entry (test / diagnostics helper).
