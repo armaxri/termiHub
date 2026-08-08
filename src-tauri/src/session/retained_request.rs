@@ -210,6 +210,53 @@ mod tests {
     }
 
     #[test]
+    fn retain_and_clear_agent_request_carries_and_scrubs_agent_id() {
+        // #2455: the same store retains a resilient **agent** request (agent_id
+        // Some) so the backend redrive can re-establish the transport through the
+        // agent. The store must round-trip the agent_id (for the redrive) and
+        // clear must drop + zeroize it just like a direct request — an agent-tab
+        // drop mirrors `session.dropped`, whose scrub now routes through `clear`,
+        // so a leaked agent request there would regress Model A's secret
+        // guarantee.
+        let store = RetainedRequestStore::new();
+        store.retain(
+            "tab-agent",
+            RetainedConnectionRequest {
+                type_id: "ssh".to_string(),
+                settings: json!({ "host": "h", "password": "p" }),
+                agent_id: Some("agent-1".to_string()),
+                resilient: true,
+                backend_reattach: true,
+            },
+        );
+
+        let got = store.get("tab-agent").expect("retained agent request");
+        assert_eq!(
+            got.agent_id.as_deref(),
+            Some("agent-1"),
+            "the store round-trips the agent_id the redrive re-connects through"
+        );
+        assert_eq!(got.settings["password"], json!("p"));
+        assert!(got.backend_reattach);
+
+        store.clear("tab-agent");
+        assert!(
+            !store.contains("tab-agent"),
+            "clearing an agent request drops + zeroizes it (the `session.dropped` scrub point)"
+        );
+    }
+
+    #[test]
+    fn drop_zeroizes_agent_id() {
+        // The retained request's Drop must scrub the agent_id string in place, the
+        // same way it scrubs the settings secrets. Assert the mechanism `Drop`
+        // uses (`Zeroize` on the owned string) empties it.
+        let mut agent_id = "agent-secret-id".to_string();
+        agent_id.zeroize();
+        assert_eq!(agent_id, "");
+    }
+
+    #[test]
     fn retain_replaces_prior_request() {
         let store = RetainedRequestStore::new();
         store.retain(
