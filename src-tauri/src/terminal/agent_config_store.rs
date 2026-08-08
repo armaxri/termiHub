@@ -91,9 +91,16 @@ impl AgentConfigStore {
     /// Retain (replacing any prior) the transport config for `agent_id`. A
     /// re-connect overwrites the previous config; the replaced value is zeroized
     /// as it drops.
-    pub(crate) fn retain(&self, agent_id: &str, config: RemoteAgentConfig, settings: AgentSettings) {
-        self.lock()
-            .insert(agent_id.to_string(), RetainedAgentConfig { config, settings });
+    pub(crate) fn retain(
+        &self,
+        agent_id: &str,
+        config: RemoteAgentConfig,
+        settings: AgentSettings,
+    ) {
+        self.lock().insert(
+            agent_id.to_string(),
+            RetainedAgentConfig { config, settings },
+        );
     }
 
     /// Drop and zeroize the retained config for `agent_id`, if any. Idempotent —
@@ -131,7 +138,9 @@ pub(crate) enum ReattachDecision {
     /// reconnect (the map entry is still alive). Do not double-drive: no-op.
     AlreadyConnected,
     /// The transport is down and a config is retained: cold-re-establish it.
-    Reconnect(RetainedAgentConfig),
+    /// Boxed to keep the enum small (the config is far larger than the unit
+    /// variants).
+    Reconnect(Box<RetainedAgentConfig>),
     /// The transport is down and nothing is retained (the connect did not opt in,
     /// or the config was already scrubbed): the redrive folds a reconnect failure.
     NoRetainedConfig,
@@ -150,7 +159,7 @@ pub(crate) fn decide_reattach(
         return ReattachDecision::AlreadyConnected;
     }
     match store.get(agent_id) {
-        Some(retained) => ReattachDecision::Reconnect(retained),
+        Some(retained) => ReattachDecision::Reconnect(Box::new(retained)),
         None => ReattachDecision::NoRetainedConfig,
     }
 }
@@ -297,7 +306,11 @@ mod tests {
     fn a_config_without_a_password_retains_and_clears_cleanly() {
         // Key-auth agents carry no password; Drop must tolerate `None`.
         let store = AgentConfigStore::new();
-        store.retain("agent-key", config_with_password(None), AgentSettings::default());
+        store.retain(
+            "agent-key",
+            config_with_password(None),
+            AgentSettings::default(),
+        );
         let got = store.get("agent-key").expect("retained config");
         assert!(got.config.password.is_none());
         store.clear("agent-key");

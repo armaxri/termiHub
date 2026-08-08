@@ -90,8 +90,11 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
             .unwrap_or(0);
 
         // Clone out the fields to forward before the secret-bearing request drops
-        // (its `Drop` zeroizes the clone). `agent_id` is always `None` for the
-        // direct connections this covers; the field is forwarded for #2455.
+        // (its `Drop` zeroizes the clone). `agent_id` is `Some` for a resilient
+        // **agent** tab (once #2473 routes them + retains the request): the redrive
+        // must cold-re-establish that agent's transport before re-creating the
+        // session, since `create_connection` → `create_session` fails "Agent not
+        // connected" when the SSH transport was reaped (#2472).
         let type_id = request.type_id.clone();
         let settings = request.settings.clone();
         let agent_id = request.agent_id.clone();
@@ -108,6 +111,41 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
         let manager = (*manager).clone();
         let tab_id = tab_id.to_string();
         tauri::async_runtime::spawn(async move {
+            // For a resilient **agent** tab, cold-re-establish the agent SSH
+            // transport from the backend-retained config (#2472) before minting
+            // the session. This models the client engine's "park while the agent
+            // reconnects": one loop attempt = one (re-establish + create) try, so
+            // the reconnect loop's own bounded backoff subsumes the client's
+            // `MAX_AGENT_SPAWN_ATTEMPTS`. The re-establish is a blocking SSH
+            // connect, so it runs on the blocking pool (as the connect command
+            // does). No-op when the agent is already connected — the in-task
+            // reconnect loop owns transient breaks, so the redrive never
+            // double-drives the transport.
+            if let Some(aid) = agent_id.as_deref() {
+                let client = manager.agent_client();
+                let aid_owned = aid.to_string();
+                let established = tauri::async_runtime::spawn_blocking(move || {
+                    client.reconnect_retained_agent(&aid_owned)
+                })
+                .await;
+                let transport_up = matches!(established, Ok(Ok(())));
+                if !transport_up {
+                    // Could not re-establish the agent transport this attempt:
+                    // fold a reconnect failure so the engine arms the next backoff
+                    // window or gives up, exactly as a failed session create would.
+                    let err = match established {
+                        Ok(Err(e)) => e.to_string(),
+                        _ => "agent transport re-establishment failed".to_string(),
+                    };
+                    fold_session_transition(&app, |store| {
+                        store.reconnect_failed(&tab_id, Some(err));
+                    });
+                    sync_timer(&app, &tab_id);
+                    clear_retained_on_giveup(&app, &tab_id, agent_id.as_deref());
+                    return;
+                }
+            }
+
             let result = manager
                 .create_connection(
                     &type_id,
@@ -154,21 +192,39 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
                         store.reconnect_failed(&tab_id, Some(e.to_string()));
                     });
                     sync_timer(&app, &tab_id);
-                    // On give-up the loop is over: drop + zeroize the retained
-                    // request so no resolved secret outlives it (#2454 mitigation).
-                    let gave_up = app
-                        .try_state::<Arc<SessionLifecycleStore>>()
-                        .and_then(|store| store.reconnect_state(&tab_id))
-                        .map(|s| s.phase)
-                        == Some(ReconnectPhase::Gaveup);
-                    if gave_up {
-                        if let Some(manager) = app.try_state::<SessionManager>() {
-                            manager.clear_retained_request(&tab_id);
-                        }
-                    }
+                    clear_retained_on_giveup(&app, &tab_id, agent_id.as_deref());
                 }
             }
         });
+    }
+}
+
+/// On a reconnect give-up (terminal `Failed`), scrub the secrets the loop
+/// retained so none outlives it: the per-tab connection request (#2454) and —
+/// for a resilient **agent** tab — the per-agent transport config (#2472). A
+/// no-op unless the store reports the tab actually gave up (a mere backoff stays
+/// `Waiting` and keeps the retained secrets for the next attempt).
+///
+/// The agent-config scrub is conservative: it clears the agent's config on this
+/// tab's give-up without ref-counting sibling tabs on the same agent. That is
+/// safe here because agent tabs do not retain a request until #2473 wires the
+/// routing; #2473 owns any multi-tab-per-agent refinement.
+fn clear_retained_on_giveup<R: Runtime>(app: &AppHandle<R>, tab_id: &str, agent_id: Option<&str>) {
+    let gave_up = app
+        .try_state::<Arc<SessionLifecycleStore>>()
+        .and_then(|store| store.reconnect_state(tab_id))
+        .map(|s| s.phase)
+        == Some(ReconnectPhase::Gaveup);
+    if !gave_up {
+        return;
+    }
+    if let Some(manager) = app.try_state::<SessionManager>() {
+        manager.clear_retained_request(tab_id);
+    }
+    if let Some(aid) = agent_id {
+        if let Some(store) = app.try_state::<SessionManager>() {
+            store.agent_client().clear_retained_agent_config(aid);
+        }
     }
 }
 

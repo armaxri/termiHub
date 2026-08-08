@@ -1076,6 +1076,14 @@ impl SessionManager {
         self.retained_requests.get(tab_id)
     }
 
+    /// The agent RPC client, for the backend reconnect redrive to cold-re-establish
+    /// a reaped **agent** transport before re-creating the session (#2472). The
+    /// redrive lives in `session_projection`, so it reaches the client through
+    /// this accessor rather than the crate-private field.
+    pub(crate) fn agent_client(&self) -> Arc<dyn AgentRpcClient> {
+        self.agent_manager.clone()
+    }
+
     /// The frontend `tab_id` that owns a backend `session_id`, or `None` for a
     /// session created without a `connect_id` (no tab) or already removed (#2431).
     ///
