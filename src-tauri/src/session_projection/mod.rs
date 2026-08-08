@@ -25,6 +25,9 @@ pub mod redrive;
 pub mod store;
 pub mod timer;
 
+#[cfg(test)]
+mod redrive_resume_tests;
+
 pub use redrive::AppReconnectRedrive;
 pub use store::SessionLifecycleStore;
 pub use timer::{ReconnectRedrive, ReconnectTimerDriver, TokioReconnectScheduler};
