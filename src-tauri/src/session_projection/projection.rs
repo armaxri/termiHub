@@ -169,6 +169,17 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         store.dropped(&id, optional_str(intent, "error"));
         let produced = publish_sessions(projector, &store);
         sync_timer(&handle, &id);
+        // A `session.dropped` is a terminal, **non-loop** drop: the tab did not
+        // arm the resilient-reconnect loop (a resilient drop folds
+        // `session.reconnect` instead, which keeps the request for the redrive).
+        // So the session is neither active nor reconnecting — scrub its retained
+        // request so no resolved secret outlives it (#2454 Model A mitigation).
+        // A no-op today (only resilient *direct* tabs retain, and they never fold
+        // `dropped`), but the mandatory scrub point once #2455 lets resilient
+        // **agent** tabs retain: an agent-tab drop mirrors `session.dropped`, so
+        // without this the agent request's resolved secret would outlive the
+        // session and regress Model A's guarantee.
+        clear_retained_request(&handle, &id);
         Ok(produced)
     });
 
