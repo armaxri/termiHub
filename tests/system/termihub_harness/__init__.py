@@ -56,6 +56,7 @@ from .manual import (
 from .clipboard import read_os_clipboard
 from .display import ensure_local_display
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
+from .local_agent import LocalAgentSshd, LocalAgentUnavailable
 from .projection import ProjectionHarness
 from .ssh_agent import agent_has_key, key_fingerprint, sha256_fingerprints
 from .systemtest import SystemTest, unique_name
@@ -99,6 +100,8 @@ __all__ = [
     "screenshot_to_png_bytes",
     "AppInstance",
     "AgentInstance",
+    "LocalAgentSshd",
+    "LocalAgentUnavailable",
     "app_binary_path",
     "agent_binary_path",
     "SystemTest",
