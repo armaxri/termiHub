@@ -1091,6 +1091,19 @@ export interface AppState
   /** Return whether a session was intentionally killed, clearing the flag (#1121). */
   consumeSessionKilled: (sessionId: string) => boolean;
   setTerminalDisconnectWithError: (tabId: string, error: string) => void;
+  /**
+   * Settle a backend-driven agent reconnect (#2476) that the **backend** gave up
+   * on. The backend redrive owns the reconnect outcome under the
+   * `sessionBackendReattach` flag, so when its park/retry loop exhausts (folds
+   * `reconnectFailed` → `Failed`/`gaveup` in the region), the frontend must
+   * reflect that terminal state directly rather than routing through the client
+   * reconnect reducer (whose local attempt counter is not the authority here).
+   * Clears the loop record + every in-flight connect flag and shows the disconnect
+   * overlay with the give-up error, WITHOUT re-mirroring any `session.*` intent
+   * (the backend already folded the give-up — mirroring would be a redundant,
+   * possibly divergent, second signal).
+   */
+  settleBackendReconnectGaveUp: (tabId: string, error: string) => void;
 
   /**
    * Register the cohort of tabs placed by a restore/launch (#1146, audit G4).
@@ -2037,20 +2050,31 @@ function clearAutoReconnectTimer(tabId: string): void {
 const autoReconnectConfig: BackoffConfig = DEFAULT_BACKOFF;
 
 /**
- * Whether a tab is eligible for agentless resilient reconnect (#1962): a plain
- * SSH terminal whose saved connection opted in via the "Resilient Reconnect"
- * setting, and which is NOT agent-backed or a persistent session (those have
- * their own continuity machinery). Reads the opt-in from the tab's connection
- * config, where the SSH schema field persists it.
+ * Whether a tab is eligible for resilient reconnect. Two distinct populations,
+ * both excluding persistent sessions (those have their own continuity machinery):
+ *
+ * - **Agentless direct SSH (#1962):** a plain SSH terminal whose saved connection
+ *   opted in via the "Resilient Reconnect" setting. Client-driven backoff loop.
+ * - **Agent-hosted (#2476):** a shell session on a remote agent, resilient **only
+ *   when the `sessionBackendReattach` flag is on**. The agent reconnect is
+ *   backend-driven (park + retry + new-sessionId re-attach); the flag is its
+ *   master switch. With the flag OFF this returns `false` for every agent tab —
+ *   byte-identical to the pre-#2476 `if (cfg.agentId) return false` behavior.
+ *
+ * Reads the opt-in / agent marker from the tab's connection config.
  */
 function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
   if (!tab) return false;
   if (tab.contentType !== "terminal") return false;
-  if (tab.connectionType !== "ssh") return false;
   if (tab.persistentConnectionId) return false;
   const cfg = tab.config?.config as { resilientReconnect?: unknown; agentId?: unknown } | undefined;
   if (!cfg) return false;
-  if (cfg.agentId) return false;
+  if (cfg.agentId) {
+    // Agent-hosted tab (#2476): resilient iff the backend-reattach flag is on.
+    // Flag off ⇒ false ⇒ byte-identical to develop (agents were always excluded).
+    return sessionBackendReattachEnabled();
+  }
+  if (tab.connectionType !== "ssh") return false;
   return cfg.resilientReconnect === true;
 }
 
@@ -2065,6 +2089,33 @@ function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
 export function isResilientReconnectTabId(tabId: string): boolean {
   const tab = collectLiveTabs(useAppStore.getState()).find((t) => t.id === tabId);
   return isResilientReconnectTab(tab);
+}
+
+/**
+ * Whether `tabId` is an **agent-hosted** tab whose reconnect is driven entirely
+ * by the backend redrive under the `sessionBackendReattach` flag (#2476), as
+ * opposed to an agentless direct-SSH resilient tab (#1962/#2457) whose reconnect
+ * the client still drives (with the backend-reattach id as a fast path).
+ *
+ * This is the discriminator for the two agent-specific cuts of the activation:
+ *  - `Terminal.tsx` routes only these tabs through the give-up-aware wait that
+ *    stays deferred to the backend loop across a prolonged drop (never falling
+ *    through to the non-idempotent client agent engine — the double-drive fix);
+ *  - `reconnectTerminal` skips arming the fixed 90 s "connecting" deadline for
+ *    these tabs, since the backend park/retry legitimately outlasts it and the
+ *    give-up fold — not a client wall-clock timeout — is what settles the tab.
+ *
+ * Flag off ⇒ always `false` (no agent tab is resilient), so both cuts are inert
+ * and every path is byte-identical to develop.
+ */
+export function isBackendDrivenAgentReconnectTabId(tabId: string): boolean {
+  if (!sessionBackendReattachEnabled()) return false;
+  const tab = collectLiveTabs(useAppStore.getState()).find((t) => t.id === tabId);
+  if (!tab) return false;
+  if (tab.persistentConnectionId) return false;
+  const cfg = tab.config?.config as { agentId?: unknown } | undefined;
+  const isAgentTab = tab.config?.type === "remote-session" || !!cfg?.agentId;
+  return isAgentTab && isResilientReconnectTab(tab);
 }
 
 /**
@@ -5613,6 +5664,29 @@ export const useAppStore = create<AppState>((set, get, store) => {
         get().disconnectMonitoring(deadKey);
       }
     },
+    settleBackendReconnectGaveUp: (tabId, error) => {
+      // The backend already folded the give-up (region → Failed/gaveup); reflect
+      // it locally without re-mirroring an intent. Clear the auto-reconnect loop
+      // record and every in-flight connect flag (connecting / deadline / waiting /
+      // spawn-error) so no competing overlay lingers, then show the disconnect
+      // overlay with the give-up error (offering View Scrollback / Reconnect).
+      set((state) => ({
+        terminalAutoReconnect: omitKey(state.terminalAutoReconnect, tabId),
+        terminalConnecting: omitKey(state.terminalConnecting, tabId),
+        terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
+        terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+        terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+        terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
+        terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
+        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+        terminalDisconnectErrors: { ...state.terminalDisconnectErrors, [tabId]: error },
+      }));
+      get().settleRestoreTab(tabId, "failed");
+      const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
+      if (deadKey && currentMonitorsView().monitors[deadKey]) {
+        get().disconnectMonitoring(deadKey);
+      }
+    },
 
     // Aggregate partial-restore feedback (#1146, audit G4) + bulk retry (#1227,
     // M2). Region-authoritative (#2206): the `restore-cohort@<clientId>` store
@@ -5701,32 +5775,49 @@ export const useAppStore = create<AppState>((set, get, store) => {
         terminalViewMode: { ...state.terminalViewMode, [tabId]: true },
       })),
     reconnectTerminal: (tabId) =>
-      set((state) => ({
-        terminalExitedTabs: omitKey(state.terminalExitedTabs, tabId),
-        terminalExitInfo: omitKey(state.terminalExitInfo, tabId),
-        terminalDisconnectErrors: omitKey(state.terminalDisconnectErrors, tabId),
-        terminalViewMode: omitKey(state.terminalViewMode, tabId),
-        terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId),
-        terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
-        terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
-        terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
-        terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
-        terminalReconnectTriggerErrors: omitKey(state.terminalReconnectTriggerErrors, tabId),
-        // Set connecting immediately so the "Connecting…" overlay appears at once,
-        // without a gap between the disconnect overlay disappearing and the effect
-        // re-running to call setTerminalConnecting().
-        terminalConnecting: { ...state.terminalConnecting, [tabId]: true },
-        // Fresh reconnect attempt: arm a new connecting deadline (any prior one
-        // was cleared on disconnect) so the wall-clock timeout starts now.
-        terminalConnectDeadline: {
-          ...state.terminalConnectDeadline,
-          [tabId]: { kind: "connecting" as const, at: Date.now() + connectTimeoutMs("connecting") },
-        },
-        terminalRetryCounters: {
-          ...state.terminalRetryCounters,
-          [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
-        },
-      })),
+      set((state) => {
+        // Backend-driven agent reconnect (#2476): the backend park/retry loop is
+        // the sole driver and legitimately outlasts the fixed 90 s "connecting"
+        // deadline on a prolonged agent drop. Arming it here would let the client
+        // wall-clock timeout force-fail a tab the backend is still recovering, so
+        // this reconnect leaves the deadline cleared — the backend give-up fold,
+        // not a client timer, is what settles the tab (the give-up-aware wait in
+        // Terminal.tsx resolves it). Every other tab keeps the safety-net deadline.
+        // Flag off ⇒ this is always false ⇒ byte-identical to develop.
+        const deferToBackendLoop = isBackendDrivenAgentReconnectTabId(tabId);
+        return {
+          terminalExitedTabs: omitKey(state.terminalExitedTabs, tabId),
+          terminalExitInfo: omitKey(state.terminalExitInfo, tabId),
+          terminalDisconnectErrors: omitKey(state.terminalDisconnectErrors, tabId),
+          terminalViewMode: omitKey(state.terminalViewMode, tabId),
+          terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId),
+          terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
+          terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+          terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+          terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
+          terminalReconnectTriggerErrors: omitKey(state.terminalReconnectTriggerErrors, tabId),
+          // Set connecting immediately so the "Connecting…" overlay appears at once,
+          // without a gap between the disconnect overlay disappearing and the effect
+          // re-running to call setTerminalConnecting().
+          terminalConnecting: { ...state.terminalConnecting, [tabId]: true },
+          // Fresh reconnect attempt: arm a new connecting deadline (any prior one
+          // was cleared on disconnect) so the wall-clock timeout starts now —
+          // except for a backend-driven agent reconnect, which owns its own timing.
+          terminalConnectDeadline: deferToBackendLoop
+            ? omitKey(state.terminalConnectDeadline, tabId)
+            : {
+                ...state.terminalConnectDeadline,
+                [tabId]: {
+                  kind: "connecting" as const,
+                  at: Date.now() + connectTimeoutMs("connecting"),
+                },
+              },
+          terminalRetryCounters: {
+            ...state.terminalRetryCounters,
+            [tabId]: (state.terminalRetryCounters[tabId] ?? 0) + 1,
+          },
+        };
+      }),
     showTerminalReconnectPrompt: (tabId) =>
       set((state) => ({
         terminalReconnectPrompt: { ...state.terminalReconnectPrompt, [tabId]: true },
