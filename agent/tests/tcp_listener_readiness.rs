@@ -80,13 +80,22 @@ fn connect_with_retry(addr: &str) -> TcpStream {
 }
 
 /// How long the agent's startup path is stretched before it binds.
-const STARTUP_DELAY: Duration = Duration::from_millis(3000);
+///
+/// Widened (was 3000ms) alongside [`INITIALIZE_READ_TIMEOUT`] so the readiness
+/// check tolerates a loaded Windows CI runner (#2493): the honest `initialize`
+/// reply now has a 3s window, while this delay stays comfortably longer so a
+/// still-in-startup agent (the #1579 bug) still cannot answer inside that window.
+const STARTUP_DELAY: Duration = Duration::from_millis(5000);
 /// Time allowed to observe the `Listening on …` line.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Read budget for `initialize` once we have connected. Deliberately shorter
 /// than `STARTUP_DELAY`: if the agent were still in its startup delay when we
 /// connected (the #1579 bug), the reply could not arrive inside this window.
-const INITIALIZE_READ_TIMEOUT: Duration = Duration::from_millis(1500);
+///
+/// Widened (was 1500ms) to absorb a slow-but-honest response on a loaded Windows
+/// runner without 10060-flaking (#2493) — it stays well under [`STARTUP_DELAY`],
+/// so the #1579 assertion (a stalled listener cannot answer in time) stays real.
+const INITIALIZE_READ_TIMEOUT: Duration = Duration::from_millis(3000);
 
 /// A spawned agent process, killed on drop so a failing assertion never leaks it.
 struct AgentProcess {
