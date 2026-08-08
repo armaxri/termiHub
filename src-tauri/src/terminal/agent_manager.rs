@@ -3252,3 +3252,603 @@ mod tests {
         assert_eq!(result.unwrap(), 42);
     }
 }
+
+// ── Real-russh agent reconnect over a local sshd (#2476 / #2480) ───────────────
+//
+// The maintainer's live bug: an agent is connected with a live session, its SSH
+// transport drops, the sshd returns, and — even though the transport is back —
+// the tab stays stuck "Reconnecting" (#2476). Every *other* layer has now been
+// eliminated with automated coverage: the frontend re-attach chain + backend
+// redrive recover in isolation (#2488), and the agent side (fresh-agent
+// `connection.create` + the ADR-11 registry-daemon handshake after reconnect)
+// does not stall — proven headless over the agent's own transport (#2489).
+//
+// The one layer no test exercised is the desktop backend's **real russh
+// transport reconnect**: does [`reconnect_agent`] actually re-establish the
+// russh session after a real sshd returns, and can a *fresh* `connection.create`
+// then be driven over it so the session is usable again — the exact recovery
+// that failed live? This test closes that gap by standing up a **real local
+// sshd** with the real `termihub-agent` binary reachable (the test-owned analog
+// of `scripts/dev.sh`'s dev agent and the Python `LocalAgentSshd`, #2481),
+// driving `reconnect_agent` against it, killing the sshd for a genuine
+// server-side transport drop, restoring it, and asserting the reconnect
+// re-establishes the transport and a fresh create yields a usable session —
+// all headless, no GUI/webview.
+//
+// WHAT THIS FOUND (#2476): `reconnect_agent`'s russh layer is correct — it
+// re-establishes the transport and drives a fresh create fine. But the drop
+// (kill the sshd tree) also kills the *setsid'd session daemon* (#995), leaving
+// its unix socket file behind. The fresh agent's startup `recover_sessions` then
+// passed its `endpoint_alive` gate (file exists) and connected via the 30s
+// **spawn-path** timeout, which retries `ConnectionRefused` for the full 30s on
+// the dead-but-lingering socket — **before** the stdio loop answers `initialize`.
+// So `reconnect_agent` sat blocked ~31s per dead session: "transport restored
+// but stuck Reconnecting". The maintainer's own psutil-recursive-kill harness
+// (#2481) destroys the setsid'd daemon the same way, so it hits this too. Fixed
+// by giving recovery a short connect timeout (`DaemonClient::connect_for_recovery`)
+// so a dead-but-lingering socket fast-fails instead of stalling startup. See the
+// hermetic transport-layer regression in `agent/src/daemon/transport.rs`.
+//
+// Registry isolation (#2489): the agent is pointed at a per-test
+// `TERMIHUB_REGISTRY_ENDPOINT` and `XDG_CONFIG_HOME` inside its own temp dir via
+// sshd `SetEnv`, so it never spawns/joins the developer's real (shared) ADR-11
+// registry daemon or a parallel checkout's. The daemon self-exits after its idle
+// timeout, so nothing is leaked past that.
+#[cfg(all(test, unix))]
+mod russh_reconnect_tests {
+    use super::*;
+    use base64::engine::general_purpose::STANDARD as B64;
+    use std::net::TcpListener;
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    /// Overall ceiling for the fresh-create + echo round-trip after reconnect.
+    /// Generous so a slow CI shell cold-start never flakes it.
+    const RECOVERY_CEILING: Duration = Duration::from_secs(45);
+
+    /// Tight ceiling on the `reconnect_agent` call itself — the regression guard
+    /// for the bug this test found and fixed (#2476).
+    ///
+    /// Before the fix, killing the sshd tree also killed the setsid'd session
+    /// daemon (leaving its socket file), so the fresh agent's startup
+    /// `recover_sessions` paid the full 30s spawn-path connect timeout on the
+    /// dead-but-lingering socket **before** answering `initialize` — so
+    /// `reconnect_agent` sat blocked ~31s (30s recovery + ~1s backoff), the
+    /// "transport restored but stuck Reconnecting" symptom. With recovery now
+    /// fast-failing the dead socket, reconnect settles in a few seconds. This
+    /// bound sits comfortably above that (SSH connect + agent cold-start +
+    /// backoff, with CI jitter) yet far below the pre-fix ~31s, so a regression
+    /// to the long recovery path trips it.
+    const RECONNECT_SETTLE_CEILING: Duration = Duration::from_secs(20);
+
+    /// Locate a usable `sshd` binary, or `None` to skip.
+    fn find_sshd() -> Option<PathBuf> {
+        for cand in ["/usr/sbin/sshd", "/sbin/sshd"] {
+            let p = Path::new(cand);
+            if p.is_file() {
+                return Some(p.to_path_buf());
+            }
+        }
+        // PATH fallback.
+        std::env::var_os("PATH").and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|d| d.join("sshd"))
+                .find(|p| p.is_file())
+        })
+    }
+
+    /// Locate the built `termihub-agent` binary, or `None` to skip.
+    ///
+    /// `termihub-agent` is a *separate* workspace crate, so `cargo test` for this
+    /// crate does not build it and there is no `CARGO_BIN_EXE_termihub-agent` for
+    /// us (that env exists only for the agent crate's own integration tests).
+    /// Resolve it relative to the test binary (`target/<profile>/deps/<test>` →
+    /// `target/<profile>/termihub-agent`), with an explicit env override for
+    /// non-standard layouts. Skip gracefully when absent (build it first with
+    /// `cargo build -p termihub-agent`).
+    fn find_agent_binary() -> Option<PathBuf> {
+        if let Some(p) = std::env::var_os("TERMIHUB_TEST_AGENT_BIN") {
+            let p = PathBuf::from(p);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        let exe = std::env::current_exe().ok()?;
+        // exe = target/<profile>/deps/<test-bin>; profile dir is two up.
+        let profile_dir = exe.parent()?.parent()?;
+        [
+            profile_dir.join("termihub-agent"),
+            exe.parent()?.join("termihub-agent"),
+        ]
+        .into_iter()
+        .find(|cand| cand.is_file())
+    }
+
+    /// Grab a currently-free loopback TCP port (best-effort; the caller retries a
+    /// bind race by respawning on a new port).
+    fn free_port() -> u16 {
+        TcpListener::bind("127.0.0.1:0")
+            .expect("bind ephemeral")
+            .local_addr()
+            .expect("local_addr")
+            .port()
+    }
+
+    fn is_listening(port: u16) -> bool {
+        std::net::TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}").parse().unwrap(),
+            Duration::from_millis(500),
+        )
+        .is_ok()
+    }
+
+    /// SIGKILL the whole process subtree rooted at `root` (master sshd + its
+    /// per-connection privilege-separation children + the shell + the agent).
+    ///
+    /// Killing only the `-D` master leaves established connections (and the agent
+    /// they spawned) alive, so it would *not* model a transport drop. We walk the
+    /// live process table by ppid — the dependency-free analog of the Python
+    /// harness's `psutil` recursive kill — and kill every descendant. Only
+    /// processes descended from our own sshd are touched (never a name pattern).
+    fn kill_subtree(root: u32) {
+        // pid -> ppid for every live process.
+        let out = match Command::new("ps")
+            .args(["-ax", "-o", "pid=,ppid="])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        let mut children: std::collections::HashMap<u32, Vec<u32>> =
+            std::collections::HashMap::new();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let mut it = line.split_whitespace();
+            if let (Some(pid), Some(ppid)) = (it.next(), it.next()) {
+                if let (Ok(pid), Ok(ppid)) = (pid.parse::<u32>(), ppid.parse::<u32>()) {
+                    children.entry(ppid).or_default().push(pid);
+                }
+            }
+        }
+        // DFS the subtree.
+        let mut victims = Vec::new();
+        let mut stack = vec![root];
+        while let Some(pid) = stack.pop() {
+            victims.push(pid);
+            if let Some(kids) = children.get(&pid) {
+                stack.extend(kids.iter().copied());
+            }
+        }
+        if victims.is_empty() {
+            return;
+        }
+        // Kill leaves first so a parent cannot re-fork a replacement mid-teardown.
+        victims.reverse();
+        let mut cmd = Command::new("kill");
+        cmd.arg("-KILL");
+        for pid in &victims {
+            cmd.arg(pid.to_string());
+        }
+        let _ = cmd.stderr(Stdio::null()).status();
+    }
+
+    /// A killable/restartable loopback `sshd` with the real agent binary
+    /// reachable over key auth — the Rust analog of the Python `LocalAgentSshd`
+    /// (#2481). `start`/`stop` own the whole process tree so a `stop` severs an
+    /// established agent connection at once (the server-side transport drop).
+    struct LocalAgentSshd {
+        sshd: PathBuf,
+        dir: PathBuf,
+        config: PathBuf,
+        client_key: PathBuf,
+        port: u16,
+        username: String,
+        agent_bin: PathBuf,
+        child: Option<Child>,
+    }
+
+    impl LocalAgentSshd {
+        fn new(sshd: PathBuf, agent_bin: PathBuf) -> std::io::Result<Self> {
+            let dir = std::env::temp_dir().join(format!(
+                "termihub-russh-reconnect-{}-{}",
+                std::process::id(),
+                free_port()
+            ));
+            std::fs::create_dir_all(&dir)?;
+            std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+
+            let host_key = dir.join("host_key");
+            let client_key = dir.join("client_key");
+            for key in [&host_key, &client_key] {
+                let status = Command::new("ssh-keygen")
+                    .args(["-t", "ed25519", "-N", "", "-q", "-f"])
+                    .arg(key)
+                    .status()?;
+                if !status.success() {
+                    return Err(std::io::Error::other("ssh-keygen failed"));
+                }
+                std::fs::set_permissions(key, std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+            }
+
+            let username = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+            let registry_endpoint = dir.join("registry.sock");
+            let xdg = dir.join("xdg");
+            std::fs::create_dir_all(&xdg)?;
+
+            let config = dir.join("sshd_config");
+            // Loopback-only key auth, no PAM/strict-modes so it runs unprivileged
+            // (mirrors scripts/dev.sh and the Python harness). `SetEnv` forces the
+            // per-test registry endpoint + config home into the agent's env so it
+            // never touches shared ADR-11 registry state (#2489).
+            let config_body = [
+                format!("Port {}", 0), // placeholder, rewritten per start
+                "ListenAddress 127.0.0.1".to_string(),
+                format!("HostKey {}", host_key.display()),
+                format!("AuthorizedKeysFile {}.pub", client_key.display()),
+                "UsePAM no".to_string(),
+                "PasswordAuthentication no".to_string(),
+                "PubkeyAuthentication yes".to_string(),
+                "StrictModes no".to_string(),
+                "LogLevel ERROR".to_string(),
+                format!(
+                    "SetEnv TERMIHUB_REGISTRY_ENDPOINT={} XDG_CONFIG_HOME={}",
+                    registry_endpoint.display(),
+                    xdg.display()
+                ),
+                String::new(),
+            ]
+            .join("\n");
+            // The port is fixed for the lifetime of the instance (drop/restore
+            // must reuse it), so pick it now and write the final config.
+            let port = free_port();
+            let config_body = config_body.replacen("Port 0", &format!("Port {port}"), 1);
+            std::fs::write(&config, config_body)?;
+
+            Ok(Self {
+                sshd,
+                dir,
+                config,
+                client_key,
+                port,
+                username,
+                agent_bin,
+                child: None,
+            })
+        }
+
+        /// Launch sshd (foreground `-D` so we own the tree) and wait until it
+        /// accepts a TCP connection.
+        fn start(&mut self) {
+            assert!(self.child.is_none(), "already running");
+            let child = Command::new(&self.sshd)
+                .arg("-D")
+                .arg("-f")
+                .arg(&self.config)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn sshd");
+            self.child = Some(child);
+
+            let deadline = Instant::now() + Duration::from_secs(15);
+            while Instant::now() < deadline {
+                if is_listening(self.port) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            panic!("sshd did not listen on 127.0.0.1:{} in time", self.port);
+        }
+
+        /// Kill the sshd tree (SIGKILL) — an abrupt server-side drop that severs
+        /// the established agent connection, then wait for the port to close.
+        fn stop(&mut self) {
+            if let Some(mut child) = self.child.take() {
+                kill_subtree(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if !is_listening(self.port) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
+        fn agent_config(&self) -> RemoteAgentConfig {
+            RemoteAgentConfig {
+                host: "127.0.0.1".to_string(),
+                port: self.port,
+                username: self.username.clone(),
+                auth_method: "key".to_string(),
+                password: None,
+                key_path: Some(self.client_key.to_string_lossy().into_owned()),
+                save_password: None,
+                agent_path: Some(self.agent_bin.to_string_lossy().into_owned()),
+                external_connection_files: vec![],
+                ..Default::default()
+            }
+        }
+    }
+
+    impl Drop for LocalAgentSshd {
+        fn drop(&mut self) {
+            self.stop();
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    /// Trust every host key for the duration of the test (process-wide, set-once).
+    ///
+    /// The desktop SSH path is strict known_hosts-only by default; a throwaway
+    /// sshd on an unknown host would otherwise block the connect pre-auth. This
+    /// mirrors the sftp integration test's `trust_fixture_host_keys()` and, unlike
+    /// seeding `~/.ssh/known_hosts`, mutates no shared on-disk state.
+    fn trust_all_host_keys() {
+        use termihub_core::backends::ssh::host_key::{
+            set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
+        };
+        struct TrustAll;
+        #[async_trait::async_trait]
+        impl HostKeyVerifier for TrustAll {
+            async fn verify(&self, _info: &HostKeyInfo) -> bool {
+                true
+            }
+        }
+        let _ = set_host_key_verifier(Arc::new(TrustAll));
+    }
+
+    /// Drive a single JSON-RPC request over the raw agent channel and return its
+    /// matching response `result` (ignoring interleaved notifications). This is
+    /// the redrive's `connection.create`/`attach` path exercised over the real
+    /// re-established transport.
+    async fn channel_rpc(
+        channel: &mut russh::Channel<russh::client::Msg>,
+        request_id: &mut u64,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        *request_id += 1;
+        let id = *request_id;
+        let line = serialize_request(id, method, params)?;
+        channel
+            .data(line.as_bytes())
+            .await
+            .map_err(|e| format!("write {method}: {e}"))?;
+        let mut buf = String::new();
+        loop {
+            let resp = read_handshake_line(channel, "test-agent", &mut buf)
+                .await
+                .ok_or_else(|| format!("channel closed before {method} response"))?;
+            if resp.is_empty() {
+                continue;
+            }
+            match jsonrpc::parse_message(&resp) {
+                Ok(jsonrpc::JsonRpcMessage::Response { id: rid, result }) if rid == id => {
+                    return Ok(result)
+                }
+                Ok(jsonrpc::JsonRpcMessage::Error {
+                    id: rid, message, ..
+                }) if rid == id => return Err(message),
+                _ => continue,
+            }
+        }
+    }
+
+    /// Read `connection.output` notifications off the channel until one decodes to
+    /// text containing `needle`, or the deadline passes. Proves the session is
+    /// genuinely usable (input → PTY echo → notification), not merely created.
+    async fn wait_for_output(
+        channel: &mut russh::Channel<russh::client::Msg>,
+        needle: &str,
+        deadline: Instant,
+    ) -> bool {
+        let mut buf = String::new();
+        while Instant::now() < deadline {
+            let read = tokio::time::timeout(
+                Duration::from_millis(500),
+                read_handshake_line(channel, "test-agent", &mut buf),
+            )
+            .await;
+            match read {
+                Ok(Some(line)) => {
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) =
+                        jsonrpc::parse_message(&line)
+                    {
+                        if method == "connection.output" {
+                            if let Some(data) = params["data"].as_str() {
+                                if let Ok(bytes) = B64.decode(data) {
+                                    if String::from_utf8_lossy(&bytes).contains(needle) {
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(None) => return false, // channel closed
+                Err(_) => continue,       // read timeout — re-check the deadline
+            }
+        }
+        false
+    }
+
+    /// Create a shell session over `channel`, attach, echo a unique marker, and
+    /// assert the marker comes back — i.e. the session is usable end to end.
+    async fn create_and_verify_usable(
+        channel: &mut russh::Channel<russh::client::Msg>,
+        request_id: &mut u64,
+        marker: &str,
+        deadline: Instant,
+    ) -> String {
+        let created = channel_rpc(
+            channel,
+            request_id,
+            "connection.create",
+            serde_json::json!({ "type": "shell", "title": marker }),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("connection.create failed for {marker}: {e}"));
+        let sid = created["session_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("create response missing session_id: {created}"))
+            .to_string();
+
+        channel_rpc(
+            channel,
+            request_id,
+            "connection.attach",
+            serde_json::json!({ "session_id": sid }),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("connection.attach failed for {marker}: {e}"));
+
+        // `connection.write` is fire-and-forget (no response); send it directly.
+        *request_id += 1;
+        let encoded = B64.encode(format!("echo {marker}\n").as_bytes());
+        let write_line = serialize_request(
+            *request_id,
+            "connection.write",
+            serde_json::json!({ "session_id": sid, "data": encoded }),
+        )
+        .expect("serialize write");
+        channel
+            .data(write_line.as_bytes())
+            .await
+            .expect("write session input");
+
+        assert!(
+            wait_for_output(channel, marker, deadline).await,
+            "session '{marker}' never echoed its marker — created but unusable \
+             (the live 'stuck Reconnecting' symptom)"
+        );
+        sid
+    }
+
+    /// The definitive last-layer test: after a real russh transport drop and the
+    /// sshd's return, [`reconnect_agent`] must re-establish the real transport and
+    /// a fresh `connection.create` over it must yield a usable session — the exact
+    /// recovery that failed live (#2476 / #2480).
+    ///
+    /// A stall at this layer FAILS the test (bounded by [`RECOVERY_CEILING`])
+    /// rather than hanging a display-backed run. A pass proves the desktop
+    /// reconnect *logic* is correct headlessly at every layer, pinning the live
+    /// failure on the webview occlusion throttle (#957 / #2460).
+    ///
+    /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips
+    /// gracefully otherwise (mirrors the Docker sftp integration test).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn reconnect_agent_reestablishes_russh_transport_and_drives_fresh_create() {
+        let Some(sshd) = find_sshd() else {
+            eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
+            return;
+        };
+        let Some(agent_bin) = find_agent_binary() else {
+            eprintln!(
+                "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
+                 (or set TERMIHUB_TEST_AGENT_BIN)"
+            );
+            return;
+        };
+
+        trust_all_host_keys();
+
+        let mut sshd = LocalAgentSshd::new(sshd, agent_bin).expect("stand up local agent sshd");
+        sshd.start();
+
+        let config = sshd.agent_config();
+        let settings = AgentSettings::default();
+        let alive = Arc::new(AtomicBool::new(true));
+        let mut request_id = 0u64;
+
+        // ── Initial establish: connect over russh, exec the agent, initialize.
+        // `reconnect_agent` performs the full establishment, so it doubles as the
+        // "before" connect here.
+        let (session, mut channel, _buffered) =
+            reconnect_agent(&config, &settings, &mut request_id, &alive)
+                .await
+                .expect("initial agent establishment over local sshd failed");
+
+        // Pre-drop: a live, usable session (models the maintainer's connected tab).
+        let deadline = Instant::now() + RECOVERY_CEILING;
+        let _pre_sid =
+            create_and_verify_usable(&mut channel, &mut request_id, "pre-drop-marker", deadline)
+                .await;
+
+        // ── Real server-side transport drop: kill the sshd tree. The established
+        // russh channel must go down (EOF), proving this is a genuine transport
+        // loss, not just a closed listener.
+        sshd.stop();
+        let old_channel_closed = {
+            let close_deadline = Instant::now() + Duration::from_secs(10);
+            let mut buf = String::new();
+            loop {
+                if Instant::now() >= close_deadline {
+                    break false;
+                }
+                match tokio::time::timeout(
+                    Duration::from_millis(500),
+                    read_handshake_line(&mut channel, "test-agent", &mut buf),
+                )
+                .await
+                {
+                    Ok(None) => break true,  // channel closed — transport is down
+                    Ok(Some(_)) => continue, // drain any buffered line
+                    Err(_) => continue,      // read timeout — keep polling
+                }
+            }
+        };
+        assert!(
+            old_channel_closed,
+            "the established russh channel did not close after the sshd was killed — \
+             the drop was not a real transport loss"
+        );
+        // Drop the dead session/channel explicitly before re-establishing.
+        drop(channel);
+        drop(session);
+
+        // ── Restore the transport (same host key/config/port).
+        sshd.start();
+
+        // ── The layer under test: reconnect_agent must re-establish the real
+        // russh transport now that the sshd is back, within the recovery ceiling.
+        let reconnect_started = Instant::now();
+        let reconnected = reconnect_agent(&config, &settings, &mut request_id, &alive).await;
+        let reconnect_elapsed = reconnect_started.elapsed();
+        let (session2, mut channel2, _buffered2) = reconnected.unwrap_or_else(|e| {
+            panic!(
+                "reconnect_agent failed to re-establish the russh transport after the sshd \
+                 returned (elapsed {reconnect_elapsed:?}): {e}"
+            )
+        });
+        assert!(
+            reconnect_elapsed < RECONNECT_SETTLE_CEILING,
+            "reconnect_agent took {reconnect_elapsed:?}, over the \
+             {RECONNECT_SETTLE_CEILING:?} settle ceiling — the fresh agent's startup \
+             session recovery is stalling initialize again (the dead-but-lingering \
+             daemon-socket 30s connect-timeout regression, #2476)"
+        );
+
+        // ── The redrive drives a FRESH create over the re-established transport;
+        // the new session must be usable — the exact recovery that failed live.
+        let recover_deadline = Instant::now() + RECOVERY_CEILING;
+        let _post_sid = create_and_verify_usable(
+            &mut channel2,
+            &mut request_id,
+            "post-reconnect-marker",
+            recover_deadline,
+        )
+        .await;
+
+        // Explicit teardown so the sshd tree (and the agent it spawned) are gone
+        // before the temp dir is removed.
+        drop(channel2);
+        drop(session2);
+        sshd.stop();
+    }
+}

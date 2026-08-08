@@ -547,6 +547,82 @@ fn probe_once(addr: &str, deadline: &Instant) -> Option<String> {
     }
 }
 
+// ── Response reads robust to slow Windows-CI responses ────────────────────────
+
+/// Short per-read socket timeout used inside [`read_line_until_deadline`].
+///
+/// Kept small so the read loop re-checks its wall-clock deadline promptly. Each
+/// expiry is a `WouldBlock` (unix) / `WSAETIMEDOUT` os error 10060 (Windows)
+/// that the loop simply retries; it is never the budget that fails a test.
+const READ_POLL_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// A fresh total budget for reading a single response line.
+///
+/// Reuses the same generous, env-overridable ([`TERMIHUB_TEST_READY_TIMEOUT_SECS`])
+/// ceiling as the other readiness waits — a loaded Windows runner's first or
+/// reconnect/replay response can arrive several seconds late without the agent
+/// being unhealthy.
+fn read_deadline() -> Instant {
+    Instant::now() + ready_timeout()
+}
+
+/// Read one NDJSON line from `reader`, retrying transient per-read timeouts until
+/// `deadline`.
+///
+/// # Why this exists (#2493)
+///
+/// A socket read timeout (`SO_RCVTIMEO`) is a hard cutoff: a single `read_line`
+/// fails the instant that timeout expires. On **Windows** the expiry maps to
+/// `WSAETIMEDOUT` — `Os { code: 10060, kind: TimedOut }` — so a loaded Windows CI
+/// runner that answers an RPC (or replays a reconnect buffer) slower than one
+/// tight timeout would 10060 the whole test even though the agent is healthy and
+/// the response is merely late. The connect facet was fixed by
+/// [`connect_with_retry`] (#2492); this is its read-side mirror, covering every
+/// response read in the suite (the [`AgentClient`] and the simple [`rpc`] helper).
+///
+/// Instead of one tight cutoff this loops a *short* per-read timeout
+/// ([`READ_POLL_TIMEOUT`]) up to a generous total `deadline`: every
+/// `WouldBlock`/`TimedOut` expiry just re-checks the clock and retries. Partial
+/// bytes already appended by a timed-out `read_line` are preserved by
+/// `BufRead::read_until` (the wire is ASCII JSON, so a per-read boundary never
+/// splits a multi-byte char), so a retry resumes the same line rather than losing
+/// it.
+///
+/// The deadline is **bounded**, so the assertion stays genuine: a genuinely
+/// stalled or never-responding agent still fails once `deadline` elapses — the
+/// read never blocks forever and no real hang is swallowed. Returns the bytes
+/// appended (`0` = clean EOF), or the last timeout error once the deadline passes.
+fn read_line_until_deadline(
+    reader: &mut BufReader<TcpStream>,
+    line: &mut String,
+    deadline: Instant,
+) -> std::io::Result<usize> {
+    reader
+        .get_ref()
+        .set_read_timeout(Some(READ_POLL_TIMEOUT))
+        .expect("set_read_timeout");
+    let start_len = line.len();
+    loop {
+        match reader.read_line(line) {
+            // `read_line` returns `Ok` only at a newline or EOF — either way this
+            // line is complete (or the stream ended). Report total bytes read.
+            Ok(_) => return Ok(line.len() - start_len),
+            Err(e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                // Slow-but-responding agent: the per-read window lapsed with the
+                // line not yet complete. Retry until the bounded deadline, then
+                // surface the timeout so a real hang still fails the test.
+                if Instant::now() >= deadline {
+                    return Err(e);
+                }
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 /// Send a single NDJSON line and return the first response line.
 fn rpc(stream: &mut TcpStream, msg: &str) -> String {
     let mut line = msg.trim().to_string();
@@ -555,8 +631,46 @@ fn rpc(stream: &mut TcpStream, msg: &str) -> String {
 
     let mut reader = BufReader::new(stream.try_clone().expect("clone failed"));
     let mut response = String::new();
-    reader.read_line(&mut response).expect("read_line failed");
+    read_line_until_deadline(&mut reader, &mut response, read_deadline())
+        .expect("read_line failed");
     response.trim().to_string()
+}
+
+/// The bounded read must still FAIL on a genuinely non-responding peer once its
+/// deadline elapses — it widens the window for a slow-but-live agent, it does not
+/// turn a real hang into a pass (#2493). Uses a raw listener that accepts but
+/// never answers, so no agent binary is involved.
+#[test]
+fn read_line_until_deadline_fails_fast_on_silent_peer() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    // Accept the connection and hold it open without ever writing a byte.
+    let server = std::thread::spawn(move || {
+        if let Ok((sock, _)) = listener.accept() {
+            std::thread::sleep(Duration::from_secs(5));
+            drop(sock);
+        }
+    });
+
+    let stream = TcpStream::connect(addr).expect("connect");
+    let mut reader = BufReader::new(stream);
+    let mut line = String::new();
+    let started = Instant::now();
+    let deadline = started + Duration::from_millis(750);
+    let result = read_line_until_deadline(&mut reader, &mut line, deadline);
+    let elapsed = started.elapsed();
+
+    assert!(
+        result.is_err(),
+        "a silent peer must time out at the deadline, not read a line: {result:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "bounded read must fail near its deadline, not block indefinitely — took {elapsed:?}"
+    );
+
+    drop(reader);
+    server.join().ok();
 }
 
 /// A dead agent process must be reported immediately, not waited out.
@@ -743,9 +857,15 @@ impl AgentClient {
     }
 
     /// Read and parse one NDJSON line from the agent.
+    ///
+    /// Uses the bounded, timeout-retrying [`read_line_until_deadline`] so a slow
+    /// Windows-CI response — the reconnect/replay read is the slowest — does not
+    /// 10060 the test on a single `SO_RCVTIMEO` expiry (#2493), while a genuinely
+    /// stalled agent still fails once the deadline elapses.
     fn read_one(&mut self) -> Value {
         let mut line = String::new();
-        self.reader.read_line(&mut line).expect("read_line failed");
+        read_line_until_deadline(&mut self.reader, &mut line, read_deadline())
+            .expect("read_line failed");
         serde_json::from_str(line.trim()).expect("invalid JSON from agent")
     }
 

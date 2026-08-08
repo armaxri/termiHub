@@ -60,6 +60,21 @@ pub use termihub_core::ipc::{BoxedReader, BoxedWriter};
 /// long window only applies while the daemon is still alive but slow to bind.
 #[allow(dead_code)]
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long [`connect_for_recovery`] waits for an **already-running** daemon
+/// endpoint to accept before giving up on it.
+///
+/// Short on purpose, and the mirror image of [`CONNECT_TIMEOUT`]'s reasoning.
+/// Recovery targets a daemon that a *previous* agent process bound long ago, so
+/// a live daemon is already in its accept loop and connects instantly — there is
+/// no slow-bind window to wait out. The spawn path can afford the long window
+/// because it races the connect against the daemon process exiting (see
+/// `session::manager`); recovery has no such process to race, so the retry loop
+/// is its only bound. Retrying `ConnectionRefused` for the full 30s against a
+/// dead daemon whose socket file merely lingers is exactly what stalled a fresh
+/// agent's startup — and therefore the desktop's `initialize` handshake — after a
+/// reconnect (#2476). This only needs to cover scheduling jitter for a live
+/// daemon; a dead-but-lingering socket fast-fails within it.
+const RECOVERY_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often [`connect`] retries while the endpoint is not yet available.
 #[allow(dead_code)]
 const CONNECT_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -127,6 +142,17 @@ impl DaemonListener {
 #[allow(dead_code)] // wired into the agent client/launcher in #767
 pub async fn connect(endpoint: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
     ipc::connect_with_retry(endpoint, CONNECT_TIMEOUT, CONNECT_POLL_INTERVAL).await
+}
+
+/// Connect to an **already-running** daemon during session recovery, failing
+/// fast on a dead daemon whose socket file merely lingers.
+///
+/// Same as [`connect`] but bounded by the short [`RECOVERY_CONNECT_TIMEOUT`]
+/// instead of [`CONNECT_TIMEOUT`]. Use this on the recovery path, where a live
+/// daemon is already accepting and a dead-but-lingering socket must not stall the
+/// fresh agent's startup for 30s (#2476). See [`RECOVERY_CONNECT_TIMEOUT`].
+pub async fn connect_for_recovery(endpoint: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
+    ipc::connect_with_retry(endpoint, RECOVERY_CONNECT_TIMEOUT, CONNECT_POLL_INTERVAL).await
 }
 
 #[cfg(unix)]
@@ -454,5 +480,54 @@ mod tests {
         }
 
         server.await.expect("server task");
+    }
+
+    /// Regression for #2476: recovery must fast-fail a dead daemon whose socket
+    /// file merely lingers, instead of retrying `ConnectionRefused` for the full
+    /// 30s [`CONNECT_TIMEOUT`].
+    ///
+    /// A dead-but-lingering socket is the exact state a killed session daemon
+    /// leaves behind (the file persists after the process dies). Before the fix,
+    /// `recover_sessions` connected via the spawn-path 30s timeout and blocked the
+    /// fresh agent's startup — and thus the desktop's `initialize` handshake —
+    /// after a reconnect, the "transport restored but stuck Reconnecting" symptom.
+    /// [`connect_for_recovery`] must give up well within [`CONNECT_TIMEOUT`].
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn connect_for_recovery_fast_fails_dead_lingering_socket() {
+        use std::time::Instant;
+
+        let address = session_endpoint(&unique_session("recovery-dead"));
+
+        // Bind then drop a listener: tokio does not unlink the socket file on
+        // drop, so the path is left behind with nothing listening — a socket file
+        // that `endpoint_alive` (a mere file-existence check) still reports as
+        // present, exactly like a daemon killed via SIGKILL.
+        let listener = tokio::net::UnixListener::bind(&address).expect("bind lingering socket");
+        drop(listener);
+        assert!(
+            endpoint_alive(&address),
+            "the lingering socket file should still exist (endpoint_alive true)"
+        );
+
+        let start = Instant::now();
+        let result = connect_for_recovery(&address).await;
+        let elapsed = start.elapsed();
+
+        assert!(
+            result.is_err(),
+            "connecting to a dead-but-lingering socket must fail"
+        );
+        // The decisive regression bound: nowhere near the 30s spawn-path timeout.
+        // Generous (well above RECOVERY_CONNECT_TIMEOUT + scheduling jitter, well
+        // below CONNECT_TIMEOUT) so it never flakes on a loaded runner yet still
+        // trips if recovery ever regresses to the long path.
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "connect_for_recovery took {elapsed:?} — a dead-but-lingering socket \
+             must fast-fail, not pay the {CONNECT_TIMEOUT:?} spawn-path timeout (#2476)"
+        );
+
+        let _ = std::fs::remove_file(&address);
     }
 }

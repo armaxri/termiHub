@@ -99,6 +99,35 @@ impl DaemonClient {
         endpoint: String,
         notification_tx: NotificationSender,
     ) -> Result<Self, anyhow::Error> {
+        Self::connect_inner(session_id, endpoint, notification_tx, false).await
+    }
+
+    /// Connect to an **already-running** daemon during session recovery, failing
+    /// fast on a dead daemon whose socket file merely lingers.
+    ///
+    /// Like [`connect`](Self::connect) but uses the short recovery connect
+    /// timeout ([`transport::connect_for_recovery`]) instead of the long
+    /// spawn-path one. The spawn path races its 30s connect against the daemon
+    /// process exiting; recovery has no such process to race, so retrying a
+    /// dead-but-lingering socket for 30s would stall the fresh agent's startup —
+    /// and therefore the desktop's `initialize` handshake — after a reconnect
+    /// (#2476). This is the entry point [`recover_sessions`] must use.
+    ///
+    /// [`recover_sessions`]: crate::session::manager::SessionManager::recover_sessions
+    pub async fn connect_for_recovery(
+        session_id: String,
+        endpoint: String,
+        notification_tx: NotificationSender,
+    ) -> Result<Self, anyhow::Error> {
+        Self::connect_inner(session_id, endpoint, notification_tx, true).await
+    }
+
+    async fn connect_inner(
+        session_id: String,
+        endpoint: String,
+        notification_tx: NotificationSender,
+        for_recovery: bool,
+    ) -> Result<Self, anyhow::Error> {
         let pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>> =
             Arc::new(Mutex::new(None));
         let on_exit: ExitHookSlot = Arc::new(OnceLock::new());
@@ -109,6 +138,7 @@ impl DaemonClient {
             notification_tx.clone(),
             pending_buffer_reply.clone(),
             on_exit.clone(),
+            for_recovery,
         )
         .await?;
 
@@ -204,13 +234,15 @@ impl DaemonClient {
         // Disconnect current connection (triggers Detach on daemon side via EOF)
         self.disconnect().await;
 
-        // Reconnect to get a fresh buffer replay
+        // Reconnect to get a fresh buffer replay. Not the recovery path — the
+        // daemon is a live session being re-attached, so keep the long timeout.
         let (writer, reader_task, alive) = connect_and_start_reader(
             &self.endpoint,
             &self.session_id,
             self.notification_tx.clone(),
             self.pending_buffer_reply.clone(),
             self.on_exit.clone(),
+            false,
         )
         .await?;
 
@@ -358,8 +390,15 @@ async fn connect_and_start_reader(
     notification_tx: NotificationSender,
     pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
     on_exit: ExitHookSlot,
+    for_recovery: bool,
 ) -> Result<(BoxedWriter, tokio::task::JoinHandle<()>, Arc<AtomicBool>), anyhow::Error> {
-    let (mut reader, writer) = transport::connect(endpoint).await?;
+    // Recovery targets an already-bound daemon and must fast-fail a dead-but-
+    // lingering socket rather than pay the long spawn-path connect timeout (#2476).
+    let (mut reader, writer) = if for_recovery {
+        transport::connect_for_recovery(endpoint).await?
+    } else {
+        transport::connect(endpoint).await?
+    };
 
     let alive = Arc::new(AtomicBool::new(true));
 
