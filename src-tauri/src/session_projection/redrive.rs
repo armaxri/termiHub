@@ -141,7 +141,7 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
                         store.reconnect_failed(&tab_id, Some(err));
                     });
                     sync_timer(&app, &tab_id);
-                    clear_retained_on_giveup(&app, &tab_id, agent_id.as_deref());
+                    clear_retained_on_giveup(&app, &tab_id);
                     return;
                 }
             }
@@ -192,7 +192,7 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
                         store.reconnect_failed(&tab_id, Some(e.to_string()));
                     });
                     sync_timer(&app, &tab_id);
-                    clear_retained_on_giveup(&app, &tab_id, agent_id.as_deref());
+                    clear_retained_on_giveup(&app, &tab_id);
                 }
             }
         });
@@ -205,11 +205,13 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
 /// no-op unless the store reports the tab actually gave up (a mere backoff stays
 /// `Waiting` and keeps the retained secrets for the next attempt).
 ///
-/// The agent-config scrub is conservative: it clears the agent's config on this
-/// tab's give-up without ref-counting sibling tabs on the same agent. That is
-/// safe here because agent tabs do not retain a request until #2473 wires the
-/// routing; #2473 owns any multi-tab-per-agent refinement.
-fn clear_retained_on_giveup<R: Runtime>(app: &AppHandle<R>, tab_id: &str, agent_id: Option<&str>) {
+/// The agent-config scrub is **refcounted** (#2473): one SSH transport is shared
+/// by every session on an agent, so this tab giving up must not scrub the config
+/// while a sibling tab on the same agent is still reconnecting over it.
+/// [`SessionManager::clear_retained_request_with_agent_scrub`] clears this tab's
+/// request first, then scrubs the per-agent config only when no sibling request
+/// still routes through the agent.
+fn clear_retained_on_giveup<R: Runtime>(app: &AppHandle<R>, tab_id: &str) {
     let gave_up = app
         .try_state::<Arc<SessionLifecycleStore>>()
         .and_then(|store| store.reconnect_state(tab_id))
@@ -219,12 +221,7 @@ fn clear_retained_on_giveup<R: Runtime>(app: &AppHandle<R>, tab_id: &str, agent_
         return;
     }
     if let Some(manager) = app.try_state::<SessionManager>() {
-        manager.clear_retained_request(tab_id);
-    }
-    if let Some(aid) = agent_id {
-        if let Some(store) = app.try_state::<SessionManager>() {
-            store.agent_client().clear_retained_agent_config(aid);
-        }
+        manager.clear_retained_request_with_agent_scrub(tab_id);
     }
 }
 

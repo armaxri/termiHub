@@ -152,6 +152,27 @@ impl RetainedRequestStore {
     pub(crate) fn get(&self, tab_id: &str) -> Option<RetainedConnectionRequest> {
         self.lock().get(tab_id).cloned()
     }
+
+    /// The `agent_id` a tab's retained request routes through, if any. Reads only
+    /// the (non-secret) agent id, so it does **not** clone the secret-bearing
+    /// `settings` the way [`Self::get`] does — the per-agent transport-config
+    /// refcount scrub (#2473) needs the agent id, not the settings.
+    pub(crate) fn agent_id_for(&self, tab_id: &str) -> Option<String> {
+        self.lock().get(tab_id).and_then(|r| r.agent_id.clone())
+    }
+
+    /// Whether **any** retained request currently routes through `agent_id`.
+    ///
+    /// The refcount behind the per-agent transport-config scrub (#2473): one SSH
+    /// transport is shared by every session on an agent, so its retained config
+    /// must survive until the *last* tab on that agent stops needing it. A caller
+    /// clears its own tab's request first, then asks this — a `false` answer means
+    /// no sibling tab still holds the agent, so its config can be scrubbed.
+    pub(crate) fn any_for_agent(&self, agent_id: &str) -> bool {
+        self.lock()
+            .values()
+            .any(|r| r.agent_id.as_deref() == Some(agent_id))
+    }
 }
 
 #[cfg(test)]
@@ -283,6 +304,73 @@ mod tests {
             store.get("tab-1").unwrap().settings["password"],
             json!("new")
         );
+    }
+
+    #[test]
+    fn agent_id_for_reads_the_agent_without_cloning_settings() {
+        let store = RetainedRequestStore::new();
+        assert_eq!(store.agent_id_for("missing"), None);
+
+        store.retain(
+            "tab-direct",
+            RetainedConnectionRequest {
+                type_id: "ssh".to_string(),
+                settings: json!({ "password": "p" }),
+                agent_id: None,
+                resilient: true,
+                backend_reattach: true,
+            },
+        );
+        store.retain(
+            "tab-agent",
+            RetainedConnectionRequest {
+                type_id: "ssh".to_string(),
+                settings: json!({ "password": "p" }),
+                agent_id: Some("agent-1".to_string()),
+                resilient: true,
+                backend_reattach: true,
+            },
+        );
+
+        assert_eq!(store.agent_id_for("tab-direct"), None);
+        assert_eq!(store.agent_id_for("tab-agent").as_deref(), Some("agent-1"));
+    }
+
+    #[test]
+    fn any_for_agent_tracks_the_last_tab_on_an_agent() {
+        // The refcount behind the per-agent transport-config scrub (#2473): the
+        // agent config must survive until the last tab on that agent releases it.
+        let store = RetainedRequestStore::new();
+        assert!(!store.any_for_agent("agent-1"));
+
+        let agent_req = |agent: &str| RetainedConnectionRequest {
+            type_id: "ssh".to_string(),
+            settings: json!({ "password": "p" }),
+            agent_id: Some(agent.to_string()),
+            resilient: true,
+            backend_reattach: true,
+        };
+        store.retain("tab-a", agent_req("agent-1"));
+        store.retain("tab-b", agent_req("agent-1"));
+        store.retain("tab-c", agent_req("agent-2"));
+
+        assert!(store.any_for_agent("agent-1"));
+        assert!(store.any_for_agent("agent-2"));
+
+        // Clearing one of two siblings on agent-1 keeps the agent referenced.
+        store.clear("tab-a");
+        assert!(
+            store.any_for_agent("agent-1"),
+            "a sibling tab still holds agent-1, so its config must not be scrubbed"
+        );
+
+        // Clearing the last tab on agent-1 releases it; agent-2 is unaffected.
+        store.clear("tab-b");
+        assert!(
+            !store.any_for_agent("agent-1"),
+            "the last tab on agent-1 released it — its config can now be scrubbed"
+        );
+        assert!(store.any_for_agent("agent-2"));
     }
 
     #[test]

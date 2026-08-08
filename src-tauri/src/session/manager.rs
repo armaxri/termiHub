@@ -829,21 +829,25 @@ impl SessionManager {
                 );
 
             // Retain the connection request for the resilient-reconnect loop
-            // (#2454, retention Model A) so the backend redrive (follow-up) can
-            // re-establish the transport itself. Scoped to **resilient DIRECT**
-            // (non-agent) sessions — agent silent-retry is #2455 and a
-            // non-resilient tab never reconnects, so neither retains a secret.
-            // Refreshed on every (re)connect of the tab; dropped + zeroized on
-            // any terminal-loop / session-end path (see the module docs and the
-            // `clear_retained_request` call sites). A no-op for the internal
-            // agent-setup session, which carries no `connect_id` / tab id.
-            if resilient_reconnect && agent_id.is_none() {
+            // (#2454, retention Model A) so the backend redrive re-establishes the
+            // transport itself. Covers **resilient DIRECT** (non-agent, #2454) and
+            // **resilient AGENT** (#2473) sessions alike: the redrive
+            // cold-re-establishes the agent transport from the retained `agent_id`
+            // + per-agent config (#2472) before re-creating the session. A
+            // non-resilient tab never reconnects, so it retains no secret; only a
+            // tab that opted into resilient reconnect (the frontend's
+            // `isResilientReconnectTab`) does. Refreshed on every (re)connect of
+            // the tab; dropped + zeroized on any terminal-loop / session-end path
+            // (see the module docs and the `clear_retained_request` call sites). A
+            // no-op for the internal agent-setup session, which carries no
+            // `connect_id` / tab id.
+            if resilient_reconnect {
                 self.retained_requests.retain(
                     &tab_id,
                     RetainedConnectionRequest {
                         type_id: type_id.to_string(),
                         settings: settings.clone(),
-                        agent_id: None,
+                        agent_id: agent_id.map(|s| s.to_string()),
                         resilient: true,
                         // The client's `sessionBackendReattach` determination
                         // (#2454): the sole gate on whether the backend reconnect
@@ -1049,13 +1053,41 @@ impl SessionManager {
     }
 
     /// Drop + zeroize the retained connection request for a tab (#2454, retention
-    /// Model A). The security-mitigation scrub point invoked by every
-    /// terminal-loop / session-end path that the manager itself does not observe
-    /// — the give-up, user-cancel, graceful-disconnect and remove lifecycle
-    /// transitions (routed through [`crate::session_projection::projection`]).
-    /// Idempotent: clearing a tab with no retained request is a no-op.
+    /// Model A) — the per-tab primitive, without the per-agent transport-config
+    /// scrub. The lifecycle scrub points now route through
+    /// [`Self::clear_retained_request_with_agent_scrub`] so a resilient agent tab's
+    /// shared transport config is refcount-scrubbed too (#2473); this narrower form
+    /// stays as the direct-only building block. Idempotent: clearing a tab with no
+    /// retained request is a no-op.
+    #[allow(dead_code)] // building block for the agent-scrub variant + the idempotency test
     pub fn clear_retained_request(&self, tab_id: &str) {
         self.retained_requests.clear(tab_id);
+    }
+
+    /// Clear a tab's retained request and, when it was the **last** tab on its
+    /// agent, scrub that agent's retained transport config too (#2473).
+    ///
+    /// The per-tab request (#2454) and the per-agent transport config (#2472) have
+    /// different lifetimes: one SSH transport is shared by every session on an
+    /// agent, so its secret-bearing config must survive until the last tab on that
+    /// agent releases it. This clears the tab's own request first, then — only if
+    /// no sibling tab still routes through the same agent — drops + zeroizes the
+    /// per-agent config. A direct (non-agent) tab has no agent config to scrub, so
+    /// this behaves exactly like [`Self::clear_retained_request`] for it; idempotent
+    /// throughout. This is the tab-close / non-loop-drop scrub point (routed
+    /// through [`crate::session_projection::projection`]); the reconnect give-up
+    /// point applies the same refcount in
+    /// [`crate::session_projection::redrive`].
+    pub fn clear_retained_request_with_agent_scrub(&self, tab_id: &str) {
+        // Read the agent id before clearing (the request is about to drop), then
+        // clear this tab so the sibling check below does not count itself.
+        let agent_id = self.retained_requests.agent_id_for(tab_id);
+        self.retained_requests.clear(tab_id);
+        if let Some(agent_id) = agent_id {
+            if !self.retained_requests.any_for_agent(&agent_id) {
+                self.agent_manager.clear_retained_agent_config(&agent_id);
+            }
+        }
     }
 
     /// Whether a resilient-reconnect connection request is currently retained for
@@ -2789,6 +2821,282 @@ mod tests {
         assert!(
             manager.has_retained_request("tab-r"),
             "a resilient direct session retains its connection request (#2454 Model A)"
+        );
+    }
+
+    /// A mock `AgentRpcClient` that satisfies the `create_connection` agent
+    /// handshake (create → register output → attach → capability query) and
+    /// **records** every `clear_retained_agent_config` call, so the #2473
+    /// retention + refcount-scrub tests can drive a real agent session through the
+    /// manager without a live SSH transport.
+    struct RetainAgent {
+        cleared: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl RetainAgent {
+        fn new() -> (Self, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+            let cleared = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            (
+                Self {
+                    cleared: cleared.clone(),
+                },
+                cleared,
+            )
+        }
+    }
+
+    impl AgentRpcClient for RetainAgent {
+        fn connect_agent(
+            &self,
+            _: &str,
+            _: &RemoteAgentConfig,
+            _: Option<&AgentSettings>,
+        ) -> Result<AgentConnectResult, TerminalError> {
+            unimplemented!()
+        }
+        fn cancel_connect(&self, _: &str) -> bool {
+            false
+        }
+        fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn is_connected(&self, _: &str) -> bool {
+            true
+        }
+        fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
+            None
+        }
+        fn clear_retained_agent_config(&self, agent_id: &str) {
+            self.cleared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(agent_id.to_string());
+        }
+        fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
+            unimplemented!()
+        }
+        fn send_request(&self, _: &str, _: &str, _: Value) -> Result<Value, TerminalError> {
+            // The handshake queries `connection.types`; an empty list is fine (no
+            // file-browser / monitoring proxies wired for the test session).
+            Ok(serde_json::json!({ "types": [] }))
+        }
+        fn create_session(
+            &self,
+            _: &str,
+            session_type: &str,
+            _: Value,
+            title: Option<&str>,
+            definition_id: Option<&str>,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            Ok(AgentSessionInfo {
+                session_id: uuid::Uuid::new_v4().to_string(),
+                title: title.unwrap_or("mock").to_string(),
+                session_type: session_type.to_string(),
+                status: "running".to_string(),
+                attached: true,
+                definition_id: definition_id.map(str::to_string),
+            })
+        }
+        fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+            Ok(Vec::new())
+        }
+        fn list_connections_and_folders(
+            &self,
+            _: &str,
+        ) -> Result<AgentConnectionsData, TerminalError> {
+            unimplemented!()
+        }
+        fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+            unimplemented!()
+        }
+        fn save_definition(&self, _: &str, _: Value) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_definition(
+            &self,
+            _: &str,
+            _: Value,
+        ) -> Result<AgentDefinitionInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn create_folder(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<&str>,
+        ) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn update_folder(&self, _: &str, _: Value) -> Result<AgentFolderInfo, TerminalError> {
+            unimplemented!()
+        }
+        fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn register_session_output(
+            &self,
+            _: &str,
+            _: &str,
+            _: OutputSender,
+        ) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn register_monitoring_output(
+            &self,
+            _: &str,
+            _: &str,
+            _: MonitoringSender,
+        ) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+            Ok(())
+        }
+        fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+        fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
+            unimplemented!()
+        }
+    }
+
+    /// Build a manager whose agent client is a [`RetainAgent`], returning the
+    /// recorded-clears handle alongside it.
+    fn make_test_manager_with_retain_agent() -> (
+        SessionManager,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+        registry.register(
+            "mock",
+            "Mock",
+            "mock",
+            Box::new(|| Box::new(MockConnection::default())),
+        );
+        let (agent, cleared) = RetainAgent::new();
+        (SessionManager::new(registry, Arc::new(agent)), cleared)
+    }
+
+    #[tokio::test]
+    async fn create_connection_retains_request_for_resilient_agent_session() {
+        // #2473: a resilient **agent** session now retains its request (with the
+        // agent_id the redrive cold-re-establishes the transport through), the same
+        // way a resilient direct session does (#2454). Before this, retention was
+        // guarded to `agent_id.is_none()`, so agent tabs never entered the backend
+        // redrive.
+        let (manager, _cleared) = make_test_manager_with_retain_agent();
+        manager
+            .create_connection(
+                "mock",
+                serde_json::json!({ "password": "secret" }),
+                Some("agent-1"), // resilient AGENT session
+                Some("tab-a:0"),
+                false,
+                true, // resilient
+                true, // backend_reattach opted in
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("agent session should open");
+        let req = manager
+            .retained_request("tab-a")
+            .expect("a resilient agent session retains its connection request");
+        assert_eq!(
+            req.agent_id.as_deref(),
+            Some("agent-1"),
+            "the retained request carries the agent_id the redrive re-connects through"
+        );
+        assert!(req.backend_reattach, "the redrive gate is recorded");
+    }
+
+    #[tokio::test]
+    async fn clear_retained_request_scrubs_agent_config_only_for_the_last_tab() {
+        // #2473 refcount: one SSH transport is shared by every session on an agent,
+        // so the per-agent transport config (#2472) must survive until the LAST tab
+        // on that agent releases its retained request. Clearing one of two sibling
+        // tabs must NOT scrub the config; clearing the last one must.
+        let (manager, cleared) = make_test_manager_with_retain_agent();
+        for tab in ["tab-x:0", "tab-y:0"] {
+            manager
+                .create_connection(
+                    "mock",
+                    serde_json::json!({ "password": "secret" }),
+                    Some("agent-1"),
+                    Some(tab),
+                    false,
+                    true,
+                    true,
+                    MockEventEmitter::new(),
+                )
+                .await
+                .expect("agent session should open");
+        }
+
+        // First sibling clears: a tab on agent-1 still holds it → no scrub.
+        manager.clear_retained_request_with_agent_scrub("tab-x");
+        assert!(
+            cleared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "a sibling tab still holds agent-1, so its transport config must not be scrubbed"
+        );
+
+        // Last sibling clears: nothing left on agent-1 → scrub exactly once.
+        manager.clear_retained_request_with_agent_scrub("tab-y");
+        assert_eq!(
+            &*cleared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            &["agent-1".to_string()],
+            "the last tab on agent-1 releasing it scrubs the per-agent transport config once"
+        );
+    }
+
+    #[tokio::test]
+    async fn clear_retained_request_with_agent_scrub_is_a_noop_for_direct_tabs() {
+        // A direct (non-agent) tab has no per-agent config, so the refcounted scrub
+        // must behave exactly like the plain per-tab clear and never touch the
+        // agent config store.
+        let (manager, cleared) = make_test_manager_with_retain_agent();
+        manager
+            .create_connection(
+                "mock",
+                serde_json::json!({ "password": "secret" }),
+                None, // direct
+                Some("tab-d:0"),
+                false,
+                true,
+                true,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("direct session should open");
+        assert!(manager.has_retained_request("tab-d"));
+
+        manager.clear_retained_request_with_agent_scrub("tab-d");
+        assert!(!manager.has_retained_request("tab-d"));
+        assert!(
+            cleared
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_empty(),
+            "a direct tab has no agent config to scrub"
         );
     }
 
