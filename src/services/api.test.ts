@@ -272,6 +272,35 @@ describe("api service", () => {
       expect(result).toBe("session-remote");
     });
 
+    it("createTerminal forwards resilientReconnect + backendReattach on the remote-session (agent) path (#2476)", async () => {
+      // The agent path used to DROP both flags (create_connection was called with
+      // only agentId + connectId), so the backend never saw them for an agent
+      // session and could not retain the request for the reconnect redrive. They
+      // are now threaded through — never spawn-origin, so `spawned` stays false.
+      mockedInvoke.mockResolvedValue("session-agent-resilient");
+      const config = {
+        type: "remote-session",
+        config: {
+          agentId: "agent-9",
+          sessionType: "shell",
+          shell: "/bin/bash",
+          persistent: false,
+        },
+      };
+
+      await createTerminal(config, "tab-agent", false, true, true);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
+        typeId: "shell",
+        settings: { shell: "/bin/bash", persistent: false },
+        agentId: "agent-9",
+        connectId: "tab-agent",
+        spawned: false,
+        resilientReconnect: true,
+        backendReattach: true,
+      });
+    });
+
     it("sendInput invokes with session ID and data", async () => {
       mockedInvoke.mockResolvedValue(undefined);
 

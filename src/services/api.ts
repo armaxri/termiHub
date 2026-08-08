@@ -184,13 +184,22 @@ export async function importInventoryHosts(path: string): Promise<InventoryHost[
  *
  * `resilientReconnect` is the tab's resilient-reconnect determination (#2439),
  * forwarded to the backend so a genuine drop is folded server-side as
- * `session.reconnect` vs `session.dropped`. Only plain-SSH tabs opt in; the
- * `remote-session` (agent) path is never resilient, so it is not forwarded there.
+ * `session.reconnect` vs `session.dropped`. Both the direct and `remote-session`
+ * (agent) paths forward it: an agent tab becomes resilient once the agent
+ * reconnect redrive is activated (#2476), and the backend only retains a tab's
+ * request for the redrive when it is `resilient` (see `session/manager.rs`).
  *
- * `backendReattach` is the client's `sessionBackendReattach` flag (#2454), passed
- * on the direct path only so the backend records it on the retained request as the
- * redrive gate. The `remote-session` (agent) path is out of scope (#2455), so it
- * is not forwarded there.
+ * `backendReattach` is the client's `sessionBackendReattach` flag (#2454),
+ * forwarded on both paths so the backend records it on the retained request as
+ * the redrive gate — for a direct connection (#2457) and, once the agent reconnect
+ * frontend lands (#2476), for an agent session too. Agent sessions are never
+ * spawn-origin, so `spawned` is not forwarded on the `remote-session` path.
+ *
+ * NOTE: flag-off, both values resolve to `false` for agent tabs
+ * (`isResilientReconnectTabId` returns `false` and `sessionBackendReattach` is
+ * default-off), and the backend only retains-for-redrive when `resilient` is true,
+ * so forwarding them here is byte-identical to `develop` until the agent reconnect
+ * frontend (#2476) classifies agent tabs resilient under the flag.
  */
 export async function createTerminal(
   config: ConnectionConfig,
@@ -205,7 +214,15 @@ export async function createTerminal(
       sessionType: string;
       [key: string]: unknown;
     };
-    return await createConnection(sessionType, rest, agentId, connectId);
+    return await createConnection(
+      sessionType,
+      rest,
+      agentId,
+      connectId,
+      undefined,
+      resilientReconnect,
+      backendReattach
+    );
   }
   return await createConnection(
     config.type,
