@@ -53,6 +53,7 @@ import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { computeVisibleTreeNodes, type VisibleTreeNode } from "@/utils/computeVisibleTreeNodes";
 import { experimentalTypeIds } from "@/utils/experimentalTypes";
 import { filterConnectionTree, type ConnectionTreeFilter } from "@/utils/connectionSearch";
+import { agentNameMatchesQuery, agentDefinitionMatchesQuery } from "@/utils/agentTreeSearch";
 import {
   getJumpHosts,
   jumpHostTooltip,
@@ -1177,6 +1178,33 @@ export function ConnectionList() {
       : {};
   const isOuterResizable = "onMouseDown" in outerResizeProps;
 
+  // Remote Agents search (#2485): the query narrows *which* agents render, not
+  // only each agent's contents. An agent is surfaced when its own name/label
+  // matches (e.g. `dev0` → "Dev Agent (dev0)") OR it holds a matching saved
+  // connection. A name-matched agent is shown with its full tree (its content
+  // filter is cleared), while an agent surfaced only by a child match keeps the
+  // content filter so just the matching connections show.
+  const normalizedAgentQuery = agentFilterQuery.trim().toLowerCase();
+  const agentNameMatches = useCallback(
+    (agent: (typeof remoteAgents)[number]) =>
+      agentNameMatchesQuery(agent.name, normalizedAgentQuery),
+    [normalizedAgentQuery]
+  );
+  const agentHasDefinitionMatch = useCallback(
+    (agentId: string) =>
+      (agentDefinitions[agentId] ?? []).some((d) =>
+        agentDefinitionMatchesQuery(d, normalizedAgentQuery)
+      ),
+    [agentDefinitions, normalizedAgentQuery]
+  );
+  const visibleAgents = useMemo(
+    () =>
+      normalizedAgentQuery
+        ? remoteAgents.filter((a) => agentNameMatches(a) || agentHasDefinitionMatch(a.id))
+        : remoteAgents,
+    [normalizedAgentQuery, remoteAgents, agentNameMatches, agentHasDefinitionMatch]
+  );
+
   return (
     <div className="connection-list">
       <DndContext
@@ -1393,7 +1421,7 @@ export function ConnectionList() {
               )}
               {!remoteAgentsCollapsed && (
                 <SortableContext
-                  items={remoteAgents.map((a) => a.id)}
+                  items={visibleAgents.map((a) => a.id)}
                   strategy={verticalListSortingStrategy}
                 >
                   <div
@@ -1408,9 +1436,25 @@ export function ConnectionList() {
                       scroll while clipping expanded content), it just makes the
                       list taller and reachable by scrolling (#2116).
                     */}
-                    {remoteAgents.map((agent) => (
-                      <AgentNode key={agent.id} agent={agent} filterQuery={agentFilterQuery} />
+                    {visibleAgents.map((agent) => (
+                      <AgentNode
+                        key={agent.id}
+                        agent={agent}
+                        // A name-matched agent shows its full tree (no content
+                        // filter); one surfaced only by a child match keeps the
+                        // query so just the matching connections show (#2485).
+                        filterQuery={agentNameMatches(agent) ? "" : agentFilterQuery}
+                      />
                     ))}
+                    {normalizedAgentQuery && visibleAgents.length === 0 && (
+                      <p
+                        className="connection-list__empty"
+                        role="status"
+                        data-testid="remote-agents-empty"
+                      >
+                        No agents match “{agentFilterQuery.trim()}”.
+                      </p>
+                    )}
                   </div>
                 </SortableContext>
               )}
