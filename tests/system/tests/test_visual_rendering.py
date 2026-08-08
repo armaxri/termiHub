@@ -36,6 +36,7 @@ from termihub_harness import (
     ConnectionsUi,
     ManualUi,
     PasswordPromptUi,
+    SETTINGS_REGION,
     SettingsUi,
     SidebarUi,
     SshUi,
@@ -135,7 +136,7 @@ class TestVisualRendering(
         self.open_settings_category("appearance")
         self.driver.select("appearance-theme-select", "light")
         self.wait(
-            lambda: self.driver.get_state("settings.theme") == "light",
+            lambda: self.projection_region_cache(SETTINGS_REGION).get("theme") == "light",
             what="the light theme to apply",
         )
         try:
@@ -149,7 +150,7 @@ class TestVisualRendering(
             # Restore the default so later suites start from a known theme.
             self.driver.select("appearance-theme-select", "dark")
             self.wait(
-                lambda: self.driver.get_state("settings.theme") == "dark",
+                lambda: self.projection_region_cache(SETTINGS_REGION).get("theme") == "dark",
                 what="the theme to restore to dark",
             )
 

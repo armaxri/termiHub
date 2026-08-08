@@ -28,6 +28,7 @@ from termihub_harness import (
     ConnectionsUi,
     CredentialStoreUi,
     PasswordPromptUi,
+    SETTINGS_REGION,
     SettingsUi,
     SidebarUi,
     SSH_HOST,
@@ -256,7 +257,10 @@ class TestCredentialStore(
         # the selected timeout round-trips into the store, then resets it to Never.
         self.setup_master_password_store(MASTER_PASSWORD)
         self.set_auto_lock_timeout(5)
-        assert self.driver.get_state("settings.credentialAutoLockMinutes") == 5
+        assert (
+            self.projection_region_cache(SETTINGS_REGION).get("credentialAutoLockMinutes")
+            == 5
+        )
         self.set_auto_lock_timeout(0)
 
     def test_change_master_password(self):

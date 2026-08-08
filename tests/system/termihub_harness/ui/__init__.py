@@ -59,7 +59,7 @@ from .monitoring import MonitoringUi
 from .network_tools import NetworkToolsUi
 from .passwordprompt import PasswordPromptUi
 from .plugins import PluginsUi
-from .settings import SettingsUi
+from .settings import SETTINGS_REGION, SettingsUi
 from .shell_fs import ShellFsUi
 from .sftp import SftpUi
 from .sidebar import SidebarUi
@@ -84,6 +84,7 @@ __all__ = [
     "FilesUi",
     "EditorUi",
     "SettingsUi",
+    "SETTINGS_REGION",
     "ManualUi",
     "NetworkToolsUi",
     "PluginsUi",

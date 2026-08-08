@@ -51,6 +51,7 @@ from termihub_harness import (
     FilesUi,
     LayoutUi,
     ManualUi,
+    SETTINGS_REGION,
     SettingsUi,
     SidebarUi,
     SystemTest,
@@ -119,10 +120,10 @@ class TestInputRouting(
             lambda: self.driver.exists("keyboard-settings-passthrough"),
             what="the pass-through toggle",
         )
-        if self.driver.get_state("settings.terminalKeyPassthrough") is False:
+        if self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is False:
             self.driver.click("keyboard-settings-passthrough")
         self.wait(
-            lambda: self.driver.get_state("settings.terminalKeyPassthrough") is not False,
+            lambda: self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is not False,
             what="pass-through to be enabled",
         )
 
@@ -159,15 +160,15 @@ class TestInputRouting(
             what="the pass-through toggle",
         )
         # Force it on first, then turn it off, so we always exercise the off path.
-        if self.driver.get_state("settings.terminalKeyPassthrough") is False:
+        if self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is False:
             self.driver.click("keyboard-settings-passthrough")
             self.wait(
-                lambda: self.driver.get_state("settings.terminalKeyPassthrough") is not False,
+                lambda: self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is not False,
                 what="pass-through to be enabled before the toggle test",
             )
         self.driver.click("keyboard-settings-passthrough")
         self.wait(
-            lambda: self.driver.get_state("settings.terminalKeyPassthrough") is False,
+            lambda: self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is False,
             what="pass-through to be disabled",
         )
 
@@ -187,7 +188,7 @@ class TestInputRouting(
         )
         self.driver.click("keyboard-settings-passthrough")
         self.wait(
-            lambda: self.driver.get_state("settings.terminalKeyPassthrough") is not False,
+            lambda: self.projection_region_cache(SETTINGS_REGION).get("terminalKeyPassthrough") is not False,
             what="pass-through to be restored",
         )
 
