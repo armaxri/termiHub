@@ -424,15 +424,17 @@ fn per_slice_setters_on_an_unknown_agent_are_no_ops() {
 }
 
 #[test]
-fn transitions_on_an_unknown_agent_are_no_ops() {
+fn entry_transitions_on_an_unknown_agent_are_no_ops() {
     let store = AgentsStore::new();
-    // None of these should panic or create an agent / sub-state.
+    // None of these fabricate an agent entry or its sub-state for an unknown id.
     store.update("ghost", "x", config("h"), settings());
     store.apply_settings("ghost", settings());
     store.toggle_expanded("ghost");
     store.set_status("ghost", AgentConnectionState::Connected, None);
     store.set_capabilities("ghost", json!({}));
     store.disconnect("ghost");
+    // The whole-list snapshot setters still no-op on an unknown id (nothing to
+    // render under a missing agent node).
     store.refresh(
         "ghost",
         vec![session("s1")],
@@ -440,8 +442,8 @@ fn transitions_on_an_unknown_agent_are_no_ops() {
         vec![folder("f1")],
     );
     store.clear_sessions("ghost");
-    store.save_definition("ghost", definition("d1", None));
-    store.create_folder("ghost", folder("f1"));
+    store.set_definitions("ghost", vec![definition("d1", None)]);
+    store.set_folders("ghost", vec![folder("f1")]);
 
     assert!(store.get("ghost").is_none());
     assert!(store.definitions_of("ghost").is_empty());
@@ -450,6 +452,151 @@ fn transitions_on_an_unknown_agent_are_no_ops() {
         store.snapshot(),
         json!({ "agents": [], "sessions": {}, "definitions": {}, "folders": {} })
     );
+}
+
+// ── #2486: creates render reliably (both candidate mechanisms) ─────────────────
+
+/// Mechanism 1 (no-op on unknown id): a folder/definition created against an agent
+/// whose entry has not landed yet must not be silently dropped — it renders as soon
+/// as the entry arrives (persisted-list fold / client `agent.add` mirror).
+#[test]
+fn a_create_racing_entry_creation_renders_once_the_entry_lands() {
+    let store = AgentsStore::new();
+    // Create fires before the agent entry exists (the entry-creation fold has not
+    // run yet). Previously a bare unknown-id no-op silently dropped it.
+    store.create_folder("a1", folder("f1"));
+    store.save_definition("a1", definition("d1", None));
+    // Sub-state is recorded even though there is no agent node to render it under yet.
+    assert_eq!(store.folders_of("a1"), vec![folder("f1")]);
+    assert_eq!(store.definitions_of("a1"), vec![definition("d1", None)]);
+
+    // The entry lands via the persisted-list fold; the pre-created items survive and
+    // now render under the agent node.
+    store.reflect_saved_agents(vec![seed("a1", "One", "h1")]);
+    assert!(store.get("a1").is_some());
+    assert_eq!(store.folders_of("a1"), vec![folder("f1")]);
+    assert_eq!(store.definitions_of("a1"), vec![definition("d1", None)]);
+}
+
+/// An orphan sub-state map for an id that never becomes a real persisted agent is
+/// self-cleaning: `reflect_saved_agents` drops it (#2486).
+#[test]
+fn a_create_for_an_id_that_never_becomes_an_agent_is_dropped_by_reflect() {
+    let store = AgentsStore::new();
+    store.create_folder("ghost", folder("f1"));
+    store.save_definition("ghost", definition("d1", None));
+    // A reflect that does not include the id drops the orphan sub-state.
+    store.reflect_saved_agents(vec![seed("a1", "One", "h1")]);
+    assert!(store.folders_of("ghost").is_empty());
+    assert!(store.definitions_of("ghost").is_empty());
+}
+
+/// Mechanism 2 (source-fold vs optimistic-write race): a stale whole-list snapshot
+/// (`set_folders` / `set_definitions`) delivered *after* an optimistic create must
+/// not clobber it. The refresh snapshot was taken before the create was persisted.
+#[test]
+fn an_optimistic_create_survives_a_stale_whole_list_snapshot() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    // Existing, server-confirmed items plus the fresh optimistic create.
+    store.set_folders("a1", vec![folder("f1")]);
+    store.set_definitions("a1", vec![definition("d1", None)]);
+    store.create_folder("a1", folder("new"));
+    store.save_definition("a1", definition("newdef", None));
+
+    // A stale refresh snapshot (taken before the create persisted) lacks the new
+    // items. It must not drop them.
+    store.set_folders("a1", vec![folder("f1")]);
+    store.set_definitions("a1", vec![definition("d1", None)]);
+
+    let folder_ids: Vec<String> = store.folders_of("a1").into_iter().map(|f| f.id).collect();
+    let def_ids: Vec<String> = store
+        .definitions_of("a1")
+        .into_iter()
+        .map(|d| d.id)
+        .collect();
+    assert!(
+        folder_ids.contains(&"new".to_string()),
+        "create clobbered: {folder_ids:?}"
+    );
+    assert!(
+        def_ids.contains(&"newdef".to_string()),
+        "create clobbered: {def_ids:?}"
+    );
+    assert!(folder_ids.contains(&"f1".to_string()));
+    assert!(def_ids.contains(&"d1".to_string()));
+}
+
+/// The once-per-connect `refresh` (which replaces sessions + definitions + folders
+/// in one shot) must also preserve an unconfirmed local create it races (#2486).
+#[test]
+fn an_optimistic_create_survives_a_stale_refresh() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    store.create_folder("a1", folder("new"));
+    store.save_definition("a1", definition("newdef", None));
+
+    // A stale connect-refresh snapshot lacking the just-created items.
+    store.refresh("a1", vec![], vec![], vec![]);
+
+    assert_eq!(store.folders_of("a1"), vec![folder("new")]);
+    assert_eq!(store.definitions_of("a1"), vec![definition("newdef", None)]);
+}
+
+/// Once a snapshot confirms a create (it now contains it), the store stops
+/// protecting it — so a later snapshot that genuinely omits it (a delete on the
+/// server / another client) correctly drops it. No stale-item resurrection (#2486).
+#[test]
+fn a_confirmed_create_is_no_longer_protected_and_a_genuine_delete_sticks() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    store.create_folder("a1", folder("f1"));
+    store.save_definition("a1", definition("d1", None));
+
+    // A snapshot that includes the create confirms it (stops the protection).
+    store.set_folders("a1", vec![folder("f1")]);
+    store.set_definitions("a1", vec![definition("d1", None)]);
+    assert_eq!(store.folders_of("a1"), vec![folder("f1")]);
+
+    // A later authoritative snapshot omits it (deleted elsewhere) → it is dropped.
+    store.set_folders("a1", vec![]);
+    store.set_definitions("a1", vec![]);
+    assert!(store.folders_of("a1").is_empty());
+    assert!(store.definitions_of("a1").is_empty());
+}
+
+/// A create the user then deletes locally must stay deleted even if a stale snapshot
+/// (still lacking the delete) arrives afterwards — the protection is cleared on the
+/// local delete, so it is not resurrected (#2486).
+#[test]
+fn a_locally_deleted_create_is_not_resurrected_by_a_stale_snapshot() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    store.create_folder("a1", folder("f1"));
+    store.save_definition("a1", definition("d1", None));
+    store.delete_folder("a1", "f1");
+    store.delete_definition("a1", "d1");
+
+    // A stale snapshot (predating the create) — must not bring the deleted items back.
+    store.set_folders("a1", vec![]);
+    store.set_definitions("a1", vec![]);
+    assert!(store.folders_of("a1").is_empty());
+    assert!(store.definitions_of("a1").is_empty());
+}
+
+/// A disconnect resets the live view and forgets unconfirmed creates, so the next
+/// connect's refresh (which by then reflects any persisted create) is authoritative
+/// and nothing stale lingers (#2486).
+#[test]
+fn a_disconnect_forgets_unconfirmed_creates() {
+    let store = AgentsStore::new();
+    store.add("a1", "One", config("h1"), settings());
+    store.create_folder("a1", folder("f1"));
+    store.disconnect("a1");
+    assert!(store.folders_of("a1").is_empty());
+    // A post-reconnect snapshot without the folder is honoured (not resurrected).
+    store.set_folders("a1", vec![]);
+    assert!(store.folders_of("a1").is_empty());
 }
 
 #[test]
