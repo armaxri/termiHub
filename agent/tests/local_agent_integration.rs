@@ -98,7 +98,33 @@ impl LocalAgent {
         // live in which a connection could be reset.
         let config_dir = TempDir::new().expect("failed to create temp config dir");
 
-        let (process, addr, stderr) = spawn_ready_listener(config_dir.path(), None);
+        // Point the agent's host-wide registry (ADR-11) at a per-agent endpoint
+        // inside this temp dir rather than the shared per-user default
+        // (`/tmp/termihub/{user}/registry.sock`). Without this override the agent
+        // spawns/joins the developer's real registry daemon — leaking a detached
+        // process into shared state and letting parallel checkouts fight over one
+        // registry. See [`registry_endpoint_in`].
+        let registry_endpoint = registry_endpoint_in(config_dir.path(), "reg");
+        let (process, addr, stderr) =
+            spawn_ready_listener(config_dir.path(), &registry_endpoint, None);
+        LocalAgent {
+            process,
+            addr,
+            _config_dir: config_dir,
+            _stderr: stderr,
+        }
+    }
+
+    /// Spawn an agent pointed at an explicit, caller-owned registry endpoint.
+    ///
+    /// Used by the fresh-after-reconnect test to stand a second agent process up
+    /// against a registry daemon a **prior** agent already spawned — the headless
+    /// analog of a reconnect re-establishing the transport with a fresh
+    /// `termihub-agent --stdio` while the host-wide registry survives the swap.
+    fn spawn_with_registry(registry_endpoint: &str) -> Self {
+        let config_dir = TempDir::new().expect("failed to create temp config dir");
+        let (process, addr, stderr) =
+            spawn_ready_listener(config_dir.path(), registry_endpoint, None);
         LocalAgent {
             process,
             addr,
@@ -116,6 +142,57 @@ impl Drop for LocalAgent {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// A unique host-wide-registry (ADR-11) endpoint scoped to `dir`.
+///
+/// Mirrors `registry_daemon_integration.rs`'s `unique_endpoint`: on unix the
+/// per-test `TempDir` scopes the socket file, so the endpoint lives (and is
+/// cleaned up) inside the agent's own config dir; on windows the `\\.\pipe\`
+/// namespace is machine-global with no directory to scope it, so uniqueness must
+/// live in the name (pid + a per-process counter). Either way the endpoint never
+/// collides with a parallel checkout or the developer's live registry — the
+/// isolation the shared per-user default (`/tmp/termihub/{user}/registry.sock`)
+/// does **not** provide on its own.
+#[cfg(unix)]
+fn registry_endpoint_in(dir: &Path, tag: &str) -> String {
+    dir.join(format!("registry-{tag}.sock"))
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(windows)]
+fn registry_endpoint_in(_dir: &Path, tag: &str) -> String {
+    static COUNTER: AtomicU16 = AtomicU16::new(0);
+    format!(
+        r"\\.\pipe\termihub-lai-{}-{}-{tag}",
+        std::process::id(),
+        COUNTER.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+/// Whether the registry daemon is currently listening at `endpoint`.
+///
+/// A connect probe, not a `Path::exists`: a `\\.\pipe\` name is not a filesystem
+/// path, and on unix the socket *file* can linger after the daemon dies, so only
+/// a connect answers the question the fresh-after-reconnect test actually asks —
+/// is a registry from the prior agent still reachable.
+#[cfg(unix)]
+fn endpoint_reachable(endpoint: &str) -> bool {
+    std::os::unix::net::UnixStream::connect(endpoint).is_ok()
+}
+
+#[cfg(windows)]
+fn endpoint_reachable(endpoint: &str) -> bool {
+    const ERROR_PIPE_BUSY: i32 = 231;
+    match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(endpoint)
+    {
+        Ok(_) => true,
+        Err(e) => e.raw_os_error() == Some(ERROR_PIPE_BUSY),
+    }
+}
 
 /// Low/high bounds of the test port range. 19200–20200 is IANA-unassigned and
 /// not used by any well-known service.
@@ -222,6 +299,7 @@ fn wait_until(mut condition: impl FnMut() -> bool, timeout: Duration) -> bool {
 fn spawn_listener_process(
     addr: &str,
     config_home: &Path,
+    registry_endpoint: &str,
     rust_log: Option<&str>,
 ) -> (Child, NamedTempFile) {
     let stderr_file = NamedTempFile::new().expect("failed to create stderr capture file");
@@ -232,6 +310,10 @@ fn spawn_listener_process(
     let mut cmd = Command::new(agent_binary());
     cmd.args(["--listen", addr])
         .env("XDG_CONFIG_HOME", config_home)
+        // Isolate the host-wide registry (ADR-11) from the shared per-user
+        // default so the test never spawns/joins the developer's real registry
+        // daemon (see [`LocalAgent::spawn`]).
+        .env("TERMIHUB_REGISTRY_ENDPOINT", registry_endpoint)
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr_handle));
     if let Some(log) = rust_log {
@@ -361,13 +443,15 @@ const MAX_SPAWN_ATTEMPTS: u32 = 5;
 /// is not retried (that would just burn another full timeout).
 fn spawn_ready_listener(
     config_home: &Path,
+    registry_endpoint: &str,
     rust_log: Option<&str>,
 ) -> (Child, String, NamedTempFile) {
     let mut last_diag = String::new();
     for attempt in 1..=MAX_SPAWN_ATTEMPTS {
         let port = unique_agent_port();
         let addr = format!("127.0.0.1:{port}");
-        let (mut child, stderr) = spawn_listener_process(&addr, config_home, rust_log);
+        let (mut child, stderr) =
+            spawn_listener_process(&addr, config_home, registry_endpoint, rust_log);
         match wait_for_agent_ready(&mut child, &addr, stderr.path(), ready_timeout()) {
             Ok(()) => return (child, addr, stderr),
             Err(ReadyError::ProcessExited(diag)) => {
@@ -1166,6 +1250,123 @@ fn shell_session_reattach_after_reconnect() {
     client2.close(&session_id);
 }
 
+// ── Fresh-after-reconnect create over a surviving registry (#2476 / #2480) ─────
+//
+// The ventilator hot path the maintainer hit live: an agent connected with a
+// live session, its SSH transport drops, the transport is re-established, and
+// the desktop stands a **fresh** `termihub-agent` process up over it and drives
+// a fresh `connection.create` — yet the tab stays stuck "Reconnecting", no
+// connection comes back (#2476). #2480 localises the suspicion to the ADR-11
+// host-wide **registry-daemon handshake** stalling for that fresh agent when a
+// registry daemon from the *prior* agent is still running.
+//
+// This is the headless analog: the agent crate can stand up a real agent over a
+// real local transport with no GUI/webview, so the registry-daemon handshake and
+// the fresh `connection.create` are exercised for real, and a stall FAILS the
+// test instead of hanging a display-backed run.
+
+/// A fresh agent process, standing up over a re-established transport while a
+/// registry daemon spawned by the *prior* agent is still alive, must complete
+/// `initialize` + a fresh `connection.create` and reach a usable session —
+/// without stalling on the ADR-11 registry-daemon handshake (#2476 / #2480).
+///
+/// Regression contract: [`crate::registry_daemon::client`]'s registry client is
+/// non-blocking and infallible by design (register is fire-and-forget, `list`
+/// times out to a fallback), so a surviving-registry handshake must never sit on
+/// the `connection.create` path. This test proves that end to end over a real
+/// transport; a real stall makes `create_elapsed` blow past the ceiling (or the
+/// echo never arrives) rather than wedging the suite forever.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
+)]
+fn fresh_agent_after_reconnect_creates_session_over_surviving_registry() {
+    // A registry endpoint the *test* owns, so it survives agent A's death — the
+    // headless stand-in for the host-wide registry daemon that outlives an agent
+    // process swap (ADR-11). Both agents point here.
+    let registry_dir = TempDir::new().expect("failed to create registry temp dir");
+    let registry_endpoint = registry_endpoint_in(registry_dir.path(), "shared");
+
+    // ── Agent A: connect, create a live session (this spawns the registry) ────
+    {
+        let agent_a = LocalAgent::spawn_with_registry(&registry_endpoint);
+        let mut client = AgentClient::connect(&agent_a.addr);
+        client.initialize();
+        let sid = client.create_shell_session("pre-drop");
+        let attach = client.attach(&sid);
+        assert!(
+            attach["result"].is_object(),
+            "agent A attach failed: {attach}"
+        );
+        client.write_input(&sid, "echo agent-a-alive-marker\n");
+        assert!(
+            client.wait_for_output("agent-a-alive-marker"),
+            "agent A shell never produced output — precondition not met"
+        );
+
+        // The registry daemon must genuinely be up: it is the "surviving
+        // registry" the fresh agent will meet. `initialize` starts the join in
+        // the background, so poll rather than assume it has bound yet.
+        assert!(
+            wait_until(|| endpoint_reachable(&registry_endpoint), ready_timeout()),
+            "registry daemon never became reachable at {registry_endpoint} — \
+             precondition not met"
+        );
+        // `agent_a` drops here: the listener process is killed, modelling the
+        // transport drop that takes the remote agent with it. The detached
+        // registry daemon is designed to outlive it.
+    }
+
+    // The registry must have survived the agent that spawned it — otherwise this
+    // would not exercise the "fresh agent meets a *pre-existing* registry" case
+    // #2480 points at.
+    assert!(
+        endpoint_reachable(&registry_endpoint),
+        "registry daemon did not survive the agent process that spawned it — \
+         cannot exercise the surviving-registry handshake"
+    );
+
+    // ── Agent B: the fresh agent the reconnect stands up over the re-established
+    // transport. `initialize` + `connection.create` must complete even though a
+    // registry daemon from agent A is already running. Time the whole path so a
+    // stall on the registry handshake is caught as a bounded FAILURE.
+    let started = Instant::now();
+    let agent_b = LocalAgent::spawn_with_registry(&registry_endpoint);
+    let mut client = AgentClient::connect(&agent_b.addr);
+    client.initialize();
+    let sid = client.create_shell_session("post-reconnect");
+    let create_elapsed = started.elapsed();
+
+    let attach = client.attach(&sid);
+    assert!(
+        attach["result"].is_object(),
+        "agent B attach failed: {attach}"
+    );
+    client.write_input(&sid, "echo agent-b-fresh-marker\n");
+    assert!(
+        client.wait_for_output("agent-b-fresh-marker"),
+        "fresh-after-reconnect agent shell never produced output — the session \
+         reached over the surviving registry is unusable (the live 'stuck \
+         Reconnecting' symptom)"
+    );
+
+    // The registry join is background + non-blocking by contract, so a fresh
+    // create must not wait on it. The ceiling reuses the shared readiness budget
+    // (env-overridable) so a slow CI shell cold-start never flakes it, while a
+    // genuine handshake stall — which in the field looked like a wedged connect —
+    // still trips it.
+    assert!(
+        create_elapsed < ready_timeout(),
+        "fresh-after-reconnect initialize+create took {create_elapsed:?}, over the \
+         {:?} ceiling — the registry-daemon handshake appears to stall the create \
+         path (#2480)",
+        ready_timeout()
+    );
+
+    client.close(&sid);
+}
+
 // ── Persistent-shell (daemon-backed) tests ────────────────────────────────────
 //
 // These tests verify the ring-buffer replay feature for daemon-backed sessions.
@@ -1281,7 +1482,9 @@ impl IsolatedAgent {
     fn spawn(xdg_home: &std::path::Path) -> Self {
         // spawn_ready_listener waits until the accept loop is idle (after
         // recover_sessions() finishes) and retries on a port collision.
-        let (process, addr, stderr) = spawn_ready_listener(xdg_home, Some("warn"));
+        let registry_endpoint = registry_endpoint_in(xdg_home, "reg");
+        let (process, addr, stderr) =
+            spawn_ready_listener(xdg_home, &registry_endpoint, Some("warn"));
         IsolatedAgent {
             process,
             addr,
