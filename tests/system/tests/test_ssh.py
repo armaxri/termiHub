@@ -271,13 +271,24 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
             connect=True,
         )
         self.handle_password_prompt()
+        # Trust the server's host key so the handshake completes — otherwise the
+        # #1959 prompt blocks it and no server-side session is ever created (#2447).
+        self.accept_host_key_prompt()
         tab = self.wait(lambda: self.find_tab(name), what="the SSH tab")
         self.wait(self.has_terminal, what="the SSH terminal session")
         tab_id = tab["id"]
 
-        # Drop *only* this connection's sshd session at the server.
-        new_pids = control.session_pids() - pids_before
-        assert new_pids, "expected a new sshd session for the SSH connection"
+        # Drop *only* this connection's sshd session at the server. The server-side
+        # sshd session process appears asynchronously *after* the client initiates
+        # the connection, and ``has_terminal`` above only proves the xterm mounted
+        # and is readable — which happens while the tab is still ``terminalConnecting``,
+        # a moment before the SSH handshake registers the session on the server. A
+        # single-shot read therefore raced and saw an empty diff (#2447); poll until
+        # the new session PID appears instead.
+        new_pids = self.wait(
+            lambda: (control.session_pids() - pids_before) or False,
+            what="a new sshd session for the SSH connection",
+        )
         control.kill_sessions(new_pids)
 
         # The client must surface the disconnect: the tab's session is marked

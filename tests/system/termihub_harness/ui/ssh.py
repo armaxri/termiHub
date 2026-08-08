@@ -23,13 +23,20 @@ class SshUi(HarnessMixin):
         def create_ssh_connection(self, name: str, *, host: str, port: int, username: str,
                                   auth_method: str = ..., key_path=..., connect: bool = ...) -> None: ...
         def handle_password_prompt(self, password: str = ...) -> None: ...
+        def accept_host_key_prompt(self, *, remember: bool = ..., timeout: float = ...) -> bool: ...
         def has_terminal(self) -> bool: ...
 
     def connect_ssh_password(self, name: str, *, port: int = SSH_PASSWORD_PORT) -> None:
         """Create + Save & Connect a password SSH connection, answer the prompt,
-        and wait for its terminal — the sequence nearly every SSH suite repeats."""
+        and wait for its terminal — the sequence nearly every SSH suite repeats.
+
+        Accepts the host-key trust prompt (#1959) that the first connect to a
+        fresh app instance's untrusted host raises mid-handshake: without it the
+        connection hangs and no session is ever established (#2398 / #2447).
+        """
         self.create_ssh_connection(
             name, host=SSH_HOST, port=port, username=SSH_USERNAME, connect=True
         )
         self.handle_password_prompt()
+        self.accept_host_key_prompt()
         self.wait(self.has_terminal, what="the SSH terminal session")

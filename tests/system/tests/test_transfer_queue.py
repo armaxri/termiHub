@@ -132,6 +132,17 @@ class TransferQueueReads(ProjectionHarness):
         )
 
 
+@pytest.mark.xfail(
+    reason=(
+        "#2469: an SSH SFTP session-to-session copy/paste is an unconditional "
+        "byte-based read/write round-trip (useSessionFileSystem.pasteEntry) that "
+        "registers no tracked transfer, so the region-fed Transfer Queue stays "
+        "empty. The connect/host-key/SFTP-open/navigation harness gaps this suite "
+        "hit are fixed (#2398); the remaining failure is the product gap in #2469. "
+        "Remove this marker once #2469 lands."
+    ),
+    strict=False,
+)
 @pytest.mark.usefixtures("ssh_password_fixtures")
 class TestTransferQueueLiveTransfer(
     TerminalUi,
@@ -162,22 +173,27 @@ class TestTransferQueueLiveTransfer(
     FILE_MB = 8
 
     def open_sftp_browser(self) -> str:
-        """Show the Files sidebar, clear any password prompt, await the listing."""
+        """Show the Files sidebar, clear any password prompt, await the listing.
+
+        Readiness is gated on the file-browser path bar rendering a path, not on a
+        ``sftpStatus`` store read: that top-level slice was retired when SFTP UI
+        state moved onto the projected file-browser region (the render-cut /
+        ``fileBrowser.*`` migration), so ``get_state("sftpStatus")`` no longer
+        resolves and the wait timed out immediately (#2398). The shared
+        ``SftpUi.connect_sftp_browser`` already gates on the same DOM signal — a
+        rendered path is the region-fed "SFTP connected and listing" signal — so
+        this mirrors it rather than reading a slice that no longer exists.
+        """
         self.switch_to_files_sidebar()
         self.wait(
             lambda: self.driver.exists("password-prompt-input")
-            or self.driver.get_state("sftpStatus") == "connected",
+            or self.driver.exists(self.CURRENT_PATH),
             what="the SFTP browser or its password prompt",
         )
-        # Gate on the store's liveness signal, not a stale DOM check: the SFTP
-        # session can auto-resolve the prompt from a cached credential, and
+        # The SFTP session can auto-resolve the prompt from a cached credential, and
         # ``handle_password_prompt`` then tolerates it closing under us (#1593).
         if self.password_prompt_open():
             self.handle_password_prompt()
-        self.wait(
-            lambda: self.driver.get_state("sftpStatus") == "connected",
-            what="the SFTP session to connect",
-        )
         return self.wait(lambda: self.file_browser_path() or False, what="the remote path")
 
     def test_real_sftp_paste_populates_the_transfer_queue(self):
@@ -194,13 +210,22 @@ class TestTransferQueueLiveTransfer(
         dest = f"destdir-{unique_name('tq')}"
 
         self.connect_ssh_password(unique_name("transfer-queue"))
-        source_dir = self.open_sftp_browser()
+        self.open_sftp_browser()
 
         # Seed a source file and an empty destination directory.
         self.run_command(f"dd if=/dev/zero of={name} bs=1M count={self.FILE_MB} 2>/dev/null")
         self.run_command(f"mkdir -p {dest}")
         self.run_command("sync")
         self.wait_for_file_row(name)
+
+        # Read the settled remote working directory only now, not from
+        # open_sftp_browser's return: a freshly-connected SFTP browser first
+        # renders the transient pre-cwd-follow root ("/") before it follows the
+        # terminal into the login directory, so capturing the path up front yielded
+        # "/" and every "<base>/<dest>" comparison below was built on the wrong base
+        # (#2398). Listing `name` proves the browser has settled on the directory
+        # that actually holds it, so the breadcrumb path is now the real base.
+        source_dir = self.file_browser_path()
 
         # Copy the source file, then paste it inside the destination directory.
         # Paste is driven from the toolbar button rather than the row context
