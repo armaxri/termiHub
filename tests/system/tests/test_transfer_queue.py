@@ -302,13 +302,17 @@ class TestTransferQueueLiveTransfer(
         assert not self.driver.exists(CANCEL)
 
         # The pasted file really landed in the destination directory at full
-        # size: the transfer moved bytes, it did not merely emit events.
+        # size: the transfer moved bytes, it did not merely emit events. Read the
+        # session file browser's slice (`sessionFileEntries`), not the SFTP-only
+        # `fileEntries`: since the SFTP convergence (#2421) an SSH file browser is
+        # a *session* browser, so its listing lives on the session slice — the
+        # same mode split `FileBrowserPathReads` documents for `currentPath`.
         self.wait_for_file_row(name)
         entry = self.wait(
             lambda: next(
                 (
                     f
-                    for f in (self.driver.get_state("fileEntries") or [])
+                    for f in (self.driver.get_state("sessionFileEntries") or [])
                     if f["name"] == name
                 ),
                 False,
