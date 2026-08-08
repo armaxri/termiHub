@@ -25,7 +25,12 @@
 #   scripts/internal/verify-agent-reconnect.sh
 set -euo pipefail
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
+# Resolve the repo root from THIS script's own location (scripts/internal/ ->
+# ../.. is the repo root), NOT from the current working directory. This lets the
+# script be invoked by absolute path from anywhere — including outside any git
+# repo — without `git rev-parse` failing on the CWD.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
 if [[ "$(uname)" != "Darwin" && "$(uname)" != "Linux" ]]; then
