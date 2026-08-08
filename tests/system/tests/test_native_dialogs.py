@@ -40,6 +40,7 @@ from termihub_harness import (
     EditorUi,
     ManualUi,
     PasswordPromptUi,
+    SETTINGS_REGION,
     SettingsUi,
     SidebarUi,
     SystemTest,
@@ -521,7 +522,10 @@ class TestNativeDialogs(
             lambda: any(
                 f.get("path") == str(fixture)
                 for f in (
-                    self.driver.get_state("settings.externalConnectionFiles") or []
+                    self.projection_region_cache(SETTINGS_REGION).get(
+                        "externalConnectionFiles"
+                    )
+                    or []
                 )
             ),
             what="the external file to be registered in settings",
