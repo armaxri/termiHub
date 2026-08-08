@@ -19,12 +19,64 @@
 //! the whole delay.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use termihub_core::monitoring::BackoffSchedule;
+
 fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_termihub-agent")
+}
+
+/// Per-attempt connect timeout for [`connect_with_retry`].
+///
+/// A bare `TcpStream::connect` uses the OS default connect timeout, ~21s of
+/// unforgiving SYN retransmits on **Windows**. Under heavy parallel CI load a
+/// *ready* loopback listener's accept backlog can fill for a beat, Windows drops
+/// the SYN, and a single connect hangs the whole way to that default —
+/// `Os { code: 10060, kind: TimedOut }`, the #2490 / #1579 flake. Capping each
+/// attempt short lets us abandon a stalled SYN and re-attempt quickly.
+const CONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(750);
+/// Overall budget for establishing the client connection once the agent has
+/// announced readiness. Matches [`STARTUP_TIMEOUT`]'s generosity for a loaded
+/// runner; a listener that never accepts still fails the test after it elapses.
+const CONNECT_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Connect to the agent's listener, retrying short-timeout connects with bounded
+/// backoff until it accepts or [`CONNECT_DEADLINE`] elapses.
+///
+/// Polls on **connect success** (per the #2459 hardening lesson — not a fixed
+/// sleep) so the transient Windows-CI SYN-drop window (see
+/// [`CONNECT_ATTEMPT_TIMEOUT`]) cannot 10060 this test. The `initialize`
+/// read-timing assertion below — the actual #1579 readiness check — is left
+/// entirely untouched: this hardens the transport, it does not weaken the test.
+fn connect_with_retry(addr: &str) -> TcpStream {
+    let socket_addr: SocketAddr = addr
+        .to_socket_addrs()
+        .unwrap_or_else(|e| panic!("could not parse agent addr {addr}: {e}"))
+        .next()
+        .unwrap_or_else(|| panic!("agent addr {addr} resolved to no socket address"));
+    let deadline = Instant::now() + CONNECT_DEADLINE;
+    let mut backoff = BackoffSchedule::new(
+        Duration::from_millis(20),
+        Duration::from_millis(500),
+        u32::MAX,
+    );
+    loop {
+        match TcpStream::connect_timeout(&socket_addr, CONNECT_ATTEMPT_TIMEOUT) {
+            Ok(stream) => return stream,
+            Err(e) => {
+                if Instant::now() >= deadline {
+                    panic!(
+                        "could not connect to agent at {addr} within {CONNECT_DEADLINE:?} \
+                         — last error: {e}"
+                    );
+                }
+            }
+        }
+        std::thread::sleep(backoff.next_delay().unwrap_or(Duration::from_millis(500)));
+    }
 }
 
 /// How long the agent's startup path is stretched before it binds.
@@ -85,7 +137,10 @@ fn listening_log_is_a_true_readiness_signal() {
     );
 
     // Connect the instant we see the readiness signal and send `initialize`.
-    let stream = TcpStream::connect(&addr).expect("connect to agent");
+    // Retry the connect with bounded backoff so a transient Windows-CI SYN drop
+    // does not 10060 before the read-timing assertion runs (#2490); the
+    // `initialize` read budget below is unchanged and remains the #1579 check.
+    let stream = connect_with_retry(&addr);
     stream
         .set_read_timeout(Some(INITIALIZE_READ_TIMEOUT))
         .expect("set read timeout");
