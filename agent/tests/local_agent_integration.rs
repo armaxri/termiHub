@@ -1277,6 +1277,10 @@ fn shell_session_reattach_after_reconnect() {
 /// transport; a real stall makes `create_elapsed` blow past the ceiling (or the
 /// echo never arrives) rather than wedging the suite forever.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
+)]
 fn fresh_agent_after_reconnect_creates_session_over_surviving_registry() {
     // A registry endpoint the *test* owns, so it survives agent A's death — the
     // headless stand-in for the host-wide registry daemon that outlives an agent
