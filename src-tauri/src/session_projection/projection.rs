@@ -262,9 +262,14 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
 /// session. `tab_id` is the region key (the intent's `sessionId`, which the
 /// bridge keys by tab id). Off-path no-op when the manager is not managed (e.g. a
 /// headless projection unit-test app), matching [`sync_timer`].
+///
+/// For a resilient **agent** tab (#2473) this also scrubs the per-agent transport
+/// config (#2472) — but only when this was the last tab on that agent, so a
+/// sibling session still reconnecting over the shared transport keeps it. A direct
+/// tab has no agent config, so this is exactly the per-tab request scrub for it.
 fn clear_retained_request(app_handle: &AppHandle, tab_id: &str) {
     if let Some(manager) = app_handle.try_state::<SessionManager>() {
-        manager.clear_retained_request(tab_id);
+        manager.clear_retained_request_with_agent_scrub(tab_id);
     }
 }
 
