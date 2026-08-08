@@ -14,7 +14,7 @@ current dialog.
 
 import pytest
 
-from termihub_harness import SettingsUi, SystemTest, TabsUi
+from termihub_harness import SETTINGS_REGION, SettingsUi, SystemTest, TabsUi
 
 pytestmark = pytest.mark.integration
 
@@ -34,12 +34,18 @@ class TestThemeLayout(TabsUi, SettingsUi, SystemTest):
         self.wait(lambda: self.driver.exists(THEME_SELECT), what="the theme selector")
 
         self.driver.select(THEME_SELECT, "light")
-        self.wait(lambda: self.driver.get_state("settings.theme") == "light", what="light theme")
+        self.wait(
+            lambda: self.projection_region_cache(SETTINGS_REGION).get("theme") == "light",
+            what="light theme",
+        )
         light_bg = self.driver.get_computed_style("--bg-primary")
         self.delay4user(2, reason="light theme applied")
 
         self.driver.select(THEME_SELECT, "dark")
-        self.wait(lambda: self.driver.get_state("settings.theme") == "dark", what="dark theme")
+        self.wait(
+            lambda: self.projection_region_cache(SETTINGS_REGION).get("theme") == "dark",
+            what="dark theme",
+        )
         dark_bg = self.driver.get_computed_style("--bg-primary")
         self.delay4user(2, reason="dark theme applied")
 
