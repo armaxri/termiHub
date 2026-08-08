@@ -22,7 +22,11 @@ import {
 } from "@/services/api";
 import { terminalDispatcher } from "@/services/events";
 import { useTerminalRegistry } from "./TerminalRegistry";
-import { useAppStore, isResilientReconnectTabId } from "@/store/appStore";
+import {
+  useAppStore,
+  isResilientReconnectTabId,
+  isBackendDrivenAgentReconnectTabId,
+} from "@/store/appStore";
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
@@ -52,6 +56,7 @@ import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntax
 import {
   sessionBackendReattachEnabled,
   waitForBackendReattachSessionId,
+  waitForBackendAgentReconnectOutcome,
 } from "@/store/sessionBridge";
 
 const HORIZONTAL_SCROLL_COLS = 500;
@@ -447,6 +452,31 @@ export function Terminal({
             // Persistent/agent tab: restart the background session and reattach
             // to its (possibly new) live id — never to the dead mount-time id.
             reattachSessionId = await useAppStore.getState().restartPersistentSessionForTab(tabId);
+          } else if (isBackendDrivenAgentReconnectTabId(tabId)) {
+            // Backend-driven AGENT reconnect (#2476): the redrive re-establishes
+            // the agent transport and mints a new backend session, parking/
+            // retrying for however long the drop lasts. The client must NOT drive
+            // the transport in parallel — its agent engine (connectRemoteAgent +
+            // park + bounded spawn retries) is non-idempotent and would
+            // double-drive the very transport the backend is re-establishing. So
+            // this waits for the backend loop's terminal outcome and never falls
+            // through to the client create loop below:
+            //   • reattach → attach I/O to the fresh backend session id;
+            //   • giveup   → settle the tab disconnected (backend exhausted retries);
+            //   • canceled → the effect was torn down.
+            const outcome = await waitForBackendAgentReconnectOutcome(
+              tabId,
+              sessionIdRef.current,
+              isCanceled
+            );
+            if (isCanceled() || outcome.kind === "canceled") return;
+            if (outcome.kind === "giveup") {
+              useAppStore
+                .getState()
+                .settleBackendReconnectGaveUp(tabId, outcome.error ?? "Agent reconnect failed.");
+              return;
+            }
+            reattachSessionId = outcome.sessionId;
           } else if (sessionBackendReattachEnabled()) {
             // Backend-driven direct reconnect (#2457): with the flag on, the
             // reconnect redrive is server-side (#2454). The backend re-creates
@@ -629,6 +659,19 @@ export function Terminal({
               useAppStore.getState().setTerminalConnecting(tabId, false);
 
               if (isAgentSession && agentId) {
+                // Backend-driven agent reconnect (#2476): under the flag, a
+                // reconnect (retryCount>0) is owned entirely by the backend
+                // redrive. The client must NOT run its agent engine
+                // (connectRemoteAgent + park + bounded MAX_AGENT_SPAWN_ATTEMPTS)
+                // here — it would double-drive the transport the redrive is
+                // re-establishing. The backend-driven reconnect path above already
+                // reattaches or settles without reaching this create loop, so this
+                // is defense-in-depth: never engage the client engine on such a
+                // reconnect. Flag off / initial connect (retryCount 0) fall
+                // through to the engine unchanged.
+                if (isReconnect && isBackendDrivenAgentReconnectTabId(tabId)) {
+                  return;
+                }
                 // Check whether the agent transport itself is still connecting.
                 const agentState = currentAgentsView().remoteAgents.find(
                   (a) => a.id === agentId

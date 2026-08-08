@@ -639,6 +639,110 @@ export function waitForBackendReattachSessionId(
   });
 }
 
+/** The terminal outcome of a backend-driven **agent** reconnect wait (#2476). */
+export type BackendAgentReconnectOutcome =
+  /** The redrive re-established the transport and published a fresh backend
+   * session id — re-attach terminal I/O to it. */
+  | { kind: "reattach"; sessionId: string }
+  /** The backend park/retry loop exhausted / the session was folded terminal —
+   * settle the tab as disconnected (never fall through to the client engine). */
+  | { kind: "giveup"; error?: string }
+  /** The effect was torn down (`isCanceled`) — abandon the wait, drive nothing. */
+  | { kind: "canceled" };
+
+/**
+ * Wait for the terminal outcome of a **backend-driven agent reconnect** (#2476),
+ * reading the projected `session-lifecycle` region keyed by tab id.
+ *
+ * This is the agent counterpart to {@link waitForBackendReattachSessionId}, and
+ * the crux of the double-drive fix. The direct-SSH wait times out after ~10 s and
+ * the caller then falls through to the client redrive — safe for a direct
+ * connection, but for an **agent** tab that fall-through re-enters the
+ * non-idempotent client agent engine (`connectRemoteAgent` + park + bounded
+ * spawn retries), which double-drives the very transport the backend redrive is
+ * re-establishing. A prolonged agent drop (the backend park/retry running for
+ * minutes) makes that fall-through the common case, not an edge.
+ *
+ * So this wait instead **stays deferred to the backend loop for as long as the
+ * loop is active**, resolving only on a genuine terminal outcome:
+ *  - a fresh (non-excluded) `sessionId` appears  ⇒ `reattach` (success),
+ *  - `reconnect.phase === "gaveup"` or `status === "failed"`  ⇒ `giveup`
+ *    (the backend exhausted its retries),
+ *  - `status === "disconnected"` (the loop was cancelled/stopped server-side)
+ *    ⇒ `giveup` (settle the tab; no error banner),
+ *  - `isCanceled()` (the effect torn down)  ⇒ `canceled`.
+ *
+ * There is deliberately **no short fall-through timeout** — the tab is never
+ * stranded because the backend always reaches one of the terminal states above
+ * (success, exhausted-give-up, or user cancel, each folded into the region), and
+ * `isCanceled` polling frees the promise the instant the effect unmounts.
+ */
+export function waitForBackendAgentReconnectOutcome(
+  tabId: string,
+  excludeSessionId: string | null | undefined,
+  isCanceled: () => boolean
+): Promise<BackendAgentReconnectOutcome> {
+  const acceptId = (id: string | undefined): id is string =>
+    !!id && !(excludeSessionId != null && id === excludeSessionId);
+
+  const classify = (
+    life: ProjectedSessionLifecycle | undefined
+  ): BackendAgentReconnectOutcome | null => {
+    if (!life) return null;
+    // Success takes precedence: a fresh backend session id means the transport is
+    // back, even if a stale phase field has not yet been recomputed.
+    if (acceptId(life.sessionId)) return { kind: "reattach", sessionId: life.sessionId };
+    if (life.reconnect.phase === "gaveup" || life.status === "failed") {
+      return { kind: "giveup", error: life.error };
+    }
+    if (life.status === "disconnected") return { kind: "giveup" };
+    return null;
+  };
+
+  return new Promise<BackendAgentReconnectOutcome>((resolve) => {
+    let settled = false;
+    const cleanups: Array<() => void> = [];
+    const finish = (value: BackendAgentReconnectOutcome) => {
+      if (settled) return;
+      settled = true;
+      for (const c of cleanups) c();
+      resolve(value);
+    };
+
+    // Register the listener before the fast-path read so no diff in between is lost.
+    cleanups.push(
+      onSessionView((next) => {
+        const outcome = classify(next[tabId]);
+        if (outcome) finish(outcome);
+      })
+    );
+
+    // A subscribe failure leaves nothing to source the outcome — settle as
+    // give-up rather than hang, so the tab is never stranded.
+    ensureSessionSubscribed().catch((err) => {
+      logSessionBridgeFallback("subscribe", err);
+      finish({ kind: "giveup" });
+    });
+
+    const immediate = classify(currentSessionView()[tabId]);
+    if (immediate) {
+      finish(immediate);
+      return;
+    }
+    if (isCanceled()) {
+      finish({ kind: "canceled" });
+      return;
+    }
+
+    // No fall-through timeout: wait across the whole backend loop. Poll only for
+    // cancellation so a torn-down effect frees the promise promptly.
+    const cancelPoll = setInterval(() => {
+      if (isCanceled()) finish({ kind: "canceled" });
+    }, 100);
+    cleanups.push(() => clearInterval(cancelPoll));
+  });
+}
+
 /**
  * Effective `terminalConnecting[tabId]` for rendering: `true` when the projected
  * status is `connecting` and it mirrors the local `terminalConnecting` bool,
