@@ -36,6 +36,7 @@ vi.mock("@/services/api", () => ({
   sessionDownload: vi.fn(() => Promise.resolve(0)),
   sessionUpload: vi.fn(() => Promise.resolve(0)),
   sessionVscodeOpenRemote: vi.fn(() => Promise.resolve()),
+  localDelete: vi.fn(() => Promise.resolve()),
   // Default: reject → session is byte-based (Docker / FTP / agent). The
   // SFTP-backed suite overrides this to resolve.
   sessionHasExecCapability: vi.fn(() => Promise.reject(new Error("not sftp-backed"))),
@@ -70,6 +71,20 @@ vi.mock("@/components/ui", () => ({
 vi.mock("@tauri-apps/plugin-fs", () => ({
   readFile: vi.fn(() => Promise.resolve(new Uint8Array())),
   writeFile: vi.fn(() => Promise.resolve()),
+}));
+
+// The Transfer Queue seed goes through the transfers bridge (see
+// transferFeedback.seedTransferQueueRow), so this is the seam that proves a
+// session→session paste registers tracked rows in the region-fed queue (#2469).
+vi.mock("@/store/transfersBridge", () => ({
+  dispatchTransferIntentBestEffort: vi.fn(),
+}));
+
+// Local temp path used by an SFTP-backed session→session copy (download → temp
+// → upload). Deterministic join so the temp path is assertable.
+vi.mock("@tauri-apps/api/path", () => ({
+  tempDir: vi.fn(() => Promise.resolve("/tmp")),
+  join: vi.fn((...parts: string[]) => Promise.resolve(parts.join("/"))),
 }));
 
 // navigateUp logic extracted from useSessionFileSystem
@@ -253,7 +268,9 @@ import {
   sessionVscodeOpenRemote,
   sessionReadFile,
   sessionHasExecCapability,
+  localDelete,
 } from "@/services/api";
+import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 
 describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () => {
   let container: HTMLDivElement;
@@ -330,6 +347,90 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
       "/remote/dir/file.txt"
     );
   });
+
+  // #2469: a session→session copy between two SFTP-backed sessions must route
+  // through the dedicated download + upload transfer channel (via a local temp
+  // file), so it registers two tracked Transfer Queue rows instead of a silent
+  // byte round-trip. Both halves seed the region-fed queue with the remote path
+  // (#1531) and the user-facing file name (#1573), never the temp copy.
+  it("routes an SFTP session→session copy through tracked download + upload", async () => {
+    // The start commands seed the queue only once the backend returns the
+    // transfer id (onRegistered), so fire it to exercise the seed path.
+    vi.mocked(sessionDownload).mockImplementation(async (_s, _r, _l, onRegistered) => {
+      onRegistered?.("t-dl");
+      return 0;
+    });
+    vi.mocked(sessionUpload).mockImplementation(async (_s, _l, _r, onRegistered) => {
+      onRegistered?.("t-ul");
+      return 0;
+    });
+
+    const api = await mountHook();
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "file.bin",
+          path: "/remote/src/file.bin",
+          isDirectory: false,
+          size: 10,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "copy",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "ssh-1",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    // Download the source to a local temp copy, then upload the temp copy to the
+    // destination — the two tracked transfers the queue renders.
+    expect(vi.mocked(sessionDownload)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/remote/src/file.bin",
+      expect.stringMatching(/termihub-paste-\d+-file\.bin$/),
+      expect.any(Function)
+    );
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "ssh-1",
+      expect.stringMatching(/termihub-paste-\d+-file\.bin$/),
+      "/remote/dir/file.bin",
+      expect.any(Function)
+    );
+
+    // Both halves seed a tracked row: the download names/paths the source, the
+    // upload names/paths the destination — both the user-facing name, not temp.
+    expect(vi.mocked(dispatchTransferIntentBestEffort)).toHaveBeenCalledWith("transfer.seed", {
+      seed: {
+        id: "t-dl",
+        sessionId: "ssh-1",
+        direction: "download",
+        name: "file.bin",
+        path: "/remote/src/file.bin",
+      },
+    });
+    expect(vi.mocked(dispatchTransferIntentBestEffort)).toHaveBeenCalledWith("transfer.seed", {
+      seed: {
+        id: "t-ul",
+        sessionId: "ssh-1",
+        direction: "upload",
+        name: "file.bin",
+        path: "/remote/dir/file.bin",
+      },
+    });
+
+    // The local temp copy is cleaned up, and the byte round-trip is not used.
+    expect(vi.mocked(localDelete)).toHaveBeenCalledWith(
+      expect.stringMatching(/termihub-paste-\d+-file\.bin$/),
+      false
+    );
+    expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
+  });
 });
 
 describe("useSessionFileSystem — byte-based transport (probe rejects)", () => {
@@ -384,5 +485,41 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
       await api.openInVscode("/remote/dir/file.txt");
     });
     expect(vi.mocked(sessionVscodeOpenRemote)).not.toHaveBeenCalled();
+  });
+
+  // #2469: a byte-based backend has no dedicated transfer channel, so a
+  // session→session copy stays a read/write round-trip (no tracked transfer).
+  it("falls back to read/write for a session→session copy (no tracked transfer)", async () => {
+    const api = await mountHook();
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "file.bin",
+          path: "/remote/src/file.bin",
+          isDirectory: false,
+          size: 10,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "copy",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "docker-1",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("docker-1", "/remote/src/file.bin");
+    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+      "docker-1",
+      "/remote/dir/file.bin",
+      expect.any(Array)
+    );
+    expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionUpload)).not.toHaveBeenCalled();
   });
 });

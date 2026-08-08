@@ -11,6 +11,7 @@ import {
   sessionUpload,
   sessionVscodeOpenRemote,
   sessionHasExecCapability,
+  localDelete,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
@@ -292,12 +293,42 @@ export function useSessionFileSystem() {
         if (clipboard.operation === "cut" && srcId === sessionFileBrowserId) {
           await sessionRenameFile(sessionFileBrowserId, clipEntry.path, destPath);
         } else {
-          // Cross-session or copy: read source, write to dest. No dedicated
-          // session-to-session copy command exists, so this stays a byte-based
-          // round-trip regardless of the SFTP capability.
+          // Cross-session or copy. When BOTH endpoints are SFTP-backed, route the
+          // copy through the dedicated download + upload transfer channel via a
+          // local temp file (the pre-#2421 mechanism), so it surfaces as two
+          // tracked Transfer Queue rows — a download of the source and an upload
+          // to the destination — instead of the silent byte round-trip that left
+          // the region-fed queue empty (#2469). Each row's name and remote path
+          // come from the remote paths (#1531/#1573), never the temp copy: the
+          // backend derives `file_name` from the remote path in both directions.
           const srcSession = srcId ?? sessionFileBrowserId;
-          const data = await sessionReadFile(srcSession, clipEntry.path);
-          await sessionWriteFile(sessionFileBrowserId, destPath, data);
+          const srcSftp =
+            srcSession === sessionFileBrowserId
+              ? sftpCapable
+              : await sessionHasExecCapability(srcSession)
+                  .then(() => true)
+                  .catch(() => false);
+          if (sftpCapable && srcSftp) {
+            const { tempDir, join } = await import("@tauri-apps/api/path");
+            const tempPath = await join(
+              await tempDir(),
+              `termihub-paste-${Date.now()}-${clipEntry.name}`
+            );
+            try {
+              await startDownload(srcSession, clipEntry.path, tempPath);
+              await startUpload(sessionFileBrowserId, tempPath, destPath);
+            } finally {
+              // Best-effort cleanup of the local temp copy; a leftover must never
+              // fail a paste whose bytes already landed.
+              await localDelete(tempPath, false).catch(() => {});
+            }
+          } else {
+            // Byte-based fallback (Docker / FTP / remote-agent, or a mixed
+            // transport where an endpoint has no SFTP channel): blocking
+            // read/write round-trip, which registers no tracked transfer.
+            const data = await sessionReadFile(srcSession, clipEntry.path);
+            await sessionWriteFile(sessionFileBrowserId, destPath, data);
+          }
           if (clipboard.operation === "cut") {
             await sessionDeleteFile(srcSession, clipEntry.path);
           }
@@ -331,7 +362,14 @@ export function useSessionFileSystem() {
     }
 
     refreshSession();
-  }, [sessionFileBrowserId, sessionCurrentPath, refreshSession, sftpCapable, startUpload]);
+  }, [
+    sessionFileBrowserId,
+    sessionCurrentPath,
+    refreshSession,
+    sftpCapable,
+    startDownload,
+    startUpload,
+  ]);
 
   return {
     fileEntries: sessionFileEntries,
