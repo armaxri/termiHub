@@ -12,11 +12,14 @@ Two suites, split by what each can assert *deterministically*:
 ``TestTransferQueueLiveTransfer``
     Drives a **real SFTP transfer** over the Docker ``ssh-password`` fixture and
     asserts the panel populates from it. The entry point is the file browser's
-    **copy → paste**: an SFTP→SFTP copy is implemented as "download to a local
-    temp file, re-upload to the destination" (``useFileSystem.pasteEntry``), so a
-    single paste drives two real ``sftp_download`` / ``sftp_upload`` transfers
-    and emits real ``transfer-progress`` events — including the remote ``path``
-    added by #1531 (PR #1543), which this suite asserts reaches the row.
+    **copy → paste**: since the SFTP convergence (#2421) an SSH session→session
+    copy flows through ``useSessionFileSystem.pasteEntry``, which — when both
+    endpoints are SFTP-backed — routes the copy as "download to a local temp
+    file, re-upload to the destination" over the dedicated transfer channel
+    (#2469). A single paste therefore drives two real ``session_download`` /
+    ``session_upload`` transfers and emits real ``transfer-progress`` events —
+    including the remote ``path`` added by #1531 (PR #1543), which this suite
+    asserts reaches the row.
 
     Copy/paste is used deliberately: it is the **only** transfer entry point the
     bridge can drive. Every other one (file-browser Download/Upload, the
@@ -132,17 +135,6 @@ class TransferQueueReads(ProjectionHarness):
         )
 
 
-@pytest.mark.xfail(
-    reason=(
-        "#2469: an SSH SFTP session-to-session copy/paste is an unconditional "
-        "byte-based read/write round-trip (useSessionFileSystem.pasteEntry) that "
-        "registers no tracked transfer, so the region-fed Transfer Queue stays "
-        "empty. The connect/host-key/SFTP-open/navigation harness gaps this suite "
-        "hit are fixed (#2398); the remaining failure is the product gap in #2469. "
-        "Remove this marker once #2469 lands."
-    ),
-    strict=False,
-)
 @pytest.mark.usefixtures("ssh_password_fixtures")
 class TestTransferQueueLiveTransfer(
     TerminalUi,
