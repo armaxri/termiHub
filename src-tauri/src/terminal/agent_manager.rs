@@ -25,6 +25,7 @@ use termihub_core::monitoring::{MonitoringSender, SystemStats};
 use crate::agents_projection::projection::fold_agent_transition;
 use crate::agents_projection::store::AgentConnectionState;
 use crate::connection::config::AgentSettings;
+use crate::terminal::agent_config_store::{decide_reattach, AgentConfigStore, ReattachDecision};
 use crate::terminal::agent_deploy::ConnectedHost;
 use crate::terminal::agent_forward::DesktopAgentForward;
 use crate::terminal::backend::{OutputSender, RemoteAgentConfig, RemoteStateChangeEvent};
@@ -251,6 +252,31 @@ pub trait AgentRpcClient: Send + Sync + 'static {
 
     /// Get the capabilities of a connected agent.
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities>;
+
+    /// Retain an agent's SSH transport config for backend-driven reconnect
+    /// reattach (#2472). Default no-op so mock clients need not implement it; the
+    /// production [`AgentConnectionManager`] stores it for the redrive.
+    fn retain_agent_config(
+        &self,
+        _agent_id: &str,
+        _config: &RemoteAgentConfig,
+        _agent_settings: Option<&AgentSettings>,
+    ) {
+    }
+
+    /// Drop and zeroize the retained reattach config for an agent (#2472).
+    /// Default no-op; the production manager scrubs it.
+    fn clear_retained_agent_config(&self, _agent_id: &str) {}
+
+    /// Cold-re-establish a reaped agent transport from its retained config for
+    /// the reconnect redrive (#2472). Default errors so mocks that do not model
+    /// reattach fall through to a folded reconnect failure; the production
+    /// [`AgentConnectionManager`] re-establishes from its retained config.
+    fn reconnect_retained_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
+        Err(TerminalError::RemoteError(format!(
+            "Agent {agent_id} reattach not supported"
+        )))
+    }
 
     /// Gracefully shut down a remote agent and disconnect.
     fn shutdown_agent(&self, agent_id: &str, reason: Option<&str>) -> Result<u32, TerminalError>;
@@ -514,6 +540,13 @@ pub struct AgentConnectionManager {
     agents: AgentMap,
     /// Cancellation tokens for in-flight connects, keyed by agent id (G1, #1235).
     connecting: ConnectingRegistry,
+    /// Retained SSH transport configs for agents that opted into backend-driven
+    /// reconnect reattach, keyed by agent id (#2472). Survives a transport reap
+    /// so the reconnect redrive can cold-re-establish the transport itself; only
+    /// ever populated when the connect opted in (default-off flag), so it is
+    /// never written on the `develop`/flag-off path. See
+    /// [`crate::terminal::agent_config_store`].
+    agent_configs: AgentConfigStore,
     app_handle: AppHandle,
 }
 
@@ -522,6 +555,7 @@ impl AgentConnectionManager {
         Self {
             agents: Arc::new(Mutex::new(HashMap::new())),
             connecting: Arc::new(Mutex::new(HashMap::new())),
+            agent_configs: AgentConfigStore::new(),
             app_handle,
         }
     }
@@ -531,7 +565,14 @@ impl AgentConnectionManager {
     /// already safe because `is_connected()` reports `false` for such entries
     /// (G6, #1239).
     pub fn prune_dead_agents(&self) -> Vec<String> {
-        prune_dead_agents_from_map(&self.agents)
+        let pruned = prune_dead_agents_from_map(&self.agents);
+        // Scrub the reattach config of every pruned agent: a manual prune of a
+        // dead agent is a terminal point, so its retained secret must not linger
+        // (#2472).
+        for agent_id in &pruned {
+            self.agent_configs.clear(agent_id);
+        }
+        pruned
     }
 
     /// Cancel an in-flight (still connecting) agent by its `agent_id`.
@@ -842,7 +883,16 @@ impl AgentConnectionManager {
             .lock()
             .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
 
-        if let Some(conn) = agents.remove(agent_id) {
+        let live = agents.remove(agent_id);
+        // Scrub the reattach config unconditionally, before returning either arm:
+        // a user disconnect is a terminal point, and the agent may already have
+        // been *reaped* (no live entry) while its reattach config lingers — that
+        // config must not survive the user's disconnect (#2472). The agents lock
+        // is dropped first so the config-store lock is never held nested under it.
+        drop(agents);
+        self.agent_configs.clear(agent_id);
+
+        if let Some(conn) = live {
             let _ = conn.command_tx.send(AgentIoCommand::Disconnect);
             conn.alive.store(false, Ordering::SeqCst);
             emit_agent_state(&self.app_handle, agent_id, "disconnected");
@@ -868,6 +918,82 @@ impl AgentConnectionManager {
     pub fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
         let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
         agents.get(agent_id).map(|c| c.capabilities.clone())
+    }
+
+    /// Retain an agent's SSH transport config for backend-driven reconnect
+    /// reattach (#2472), so the redrive can cold-re-establish the transport after
+    /// a reap. Called by the `connect_agent` command **only** when the connect
+    /// opted into backend reattach (the client's default-off `sessionBackendReattach`
+    /// flag); with the flag off this is never called, so no agent config survives
+    /// a reap and the path stays byte-identical to `develop`. The retained
+    /// secret is zeroized on drop and scrubbed at every terminal point (user
+    /// disconnect / shutdown / prune here, reconnect give-up in the redrive).
+    pub fn retain_agent_config(
+        &self,
+        agent_id: &str,
+        config: &RemoteAgentConfig,
+        agent_settings: Option<&AgentSettings>,
+    ) {
+        self.agent_configs.retain(
+            agent_id,
+            config.clone(),
+            agent_settings.cloned().unwrap_or_default(),
+        );
+    }
+
+    /// Drop and zeroize the retained reattach config for an agent (#2472). The
+    /// loop-terminal scrub point: the redrive calls it when a tab's reconnect
+    /// loop gives up. Idempotent.
+    pub fn clear_retained_agent_config(&self, agent_id: &str) {
+        self.agent_configs.clear(agent_id);
+    }
+
+    /// Cold-re-establish a **reaped** agent transport from its retained config
+    /// for the reconnect redrive (#2472).
+    ///
+    /// Single-owner coordination with the in-task reconnect loop
+    /// ([`agent_io_task`]'s [`reconnect_agent`]): that loop owns *transient*
+    /// transport breaks while the I/O task is alive, keeping the agent map entry
+    /// present. This method therefore:
+    ///
+    /// - **no-ops** (`Ok`) when the agent is already connected — either genuinely,
+    ///   or mid in-task reconnect (the entry is still `alive`), so it never
+    ///   double-drives against that loop;
+    /// - otherwise cold-re-establishes from the retained config via
+    ///   [`Self::connect_agent`], which locks the agent map for the whole connect,
+    ///   so two concurrent redrives serialize and the loser observes the winner's
+    ///   entry as "already connected" (mapped back to `Ok` here);
+    /// - returns `Err` when nothing is retained (the connect did not opt in, or
+    ///   the config was already scrubbed) so the redrive folds a reconnect
+    ///   failure and arms the next backoff / gives up.
+    ///
+    /// Synchronous (wraps a blocking SSH connect); callers on an async runtime
+    /// must invoke it via `spawn_blocking`, exactly as the `connect_agent`
+    /// command does.
+    pub fn reconnect_retained_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
+        // The decision (no-op / reconnect / no-config) is a pure function over the
+        // config store + the connected reading, unit-tested in `agent_config_store`.
+        // `Reconnect` clones the config out (its `Drop` zeroizes the copied
+        // password) so the config-store lock is not held across the blocking
+        // connect.
+        match decide_reattach(&self.agent_configs, self.is_connected(agent_id), agent_id) {
+            ReattachDecision::AlreadyConnected => Ok(()),
+            ReattachDecision::NoRetainedConfig => Err(TerminalError::RemoteError(format!(
+                "No retained config to re-establish agent {agent_id}"
+            ))),
+            ReattachDecision::Reconnect(retained) => {
+                match self.connect_agent(agent_id, &retained.config, Some(&retained.settings)) {
+                    Ok(_) => Ok(()),
+                    // A concurrent redrive won the connect race and already
+                    // re-established the transport — treat that as success, not a
+                    // failure to fold.
+                    Err(TerminalError::RemoteError(msg)) if msg.contains("already connected") => {
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+        }
     }
 
     /// Send `agent.shutdown` to a connected agent and disconnect it.
@@ -1347,6 +1473,23 @@ impl AgentRpcClient for AgentConnectionManager {
 
     fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
         AgentConnectionManager::get_capabilities(self, agent_id)
+    }
+
+    fn retain_agent_config(
+        &self,
+        agent_id: &str,
+        config: &RemoteAgentConfig,
+        agent_settings: Option<&AgentSettings>,
+    ) {
+        AgentConnectionManager::retain_agent_config(self, agent_id, config, agent_settings)
+    }
+
+    fn clear_retained_agent_config(&self, agent_id: &str) {
+        AgentConnectionManager::clear_retained_agent_config(self, agent_id)
+    }
+
+    fn reconnect_retained_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
+        AgentConnectionManager::reconnect_retained_agent(self, agent_id)
     }
 
     fn shutdown_agent(&self, agent_id: &str, reason: Option<&str>) -> Result<u32, TerminalError> {
