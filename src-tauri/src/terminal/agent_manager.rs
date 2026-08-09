@@ -684,10 +684,22 @@ impl AgentConnectionManager {
                     TerminalError::RemoteError(format!("Serialize initialize failed: {}", e))
                 })?;
 
+            // Diagnostic for #2480: bookend the handshake at INFO so a full-app
+            // display run can see whether the stall is before the `initialize`
+            // write, or while awaiting the response line from the agent. Pairs
+            // with the "initialize response received" log after the loop below.
+            info!(
+                "Agent {}: exec launched, sending initialize over the SSH channel",
+                agent_id_str
+            );
             channel.data(req_line.as_bytes()).await.map_err(|e| {
                 emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
                 TerminalError::RemoteError(format!("Write initialize failed: {}", e))
             })?;
+            info!(
+                "Agent {}: initialize written, awaiting response line from agent",
+                agent_id_str
+            );
 
             // Read the initialize response from the channel. The agent may emit
             // notifications before it answers (e.g. output from a session it
@@ -754,6 +766,14 @@ impl AgentConnectionManager {
                             .to_string();
                         // Copy agent_version into capabilities so the UI can read it.
                         capabilities.agent_version = agent_version.clone();
+                        // Diagnostic for #2480: the handshake completed — the
+                        // agent's initialize response reached the desktop. If a
+                        // display run reaches this line the transport round-trip
+                        // is healthy and any remaining stall is downstream.
+                        info!(
+                            "Agent {}: initialize response received (agent v{}, protocol {}); marking connected",
+                            agent_id_str, agent_version, protocol_version
+                        );
                         break (capabilities, agent_version, protocol_version, client_id);
                     }
                     jsonrpc::HandshakeOutcome::Rejected(message) => {
