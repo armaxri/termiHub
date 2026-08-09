@@ -60,7 +60,14 @@ export type ProjectedSessionStatus =
   | "connected"
   | "disconnected"
   | "reconnecting"
-  | "failed";
+  | "failed"
+  /** A resilient **agent** tab re-established its transport on reconnect, but the
+   * live agent session it was attached to could not be recovered (agent
+   * hard-restart / aged out / daemon died). Terminal state: the frontend renders
+   * an explicit "session lost" notice + a manual "start new shell" action rather
+   * than silently minting a replacement shell (#2512). Twin of Rust
+   * `SessionStatus::SessionLost`. */
+  | "sessionLost";
 
 /** Why a session left `connected` (twin of Rust `EndReason`). */
 export type ProjectedEndReason = "user" | "unexpected" | "error";
@@ -647,6 +654,10 @@ export type BackendAgentReconnectOutcome =
   /** The backend park/retry loop exhausted / the session was folded terminal —
    * settle the tab as disconnected (never fall through to the client engine). */
   | { kind: "giveup"; error?: string }
+  /** The transport was re-established but the live agent session could not be
+   * recovered (#2512): the tab folds to the explicit session-lost notice with a
+   * manual "start new shell" action — never a silent replacement shell. */
+  | { kind: "sessionLost"; error?: string }
   /** The effect was torn down (`isCanceled`) — abandon the wait, drive nothing. */
   | { kind: "canceled" };
 
@@ -692,6 +703,10 @@ export function waitForBackendAgentReconnectOutcome(
     // Success takes precedence: a fresh backend session id means the transport is
     // back, even if a stale phase field has not yet been recomputed.
     if (acceptId(life.sessionId)) return { kind: "reattach", sessionId: life.sessionId };
+    // The transport came back but the live agent session was unrecoverable
+    // (#2512): a distinct terminal outcome from a plain give-up — the frontend
+    // renders the explicit session-lost notice, never a silent new shell.
+    if (life.status === "sessionLost") return { kind: "sessionLost", error: life.error };
     if (life.reconnect.phase === "gaveup" || life.status === "failed") {
       return { kind: "giveup", error: life.error };
     }

@@ -25,6 +25,8 @@ vi.mock("lucide-react", () => ({
   AlertTriangle: () => null,
   Loader2: () => null,
   CheckCircle2: () => null,
+  Unplug: () => null,
+  Plus: () => null,
 }));
 
 const TAB = "tab-1";

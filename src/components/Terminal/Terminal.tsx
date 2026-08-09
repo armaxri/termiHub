@@ -446,9 +446,26 @@ export function Terminal({
         // we start fresh: a persistent tab restarts its background session and
         // reattaches to the new live id; any other tab creates a new session.
         const isReconnect = (useAppStore.getState().terminalRetryCounters[tabId] ?? 0) > 0;
+        // "Start new shell" (#2512): the one-shot force-fresh flag makes this
+        // reconnect create a brand-new session instead of re-attaching an
+        // unrecoverable one. Consumed here so a later reconnect re-attaches as
+        // usual.
+        const forceFresh = useAppStore.getState().terminalForceFreshReconnect[tabId] ?? false;
+        if (forceFresh) {
+          useAppStore.setState((s) => {
+            const next = { ...s.terminalForceFreshReconnect };
+            delete next[tabId];
+            return { terminalForceFreshReconnect: next };
+          });
+        }
         let reattachSessionId: string | null;
         if (isReconnect) {
-          if (persistentConnectionId) {
+          if (forceFresh) {
+            // Skip every re-attach branch: a fresh `create_connection` below opens
+            // a new shell for the tab (an explicit user choice on the session-lost
+            // notice, where auto re-attach is deliberately suppressed).
+            reattachSessionId = null;
+          } else if (persistentConnectionId) {
             // Persistent/agent tab: restart the background session and reattach
             // to its (possibly new) live id — never to the dead mount-time id.
             reattachSessionId = await useAppStore.getState().restartPersistentSessionForTab(tabId);
@@ -474,6 +491,14 @@ export function Terminal({
               useAppStore
                 .getState()
                 .settleBackendReconnectGaveUp(tabId, outcome.error ?? "Agent reconnect failed.");
+              return;
+            }
+            if (outcome.kind === "sessionLost") {
+              // The transport came back but the live agent session was
+              // unrecoverable (#2512). Never silently mint a replacement: settle
+              // the tab into the terminal session-lost state, whose overlay offers
+              // an explicit "start new shell" action.
+              useAppStore.getState().settleSessionLost(tabId);
               return;
             }
             reattachSessionId = outcome.sessionId;
