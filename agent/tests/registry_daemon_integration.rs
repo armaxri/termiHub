@@ -93,10 +93,26 @@ impl Drop for RegistryProcess {
 /// assertion. Binding `:0` in the agent itself closes the window completely:
 /// the port cannot be taken because it is never free.
 fn spawn_agent(registry_endpoint: &str) -> AgentProcess {
-    let mut child = Command::new(agent_binary())
+    spawn_agent_inner(registry_endpoint, false)
+}
+
+/// Like [`spawn_agent`] but with `TERMIHUB_AGENT_SKIP_REGISTRY_DAEMON=1`, the
+/// single-client opt-out the system-test harness sets (#2480). The agent must
+/// still serve `initialize`/RPC, but must never spawn a registry daemon.
+fn spawn_agent_skipping_registry(registry_endpoint: &str) -> AgentProcess {
+    spawn_agent_inner(registry_endpoint, true)
+}
+
+fn spawn_agent_inner(registry_endpoint: &str, skip_registry_daemon: bool) -> AgentProcess {
+    let mut command = Command::new(agent_binary());
+    command
         .arg("--listen")
         .arg("127.0.0.1:0")
-        .env("TERMIHUB_REGISTRY_ENDPOINT", registry_endpoint)
+        .env("TERMIHUB_REGISTRY_ENDPOINT", registry_endpoint);
+    if skip_registry_daemon {
+        command.env("TERMIHUB_AGENT_SKIP_REGISTRY_DAEMON", "1");
+    }
+    let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -460,6 +476,55 @@ fn a_worker_spawns_the_registry_when_none_is_running() {
     );
     // The auto-spawned registry is not ours to kill — it exits on its own once
     // idle. Its endpoint is unique to this test, so it can affect nothing else.
+}
+
+/// The single-client opt-out (#2480): with `TERMIHUB_AGENT_SKIP_REGISTRY_DAEMON`
+/// set, a worker that finds no registry must **not** spawn one, yet must still
+/// serve the desktop — `initialize` succeeds and the per-process fallback view
+/// reports the client. This is the headless proof (over a direct TCP transport,
+/// no SSH) that suppressing the ADR-11 registry-daemon spawn leaves the connect
+/// path intact; it is the exact inverse of
+/// [`a_worker_spawns_the_registry_when_none_is_running`].
+#[test]
+fn a_worker_with_the_skip_env_never_spawns_the_registry_but_still_serves() {
+    let dir = TempDir::new().expect("temp dir");
+    let endpoint = unique_endpoint(&dir, "skip");
+    assert!(
+        !endpoint_reachable(&endpoint),
+        "test must start with no registry"
+    );
+
+    // A single agent with the opt-out env set — the harness's single-client shape.
+    let agent = spawn_agent_skipping_registry(&endpoint);
+    let mut desktop = Client::connect(&agent.addr);
+
+    // The connect path is unaffected: initialize completes and returns a client_id.
+    let client_id = desktop.initialize("skip-desktop");
+    assert!(
+        !client_id.is_empty(),
+        "initialize must still succeed with the registry-daemon spawn suppressed"
+    );
+
+    // The host-wide registry never answers (none was spawned), so
+    // `list_connections` falls back to this worker's per-process view — which
+    // still includes the connected desktop.
+    assert_eq!(
+        wait_for_connections(&mut desktop, &["skip-desktop"]),
+        vec!["skip-desktop"],
+        "the per-process fallback must still report the connected client"
+    );
+
+    // The decisive assertion: nothing ever bound the registry endpoint. Poll a
+    // short window so a (buggy) delayed spawn would still be caught, then confirm
+    // the endpoint stayed unreachable the whole time.
+    let watch_deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < watch_deadline {
+        assert!(
+            !endpoint_reachable(&endpoint),
+            "the skip env must prevent any registry-daemon spawn ({endpoint} became reachable)"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 /// A desktop that disconnects must stop being reported host-wide — otherwise

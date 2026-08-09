@@ -75,6 +75,39 @@ const CONNECT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// trying again. Bounds the respawn rate when a registry cannot start at all.
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 
+/// Env var that suppresses the detached registry-daemon spawn (#2480).
+///
+/// A `--stdio` agent serving a **single** desktop client does not need the
+/// ADR-11 cross-worker "who is attached" registry — that only matters when
+/// several agent processes on one host must see each other. The system-test
+/// harness stands up exactly one throwaway-sshd agent per session, so it sets
+/// this to opt that session out of spawning the detached registry daemon.
+///
+/// When set to a truthy value (`1` / `true` / `yes`) [`RegistryConfig::default`]
+/// disables [`auto_spawn`](RegistryConfig::auto_spawn): the worker still connects
+/// to a registry that already happens to be listening, but it never *spawns* one,
+/// and [`list`](RegistryClient::list) falls back to the per-process view — the
+/// same behaviour as a host where no registry is reachable. Unset (the
+/// production default) the behaviour is byte-identical to before this flag
+/// existed.
+pub const SKIP_REGISTRY_DAEMON_ENV: &str = "TERMIHUB_AGENT_SKIP_REGISTRY_DAEMON";
+
+/// Parse a [`SKIP_REGISTRY_DAEMON_ENV`]-style value into a skip decision.
+///
+/// Truthy (`1` / `true` / `yes`) → skip the spawn. Anything else — absent,
+/// empty, or any other string — means "do not skip", so production (env unset)
+/// is byte-identical to the pre-flag behaviour. Pulled out as a pure function so
+/// the decision is unit-testable without mutating the process environment.
+fn skip_from_env(raw: Option<&str>) -> bool {
+    matches!(raw, Some("1") | Some("true") | Some("yes"))
+}
+
+/// Whether this process should suppress the registry-daemon spawn, read from
+/// [`SKIP_REGISTRY_DAEMON_ENV`].
+fn skip_registry_daemon() -> bool {
+    skip_from_env(std::env::var(SKIP_REGISTRY_DAEMON_ENV).ok().as_deref())
+}
+
 /// How the worker reaches its registry.
 #[derive(Debug, Clone)]
 pub struct RegistryConfig {
@@ -82,9 +115,11 @@ pub struct RegistryConfig {
     pub endpoint: String,
     /// Whether a failed connect may spawn a registry daemon.
     ///
-    /// Always `true` in production. Tests that run the registry in-process set
-    /// it to `false` so a failure surfaces as a failure rather than silently
-    /// spawning a real detached process from the test binary.
+    /// `true` in production by default. Tests that run the registry in-process
+    /// set it to `false` so a failure surfaces as a failure rather than silently
+    /// spawning a real detached process from the test binary. It is also forced
+    /// to `false` when [`SKIP_REGISTRY_DAEMON_ENV`] is set (single-client
+    /// sessions that do not need the ADR-11 registry — see that constant).
     pub auto_spawn: bool,
 }
 
@@ -92,7 +127,10 @@ impl Default for RegistryConfig {
     fn default() -> Self {
         Self {
             endpoint: registry_endpoint(),
-            auto_spawn: true,
+            // A single-client session (the system-test harness) opts out of the
+            // detached registry-daemon spawn via the env var; production leaves
+            // it unset, so this is `true` exactly as before (#2480).
+            auto_spawn: !skip_registry_daemon(),
         }
     }
 }
@@ -128,6 +166,16 @@ impl RegistryClient {
         notification_tx: NotificationSender,
         shutdown: CancellationToken,
     ) -> Self {
+        // Diagnostic for #2480: make the single-client opt-out visible at INFO in
+        // the agent's stderr so a full-app display run can confirm the harness
+        // env reached the agent and the registry-daemon spawn was suppressed.
+        if !config.auto_spawn {
+            info!(
+                "Registry-daemon auto-spawn disabled ({} set) — single-client session, \
+                 not spawning the host-wide registry",
+                SKIP_REGISTRY_DAEMON_ENV
+            );
+        }
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         tokio::spawn(supervise(config, cmd_rx, notification_tx, shutdown));
         Self { cmd_tx }
@@ -258,8 +306,18 @@ async fn connect_or_spawn(config: &RegistryConfig) -> std::io::Result<(BoxedRead
     // Nothing listening — start one. Several workers may reach this at once;
     // the losers' daemons exit on `AddrInUse` and everyone connects to the
     // winner, so no locking is needed (see `process::run_registry_daemon`).
-    if let Err(e) = spawn_registry_daemon() {
-        warn!("Failed to spawn registry daemon: {e}");
+    //
+    // The spawn is a synchronous `fork`+`exec` of a full binary; on a loaded
+    // host that can take non-trivial time (copy-on-write page-table setup), so
+    // it runs on the blocking pool rather than occupying a runtime worker thread
+    // the transport loop shares. This supervisor already runs on its own task
+    // off the `initialize` critical path, but keeping the fork off the async
+    // workers entirely is cheap insurance that a slow spawn can never add
+    // latency to request handling (#2480 hardening).
+    match tokio::task::spawn_blocking(spawn_registry_daemon).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => warn!("Failed to spawn registry daemon: {e}"),
+        Err(e) => warn!("Registry daemon spawn task panicked: {e}"),
     }
     ipc::connect_with_retry(
         &config.endpoint,
@@ -532,6 +590,43 @@ mod tests {
         );
 
         assert_eq!(client.list().await, None);
+    }
+
+    /// The single-client opt-out (#2480): a truthy [`SKIP_REGISTRY_DAEMON_ENV`]
+    /// value disables the spawn, everything else leaves it enabled — so an unset
+    /// env (production) is byte-identical to the pre-flag default.
+    #[test]
+    fn skip_from_env_only_trips_on_truthy_values() {
+        for truthy in ["1", "true", "yes"] {
+            assert!(
+                skip_from_env(Some(truthy)),
+                "{truthy:?} should suppress the registry-daemon spawn"
+            );
+        }
+        for falsy in [
+            None,
+            Some(""),
+            Some("0"),
+            Some("false"),
+            Some("no"),
+            Some("on"),
+        ] {
+            assert!(
+                !skip_from_env(falsy),
+                "{falsy:?} must not suppress the spawn (production default is unset)"
+            );
+        }
+    }
+
+    /// With the skip env unset, [`RegistryConfig::default`] must keep
+    /// `auto_spawn` on — the production path is unchanged by the new flag.
+    #[test]
+    fn default_config_keeps_auto_spawn_on_without_the_skip_env() {
+        // This test process does not set the env var, so the default must spawn.
+        assert!(
+            RegistryConfig::default().auto_spawn,
+            "production default (env unset) must still auto-spawn the registry"
+        );
     }
 
     #[test]

@@ -17,7 +17,7 @@ use jsonrpsee::types::ErrorObjectOwned;
 use semver::Version as SemverVersion;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use termihub_core::tool::{CollectingHost, ToolRegistry};
 use tokio_util::sync::CancellationToken;
@@ -483,6 +483,16 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             .parse()
             .map_err(|e| invalid_params("initialize", e))?;
 
+        // Diagnostic for #2480: INFO-level bookend so a full-app display run can
+        // see the `initialize` request arrive on the agent (the transport loop's
+        // "Received:" line is DEBUG-gated and hidden at the default INFO filter).
+        // Pairs with "initialize: responding" below — a gap between the two
+        // localises a stall to the agent's initialize handler.
+        info!(
+            "initialize: request received from client={} version={} protocol={}",
+            p.client, p.client_version, p.protocol_version
+        );
+
         // Negotiate the version both sides will speak: the highest version the
         // agent supports that does not exceed the client's request, sharing the
         // agent's major (docs/remote-protocol.md → Version Negotiation). An
@@ -519,6 +529,13 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             // an agent binary swap would otherwise kill without warning.
             // Fire-and-forget: a missing registry must never fail `initialize`.
             if let Some(registry) = s.registry_client.get() {
+                // Diagnostic for #2480: this call is fire-and-forget (it only
+                // hands a command to the background supervisor), so it must never
+                // be where `initialize` stalls — the log confirms it returns.
+                debug!(
+                    "initialize: announcing client {} to host registry",
+                    client_id
+                );
                 registry.register(ClientRecord {
                     client_id: entry.client_id.clone(),
                     client: entry.client.clone(),
@@ -537,16 +554,28 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             )
         };
 
+        // Diagnostic step-trace for #2480: the local repro proves the registry
+        // path never blocks `initialize` (fresh spawn, fd-clean daemon, and even
+        // a wedged registry all respond in ~2 ms), so if a full-app run stalls
+        // between "request received" and "responding" it is one of the awaits
+        // below. These per-step logs localise which one on the next display run.
+        debug!("initialize: applying persistent buffer size");
         session_manager
             .set_persistent_buffer_size_bytes(buffer_size)
             .await;
 
         if !p.external_connection_files.is_empty() {
+            info!(
+                "initialize: loading {} external connection file(s)",
+                p.external_connection_files.len()
+            );
             connection_store
                 .load_external_files(&p.external_connection_files)
                 .await;
+            debug!("initialize: external connection files loaded");
         }
 
+        debug!("initialize: probing docker availability");
         let docker_available = detect_docker_available().await;
         // Only enumerate images when the daemon already answered the probe
         // quickly — this keeps `initialize` from blocking on `docker images`
@@ -557,6 +586,10 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             Vec::new()
         };
         let connection_types = session_manager.registry().available_types();
+
+        // Diagnostic for #2480: the handler has finished all its work and is
+        // handing the result back to the transport loop to serialise + flush.
+        info!("initialize: responding to client (docker_available={docker_available})");
 
         Ok::<_, ErrorObjectOwned>(
             serde_json::to_value(InitializeResult {

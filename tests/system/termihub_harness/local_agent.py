@@ -211,6 +211,11 @@ class LocalAgentSshd:
     def _write_config(self) -> None:
         # Mirrors scripts/dev.sh: loopback-only, key auth only, no PAM/strict-modes
         # so it runs unprivileged.
+        #
+        # The agent runs with the ADR-11 host-wide registry daemon ON here (the
+        # default), so post-drop session recovery is genuinely exercised — the
+        # single-client skip option (#2480) exists but is deliberately NOT wired
+        # in, because recovery must work with the registry present.
         self._config.write_text(
             "\n".join(
                 [
