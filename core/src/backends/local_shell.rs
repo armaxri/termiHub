@@ -621,6 +621,38 @@ mod tests {
     use crate::session::shell::ShellCommand;
     use crate::session::traits::SpawnedShell;
 
+    /// Generous, env-overridable ceiling for waiting on a spawned shell's first
+    /// output in the PTY integration tests below.
+    ///
+    /// # Why this exists (#2498)
+    ///
+    /// The integration tests spawn a real shell, write a command, then wait for
+    /// its echoed output on the async output channel. The wait is already a poll
+    /// loop that returns the *instant* the expected marker arrives — but it was
+    /// wrapped in a tight fixed 5s (cross-platform) / 15s (ConPTY) budget. Under
+    /// a loaded Windows CI runner the first PTY output (shell startup + VT
+    /// processing + echo) can legitimately arrive several seconds late, so that
+    /// tight budget expired before the healthy-but-slow output showed up and the
+    /// test flaked (`connect_and_receive_output`, `subscribe_output_replaces_previous`).
+    ///
+    /// This mirrors the agent-integration fix (#2492/#2494): reuse the same
+    /// generous, env-overridable (`TERMIHUB_TEST_READY_TIMEOUT_SECS`) ceiling as
+    /// the other readiness waits in the workspace. A fixed budget is a guess; a
+    /// generous ceiling widens the window for a slow-but-live shell **without**
+    /// slowing the passing path, because the poll loop returns as soon as the
+    /// marker appears.
+    ///
+    /// The ceiling stays **bounded**, so the assertion stays genuine: a shell
+    /// that never produces the expected output still FAILS once the deadline
+    /// elapses — a real hang is never turned into a vacuous pass.
+    fn pty_output_timeout() -> tokio::time::Duration {
+        std::env::var("TERMIHUB_TEST_READY_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(tokio::time::Duration::from_secs)
+            .unwrap_or(tokio::time::Duration::from_secs(60))
+    }
+
     // ── MockLocalShellSpawner ────────────────────────────────────────
 
     /// Logs bytes written to the spawned process's stdin.
@@ -1195,7 +1227,7 @@ mod tests {
         shell.write(b"echo HELLO_TERMIHUB\n").expect("write failed");
 
         let mut output = Vec::new();
-        let deadline = tokio::time::Duration::from_secs(5);
+        let deadline = pty_output_timeout();
         let result = tokio::time::timeout(deadline, async {
             while let Some(chunk) = rx.recv().await {
                 output.extend_from_slice(&chunk);
@@ -1251,7 +1283,7 @@ mod tests {
         shell.write(b"echo TEST_REPLACE\n").expect("write failed");
 
         let mut output = Vec::new();
-        let deadline = tokio::time::Duration::from_secs(5);
+        let deadline = pty_output_timeout();
         let _ = tokio::time::timeout(deadline, async {
             while let Some(chunk) = rx2.recv().await {
                 output.extend_from_slice(&chunk);
@@ -1299,7 +1331,7 @@ mod tests {
         let mut rx = shell.subscribe_output();
 
         let mut output = Vec::new();
-        let deadline = tokio::time::Duration::from_secs(5);
+        let deadline = pty_output_timeout();
         let found = tokio::time::timeout(deadline, async {
             while let Some(chunk) = rx.recv().await {
                 output.extend_from_slice(&chunk);
@@ -1362,7 +1394,7 @@ mod tests {
             .expect("write failed");
 
         let mut output = Vec::new();
-        let deadline = tokio::time::Duration::from_secs(15);
+        let deadline = pty_output_timeout();
         let result = tokio::time::timeout(deadline, async {
             while let Some(chunk) = rx.recv().await {
                 output.extend_from_slice(&chunk);
@@ -1409,7 +1441,7 @@ mod tests {
             .expect("write failed");
 
         let mut output = Vec::new();
-        let deadline = tokio::time::Duration::from_secs(15);
+        let deadline = pty_output_timeout();
         let result = tokio::time::timeout(deadline, async {
             while let Some(chunk) = rx.recv().await {
                 output.extend_from_slice(&chunk);
