@@ -1273,12 +1273,20 @@ export function Terminal({
     // (a reconnect disposes the old xterm — see cleanup below). Writing it here,
     // before the new session connects, means a failed reconnect still shows the
     // prior scrollback under the disconnect overlay instead of a blank pane
-    // (#1126). Persistent/agent tabs re-fetch an authoritative buffer from the
-    // server during reattach, so replaying the local snapshot too would double
-    // the scrollback — skip it for those and rely on the server buffer.
+    // (#1126). Persistent/agent tabs re-fetch or re-forward an authoritative
+    // buffer from the server during reattach, so replaying the local snapshot too
+    // would double the scrollback — skip it for those and rely on the server
+    // buffer. `persistentConnectionId` covers persistent agent tabs (they fetch
+    // via `getAgentSessionBuffer`); a backend-driven resilient agent reconnect
+    // (#2476/#2512) has NO `persistentConnectionId` but likewise re-attaches to a
+    // live agent session whose ring buffer the daemon re-forwards as live output
+    // (`MSG_BUFFER_REPLAY`) — so it must skip the local replay too, otherwise the
+    // recovered scrollback renders twice (compounding across reconnect attempts).
     // Always clear the ref so an unrelated re-run starts empty.
     if (scrollbackSnapshotRef.current) {
-      if (!persistentConnectionIdRef.current) {
+      const serverWillSupplyBuffer =
+        !!persistentConnectionIdRef.current || isBackendDrivenAgentReconnectTabId(tabId);
+      if (!serverWillSupplyBuffer) {
         xterm.write(scrollbackSnapshotRef.current);
       }
       scrollbackSnapshotRef.current = null;
