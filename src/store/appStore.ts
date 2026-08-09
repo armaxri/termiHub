@@ -1052,6 +1052,15 @@ export interface AppState
 
   // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close)
   terminalExitedTabs: Record<string, boolean>;
+  /**
+   * Tabs whose next reconnect must start a **fresh** session rather than
+   * re-attach to a retained one (#2512). Set by {@link startFreshShellForTab} when
+   * the user picks "start new shell" on the session-lost notice: the reconnect
+   * effect consumes the flag and skips the backend re-attach / persistent-restart
+   * branches, going straight to a fresh `create_connection`. Runtime-only,
+   * one-shot (consumed by the effect).
+   */
+  terminalForceFreshReconnect: Record<string, boolean>;
   /** How each exited tab's session ended — drives the disconnect overlay wording (#1121). */
   terminalExitInfo: Record<string, TerminalExitInfo>;
   /**
@@ -1104,6 +1113,26 @@ export interface AppState
    * possibly divergent, second signal).
    */
   settleBackendReconnectGaveUp: (tabId: string, error: string) => void;
+
+  /**
+   * Settle a resilient agent tab into the terminal **session-lost** state (#2512):
+   * the backend re-established the transport on reconnect but the live agent
+   * session could not be recovered, so it folded `session.sessionLost` into the
+   * region. This reflects that locally — clearing the loop record + every in-flight
+   * connect flag and marking the tab exited so the disconnect overlay mounts and
+   * renders the projected session-lost notice (its "start new shell" action). Does
+   * NOT set a disconnect error (the notice sources its message from the region) and
+   * does NOT re-mirror any `session.*` intent (the backend already folded it).
+   */
+  settleSessionLost: (tabId: string) => void;
+
+  /**
+   * Start a fresh shell for a tab from the session-lost notice (#2512): arm the
+   * one-shot {@link terminalForceFreshReconnect} flag and drive a reconnect, so the
+   * effect creates a brand-new session (an explicit `create_connection`) instead of
+   * attempting to re-attach the unrecoverable one.
+   */
+  startFreshShellForTab: (tabId: string) => void;
 
   /**
    * Register the cohort of tabs placed by a restore/launch (#1146, audit G4).
@@ -5570,6 +5599,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     // Per-tab terminal session disconnects (runtime-only)
     terminalExitedTabs: {},
+    terminalForceFreshReconnect: {},
     terminalExitInfo: {},
     intentionallyKilledSessions: {},
     terminalDisconnectErrors: {},
@@ -5686,6 +5716,43 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (deadKey && currentMonitorsView().monitors[deadKey]) {
         get().disconnectMonitoring(deadKey);
       }
+    },
+
+    settleSessionLost: (tabId) => {
+      // The backend folded `session.sessionLost` into the region (the live agent
+      // session was unrecoverable). Reflect it locally without re-mirroring an
+      // intent: clear the loop record + every in-flight connect flag so no
+      // competing overlay lingers, and mark the tab exited so the disconnect
+      // overlay mounts. Deliberately no `terminalDisconnectErrors` write — the
+      // session-lost variant sources its message from the projected region, and a
+      // disconnect error would otherwise drive the generic "Reconnect failed"
+      // variant.
+      set((state) => ({
+        terminalAutoReconnect: omitKey(state.terminalAutoReconnect, tabId),
+        terminalConnecting: omitKey(state.terminalConnecting, tabId),
+        terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
+        terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
+        terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
+        terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
+        terminalReconnectingTabs: omitKey(state.terminalReconnectingTabs, tabId),
+        terminalReconnectTriggerErrors: omitKey(state.terminalReconnectTriggerErrors, tabId),
+        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
+      }));
+      get().settleRestoreTab(tabId, "failed");
+      const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
+      if (deadKey && currentMonitorsView().monitors[deadKey]) {
+        get().disconnectMonitoring(deadKey);
+      }
+    },
+
+    startFreshShellForTab: (tabId) => {
+      // Arm the one-shot force-fresh flag first so the reconnect effect (re-run by
+      // reconnectTerminal bumping the retry counter) reads it and skips the
+      // re-attach branch, creating a brand-new session instead.
+      set((state) => ({
+        terminalForceFreshReconnect: { ...state.terminalForceFreshReconnect, [tabId]: true },
+      }));
+      get().reconnectTerminal(tabId);
     },
 
     // Aggregate partial-restore feedback (#1146, audit G4) + bulk retry (#1227,

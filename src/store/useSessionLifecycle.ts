@@ -113,6 +113,14 @@ export interface ProjectedSessionLifecycleSlice {
   /** The reconnect-trigger cause shown while reconnecting, if any (mirrors
    * `terminalReconnectTriggerErrors`, #2442). */
   reconnectTriggerError: string | undefined;
+  /** True when the projected status is the terminal `sessionLost` state (#2512):
+   * a resilient agent tab reconnected its transport but its live agent session
+   * could not be recovered. Sourced directly from the region (no `appStore` twin —
+   * the state is only ever emitted server-side, behind `sessionBackendReattach`). */
+  sessionLost: boolean;
+  /** The backend-supplied "why the session could not be recovered" message shown
+   * in the session-lost notice, if any (#2512). `undefined` unless `sessionLost`. */
+  sessionLostError: string | undefined;
 }
 
 /**
@@ -166,11 +174,18 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
   }, [enabled, tabId]);
 
   const p = enabled ? projected : undefined;
+  // `sessionLost` has no `appStore` twin to gate against (it is emitted only
+  // server-side, behind `sessionBackendReattach`), so it is read straight from the
+  // region: present ⇒ terminal session-lost, absent ⇒ false. When the render cut
+  // is off `p` is `undefined`, so it stays `false` — inert on the pre-cut path.
+  const lost = p?.status === "sessionLost";
   return {
     connecting: effectiveConnecting(connectingLocal, p),
     reconnecting: effectiveReconnecting(reconnectingLocal, p),
     disconnectError: effectiveDisconnectError(disconnectErrorLocal, p),
     reconnectTriggerError: effectiveReconnectTriggerError(reconnectTriggerErrorLocal, p),
+    sessionLost: lost,
+    sessionLostError: lost ? p?.error : undefined,
   };
 }
 
