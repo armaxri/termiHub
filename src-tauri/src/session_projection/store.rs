@@ -60,6 +60,16 @@ pub enum SessionStatus {
     /// exhausted its attempts. `error` carries the message; the user may
     /// manually reconnect.
     Failed,
+    /// A distinct terminal state (#2512): a resilient **agent**-hosted tab
+    /// re-established its transport on reconnect, but the **live agent session**
+    /// it was attached to (its running process, e.g. a compile) could not be
+    /// recovered — the agent hard-restarted, the session aged out, or its daemon
+    /// died. The desktop deliberately does **not** silently mint a new shell in
+    /// its place (maintainer decision); it surfaces this explicit state so the
+    /// frontend can render a clear "session lost" notice plus a manual "start new
+    /// shell" action. Serialised as `sessionLost` for the frontend to key on.
+    #[serde(rename = "sessionLost")]
+    SessionLost,
 }
 
 /// Why a session left the `Connected` state — drives the disconnect-overlay
@@ -406,6 +416,32 @@ impl SessionLifecycleStore {
         if let Some(entry) = inner.sessions.get_mut(session_id) {
             entry.backend_session_id = backend_session_id;
         }
+    }
+
+    /// `session.sessionLost` (#2512) — a resilient **agent** tab re-established
+    /// its transport on reconnect, but the **live agent session** it was attached
+    /// to could not be recovered (agent hard-restart / aged out / daemon died).
+    /// Lands in the terminal [`SessionStatus::SessionLost`] state carrying
+    /// `error`, so the frontend renders an explicit "session lost" notice with a
+    /// manual "start new shell" action rather than the backend silently minting a
+    /// replacement shell. Resets the reconnect loop to idle, clears the
+    /// re-attach id (the backend session is gone), and records `Unexpected` as the
+    /// end reason (the live process was lost, not user-ended). Creates the entry
+    /// lazily so the redrive can fold it for a tab the store is already tracking.
+    pub fn session_lost(&self, session_id: &str, error: Option<String>) {
+        let mut inner = self.lock();
+        let entry = inner
+            .sessions
+            .entry(session_id.to_string())
+            .or_insert_with(SessionLifecycle::connecting);
+        entry.status = SessionStatus::SessionLost;
+        entry.reconnect = INITIAL_RECONNECT_STATE;
+        entry.end_reason = Some(EndReason::Unexpected);
+        entry.error = error;
+        entry.reconnect_error = None;
+        // The live agent session could not be recovered; there is no backend
+        // session to re-attach to (#2512).
+        entry.backend_session_id = None;
     }
 
     /// `session.remove` — the session/tab is gone; drop it from the region.

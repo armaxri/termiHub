@@ -810,6 +810,12 @@ impl SessionManager {
             spawned,
         };
 
+        // Capture the agent's live session id before `remote_session_id` moves
+        // into the `SessionEntry` below, so the resilient-reconnect retention can
+        // record it for the redrive to re-attach to (#2512). `None` for a direct
+        // (non-agent) session.
+        let retained_agent_session_id = remote_session_id.clone();
+
         // Store session.
         {
             let mut sessions = self.sessions.lock().await;
@@ -865,6 +871,14 @@ impl SessionManager {
                         type_id: type_id.to_string(),
                         settings: settings.clone(),
                         agent_id: agent_id.map(|s| s.to_string()),
+                        // The live agent session id to re-attach to on reconnect
+                        // (#2512), captured from the proxy's `remote_session_id()`
+                        // after the initial agent connect. `None` for a direct tab
+                        // (no agent session). The redrive attaches to *this* live
+                        // session (running process continues) rather than minting a
+                        // new one, and emits session-lost when the agent no longer
+                        // lists it.
+                        agent_session_id: retained_agent_session_id.clone(),
                         resilient: true,
                         // The client's `sessionBackendReattach` determination
                         // (#2454): the sole gate on whether the backend reconnect
@@ -1489,6 +1503,113 @@ impl SessionManager {
         self.persistent()
             .attach_persistent_tab(connection_id, tab_id, emitter)
             .await
+    }
+
+    /// Re-attach a reconnecting resilient tab to an **existing live agent
+    /// session** — the running process continues (#2512).
+    ///
+    /// The backend reconnect redrive calls this after it re-establishes the
+    /// agent's SSH transport and confirms (via `connection.list`) that the live
+    /// agent session id it retained for the tab (`remote_session_id`) is still
+    /// present. Rather than `create_connection` minting a **new** agent session
+    /// (which would orphan the recovered process), it re-establishes the
+    /// desktop-side proxy against the surviving daemon via
+    /// [`RemoteProxy::reconnect_existing`] (which registers a fresh output channel
+    /// and issues `connection.attach` for a buffer replay), inserts it under a
+    /// fresh desktop `session_id`, records the identity bridge for that id keyed by
+    /// the stable `tab_id`, and streams output — mirroring the post-connect
+    /// bookkeeping of [`create_connection`](Self::create_connection). Returns the
+    /// new desktop `session_id` so the redrive can publish it via
+    /// `set_backend_session_id` for the frontend to re-attach terminal I/O to.
+    ///
+    /// Only ever called for a resilient agent tab, so the identity bridge is
+    /// recorded with `resilient: true`. The retained request is left untouched:
+    /// the same live agent session id remains valid for the next drop.
+    pub async fn reattach_agent_session<E: EventEmitter>(
+        &self,
+        tab_id: &str,
+        agent_id: &str,
+        remote_session_id: &str,
+        emitter: E,
+    ) -> Result<String, TerminalError> {
+        let session_id = uuid::Uuid::new_v4().to_string();
+
+        // Re-establish the desktop side against the surviving daemon.
+        // `reconnect_existing` calls `register_session_output` + `attach_session`
+        // synchronously; the latter internally parks on `blocking_recv`, so run it
+        // on the blocking pool to keep the tokio worker free to drive
+        // `agent_io_task` and deliver the reply.
+        let agent_mgr = self.agent_manager.clone();
+        let agent_id_owned = agent_id.to_string();
+        let remote_sid_owned = remote_session_id.to_string();
+        let proxy = tokio::task::spawn_blocking(move || {
+            RemoteProxy::reconnect_existing(agent_id_owned, remote_sid_owned, agent_mgr)
+        })
+        .await
+        .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
+        .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+
+        let output_rx = proxy.subscribe_output();
+
+        // Insert under the fresh desktop session id.
+        {
+            let mut sessions = self.sessions.lock().await;
+            sessions.insert(
+                session_id.clone(),
+                SessionEntry {
+                    connection: Box::new(proxy),
+                    info: SessionInfo {
+                        id: session_id.clone(),
+                        title: "Remote".to_string(),
+                        connection_type: "remote".to_string(),
+                        alive: true,
+                        agent_id: Some(agent_id.to_string()),
+                        spawned: false,
+                    },
+                    remote_session_id: Some(remote_session_id.to_string()),
+                    line_ending: LineEnding::default(),
+                },
+            );
+        }
+
+        // Record the identity bridge for the new desktop session id, keyed by the
+        // stable tab id, so a future drop of this re-attached session folds
+        // `reconnect`/`dropped` at the `terminal-exit` source (#2431/#2439).
+        self.session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                session_id.clone(),
+                TabBinding {
+                    tab_id: tab_id.to_string(),
+                    resilient: true,
+                },
+            );
+
+        // Stream output for the re-attached session (buffer replay is already
+        // in-flight from `attach_session`).
+        let sessions_clone = self.sessions.clone();
+        let capture = self.ensure_output_buffer(&session_id);
+        let output_buffers = self.output_buffers.clone();
+        let session_loggers = self.session_loggers.clone();
+        let session_tab_ids = self.session_tab_ids.clone();
+        let sid = session_id.clone();
+        tokio::spawn(async move {
+            Self::run_output_reader(
+                sid,
+                output_rx,
+                emitter,
+                sessions_clone,
+                false,
+                capture,
+                output_buffers,
+                session_loggers,
+                session_tab_ids,
+            )
+            .await;
+        });
+
+        Ok(session_id)
     }
 
     /// Unregister `tab_id` from the persistent session identified by `session_id`.
@@ -3039,6 +3160,58 @@ mod tests {
             "the retained request carries the agent_id the redrive re-connects through"
         );
         assert!(req.backend_reattach, "the redrive gate is recorded");
+    }
+
+    #[tokio::test]
+    async fn create_connection_records_agent_session_id_on_the_retained_request() {
+        // #2512: a resilient AGENT tab must retain the live agent session id it is
+        // attached to (from the proxy's `remote_session_id()` after the initial
+        // connect), so the redrive can re-attach to *that same* live session on
+        // reconnect instead of minting a new one. A resilient DIRECT tab has no
+        // agent session, so it retains `None`.
+        let (manager, _cleared) = make_test_manager_with_retain_agent();
+
+        manager
+            .create_connection(
+                "mock",
+                serde_json::json!({ "password": "secret" }),
+                Some("agent-1"), // resilient AGENT session
+                Some("tab-a:0"),
+                false,
+                true, // resilient
+                true, // backend_reattach opted in
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("agent session should open");
+        let agent_req = manager
+            .retained_request("tab-a")
+            .expect("a resilient agent session retains its connection request");
+        assert!(
+            agent_req.agent_session_id.is_some(),
+            "the retained request carries the live agent session id to re-attach to (#2512)"
+        );
+
+        manager
+            .create_connection(
+                "mock",
+                serde_json::json!({ "password": "secret" }),
+                None, // resilient DIRECT session
+                Some("tab-d:0"),
+                false,
+                true,
+                true,
+                MockEventEmitter::new(),
+            )
+            .await
+            .expect("direct session should open");
+        let direct_req = manager
+            .retained_request("tab-d")
+            .expect("a resilient direct session retains its connection request");
+        assert!(
+            direct_req.agent_session_id.is_none(),
+            "a direct (non-agent) tab has no agent session id to retain (#2512)"
+        );
     }
 
     #[tokio::test]

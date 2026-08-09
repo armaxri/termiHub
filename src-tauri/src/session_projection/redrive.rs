@@ -98,6 +98,11 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
         let type_id = request.type_id.clone();
         let settings = request.settings.clone();
         let agent_id = request.agent_id.clone();
+        // The live agent session id this tab is attached to (#2512). `Some` for a
+        // resilient agent tab: the redrive re-attaches to *this* live session
+        // (running process continues) instead of minting a new one, and emits
+        // session-lost if the agent no longer lists it. `None` for a direct tab.
+        let agent_session_id = request.agent_session_id.clone();
         drop(request);
 
         // A unique per-attempt connect id in the `${tabId}:${retry}` form so the
@@ -142,6 +147,18 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
                     });
                     sync_timer(&app, &tab_id);
                     clear_retained_on_giveup(&app, &tab_id);
+                    return;
+                }
+
+                // #2512: for a resilient **agent** tab whose live agent session id
+                // we retained, re-attach to *that same* live session (the running
+                // process continues) rather than minting a new one — or emit an
+                // explicit session-lost state when the agent no longer lists it.
+                // The transport is up (checked above), so the agent can answer
+                // `connection.list`. Direct tabs and agent tabs with no retained
+                // session id fall through to the create path below.
+                if let Some(remote_sid) = agent_session_id.as_deref() {
+                    reattach_or_lose(&app, &manager, &tab_id, aid, remote_sid).await;
                     return;
                 }
             }
@@ -197,6 +214,103 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
             }
         });
     }
+}
+
+/// Re-attach a reconnecting resilient agent tab to its retained **live** agent
+/// session, or emit an explicit session-lost state when the agent no longer
+/// lists it (#2512). The caller has already re-established the agent transport,
+/// so `connection.list` can answer.
+///
+/// Never mints a new agent session (maintainer decision): a recovered live
+/// session is re-attached so the **running process continues**; an unrecoverable
+/// one surfaces [`SessionLifecycleStore::session_lost`] so the frontend renders a
+/// "session lost" notice + manual "start new shell", never a silent replacement.
+async fn reattach_or_lose<R: Runtime>(
+    app: &AppHandle<R>,
+    manager: &SessionManager,
+    tab_id: &str,
+    agent_id: &str,
+    remote_session_id: &str,
+) {
+    // Ask the agent which sessions are live/recovered. Runs on the blocking pool
+    // (the client parks on `blocking_recv`), like the transport re-establish.
+    let client = manager.agent_client();
+    let aid = agent_id.to_string();
+    let listed = tauri::async_runtime::spawn_blocking(move || client.list_sessions(&aid)).await;
+
+    let recoverable = matches!(&listed, Ok(Ok(sessions))
+        if sessions
+            .iter()
+            .any(|s| s.session_id == remote_session_id && is_recoverable_status(&s.status)));
+
+    if !recoverable {
+        // The live session is gone. Guard the cancel race, then fold the terminal
+        // session-lost state and scrub the retained secrets — never a silent new
+        // shell.
+        if still_connecting(app, tab_id) {
+            fold_session_transition(app, |store| {
+                store.session_lost(
+                    tab_id,
+                    Some("the live agent session could not be recovered".to_string()),
+                );
+            });
+            sync_timer(app, tab_id);
+            manager.clear_retained_request_with_agent_scrub(tab_id);
+        }
+        return;
+    }
+
+    match manager
+        .reattach_agent_session(tab_id, agent_id, remote_session_id, app.clone())
+        .await
+    {
+        Ok(new_session_id) => {
+            // Guard the cancel race exactly as the create path does: a user cancel
+            // / give-up that landed while attaching moved the loop off
+            // `Connecting` — tear the freshly re-attached desktop session down
+            // rather than settling it live.
+            if !still_connecting(app, tab_id) {
+                let _ = manager.close_session(&new_session_id).await;
+                return;
+            }
+            // Settle the tab live and hand the frontend the new backend session id
+            // to re-attach terminal I/O to (#2457); the live process continues.
+            let sid = new_session_id.clone();
+            fold_session_transition(app, |store| {
+                store.connected(tab_id);
+                store.set_backend_session_id(tab_id, Some(sid.clone()));
+            });
+            sync_timer(app, tab_id);
+        }
+        Err(e) => {
+            // A transient attach failure re-arms the next backoff window (or gives
+            // up), exactly like a failed create — a transport hiccup, distinct
+            // from a gone session (which folds session-lost above).
+            fold_session_transition(app, |store| {
+                store.reconnect_failed(tab_id, Some(e.to_string()));
+            });
+            sync_timer(app, tab_id);
+            clear_retained_on_giveup(app, tab_id);
+        }
+    }
+}
+
+/// Whether the tab's reconnect loop is still in its `Connecting` sub-phase — the
+/// guard the redrive uses to avoid settling (or stomping) an outcome after a user
+/// cancel / give-up raced the in-flight attempt.
+fn still_connecting<R: Runtime>(app: &AppHandle<R>, tab_id: &str) -> bool {
+    app.try_state::<Arc<SessionLifecycleStore>>()
+        .and_then(|store| store.reconnect_state(tab_id))
+        .map(|s| s.phase)
+        == Some(ReconnectPhase::Connecting)
+}
+
+/// Whether an agent-reported session status means the live session is still there
+/// to re-attach to (#2512). The agent reports `running` for both live and
+/// **recovered** sessions (a recovered daemon is set back to `Running`); a
+/// naturally-exited session reports `exited` and must not be re-attached.
+fn is_recoverable_status(status: &str) -> bool {
+    status == "running"
 }
 
 /// On a reconnect give-up (terminal `Failed`), scrub the secrets the loop
