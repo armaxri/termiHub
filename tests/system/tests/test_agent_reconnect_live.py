@@ -47,10 +47,11 @@ Two lanes, differing only by the ``sessionBackendReattach`` flag:
   ``fresh_agent_recovers_daemon_session_from_dead_prior_agent`` and the #2519
   tests, and is deliberately NOT read back through the throttled bridge here.)
 
-Agent + settings state is region-authoritative (#2227/#2409), so this suite reads
-it through the projection API (the ``agents`` region) *pre-drop* and seeds
-experimental features via ``settings.json``. The agent row is driven by its known
-seeded id (no name→id store lookup needed).
+Agent + settings state is region-authoritative (#2227/#2409); this suite seeds
+experimental features via ``settings.json`` and drives the agent row by its known
+seeded id (no name→id store lookup needed). It reads **no** frontend agent
+connectionState at all — connectedness comes only from the backend log, which is
+the whole point of the log-based rewrite.
 
 Skips cleanly when the app / agent binary is not built or no ``sshd`` is present.
 """
@@ -59,7 +60,6 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Optional
 
 import pytest
 
@@ -93,7 +93,12 @@ CTX_NEW_SHELL = "context-agent-new-shell"
 # ── backend-log markers (see the module docstring) ────────────────────────────
 # Desktop-side (agent_manager), un-prefixed:
 LOG_DROP = "connection lost, attempting reconnect"
-LOG_HANDSHAKE = "initialize response received"  # pairs with "; marking connected"
+# Connectedness is read HERE, never from the frontend agent connectionState via
+# the bridge — that read is the throttle/timing-fragile one this suite exists to
+# eliminate (the backend connects fine, but the projected frontend state does not
+# reliably reach "connected" under a display run). This is the tail of the
+# desktop line ``initialize response received (...); marking connected``.
+LOG_CONNECTED = "marking connected"
 LOG_RECONNECT_FAILED = "reconnection failed"
 # Agent-side, forwarded into the desktop log as "Agent <id>: stderr: ...":
 LOG_SESSION_SPAWNED = "Daemon spawned for session"  # a FRESH session was created
@@ -158,7 +163,6 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
             pytest.skip(str(exc))
         sshd.start()
         self.sshd = sshd
-        self._agents_sub: Optional[str] = None
 
         prev_flag = os.environ.get(self._FLAG_ENV)
         if self.flag_on:
@@ -181,8 +185,10 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
         finally:
             sshd.cleanup()  # reap first so it never leaks on a slow UI teardown
             try:
-                if self._agent_state() not in (None, "disconnected"):
-                    self._agent_menu_click(CTX_DISCONNECT)
+                # Best-effort disconnect — no frontend-state read to gate it (that
+                # is exactly the fragile read this suite avoids); a no-op click on
+                # an already-disconnected agent is harmless.
+                self._agent_menu_click(CTX_DISCONNECT)
             except Exception:
                 pass
             try:
@@ -233,25 +239,6 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
         assert sid, "could not parse the daemon session id from the log"
         return sid
 
-    # ── agents projection reads (region-authoritative, #2409) — PRE-DROP ONLY ─────
-    def _agents_view(self) -> list[dict[str, Any]]:
-        if self._agents_sub is None:
-            self._agents_sub = self.driver.projection_subscribe("agents")["subscriptionId"]
-        cache = self.driver.projection_state(self._agents_sub).get("cache") or {}
-        agents = cache.get("agents")
-        return [a for a in agents if isinstance(a, dict)] if isinstance(agents, list) else []
-
-    def _agent_state(self) -> Optional[str]:
-        agent = next((a for a in self._agents_view() if a.get("id") == AGENT_ID), None)
-        return agent.get("connectionState") if agent else None
-
-    def _wait_agent_state(self, *states: str, timeout: float = 60.0) -> None:
-        self.wait(
-            lambda: self._agent_state() in states,
-            what=f"agent to reach state in {states}",
-            timeout=timeout,
-        )
-
     # ── agent row driving (by known id) ──────────────────────────────────────────
     def _agent_menu_click(self, action: str) -> None:
         def opened() -> bool:
@@ -265,9 +252,23 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
 
     # ── shared steps ─────────────────────────────────────────────────────────────
     def _connect_and_open_shell(self) -> None:
-        """Bridge-driven setup — runs PRE-drop, so the webview is un-throttled."""
+        """Connect + open a shell. Connectedness is read from the LOG.
+
+        Only the two UI *actions* go through the bridge (clicking Connect on the
+        seeded agent row, opening the shell); "is it connected?" is asserted on
+        the backend log (``marking connected``), never on the frontend agent
+        state. The connect may bounce once over the throwaway sshd (a spurious
+        ``connection lost`` then a successful retry) — waiting for *any*
+        ``marking connected`` past the pre-click cursor tolerates that.
+        """
+        cursor = self._log_len()
         self._agent_menu_click(CTX_CONNECT)
-        self._wait_agent_state("connected")
+        self._wait_log(
+            LOG_CONNECTED,
+            since=cursor,
+            timeout=60.0,
+            what="the agent handshake to complete (marking connected)",
+        )
         before = self.tab_count()
         self._agent_menu_click(CTX_NEW_SHELL)
         self.wait(lambda: self.tab_count() > before, what="the agent shell-session tab")
@@ -315,10 +316,10 @@ class TestAgentReconnectClientDriven(_AgentReconnectBase):
         self.sshd.start()
         self._agent_menu_click(CTX_CONNECT)
         self._wait_log(
-            LOG_HANDSHAKE,
+            LOG_CONNECTED,
             since=offset,
             timeout=RECONNECT_LOG_TIMEOUT,
-            what="the agent handshake to complete again after the server returns",
+            what="the agent handshake to complete again (marking connected) after the server returns",
         )
 
 
@@ -347,10 +348,10 @@ class TestAgentReconnectBackendDriven(_AgentReconnectBase):
         # again (throttle-immune log read, never a frontend poll).
         self.sshd.start()
         self._wait_log(
-            LOG_HANDSHAKE,
+            LOG_CONNECTED,
             since=offset,
             timeout=RECONNECT_LOG_TIMEOUT,
-            what="the backend redrive to complete the reconnect handshake",
+            what="the backend redrive to complete the reconnect handshake (marking connected)",
         )
 
         # THE key end-to-end assertion: the LIVE daemon session was re-attached
