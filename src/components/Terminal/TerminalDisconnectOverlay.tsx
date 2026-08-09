@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { WifiOff, RefreshCw, X, AlertTriangle, Loader2, CheckCircle2 } from "lucide-react";
+import {
+  WifiOff,
+  RefreshCw,
+  X,
+  AlertTriangle,
+  Loader2,
+  CheckCircle2,
+  Unplug,
+  Plus,
+} from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
 import { Button, Tooltip } from "@/components/ui";
@@ -128,6 +137,8 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
  * exits unexpectedly or while a reconnect is in progress.
  *
  * Variants (determined from store state, in priority order):
+ *   - "session-lost"   — terminal: live agent session unrecoverable, "start new
+ *                        shell" + view-scrollback buttons (#2512)
  *   - "auto-reconnect" — agentless resilient-reconnect countdown + Cancel (#1962)
  *   - "reconnecting"   — spinner, optional trigger error, Stop button
  *   - "error"          — error box, "Reconnect failed" heading, retry + view buttons
@@ -139,6 +150,7 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
   const setTerminalExited = useAppStore((s) => s.setTerminalExited);
+  const startFreshShellForTab = useAppStore((s) => s.startFreshShellForTab);
   // Render cut (#2205 PR-A / #2442): the disconnect error, reconnect flag and the
   // reconnect-trigger error are all sourced from the projected `session-lifecycle`
   // region (falls back to appStore when it does not mirror). #2442 added the
@@ -148,6 +160,11 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   const disconnectError = lifecycle.disconnectError;
   const isReconnecting = lifecycle.reconnecting;
   const reconnectTriggerError = lifecycle.reconnectTriggerError;
+  // Terminal session-lost state (#2512): a resilient agent tab reconnected its
+  // transport but its live agent session could not be recovered. Sourced from the
+  // projected region (no appStore twin) and gated behind `sessionBackendReattach`.
+  const isSessionLost = lifecycle.sessionLost;
+  const sessionLostError = lifecycle.sessionLostError;
   // The auto-reconnect gate reads the same projected-with-fallback loop detail as
   // the countdown overlay itself, so the region drives which variant shows (#2204).
   const autoReconnectWaiting = useSessionAutoReconnect(tabId)?.phase === "waiting";
@@ -164,6 +181,75 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   const handleStop = useCallback(() => {
     setTerminalExited(tabId);
   }, [tabId, setTerminalExited]);
+
+  const handleStartNewShell = useCallback(() => {
+    startFreshShellForTab(tabId);
+  }, [tabId, startFreshShellForTab]);
+
+  // Session-lost (#2512) is terminal and takes precedence over every other
+  // variant: the live agent session could not be recovered, so the tab offers an
+  // explicit "start new shell" rather than a reconnect — never a silent new shell.
+  if (isSessionLost) {
+    return (
+      <div
+        className="terminal-disconnect-overlay terminal-disconnect-overlay--error"
+        data-testid="terminal-disconnect-overlay"
+      >
+        <Tooltip content="View scrollback" side="bottom">
+          <button
+            className="terminal-disconnect-overlay__dismiss"
+            onClick={handleDismiss}
+            aria-label="Dismiss and view scrollback"
+            data-testid="terminal-disconnect-dismiss-btn"
+          >
+            <X size={14} />
+          </button>
+        </Tooltip>
+
+        <div className="terminal-disconnect-overlay__body" data-testid="terminal-session-lost">
+          <Unplug
+            size={32}
+            className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
+          />
+
+          <p className="terminal-disconnect-overlay__heading">Session lost</p>
+          <p className="terminal-disconnect-overlay__subheading">
+            The connection was restored, but the live session could not be recovered. Its process
+            has ended. Scrollback is preserved below.
+          </p>
+
+          {sessionLostError && (
+            <div
+              className="terminal-disconnect-overlay__error-box"
+              data-testid="terminal-session-lost-error-box"
+            >
+              <span className="terminal-disconnect-overlay__error-text">{sessionLostError}</span>
+            </div>
+          )}
+
+          <div className="terminal-disconnect-overlay__actions">
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Plus size={14} />}
+              onClick={handleStartNewShell}
+              data-testid="terminal-session-lost-new-shell-btn"
+            >
+              Start New Shell
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleDismiss}
+              data-testid="terminal-disconnect-view-btn"
+            >
+              View Scrollback
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Agentless resilient reconnect (#1962) takes precedence: while the backoff
   // loop is counting down, show the countdown/Cancel variant instead of the
