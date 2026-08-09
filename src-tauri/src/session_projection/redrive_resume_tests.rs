@@ -75,6 +75,13 @@ struct FakeAgent {
     /// Whether a cold reconnect (reconnect_retained_agent) can re-establish.
     reattach_ok: AtomicBool,
     create_count: AtomicUsize,
+    /// The live agent session ids `create_session` minted, so `list_sessions` can
+    /// report them as recoverable on reconnect (#2512).
+    created_ids: Mutex<Vec<String>>,
+    /// Whether the live agent session survived the drop and is recoverable. When
+    /// `false`, `list_sessions` returns empty (the agent hard-restarted / the
+    /// session aged out) so the redrive must fold session-lost, not create-new.
+    session_recoverable: AtomicBool,
     /// Keep output senders alive so create_connection's reader does not end
     /// (which would tear the session down + fold a drop).
     senders: Mutex<Vec<OutputSender>>,
@@ -85,6 +92,8 @@ impl FakeAgent {
             connected: AtomicBool::new(true),
             reattach_ok: AtomicBool::new(true),
             create_count: AtomicUsize::new(0),
+            created_ids: Mutex::new(Vec::new()),
+            session_recoverable: AtomicBool::new(true),
             senders: Mutex::new(Vec::new()),
         }
     }
@@ -134,8 +143,10 @@ impl AgentRpcClient for FakeAgent {
             return Err(TerminalError::RemoteError("Agent not connected".into()));
         }
         let n = self.create_count.fetch_add(1, Ordering::SeqCst);
+        let session_id = format!("remote-{n}");
+        self.created_ids.lock().unwrap().push(session_id.clone());
         Ok(AgentSessionInfo {
-            session_id: format!("remote-{n}"),
+            session_id,
             title: "Shell".into(),
             session_type: session_type.into(),
             status: "running".into(),
@@ -158,7 +169,23 @@ impl AgentRpcClient for FakeAgent {
         Ok(())
     }
     fn list_sessions(&self, _agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        Ok(vec![])
+        if !self.session_recoverable.load(Ordering::SeqCst) {
+            return Ok(vec![]);
+        }
+        Ok(self
+            .created_ids
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|id| AgentSessionInfo {
+                session_id: id.clone(),
+                title: "Shell".into(),
+                session_type: "local".into(),
+                status: "running".into(),
+                attached: false,
+                definition_id: None,
+            })
+            .collect())
     }
     fn list_connections_and_folders(
         &self,
@@ -386,7 +413,9 @@ fn agent_reconnect_resumes_after_transport_restore() {
     // Transport RESTORED.
     agent.reattach_ok.store(true, Ordering::SeqCst);
 
-    // Fire attempt 2: redrive re-establishes + creates a new session + publishes it.
+    // Fire attempt 2: redrive re-establishes the transport and — since the live
+    // agent session (`remote-0`) is still listed — RE-ATTACHES to it (#2512)
+    // rather than minting a new one, publishing the new desktop session id.
     scheduler.fire("tab-1");
     poll_until(
         || store.get("tab-1").map(|s| s.status) == Some(SessionStatus::Connected),
@@ -397,7 +426,108 @@ fn agent_reconnect_resumes_after_transport_restore() {
     assert!(
         life.backend_session_id.is_some()
             && life.backend_session_id.as_deref() != Some(s1.as_str()),
-        "a fresh backend session id is published for the frontend to re-attach"
+        "a fresh desktop session id is published for the frontend to re-attach"
+    );
+    assert_eq!(
+        agent.create_count.load(Ordering::SeqCst),
+        1,
+        "the live agent session is re-attached, NOT re-created — only the initial \
+         create_session ran (#2512)"
+    );
+}
+
+/// #2512 session-lost: when the transport re-establishes but the live agent
+/// session is genuinely gone (agent hard-restarted / aged out), the redrive must
+/// fold the explicit terminal `SessionLost` state — never silently mint a new
+/// shell in its place.
+#[test]
+fn agent_reconnect_folds_session_lost_when_live_session_unrecoverable() {
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let agent = Arc::new(FakeAgent::new());
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        agent.clone() as Arc<dyn AgentRpcClient>,
+    );
+    handle.manage(manager);
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    handle.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector = projection.projector.clone();
+    let projector_seed = projection.projector.clone();
+    let store_for_publish = store.clone();
+    handle.manage(projection);
+
+    let scheduler = Arc::new(ManualScheduler::default());
+    let redrive: Arc<dyn ReconnectRedrive> = Arc::new(AppReconnectRedrive::new(handle.clone()));
+    let driver = Arc::new(
+        ReconnectTimerDriver::new(
+            store.clone(),
+            scheduler.clone(),
+            Arc::new(move || {
+                publish_sessions(&projector, &store_for_publish);
+            }),
+        )
+        .with_redrive(redrive),
+    );
+    handle.manage(driver.clone());
+
+    // Initial connect: agent up → session S1 (remote-0), request retained.
+    let manager_ref = handle.state::<SessionManager>();
+    let settings = serde_json::json!({ "config": {} });
+    let s1 = tauri::async_runtime::block_on(manager_ref.create_connection(
+        "shell",
+        settings.clone(),
+        Some("agent-1"),
+        Some("tab-1:0"),
+        false,
+        true, // resilient
+        true, // backend_reattach
+        handle.clone(),
+    ))
+    .expect("initial connect succeeds");
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_backend_session_id("tab-1", Some(s1.clone()));
+    publish_sessions(&projector_seed, &store);
+
+    // Drop: arm the loop.
+    store.reconnect("tab-1");
+    driver.sync("tab-1");
+    assert!(scheduler.armed("tab-1"), "timer armed on drop");
+
+    // Transport comes back, but the live agent session did NOT survive.
+    agent.session_recoverable.store(false, Ordering::SeqCst);
+
+    // Fire the attempt: transport re-establishes, `connection.list` no longer
+    // reports remote-0 → session-lost, and no new session is created.
+    scheduler.fire("tab-1");
+    poll_until(
+        || store.get("tab-1").map(|s| s.status) == Some(SessionStatus::SessionLost),
+        "redrive folds session-lost when the live session is unrecoverable",
+    );
+    let life = store.get("tab-1").unwrap();
+    assert_eq!(life.status, SessionStatus::SessionLost);
+    assert_eq!(
+        life.backend_session_id, None,
+        "a lost session leaves no backend id to re-attach to"
+    );
+    assert_eq!(
+        agent.create_count.load(Ordering::SeqCst),
+        1,
+        "session-lost must NOT mint a replacement shell — only the initial \
+         create_session ran (#2512)"
+    );
+    assert!(
+        !manager_ref.has_retained_request("tab-1"),
+        "the terminal session-lost state scrubs the retained request"
     );
 }
 

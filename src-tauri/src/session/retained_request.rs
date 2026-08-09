@@ -65,6 +65,16 @@ pub(crate) struct RetainedConnectionRequest {
     /// direct connections this retention currently covers (#2454); kept so the
     /// agent redrive (#2455) can reuse the same store.
     pub(crate) agent_id: Option<String>,
+    /// The **live agent session id** this resilient agent tab is attached to, if
+    /// any (#2512). Populated in `create_connection` from the proxy's
+    /// `remote_session_id()` after the initial agent connect; always `None` for a
+    /// **direct** (non-agent) tab, which has no agent session. On reconnect the
+    /// backend redrive re-attaches to *this same* live session (the running
+    /// process continues) via `connection.attach` instead of minting a new one
+    /// with `connection.create` — and, when the agent no longer lists it, emits an
+    /// explicit session-lost state rather than a silent new shell. Not a secret,
+    /// but zeroized on drop alongside the other fields for uniformity.
+    pub(crate) agent_session_id: Option<String>,
     /// The tab's resilient-reconnect determination at connect time.
     pub(crate) resilient: bool,
     /// Whether the owning tab opted into the **backend-driven** reconnect redrive
@@ -84,6 +94,9 @@ impl Drop for RetainedConnectionRequest {
         self.type_id.zeroize();
         if let Some(agent_id) = self.agent_id.as_mut() {
             agent_id.zeroize();
+        }
+        if let Some(agent_session_id) = self.agent_session_id.as_mut() {
+            agent_session_id.zeroize();
         }
         zeroize_json(&mut self.settings);
     }
@@ -211,6 +224,7 @@ mod tests {
                 type_id: "ssh".to_string(),
                 settings: json!({ "host": "h", "password": "p" }),
                 agent_id: None,
+                agent_session_id: None,
                 resilient: true,
                 backend_reattach: false,
             },
@@ -246,6 +260,7 @@ mod tests {
                 type_id: "ssh".to_string(),
                 settings: json!({ "host": "h", "password": "p" }),
                 agent_id: Some("agent-1".to_string()),
+                agent_session_id: None,
                 resilient: true,
                 backend_reattach: true,
             },
@@ -286,6 +301,7 @@ mod tests {
                 type_id: "ssh".to_string(),
                 settings: json!({ "password": "old" }),
                 agent_id: None,
+                agent_session_id: None,
                 resilient: true,
                 backend_reattach: false,
             },
@@ -296,6 +312,7 @@ mod tests {
                 type_id: "ssh".to_string(),
                 settings: json!({ "password": "new" }),
                 agent_id: None,
+                agent_session_id: None,
                 resilient: true,
                 backend_reattach: false,
             },
@@ -317,6 +334,7 @@ mod tests {
                 type_id: "ssh".to_string(),
                 settings: json!({ "password": "p" }),
                 agent_id: None,
+                agent_session_id: None,
                 resilient: true,
                 backend_reattach: true,
             },
@@ -327,6 +345,7 @@ mod tests {
                 type_id: "ssh".to_string(),
                 settings: json!({ "password": "p" }),
                 agent_id: Some("agent-1".to_string()),
+                agent_session_id: None,
                 resilient: true,
                 backend_reattach: true,
             },
@@ -347,6 +366,7 @@ mod tests {
             type_id: "ssh".to_string(),
             settings: json!({ "password": "p" }),
             agent_id: Some(agent.to_string()),
+            agent_session_id: None,
             resilient: true,
             backend_reattach: true,
         };
