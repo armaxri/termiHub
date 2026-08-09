@@ -554,16 +554,28 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             )
         };
 
+        // Diagnostic step-trace for #2480: the local repro proves the registry
+        // path never blocks `initialize` (fresh spawn, fd-clean daemon, and even
+        // a wedged registry all respond in ~2 ms), so if a full-app run stalls
+        // between "request received" and "responding" it is one of the awaits
+        // below. These per-step logs localise which one on the next display run.
+        debug!("initialize: applying persistent buffer size");
         session_manager
             .set_persistent_buffer_size_bytes(buffer_size)
             .await;
 
         if !p.external_connection_files.is_empty() {
+            info!(
+                "initialize: loading {} external connection file(s)",
+                p.external_connection_files.len()
+            );
             connection_store
                 .load_external_files(&p.external_connection_files)
                 .await;
+            debug!("initialize: external connection files loaded");
         }
 
+        debug!("initialize: probing docker availability");
         let docker_available = detect_docker_available().await;
         // Only enumerate images when the daemon already answered the probe
         // quickly — this keeps `initialize` from blocking on `docker images`

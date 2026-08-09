@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
@@ -1738,6 +1738,16 @@ async fn read_handshake_line(
         }
         match channel.wait().await {
             Some(ChannelMsg::Data { ref data }) => {
+                // Diagnostic for #2480: confirms the desktop is actually
+                // receiving the agent's stdout (the initialize response) over the
+                // SSH channel. A run that logs "awaiting response" but never this
+                // means the bytes are not arriving — a transport/channel issue,
+                // not the agent's initialize handler.
+                info!(
+                    "Agent {}: handshake received {} stdout byte(s) over the channel",
+                    agent_id,
+                    data.len()
+                );
                 buf.push_str(&String::from_utf8_lossy(data));
             }
             Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
@@ -1748,7 +1758,10 @@ async fn read_handshake_line(
                     String::from_utf8_lossy(data)
                 );
             }
-            Some(ChannelMsg::Eof) | None => return None,
+            Some(ChannelMsg::Eof) | None => {
+                info!("Agent {}: channel EOF/closed during handshake", agent_id);
+                return None;
+            }
             Some(ChannelMsg::ExitStatus { exit_status }) => {
                 warn!(
                     "Agent {}: process exited with status {} during handshake",
@@ -1756,7 +1769,11 @@ async fn read_handshake_line(
                 );
                 return None;
             }
-            _ => {}
+            other => {
+                // Any other channel message (window adjust, success, etc.). Logged
+                // at DEBUG so a stalled handshake still shows what russh delivered.
+                debug!("Agent {}: handshake channel message: {:?}", agent_id, other);
+            }
         }
     }
 }
