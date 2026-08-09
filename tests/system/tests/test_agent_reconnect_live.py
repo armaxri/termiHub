@@ -1,4 +1,4 @@
-"""Live agent drop / reconnect over a harness-controlled sshd (#2476).
+"""Live agent drop / reconnect over a harness-controlled sshd (#2476, #2480).
 
 The missing enabler for the agent reconnect activation: no scenario existed to
 drive a real agent-transport drop and assert the reconnect outcome. The desktop
@@ -9,22 +9,48 @@ agent connection at it, opens a shell session, then **kills the sshd** to sever
 the transport — a genuine, prolonged drop the harness fully controls — before
 bringing it back.
 
+**Why this suite is log-based (supersedes the bridge-poll approach of #2520).**
+During the prolonged agent reconnect the WKWebView occlusion-throttles, so a
+bridge poll of the frontend state (``projection_state`` / ``get_state`` /
+terminal reads) times out — ``command timed out after 60s`` — even though the app
+reconnects fine. The app's **backend log is written by Rust and is immune to that
+throttle**, so this suite asserts on it. Setup and the initial-``connected`` check
+run through the bridge *pre-drop* (un-throttled); everything after the drop is a
+bounded poll on ``app.read_log()`` (the harness's per-instance capture of the
+app's merged stdout/stderr — see :meth:`AppInstance.read_log`), never the bridge.
+
+The log markers this asserts on (grounded in the running binaries):
+
+* Desktop (``agent_manager``): ``connection lost, attempting reconnect`` on the
+  drop; ``initialize response received (...); marking connected`` when a
+  (re)connect handshake completes; ``reconnection failed`` when a single-shot
+  transport reconnect gives up while the server is down.
+* Agent (forwarded into the desktop log as ``Agent <id>: stderr: ...``):
+  ``Daemon spawned for session <sid>`` when a **fresh** session is created;
+  ``Recovered session <sid>`` / ``Reattached to session <sid>`` when the **live**
+  session is re-attached; ``Failed to recover session <sid>`` when it is lost.
+
 Two lanes, differing only by the ``sessionBackendReattach`` flag:
 
 * :class:`TestAgentReconnectClientDriven` — flag **off** (develop behavior): the
-  drop surfaces (the agent leaves ``connected``) and, once the server is back and
-  the agent reconnects, a fresh shell session is live again. Proves the scenario
-  is valid before any product change relies on it.
+  drop surfaces in the log and, once the server is back and the connection is
+  re-initiated, the handshake completes again. Proves the scenario is valid
+  before any product change relies on it.
 * :class:`TestAgentReconnectBackendDriven` — flag **on** (the activation): the
-  agent tab's reconnect is driven by the backend redrive across the prolonged
-  drop; the tab recovers on reconnection with the client agent engine suppressed.
+  backend redrive re-establishes the transport across the prolonged drop and
+  **re-attaches the live daemon session** — the log shows ``Recovered``/
+  ``Reattached`` for the same ``<sid>`` and **no** fresh ``Daemon spawned`` /
+  ``Failed to recover`` for it. This is the unique end-to-end assertion: the
+  desktop↔agent reconnect + live re-attach happened, process continuity intact.
+  (Terminal *content* continuity — the var-survives / loop-continues output — is
+  covered headlessly by the agent-integration tests, e.g.
+  ``fresh_agent_recovers_daemon_session_from_dead_prior_agent`` and the #2519
+  tests, and is deliberately NOT read back through the throttled bridge here.)
 
 Agent + settings state is region-authoritative (#2227/#2409), so this suite reads
-it through the projection API (the ``agents`` region) and seeds experimental
-features via ``settings.json`` — the ``get_state("remoteAgents"/"settings")``
-paths the older ``AgentUi``/``SettingsUi`` helpers use no longer resolve against a
-projection-migrated build (see the follow-up filed from this issue). The agent
-row is driven by its known seeded id (no name→id store lookup needed).
+it through the projection API (the ``agents`` region) *pre-drop* and seeds
+experimental features via ``settings.json``. The agent row is driven by its known
+seeded id (no name→id store lookup needed).
 
 Skips cleanly when the app / agent binary is not built or no ``sshd`` is present.
 """
@@ -63,6 +89,19 @@ SETTINGS_DOC = json.dumps({"version": "1", "experimentalFeaturesEnabled": True})
 CTX_CONNECT = "context-agent-connect"
 CTX_DISCONNECT = "context-agent-disconnect"
 CTX_NEW_SHELL = "context-agent-new-shell"
+
+# ── backend-log markers (see the module docstring) ────────────────────────────
+# Desktop-side (agent_manager), un-prefixed:
+LOG_DROP = "connection lost, attempting reconnect"
+LOG_HANDSHAKE = "initialize response received"  # pairs with "; marking connected"
+LOG_RECONNECT_FAILED = "reconnection failed"
+# Agent-side, forwarded into the desktop log as "Agent <id>: stderr: ...":
+LOG_SESSION_SPAWNED = "Daemon spawned for session"  # a FRESH session was created
+LOG_SESSION_RECOVER_FAIL = "Failed to recover session"  # the live session was lost
+
+# How long the backend redrive may take to re-establish + re-attach across a
+# prolonged drop (generous — the redrive parks/retries; this is not a UI read).
+RECONNECT_LOG_TIMEOUT = 180.0
 
 
 def _agent_doc(sshd: LocalAgentSshd) -> str:
@@ -111,23 +150,8 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
 
     _FLAG_ENV = "TERMIHUB_TEST_FLAG_SESSION_BACKEND_REATTACH"
 
-    #: Opt-in gate. The scenario drives everything up to the agent transport
-    #: (SSH + key auth + host-key trust + the agent binary starting over SSH), but
-    #: the agent's registry-daemon handshake stalls over a throwaway sshd and the
-    #: WKWebView is occlusion-throttled during the long connect, so the agent never
-    #: reaches ``connected`` unattended (tracked in #2480; agent/settings harness
-    #: reads also need the projection API per #2479). Set this env to 1 to run it.
-    _OPT_IN_ENV = "TERMIHUB_TEST_LOCAL_AGENT_RECONNECT"
-
     @pytest.fixture(autouse=True)
     def _local_agent(self):
-        if os.environ.get(self._OPT_IN_ENV) != "1":
-            pytest.skip(
-                f"opt-in: set {self._OPT_IN_ENV}=1 to run the live local-agent "
-                "reconnect scenario (blocked unattended by the agent registry-daemon "
-                "handshake over a throwaway sshd + webview throttling — see #2480; "
-                "harness agent/settings reads tracked in #2479)"
-            )
         try:
             sshd = LocalAgentSshd()
         except LocalAgentUnavailable as exc:
@@ -170,7 +194,46 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
             else:
                 os.environ[self._FLAG_ENV] = prev_flag
 
-    # ── agents projection reads (region-authoritative, #2409) ────────────────────
+    # ── backend-log reads (throttle-immune — this is the whole point) ─────────────
+    def _log(self) -> str:
+        """The app's captured backend log (Rust stdout/stderr) so far."""
+        return self.app.read_log()
+
+    def _log_len(self) -> int:
+        """A cursor into the log, so post-drop asserts ignore pre-drop lines."""
+        return len(self._log())
+
+    def _wait_log(
+        self, *needles: str, since: int = 0, timeout: float = 60.0, what: str
+    ) -> str:
+        """Poll the log tail (from ``since``) until ANY ``needle`` appears."""
+        return self.wait(
+            lambda: next((n for n in needles if n in self._log()[since:]), None),
+            timeout=timeout,
+            what=what,
+        )
+
+    def _assert_log_absent(self, needle: str, *, since: int, what: str) -> None:
+        assert needle not in self._log()[since:], (
+            f"unexpected log line {needle!r} after the drop — {what}"
+        )
+
+    def _daemon_session_id(self, *, since: int = 0) -> str:
+        """The daemon session id from the ``Daemon spawned for session <sid>`` log.
+
+        Emitted by the agent when the shell's daemon-backed session is created;
+        used to correlate the later ``Recovered``/``Reattached`` markers to *this*
+        session. The id token follows the marker (``... session abc123 (type=…)``).
+        """
+        tail = self._log()[since:]
+        idx = tail.find(LOG_SESSION_SPAWNED)
+        assert idx != -1, "no daemon session was spawned for the opened shell"
+        after = tail[idx + len(LOG_SESSION_SPAWNED):].strip()
+        sid = after.split()[0] if after else ""
+        assert sid, "could not parse the daemon session id from the log"
+        return sid
+
+    # ── agents projection reads (region-authoritative, #2409) — PRE-DROP ONLY ─────
     def _agents_view(self) -> list[dict[str, Any]]:
         if self._agents_sub is None:
             self._agents_sub = self.driver.projection_subscribe("agents")["subscriptionId"]
@@ -202,6 +265,7 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
 
     # ── shared steps ─────────────────────────────────────────────────────────────
     def _connect_and_open_shell(self) -> None:
+        """Bridge-driven setup — runs PRE-drop, so the webview is un-throttled."""
         self._agent_menu_click(CTX_CONNECT)
         self._wait_agent_state("connected")
         before = self.tab_count()
@@ -210,6 +274,7 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
         self.wait(self.has_terminal, what="the agent shell terminal session")
 
     def _assert_shell_live(self) -> None:
+        """PRE-drop only — a round-trip through the live shell."""
         marker = unique_name("agent-echo")
         self.run_command(f"echo {marker}")
         assert marker in self.wait_for_output(marker)
@@ -229,22 +294,32 @@ class TestAgentReconnectClientDriven(_AgentReconnectBase):
         self._connect_and_open_shell()
         self._assert_shell_live()
 
-        # Drop the agent transport at the server and keep it down long enough that
-        # a client single-shot reconnect would fail — a prolonged outage.
+        # Cursor: everything asserted below must be POST-drop log content.
+        offset = self._log_len()
+
+        # Drop the agent transport at the server. The single-shot transport
+        # reconnect fires immediately, then fails while the server is down — a
+        # prolonged outage a client single-shot cannot ride out (flag off).
         self._drop_transport()
-        self._wait_agent_state("reconnecting", "disconnected", timeout=60.0)
+        self._wait_log(LOG_DROP, since=offset, timeout=60.0, what="the drop to surface in the log")
+        self._wait_log(
+            LOG_RECONNECT_FAILED,
+            since=offset,
+            timeout=60.0,
+            what="the single-shot transport reconnect to give up while the server is down",
+        )
 
-        # Bring the server back; the agent must reconnect and serve a live shell.
+        # Bring the server back and re-initiate the connection (the connect click
+        # is issued while the agent is idle/disconnected, so it is un-throttled);
+        # the reconnect handshake must complete again — asserted on the log.
         self.sshd.start()
-        self._wait_agent_state("disconnected", timeout=60.0)
         self._agent_menu_click(CTX_CONNECT)
-        self._wait_agent_state("connected", timeout=60.0)
-
-        before = self.tab_count()
-        self._agent_menu_click(CTX_NEW_SHELL)
-        self.wait(lambda: self.tab_count() > before, what="a fresh agent shell after recovery")
-        self.wait(self.has_terminal, what="the recovered agent shell terminal")
-        self._assert_shell_live()
+        self._wait_log(
+            LOG_HANDSHAKE,
+            since=offset,
+            timeout=RECONNECT_LOG_TIMEOUT,
+            what="the agent handshake to complete again after the server returns",
+        )
 
 
 class TestAgentReconnectBackendDriven(_AgentReconnectBase):
@@ -254,26 +329,52 @@ class TestAgentReconnectBackendDriven(_AgentReconnectBase):
 
     def test_backend_driven_reconnect_reattaches(self):
         self._connect_and_open_shell()
-        tab = self.wait(
-            lambda: self.find_tab("Shell") or self.find_tab(AGENT_NAME),
-            what="the shell tab",
-        )
-        tab_id = tab["id"]
         self._assert_shell_live()
+
+        # The daemon session id of the live shell — correlates the re-attach below.
+        sid = self._daemon_session_id()
+
+        # Cursor: everything asserted below must be POST-drop log content.
+        offset = self._log_len()
 
         # Prolonged drop: kill the sshd and keep it down while the backend redrive
-        # parks/retries. The client agent engine must NOT drive the transport.
+        # parks/retries. The drop must surface in the backend log.
         self._drop_transport()
-        self._wait_agent_state("reconnecting", "disconnected", timeout=60.0)
+        self._wait_log(LOG_DROP, since=offset, timeout=60.0, what="the drop to surface in the log")
 
-        # Recover the server; the agent transport comes back and the tab must
-        # recover live without being left exited/stranded.
+        # Recover the server. With the flag on, the backend redrive re-establishes
+        # the transport WITHOUT any bridge interaction — the handshake completes
+        # again (throttle-immune log read, never a frontend poll).
         self.sshd.start()
-        self._wait_agent_state("connected", timeout=90.0)
-        self.wait(
-            lambda: self.driver.get_state("terminalExitedTabs").get(tab_id) is not True,
-            what="the agent shell tab to recover (not left exited)",
-            timeout=90.0,
+        self._wait_log(
+            LOG_HANDSHAKE,
+            since=offset,
+            timeout=RECONNECT_LOG_TIMEOUT,
+            what="the backend redrive to complete the reconnect handshake",
         )
-        self.wait(self.has_terminal, what="the reattached agent shell terminal")
-        self._assert_shell_live()
+
+        # THE key end-to-end assertion: the LIVE daemon session was re-attached
+        # (process continuity), not silently recreated. The agent forwards its
+        # recovery log into the desktop log; assert the marker names *this* sid.
+        self._wait_log(
+            f"Recovered session {sid}",
+            f"Reattached to session {sid}",
+            since=offset,
+            timeout=RECONNECT_LOG_TIMEOUT,
+            what=f"the live agent session {sid} to be re-attached after reconnect",
+        )
+
+        # Negatives that would betray a lost/recreated session after the drop:
+        #   * a FRESH "Daemon spawned for session" (== a new "Created session"), and
+        #   * "Failed to recover session" (== the "session_lost" fold).
+        # Neither may appear in the post-drop window if the live session survived.
+        self._assert_log_absent(
+            LOG_SESSION_SPAWNED,
+            since=offset,
+            what="the live session must be re-attached, not recreated",
+        )
+        self._assert_log_absent(
+            LOG_SESSION_RECOVER_FAIL,
+            since=offset,
+            what="the live session must not be lost across the reconnect",
+        )
