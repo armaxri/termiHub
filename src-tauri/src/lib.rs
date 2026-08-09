@@ -405,9 +405,15 @@ pub fn run() {
             // throttles WKWebView rendering, which hangs the harness (xterm stops
             // painting, screenshots time out) once a guided-manual test hands off
             // to an external app like VS Code (#957). Best-effort and test-only;
-            // production windows are untouched.
+            // production windows are untouched. An operator can opt out via
+            // TERMIHUB_TEST_NO_ALWAYS_ON_TOP so the window stays backgroundable
+            // during a guided-manual grade (#2504).
             if utils::test_bridge::is_test_bridge_enabled() {
-                if let Some(window) = app.get_webview_window("main") {
+                if utils::test_bridge::always_on_top_opt_out() {
+                    info!(
+                        "Test window always-on-top skipped by request (TERMIHUB_TEST_NO_ALWAYS_ON_TOP, #2504)"
+                    );
+                } else if let Some(window) = app.get_webview_window("main") {
                     if let Err(e) = window.set_always_on_top(true) {
                         tracing::warn!("Failed to set test window always-on-top: {e}");
                     } else {

@@ -20,6 +20,13 @@ use tauri::Runtime;
 /// Env var holding the runner's WebSocket port the app should connect out to.
 pub const TEST_BRIDGE_PORT_ENV: &str = "TERMIHUB_TEST_BRIDGE_PORT";
 
+/// Env var to opt out of pinning the test window always-on-top under the test
+/// bridge (#2504). When set to a truthy value (`1`/`true`, any case), the
+/// anti-occlusion pin (#957) is skipped so an operator can background the
+/// window during a guided-manual grade (read the checklist, use a second
+/// terminal). Unset → behaviour is unchanged (the window is still pinned).
+pub const TEST_NO_ALWAYS_ON_TOP_ENV: &str = "TERMIHUB_TEST_NO_ALWAYS_ON_TOP";
+
 /// Env-var prefix for injecting a runtime feature-flag global into the webview
 /// under the test bridge (#2476). `TERMIHUB_TEST_FLAG_<NAME>=<bool>` injects
 /// `window.__TERMIHUB_<NAME>__ = <bool>` before boot, so the harness can flip a
@@ -97,6 +104,15 @@ pub fn is_test_bridge_enabled() -> bool {
     parse_port(std::env::var(TEST_BRIDGE_PORT_ENV).ok()).is_some()
 }
 
+/// Whether the operator has opted out of pinning the test window always-on-top
+/// (`TERMIHUB_TEST_NO_ALWAYS_ON_TOP` set to a truthy value). See #2504. Used only
+/// in test-bridge mode; production launches never pin the window regardless.
+pub fn always_on_top_opt_out() -> bool {
+    std::env::var(TEST_NO_ALWAYS_ON_TOP_ENV)
+        .ok()
+        .is_some_and(|raw| flag_is_truthy(&raw))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,6 +176,30 @@ mod tests {
         assert_eq!(parse_port(Some("0".to_string())), None);
         assert_eq!(parse_port(Some("70000".to_string())), None);
         assert_eq!(parse_port(Some("not-a-port".to_string())), None);
+    }
+
+    #[test]
+    fn always_on_top_opt_out_tracks_truthy_env_var() {
+        // Mutates a process-global env var; no other test reads this key.
+        let key = TEST_NO_ALWAYS_ON_TOP_ENV;
+        let saved = std::env::var(key).ok();
+        unsafe { std::env::remove_var(key) };
+        assert!(
+            !always_on_top_opt_out(),
+            "unset → do not opt out (pin stays)"
+        );
+        unsafe { std::env::set_var(key, "1") };
+        assert!(always_on_top_opt_out());
+        unsafe { std::env::set_var(key, "true") };
+        assert!(always_on_top_opt_out());
+        unsafe { std::env::set_var(key, "0") };
+        assert!(!always_on_top_opt_out());
+        unsafe { std::env::set_var(key, "") };
+        assert!(!always_on_top_opt_out());
+        match saved {
+            Some(v) => unsafe { std::env::set_var(key, v) },
+            None => unsafe { std::env::remove_var(key) },
+        }
     }
 
     #[test]
