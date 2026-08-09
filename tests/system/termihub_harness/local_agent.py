@@ -211,6 +211,15 @@ class LocalAgentSshd:
     def _write_config(self) -> None:
         # Mirrors scripts/dev.sh: loopback-only, key auth only, no PAM/strict-modes
         # so it runs unprivileged.
+        #
+        # SetEnv injects TERMIHUB_AGENT_SKIP_REGISTRY_DAEMON into every session so
+        # the `termihub-agent --stdio` the desktop execs opts out of spawning the
+        # ADR-11 host-wide registry daemon (#2480). This session serves exactly
+        # one desktop client, which never needs the cross-worker "who is attached"
+        # registry, and suppressing its detached spawn keeps the agent-over-
+        # throwaway-sshd connect path clean. sshd builds its session environment
+        # from scratch (it does not pass its own env through), so SetEnv — not the
+        # launcher's env — is what actually reaches the exec'd agent.
         self._config.write_text(
             "\n".join(
                 [
@@ -223,6 +232,7 @@ class LocalAgentSshd:
                     "PasswordAuthentication no",
                     "PubkeyAuthentication yes",
                     "StrictModes no",
+                    "SetEnv TERMIHUB_AGENT_SKIP_REGISTRY_DAEMON=1",
                     "LogLevel ERROR",
                     "",
                 ]
