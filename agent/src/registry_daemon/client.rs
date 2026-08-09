@@ -306,8 +306,18 @@ async fn connect_or_spawn(config: &RegistryConfig) -> std::io::Result<(BoxedRead
     // Nothing listening — start one. Several workers may reach this at once;
     // the losers' daemons exit on `AddrInUse` and everyone connects to the
     // winner, so no locking is needed (see `process::run_registry_daemon`).
-    if let Err(e) = spawn_registry_daemon() {
-        warn!("Failed to spawn registry daemon: {e}");
+    //
+    // The spawn is a synchronous `fork`+`exec` of a full binary; on a loaded
+    // host that can take non-trivial time (copy-on-write page-table setup), so
+    // it runs on the blocking pool rather than occupying a runtime worker thread
+    // the transport loop shares. This supervisor already runs on its own task
+    // off the `initialize` critical path, but keeping the fork off the async
+    // workers entirely is cheap insurance that a slow spawn can never add
+    // latency to request handling (#2480 hardening).
+    match tokio::task::spawn_blocking(spawn_registry_daemon).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => warn!("Failed to spawn registry daemon: {e}"),
+        Err(e) => warn!("Registry daemon spawn task panicked: {e}"),
     }
     ipc::connect_with_retry(
         &config.endpoint,
