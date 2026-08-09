@@ -100,25 +100,35 @@ comm_of() {
     printf '%s' "${comm##*/}"
 }
 
-# The SSH-transport kill list for a running sshd master $1: the master itself
-# plus only those of its descendants whose command is `sshd` — i.e. the
-# per-connection `sshd:` handlers and their privsep children. Leaves first, then
-# the master last, so the reap unwinds children before parents.
+# The SSH-transport kill list: every sshd-family process holding a socket on our
+# loopback dev-agent port — matched by comm `sshd` OR `sshd-*` (OpenSSH 9.8+ /
+# macOS 26 split the per-connection handler into a separate `sshd-session` /
+# `sshd-sess` process). Found via the PORT socket (`lsof -iTCP:PORT`), NOT by
+# walking a master's descendants, so it still finds an ESTABLISHED session that
+# outlived its master listener (the #2510 case: the master had already exited but
+# a live `sshd-session` kept the agent connection up, so the descendant-walk found
+# nothing and `drop` wrongly reported "already down").
 #
-# Crucially this EXCLUDES the `termihub-agent --stdio` process the SSH session
-# runs and the `setsid`'d session daemon that agent spawned: at drop time the
-# daemon is still a PPID-child of the live agent (setsid changed its
-# session/pgroup, not its PPID), so a full `descendants()` reap would kill it and
-# reproduce the #2508 false failure. Filtering to `sshd` severs only the
-# transport; the agent then EOFs and exits on its own, and the detached daemon
-# survives for the recovery grade.
+# Crucially this still EXCLUDES the `termihub-agent --stdio` process the SSH
+# session runs and the `setsid`'d session daemon that agent spawned: their comm is
+# `termihub`/`termihub-agent`, not `sshd*`, so the case match skips them. At drop
+# time the daemon is still a PPID-child of the live agent (setsid changed its
+# session/pgroup, not its PPID), so a naive `descendants()` reap would kill it and
+# reproduce the #2508 false failure. Matching only sshd-family comm on the port
+# socket severs only the transport; the agent then EOFs and exits on its own, and
+# the detached daemon survives for the recovery grade.
 sshd_transport_pids() {
-    local master="$1" pid
-    for pid in $(descendants "$master"); do
-        [ "$(comm_of "$pid")" = "sshd" ] && printf '%s\n' "$pid"
+    local pid
+    for pid in $(lsof -nP -iTCP:"$PORT" -t 2>/dev/null | sort -u); do
+        case "$(comm_of "$pid")" in
+        sshd | sshd-*) printf '%s\n' "$pid" ;;
+        esac
     done
-    printf '%s\n' "$master"
 }
+
+# True while any sshd-family transport process (master listener OR an established
+# session that outlived it) still holds a socket on the dev-agent port.
+transport_up() { [ -n "$(sshd_transport_pids)" ]; }
 
 # The sshd config path of a running master: prefer its own argv (`-f <path>`),
 # else fall back to the newest dev.sh-created sshd config dir.
@@ -139,48 +149,53 @@ config_of() {
 }
 
 do_drop() {
-    local master
-    master="$(listener_pid)"
-    if [ -z "$master" ]; then
-        echo "[transport] already down — nothing listening on 127.0.0.1:$PORT."
+    # Collect every sshd-family transport process on our port — the master
+    # listener AND/OR any ESTABLISHED session that outlived it (#2510). Empty
+    # means the transport really is severed already.
+    local victims
+    victims="$(sshd_transport_pids | tr '\n' ' ')"
+    if [ -z "${victims// /}" ]; then
+        echo "[transport] already down — no sshd transport on 127.0.0.1:$PORT."
         return 0
     fi
 
     # Remember the config (host key) so restore relaunches an identical sshd.
+    # config_of falls back to the newest dev.sh sshd_config dir when the master
+    # listener is already gone (no pid to read `-f` from).
     local cfg
-    cfg="$(config_of "$master")"
+    cfg="$(config_of "$(listener_pid)")"
     mkdir -p "$STATE_DIR"
     {
         printf 'config=%s\n' "$cfg"
         printf 'sshd=%s\n' "$(find_sshd_binary)"
     } >"$STATE_FILE"
 
-    # Reap the sshd master AND its per-connection `sshd:` handlers so the
-    # established SSH transport is severed at once — but NOT the agent process or
-    # its detached session daemon (see sshd_transport_pids / #2508). The agent
-    # then EOFs and exits on its own; the setsid'd daemon survives for recovery.
-    local victims
-    victims="$(sshd_transport_pids "$master" | tr '\n' ' ')"
+    # Reap the sshd master AND its per-connection handlers so the established SSH
+    # transport is severed at once — but NOT the agent process or its detached
+    # session daemon (see sshd_transport_pids / #2508). The agent then EOFs and
+    # exits on its own; the setsid'd daemon survives for recovery.
     # shellcheck disable=SC2086 # word-splitting the PID list is intended.
     kill -TERM $victims 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-        is_listening || break
+        transport_up || break
         sleep 0.2
     done
-    if is_listening; then
+    if transport_up; then
+        # Re-collect: established children may have been re-forked with new pids.
+        victims="$(sshd_transport_pids | tr '\n' ' ')"
         # shellcheck disable=SC2086
         kill -KILL $victims 2>/dev/null || true
         for _ in 1 2 3 4 5; do
-            is_listening || break
+            transport_up || break
             sleep 0.2
         done
     fi
 
-    if is_listening; then
-        echo "[transport] WARNING: sshd still listening on :$PORT after kill." >&2
+    if transport_up; then
+        echo "[transport] WARNING: sshd transport still up on :$PORT after kill." >&2
         return 1
     fi
-    echo "[transport] DROPPED — dev-agent sshd on 127.0.0.1:$PORT is down."
+    echo "[transport] DROPPED — dev-agent SSH transport on 127.0.0.1:$PORT is severed."
     echo "[transport] the agent tab should go Reconnecting; run 'restore' to bring it back,"
     echo "[transport] or leave it down to watch the permanent-drop -> Disconnected case."
 }
