@@ -13,19 +13,25 @@
 //!
 //! The binary is built automatically by cargo before the tests run.
 //!
-//! # Windows CI quarantine (#2495)
+//! # Windows CI contention control (#2495)
 //!
-//! The tests that spawn a live agent and drive it over a TCP client chronically
-//! flake **only on Windows CI** with `Os { code: 10060, kind: TimedOut }` — a
-//! *random* one each run — because the agent is genuinely slow to respond under
-//! the loaded Windows runner. Two targeted transport fixes (#2492 connect-retry,
-//! #2494 read-deadline) did not fully resolve the residual, so those tests carry
-//! `#[cfg_attr(windows, ignore = "…; see #2495")]`: they still run at full
-//! strength on ubuntu + macOS and only skip on the Windows leg, so this flake
-//! stops blocking unrelated PRs. The deep root-cause fix is tracked in #2495;
-//! remove the attribute when it lands. Tests that do not drive a live agent over
-//! TCP (the raw-socket read-deadline test, the dead-process fast-fail, and the
-//! `--version` check) are unaffected and stay enabled everywhere.
+//! These tests each spawn a live `termihub-agent --listen` process and drive it
+//! over a TCP client, and cargo runs them in parallel. They used to flake **only
+//! on Windows CI** with `Os { code: 10060, kind: TimedOut }` — a *random* one each
+//! run — not from too-tight timeouts (two transport fixes, #2492 connect-retry and
+//! #2494 read-deadline, had already ruled that out) but because the agent was
+//! genuinely slow to respond under a loaded runner. Root cause (#2495): each agent
+//! process spun up `num_cpus` Tokio worker threads AND spawned a `docker info`
+//! child on every `initialize`, so N parallel agents oversubscribed the runner's
+//! few cores until the agent answered past even the generous deadline.
+//!
+//! The fix is contention control, applied by [`spawn_listener_process`] to every
+//! agent it spawns: `TERMIHUB_AGENT_WORKER_THREADS=2` caps each agent's runtime,
+//! and `TERMIHUB_AGENT_SKIP_DOCKER_PROBE=1` stops `initialize` from spawning a
+//! `docker info` child. Both are test-harness-only env opt-ins — production
+//! behavior (default `num_cpus` runtime, real Docker probe) is unchanged. With
+//! them in place the tests run at full strength on every platform, so the earlier
+//! `#[cfg_attr(windows, ignore … #2495)]` quarantine has been removed.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -314,6 +320,15 @@ fn spawn_listener_process(
         // default so the test never spawns/joins the developer's real registry
         // daemon (see [`LocalAgent::spawn`]).
         .env("TERMIHUB_REGISTRY_ENDPOINT", registry_endpoint)
+        // Contention control for the Windows CI leg (#2495). Each test spawns its
+        // own agent process and cargo runs the tests in parallel; without these
+        // two knobs every agent would start `num_cpus` Tokio worker threads AND
+        // spawn a `docker info` child on every `initialize`, oversubscribing a
+        // loaded runner until the agent answers past even the generous deadline
+        // (the random 10060). Cap the worker threads low and skip the Docker
+        // probe entirely — neither changes what these tests assert.
+        .env("TERMIHUB_AGENT_WORKER_THREADS", "2")
+        .env("TERMIHUB_AGENT_SKIP_DOCKER_PROBE", "1")
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr_handle));
     if let Some(log) = rust_log {
@@ -733,10 +748,6 @@ fn wait_for_agent_ready_reports_dead_process_fast() {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn agent_starts_and_accepts_connections() {
     let agent = LocalAgent::spawn();
     // If we reach here, the agent bound a port and served the readiness probe
@@ -745,10 +756,6 @@ fn agent_starts_and_accepts_connections() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn agent_responds_to_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = connect_with_retry(&agent.addr);
@@ -771,10 +778,6 @@ fn agent_responds_to_initialize() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn agent_returns_error_for_unknown_method_before_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = connect_with_retry(&agent.addr);
@@ -797,10 +800,6 @@ fn agent_returns_error_for_unknown_method_before_initialize() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn agent_handles_multiple_sequential_connections() {
     let agent = LocalAgent::spawn();
 
@@ -1057,10 +1056,6 @@ impl AgentClient {
 /// Verify that creating a local shell session returns a valid session ID with
 /// status "running". This is the prerequisite for all other shell tests.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn shell_session_create_returns_session_id() {
     let agent = LocalAgent::spawn();
     let mut client = AgentClient::connect(&agent.addr);
@@ -1088,10 +1083,6 @@ fn shell_session_create_returns_session_id() {
 /// Verify that after attaching to a shell and writing a command, the agent
 /// delivers `connection.output` notifications containing the echoed text.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn shell_session_attach_and_receive_output() {
     let agent = LocalAgent::spawn();
     let mut client = AgentClient::connect(&agent.addr);
@@ -1125,10 +1116,6 @@ fn shell_session_attach_and_receive_output() {
 /// alive in memory. A second client should see the same session in the list
 /// with `attached: false`.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn shell_session_persists_across_client_disconnect() {
     let agent = LocalAgent::spawn();
     let session_id;
@@ -1179,10 +1166,6 @@ fn shell_session_persists_across_client_disconnect() {
 /// echo, then disconnects. A second client reconnects, re-attaches to the same
 /// session, and receives output — proving the shell process survived.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn shell_session_reattach_after_reconnect() {
     let agent = LocalAgent::spawn();
     let session_id;
@@ -1277,10 +1260,6 @@ fn shell_session_reattach_after_reconnect() {
 /// transport; a real stall makes `create_elapsed` blow past the ceiling (or the
 /// echo never arrives) rather than wedging the suite forever.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn fresh_agent_after_reconnect_creates_session_over_surviving_registry() {
     // A registry endpoint the *test* owns, so it survives agent A's death — the
     // headless stand-in for the host-wide registry daemon that outlives an agent
@@ -1599,10 +1578,6 @@ impl Drop for PersistentShellSetup {
 /// Flow: attach → run `ls`/`dir` → detach → attach → buffer replay contains output.
 #[cfg(unix)]
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn persistent_shell_buffer_replayed_on_same_connection_reattach() {
     let setup = PersistentShellSetup::new();
     let mut client = setup.connect_client();
@@ -1666,10 +1641,6 @@ fn persistent_shell_buffer_replayed_on_same_connection_reattach() {
 /// buffer replay contains previous output.
 #[cfg(unix)]
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn persistent_shell_buffer_replayed_after_tcp_reconnect() {
     let setup = PersistentShellSetup::new();
 

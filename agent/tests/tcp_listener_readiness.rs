@@ -113,10 +113,6 @@ impl Drop for AgentProcess {
 /// accept, and a client that connects on the strength of that log gets a timely
 /// `initialize` response rather than an accepted-then-stalled socket.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky on Windows CI: agent slow-to-respond under load; see #2495"
-)]
 fn listening_log_is_a_true_readiness_signal() {
     let spawned_at = Instant::now();
     let mut child = Command::new(agent_binary())
@@ -126,6 +122,12 @@ fn listening_log_is_a_true_readiness_signal() {
             "TERMIHUB_TEST_STARTUP_DELAY_MS",
             STARTUP_DELAY.as_millis().to_string(),
         )
+        // Contention control for the Windows CI leg (#2495): cap this agent's
+        // Tokio worker threads and skip the per-`initialize` `docker info` spawn
+        // so a loaded runner does not delay the readiness reply this test times.
+        // Test-harness-only; production behavior is unchanged.
+        .env("TERMIHUB_AGENT_WORKER_THREADS", "2")
+        .env("TERMIHUB_AGENT_SKIP_DOCKER_PROBE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
