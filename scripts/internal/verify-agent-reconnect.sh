@@ -7,9 +7,10 @@
 #   2. Turns the `sessionBackendReattach` flag ON without you editing anything,
 #      via the #2481 test-bridge env->window injection
 #      (TERMIHUB_TEST_FLAG_SESSION_BACKEND_REATTACH -> window.__TERMIHUB_SESSION_BACKEND_REATTACH__).
-#      Test-bridge mode also pins the window always-on-top, which stops macOS from
-#      occlusion-throttling the WebView during the long reconnect (#957) — the very
-#      reason this grade cannot run headlessly and needs a real display.
+#      This is an operator-watched grade on a real display, so the window is left
+#      as a NORMAL, backgroundable window (TERMIHUB_TEST_NO_ALWAYS_ON_TOP=1, #2504)
+#      — you keep it visible yourself, so occlusion-throttling isn't a concern and
+#      you can freely background it to read this checklist / use a second terminal.
 #   3. Launches this checkout's dev agent + the app via `scripts/dev.sh` (builds if
 #      stale; the dev agent sshd + connection are set up for you). The window stays
 #      in the foreground so you can watch the reconnect.
@@ -90,7 +91,8 @@ PYEOF
 
 # ── A free loopback port to trigger the test-bridge init-script (flag inject) ──
 # Nothing needs to listen there — the port's only job is to register the bridge
-# plugin so the flag global is injected and the window is pinned always-on-top.
+# plugin so the flag global is injected (the window is NOT pinned always-on-top
+# here; see TERMIHUB_TEST_NO_ALWAYS_ON_TOP below, #2504).
 pick_bridge_port() {
     local port
     for port in 47600 47601 47602 47603 47604; do
@@ -118,6 +120,9 @@ cat <<CHECKLIST
 The app is about to launch (first run BUILDS — this can take a few minutes).
 Keep THIS terminal open (it runs the app). Do the drop/restore in a SECOND
 terminal with the one-liners below.
+
+The termiHub window is a NORMAL, backgroundable window (not pinned on top) — you
+can freely switch to this terminal / another app to read these steps.
 
   DROP transport (sever the dev-agent SSH):
       $TRANSPORT drop
@@ -159,11 +164,15 @@ Disconnected) both hold. Close the window / press Ctrl-C here to tear down
 
 CHECKLIST
 
-# The flag injection + always-on-top require the test-bridge plugin, which the
-# backend registers only when TERMIHUB_TEST_BRIDGE_PORT parses. Nothing listens
-# on BRIDGE_PORT — the app's bridge client just logs a failed connect (harmless).
+# The flag injection requires the test-bridge plugin, which the backend registers
+# only when TERMIHUB_TEST_BRIDGE_PORT parses. Nothing listens on BRIDGE_PORT — the
+# app's bridge client just logs a failed connect (harmless).
 export TERMIHUB_TEST_BRIDGE_PORT="$BRIDGE_PORT"
 export TERMIHUB_TEST_FLAG_SESSION_BACKEND_REATTACH=1
+# Opt out of the test-bridge always-on-top pin (#2504): this is an operator-watched
+# grade on a real display, so the operator keeps the window visible themselves —
+# leaving it a normal, backgroundable window instead of forcing it above everything.
+export TERMIHUB_TEST_NO_ALWAYS_ON_TOP=1
 
 # Not `exec`: run as a child so the EXIT trap (state-file cleanup) still fires
 # when the app closes. scripts/dev.sh owns stopping its own dev-agent sshd.
