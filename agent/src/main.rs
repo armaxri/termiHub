@@ -48,6 +48,18 @@ const SELF_UPDATE_ENV: &str = "TERMIHUB_AGENT_ALLOW_SELF_UPDATE";
 /// CLI flag carrying the connection's configured self-update apply strategy.
 const UPDATE_STRATEGY_FLAG: &str = "--update-strategy";
 
+/// Env var that caps the agent's Tokio worker-thread count (#2495).
+///
+/// Unset — the production default — the agent runs the same multi-thread runtime
+/// `#[tokio::main]` builds: `worker_threads` = available parallelism. Set to a
+/// positive integer, the worker-thread count is capped to that value instead.
+/// Only the integration-test harness opts in: it spawns many agent processes
+/// concurrently, and without a cap each would start `num_cpus` worker threads,
+/// oversubscribing a loaded CI runner and making the agent slow-to-respond (the
+/// Windows 10060 flake). An absent or unparseable value is byte-identical to the
+/// default runtime.
+const WORKER_THREADS_ENV: &str = "TERMIHUB_AGENT_WORKER_THREADS";
+
 /// Determine whether the agent should run the optional self-update check.
 ///
 /// Enabled when the `--allow-self-update` flag is passed (the desktop appends it
@@ -76,8 +88,40 @@ fn update_strategy_from_args(args: &[String]) -> update::UpdateStrategy {
         .unwrap_or_default()
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    build_runtime().block_on(run())
+}
+
+/// Build the agent's Tokio runtime.
+///
+/// Mirrors what `#[tokio::main]` builds — a multi-thread runtime with all drivers
+/// enabled and `worker_threads` defaulting to available parallelism — so with
+/// [`WORKER_THREADS_ENV`] absent the behavior is byte-identical to the previous
+/// `#[tokio::main]` entry point. When the env var is set to a positive integer,
+/// the worker-thread count is capped to it (test-harness contention control only;
+/// see [`WORKER_THREADS_ENV`]).
+fn build_runtime() -> tokio::runtime::Runtime {
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.enable_all();
+    if let Some(n) = worker_threads_override(std::env::var(WORKER_THREADS_ENV).ok()) {
+        builder.worker_threads(n);
+    }
+    builder
+        .build()
+        .expect("failed to build the agent Tokio runtime")
+}
+
+/// Parse the [`WORKER_THREADS_ENV`] value into a worker-thread cap.
+///
+/// A positive integer caps the runtime to that many worker threads; anything
+/// else — absent, empty, non-numeric, or zero — yields `None`, meaning "use the
+/// runtime default" (byte-identical to `#[tokio::main]`).
+fn worker_threads_override(raw: Option<String>) -> Option<usize> {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+}
+
+async fn run() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
@@ -256,6 +300,26 @@ mod tests {
                 "coordinated",
             ])),
             UpdateStrategy::Coordinated
+        );
+    }
+
+    #[test]
+    fn worker_threads_override_parses_positive_and_rejects_the_rest() {
+        // A positive integer caps the runtime.
+        assert_eq!(worker_threads_override(Some("2".to_string())), Some(2));
+        assert_eq!(
+            worker_threads_override(Some("  4 ".to_string())),
+            Some(4),
+            "surrounding whitespace is tolerated"
+        );
+        // Absent / empty / non-numeric / zero all mean "use the default".
+        assert_eq!(worker_threads_override(None), None);
+        assert_eq!(worker_threads_override(Some("".to_string())), None);
+        assert_eq!(worker_threads_override(Some("nope".to_string())), None);
+        assert_eq!(
+            worker_threads_override(Some("0".to_string())),
+            None,
+            "zero worker threads is invalid; fall back to the default"
         );
     }
 

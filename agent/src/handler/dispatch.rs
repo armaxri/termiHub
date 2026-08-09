@@ -1977,6 +1977,18 @@ const DOCKER_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// Environment variable to override [`DOCKER_PROBE_TIMEOUT`] (milliseconds).
 const DOCKER_PROBE_TIMEOUT_ENV: &str = "TERMIHUB_DOCKER_PROBE_TIMEOUT_MS";
 
+/// Env var that skips the Docker availability probe entirely (#2495).
+///
+/// When set to a truthy value the probe reports "unavailable" **without spawning
+/// a `docker info` child process**. Docker container spawning is simply disabled
+/// — the same outcome as a host with no Docker. Only the integration-test harness
+/// opts in: `initialize` runs on every connection, so an un-skipped probe spawns
+/// a `docker info` child (a heavy `CreateProcess`, up to the probe timeout) each
+/// time, and across many concurrently-spawned agent processes that compounds the
+/// CI-runner oversubscription behind the Windows 10060 flake. Unset in
+/// production, where the real probe runs.
+const DOCKER_PROBE_SKIP_ENV: &str = "TERMIHUB_AGENT_SKIP_DOCKER_PROBE";
+
 /// Resolve the Docker probe timeout, honouring the env override when present.
 fn docker_probe_timeout() -> Duration {
     std::env::var(DOCKER_PROBE_TIMEOUT_ENV)
@@ -2028,9 +2040,29 @@ async fn probe_docker_available(program: &str, timeout: Duration) -> bool {
     }
 }
 
+/// Whether [`DOCKER_PROBE_SKIP_ENV`] opts out of the Docker probe.
+fn docker_probe_skipped() -> bool {
+    docker_probe_skip_from(std::env::var(DOCKER_PROBE_SKIP_ENV).ok().as_deref())
+}
+
+/// Whether a [`DOCKER_PROBE_SKIP_ENV`] value opts out of the Docker probe.
+///
+/// Only the explicit truthy tokens skip the probe; absent or any other value
+/// runs it, so production (env unset) always probes.
+fn docker_probe_skip_from(raw: Option<&str>) -> bool {
+    matches!(raw, Some("1") | Some("true") | Some("yes"))
+}
+
 /// Detect whether Docker is available, time-bounded so an unresponsive daemon
 /// cannot block agent `initialize`.
+///
+/// Honours [`DOCKER_PROBE_SKIP_ENV`]: when set, reports "unavailable" without
+/// spawning any child process (test-harness contention control; production runs
+/// the real probe).
 async fn detect_docker_available() -> bool {
+    if docker_probe_skipped() {
+        return false;
+    }
     probe_docker_available("docker", docker_probe_timeout()).await
 }
 
@@ -2066,6 +2098,19 @@ mod tests {
     use serde_json::json;
 
     // ── Docker availability probe tests ────────────────────────────
+
+    #[test]
+    fn docker_probe_skip_only_on_truthy_tokens() {
+        // The harness opt-ins skip the probe.
+        assert!(docker_probe_skip_from(Some("1")));
+        assert!(docker_probe_skip_from(Some("true")));
+        assert!(docker_probe_skip_from(Some("yes")));
+        // Absent or any other value runs the real probe (production default).
+        assert!(!docker_probe_skip_from(None));
+        assert!(!docker_probe_skip_from(Some("0")));
+        assert!(!docker_probe_skip_from(Some("false")));
+        assert!(!docker_probe_skip_from(Some("")));
+    }
 
     /// Write an executable shim script under a unique temp path and return it.
     #[cfg(unix)]
