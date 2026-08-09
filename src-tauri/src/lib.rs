@@ -1584,7 +1584,18 @@ pub fn run() {
             commands::xserver::x_server_install_dependency,
             commands::xserver::x_server_connect_consent_reply,
         ])
-        .build(tauri::generate_context!())
+        .build({
+            let mut context = tauri::generate_context!();
+            // In WebSocket test-bridge mode, widen `connect-src` so the in-app
+            // bridge's `ws://127.0.0.1:<port>` client (`src/testbridge/wsClient.ts`)
+            // is permitted by the built bundle's secure-origin (`tauri://localhost`)
+            // CSP — otherwise WebKit rejects the socket with `SecurityError` and the
+            // automated full-app system-test lane never connects (#2480). This is a
+            // no-op unless `TERMIHUB_TEST_BRIDGE_PORT` is set, so the production /
+            // release CSP is byte-identical to `tauri.conf.json`.
+            utils::test_bridge::relax_csp_if_test_bridge(&mut context.config_mut().app.security.csp);
+            context
+        })
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             // Shutdown breadcrumbs (#1570). The 2026-07-17 post-mortem could only
