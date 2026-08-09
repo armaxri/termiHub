@@ -1,4 +1,4 @@
-"""Live agent drop / reconnect over a harness-controlled sshd (#2476).
+"""Live agent drop / reconnect over a harness-controlled sshd (#2476, #2512, #2480).
 
 The missing enabler for the agent reconnect activation: no scenario existed to
 drive a real agent-transport drop and assert the reconnect outcome. The desktop
@@ -9,6 +9,12 @@ agent connection at it, opens a shell session, then **kills the sshd** to sever
 the transport — a genuine, prolonged drop the harness fully controls — before
 bringing it back.
 
+Because the agent's session daemon detaches from the sshd session (``setsid``),
+killing the sshd severs only the *transport*: the daemon-held shell **keeps
+running**. That is what makes the real requirement testable end to end — a
+backend-driven re-attach must reconnect the tab to the *same live shell
+instance*, not spawn a fresh one (#2512, maintainer decision).
+
 Two lanes, differing only by the ``sessionBackendReattach`` flag:
 
 * :class:`TestAgentReconnectClientDriven` — flag **off** (develop behavior): the
@@ -17,7 +23,14 @@ Two lanes, differing only by the ``sessionBackendReattach`` flag:
   is valid before any product change relies on it.
 * :class:`TestAgentReconnectBackendDriven` — flag **on** (the activation): the
   agent tab's reconnect is driven by the backend redrive across the prolonged
-  drop; the tab recovers on reconnection with the client agent engine suppressed.
+  drop, and the tab re-attaches to the **same running shell**. Asserts the real
+  requirement the way the maintainer framed it:
+    - a shell **variable set before the drop survives** the re-attach (a fresh
+      shell would have no such variable);
+    - a **running loop keeps advancing** across the drop (the process never
+      paused or restarted at 0);
+    - the pre-drop scrollback is **not duplicated** on re-attach — the
+      end-to-end guard for the #2515 / #2518 duplicate-scrollback regression.
 
 Agent + settings state is region-authoritative (#2227/#2409), so this suite reads
 it through the projection API (the ``agents`` region) and seeds experimental
@@ -27,12 +40,18 @@ projection-migrated build (see the follow-up filed from this issue). The agent
 row is driven by its known seeded id (no name→id store lookup needed).
 
 Skips cleanly when the app / agent binary is not built or no ``sshd`` is present.
+The live grade is a **display-backed** run (a headless WKWebView occlusion-
+throttles the long connect, so the agent never reaches ``connected`` unattended —
+see #2480); it is no longer hidden behind an opt-in env var so the coordinator can
+launch it directly in a foreground session.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
+import uuid
 from typing import Any, Optional
 
 import pytest
@@ -111,23 +130,8 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
 
     _FLAG_ENV = "TERMIHUB_TEST_FLAG_SESSION_BACKEND_REATTACH"
 
-    #: Opt-in gate. The scenario drives everything up to the agent transport
-    #: (SSH + key auth + host-key trust + the agent binary starting over SSH), but
-    #: the agent's registry-daemon handshake stalls over a throwaway sshd and the
-    #: WKWebView is occlusion-throttled during the long connect, so the agent never
-    #: reaches ``connected`` unattended (tracked in #2480; agent/settings harness
-    #: reads also need the projection API per #2479). Set this env to 1 to run it.
-    _OPT_IN_ENV = "TERMIHUB_TEST_LOCAL_AGENT_RECONNECT"
-
     @pytest.fixture(autouse=True)
     def _local_agent(self):
-        if os.environ.get(self._OPT_IN_ENV) != "1":
-            pytest.skip(
-                f"opt-in: set {self._OPT_IN_ENV}=1 to run the live local-agent "
-                "reconnect scenario (blocked unattended by the agent registry-daemon "
-                "handshake over a throwaway sshd + webview throttling — see #2480; "
-                "harness agent/settings reads tracked in #2479)"
-            )
         try:
             sshd = LocalAgentSshd()
         except LocalAgentUnavailable as exc:
@@ -209,6 +213,15 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
         self.wait(lambda: self.tab_count() > before, what="the agent shell-session tab")
         self.wait(self.has_terminal, what="the agent shell terminal session")
 
+    def _open_shell_tab_id(self) -> str:
+        """Connect the agent, open a shell, and return the shell tab's id."""
+        self._connect_and_open_shell()
+        tab = self.wait(
+            lambda: self.find_tab("Shell") or self.find_tab(AGENT_NAME),
+            what="the agent shell tab",
+        )
+        return tab["id"]
+
     def _assert_shell_live(self) -> None:
         marker = unique_name("agent-echo")
         self.run_command(f"echo {marker}")
@@ -218,6 +231,60 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
         """Kill the sshd (and its session children) — a genuine transport drop."""
         self.sshd.stop()
         assert not self.sshd.is_listening()
+
+    # ── tab-targeted shell I/O (survives the re-attach re-focus) ──────────────────
+    def _type(self, tab_id: str, command: str) -> None:
+        """Send a command line to a specific tab, retrying while it registers.
+
+        Targets the tab by id (not the active-tab default) so a shell the
+        re-attach may not have re-focused still receives input; a failed send
+        transmits nothing, so the retry never double-sends.
+        """
+        self.wait(
+            lambda: (self.driver.terminal_input(command, tab_id) or True),
+            what="the shell session to accept input",
+        )
+
+    def _read(self, tab_id: str) -> str:
+        """The full logical-line buffer (viewport + scrollback) of a tab."""
+        return self.driver.read_terminal(tab_id)
+
+    def _wait_output(self, tab_id: str, needle: str, *, timeout: float = 30.0) -> str:
+        return self.wait(
+            lambda: (lambda t: t if needle in t else None)(self._read(tab_id)),
+            timeout=timeout,
+            what=f"{needle!r} in the shell output",
+        )
+
+    def _count_in_terminal(self, tab_id: str, needle: str) -> int:
+        return self._read(tab_id).count(needle)
+
+    def _max_counter(self, tab_id: str, prefix: str) -> Optional[int]:
+        """Highest ``<prefix>=<n>`` value currently in the tab's buffer, or None."""
+        vals = [int(m) for m in re.findall(rf"{re.escape(prefix)}=(\d+)", self._read(tab_id))]
+        return max(vals) if vals else None
+
+    def _drop_and_reattach(self, tab_id: str) -> None:
+        """Sever the transport, restore it, and wait for a backend-driven re-attach.
+
+        The prolonged drop parks the backend redrive; on restore the agent
+        transport comes back and the tab must recover **live** (re-attached to the
+        same daemon-held session), never left exited/stranded.
+        """
+        self._drop_transport()
+        self._wait_agent_state("reconnecting", "disconnected", timeout=60.0)
+        self.sshd.start()
+        self._wait_agent_state("connected", timeout=90.0)
+        self.wait(
+            lambda: self.driver.get_state("terminalExitedTabs").get(tab_id) is not True,
+            what="the agent shell tab to re-attach (not left exited)",
+            timeout=90.0,
+        )
+        self.wait(
+            lambda: bool(self._read(tab_id).strip()),
+            what="the re-attached shell terminal to be readable",
+            timeout=90.0,
+        )
 
 
 class TestAgentReconnectClientDriven(_AgentReconnectBase):
@@ -253,6 +320,7 @@ class TestAgentReconnectBackendDriven(_AgentReconnectBase):
     flag_on = True
 
     def test_backend_driven_reconnect_reattaches(self):
+        """The basic requirement: the tab recovers live (not left exited)."""
         self._connect_and_open_shell()
         tab = self.wait(
             lambda: self.find_tab("Shell") or self.find_tab(AGENT_NAME),
@@ -263,17 +331,97 @@ class TestAgentReconnectBackendDriven(_AgentReconnectBase):
 
         # Prolonged drop: kill the sshd and keep it down while the backend redrive
         # parks/retries. The client agent engine must NOT drive the transport.
-        self._drop_transport()
-        self._wait_agent_state("reconnecting", "disconnected", timeout=60.0)
-
-        # Recover the server; the agent transport comes back and the tab must
-        # recover live without being left exited/stranded.
-        self.sshd.start()
-        self._wait_agent_state("connected", timeout=90.0)
-        self.wait(
-            lambda: self.driver.get_state("terminalExitedTabs").get(tab_id) is not True,
-            what="the agent shell tab to recover (not left exited)",
-            timeout=90.0,
-        )
+        self._drop_and_reattach(tab_id)
         self.wait(self.has_terminal, what="the reattached agent shell terminal")
         self._assert_shell_live()
+
+    def test_shell_variable_survives_reattach(self):
+        """A variable set before the drop is still set after the re-attach.
+
+        The truest proof it is the *same* shell instance: a freshly-minted shell
+        would echo an empty ``MYVAR``.
+        """
+        tab_id = self._open_shell_tab_id()
+        value = f"live{uuid.uuid4().hex[:8]}"
+        self._type(tab_id, f"MYVAR={value}")
+        # Prove it is set in the pre-drop shell (the output line carries the
+        # expanded value; the typed command line shows the literal ``$MYVAR``).
+        self._type(tab_id, "echo PRE-$MYVAR-END")
+        self._wait_output(tab_id, f"PRE-{value}-END")
+
+        self._drop_and_reattach(tab_id)
+
+        # After the backend-driven re-attach the same shell answers, so the
+        # variable is still set.
+        self._type(tab_id, "echo VARWAS-$MYVAR-END")
+        assert f"VARWAS-{value}-END" in self._wait_output(tab_id, f"VARWAS-{value}-END")
+
+    def test_running_loop_continues_across_reattach(self):
+        """A running loop keeps advancing across the drop — never paused/restarted.
+
+        Starts a self-incrementing loop in the live shell, notes the last counter
+        value before the drop, then after re-attach asserts the counter is past
+        that value (the daemon-held process kept ticking, it did not restart at 0)
+        and keeps advancing (it is genuinely live, not a frozen replay).
+        """
+        tab_id = self._open_shell_tab_id()
+        tick = f"TCK{uuid.uuid4().hex[:8]}"
+        self._type(
+            tab_id,
+            f"i=0; while true; do echo {tick}=$i; i=$((i+1)); sleep 0.3; done",
+        )
+        # Let it run a few seconds so the pre-drop value is unambiguously non-zero
+        # (a restarted-from-0 shell could not reach it fast after re-attach).
+        self.wait(
+            lambda: (self._max_counter(tab_id, tick) or -1) >= 5,
+            what="the loop to emit several ticks before the drop",
+            timeout=30.0,
+        )
+        before = self._max_counter(tab_id, tick)
+        assert before is not None and before >= 5
+
+        self._drop_and_reattach(tab_id)
+
+        # The counter has advanced past the pre-drop value (continued, not reset)…
+        resumed = self.wait(
+            lambda: (lambda m: m if m is not None and m > before else None)(
+                self._max_counter(tab_id, tick)
+            ),
+            what=f"the loop counter to advance past {before} after re-attach",
+            timeout=60.0,
+        )
+        # …and keeps advancing (the process is live, not a stalled buffer replay).
+        self.wait(
+            lambda: (self._max_counter(tab_id, tick) or -1) > resumed,
+            what="the loop counter to keep advancing after re-attach",
+            timeout=30.0,
+        )
+
+    def test_no_duplicate_scrollback_on_reattach(self):
+        """Pre-drop scrollback is not duplicated on re-attach (#2515 / #2518).
+
+        Emits a unique marker whose *output* is the needle while the typed command
+        text is not (adjacent quoted string literals concatenate, so the literal
+        never contains the contiguous needle) — so a buffer count reflects real
+        emissions only. The duplicate-scrollback regression would replay the local
+        scrollback on re-attach and make the marker appear twice.
+        """
+        tab_id = self._open_shell_tab_id()
+        tok = uuid.uuid4().hex[:8]
+        needle = f"SCROLL{tok}END"
+        self._type(tab_id, f'printf "%s\\n" "SCROLL{tok}""END"')
+        self._wait_output(tab_id, needle)
+        assert self._count_in_terminal(tab_id, needle) == 1, "marker should appear once pre-drop"
+
+        self._drop_and_reattach(tab_id)
+
+        # Land fresh output after the re-attach, so any faulty scrollback replay
+        # would already have happened by the time we count…
+        live = uuid.uuid4().hex[:8]
+        self._type(tab_id, f'printf "%s\\n" "AFT""{live}"')
+        self._wait_output(tab_id, f"AFT{live}")
+        # …then the pre-drop marker must still appear exactly once.
+        assert self._count_in_terminal(tab_id, needle) == 1, (
+            "pre-drop scrollback marker duplicated on re-attach "
+            "(regression of #2515 / #2518)"
+        )
