@@ -367,6 +367,94 @@ fn backend_redrive_giveup_settles_failed_error_distinct_from_user_cancel_disconn
     );
 }
 
+// ── Production scheduler off the Tokio runtime (#2503) ──────────────────────
+
+use super::TokioReconnectScheduler;
+
+/// #2503 regression: the production [`TokioReconnectScheduler`] is reached
+/// **synchronously** from the sync Tauri command `intent_dispatch`, which runs
+/// on the main/webview thread *outside* any Tokio runtime. The old free
+/// `tokio::spawn` panicked there ("must be called from the context of a Tokio
+/// 1.x runtime") → `abort()` → the app SIGABRT-crashed on agent reconnect.
+/// Spawning onto Tauri's managed runtime makes arming safe from any thread.
+///
+/// This is a plain `#[test]` (NOT `#[tokio::test]`) so it runs with no ambient
+/// runtime, reproducing the crash context exactly. On `develop` it aborts; with
+/// the fix it arms and the one-shot fires through the managed runtime.
+#[test]
+fn scheduling_from_a_non_runtime_thread_arms_and_fires_without_panicking() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let scheduler = TokioReconnectScheduler::new();
+    let (tx, rx) = mpsc::channel();
+
+    // Arm from this plain-test thread (no Tokio runtime in scope). The old free
+    // `tokio::spawn` would panic/abort right here.
+    scheduler.schedule(
+        "s1".to_string(),
+        0,
+        Box::new(move || {
+            let _ = tx.send(());
+        }),
+    );
+
+    rx.recv_timeout(Duration::from_secs(5))
+        .expect("the armed timer fired via the managed runtime");
+}
+
+/// A pending timer armed off the runtime can still be cancelled off the runtime:
+/// `cancel` aborts the managed handle, so the task never runs. Guards against a
+/// regression where the abort path also needs the ambient runtime.
+#[test]
+fn cancelling_a_pending_timer_from_a_non_runtime_thread_stops_it() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let scheduler = TokioReconnectScheduler::new();
+    let (tx, rx) = mpsc::channel();
+
+    // Arm far in the future, then cancel before it can elapse.
+    scheduler.schedule(
+        "s1".to_string(),
+        60_000,
+        Box::new(move || {
+            let _ = tx.send(());
+        }),
+    );
+    scheduler.cancel("s1");
+
+    assert!(
+        rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "a cancelled timer never fires"
+    );
+}
+
+/// End-to-end shape of the crash: drive the real [`ReconnectTimerDriver::sync`]
+/// with the production [`TokioReconnectScheduler`] from a plain (non-runtime)
+/// thread — the exact `intent_dispatch → register_session_intents → sync_timer →
+/// sync → schedule` path that aborted on `develop`. Arming must not panic.
+#[test]
+fn driver_sync_with_the_production_scheduler_arms_off_runtime_without_panicking() {
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    let scheduler = Arc::new(TokioReconnectScheduler::new());
+    let driver = Arc::new(ReconnectTimerDriver::new(
+        store.clone(),
+        scheduler.clone(),
+        Arc::new(|| {}),
+    ));
+
+    // Drop → Waiting arms a real backoff one-shot via `tauri::async_runtime`.
+    store.connect("s1");
+    store.reconnect("s1");
+    driver.sync("s1"); // panicked/aborted here on develop
+
+    // A subsequent settle cancels the pending timer — also off-runtime.
+    store.connected("s1");
+    driver.sync("s1");
+}
+
 #[test]
 fn remove_disarms_any_pending_timer() {
     let (store, _projector, scheduler, driver, _pub) = harness();

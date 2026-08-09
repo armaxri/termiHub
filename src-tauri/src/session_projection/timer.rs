@@ -93,10 +93,18 @@ pub trait ReconnectScheduler: Send + Sync {
 }
 
 /// Production [`ReconnectScheduler`] backed by `tokio::time::sleep`. Each armed
-/// timer is a spawned task; cancelling aborts it. Requires a Tokio runtime
-/// (always present in the Tauri app).
+/// timer is a spawned task; cancelling aborts it.
+///
+/// Spawns onto Tauri's **managed** async runtime via
+/// [`tauri::async_runtime::spawn`] rather than the free `tokio::spawn`. This is
+/// load-bearing (#2503): `schedule` is reached **synchronously** from the sync
+/// Tauri command `intent_dispatch`, which runs on the main/webview thread
+/// *outside* any Tokio runtime context — the free `tokio::spawn` panics there
+/// ("must be called from the context of a Tokio 1.x runtime") and aborts the
+/// process on the reconnect hot path. The managed handle is thread-agnostic, so
+/// arming is safe from the sync-command thread (and from a plain unit test).
 pub struct TokioReconnectScheduler {
-    handles: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
+    handles: Mutex<HashMap<String, tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl TokioReconnectScheduler {
@@ -106,7 +114,7 @@ impl TokioReconnectScheduler {
         }
     }
 
-    fn lock(&self) -> MutexGuard<'_, HashMap<String, tokio::task::JoinHandle<()>>> {
+    fn lock(&self) -> MutexGuard<'_, HashMap<String, tauri::async_runtime::JoinHandle<()>>> {
         self.handles.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
@@ -121,7 +129,10 @@ impl ReconnectScheduler for TokioReconnectScheduler {
     fn schedule(&self, key: String, delay_ms: u64, task: FireTask) {
         // Replace any prior timer for this key so a re-arm never leaves two live.
         self.cancel(&key);
-        let handle = tokio::spawn(async move {
+        // Managed runtime (not the free `tokio::spawn`): this is reached from a
+        // sync Tauri command that runs off the Tokio runtime — see the struct
+        // doc and #2503.
+        let handle = tauri::async_runtime::spawn(async move {
             tokio::time::sleep(Duration::from_millis(delay_ms)).await;
             task();
         });
