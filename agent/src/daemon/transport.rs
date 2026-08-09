@@ -482,6 +482,39 @@ mod tests {
         server.await.expect("server task");
     }
 
+    /// Env var carrying the socket path for [`bind_lingering_socket_helper`].
+    ///
+    /// Set by [`connect_for_recovery_fast_fails_dead_lingering_socket`] only on
+    /// the child test process it spawns; absent in every normal test run.
+    #[cfg(unix)]
+    const LINGERING_SOCKET_ENV: &str = "TERMIHUB_TEST_LINGERING_SOCKET";
+
+    /// Child-process helper for
+    /// [`connect_for_recovery_fast_fails_dead_lingering_socket`].
+    ///
+    /// A **no-op** in a normal test run: it does nothing unless the parent test
+    /// re-execs this binary with [`LINGERING_SOCKET_ENV`] pointing at a socket
+    /// path. In that mode it binds a real listener at the path and leaks it, so
+    /// when this process exits the kernel reclaims the listening socket while the
+    /// socket *file* lingers on disk. That is the whole point: a socket whose
+    /// owning process has truly exited deterministically refuses connections,
+    /// whereas an in-process close does not (see the parent test).
+    #[cfg(unix)]
+    #[test]
+    fn bind_lingering_socket_helper() {
+        let Ok(path) = std::env::var(LINGERING_SOCKET_ENV) else {
+            return;
+        };
+        let listener =
+            std::os::unix::net::UnixListener::bind(&path).expect("helper: bind lingering socket");
+        // Keep it bound until the process exits, so the socket file is left behind
+        // exactly as a SIGKILLed daemon leaves it. Process exit — not this drop —
+        // is what reclaims the socket, so `forget` vs `drop` is immaterial to
+        // correctness; forgetting just makes the intent ("still listening at exit")
+        // explicit.
+        std::mem::forget(listener);
+    }
+
     /// Regression for #2476: recovery must fast-fail a dead daemon whose socket
     /// file merely lingers, instead of retrying `ConnectionRefused` for the full
     /// 30s [`CONNECT_TIMEOUT`].
@@ -492,19 +525,47 @@ mod tests {
     /// fresh agent's startup — and thus the desktop's `initialize` handshake —
     /// after a reconnect, the "transport restored but stuck Reconnecting" symptom.
     /// [`connect_for_recovery`] must give up well within [`CONNECT_TIMEOUT`].
+    ///
+    /// The dead daemon is simulated by a **separate process that binds the socket
+    /// and then exits** ([`bind_lingering_socket_helper`]), not by binding and
+    /// closing a listener in this process. That distinction is load-bearing and is
+    /// what fixed the #2500 flake: on macOS under parallel-test load, a just-closed
+    /// in-process AF_UNIX listener stays *transiently connectable* (the kernel
+    /// defers teardown while the owning process is still alive), so `connect`
+    /// intermittently *succeeded* against the supposedly-dead socket. A socket
+    /// whose owning process has actually exited is fully reclaimed by the kernel,
+    /// so it refuses connections deterministically — which is precisely the state
+    /// production recovery meets, and the only faithful simulation of it.
     #[cfg(unix)]
     #[tokio::test]
     async fn connect_for_recovery_fast_fails_dead_lingering_socket() {
         use std::time::Instant;
 
+        // The per-user socket dir must exist before the child binds into it.
+        ensure_agent_forward_dir().expect("ensure socket dir");
         let address = session_endpoint(&unique_session("recovery-dead"));
 
-        // Bind then drop a listener: tokio does not unlink the socket file on
-        // drop, so the path is left behind with nothing listening — a socket file
-        // that `endpoint_alive` (a mere file-existence check) still reports as
-        // present, exactly like a daemon killed via SIGKILL.
-        let listener = tokio::net::UnixListener::bind(&address).expect("bind lingering socket");
-        drop(listener);
+        // Re-exec this test binary to run only the bind-and-exit helper, handing it
+        // the socket path via the environment. When it returns, the child process
+        // has exited and left a genuinely-dead socket file behind.
+        let exe = std::env::current_exe().expect("current test exe");
+        let output = std::process::Command::new(exe)
+            .args([
+                "--exact",
+                "--test-threads=1",
+                "-q",
+                "daemon::transport::tests::bind_lingering_socket_helper",
+            ])
+            .env(LINGERING_SOCKET_ENV, &address)
+            .output()
+            .expect("run lingering-socket helper");
+        assert!(
+            output.status.success(),
+            "lingering-socket helper failed: {status}\nstdout: {out}\nstderr: {err}",
+            status = output.status,
+            out = String::from_utf8_lossy(&output.stdout),
+            err = String::from_utf8_lossy(&output.stderr),
+        );
         assert!(
             endpoint_alive(&address),
             "the lingering socket file should still exist (endpoint_alive true)"
@@ -514,14 +575,18 @@ mod tests {
         let result = connect_for_recovery(&address).await;
         let elapsed = start.elapsed();
 
+        // Two independent guarantees, both from the #2476/#2491 recovery fix:
+        //  (1) a dead-but-lingering socket is rejected, not silently treated as a
+        //      live daemon;
         assert!(
             result.is_err(),
-            "connecting to a dead-but-lingering socket must fail"
+            "connecting to a dead-but-lingering socket must fail (got a live \
+             connection to a socket whose owning process has exited)"
         );
-        // The decisive regression bound: nowhere near the 30s spawn-path timeout.
-        // Generous (well above RECOVERY_CONNECT_TIMEOUT + scheduling jitter, well
-        // below CONNECT_TIMEOUT) so it never flakes on a loaded runner yet still
-        // trips if recovery ever regresses to the long path.
+        //  (2) it fast-fails nowhere near the 30s spawn-path timeout. Generous
+        //      bound (well above RECOVERY_CONNECT_TIMEOUT + retry jitter, well below
+        //      CONNECT_TIMEOUT) so it never flakes on a loaded runner yet still
+        //      trips if recovery ever regresses to the long path.
         assert!(
             elapsed < Duration::from_secs(10),
             "connect_for_recovery took {elapsed:?} — a dead-but-lingering socket \
