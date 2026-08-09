@@ -370,3 +370,53 @@ fn a_fresh_connect_starts_without_a_stale_backend_session_id() {
     store.connect("s1");
     assert_eq!(store.get("s1").unwrap().backend_session_id, None);
 }
+
+#[test]
+fn session_lost_enters_the_terminal_session_lost_state() {
+    // #2512: when a resilient agent tab re-establishes its transport but the live
+    // agent session could not be recovered, `session_lost` folds a distinct
+    // terminal state — NOT a reconnect loop, NOT a silent new session. It carries
+    // the error, resets the loop to idle, and drops any stale re-attach id.
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_backend_session_id("tab-1", Some("backend-live".to_string()));
+    // Arm a reconnect loop, as a real drop would.
+    store.reconnect("tab-1");
+    assert_eq!(
+        store.get("tab-1").unwrap().status,
+        SessionStatus::Reconnecting
+    );
+
+    store.session_lost(
+        "tab-1",
+        Some("the live agent session could not be recovered".to_string()),
+    );
+
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(s.status, SessionStatus::SessionLost);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+    assert_eq!(s.end_reason, Some(EndReason::Unexpected));
+    assert_eq!(
+        s.error.as_deref(),
+        Some("the live agent session could not be recovered")
+    );
+    assert_eq!(
+        s.backend_session_id, None,
+        "the lost live session leaves no backend id to re-attach to"
+    );
+}
+
+#[test]
+fn session_lost_serializes_as_session_lost_for_the_frontend() {
+    // The frontend keys off the serialized status string; pin it so the renderer
+    // and this backend state stay in agreement (#2512).
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.session_lost("tab-1", Some("gone".to_string()));
+    let snapshot = store.snapshot();
+    assert_eq!(
+        snapshot["sessions"]["tab-1"]["status"],
+        serde_json::json!("sessionLost")
+    );
+}
