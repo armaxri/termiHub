@@ -91,6 +91,13 @@ const gaveUp = (error?: string): ProjectedSessionLifecycle => ({
   error,
 });
 
+const lost = (error?: string): ProjectedSessionLifecycle => ({
+  status: "sessionLost",
+  reconnect: { phase: "idle", attempt: 0, delayMs: 0 },
+  endReason: "unexpected",
+  error,
+});
+
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
 let transport: FakeTransport;
@@ -174,5 +181,24 @@ describe("waitForBackendAgentReconnectOutcome", () => {
   it("resolves canceled when the effect is torn down", async () => {
     const outcome = await waitForBackendAgentReconnectOutcome("tab-7", null, () => true);
     expect(outcome).toEqual({ kind: "canceled" });
+  });
+
+  it("reports session-lost when the live agent session is unrecoverable (#2512)", async () => {
+    const pending = waitForBackendAgentReconnectOutcome("tab-8", "agent-old", never);
+    await flush();
+    transport.setSession("tab-8", reconnecting()); // parking — no resolution yet
+    await flush();
+    transport.setSession("tab-8", lost("the live agent session could not be recovered"));
+    expect(await pending).toEqual({
+      kind: "sessionLost",
+      error: "the live agent session could not be recovered",
+    });
+  });
+
+  it("reports session-lost with no error when the region carries none (#2512)", async () => {
+    transport.setSession("tab-9", lost());
+    await flush();
+    const outcome = await waitForBackendAgentReconnectOutcome("tab-9", "agent-old", never);
+    expect(outcome).toEqual({ kind: "sessionLost", error: undefined });
   });
 });

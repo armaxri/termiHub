@@ -184,6 +184,21 @@ export function failed(
   return { status: "failed", reconnect: idleReconnect(), endReason, error };
 }
 
+/**
+ * A terminal `sessionLost` projected lifecycle (#2512): a resilient agent tab
+ * re-established its transport but the live agent session could not be recovered.
+ * Carries the backend "why" message; the reconnect loop is idle and there is no
+ * backend session id to re-attach to.
+ */
+export function sessionLost(error?: string): ProjectedSessionLifecycle {
+  return {
+    status: "sessionLost",
+    reconnect: idleReconnect(),
+    endReason: "unexpected",
+    ...(error !== undefined ? { error } : {}),
+  };
+}
+
 /** The idle reconnect detail (no loop active). */
 export function idleReconnect(): ProjectedReconnect {
   return { phase: "idle", attempt: 0, delayMs: 0 };
