@@ -75,6 +75,10 @@ struct FakeAgent {
     /// Whether a cold reconnect (reconnect_retained_agent) can re-establish.
     reattach_ok: AtomicBool,
     create_count: AtomicUsize,
+    /// Count of `attach_session` calls — the redrive's re-attach of the surviving
+    /// live session goes through here (via `reconnect_existing`), so this proves a
+    /// single reconnect performs exactly one re-attach and never double-attaches.
+    attach_count: AtomicUsize,
     /// The live agent session ids `create_session` minted, so `list_sessions` can
     /// report them as recoverable on reconnect (#2512).
     created_ids: Mutex<Vec<String>>,
@@ -92,6 +96,7 @@ impl FakeAgent {
             connected: AtomicBool::new(true),
             reattach_ok: AtomicBool::new(true),
             create_count: AtomicUsize::new(0),
+            attach_count: AtomicUsize::new(0),
             created_ids: Mutex::new(Vec::new()),
             session_recoverable: AtomicBool::new(true),
             senders: Mutex::new(Vec::new()),
@@ -159,6 +164,7 @@ impl AgentRpcClient for FakeAgent {
         _agent_id: &str,
         _remote_session_id: &str,
     ) -> Result<(), TerminalError> {
+        self.attach_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
     fn close_session(
@@ -416,6 +422,7 @@ fn agent_reconnect_resumes_after_transport_restore() {
     // Fire attempt 2: redrive re-establishes the transport and — since the live
     // agent session (`remote-0`) is still listed — RE-ATTACHES to it (#2512)
     // rather than minting a new one, publishing the new desktop session id.
+    let attaches_before = agent.attach_count.load(Ordering::SeqCst);
     scheduler.fire("tab-1");
     poll_until(
         || store.get("tab-1").map(|s| s.status) == Some(SessionStatus::Connected),
@@ -433,6 +440,12 @@ fn agent_reconnect_resumes_after_transport_restore() {
         1,
         "the live agent session is re-attached, NOT re-created — only the initial \
          create_session ran (#2512)"
+    );
+    assert_eq!(
+        agent.attach_count.load(Ordering::SeqCst) - attaches_before,
+        1,
+        "a single reconnect must perform exactly one re-attach of the live session \
+         (no double-attach)"
     );
 }
 
