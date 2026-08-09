@@ -44,7 +44,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::OnceLock;
@@ -1074,6 +1074,141 @@ impl AgentClient {
         self.set_read_timeout(Some(RPC_READ_TIMEOUT));
         false
     }
+
+    /// Accumulate `connection.output` and track the **highest** integer that
+    /// follows `prefix` (e.g. `TICK=` → the max `N` in `TICK=N`). Returns as soon
+    /// as `done(max)` is satisfied (with that max), or the running max seen when
+    /// `timeout` elapses, or `None` if no such counter was ever observed.
+    ///
+    /// Decoded output is appended to a single accumulator and re-parsed each round
+    /// so a counter split across two output notifications (PTY chunking, or a big
+    /// buffer replay arriving in pieces) is still recognised once both halves land.
+    fn track_counter(
+        &mut self,
+        prefix: &str,
+        timeout: Duration,
+        mut done: impl FnMut(u64) -> bool,
+    ) -> Option<u64> {
+        let deadline = Instant::now() + timeout;
+        self.set_read_timeout(Some(Duration::from_millis(100)));
+        let mut acc = String::new();
+        let mut max: Option<u64> = None;
+        while Instant::now() < deadline {
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if let Ok(msg) = serde_json::from_str::<Value>(trimmed) {
+                        if msg["method"] == "connection.output" {
+                            let b64 = msg["params"]["data"].as_str().unwrap_or("");
+                            let bytes = base64::engine::general_purpose::STANDARD
+                                .decode(b64)
+                                .unwrap_or_default();
+                            acc.push_str(&String::from_utf8_lossy(&bytes));
+                            for v in counters_in(&acc, prefix) {
+                                if max.is_none_or(|m| v > m) {
+                                    max = Some(v);
+                                }
+                            }
+                            if let Some(m) = max {
+                                if done(m) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    // per-read timeout — loop and re-check the overall deadline
+                }
+                Err(_) => break,
+            }
+        }
+        self.set_read_timeout(Some(RPC_READ_TIMEOUT));
+        max
+    }
+
+    /// Count how many times `needle` appears across all `connection.output`
+    /// delivered on this connection, reading until output goes quiet for `settle`
+    /// after the first sighting (an idle shell naturally stops emitting once its
+    /// buffer replay is delivered) or `overall` elapses. Occurrences are counted
+    /// over one accumulator so a needle split across notifications still counts
+    /// once, and only non-overlapping matches are counted.
+    fn count_output_occurrences(
+        &mut self,
+        needle: &str,
+        settle: Duration,
+        overall: Duration,
+    ) -> usize {
+        let deadline = Instant::now() + overall;
+        self.set_read_timeout(Some(Duration::from_millis(100)));
+        let mut acc = String::new();
+        let mut seen = false;
+        let mut last_data = Instant::now();
+        while Instant::now() < deadline {
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => break, // EOF
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if let Ok(msg) = serde_json::from_str::<Value>(trimmed) {
+                        if msg["method"] == "connection.output" {
+                            let b64 = msg["params"]["data"].as_str().unwrap_or("");
+                            let bytes = base64::engine::general_purpose::STANDARD
+                                .decode(b64)
+                                .unwrap_or_default();
+                            acc.push_str(&String::from_utf8_lossy(&bytes));
+                            last_data = Instant::now();
+                            if acc.contains(needle) {
+                                seen = true;
+                            }
+                        }
+                    }
+                }
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    // Once the token has arrived and output has been quiet for
+                    // `settle`, a duplicate replay would already have landed — stop.
+                    if seen && last_data.elapsed() >= settle {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        self.set_read_timeout(Some(RPC_READ_TIMEOUT));
+        acc.matches(needle).count()
+    }
+}
+
+/// Extract every unsigned integer that immediately follows `prefix` in `text`,
+/// in order of appearance. `counters_in("a TICK=1 b TICK=42", "TICK=")` →
+/// `[1, 42]`. A `prefix` occurrence not followed by a digit (e.g. the shell's
+/// echo of the literal loop command `echo TICK=$i`) contributes nothing.
+fn counters_in(text: &str, prefix: &str) -> Vec<u64> {
+    // `match_indices` yields each non-overlapping match start (a valid char
+    // boundary), and `idx + prefix.len()` is also a boundary because `prefix` is
+    // ASCII — so slicing here is always safe even though `text` carries ANSI
+    // escapes and multibyte prompt glyphs. Trailing digits are read via `chars()`.
+    text.match_indices(prefix)
+        .filter_map(|(idx, _)| {
+            let after = &text[idx + prefix.len()..];
+            let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+            digits.parse::<u64>().ok()
+        })
+        .collect()
 }
 
 // ── Shell session tests ───────────────────────────────────────────────────────
@@ -1612,6 +1747,87 @@ impl Drop for PersistentShellSetup {
     }
 }
 
+/// A **detached, `setsid`'d session daemon** plus its persisted `AgentState`,
+/// deliberately owned by the *test* rather than by any agent process. This is the
+/// scaffold for the cross-agent recovery tests: an agent spawned against
+/// [`Self::tmp_path`] recovers this daemon on startup (`recover_sessions()`), and
+/// killing that agent process never touches the daemon — exactly the invariant a
+/// faithful SSH-transport drop preserves (the daemon reparents to PID 1 and lives
+/// on). See [`fresh_agent_recovers_daemon_session_from_dead_prior_agent`], which
+/// this generalises.
+#[cfg(unix)]
+struct RecoverableDaemon {
+    _tmp: TempDir,
+    tmp_path: PathBuf,
+    daemon: Child,
+    /// Captured daemon stderr, kept alive for startup-failure diagnostics.
+    _daemon_stderr: NamedTempFile,
+    socket_path: PathBuf,
+    session_id: String,
+}
+
+#[cfg(unix)]
+impl RecoverableDaemon {
+    fn new() -> Self {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let tmp_path = tmp.path().to_path_buf();
+        let session_id = test_session_id();
+        let socket_path = tmp_path.join(format!("session-{session_id}.sock"));
+
+        let (mut daemon, daemon_stderr) = spawn_daemon_for_local_shell(&session_id, &socket_path);
+        wait_for_socket(
+            &mut daemon,
+            &socket_path,
+            daemon_stderr.path(),
+            ready_timeout(),
+        );
+
+        // Persist the daemon session so every agent started against this config dir
+        // recovers it on startup — the same record a persistent session's
+        // `connection.create` writes.
+        let state_dir = tmp_path.join("termihub-agent");
+        std::fs::create_dir_all(&state_dir).expect("create state dir");
+        let state_json = json!({
+            "sessions": {
+                &session_id: {
+                    "type_id": "local",
+                    "title": "reattach-mechanic-shell",
+                    "created_at": "2024-01-01T00:00:00+00:00",
+                    "daemon_socket": socket_path.to_str().expect("socket path not UTF-8"),
+                    "settings": {}
+                }
+            }
+        });
+        std::fs::write(state_dir.join("state.json"), state_json.to_string())
+            .expect("write state.json");
+
+        RecoverableDaemon {
+            _tmp: tmp,
+            tmp_path,
+            daemon,
+            _daemon_stderr: daemon_stderr,
+            socket_path,
+            session_id,
+        }
+    }
+
+    /// The daemon's socket still exists and its process has not exited — i.e. the
+    /// detached session genuinely survived whatever agent process was attached to
+    /// it. A `false` here is the #2508 drop-harness signature (the daemon reaped
+    /// with the agent).
+    fn alive(&mut self) -> bool {
+        self.socket_path.exists() && matches!(self.daemon.try_wait(), Ok(None))
+    }
+}
+
+#[cfg(unix)]
+impl Drop for RecoverableDaemon {
+    fn drop(&mut self) {
+        self.daemon.kill().ok();
+        self.daemon.wait().ok();
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 /// Verify that a persistent shell's ring buffer is replayed when `connection.attach`
@@ -1919,4 +2135,262 @@ fn fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
     // Explicitly reap the daemon (the test owns it; no scaffold Drop does it).
     daemon.kill().ok();
     daemon.wait().ok();
+}
+
+/// The recovered shell is the **same live process**, so in-memory shell state set
+/// before a reconnect survives it. A variable set under agent A must still be
+/// readable after agent A's process dies and a fresh agent B recovers the
+/// surviving daemon — the mechanic the live agent-reattach feature promises
+/// (#2512): the process (and its state) genuinely continues across the drop, it
+/// is not restarted.
+///
+/// The read-back token is composed so a false positive is impossible: agent A
+/// sets `MYVAR=hello123` (whose keystroke echo, replayed to agent B on attach,
+/// contains only the bare value), while agent B reads it via
+/// `echo VARWAS-${MYVAR}-END`. The composed string `VARWAS-hello123-END` can be
+/// produced **only** by the live shell expanding a still-set `MYVAR` — it never
+/// appears in the replayed keystroke echo of either command. If recovery had
+/// silently minted a fresh shell, `MYVAR` would be unset and the expansion would
+/// yield `VARWAS--END`, so the probe would never arrive.
+#[cfg(unix)]
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "flaky under Windows-runner oversubscription; see #2495"
+)]
+fn recovered_shell_preserves_environment_variable_across_agent_swap() {
+    let mut daemon = RecoverableDaemon::new();
+    let value = "hello123";
+
+    // ── Agent A: recover the daemon session, attach, set a shell variable ──────
+    {
+        let agent_a = IsolatedAgent::spawn(&daemon.tmp_path);
+        let mut client = AgentClient::connect(&agent_a.addr);
+        client.initialize();
+
+        let entry = client
+            .list_sessions()
+            .into_iter()
+            .find(|s| s["session_id"].as_str() == Some(daemon.session_id.as_str()))
+            .expect("agent A did not recover the daemon session from state.json");
+        assert_eq!(
+            entry["status"], "running",
+            "recovered session not running under agent A: {entry}"
+        );
+
+        let ar = client.attach(&daemon.session_id);
+        assert!(ar["result"].is_object(), "agent A attach failed: {ar}");
+
+        // Set the variable, then echo a readiness marker so we know the shell has
+        // executed the assignment before agent A's process is killed.
+        client.write_input(&daemon.session_id, &format!("MYVAR={value}\n"));
+        let ready = "termihub-varset-ready";
+        client.write_input(&daemon.session_id, &format!("echo {ready}\n"));
+        assert!(
+            client.wait_for_output(ready),
+            "agent A shell never echoed the readiness marker — the assignment may \
+             not have been applied before the drop"
+        );
+
+        // agent_a drops → its process is SIGKILL'd; the daemon (and the live shell
+        // holding MYVAR in memory) is untouched and keeps running.
+    }
+
+    assert!(
+        daemon.alive(),
+        "session daemon did not survive agent A's death — cannot exercise \
+         cross-agent state persistence (the #2508 drop-harness signature)"
+    );
+
+    // ── Agent B: a fresh process recovers the surviving shell and reads MYVAR ──
+    let agent_b = IsolatedAgent::spawn(&daemon.tmp_path);
+    let mut client = AgentClient::connect(&agent_b.addr);
+    client.initialize();
+
+    assert!(
+        client
+            .list_sessions()
+            .iter()
+            .any(|s| s["session_id"].as_str() == Some(daemon.session_id.as_str())),
+        "fresh agent B did not recover the original session {} — recovery fell \
+         back to a new shell instead of re-attaching the surviving daemon",
+        daemon.session_id
+    );
+
+    let ar = client.attach(&daemon.session_id);
+    assert!(ar["result"].is_object(), "agent B attach failed: {ar}");
+
+    // Read the variable back through a composed token that cannot be satisfied by
+    // the replayed keystroke echo — only by the live shell still holding MYVAR.
+    let probe = format!("VARWAS-{value}-END");
+    client.write_input(&daemon.session_id, "echo VARWAS-${MYVAR}-END\n");
+    assert!(
+        client.wait_for_output(&probe),
+        "'{probe}' never arrived — MYVAR did not survive the agent-process swap, \
+         so the recovered shell was NOT the same live process (it was restarted)"
+    );
+
+    client.close(&daemon.session_id);
+}
+
+/// The headline guarantee of live reattach: the shell **and its running work keep
+/// executing while nothing is attached**, then continue after recovery — it never
+/// pauses or restarts across the disconnect (#2512).
+///
+/// A self-incrementing loop (`TICK=$i`, +1 every 0.2 s) runs under agent A. Agent
+/// A's process is killed (the daemon + loop survive), and the test waits a bounded
+/// "disconnected" gap during which no agent is attached at all. A fresh agent B
+/// then recovers the session; because the loop kept running through the gap, its
+/// counter has advanced **strictly beyond** the last value seen before the drop —
+/// a restart would have reset it to 0, and a pause would have left it unchanged.
+/// After draining the replay, a further strictly-greater value proves the same
+/// live loop is still producing output post-recovery (not merely replaying old
+/// buffer). Both checks use bounded polling on the counter value, never fixed
+/// sleeps keyed to output timing, so they are deterministic under CI load.
+#[cfg(unix)]
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "flaky under Windows-runner oversubscription; see #2495"
+)]
+fn daemon_shell_keeps_running_during_disconnect_and_after_recovery() {
+    let mut daemon = RecoverableDaemon::new();
+    let prefix = "TICK=";
+
+    // ── Agent A: attach, start the self-incrementing loop, note its progress ───
+    let before;
+    {
+        let agent_a = IsolatedAgent::spawn(&daemon.tmp_path);
+        let mut client = AgentClient::connect(&agent_a.addr);
+        client.initialize();
+
+        let ar = client.attach(&daemon.session_id);
+        assert!(ar["result"].is_object(), "agent A attach failed: {ar}");
+
+        // A POSIX loop that emits a monotonically increasing counter forever. Its
+        // keystroke echo contains `TICK=$i` (no digit after `TICK=`), which
+        // `counters_in` ignores, so only executed output contributes counters.
+        client.write_input(
+            &daemon.session_id,
+            "i=0; while true; do echo TICK=$i; i=$((i+1)); sleep 0.2; done\n",
+        );
+
+        before = client
+            .track_counter(prefix, ready_timeout(), |m| m >= 3)
+            .expect("loop never produced TICK counters under agent A");
+        assert!(
+            before >= 3,
+            "loop not clearly running before the drop: before={before}"
+        );
+
+        // agent_a drops → process SIGKILL'd; the daemon + looping shell live on.
+    }
+
+    assert!(
+        daemon.alive(),
+        "session daemon did not survive agent A while the loop was running \
+         (the #2508 drop-harness signature)"
+    );
+
+    // Disconnected gap: NO agent is attached, yet the shell must keep ticking.
+    // ~0.2 s cadence over 1.5 s ⇒ several increments produced with nobody watching.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // ── Agent B: recover + attach; the replay must carry gap-produced ticks ────
+    let agent_b = IsolatedAgent::spawn(&daemon.tmp_path);
+    let mut client = AgentClient::connect(&agent_b.addr);
+    client.initialize();
+
+    let ar = client.attach(&daemon.session_id);
+    assert!(ar["result"].is_object(), "agent B attach failed: {ar}");
+
+    // Advanced ACROSS the disconnect: a counter strictly greater than the last
+    // pre-drop value proves the loop neither paused (would be unchanged) nor
+    // restarted (would reset to 0) while detached.
+    let after_gap = client
+        .track_counter(prefix, ready_timeout(), |m| m > before)
+        .expect("no TICK counters after recovery — the loop did not survive");
+    assert!(
+        after_gap > before,
+        "counter did not advance across the disconnect: before={before}, \
+         after_gap={after_gap} — the process paused or was restarted"
+    );
+
+    // Drain the (small, instantly-delivered) replay to catch up to the live head,
+    // then require a further strictly-greater value: that can come only from NEW
+    // output the still-running loop produces after recovery, not from the replay.
+    let base = client
+        .track_counter(prefix, Duration::from_millis(600), |_| false)
+        .expect("no output while draining the replay");
+    let after_live = client
+        .track_counter(prefix, ready_timeout(), |m| m > base)
+        .expect("counter stopped advancing after recovery");
+    assert!(
+        after_live > base,
+        "counter stopped advancing after recovery: base={base}, \
+         after_live={after_live} — the live process did not continue"
+    );
+
+    client.close(&daemon.session_id);
+}
+
+/// The recovered session's ring buffer must be replayed **exactly once** to a
+/// freshly-attached client — the agent layer must not duplicate it. This guards
+/// the layer directly beneath the frontend duplicate-render bug seen in live
+/// testing: if the double appears here, it is an agent bug; if the agent delivers
+/// exactly one copy, any user-visible duplication is above this layer (frontend).
+///
+/// A token that occurs exactly once in the buffer is produced via a variable so
+/// neither command's keystroke echo contains it: `M=<tag>` then `echo mark-${M}-end`
+/// yields the composed `mark-<tag>-end` only in the executed output. A *fresh* TCP
+/// connection then re-attaches (it never saw the live output), so every occurrence
+/// it receives comes from the replay — and there must be exactly one.
+#[cfg(unix)]
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "flaky under Windows-runner oversubscription; see #2495"
+)]
+fn recovered_session_buffer_replayed_exactly_once_on_reattach() {
+    let setup = PersistentShellSetup::new();
+    let tag = "REPLAYONCE-7f3a2b1c";
+    let composed = format!("mark-{tag}-end");
+
+    // ── Connection 1: attach, produce the token exactly once, TCP disconnect ───
+    {
+        let mut client = setup.connect_client();
+
+        let ar = client.attach(&setup.session_id);
+        assert!(ar["result"].is_object(), "first attach failed: {ar}");
+
+        client.write_input(&setup.session_id, &format!("M={tag}\n"));
+        client.write_input(&setup.session_id, "echo mark-${M}-end\n");
+        assert!(
+            client.wait_for_output(&composed),
+            "token '{composed}' not produced on the first connection — shell not \
+             responding"
+        );
+        // Drop: TCP closes → agent detaches; daemon keeps the shell + ring buffer.
+    }
+
+    // ── Connection 2: fresh TCP; the replay must deliver the token exactly once ─
+    let mut client = setup.connect_client();
+    let session_id = setup.session_id.clone();
+    assert!(
+        wait_until(|| client.session_detached(&session_id), ready_timeout()),
+        "session {session_id} not reported detached after TCP reconnect"
+    );
+
+    let ar = client.attach(&setup.session_id);
+    assert!(ar["result"].is_object(), "re-attach failed: {ar}");
+
+    let count =
+        client.count_output_occurrences(&composed, Duration::from_millis(800), ready_timeout());
+    assert_eq!(
+        count, 1,
+        "recovered buffer delivered '{composed}' {count} time(s) to a fresh \
+         client, expected exactly once — an agent-layer duplicate replay"
+    );
+
+    client.close(&setup.session_id);
 }
