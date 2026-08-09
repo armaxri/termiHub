@@ -1764,3 +1764,159 @@ fn persistent_shell_buffer_replayed_after_tcp_reconnect() {
         client.close(&setup.session_id);
     }
 }
+
+/// A **fresh agent process** must recover a session daemon spawned under a
+/// **prior, now-dead** agent process and re-attach the *original* session —
+/// not fall back to a brand-new one.
+///
+/// This is the headless analog of the live #2476 agent-reconnect recovery path,
+/// and the exact positive case that had no automated coverage and that failed in
+/// the live grade (because the drop harness was killing the detached daemon; see
+/// #2508). The real reconnect flow is:
+///
+///   1. an agent process is attached to a detached, `setsid`'d session daemon;
+///   2. the SSH transport drops and takes the agent process with it (its stdio
+///      hits EOF and it exits) — but the daemon, reparented to PID 1, survives;
+///   3. the reconnect stands up a *fresh* agent process against the same per-user
+///      state/socket dir, which calls `recover_sessions()` and re-attaches the
+///      surviving daemon, replaying its ring buffer.
+///
+/// The test reproduces that with an agent-process swap over a genuinely surviving
+/// daemon: agent A recovers the daemon session and writes a marker into it; agent
+/// A's **process** is then killed (like [`LocalAgent`]/[`IsolatedAgent`]'s `Drop`
+/// — leaving the separately-spawned daemon alive); a fresh agent B, pointed at the
+/// same config/state dir, must recover the **same** session id and replay the
+/// marker on re-attach. A regression that reaped the daemon with the agent (the
+/// #2508 drop-harness bug) fails here: agent B would find a dead endpoint, drop
+/// the session from state, and expose no session to re-attach.
+#[cfg(unix)]
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "flaky under Windows-runner oversubscription; see #2495"
+)]
+fn fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
+    // ── Shared, agent-independent state: a temp dir + a manually-spawned daemon.
+    // The daemon stands in for the detached, `setsid`'d session daemon that
+    // outlives any single agent process. Because it is spawned by the *test*
+    // (not a child of either agent), killing an agent process never touches it —
+    // exactly the invariant a faithful transport drop preserves.
+    let tmp = TempDir::new().expect("failed to create temp dir");
+    let tmp_path = tmp.path().to_path_buf();
+    let session_id = test_session_id();
+    let socket_path = tmp_path.join(format!("session-{session_id}.sock"));
+
+    let (mut daemon, daemon_stderr) = spawn_daemon_for_local_shell(&session_id, &socket_path);
+    wait_for_socket(
+        &mut daemon,
+        &socket_path,
+        daemon_stderr.path(),
+        ready_timeout(),
+    );
+
+    // Persist the daemon session so every agent that starts against this config
+    // dir recovers it on startup (`recover_sessions()`), the same record a real
+    // persistent session's `connection.create` writes.
+    let state_dir = tmp_path.join("termihub-agent");
+    std::fs::create_dir_all(&state_dir).expect("create state dir");
+    let state_json = json!({
+        "sessions": {
+            &session_id: {
+                "type_id": "local",
+                "title": "reconnect-recovery-shell",
+                "created_at": "2024-01-01T00:00:00+00:00",
+                "daemon_socket": socket_path.to_str().expect("socket path not UTF-8"),
+                "settings": {}
+            }
+        }
+    });
+    std::fs::write(state_dir.join("state.json"), state_json.to_string()).expect("write state.json");
+
+    let marker = "termihub-agent-swap-marker-2508";
+
+    // ── Agent A: recover the daemon session, attach, write a marker ───────────
+    {
+        let agent_a = IsolatedAgent::spawn(&tmp_path);
+        let mut client = AgentClient::connect(&agent_a.addr);
+        client.initialize();
+
+        // The session recovered from state must be present and match our id.
+        let entry = client
+            .list_sessions()
+            .into_iter()
+            .find(|s| s["session_id"].as_str() == Some(session_id.as_str()))
+            .expect("agent A did not recover the daemon session from state.json");
+        assert_eq!(
+            entry["status"], "running",
+            "recovered session not running under agent A: {entry}"
+        );
+
+        let ar = client.attach(&session_id);
+        assert!(ar["result"].is_object(), "agent A attach failed: {ar}");
+
+        let wr = client.write_input(&session_id, &format!("echo {marker}\n"));
+        assert!(wr["result"].is_object(), "agent A write failed: {wr}");
+        assert!(
+            client.wait_for_output(marker),
+            "agent A never saw its marker echoed — precondition (a live daemon \
+             session under the prior agent) not met"
+        );
+
+        // `agent_a` drops here: its process is killed (SIGKILL, as
+        // `IsolatedAgent::Drop` does), modelling the transport drop that takes
+        // the remote agent process with it. The separately-spawned daemon is
+        // untouched and stays alive.
+    }
+
+    // The daemon must have survived the agent process that was attached to it —
+    // otherwise this would not exercise the "fresh agent recovers a *surviving*
+    // daemon" case, and would instead be the #2508 false-failure it guards against.
+    assert!(
+        socket_path.exists() && matches!(daemon.try_wait(), Ok(None)),
+        "session daemon did not survive agent A's death — cannot exercise \
+         cross-agent recovery (this is the #2508 drop-harness bug's signature)"
+    );
+
+    // ── Agent B: a *fresh* process recovers the surviving daemon ──────────────
+    let agent_b = IsolatedAgent::spawn(&tmp_path);
+    let mut client = AgentClient::connect(&agent_b.addr);
+    client.initialize();
+
+    // Agent B must re-attach the ORIGINAL session, not create a new one: the
+    // recovered list must hold exactly the same id agent A used.
+    let sessions = client.list_sessions();
+    let recovered_ids: Vec<&str> = sessions
+        .iter()
+        .filter_map(|s| s["session_id"].as_str())
+        .collect();
+    assert!(
+        recovered_ids.contains(&session_id.as_str()),
+        "fresh agent B did not recover the original session {session_id} — \
+         recovery fell back to a new session instead of re-attaching the \
+         surviving daemon (the live 'stuck Reconnecting -> new shell' symptom); \
+         recovered ids: {recovered_ids:?}"
+    );
+    assert_eq!(
+        recovered_ids.len(),
+        1,
+        "expected exactly the one surviving session after cross-agent recovery, \
+         got {recovered_ids:?}"
+    );
+
+    // Re-attach over the fresh agent: the daemon replays its ring buffer, which
+    // must still contain the marker agent A wrote before it died — proving the
+    // ORIGINAL session state survived the agent-process swap.
+    let ar = client.attach(&session_id);
+    assert!(ar["result"].is_object(), "agent B re-attach failed: {ar}");
+    assert!(
+        client.wait_for_output(marker),
+        "buffer replay after cross-agent recovery did not contain '{marker}' — \
+         the fresh agent did not re-attach the original daemon session's state"
+    );
+
+    client.close(&session_id);
+
+    // Explicitly reap the daemon (the test owns it; no scaffold Drop does it).
+    daemon.kill().ok();
+    daemon.wait().ok();
+}

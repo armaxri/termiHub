@@ -4,10 +4,23 @@
 #
 # The dev agent is a loopback sshd on this checkout's `dev_agent_port` (from
 # dev.local.json), started by `scripts/dev.sh`. "Dropping" the transport means
-# killing that sshd — the master listener AND every established-connection child —
-# so an in-flight agent session is severed at once (killing only the listener
-# leaves the established connection alive; see tests' LocalAgentSshd.stop). With
-# the listener gone, backend reconnect attempts fail, which is exactly the
+# severing ONLY the SSH transport: kill the sshd master listener AND its
+# per-connection `sshd:` child handlers, but do NOT touch the `termihub-agent`
+# process or the detached session daemon it spawned. Killing sshd is enough — the
+# SSH channel closes, the agent's stdio hits EOF and it exits on its own, and the
+# `setsid`'d session daemon (reparented to PID 1) survives, exactly as it does in
+# a real transport drop. That surviving daemon is the whole point of the recovery
+# grade: on `restore`, the backend re-establishes the transport and the fresh
+# agent re-attaches it.
+#
+# This is deliberately NOT a recursive PPID-tree reap of the sshd master. At the
+# instant of the drop the agent's session daemon is still a PPID-child of the live
+# `termihub-agent` (setsid changed its session/pgroup, NOT its PPID), so a
+# descendants() walk would kill the daemon too — the #2508 bug that made recovery
+# find a dead socket and fall back to a NEW shell, a false failure that invalidated
+# the #2476 grade. `setsid` protects the daemon from sshd's SIGHUP-on-teardown, not
+# from an explicit PPID-tree kill, so the kill list is restricted to sshd processes.
+# With the listener gone, backend reconnect attempts fail, which is exactly the
 # prolonged outage that forces the backend park/retry loop under the
 # `sessionBackendReattach` flag.
 #
@@ -69,13 +82,42 @@ is_listening() {
 }
 
 # Every descendant PID of $1, depth-first (children before parents), so a kill
-# list reaps leaves first — mirrors LocalAgentSshd.stop's recursive reap.
+# list reaps leaves first.
 descendants() {
     local pid="$1" child
     for child in $(pgrep -P "$pid" 2>/dev/null || true); do
         descendants "$child"
         printf '%s\n' "$child"
     done
+}
+
+# The basename of a PID's executable command (empty if the process is gone).
+# `ps -o comm=` returns the exec path on macOS (`/usr/sbin/sshd`) and the process
+# name on Linux (`sshd`); the basename normalises both.
+comm_of() {
+    local comm
+    comm=$(ps -o comm= -p "$1" 2>/dev/null | awk 'NR==1{print $1}')
+    printf '%s' "${comm##*/}"
+}
+
+# The SSH-transport kill list for a running sshd master $1: the master itself
+# plus only those of its descendants whose command is `sshd` — i.e. the
+# per-connection `sshd:` handlers and their privsep children. Leaves first, then
+# the master last, so the reap unwinds children before parents.
+#
+# Crucially this EXCLUDES the `termihub-agent --stdio` process the SSH session
+# runs and the `setsid`'d session daemon that agent spawned: at drop time the
+# daemon is still a PPID-child of the live agent (setsid changed its
+# session/pgroup, not its PPID), so a full `descendants()` reap would kill it and
+# reproduce the #2508 false failure. Filtering to `sshd` severs only the
+# transport; the agent then EOFs and exits on its own, and the detached daemon
+# survives for the recovery grade.
+sshd_transport_pids() {
+    local master="$1" pid
+    for pid in $(descendants "$master"); do
+        [ "$(comm_of "$pid")" = "sshd" ] && printf '%s\n' "$pid"
+    done
+    printf '%s\n' "$master"
 }
 
 # The sshd config path of a running master: prefer its own argv (`-f <path>`),
@@ -113,10 +155,12 @@ do_drop() {
         printf 'sshd=%s\n' "$(find_sshd_binary)"
     } >"$STATE_FILE"
 
-    # Reap the master AND its per-connection children so the established agent
-    # transport is severed at once, not just the listener.
+    # Reap the sshd master AND its per-connection `sshd:` handlers so the
+    # established SSH transport is severed at once — but NOT the agent process or
+    # its detached session daemon (see sshd_transport_pids / #2508). The agent
+    # then EOFs and exits on its own; the setsid'd daemon survives for recovery.
     local victims
-    victims="$(descendants "$master") $master"
+    victims="$(sshd_transport_pids "$master" | tr '\n' ' ')"
     # shellcheck disable=SC2086 # word-splitting the PID list is intended.
     kill -TERM $victims 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
