@@ -217,6 +217,16 @@ class AppInstance:
         """Path of the file the app's stdout/stderr is captured to."""
         return self._log_path
 
+    @property
+    def pid(self) -> Optional[int]:
+        """OS pid of the launched app process, or ``None`` if not running.
+
+        Each launch (including a :meth:`restart`) logs a ``termiHub starting …
+        pid=<P>`` line to the durable file log, so a test can anchor its reads of
+        that shared, cross-instance log to *this* instance's pid.
+        """
+        return self._process.pid if self._process is not None else None
+
     def read_log(self) -> str:
         """The captured app log so far (empty string if nothing was captured)."""
         try:
