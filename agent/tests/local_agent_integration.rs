@@ -25,29 +25,55 @@
 //! child on every `initialize`, so N parallel agents oversubscribed the runner's
 //! few cores until the agent answered past even the generous deadline.
 //!
-//! The mitigation is contention control, applied by [`spawn_listener_process`] to
-//! every agent it spawns: `TERMIHUB_AGENT_WORKER_THREADS=2` caps each agent's
-//! runtime, and `TERMIHUB_AGENT_SKIP_DOCKER_PROBE=1` stops `initialize` from
-//! spawning a `docker info` child. Both are test-harness-only env opt-ins —
-//! production behavior (default `num_cpus` runtime, real Docker probe) is
-//! unchanged.
+//! The mitigation has three layers, all test-harness-only (production keeps the
+//! default `num_cpus` runtime and real Docker probe):
 //!
-//! These knobs **reduced but did not eliminate** the flake — the random 10060
-//! recurred on the Windows leg after the mitigations landed (#2501). Per the
-//! flake stop-condition, the `#[cfg_attr(windows, ignore … #2495)]` quarantine is
-//! therefore kept: these tests still run at full strength on ubuntu + macOS and
-//! only skip on the Windows leg, so the residual flake stops blocking unrelated
-//! PRs. The deep root-cause fix stays tracked in #2495; remove the attribute when
-//! it lands. Tests that do not drive a live agent over TCP (the raw-socket
-//! read-deadline test, the dead-process fast-fail, and the `--version` check) are
-//! unaffected and stay enabled everywhere.
+//! 1. **Per-process caps (#2501)**, applied by [`spawn_listener_process`]:
+//!    `TERMIHUB_AGENT_WORKER_THREADS=2` caps each agent's runtime and
+//!    `TERMIHUB_AGENT_SKIP_DOCKER_PROBE=1` stops `initialize` from spawning a
+//!    `docker info` child. These bound each *individual* agent.
+//! 2. **An aggregate concurrency gate (#2495, this change)** — see
+//!    [`AgentSlot`]/[`agent_slots`]. The per-process caps could not stop ~11
+//!    agents *cold-starting at once* from oversubscribing a few-core runner
+//!    (11 × 2 worker threads still swamp 2–4 cores). The gate is a process-global
+//!    counting semaphore acquired **before** each spawn and held for the agent's
+//!    lifetime, so at most [`max_concurrent_agents`] agents are alive/starting at
+//!    a time (Windows default 2; other platforms unbounded → no change to the
+//!    green lanes). Tune with `TERMIHUB_AGENT_TEST_MAX_CONCURRENT`.
+//! 3. **Phase-timing instrumentation (#2495, this change)** — the spawn path and
+//!    the response reads time the gate wait, the process cold-start, and the
+//!    first-RPC round-trip. A Windows-CI failure now names the slow phase in its
+//!    panic, and `TERMIHUB_TEST_TIMING=1` + `--nocapture` prints the full
+//!    distribution on a passing run so we can see how close the runner is to the
+//!    deadline. See [`log_timing`]/[`read_response_line`].
+//!
+//! The #2501 per-process caps **reduced but did not eliminate** the flake — the
+//! random 10060 recurred on the Windows leg after they landed. Per the flake
+//! stop-condition, the `#[cfg_attr(windows, ignore … #2495)]` quarantine is
+//! therefore **kept in this change too**: the aggregate gate is a candidate
+//! deeper fix that must be *graded on Windows before* the tests are re-enabled
+//! per-PR, so unrelated PRs stay unblocked meanwhile. To grade it, run the
+//! quarantined subset on a Windows runner, stress-looped:
+//!
+//! ```sh
+//! cargo test -p termihub-agent --test local_agent_integration -- \
+//!   --ignored --nocapture   # with TERMIHUB_TEST_TIMING=1 for the phase breakdown
+//! ```
+//!
+//! Un-quarantine (remove the attributes) only once that holds across many
+//! consecutive runs — 3 green is not enough for a chronic flake. The timing
+//! lines tell us whether the gate closed the gap (small gate_wait + small
+//! cold_start + fast first response) or whether a residual phase is still slow.
+//! Tests that do not drive a live agent over TCP (the raw-socket read-deadline
+//! test, the dead-process fast-fail, the `--version` check, and the gate's own
+//! unit tests) are unaffected and stay enabled everywhere.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -60,6 +86,189 @@ use termihub_core::monitoring::BackoffSchedule;
 
 fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_termihub-agent")
+}
+
+// ── Global agent-process concurrency gate (#2495, facet 3) ────────────────────
+//
+// The two transport facets were already fixed (#2492 connect-retry, #2494
+// read-deadline) and #2501 added *per-process* contention control
+// (`TERMIHUB_AGENT_WORKER_THREADS=2` + `TERMIHUB_AGENT_SKIP_DOCKER_PROBE=1`).
+// Those reduced but did **not** eliminate the residual Windows-CI flake
+// (`Os { code: 10060, kind: TimedOut }`), because they bound only *each* agent,
+// not the *aggregate*: cargo runs ~11 of these tests in parallel and each spawns
+// a full `termihub-agent` process, so on a 2–4-core Windows runner ~11 agents
+// cold-start at once and oversubscribe every core until an agent answers past
+// even the generous 60s deadline. The decisive evidence is that
+// `agent_handles_multiple_sequential_connections` creates **no shell** (pure
+// connect→initialize→disconnect) yet still ran >60s on Windows — ruling out every
+// shell/ConPTY/spawn-cost hypothesis and pointing squarely at scheduler
+// starvation from too many concurrent agent processes.
+//
+// This gate bounds that aggregate directly with a process-global counting
+// semaphore: at most [`max_concurrent_agents`] agent processes are alive (and,
+// crucially, *cold-starting*) at any moment. It is acquired **before** the spawn
+// in [`spawn_ready_listener`] and held for the whole life of the agent process
+// (stored in [`LocalAgent`]), so it caps both concurrent starts — where the CPU
+// spike is — and concurrent live agents. On non-Windows platforms the default is
+// unbounded, so the green ubuntu/macOS lanes stay fully parallel with no
+// behavior change; the only cost there is one mutex lock/unlock per spawn.
+
+/// Env override for the maximum number of concurrently-live agent processes.
+///
+/// A positive integer caps the [`agent_slots`] semaphore to that many permits;
+/// absent/empty/non-numeric/zero falls back to [`DEFAULT_MAX_CONCURRENT`]. Lets
+/// CI (or a local repro) tune the cap — or force one on a normally-unbounded
+/// platform to grade the gate — without a code change.
+const MAX_CONCURRENT_ENV: &str = "TERMIHUB_AGENT_TEST_MAX_CONCURRENT";
+
+/// Default cap on concurrently-live agent processes.
+///
+/// Windows caps low (the leg that flaked under aggregate oversubscription);
+/// every other platform is effectively unbounded — they never exhibited the
+/// flake and stay fully parallel, so there is no throughput regression there.
+#[cfg(windows)]
+const DEFAULT_MAX_CONCURRENT: usize = 2;
+#[cfg(not(windows))]
+const DEFAULT_MAX_CONCURRENT: usize = usize::MAX;
+
+/// Parse a concurrency cap, falling back to `default` for
+/// absent/empty/non-numeric/zero. Split out so it is unit-testable without the
+/// process env (see [`max_concurrent_parses_*`]).
+fn parse_max_concurrent(raw: Option<String>, default: usize) -> usize {
+    raw.and_then(|v| v.trim().parse::<usize>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(default)
+}
+
+/// Resolve the concurrency cap from the env override, falling back to the
+/// platform default.
+fn max_concurrent_agents() -> usize {
+    parse_max_concurrent(
+        std::env::var(MAX_CONCURRENT_ENV).ok(),
+        DEFAULT_MAX_CONCURRENT,
+    )
+}
+
+/// A tiny std-only counting semaphore gating concurrently-live agent processes.
+struct AgentSlots {
+    available: Mutex<usize>,
+    slot_freed: Condvar,
+}
+
+impl AgentSlots {
+    fn with_permits(permits: usize) -> Self {
+        AgentSlots {
+            available: Mutex::new(permits),
+            slot_freed: Condvar::new(),
+        }
+    }
+
+    /// Block until a permit is free, then take it.
+    fn take(&self) {
+        let mut available = self.available.lock().expect("agent-slots mutex poisoned");
+        while *available == 0 {
+            available = self
+                .slot_freed
+                .wait(available)
+                .expect("agent-slots mutex poisoned");
+        }
+        *available -= 1;
+    }
+
+    /// Return a permit and wake one waiter.
+    fn give(&self) {
+        let mut available = self.available.lock().expect("agent-slots mutex poisoned");
+        *available += 1;
+        // A single returned permit only unblocks one acquirer.
+        self.slot_freed.notify_one();
+    }
+}
+
+/// The process-global agent-process concurrency gate, sized once on first use.
+fn agent_slots() -> &'static AgentSlots {
+    static SLOTS: OnceLock<AgentSlots> = OnceLock::new();
+    SLOTS.get_or_init(|| AgentSlots::with_permits(max_concurrent_agents()))
+}
+
+/// RAII permit for one live agent process; returns its slot to the gate on drop.
+///
+/// Held for the entire lifetime of the agent process (a field of [`LocalAgent`]),
+/// so a slot is only released once that process has been killed and reaped.
+struct AgentSlot;
+
+impl AgentSlot {
+    /// Block until a slot is free, then take it. Returns immediately (after one
+    /// mutex round-trip) whenever the cap is not saturated — the common case, and
+    /// always the case on the effectively-unbounded non-Windows default.
+    fn acquire() -> Self {
+        agent_slots().take();
+        AgentSlot
+    }
+}
+
+impl Drop for AgentSlot {
+    fn drop(&mut self) {
+        agent_slots().give();
+    }
+}
+
+// ── Phase-timing instrumentation (#2495, facet 3) ─────────────────────────────
+//
+// Facet 3 is "the agent is genuinely slow to respond on the loaded Windows
+// runner" — but *which phase* is slow was never measured: the gate wait, the
+// process cold-start (spawn→accept-loop-live), or the first RPC round-trip. This
+// instrumentation times each phase so a Windows-CI failure is self-diagnosing
+// (the panic names the phase and its elapsed time) and, under
+// `TERMIHUB_TEST_TIMING=1` + `--nocapture`, a *passing* run prints the full
+// distribution so we can see how close the runner is to the deadline even when
+// it does not flake. It changes no assertion — it only enriches diagnostics.
+
+/// Whether per-phase timing lines should be emitted (`TERMIHUB_TEST_TIMING=1`).
+fn timing_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| {
+        matches!(
+            std::env::var("TERMIHUB_TEST_TIMING").ok().as_deref(),
+            Some("1") | Some("true") | Some("yes")
+        )
+    })
+}
+
+/// Emit one timing line to stderr when [`timing_enabled`].
+///
+/// libtest captures a passing test's output, so these surface only with
+/// `cargo test … -- --nocapture` (the grading invocation); a *failing* test's
+/// captured output is shown regardless, and the timing is also folded into the
+/// failure panics directly, so a flake is diagnosable without `--nocapture`.
+fn log_timing(args: std::fmt::Arguments) {
+    if timing_enabled() {
+        eprintln!("[termihub-test-timing] {args}");
+    }
+}
+
+/// Read one response line, timing it and attributing a stall to a named call.
+///
+/// Replaces a bare `read_line_until_deadline(...).expect("read_line failed")`:
+/// on the bounded-deadline expiry it panics with the call label and how long it
+/// waited, so a Windows-CI 10060 says *first-response-slow for `initialize`*
+/// rather than an opaque "read_line failed" — the exact signal facet 3 needs to
+/// separate a slow first response from a slow spawn. The read still fails a
+/// genuinely non-responding agent once the deadline elapses (unchanged).
+fn read_response_line(reader: &mut BufReader<TcpStream>, line: &mut String, label: &str) {
+    let start = Instant::now();
+    let result = read_line_until_deadline(reader, line, read_deadline());
+    let elapsed = start.elapsed();
+    log_timing(format_args!(
+        "response[{label}] elapsed={elapsed:?} ok={}",
+        result.is_ok()
+    ));
+    if let Err(e) = result {
+        panic!(
+            "no agent response for {label:?} within {:?} (waited {elapsed:?}) — agent \
+             slow-to-respond on this runner (#2495 facet 3): {e}",
+            ready_timeout()
+        );
+    }
 }
 
 /// Read timeout for a single `initialize` / `connection.list` RPC round-trip.
@@ -102,6 +311,12 @@ struct LocalAgent {
     /// Captured agent stderr, kept alive so `wait_for_agent_ready` can surface
     /// it in a panic if startup fails.
     _stderr: NamedTempFile,
+    /// Concurrency-gate permit for this live agent process (#2495). Held for the
+    /// whole process lifetime and returned to [`agent_slots`] on drop — after the
+    /// explicit [`Drop`] below has killed and reaped the process (fields drop
+    /// after the impl body runs), so a freed slot always corresponds to a
+    /// genuinely gone agent.
+    _slot: AgentSlot,
 }
 
 impl LocalAgent {
@@ -120,13 +335,14 @@ impl LocalAgent {
         // process into shared state and letting parallel checkouts fight over one
         // registry. See [`registry_endpoint_in`].
         let registry_endpoint = registry_endpoint_in(config_dir.path(), "reg");
-        let (process, addr, stderr) =
+        let (process, addr, stderr, slot) =
             spawn_ready_listener(config_dir.path(), &registry_endpoint, None);
         LocalAgent {
             process,
             addr,
             _config_dir: config_dir,
             _stderr: stderr,
+            _slot: slot,
         }
     }
 
@@ -138,13 +354,14 @@ impl LocalAgent {
     /// `termihub-agent --stdio` while the host-wide registry survives the swap.
     fn spawn_with_registry(registry_endpoint: &str) -> Self {
         let config_dir = TempDir::new().expect("failed to create temp config dir");
-        let (process, addr, stderr) =
+        let (process, addr, stderr, slot) =
             spawn_ready_listener(config_dir.path(), registry_endpoint, None);
         LocalAgent {
             process,
             addr,
             _config_dir: config_dir,
             _stderr: stderr,
+            _slot: slot,
         }
     }
 }
@@ -469,30 +686,56 @@ fn spawn_ready_listener(
     config_home: &Path,
     registry_endpoint: &str,
     rust_log: Option<&str>,
-) -> (Child, String, NamedTempFile) {
+) -> (Child, String, NamedTempFile, AgentSlot) {
+    // Acquire the concurrency-gate permit BEFORE spawning so the CPU-heavy cold
+    // start is what the gate bounds, not just the idle steady state (#2495). The
+    // wait is timed: on Windows CI the gate wait is the direct measure of how
+    // oversubscribed the runner is.
+    let gate_started = Instant::now();
+    let slot = AgentSlot::acquire();
+    let gate_wait = gate_started.elapsed();
+
     let mut last_diag = String::new();
     for attempt in 1..=MAX_SPAWN_ATTEMPTS {
         let port = unique_agent_port();
         let addr = format!("127.0.0.1:{port}");
+        let spawn_started = Instant::now();
         let (mut child, stderr) =
             spawn_listener_process(&addr, config_home, registry_endpoint, rust_log);
         match wait_for_agent_ready(&mut child, &addr, stderr.path(), ready_timeout()) {
-            Ok(()) => return (child, addr, stderr),
+            Ok(()) => {
+                log_timing(format_args!(
+                    "spawn[{addr}] gate_wait={gate_wait:?} cold_start={:?} attempts={attempt}",
+                    spawn_started.elapsed()
+                ));
+                return (child, addr, stderr, slot);
+            }
             Err(ReadyError::ProcessExited(diag)) => {
                 child.kill().ok();
                 child.wait().ok();
                 last_diag = format!("attempt {attempt}/{MAX_SPAWN_ATTEMPTS}: {diag}");
             }
             Err(ReadyError::Timeout(diag)) => {
+                let cold_start = spawn_started.elapsed();
                 child.kill().ok();
                 child.wait().ok();
-                panic!("{diag}");
+                // Attribute the stall: a large `cold_start` with a small
+                // `gate_wait` means the agent process itself was slow to bring
+                // its accept loop up (facet 3, spawn side); a large `gate_wait`
+                // means the runner was saturated by other agents (the gate is
+                // working but the cap is still too high for this runner).
+                panic!(
+                    "{diag}\n--- #2495 spawn timing --- gate_wait={gate_wait:?}, \
+                     cold_start={cold_start:?} before the ready deadline, attempt \
+                     {attempt}/{MAX_SPAWN_ATTEMPTS}, concurrency_cap={}",
+                    max_concurrent_agents()
+                );
             }
         }
     }
     panic!(
         "agent listener failed to become ready after {MAX_SPAWN_ATTEMPTS} attempts \
-         (each exited during startup) — {last_diag}"
+         (each exited during startup) — {last_diag} (#2495 gate_wait={gate_wait:?})"
     );
 }
 
@@ -669,8 +912,13 @@ fn rpc(stream: &mut TcpStream, msg: &str) -> String {
 
     let mut reader = BufReader::new(stream.try_clone().expect("clone failed"));
     let mut response = String::new();
-    read_line_until_deadline(&mut reader, &mut response, read_deadline())
-        .expect("read_line failed");
+    // Label the read with the request method so a slow first response is
+    // attributed to the right call in a Windows-CI failure (#2495 facet 3).
+    let label = serde_json::from_str::<Value>(msg)
+        .ok()
+        .and_then(|v| v.get("method").and_then(|m| m.as_str()).map(str::to_owned))
+        .unwrap_or_else(|| "rpc".to_string());
+    read_response_line(&mut reader, &mut response, &label);
     response.trim().to_string()
 }
 
@@ -752,6 +1000,79 @@ fn wait_for_agent_ready_reports_dead_process_fast() {
         elapsed < Duration::from_secs(5),
         "readiness wait must fail fast, not wait out the timeout — took {elapsed:?}"
     );
+}
+
+// ── Concurrency-gate unit tests (#2495) ──────────────────────────────────────
+
+/// The env parser accepts a positive integer and rejects everything else
+/// (falling back to the platform default), so an absent/garbage override never
+/// silently disables the gate or panics.
+#[test]
+fn max_concurrent_parses_positive_and_falls_back_otherwise() {
+    assert_eq!(parse_max_concurrent(Some("3".to_string()), 99), 3);
+    assert_eq!(
+        parse_max_concurrent(Some("  4 ".to_string()), 99),
+        4,
+        "surrounding whitespace is tolerated"
+    );
+    // Absent / empty / non-numeric / zero all mean "use the default".
+    assert_eq!(parse_max_concurrent(None, 99), 99);
+    assert_eq!(parse_max_concurrent(Some(String::new()), 99), 99);
+    assert_eq!(parse_max_concurrent(Some("nope".to_string()), 99), 99);
+    assert_eq!(
+        parse_max_concurrent(Some("0".to_string()), 99),
+        99,
+        "zero is meaningless as a cap — fall back rather than deadlock"
+    );
+}
+
+/// The counting semaphore blocks a would-be third holder while two permits are
+/// out, and hands the slot on the instant one is returned — proving the gate
+/// bounds concurrency without deadlocking or dropping a permit. Runs on every
+/// platform against a *local* `AgentSlots`, so it exercises the primitive that
+/// backs the global gate without touching the process-wide `OnceLock`.
+#[test]
+fn agent_slots_bounds_concurrency_and_hands_off() {
+    use std::sync::Arc;
+
+    let slots = Arc::new(AgentSlots::with_permits(2));
+    // Take both permits: the gate is now saturated.
+    slots.take();
+    slots.take();
+
+    // A third acquirer must block until a permit is returned.
+    let acquired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let waiter = {
+        let slots = Arc::clone(&slots);
+        let acquired = Arc::clone(&acquired);
+        std::thread::spawn(move || {
+            slots.take();
+            acquired.store(true, Ordering::SeqCst);
+        })
+    };
+
+    // Give the waiter a moment; it must still be blocked (no permit free).
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(
+        !acquired.load(Ordering::SeqCst),
+        "third acquirer must block while both permits are out"
+    );
+
+    // Return one permit → the waiter must proceed promptly.
+    slots.give();
+    let started = Instant::now();
+    while !acquired.load(Ordering::SeqCst) && started.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(
+        acquired.load(Ordering::SeqCst),
+        "waiter must acquire the freed permit within the timeout"
+    );
+    waiter.join().expect("waiter thread panicked");
+
+    // Balance the books so no permit is leaked (two still held by this test).
+    slots.give();
+    slots.give();
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -916,10 +1237,9 @@ impl AgentClient {
     /// Windows-CI response — the reconnect/replay read is the slowest — does not
     /// 10060 the test on a single `SO_RCVTIMEO` expiry (#2493), while a genuinely
     /// stalled agent still fails once the deadline elapses.
-    fn read_one(&mut self) -> Value {
+    fn read_one(&mut self, label: &str) -> Value {
         let mut line = String::new();
-        read_line_until_deadline(&mut self.reader, &mut line, read_deadline())
-            .expect("read_line failed");
+        read_response_line(&mut self.reader, &mut line, label);
         serde_json::from_str(line.trim()).expect("invalid JSON from agent")
     }
 
@@ -939,7 +1259,7 @@ impl AgentClient {
         });
         self.send(&req.to_string());
         loop {
-            let msg = self.read_one();
+            let msg = self.read_one(method);
             if msg.get("id").is_some() {
                 return msg;
             }
@@ -1634,6 +1954,9 @@ struct IsolatedAgent {
     pub addr: String,
     /// Captured agent stderr, kept alive for startup-failure diagnostics.
     _stderr: NamedTempFile,
+    /// Concurrency-gate permit for this live agent process (#2495), released on
+    /// drop after the process is reaped.
+    _slot: AgentSlot,
 }
 
 #[cfg(unix)]
@@ -1642,12 +1965,13 @@ impl IsolatedAgent {
         // spawn_ready_listener waits until the accept loop is idle (after
         // recover_sessions() finishes) and retries on a port collision.
         let registry_endpoint = registry_endpoint_in(xdg_home, "reg");
-        let (process, addr, stderr) =
+        let (process, addr, stderr, slot) =
             spawn_ready_listener(xdg_home, &registry_endpoint, Some("warn"));
         IsolatedAgent {
             process,
             addr,
             _stderr: stderr,
+            _slot: slot,
         }
     }
 }
