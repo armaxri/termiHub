@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# TURNKEY manual test for the #2476 backend-driven agent-reconnect grade.
+# TURNKEY manual test for the #2476 backend-driven agent-reconnect grade,
+# extended (#2529) to grade #2512's headline: a RUNNING process survives the
+# transport drop and is CONTINUED (same live shell) on reattach — not recreated.
 #
 # ONE command, zero setup. It:
 #   1. Enables experimental features in the app's settings.json (so the dev
@@ -111,10 +113,13 @@ trap cleanup EXIT
 seed_experimental_features
 rm -f "$STATE_FILE" 2>/dev/null || true
 
+# SC2257: the `i++` below is literal text inside this operator-facing heredoc
+# (a command for the human to type into the app's shell tab), not executed here.
+# shellcheck disable=SC2257
 cat <<CHECKLIST
 
 ============================================================================
-  AGENT RECONNECT — TURNKEY MANUAL TEST (#2476)   flag: sessionBackendReattach ON
+  AGENT RECONNECT — TURNKEY MANUAL TEST (#2476/#2512)   flag: sessionBackendReattach ON
 ============================================================================
 
 The app is about to launch (first run BUILDS — this can take a few minutes).
@@ -143,23 +148,42 @@ FOLLOW THESE STEPS (each line states the expected result):
       echo hello
    EXPECT: a live shell that prints "hello".
 
-4. In the SECOND terminal run:  $TRANSPORT drop
+4. THE #2512 HEADLINE — start a long-running process in that SAME tab so we can
+   prove it survives the outage. Type (a 1 Hz counter that never stops):
+      i=0; while true; do echo $((i++)); sleep 1; done
+   EXPECT: the tab prints a new number every second (0, 1, 2, ...). Let it run.
+   Note roughly which number it has reached, then leave it counting.
+
+5. In the SECOND terminal run:  $TRANSPORT drop
    EXPECT: within a few seconds the agent tab shows "Reconnecting..." (it must
-   NOT close, exit, or vanish — the terminal stays, backend-driven).
+   NOT close, exit, or vanish — the terminal stays, backend-driven). The visible
+   counter stops updating on screen while the transport is severed.
 
-5. Wait ~30s (let the backend park + retry a prolonged outage), then run:
+6. Wait ~30s (let the backend park + retry a prolonged outage, and let the
+   counter advance by ~30 while you are disconnected), then run:
       $TRANSPORT restore
-   EXPECT: the agent reconnects BACKEND-DRIVEN and the SAME shell tab re-attaches
-   to a fresh backend session. Type:  echo hello2
-   -> it prints "hello2". No duplicate tab, no second connection.
+   EXPECT (the #2512 PASS criterion): the agent reconnects BACKEND-DRIVEN and the
+   SAME shell tab CONTINUES the SAME live process — it does NOT start a fresh
+   shell. Concretely: the numbers that elapsed DURING the outage replay (the
+   buffered output catches up), the count is now WELL ABOVE where it was at the
+   drop (it did NOT restart from 0), and counting then continues live, +1/sec.
+   There is NO new/duplicate tab and NO second connection. A count that restarts
+   at 0, a dead/empty tab, or a second tab is a FAIL (that would be a recreated
+   shell, not the continued live session).
 
-6. PERMANENT-DROP case: run  $TRANSPORT drop  again and DO NOT restore.
+7. Confirm the reattached shell is fully interactive: press Ctrl-C to stop the
+   counter, then type:  echo hello2
+   EXPECT: the counter stops and "hello2" prints in the SAME tab.
+
+8. PERMANENT-DROP case: run  $TRANSPORT drop  again and DO NOT restore.
    EXPECT: after the backend gives up retrying, the agent/tab settles
    "Disconnected" (it must not spin forever and must not be left stranded).
 
-Done: PASS = steps 5 (reattach live, no double-connect) and 6 (clean
-Disconnected) both hold. Close the window / press Ctrl-C here to tear down
-(the dev agent sshd is stopped automatically).
+Done: PASS = step 6 (the running counter survives the outage and CONTINUES in
+the same live shell — no restart-from-0, no duplicate tab), step 7 (reattached
+shell is interactive), and step 8 (clean Disconnected) all hold. Close the
+window / press Ctrl-C here to tear down (the dev agent sshd is stopped
+automatically).
 ============================================================================
 
 CHECKLIST
