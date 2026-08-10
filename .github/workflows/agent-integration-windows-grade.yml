@@ -1,0 +1,135 @@
+name: Agent Integration Windows Grade (#2495)
+
+# Manually-triggered grading harness for the chronically-flaky Windows
+# agent-integration lane (#2495).
+#
+# The 15 live-agent-TCP tests in `agent/tests/local_agent_integration.rs` flaked
+# only on the Windows CI leg (`Os { code: 10060, kind: TimedOut }`, a *random*
+# test each run) because many agent processes cold-started at once and
+# oversubscribed the runner's few cores. They are therefore quarantined on
+# Windows via `#[cfg_attr(windows, ignore … #2495)]`, so per-PR CI no longer runs
+# them there and can no longer re-flake — but that also means we can no longer
+# *see* whether the candidate deeper fix (the aggregate cold-start concurrency
+# gate, #2528/#2501) actually closed the gap on a real Windows runner.
+#
+# This workflow is that missing feedback loop. It runs ONLY the quarantined
+# subset (`-- --ignored`), on `windows-latest`, in cargo's normal parallel mode
+# (so the aggregate gate is genuinely exercised), with `TERMIHUB_TEST_TIMING=1`
+# so a *passing* run prints the per-phase distribution (gate-wait / cold-start /
+# first-response) and a failing run's panic names the slow phase. It loops the
+# subset `runs` times (default 3) so flakiness and the timing spread are visible
+# across consecutive runs in a single job log.
+#
+# It is `workflow_dispatch`-ONLY — it never runs on push or pull_request — so it
+# grades the quarantine without ever re-introducing the flake into normal CI.
+#
+# How to trigger:
+#   gh workflow run agent-integration-windows-grade.yml -f runs=5
+#   # optional: -f max_concurrent=3   (tune the cold-start gate; empty = default)
+#
+# How to read the result:
+#   * Green across ALL iterations, with small gate-wait + small cold-start +
+#     fast first-response in the `[termihub-test-timing]` lines ⇒ the #2528 gate
+#     resolved the Windows slowness. A trivial follow-up then removes the
+#     `#[cfg_attr(windows, ignore …)]` attributes and closes #2495. Per the
+#     chronic-flake bar, require MANY consecutive green iterations (3 is not
+#     enough) before un-quarantining — run this with a high `runs` a few times.
+#   * A red iteration ⇒ still flaky: the panic (and the timing lines) localize
+#     the residual slow phase for the next fix. #2495 stays open.
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: "How many times to loop the quarantined subset (flakiness surfaces across consecutive runs)"
+        required: false
+        default: "3"
+      max_concurrent:
+        description: "Override TERMIHUB_AGENT_TEST_MAX_CONCURRENT (cold-start gate size). Empty = platform default (Windows = 2)."
+        required: false
+        default: ""
+
+# A grade run is self-contained; cancel an in-flight run when a newer manual
+# dispatch starts on the same ref.
+concurrency:
+  group: agent-integration-windows-grade-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  grade:
+    name: Grade quarantined agent-integration tests (windows-latest)
+    runs-on: windows-latest
+    # Looped live-agent spawns on a loaded runner are slow by construction; a
+    # generous ceiling keeps a genuinely wedged agent from hanging forever while
+    # still allowing a high `runs` count.
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Restore the same Windows cache the Agent workflow's build-windows job
+          # warms, so a grade starts hot. This is a manual, throwaway lane — it
+          # must never write its own cache against the budget, hence save-if:false.
+          key: x86_64-pc-windows-msvc
+          save-if: false
+
+      # Compile the test binary up front so build time is excluded from the
+      # per-iteration timing below (the loop then only measures test execution).
+      - name: Build agent-integration test binary
+        run: cargo test -p termihub-agent --test local_agent_integration --no-run
+
+      # Loop the quarantined subset `runs` times. `-- --ignored` selects ONLY the
+      # `#[ignore]`-quarantined tests (on Windows that is exactly the 15
+      # live-agent-TCP tests #2495 tracks); `--nocapture` surfaces the
+      # `[termihub-test-timing]` phase lines that `TERMIHUB_TEST_TIMING=1` emits
+      # even on a passing run. Cargo's default parallelism is kept so the
+      # aggregate cold-start gate is actually exercised. Iterations continue past
+      # a failure so the full flakiness/timing distribution is visible; the job
+      # then fails if any iteration failed.
+      - name: Grade (loop --ignored subset with timing)
+        shell: pwsh
+        env:
+          TERMIHUB_TEST_TIMING: "1"
+          RUNS: ${{ github.event.inputs.runs }}
+          MAX_CONCURRENT: ${{ github.event.inputs.max_concurrent }}
+        run: |
+          $runs = [int]$env:RUNS
+          if ($runs -lt 1) { $runs = 1 }
+          if ($env:MAX_CONCURRENT -ne '') {
+            $env:TERMIHUB_AGENT_TEST_MAX_CONCURRENT = $env:MAX_CONCURRENT
+            Write-Host "Cold-start gate override: TERMIHUB_AGENT_TEST_MAX_CONCURRENT=$($env:MAX_CONCURRENT)"
+          } else {
+            Write-Host "Cold-start gate: platform default (Windows = 2)"
+          }
+          $failed = 0
+          for ($i = 1; $i -le $runs; $i++) {
+            Write-Host "::group::grade iteration $i of $runs"
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            cargo test -p termihub-agent --test local_agent_integration -- --ignored --nocapture
+            $code = $LASTEXITCODE
+            $sw.Stop()
+            $secs = [math]::Round($sw.Elapsed.TotalSeconds, 1)
+            if ($code -ne 0) {
+              $failed++
+              Write-Host "iteration ${i}: FAIL (cargo exit $code) after ${secs}s"
+            } else {
+              Write-Host "iteration ${i}: PASS after ${secs}s"
+            }
+            Write-Host "::endgroup::"
+          }
+          $passed = $runs - $failed
+          Write-Host "=== grade summary: $passed/$runs iterations PASSED (see [termihub-test-timing] lines for phase breakdown) ==="
+          if ($failed -gt 0) {
+            Write-Host "Result: STILL FLAKY on Windows — #2495 stays open; the panics/timing above localize the residual phase."
+            exit 1
+          }
+          Write-Host "Result: all $runs iterations green. Re-run with a higher 'runs' a few times; once consistently green, a follow-up removes the Windows #[ignore] attrs and closes #2495."
