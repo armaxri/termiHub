@@ -6,11 +6,13 @@ app reaches agents only over SSH, so this suite stands up a throwaway loopback
 ``sshd`` with the ``termihub-agent`` binary reachable (:class:`LocalAgentSshd`,
 the test-owned equivalent of ``scripts/dev.sh``'s dev agent), points a key-auth
 agent connection at it, opens a shell session, then **kills the sshd** to sever
-the transport — a genuine, prolonged drop the harness fully controls — before
-bringing it back.
+the transport — a genuine transport drop the harness fully controls — before
+bringing it back promptly (the agent_manager retries the transport with
+exponential backoff, so the sshd is restored early, right after the drop
+surfaces, for a retry to reconnect fast).
 
 **Why this suite is log-based (supersedes the bridge-poll approach of #2520).**
-During the prolonged agent reconnect the WKWebView occlusion-throttles, so a
+During the agent reconnect the WKWebView occlusion-throttles, so a
 bridge poll of the frontend state (``projection_state`` / ``get_state`` /
 terminal reads) times out — ``command timed out after 60s`` — even though the app
 reconnects fine. The app's **backend log is written by Rust and is immune to that
@@ -23,8 +25,8 @@ The log markers this asserts on (grounded in the running binaries):
 
 * Desktop (``agent_manager``): ``connection lost, attempting reconnect`` on the
   drop; ``initialize response received (...); marking connected`` when a
-  (re)connect handshake completes; ``reconnection failed`` when a single-shot
-  transport reconnect gives up while the server is down.
+  (re)connect handshake completes (the transport then retries with exponential
+  backoff until the sshd returns).
 * Agent (forwarded into the desktop log as ``Agent <id>: stderr: ...``):
   ``Daemon spawned for session <sid>`` when a **fresh** session is created;
   ``Recovered session <sid>`` / ``Reattached to session <sid>`` when the **live**
@@ -37,7 +39,7 @@ Two lanes, differing only by the ``sessionBackendReattach`` flag:
   re-initiated, the handshake completes again. Proves the scenario is valid
   before any product change relies on it.
 * :class:`TestAgentReconnectBackendDriven` — flag **on** (the activation): the
-  backend redrive re-establishes the transport across the prolonged drop and
+  backend redrive re-establishes the transport after the drop and
   **re-attaches the live daemon session** — the log shows ``Recovered``/
   ``Reattached`` for the same ``<sid>`` and **no** fresh ``Daemon spawned`` /
   ``Failed to recover`` for it. This is the unique end-to-end assertion: the
@@ -99,14 +101,16 @@ LOG_DROP = "connection lost, attempting reconnect"
 # reliably reach "connected" under a display run). This is the tail of the
 # desktop line ``initialize response received (...); marking connected``.
 LOG_CONNECTED = "marking connected"
-LOG_RECONNECT_FAILED = "reconnection failed"
 # Agent-side, forwarded into the desktop log as "Agent <id>: stderr: ...":
 LOG_SESSION_SPAWNED = "Daemon spawned for session"  # a FRESH session was created
 LOG_SESSION_RECOVER_FAIL = "Failed to recover session"  # the live session was lost
 
-# How long the backend redrive may take to re-establish + re-attach across a
-# prolonged drop (generous — the redrive parks/retries; this is not a UI read).
-RECONNECT_LOG_TIMEOUT = 180.0
+# The agent_manager retries the transport with exponential backoff (~2s, 4s, 8s,
+# 16s, 32s, …), so the sshd must be restored EARLY — right after the drop
+# surfaces — for a retry to land quickly; a late restore falls into a long
+# backoff window and reads flaky. The reconnect timeout is still generous so a
+# retry that lands mid-backoff is tolerated (this is a log poll, not a UI read).
+RECONNECT_LOG_TIMEOUT = 120.0
 
 
 def _agent_doc(sshd: LocalAgentSshd) -> str:
@@ -298,23 +302,17 @@ class TestAgentReconnectClientDriven(_AgentReconnectBase):
         # Cursor: everything asserted below must be POST-drop log content.
         offset = self._log_len()
 
-        # Drop the agent transport at the server. The single-shot transport
-        # reconnect fires immediately, then fails while the server is down — a
-        # prolonged outage a client single-shot cannot ride out (flag off).
+        # Drop the agent transport at the server; the drop must surface in the
+        # backend log. The agent_manager then retries with exponential backoff.
         self._drop_transport()
         self._wait_log(LOG_DROP, since=offset, timeout=60.0, what="the drop to surface in the log")
-        self._wait_log(
-            LOG_RECONNECT_FAILED,
-            since=offset,
-            timeout=60.0,
-            what="the single-shot transport reconnect to give up while the server is down",
-        )
 
-        # Bring the server back and re-initiate the connection (the connect click
-        # is issued while the agent is idle/disconnected, so it is un-throttled);
-        # the reconnect handshake must complete again — asserted on the log.
+        # Restore the sshd EARLY — right after the drop surfaced — so an early,
+        # short-backoff retry reconnects fast (a late restore falls into a long
+        # backoff window and reads flaky). The reconnect handshake must complete
+        # again; asserted on the log with a generous timeout to tolerate a retry
+        # that lands mid-backoff.
         self.sshd.start()
-        self._agent_menu_click(CTX_CONNECT)
         self._wait_log(
             LOG_CONNECTED,
             since=offset,
@@ -324,7 +322,7 @@ class TestAgentReconnectClientDriven(_AgentReconnectBase):
 
 
 class TestAgentReconnectBackendDriven(_AgentReconnectBase):
-    """Flag ON — the activation: backend-driven reconnect across a prolonged drop."""
+    """Flag ON — the activation: backend-driven reconnect + live session re-attach."""
 
     flag_on = True
 
@@ -338,14 +336,16 @@ class TestAgentReconnectBackendDriven(_AgentReconnectBase):
         # Cursor: everything asserted below must be POST-drop log content.
         offset = self._log_len()
 
-        # Prolonged drop: kill the sshd and keep it down while the backend redrive
-        # parks/retries. The drop must surface in the backend log.
+        # Kill the sshd; the drop must surface in the backend log.
         self._drop_transport()
         self._wait_log(LOG_DROP, since=offset, timeout=60.0, what="the drop to surface in the log")
 
-        # Recover the server. With the flag on, the backend redrive re-establishes
-        # the transport WITHOUT any bridge interaction — the handshake completes
-        # again (throttle-immune log read, never a frontend poll).
+        # Restore the sshd EARLY — right after the drop surfaced, in the early
+        # short-backoff window — so the next retry reconnects fast (the transport
+        # retries with exponential backoff, so a late restore reads flaky). With
+        # the flag on, the backend redrive re-establishes the transport WITHOUT
+        # any bridge interaction; the handshake completes again — a throttle-
+        # immune log read (generous timeout to tolerate a retry mid-backoff).
         self.sshd.start()
         self._wait_log(
             LOG_CONNECTED,
