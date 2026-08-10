@@ -19,8 +19,10 @@ import {
 } from "@/utils/reconnectBackoff";
 
 import {
+  currentSessionView,
   dispatchSessionIntent,
   effectiveAutoReconnect,
+  ensureSessionSubscribed,
   mirrorSessionIntent,
   onSessionView,
   projectedReconnectMirrors,
@@ -383,5 +385,82 @@ describe("effectiveAutoReconnect — render-cut source selection (#2204)", () =>
   it("preserves the fixed countdown deadline (never re-anchors nextAttemptAt)", () => {
     const composed = effectiveAutoReconnect(record, mirror);
     expect(composed?.nextAttemptAt).toBe(record.nextAttemptAt);
+  });
+});
+
+describe("optimistic client-side folding (#2533)", () => {
+  const connecting: ProjectedSessionLifecycle = {
+    status: "connecting",
+    reconnect: initialReconnectState,
+  };
+
+  /** Let the dispatch + reconcile microtasks settle. */
+  const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+
+  it("applies session.connect optimistically so the connecting state is gap-free — synchronously, before any await", () => {
+    // The backend also records the connect (realistic path), but the assertion
+    // fires synchronously, before the dispatch promise resolves: the overlay
+    // alone makes the projection connecting, so there is NO local write needed.
+    transport.onDispatch = (intent, sessions) => {
+      const id = (intent.payload as { sessionId: string }).sessionId;
+      sessions[id] = { status: "connecting", reconnect: initialReconnectState };
+    };
+
+    const seen: Array<Record<string, ProjectedSessionLifecycle>> = [];
+    onSessionView((next) => seen.push(structuredClone(next)));
+
+    mirrorSessionIntent("session.connect", "tab-1");
+
+    // Gap-free: the projected read reflects the intent immediately.
+    expect(currentSessionView()["tab-1"]).toEqual(connecting);
+    expect(seen[seen.length - 1]?.["tab-1"]).toEqual(connecting);
+    expect(transport.dispatched).toHaveLength(1);
+    expect(transport.dispatched[0].kind).toBe("session.connect");
+  });
+
+  it("reconciles the overlay against the authoritative diff (no double-apply, overlay pruned)", async () => {
+    transport.onDispatch = (intent, sessions) => {
+      const id = (intent.payload as { sessionId: string }).sessionId;
+      sessions[id] = { status: "connecting", reconnect: initialReconnectState };
+    };
+
+    mirrorSessionIntent("session.connect", "tab-1");
+    expect(currentSessionView()["tab-1"]).toEqual(connecting);
+
+    await flush();
+
+    // Still connecting — but now sourced from the authoritative view, with the
+    // overlay pruned (the value is exactly the backend's, not folded twice).
+    expect(currentSessionView()["tab-1"]).toEqual(connecting);
+    // A later authoritative transition wins with no stale optimistic residue.
+    transport.setSession("tab-1", { status: "connected", reconnect: initialReconnectState });
+    await flush();
+    expect(currentSessionView()["tab-1"]).toEqual({
+      status: "connected",
+      reconnect: initialReconnectState,
+    });
+  });
+
+  it("rolls the overlay back cleanly when the intent diverges (backend produced no change)", async () => {
+    // No onDispatch ⇒ the fake acks `accepted` with an empty `produced`: nothing
+    // authoritative will confirm the overlay, so it must be rolled back.
+    await ensureSessionSubscribed();
+
+    mirrorSessionIntent("session.connect", "tab-1");
+    // Synchronously overlaid…
+    expect(currentSessionView()["tab-1"]).toEqual(connecting);
+
+    await flush();
+
+    // …then rolled back to the authoritative (empty) view — never stranded.
+    expect(currentSessionView()["tab-1"]).toBeUndefined();
+  });
+
+  it("does not overlay non-folded intents (minimal blast radius)", () => {
+    // `session.disconnect` has no registered fold, so it dispatches without any
+    // synchronous overlay: the projected view is untouched for an unknown tab.
+    mirrorSessionIntent("session.disconnect", "tab-x");
+    expect(currentSessionView()["tab-x"]).toBeUndefined();
+    expect(transport.dispatched[transport.dispatched.length - 1]?.kind).toBe("session.disconnect");
   });
 });
