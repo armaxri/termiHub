@@ -20,14 +20,23 @@ throttle**, so this suite asserts on it. Setup and the initial-``connected`` che
 run through the bridge *pre-drop* (un-throttled); every post-drop **assertion**
 reads the **durable file log**, never the bridge.
 
-**One caveat — a bridge heartbeat drives the engine.** The reconnect engine /
-redrive-trigger only advances while the webview's event loop is driven; an idle
-WKWebView parks its JS timers (even with App-Nap and occlusion-detection off), so
-a purely passive log poll would let the engine idle and no reconnect would ever
-fire. The post-drop waits therefore issue a lightweight, best-effort bridge
-``getState`` "heartbeat" each ~1s cycle purely to keep that loop alive — the pass/
-fail decision still comes only from the durable log, and a throttled/failed poke
-is swallowed. If the poke itself reliably times out the webview is truly frozen,
+**Requires a display-backed runner (#2526).** The reconnect engine only advances
+while the WKWebView is *foreground-active* on a live, composited display; a
+headless / SSH / locked session parks its JS timers (even with App-Nap and
+occlusion-detection off — those are in-process and insufficient), so the
+reconnect never fires. This suite therefore gates on
+``ensure_display_backed_runner()`` and **skips cleanly** off such a runner rather
+than timing out, and on one it holds the display awake (``keep_display_awake``)
+and makes the app the foreground/key application (``bring_app_foreground``) so
+WebKit ticks un-throttled. See ``termihub_harness/display_runner.py`` for
+provisioning a runner on a headless Mac (virtual display / Screen-Sharing /
+auto-login session).
+
+**A bridge heartbeat additionally drives the engine.** As a backstop, the
+post-drop waits also issue a lightweight, best-effort bridge ``getState``
+"heartbeat" each ~1s cycle purely to keep the event loop alive — the pass/fail
+decision still comes only from the durable log, and a throttled/failed poke is
+swallowed. If the poke itself reliably times out the webview is truly frozen,
 which is the hard-stop signal.
 
 **Which log — the durable file, not stdout.** The system-test harness captures
@@ -78,7 +87,8 @@ seeded id (no name→id store lookup needed). It reads **no** frontend agent
 connectionState at all — connectedness comes only from the backend log, which is
 the whole point of the log-based rewrite.
 
-Skips cleanly when the app / agent binary is not built or no ``sshd`` is present.
+Skips cleanly when there is no display-backed runner (#2526), the app / agent
+binary is not built, or no ``sshd`` is present.
 """
 
 from __future__ import annotations
@@ -96,12 +106,17 @@ from termihub_harness import (
     LIVE_CONNECT_REQUEST_TIMEOUT,
     BridgeError,
     ConfigRecoveryUi,
+    DisplayRunnerUnavailable,
     LocalAgentSshd,
     LocalAgentUnavailable,
     SidebarUi,
     TabsUi,
     TerminalUi,
     SystemTest,
+    bring_app_foreground,
+    ensure_display_backed_runner,
+    keep_display_awake,
+    release_display_awake,
     unique_name,
 )
 
@@ -208,12 +223,27 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
 
     @pytest.fixture(autouse=True)
     def _local_agent(self):
+        # Guard #1 (the #2526 enabler): this suite drives a *frontend*-dependent
+        # flow (the JS reconnect engine), so it only makes sense on a display-
+        # backed runner — a live, unlocked, composited GUI session that keeps the
+        # WKWebView foreground-active. Off such a runner (headless / SSH / locked)
+        # the webview parks its timers and the reconnect never fires, so skip
+        # cleanly with a precise reason instead of timing out. See
+        # display_runner.py for provisioning one on a headless Mac.
+        try:
+            ensure_display_backed_runner()
+        except DisplayRunnerUnavailable as exc:
+            pytest.skip(f"no display-backed runner (#2526): {exc}")
         try:
             sshd = LocalAgentSshd()
         except LocalAgentUnavailable as exc:
             pytest.skip(str(exc))
         sshd.start()
         self.sshd = sshd
+
+        # Hold the display + system awake for the whole scenario so WindowServer
+        # keeps compositing (a backstop to the runner, not a substitute for it).
+        self._awake = keep_display_awake()
 
         prev_flag = os.environ.get(self._FLAG_ENV)
         if self.flag_on:
@@ -227,6 +257,11 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
 
         # Relaunch so the app loads the seeded agent + experimental flag + flag env.
         self.restart_app(between=_seed)
+        # Make the app the FOREGROUND/key application on the runner's display so
+        # WebKit keeps the page foreground-active and its timers tick un-throttled
+        # — the always-on-top pin (#957) keeps the window visible but does not make
+        # the app *active* (the pytest terminal is). Best-effort (#2526).
+        self._foreground_app()
         # Anchor all durable-log reads past THIS (post-restart) instance's boot
         # line — the shared file carries prior instances' lines too.
         self._log_base = self._instance_log_base()
@@ -237,6 +272,7 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
         try:
             yield
         finally:
+            release_display_awake(getattr(self, "_awake", None))
             sshd.cleanup()  # reap first so it never leaks on a slow UI teardown
             try:
                 # Best-effort disconnect — no frontend-state read to gate it (that
@@ -305,6 +341,18 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
             what=what,
         )
 
+    def _foreground_app(self) -> None:
+        """Best-effort: make the app the foreground/key application (see #2526).
+
+        Un-parks the WKWebView's JS timers by putting the app in the foreground-
+        active state WebKit ticks in. Guarded by the runner probe in the fixture,
+        so this only ever runs where an activation can succeed; any failure is
+        swallowed (the suite still asserts on the durable log).
+        """
+        pid = self.app.pid
+        if pid is not None:
+            bring_app_foreground(pid)
+
     def _heartbeat(self) -> None:
         """Poke the webview so its event loop (the reconnect engine) keeps running.
 
@@ -329,6 +377,9 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
         poke the webview (best-effort), then check the durable-log tail past
         ``since`` for any ``needle``; return on hit, raise on timeout.
         """
+        # Re-assert foreground/key at the start of the critical reconnect window —
+        # the app may have lost activation since setup (#2526).
+        self._foreground_app()
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self._heartbeat()
