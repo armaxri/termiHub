@@ -66,15 +66,37 @@ fn feature_flag_init_script() -> String {
         .collect()
 }
 
+/// JavaScript that forces the page to always look foregrounded/visible, so the
+/// frontend agent-reconnect engine (and anything else gated on
+/// `document.hidden` / `document.visibilityState`) never suspends when the test
+/// window is unfocused or occluded (#2480).
+///
+/// This is the frontend belt-and-suspenders layer alongside the native
+/// anti-throttle (App Nap assertion + occlusion-detection disable, see
+/// `utils::macos_unthrottle`): even if WebKit still believes the page is hidden,
+/// the Page Visibility API reports "visible" and `visibilitychange` events are
+/// swallowed, so nothing re-hides the page. Injected only under the test bridge.
+const VISIBILITY_OVERRIDE_JS: &str = "(function(){try{\
+var visible=function(){return false;};var state=function(){return 'visible';};\
+Object.defineProperty(document,'hidden',{configurable:true,get:visible});\
+Object.defineProperty(document,'visibilityState',{configurable:true,get:state});\
+Object.defineProperty(document,'webkitHidden',{configurable:true,get:visible});\
+Object.defineProperty(document,'webkitVisibilityState',{configurable:true,get:state});\
+var swallow=function(e){e.stopImmediatePropagation();};\
+document.addEventListener('visibilitychange',swallow,true);\
+document.addEventListener('webkitvisibilitychange',swallow,true);\
+}catch(e){}})();";
+
 /// JavaScript that opts the in-app bridge into WebSocket test mode.
 ///
 /// Mirrors the keys read by `src/testbridge/testMode.ts`
 /// (`TEST_BRIDGE_GLOBAL_KEY` and `TEST_BRIDGE_PORT_GLOBAL_KEY`). Assigns to
 /// `window` explicitly since the script runs in its own function scope. Any
-/// `TERMIHUB_TEST_FLAG_*` feature-flag globals are appended (#2476).
+/// `TERMIHUB_TEST_FLAG_*` feature-flag globals are appended (#2476), followed by
+/// the page-visibility override that keeps the reconnect engine awake (#2480).
 fn test_bridge_init_script(port: u16) -> String {
     format!(
-        "window.__TERMIHUB_TEST_BRIDGE__ = true; window.__TERMIHUB_TEST_BRIDGE_PORT__ = {port};{}",
+        "window.__TERMIHUB_TEST_BRIDGE__ = true; window.__TERMIHUB_TEST_BRIDGE_PORT__ = {port};{}{VISIBILITY_OVERRIDE_JS}",
         feature_flag_init_script()
     )
 }
@@ -188,6 +210,19 @@ mod tests {
         let script = test_bridge_init_script(48123);
         assert!(script.contains("window.__TERMIHUB_TEST_BRIDGE__ = true"));
         assert!(script.contains("window.__TERMIHUB_TEST_BRIDGE_PORT__ = 48123"));
+    }
+
+    #[test]
+    fn init_script_forces_page_visible() {
+        // The visibility override keeps the frontend reconnect engine awake when
+        // the headless test window is unfocused/occluded (#2480).
+        let script = test_bridge_init_script(48123);
+        assert!(script.contains("Object.defineProperty(document,'hidden'"));
+        assert!(script.contains("Object.defineProperty(document,'visibilityState'"));
+        assert!(script.contains("return 'visible';"));
+        // visibilitychange must be swallowed so nothing re-hides the page.
+        assert!(script.contains("addEventListener('visibilitychange',swallow,true)"));
+        assert!(script.contains("addEventListener('webkitvisibilitychange',swallow,true)"));
     }
 
     #[test]

@@ -279,6 +279,18 @@ pub fn run() {
         spawn::Command::None => None,
     };
 
+    // Under the headless test bridge on macOS, turn off AppKit window occlusion
+    // detection *before* NSApplication launches (it reads this user default
+    // while launching). Without it, macOS marks the unfocused test window
+    // occluded and WebKit throttles the page's timers, stalling the
+    // frontend-driven agent-reconnect engine (#2480). setup() runs too late for
+    // this default, so it must happen here. macOS-only, test-bridge-only, so
+    // production/default is byte-identical.
+    #[cfg(target_os = "macos")]
+    if utils::test_bridge::is_test_bridge_enabled() {
+        utils::macos_unthrottle::pre_launch_disable_occlusion_detection();
+    }
+
     let log_buffer = create_log_buffer();
     let capture_layer = LogCaptureLayer::new(log_buffer.clone());
     let app_handle_slot = capture_layer.app_handle_slot();
@@ -420,6 +432,16 @@ pub fn run() {
                         info!("Test window pinned always-on-top (anti-occlusion, #957)");
                     }
                 }
+
+                // Always-on-top alone does not stop macOS from throttling the
+                // WKWebView once the app is unfocused/occluded (App Nap +
+                // window-occlusion detection), which stalls the frontend-driven
+                // agent-reconnect logic during a headless E2E run (#2480). Hold
+                // an NSProcessInfo activity assertion and turn off AppKit
+                // occlusion detection so the webview's timers keep running.
+                // macOS-only, test-bridge-only.
+                #[cfg(target_os = "macos")]
+                utils::macos_unthrottle::engage_test_bridge_unthrottle();
             }
 
             let mut recovery_warnings: Vec<RecoveryWarning> = Vec::new();
