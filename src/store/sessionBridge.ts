@@ -41,11 +41,19 @@ import {
   newClientId,
   newIntentId,
   ProjectionClient,
+  type Intent,
   type IntentAck,
+  type OptimisticFold,
+  type ProjectionCacheState,
   type Transport,
 } from "@/services/transport";
 import type { TerminalAutoReconnectState } from "@/types/terminal";
-import { DEFAULT_BACKOFF, type BackoffConfig, type ReconnectPhase } from "@/utils/reconnectBackoff";
+import {
+  DEFAULT_BACKOFF,
+  initialReconnectState,
+  type BackoffConfig,
+  type ReconnectPhase,
+} from "@/utils/reconnectBackoff";
 import { frontendLog } from "@/utils/frontendLog";
 
 /** The projection region id for the session-lifecycle domain (twin of the Rust
@@ -279,7 +287,12 @@ export function sessionBackendReattachEnabled(): boolean {
 // ── Transport + region client (lazy, mirrors the tunnel slice) ─────────────────
 
 let transportInstance: Transport | null = null;
+/** The region client once its subscription has started (its snapshot adopted). */
 let regionClient: ProjectionClient | null = null;
+/** The region client instance the moment it is created — before `start()`
+ * resolves — so an optimistic dispatch can overlay on it synchronously (#2533).
+ * Same object as {@link regionClient} once started. */
+let creatingClient: ProjectionClient | null = null;
 let startPromise: Promise<ProjectionClient> | null = null;
 
 // A stable per-session client identity for dispatched intents (fan-out / audit
@@ -290,8 +303,9 @@ const clientId = newClientId();
 /** Inject a transport for tests; `null` restores the lazily-created real one and
  * drops any active subscription. */
 export function setSessionTransportForTest(t: Transport | null): void {
-  regionClient?.stop();
+  (regionClient ?? creatingClient)?.stop();
   regionClient = null;
+  creatingClient = null;
   startPromise = null;
   transportInstance = t;
 }
@@ -316,13 +330,109 @@ export async function dispatchSessionIntent(
 
 /** Fire a `session.*` intent, swallowing and logging any failure so the local
  * lifecycle path is never disrupted by a bridge hiccup (the resilience
- * fallback). Never throws. */
+ * fallback). Never throws.
+ *
+ * When the intent kind carries a synchronous-feedback requirement (it has a
+ * registered {@link OPTIMISTIC_SESSION_FOLDS} entry, e.g. `session.connect`), the
+ * dispatch is routed through the region client's optimistic-folding path so the
+ * projected view reflects the intent immediately — closing the hot-path overlay
+ * gap (#2533). Unregistered kinds dispatch without an overlay. */
 export function mirrorSessionIntent(
   kind: SessionIntentKind,
   sessionId: string,
   error?: string
 ): void {
+  const fold = OPTIMISTIC_SESSION_FOLDS[kind];
+  if (fold) {
+    mirrorOptimisticSessionIntent(kind, sessionId, fold, error);
+    return;
+  }
   void dispatchSessionIntent(kind, sessionId, error)
+    .then((ack) => {
+      if (ack.status === "rejected") {
+        logSessionBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+      }
+    })
+    .catch((err) => logSessionBridgeFallback(kind, err));
+}
+
+// ── Optimistic client-side folding (#2533) ─────────────────────────────────────
+//
+// A dispatching client applies its own `session.*` intent to the local
+// projection view synchronously, so the projected read is gap-free — closing the
+// hot-path window appStore's synchronous `terminalConnecting` write covers today
+// (removed by #2205 PR-B / #2283). ProjectionClient owns the general overlay +
+// version-gated reconcile machinery; this file supplies the faithful per-intent
+// transform (the client-side twin of the Rust `SessionLifecycleStore` reducer).
+// Only the `connecting`-feedback intents are folded — the rest dispatch without
+// an overlay, keeping the blast radius minimal.
+
+/** The projected lifecycle for a session entering its initial connect — the twin
+ * of the Rust `SessionLifecycle::connecting()` serialisation (every `Option`
+ * field is skipped, so only `status` + `reconnect` are present). */
+function projectedConnecting(): ProjectedSessionLifecycle {
+  return { status: "connecting", reconnect: { ...initialReconnectState } };
+}
+
+/** A session-intent optimistic transform: `(view, sessionId, error) => view`,
+ * pure and immutable (never mutates the shared baseline). */
+type SessionOptimisticFold = (
+  view: SessionLifecycleView,
+  sessionId: string,
+  error: string | undefined
+) => SessionLifecycleView;
+
+/**
+ * Intents that carry a synchronous-feedback requirement, folded optimistically.
+ *
+ * `session.connect` sets the tab's lifecycle to `connecting`, matching
+ * `SessionLifecycleStore::connect` (a fresh connect resets any prior record) —
+ * so the "Connecting…" overlay is gap-free the instant the intent is dispatched,
+ * with no local `terminalConnecting` write. Extend this map to add
+ * `file-browser` / `layout`-style folds; unregistered kinds dispatch without an
+ * overlay (the minimal blast radius on the already-inverted domains).
+ */
+const OPTIMISTIC_SESSION_FOLDS: Partial<Record<SessionIntentKind, SessionOptimisticFold>> = {
+  "session.connect": (view, sessionId) => ({
+    ...view,
+    sessions: { ...view.sessions, [sessionId]: projectedConnecting() },
+  }),
+};
+
+/** Dispatch a folded `session.*` intent through the region client so its overlay
+ * is applied to the projected view synchronously, then reconciled against the
+ * authoritative diff. Never throws (the resilience contract). */
+function mirrorOptimisticSessionIntent(
+  kind: SessionIntentKind,
+  sessionId: string,
+  fold: SessionOptimisticFold,
+  error?: string
+): void {
+  let client: ProjectionClient;
+  try {
+    client = sessionRegionClient();
+  } catch (err) {
+    // No transport (e.g. non-Tauri without a socket): the optimistic overlay is
+    // a hot-path nicety, never a correctness requirement — the plain dispatch
+    // path would swallow the same failure. Log and skip.
+    logSessionBridgeFallback(kind, err);
+    return;
+  }
+
+  // Ensure the region is subscribed so the authoritative diff arrives to
+  // reconcile (prune) the overlay; a subscribe failure is logged and does not
+  // strand the overlay — a later resync/snapshot reconciles it.
+  void ensureSessionSubscribed().catch((err) => logSessionBridgeFallback("subscribe", err));
+
+  const payload: Record<string, unknown> = { sessionId };
+  if (error !== undefined) payload.error = error;
+  const intent: Intent = { intentId: newIntentId(), kind, payload, clientId };
+
+  const overlay: OptimisticFold = (view) =>
+    fold((view ?? { sessions: {} }) as SessionLifecycleView, sessionId, error);
+
+  void client
+    .dispatchOptimistic(intent, overlay)
     .then((ack) => {
       if (ack.status === "rejected") {
         logSessionBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
@@ -350,6 +460,38 @@ export function onSessionView(listener: SessionViewListener): () => void {
   return () => viewListeners.delete(listener);
 }
 
+/** Fan a region-client change out to the {@link onSessionView} listeners as the
+ * reconciled `sessions` map (and the previous one). */
+function fanOutSessionView(state: ProjectionCacheState): void {
+  const view = (state.view ?? {}) as Partial<SessionLifecycleView>;
+  const next = view.sessions ?? {};
+  const prev = lastSessions;
+  lastSessions = next;
+  for (const listener of viewListeners) {
+    try {
+      listener(next, prev);
+    } catch (err) {
+      logSessionBridgeFallback("reconcile", err);
+    }
+  }
+}
+
+/**
+ * The region client instance, created (and its change fan-out registered) on
+ * first use — **synchronously**, before its subscription has started — so an
+ * optimistic dispatch can overlay on it at once (#2533). Returns the started
+ * {@link regionClient} once available, else the {@link creatingClient}. Throws
+ * only if the transport itself cannot be built (non-Tauri without a socket).
+ */
+function sessionRegionClient(): ProjectionClient {
+  if (regionClient) return regionClient;
+  if (!creatingClient) {
+    creatingClient = new ProjectionClient(transport(), SESSION_LIFECYCLE_REGION);
+    creatingClient.onChange(fanOutSessionView);
+  }
+  return creatingClient;
+}
+
 /**
  * Ensure the `session-lifecycle` region client is subscribed so projected diffs
  * are received and fanned out to the {@link onSessionView} listeners. Idempotent
@@ -359,20 +501,7 @@ export function onSessionView(listener: SessionViewListener): () => void {
 export function ensureSessionSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);
   if (!startPromise) {
-    const client = new ProjectionClient(transport(), SESSION_LIFECYCLE_REGION);
-    client.onChange((state) => {
-      const view = (state.view ?? {}) as Partial<SessionLifecycleView>;
-      const next = view.sessions ?? {};
-      const prev = lastSessions;
-      lastSessions = next;
-      for (const listener of viewListeners) {
-        try {
-          listener(next, prev);
-        } catch (err) {
-          logSessionBridgeFallback("reconcile", err);
-        }
-      }
-    });
+    const client = sessionRegionClient();
     startPromise = client
       .start()
       .then(() => {
@@ -390,8 +519,9 @@ export function ensureSessionSubscribed(): Promise<ProjectionClient> {
 
 /** Drop the region subscription (tests / re-init). */
 export function stopSessionSubscription(): void {
-  regionClient?.stop();
+  (regionClient ?? creatingClient)?.stop();
   regionClient = null;
+  creatingClient = null;
   startPromise = null;
   lastSessions = {};
 }
