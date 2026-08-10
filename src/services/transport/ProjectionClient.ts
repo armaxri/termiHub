@@ -156,9 +156,7 @@ export class ProjectionClient {
     }
 
     const produced =
-      ack.status === "accepted"
-        ? ack.produced?.find((p) => p.region === this.region)
-        : undefined;
+      ack.status === "accepted" ? ack.produced?.find((p) => p.region === this.region) : undefined;
     if (!produced) {
       // Rejected, or a no-op / divergence that produced no change on this
       // region: no confirming version will ever arrive, so roll back now.
