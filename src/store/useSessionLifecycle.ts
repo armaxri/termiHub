@@ -200,6 +200,21 @@ export interface ProjectedSessionLifecycleMaps {
   terminalConnecting: Record<string, boolean>;
   terminalReconnectingTabs: Record<string, boolean>;
   terminalDisconnectErrors: Record<string, string>;
+  /**
+   * Tabs whose live session is terminally lost (#2512). Region-only (no `appStore`
+   * twin), so this is empty on the pre-cut path. It drives the tab-strip dot away
+   * from a stale-green "connected" when the session could not be recovered (#2524).
+   */
+  terminalSessionLost: Record<string, boolean>;
+}
+
+/** Build the `tabId → true` session-lost map from the projected region view. */
+function sessionLostMap(view: Record<string, ProjectedSessionLifecycle>): Record<string, boolean> {
+  const map: Record<string, boolean> = {};
+  for (const [tabId, life] of Object.entries(view)) {
+    if (life.status === "sessionLost") map[tabId] = true;
+  }
+  return map;
 }
 
 /**
@@ -251,12 +266,15 @@ export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMap
         terminalConnecting: connectingLocal,
         terminalReconnectingTabs: reconnectingLocal,
         terminalDisconnectErrors: disconnectErrorsLocal,
+        // Session-lost is region-only; with the cut off there is nothing to read.
+        terminalSessionLost: {},
       };
     }
     return {
       terminalConnecting: effectiveConnectingMap(connectingLocal, view),
       terminalReconnectingTabs: effectiveReconnectingMap(reconnectingLocal, view),
       terminalDisconnectErrors: effectiveDisconnectErrorMap(disconnectErrorsLocal, view),
+      terminalSessionLost: sessionLostMap(view),
     };
   }, [enabled, connectingLocal, reconnectingLocal, disconnectErrorsLocal, view]);
 }

@@ -18,6 +18,7 @@ import {
   flushSessionRegion,
   installSessionLifecycleHarness,
   reconnecting,
+  sessionLost,
 } from "@/test/sessionLifecycleRegionTestHarness";
 
 import {
@@ -153,5 +154,16 @@ describe("useProjectedSessionLifecycleMaps (list consumers)", () => {
     expect(latest?.terminalConnecting).toEqual({ a: true });
     expect(latest?.terminalReconnectingTabs).toEqual({ b: true });
     expect(latest?.terminalDisconnectErrors).toEqual({ c: "boom" });
+  });
+
+  it("exposes a terminalSessionLost map from the region (#2524)", async () => {
+    // The tab-strip dot reads this so a session-lost tab never stays green (#2512).
+    harness.transport.setSession("d", sessionLost("process ended"));
+    harness.transport.setSession("e", connected());
+    let latest: ProjectedSessionLifecycleMaps | undefined;
+    mount(<Probe onValue={(v) => (latest = v)} />);
+    await flushSessionRegion();
+
+    expect(latest?.terminalSessionLost).toEqual({ d: true });
   });
 });

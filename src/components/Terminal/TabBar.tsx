@@ -46,8 +46,12 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   // / disconnect errors) are sourced from the projected region (falls back to
   // appStore per key when not mirrored); spawn errors and exited tabs stay on
   // appStore (not part of the session-lifecycle region).
-  const { terminalConnecting, terminalReconnectingTabs, terminalDisconnectErrors } =
-    useProjectedSessionLifecycleMaps();
+  const {
+    terminalConnecting,
+    terminalReconnectingTabs,
+    terminalDisconnectErrors,
+    terminalSessionLost,
+  } = useProjectedSessionLifecycleMaps();
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
   const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
   // Broadcast participation (#1957): the badge shows on every tab in the target
@@ -230,6 +234,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
                         terminalSpawnErrors,
                         terminalDisconnectErrors,
                         terminalExitedTabs,
+                        terminalSessionLost,
                       },
                       tab.id
                     )

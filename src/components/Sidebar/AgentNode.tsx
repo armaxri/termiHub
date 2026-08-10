@@ -1201,7 +1201,7 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <div
-            className="connection-list__group-header"
+            className="connection-list__group-header connection-list__group-header--agent"
             data-testid={`agent-header-${agent.id}`}
             title={`Remote agent: ${agent.name}`}
             {...attributes}

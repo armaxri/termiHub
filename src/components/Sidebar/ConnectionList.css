@@ -126,6 +126,27 @@
   flex-shrink: 0;
 }
 
+/*
+ * Per-agent header stacks into two rows (#2524): row 1 = state bubble + agent
+ * name + version badge (the toggle), row 2 = the action buttons. On the single
+ * shared row the buttons crowded the row and pushed the agent name out of view;
+ * a column keeps the toggle full-width so the name is always visible and free to
+ * ellipsize. Scoped to the agent header so the LOCAL / REMOTE AGENTS section
+ * headers keep their single-row layout.
+ */
+.connection-list__group-header--agent {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: var(--spacing-xxs);
+}
+
+/* Row 2: indent the buttons to sit under the agent name (past chevron + state
+   dot + server icon) so they read as belonging to the agent above them. */
+.connection-list__group-header--agent .connection-list__group-actions {
+  padding-left: calc(var(--spacing-2xl) + var(--spacing-lg));
+}
+
 .connection-list__tree {
   flex: 1;
   overflow-y: auto;
