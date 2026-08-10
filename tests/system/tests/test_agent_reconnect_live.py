@@ -17,8 +17,18 @@ bridge poll of the frontend state (``projection_state`` / ``get_state`` /
 terminal reads) times out — ``command timed out after 60s`` — even though the app
 reconnects fine. The app's **backend log is written by Rust and is immune to that
 throttle**, so this suite asserts on it. Setup and the initial-``connected`` check
-run through the bridge *pre-drop* (un-throttled); everything after the drop is a
-bounded poll on the **durable file log**, never the bridge.
+run through the bridge *pre-drop* (un-throttled); every post-drop **assertion**
+reads the **durable file log**, never the bridge.
+
+**One caveat — a bridge heartbeat drives the engine.** The reconnect engine /
+redrive-trigger only advances while the webview's event loop is driven; an idle
+WKWebView parks its JS timers (even with App-Nap and occlusion-detection off), so
+a purely passive log poll would let the engine idle and no reconnect would ever
+fire. The post-drop waits therefore issue a lightweight, best-effort bridge
+``getState`` "heartbeat" each ~1s cycle purely to keep that loop alive — the pass/
+fail decision still comes only from the durable log, and a throttled/failed poke
+is swallowed. If the poke itself reliably times out the webview is truly frozen,
+which is the hard-stop signal.
 
 **Which log — the durable file, not stdout.** The system-test harness captures
 the app's *stdout* (``app.read_log()``), but this is a **bundled** app and, per
@@ -76,6 +86,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -83,6 +94,7 @@ import pytest
 
 from termihub_harness import (
     LIVE_CONNECT_REQUEST_TIMEOUT,
+    BridgeError,
     ConfigRecoveryUi,
     LocalAgentSshd,
     LocalAgentUnavailable,
@@ -135,6 +147,17 @@ LOG_SESSION_RECOVER_FAIL = "Failed to recover session"  # the live session was l
 # backoff window and reads flaky. The reconnect timeout is still generous so a
 # retry that lands mid-backoff is tolerated (this is a log poll, not a UI read).
 RECONNECT_LOG_TIMEOUT = 120.0
+
+# The reconnect engine / redrive-trigger only advances while the webview's event
+# loop is driven; an idle WKWebView parks its JS timers even with App-Nap and
+# occlusion-detection off, so a purely passive log poll never sees a reconnect
+# attempt. During the post-drop wait we therefore issue a lightweight, best-
+# effort bridge "heartbeat" each cycle purely to keep that loop alive — the
+# assertion itself still reads the durable log, never the bridge.
+HEARTBEAT_INTERVAL = 1.0
+# Short per-poke timeout so a throttled heartbeat returns fast and the loop keeps
+# cycling (never blocks the full request_timeout on a single poke).
+HEARTBEAT_TIMEOUT = 2.5
 
 
 def _agent_doc(sshd: LocalAgentSshd) -> str:
@@ -282,6 +305,40 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
             what=what,
         )
 
+    def _heartbeat(self) -> None:
+        """Poke the webview so its event loop (the reconnect engine) keeps running.
+
+        A lightweight, best-effort ``getState`` round-trip through the webview —
+        purely to unpark WKWebView's JS timers during the reconnect wait. It is
+        NOT an assertion: any ``BridgeError`` / timeout (a throttled poke) is
+        swallowed so a slow poke never fails the test. A short per-poke timeout
+        keeps the loop cycling instead of blocking on one call.
+        """
+        try:
+            self.driver.get_state("recoveryWarnings", timeout=HEARTBEAT_TIMEOUT)
+        except BridgeError:
+            pass
+
+    def _wait_log_with_heartbeat(
+        self, *needles: str, since: int, timeout: float, what: str
+    ) -> str:
+        """Like :meth:`_wait_log`, but drive a bridge heartbeat each cycle.
+
+        The reconnect engine / redrive-trigger only advances while the webview is
+        driven, so a passive log poll would let it idle forever. Each ~1s cycle:
+        poke the webview (best-effort), then check the durable-log tail past
+        ``since`` for any ``needle``; return on hit, raise on timeout.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self._heartbeat()
+            tail = self._log()[since:]
+            hit = next((n for n in needles if n in tail), None)
+            if hit:
+                return hit
+            time.sleep(HEARTBEAT_INTERVAL)
+        raise AssertionError(f"timed out waiting for {what}")
+
     def _assert_log_absent(self, needle: str, *, since: int, what: str) -> None:
         assert needle not in self._log()[since:], (
             f"unexpected log line {needle!r} after the drop — {what}"
@@ -369,11 +426,11 @@ class TestAgentReconnectClientDriven(_AgentReconnectBase):
 
         # Restore the sshd EARLY — right after the drop surfaced — so an early,
         # short-backoff retry reconnects fast (a late restore falls into a long
-        # backoff window and reads flaky). The reconnect handshake must complete
-        # again; asserted on the log with a generous timeout to tolerate a retry
-        # that lands mid-backoff.
+        # backoff window and reads flaky). The reconnect engine only advances
+        # while the webview is driven, so poll with a bridge heartbeat; the
+        # handshake completing again is asserted on the log, not the bridge.
         self.sshd.start()
-        self._wait_log(
+        self._wait_log_with_heartbeat(
             LOG_CONNECTED,
             since=offset,
             timeout=RECONNECT_LOG_TIMEOUT,
@@ -402,12 +459,12 @@ class TestAgentReconnectBackendDriven(_AgentReconnectBase):
 
         # Restore the sshd EARLY — right after the drop surfaced, in the early
         # short-backoff window — so the next retry reconnects fast (the transport
-        # retries with exponential backoff, so a late restore reads flaky). With
-        # the flag on, the backend redrive re-establishes the transport WITHOUT
-        # any bridge interaction; the handshake completes again — a throttle-
-        # immune log read (generous timeout to tolerate a retry mid-backoff).
+        # retries with exponential backoff, so a late restore reads flaky). The
+        # backend redrive-trigger only advances while the webview is driven, so
+        # poll with a bridge heartbeat; the handshake completing again is a
+        # throttle-immune log read, never a frontend poll.
         self.sshd.start()
-        self._wait_log(
+        self._wait_log_with_heartbeat(
             LOG_CONNECTED,
             since=offset,
             timeout=RECONNECT_LOG_TIMEOUT,
@@ -417,7 +474,9 @@ class TestAgentReconnectBackendDriven(_AgentReconnectBase):
         # THE key end-to-end assertion: the LIVE daemon session was re-attached
         # (process continuity), not silently recreated. The agent forwards its
         # recovery log into the desktop log; assert the marker names *this* sid.
-        self._wait_log(
+        # Keep the heartbeat up — the re-attach round-trip also runs on the driven
+        # event loop.
+        self._wait_log_with_heartbeat(
             f"Recovered session {sid}",
             f"Reattached to session {sid}",
             since=offset,
