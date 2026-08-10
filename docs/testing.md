@@ -64,6 +64,36 @@ the app's own `listen` subscriptions and store-folding hooks still run. See
 [Injecting backend events](test-bridge.md#injecting-backend-events-emitevent)
 for the gating and payload rules.
 
+#### Display-backed runner (frontend-dependent live E2E, macOS)
+
+A handful of live suites drive a **frontend** flow that only advances while the
+app's JS event loop runs — most sharply the agent-reconnect lane
+(`tests/system/tests/test_agent_reconnect_live.py`). On macOS, WKWebView
+**occlusion/foreground-throttles** the page's timers / `requestAnimationFrame`
+whenever the window is not part of an _actively composited, foreground_ display
+session, so these flows never fire headlessly. The in-app anti-throttle
+mitigations (always-on-top pin #957, App-Nap defeat +
+`NSWindowOcclusionDetectionEnabled=false` + `document.hidden` override #2523) are
+necessary but **not sufficient** — the missing ingredient is external to the app
+process.
+
+These suites therefore require a **display-backed runner**: a live, unlocked,
+composited GUI (Aqua) session, with `tests/system` run from **inside** it (never
+over a plain SSH shell). The harness detects this
+(`termihub_harness.display_runner.probe_display_runner`) and **skips cleanly with
+a precise reason** when it is absent, rather than timing out; on a runner it
+holds the display awake (`caffeinate`) and makes the app the foreground/key
+application so WebKit ticks un-throttled.
+
+To turn a **headless CI Mac** (no attached display) into a runner, give it a real
+composited session — a **virtual display** WindowServer treats as real
+(dummy-display driver / `BetterDummy`-style CoreDisplay virtual display), a
+**Screen-Sharing / VNC** connection (which allocates a virtual framebuffer), or a
+**dedicated auto-login GUI session** (loginwindow auto-login + screen-lock
+disabled, runner started via a LaunchAgent or `launchctl asuser <uid>`). See the
+module docstring of `tests/system/termihub_harness/display_runner.py` for the
+full rationale and provisioning notes (#2526).
+
 ## 2. Component Integration Tests
 
 **What it does**: Tests React components with backend integration
