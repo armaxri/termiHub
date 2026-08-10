@@ -18,8 +18,21 @@ terminal reads) times out — ``command timed out after 60s`` — even though th
 reconnects fine. The app's **backend log is written by Rust and is immune to that
 throttle**, so this suite asserts on it. Setup and the initial-``connected`` check
 run through the bridge *pre-drop* (un-throttled); everything after the drop is a
-bounded poll on ``app.read_log()`` (the harness's per-instance capture of the
-app's merged stdout/stderr — see :meth:`AppInstance.read_log`), never the bridge.
+bounded poll on the **durable file log**, never the bridge.
+
+**Which log — the durable file, not stdout.** The system-test harness captures
+the app's *stdout* (``app.read_log()``), but this is a **bundled** app and, per
+``src-tauri/src/lib.rs``, a bundled desktop app has nowhere for the ``fmt``
+(stdout) layer to write — so the lines this suite asserts on are simply not in
+stdout. They all go to the **durable rotating file log** (#1570) at
+``~/Library/Logs/com.termihub.app/termihub.log`` on macOS (``termihub_lib=debug``,
+reliably flushed), which is both throttle-immune (Rust-written, not the webview)
+and flush-reliable. That shared file is appended across app instances, so this
+suite anchors its reads to *this* instance: each launch logs a ``termiHub
+starting … pid=<P>`` line, and the pre-drop cursor is set just past this
+instance's line (``AppInstance.pid``). All post-drop assertions read the file
+tail past that cursor. (``app.read_log()`` is still captured for the failure
+bundle; it is just not what the assertions read.)
 
 The log markers this asserts on (grounded in the running binaries):
 
@@ -62,6 +75,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -91,6 +107,14 @@ SETTINGS_DOC = json.dumps({"version": "1", "experimentalFeaturesEnabled": True})
 CTX_CONNECT = "context-agent-connect"
 CTX_DISCONNECT = "context-agent-disconnect"
 CTX_NEW_SHELL = "context-agent-new-shell"
+
+# The durable rotating file log (#1570) — the real sink for the INFO/DEBUG lines
+# this suite asserts on (a bundled app's stdout is a dead stream, see the module
+# docstring). macOS path; the suite already skips off-macOS agent scenarios.
+DURABLE_LOG = Path.home() / "Library" / "Logs" / "com.termihub.app" / "termihub.log"
+
+# Anchors the per-instance read cursor: each app launch logs this with its pid.
+STARTING_MARKER = "termiHub starting"
 
 # ── backend-log markers (see the module docstring) ────────────────────────────
 # Desktop-side (agent_manager), un-prefixed:
@@ -180,6 +204,9 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
 
         # Relaunch so the app loads the seeded agent + experimental flag + flag env.
         self.restart_app(between=_seed)
+        # Anchor all durable-log reads past THIS (post-restart) instance's boot
+        # line — the shared file carries prior instances' lines too.
+        self._log_base = self._instance_log_base()
         self.switch_to_connections_sidebar()
         # The seeded experimental flag renders the Remote Agents group; its row is
         # addressable by the known id (no name→id store lookup, which is stale).
@@ -206,12 +233,44 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
 
     # ── backend-log reads (throttle-immune — this is the whole point) ─────────────
     def _log(self) -> str:
-        """The app's captured backend log (Rust stdout/stderr) so far."""
-        return self.app.read_log()
+        """The app's durable file log so far (Rust-written; not the dead stdout)."""
+        try:
+            return DURABLE_LOG.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return ""
 
     def _log_len(self) -> int:
-        """A cursor into the log, so post-drop asserts ignore pre-drop lines."""
+        """A forward cursor into the log, so later asserts ignore earlier lines."""
         return len(self._log())
+
+    def _instance_log_base(self, *, timeout: float = 30.0) -> int:
+        """Char offset just past THIS instance's ``termiHub starting … pid=<P>``.
+
+        The durable log is shared/appended across app instances, so reads that
+        scan from the start (session-id extraction) must begin at this instance's
+        boot line — matched by :attr:`AppInstance.pid` — not a prior run's.
+        """
+        pid = self.app.pid
+        assert pid is not None, "the app instance is not running"
+        pid_field = re.compile(rf"\bpid={pid}\b")
+
+        def resolve() -> Optional[int]:
+            text = self._log()
+            end = None
+            pos = 0
+            # Match the boot line by its two markers regardless of field order,
+            # tracking the exact char offset of the end of the last such line.
+            for line in text.splitlines(keepends=True):
+                if STARTING_MARKER in line and pid_field.search(line):
+                    end = pos + len(line)
+                pos += len(line)
+            return end
+
+        return self.wait(
+            resolve,
+            timeout=timeout,
+            what=f"this app instance's startup log line (pid={pid})",
+        )
 
     def _wait_log(
         self, *needles: str, since: int = 0, timeout: float = 60.0, what: str
@@ -228,14 +287,15 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
             f"unexpected log line {needle!r} after the drop — {what}"
         )
 
-    def _daemon_session_id(self, *, since: int = 0) -> str:
+    def _daemon_session_id(self) -> str:
         """The daemon session id from the ``Daemon spawned for session <sid>`` log.
 
         Emitted by the agent when the shell's daemon-backed session is created;
         used to correlate the later ``Recovered``/``Reattached`` markers to *this*
         session. The id token follows the marker (``... session abc123 (type=…)``).
+        Scans from this instance's boot cursor so a prior run's spawn is ignored.
         """
-        tail = self._log()[since:]
+        tail = self._log()[self._log_base:]
         idx = tail.find(LOG_SESSION_SPAWNED)
         assert idx != -1, "no daemon session was spawned for the opened shell"
         after = tail[idx + len(LOG_SESSION_SPAWNED):].strip()
