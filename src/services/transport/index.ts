@@ -27,6 +27,7 @@ export { WebSocketTransport, type JsonRpcSocket } from "./WebSocketTransport";
 export {
   ProjectionClient,
   type CacheListener,
+  type OptimisticFold,
   type ProjectionCacheState,
 } from "./ProjectionClient";
 export { newClientId, newIntentId } from "./ids";
