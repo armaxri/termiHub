@@ -55,6 +55,16 @@ from .manual import (
 )
 from .clipboard import read_os_clipboard
 from .display import ensure_local_display
+from .display_runner import (
+    DisplayRunnerStatus,
+    DisplayRunnerUnavailable,
+    bring_app_foreground,
+    display_backed_runner_available,
+    ensure_display_backed_runner,
+    keep_display_awake,
+    probe_display_runner,
+    release_display_awake,
+)
 from .orchestrator import AgentInstance, AppInstance, agent_binary_path, app_binary_path
 from .local_agent import LocalAgentSshd, LocalAgentUnavailable
 from .projection import ProjectionHarness
@@ -182,5 +192,13 @@ __all__ = [
     "key_fingerprint",
     "sha256_fingerprints",
     "ensure_local_display",
+    "DisplayRunnerStatus",
+    "DisplayRunnerUnavailable",
+    "probe_display_runner",
+    "display_backed_runner_available",
+    "ensure_display_backed_runner",
+    "keep_display_awake",
+    "release_display_awake",
+    "bring_app_foreground",
     "read_os_clipboard",
 ]
