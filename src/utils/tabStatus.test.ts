@@ -39,6 +39,24 @@ describe("deriveTabStatus", () => {
     expect(deriveTabStatus(maps, "a")).toBe("disconnected");
   });
 
+  it("returns 'disconnected' when the live agent session is lost (#2524)", () => {
+    // #2512 session-lost: the transport came back but the live session could not
+    // be recovered. The dot must never stay green — regression for #2524 bug 2.
+    const maps = makeMaps({ terminalSessionLost: { a: true } });
+    expect(deriveTabStatus(maps, "a")).toBe("disconnected");
+  });
+
+  it("treats session-lost as terminal — it wins over an in-flight connecting flag (#2524)", () => {
+    // The region can report `sessionLost` while a stale connecting flag lingers
+    // (settleSessionLost has not folded yet). Session-lost is terminal, so the
+    // dot must show disconnected rather than a green-adjacent connecting pulse.
+    const maps = makeMaps({
+      terminalSessionLost: { a: true },
+      terminalConnecting: { a: true },
+    });
+    expect(deriveTabStatus(maps, "a")).toBe("disconnected");
+  });
+
   it("returns 'connected' when no lifecycle flags are set", () => {
     const maps = makeMaps();
     expect(deriveTabStatus(maps, "a")).toBe("connected");
