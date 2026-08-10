@@ -125,6 +125,9 @@ objc2-foundation = { version = "0.3", features = [
     "NSUserDefaults",
     "NSString",
     "NSArray",
+    # Hold an NSProcessInfo activity assertion under the test bridge so macOS
+    # App Nap never throttles the headless E2E app (see utils::macos_unthrottle).
+    "NSProcessInfo",
 ] }
 # Native Cocoa Services provider for the app-level "Open in termiHub"
 # Services-menu entry (#1409): register on NSApp.servicesProvider and read the

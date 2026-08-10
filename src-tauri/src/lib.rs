@@ -420,6 +420,16 @@ pub fn run() {
                         info!("Test window pinned always-on-top (anti-occlusion, #957)");
                     }
                 }
+
+                // Always-on-top alone does not stop macOS from throttling the
+                // WKWebView once the app is unfocused/occluded (App Nap +
+                // window-occlusion detection), which stalls the frontend-driven
+                // agent-reconnect logic during a headless E2E run (#2480). Hold
+                // an NSProcessInfo activity assertion and turn off AppKit
+                // occlusion detection so the webview's timers keep running.
+                // macOS-only, test-bridge-only.
+                #[cfg(target_os = "macos")]
+                utils::macos_unthrottle::engage_test_bridge_unthrottle();
             }
 
             let mut recovery_warnings: Vec<RecoveryWarning> = Vec::new();
