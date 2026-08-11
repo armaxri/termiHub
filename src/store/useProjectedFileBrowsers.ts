@@ -1,119 +1,58 @@
 /**
- * `useProjectedFileBrowsers` — the file-browser panel cut to the projected
- * client-scoped `file-browser@<clientId>` region (#2228 render cut, part of #2139
- * and #2153).
+ * `useProjectedFileBrowsers` — read the **authoritative** client-scoped
+ * `file-browser@<clientId>` region (#2228, part of #2139 / #2153; reducer removal
+ * #2283).
  *
  * The file-browser panel renders per-pane UI state: the active pane, each pane's
- * cwd / listing / loading / error, and the copy-cut clipboard. Through the shadow
- * step it reads `appStore`'s file-browser slice (`fileBrowserMode`, the per-mode
- * `*FileEntries` / `*CurrentPath` / `*FileLoading` / `*FileError`, `fileClipboard`)
- * directly. This hook makes it source that slice from the client-scoped
- * `file-browser@<clientId>` projection region instead — the direct analog of
- * {@link import("./useProjectedBroadcast").useProjectedBroadcast} (#2242) and
- * {@link import("./useProjectedConnections").useProjectedConnections} (#2225).
+ * cwd / listing / loading / error, and the copy-cut clipboard. Since the reducer
+ * removal (#2283) the `appStore` file-browser slice is gone, so this region is the
+ * single source of truth: the `appStore` file-browser actions do the async list op
+ * and report each transition through a granular `fileBrowser.*` intent, which the
+ * bridge overlays optimistically and the backend `FileBrowserStore` confirms. The
+ * direct analog of {@link import("./useProjectedSettings").useProjectedSettings}
+ * (#2227) and {@link import("./useProjectedMonitors").useProjectedMonitors} (#2224).
+ *
+ * The hook subscribes to the region (one shared subscription, fanned out by the
+ * bridge) and returns the latest projected view, re-rendering on every diff. It
+ * seeds from {@link currentFileBrowsersView} so a consumer mounting after the first
+ * diff already has the current picture, and from {@link EMPTY_FILE_BROWSERS_VIEW}
+ * before any diff has arrived. There is no `appStore` fallback and no mirror gate —
+ * the region is the source of truth.
  *
  * # Scope — the browser *view*, not the session model
  *
- * The projected view mirrors only the browser *view*: the active pane, each pane's
+ * The projected view covers only the browser *view*: the active pane, each pane's
  * cwd / listing / list-operation loading+error, and the clipboard. The backend
  * session model — the live session id that gates `isConnected` and transfers —
  * stays an `appStore` read in the per-mode hooks; this hook does not touch it.
- * Since the SFTP convergence (#2313 / #2422) SSH browses through the `session`
- * pane, so only the `local` and `session` panes remain.
- *
- * # Safety (strangler)
- *
- * - **Gated** by {@link fileBrowsersRenderFromProjectionEnabled} (on by default).
- *   Flag off ⇒ the hook returns `appStore`'s slice verbatim.
- * - **Faithful-mirror gate.** The projection sources the render only when it
- *   deep-equals the `appStore` slice ({@link fileBrowsersViewMirrors}); otherwise
- *   the hook falls back to `appStore` (never a stale view). While `appStore` stays
- *   authoritative (the mutation cut is a later step) the region is kept a mirror by
- *   {@link seedFileBrowsersRegion}, so it is always populated — making the cut
- *   parity-safe and independent of the mutation flag.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { useAppStore } from "@/store/appStore";
 import {
   currentFileBrowsersView,
   ensureFileBrowsersSubscribed,
-  fileBrowsersRenderFromProjectionEnabled,
-  fileBrowsersViewMirrors,
   logFileBrowsersBridgeFallback,
   onFileBrowsersView,
-  seedFileBrowsersRegion,
   type FileBrowsersView,
 } from "@/store/fileBrowsersBridge";
 
 /**
- * The effective file-browsers slice for rendering: the active pane, the two panes
- * (local / session) and the clipboard, sourced from the projected
- * `file-browser@<clientId>` region when it faithfully mirrors `appStore`, otherwise
- * `appStore`'s slice verbatim (flag off, region not yet caught up, or a transport
- * that cannot subscribe).
+ * The effective file-browsers view for rendering — the active pane, the two panes
+ * (local / session) and the clipboard — sourced from the authoritative
+ * `file-browser@<clientId>` projection region.
  */
 export function useProjectedFileBrowsers(): FileBrowsersView {
-  const mode = useAppStore((s) => s.fileBrowserMode);
+  const [view, setView] = useState<FileBrowsersView>(() => currentFileBrowsersView());
 
-  const localEntries = useAppStore((s) => s.localFileEntries);
-  const localPath = useAppStore((s) => s.localCurrentPath);
-  const localLoading = useAppStore((s) => s.localFileLoading);
-  const localError = useAppStore((s) => s.localFileError);
-
-  const sessionEntries = useAppStore((s) => s.sessionFileEntries);
-  const sessionPath = useAppStore((s) => s.sessionCurrentPath);
-  const sessionLoading = useAppStore((s) => s.sessionFileLoading);
-  const sessionError = useAppStore((s) => s.sessionFileError);
-
-  const clipboard = useAppStore((s) => s.fileClipboard);
-
-  // The `appStore`-shaped slice, matching the Rust region view model one-to-one.
-  const slice = useMemo<FileBrowsersView>(
-    () => ({
-      mode,
-      local: { path: localPath, entries: localEntries, loading: localLoading, error: localError },
-      session: {
-        path: sessionPath,
-        entries: sessionEntries,
-        loading: sessionLoading,
-        error: sessionError,
-      },
-      clipboard,
-    }),
-    [
-      mode,
-      localPath,
-      localEntries,
-      localLoading,
-      localError,
-      sessionPath,
-      sessionEntries,
-      sessionLoading,
-      sessionError,
-      clipboard,
-    ]
-  );
-
-  // Read the flag once at mount: it flips only via dev tooling, and the
-  // subscription lifecycle is keyed off it below.
-  const [enabled] = useState(() => fileBrowsersRenderFromProjectionEnabled());
-
-  const [view, setView] = useState<FileBrowsersView | undefined>(undefined);
-
-  // Subscribe to the client-scoped file-browsers region while enabled; a transport
-  // that cannot subscribe (non-Tauri without a socket) just leaves the UI on the
-  // appStore fallback.
   useEffect(() => {
-    if (!enabled) return;
     let cancelled = false;
     const unsubscribe = onFileBrowsersView((next) => {
       if (!cancelled) setView(next);
     });
     // `ensureFileBrowsersSubscribed` builds the transport eagerly, so a non-Tauri
     // env without a socket throws synchronously (not just a rejection) — guard both
-    // so the UI silently stays on the appStore fallback.
+    // so the hook silently stays on the last-known (or empty) view.
     try {
       ensureFileBrowsersSubscribed()
         .then(() => {
@@ -127,20 +66,7 @@ export function useProjectedFileBrowsers(): FileBrowsersView {
       cancelled = true;
       unsubscribe();
     };
-  }, [enabled]);
+  }, []);
 
-  const matches = enabled && fileBrowsersViewMirrors(view, slice);
-
-  // Keep the region a faithful mirror of appStore's slice. Only once a view has
-  // arrived (so we are subscribed) and it is not already a mirror; de-duped inside
-  // `seedFileBrowsersRegion` so a settled slice is not re-seeded on every render.
-  useEffect(() => {
-    if (!enabled || matches || view === undefined) return;
-    seedFileBrowsersRegion(slice).catch((err) => logFileBrowsersBridgeFallback("seed", err));
-  }, [enabled, matches, view, slice]);
-
-  return useMemo(() => {
-    if (matches && view) return view;
-    return slice;
-  }, [matches, view, slice]);
+  return view;
 }

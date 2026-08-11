@@ -269,7 +269,7 @@ import {
   ensureConnectionsSubscribed,
   mirrorConnectionIntent,
 } from "@/store/connectionsBridge";
-import { mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
+import { currentFileBrowsersView, mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 import {
   currentSettingsView,
@@ -1267,31 +1267,36 @@ export interface AppState
   /** Convert all agent-error tabs for the given agent into live terminal tabs after reconnect. */
   resolveAgentErrorTabs: (agentId: string) => void;
 
-  // Local file browser state
-  localFileEntries: FileEntry[];
-  localCurrentPath: string;
-  localFileLoading: boolean;
-  localFileError: string | null;
+  // File browser — the view (active pane, per-pane cwd/listing/loading/error, and
+  // the copy-cut clipboard) no longer lives in `appStore` (#2283): it is owned by
+  // the backend `FileBrowserStore` and projected through the authoritative
+  // client-scoped `file-browser@<clientId>` region. Readers use
+  // {@link import("./useProjectedFileBrowsers").useProjectedFileBrowsers}
+  // (components) or {@link import("./fileBrowsersBridge").currentFileBrowsersView}
+  // (store-side). The actions below do the async list op and report each transition
+  // through a granular `fileBrowser.*` intent, which the bridge overlays
+  // optimistically and the store confirms.
+
+  // Local file browser
   navigateLocal: (path: string) => Promise<void>;
   refreshLocal: () => Promise<void>;
 
-  // Session-based file browser state (for remote-session tabs)
-  sessionFileEntries: FileEntry[];
-  sessionCurrentPath: string;
-  sessionFileLoading: boolean;
-  sessionFileError: string | null;
-  /** Terminal session ID used for session-based file browsing. */
+  // Session-based file browser (for remote-session tabs)
+  /**
+   * Terminal session ID used for session-based file browsing. This is the backend
+   * session model — a per-client pointer to the active terminal session, set
+   * imperatively from the active tab — not part of the projected view, so it stays
+   * an `appStore` field (it gates `isConnected` and targets the session file ops).
+   */
   sessionFileBrowserId: string | null;
   navigateSession: (sessionId: string, path: string) => Promise<void>;
   refreshSession: () => Promise<void>;
   setSessionFileBrowserId: (sessionId: string | null) => void;
 
   // File browser mode
-  fileBrowserMode: "local" | "session" | "none";
   setFileBrowserMode: (mode: "local" | "session" | "none") => void;
 
   // File clipboard (copy/cut)
-  fileClipboard: FileClipboard | null;
   setFileClipboard: (clipboard: FileClipboard | null) => void;
 
   // VS Code availability
@@ -6415,12 +6420,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }));
     },
 
-    // Local file browser state
-    localFileEntries: [],
-    localCurrentPath: "/",
-    localFileLoading: false,
-    localFileError: null,
+    // File browser — the view is owned by the authoritative `file-browser` region
+    // (#2283). Each action does the async list op and reports its transitions
+    // through granular `fileBrowser.*` intents; the bridge overlays them
+    // optimistically (gap-free loading/pane/clipboard feedback) and the backend
+    // `FileBrowserStore` confirms. There is no local slice to `set` — every reader
+    // sources the view from the region via `useProjectedFileBrowsers()` /
+    // `currentFileBrowsersView()`.
 
+    // Local file browser
     navigateLocal: async (path: string) => {
       // Normalize Windows backslashes to forward slashes so path manipulation
       // in the frontend (navigateUp, path join) works uniformly on all platforms.
@@ -6430,15 +6438,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (/^[A-Za-z]:$/.test(normalizedPath)) {
         normalizedPath = normalizedPath + "/";
       }
-      set({ localFileLoading: true, localFileError: null });
       mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "local" });
       try {
         const entries = await localListDir(normalizedPath);
-        set({
-          localFileEntries: entries,
-          localCurrentPath: normalizedPath,
-          localFileLoading: false,
-        });
         mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
           pane: "local",
           path: normalizedPath,
@@ -6446,18 +6448,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        set({ localFileLoading: false, localFileError: message });
         mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
       }
     },
 
     refreshLocal: async () => {
-      const { localCurrentPath } = useAppStore.getState();
-      set({ localFileLoading: true, localFileError: null });
+      const localCurrentPath = currentFileBrowsersView().local.path;
       mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "local" });
       try {
         const entries = await localListDir(localCurrentPath);
-        set({ localFileEntries: entries, localFileLoading: false });
         mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
           pane: "local",
           path: localCurrentPath,
@@ -6465,29 +6464,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        set({ localFileLoading: false, localFileError: message });
         mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
       }
     },
 
-    // Session-based file browser state
-    sessionFileEntries: [],
-    sessionCurrentPath: "/",
-    sessionFileLoading: false,
-    sessionFileError: null,
+    // Session-based file browser
     sessionFileBrowserId: null,
     setSessionFileBrowserId: (sessionId) => set({ sessionFileBrowserId: sessionId }),
 
     navigateSession: async (sessionId: string, path: string) => {
-      set({ sessionFileLoading: true, sessionFileError: null });
       mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
       try {
         const entries = await sessionListFiles(sessionId, path);
-        set({
-          sessionFileEntries: entries,
-          sessionCurrentPath: path,
-          sessionFileLoading: false,
-        });
         mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
           pane: "session",
           path,
@@ -6495,19 +6483,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        set({ sessionFileLoading: false, sessionFileError: message });
         mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
       }
     },
 
     refreshSession: async () => {
-      const { sessionFileBrowserId, sessionCurrentPath } = useAppStore.getState();
+      const { sessionFileBrowserId } = useAppStore.getState();
       if (!sessionFileBrowserId) return;
-      set({ sessionFileLoading: true, sessionFileError: null });
+      const sessionCurrentPath = currentFileBrowsersView().session.path;
       mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
       try {
         const entries = await sessionListFiles(sessionFileBrowserId, sessionCurrentPath);
-        set({ sessionFileEntries: entries, sessionFileLoading: false });
         mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
           pane: "session",
           path: sessionCurrentPath,
@@ -6515,22 +6501,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        set({ sessionFileLoading: false, sessionFileError: message });
         mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
       }
     },
 
     // File browser mode
-    fileBrowserMode: "none",
     setFileBrowserMode: (mode) => {
-      set({ fileBrowserMode: mode });
       mirrorFileBrowserIntent("fileBrowser.setMode", { mode });
     },
 
     // File clipboard (copy/cut)
-    fileClipboard: null,
     setFileClipboard: (clipboard) => {
-      set({ fileClipboard: clipboard });
       mirrorFileBrowserIntent("fileBrowser.setClipboard", { clipboard });
     },
 

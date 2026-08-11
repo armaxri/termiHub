@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
+import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
+import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import {
   sessionReadFile,
   sessionWriteFile,
@@ -46,11 +48,16 @@ import { runTransfer, seedTransferQueueRow } from "./transferFeedback";
  * a rejection leaves the session on the byte-based path.
  */
 export function useSessionFileSystem() {
-  const sessionFileEntries = useAppStore((s) => s.sessionFileEntries);
-  const sessionCurrentPath = useAppStore((s) => s.sessionCurrentPath);
+  // The session pane's view (listing, cwd, loading, error) is sourced from the
+  // authoritative `file-browser` projection region (#2283); the live session id
+  // (`sessionFileBrowserId`) is the backend session model and stays an `appStore`
+  // read (it gates `isConnected` and targets the session file ops).
+  const sessionPane = useProjectedFileBrowsers().session;
+  const sessionFileEntries = sessionPane.entries;
+  const sessionCurrentPath = sessionPane.path;
+  const sessionFileLoading = sessionPane.loading;
+  const sessionFileError = sessionPane.error;
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
-  const sessionFileLoading = useAppStore((s) => s.sessionFileLoading);
-  const sessionFileError = useAppStore((s) => s.sessionFileError);
   const navigateSession = useAppStore((s) => s.navigateSession);
   const refreshSession = useAppStore((s) => s.refreshSession);
 
@@ -277,7 +284,7 @@ export function useSessionFileSystem() {
   );
 
   const pasteEntry = useCallback(async () => {
-    const clipboard = useAppStore.getState().fileClipboard;
+    const clipboard = currentFileBrowsersView().clipboard;
     if (!clipboard || !sessionFileBrowserId) return;
 
     const destDir = sessionCurrentPath;

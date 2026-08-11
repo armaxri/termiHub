@@ -1,36 +1,25 @@
 /**
- * File-browsers projection bridge (#2228) — the render-cut flag, the
- * faithful-mirror gate, and the `fileBrowser.replace` whole-slice seed round-trip.
- * Drives the bridge against an in-memory substrate double that applies
- * `fileBrowser.replace` and fans a snapshot, without a backend.
+ * File-browsers projection bridge (#2228 / #2283) — the authoritative region: a
+ * `fileBrowser.*` mutation is overlaid on the projected view **synchronously**
+ * (optimistic folding, #2533) and reconciled against the backend's diff, with no
+ * appStore slice, no migration flag, and no faithful-mirror gate. Driven against an
+ * in-memory substrate double that folds the granular intents like the Rust store.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type {
-  FrameHandler,
-  Intent,
-  IntentAck,
-  ProjectionFrame,
-  SnapshotFrame,
-  Subscription,
-  Transport,
-} from "@/services/transport";
 import type { FileEntry } from "@/types/connection";
 
 import {
   currentFileBrowsersView,
   EMPTY_FILE_BROWSERS_VIEW,
   ensureFileBrowsersSubscribed,
-  FILE_BROWSERS_REGION,
-  fileBrowsersRenderFromProjectionEnabled,
-  fileBrowsersViewMirrors,
+  mirrorFileBrowserIntent,
   onFileBrowsersView,
-  seedFileBrowsersRegion,
-  setFileBrowsersRenderFromProjectionEnabled,
   setFileBrowsersTransportForTest,
   stopFileBrowsersSubscription,
   type FileBrowsersView,
 } from "./fileBrowsersBridge";
+import { FakeFileBrowsersTransport, fileBrowsersView } from "@/test/fileBrowsersRegionTestHarness";
 
 function entry(name: string, isDirectory = false): FileEntry {
   return {
@@ -46,151 +35,114 @@ function entry(name: string, isDirectory = false): FileEntry {
   };
 }
 
-function view(over: Partial<FileBrowsersView> = {}): FileBrowsersView {
-  return {
-    mode: "local",
-    local: { path: "/home", entries: [entry("a")], loading: false, error: null },
-    session: { path: "/", entries: [], loading: false, error: "gone" },
-    clipboard: null,
-    ...over,
-  };
-}
-
-/** An in-memory substrate double: holds one file-browsers view, applies a
- * `fileBrowser.replace` by overwriting it, and fans a fresh snapshot to subscribers. */
-class FakeTransport implements Transport {
-  dispatched: Intent[] = [];
-  private stored: FileBrowsersView = { ...EMPTY_FILE_BROWSERS_VIEW };
-  private version = 0;
-  private handlers: FrameHandler[] = [];
-
-  async dispatch(intent: Intent): Promise<IntentAck> {
-    this.dispatched.push(intent);
-    if (intent.kind === "fileBrowser.replace") {
-      this.stored = intent.payload as unknown as FileBrowsersView;
-      this.version += 1;
-      this.fan();
-      return {
-        intentId: intent.intentId,
-        status: "accepted",
-        produced: [{ region: FILE_BROWSERS_REGION, version: this.version }],
-      };
-    }
-    return { intentId: intent.intentId, status: "accepted", produced: [] };
-  }
-
-  async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
-    this.handlers.push(onFrame);
-    return {
-      snapshot: this.snapshot(region),
-      unsubscribe: () => {
-        this.handlers = this.handlers.filter((h) => h !== onFrame);
-      },
-    };
-  }
-
-  async resync(): Promise<SnapshotFrame | null> {
-    return null;
-  }
-
-  private snapshot(region: string): SnapshotFrame {
-    return { kind: "snapshot", region, version: this.version, view: structuredClone(this.stored) };
-  }
-
-  private fan(): void {
-    const frame: ProjectionFrame = this.snapshot(FILE_BROWSERS_REGION);
-    for (const h of this.handlers) h(frame);
-  }
-}
-
-let transport: FakeTransport;
+let transport: FakeFileBrowsersTransport;
 
 beforeEach(() => {
-  transport = new FakeTransport();
+  transport = new FakeFileBrowsersTransport();
   setFileBrowsersTransportForTest(transport);
 });
 
 afterEach(() => {
   stopFileBrowsersSubscription();
   setFileBrowsersTransportForTest(null);
-  setFileBrowsersRenderFromProjectionEnabled(null);
 });
 
-describe("fileBrowsersRenderFromProjectionEnabled flag", () => {
-  it("defaults on and honours the programmatic override", () => {
-    expect(fileBrowsersRenderFromProjectionEnabled()).toBe(true);
-    setFileBrowsersRenderFromProjectionEnabled(false);
-    expect(fileBrowsersRenderFromProjectionEnabled()).toBe(false);
-    setFileBrowsersRenderFromProjectionEnabled(true);
-    expect(fileBrowsersRenderFromProjectionEnabled()).toBe(true);
-    setFileBrowsersRenderFromProjectionEnabled(null);
-    expect(fileBrowsersRenderFromProjectionEnabled()).toBe(true);
-  });
-});
+const flush = () => Promise.resolve();
 
-describe("fileBrowsersViewMirrors gate", () => {
-  it("is false for an undefined view", () => {
-    expect(fileBrowsersViewMirrors(undefined, view())).toBe(false);
+describe("mirrorFileBrowserIntent — optimistic folding", () => {
+  it("overlays the active-pane switch synchronously", () => {
+    mirrorFileBrowserIntent("fileBrowser.setMode", { mode: "local" });
+    // No await: the overlay is applied to the projected view at once.
+    expect(currentFileBrowsersView().mode).toBe("local");
   });
 
-  it("mirrors when the whole view matches by value", () => {
-    expect(fileBrowsersViewMirrors(view(), view())).toBe(true);
+  it("overlays loading then the listing synchronously", () => {
+    mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "local" });
+    expect(currentFileBrowsersView().local.loading).toBe(true);
+
+    mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
+      pane: "local",
+      path: "/home/user",
+      entries: [entry("a"), entry("dir", true)],
+    });
+    const view = currentFileBrowsersView();
+    expect(view.local.path).toBe("/home/user");
+    expect(view.local.loading).toBe(false);
+    expect(view.local.entries.map((e) => e.name)).toEqual(["a", "dir"]);
   });
 
-  it("rejects on any field divergence", () => {
-    expect(fileBrowsersViewMirrors(view({ mode: "session" }), view())).toBe(false);
-    expect(
-      fileBrowsersViewMirrors(
-        view({ local: { path: "/x", entries: [], loading: false, error: null } }),
-        view()
-      )
-    ).toBe(false);
-    // A different listing under the same pane path is not a mirror.
-    expect(
-      fileBrowsersViewMirrors(
-        view({
-          session: { path: "/", entries: [entry("other", true)], loading: false, error: "gone" },
-        }),
-        view()
-      )
-    ).toBe(false);
-    // A divergent clipboard is not a mirror.
-    expect(
-      fileBrowsersViewMirrors(
-        view({
-          clipboard: {
-            entries: [entry("c")],
-            operation: "copy",
-            sourceMode: "local",
-            sourcePath: "/home",
-          },
-        }),
-        view()
-      )
-    ).toBe(false);
+  it("overlays a load failure synchronously", () => {
+    mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
+    mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: "denied" });
+    const view = currentFileBrowsersView();
+    expect(view.session.loading).toBe(false);
+    expect(view.session.error).toBe("denied");
   });
-});
 
-describe("seedFileBrowsersRegion (fileBrowser.replace mirror)", () => {
-  it("dispatches a fileBrowser.replace and fans the mirrored view", async () => {
-    const received: FileBrowsersView[] = [];
-    onFileBrowsersView((v) => received.push(v));
+  it("overlays the clipboard so a paste reads it right after a copy", () => {
+    mirrorFileBrowserIntent("fileBrowser.setClipboard", {
+      clipboard: { entries: [entry("c")], operation: "copy", sourceMode: "local", sourcePath: "/" },
+    });
+    expect(currentFileBrowsersView().clipboard?.operation).toBe("copy");
+    mirrorFileBrowserIntent("fileBrowser.setClipboard", { clipboard: null });
+    expect(currentFileBrowsersView().clipboard).toBeNull();
+  });
+
+  it("dispatches the intent to the backend and reconciles to the same view", async () => {
+    mirrorFileBrowserIntent("fileBrowser.setMode", { mode: "session" });
+    mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
+      pane: "session",
+      path: "/srv",
+      entries: [entry("s")],
+    });
+    // The backend applied the same transitions…
+    expect(transport.kinds()).toEqual(["fileBrowser.setMode", "fileBrowser.loadSucceeded"]);
+    expect(transport.regionView().session.path).toBe("/srv");
+
+    // …and once the subscription settles the authoritative view matches the overlay.
     await ensureFileBrowsersSubscribed();
-
-    const v = view();
-    await seedFileBrowsersRegion(v);
-
-    const replace = transport.dispatched.filter((d) => d.kind === "fileBrowser.replace");
-    expect(replace).toHaveLength(1);
-    expect(currentFileBrowsersView()).toEqual(v);
-    expect(received[received.length - 1]).toEqual(v);
+    await flush();
+    expect(currentFileBrowsersView()).toEqual(transport.regionView());
   });
 
-  it("de-duplicates an identical seed", async () => {
+  it("fans the projected view out to onFileBrowsersView listeners", () => {
+    const seen: FileBrowsersView[] = [];
+    const unsub = onFileBrowsersView((v) => seen.push(v));
+    mirrorFileBrowserIntent("fileBrowser.setMode", { mode: "local" });
+    unsub();
+    expect(seen[seen.length - 1]?.mode).toBe("local");
+  });
+
+  it("swallows a rejected dispatch without throwing (resilience)", async () => {
+    setFileBrowsersTransportForTest({
+      dispatch: () =>
+        Promise.resolve({
+          intentId: "x",
+          status: "rejected",
+          error: { code: "rejected", message: "no" },
+        }),
+      subscribe: async (region, onFrame) => {
+        void onFrame;
+        return { snapshot: { kind: "snapshot", region, version: 0, view: {} }, unsubscribe() {} };
+      },
+      resync: async () => null,
+    });
+    // The overlay still applies; the rejection is logged, not thrown.
+    expect(() => mirrorFileBrowserIntent("fileBrowser.setMode", { mode: "local" })).not.toThrow();
+    await flush();
+  });
+});
+
+describe("currentFileBrowsersView", () => {
+  it("is the empty baseline before any mutation", () => {
+    expect(currentFileBrowsersView()).toEqual(EMPTY_FILE_BROWSERS_VIEW);
+  });
+
+  it("seeds from a substrate snapshot on subscribe", async () => {
+    transport.seed(fileBrowsersView({ mode: "local", local: { path: "/home", entries: [] } }));
     await ensureFileBrowsersSubscribed();
-    const v = view();
-    await seedFileBrowsersRegion(v);
-    await seedFileBrowsersRegion(v);
-    expect(transport.dispatched.filter((d) => d.kind === "fileBrowser.replace")).toHaveLength(1);
+    await flush();
+    expect(currentFileBrowsersView().mode).toBe("local");
+    expect(currentFileBrowsersView().local.path).toBe("/home");
   });
 });

@@ -4,6 +4,7 @@ import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
@@ -103,6 +104,8 @@ async function renderLocalBrowser(entries: FileEntry[]) {
   });
   await flushAsync();
 }
+
+setupFileBrowsersRegion();
 
 describe("FileBrowser – virtualization", () => {
   beforeEach(() => {

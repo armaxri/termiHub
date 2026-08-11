@@ -43,6 +43,10 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 }));
 
 import { useAppStore } from "@/store/appStore";
+import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
+import { seedFileBrowsers, setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
+
+setupFileBrowsersRegion();
 
 // Test the navigateUp path-logic which is pure string manipulation.
 // We extract and test the logic directly rather than through the hook
@@ -147,16 +151,16 @@ describe("useLocalFileSystem — store integration", () => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
-  it("localCurrentPath defaults to home or /", () => {
-    // The store initializes localCurrentPath, just verify it's a string
-    const { localCurrentPath } = useAppStore.getState();
-    expect(typeof localCurrentPath).toBe("string");
+  it("the local pane path defaults to a string", () => {
+    // The region initializes the local pane path, just verify it's a string
+    expect(typeof currentFileBrowsersView().local.path).toBe("string");
   });
 
-  it("navigateLocal updates localCurrentPath in store", async () => {
-    // navigateLocal is async: it calls localListDir then sets the path
+  it("navigateLocal commits the path to the region", async () => {
+    // navigateLocal is async: it calls localListDir then reports the path
     await useAppStore.getState().navigateLocal("/test/path");
-    expect(useAppStore.getState().localCurrentPath).toBe("/test/path");
+    await Promise.resolve();
+    expect(currentFileBrowsersView().local.path).toBe("/test/path");
   });
 });
 
@@ -183,7 +187,9 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
   });
 
   it("calls localCopyFile with the correct destination path", async () => {
-    useAppStore.setState({ localCurrentPath: "/destination/dir" });
+    seedFileBrowsers({
+      local: { path: "/destination/dir", entries: [], loading: false, error: null },
+    });
 
     let uploadFn: ((path: string) => Promise<void>) | undefined;
     function Harness() {
@@ -208,7 +214,7 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
   });
 
   it("skips copy when source and destination are the same path", async () => {
-    useAppStore.setState({ localCurrentPath: "/source" });
+    seedFileBrowsers({ local: { path: "/source", entries: [], loading: false, error: null } });
 
     let uploadFn: ((path: string) => Promise<void>) | undefined;
     function Harness() {
@@ -229,7 +235,7 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
   });
 
   it("handles Windows-style backslash source path", async () => {
-    useAppStore.setState({ localCurrentPath: "/uploads" });
+    seedFileBrowsers({ local: { path: "/uploads", entries: [], loading: false, error: null } });
 
     let uploadFn: ((path: string) => Promise<void>) | undefined;
     function Harness() {

@@ -78,36 +78,29 @@ vi.mock("./useSessionFileSystem", () => ({
 }));
 
 import { useAppStore } from "@/store/appStore";
+import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
+import { seedFileBrowsers, setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import type { FileEntry } from "@/types/connection";
 import { useFileBrowser } from "./useFileBrowser";
 
-// Test the routing logic by calling the hook with the store in different modes.
-// Since hooks must run in a component, we test the routing indirectly via
-// the store state that drives the mode selection.
+setupFileBrowsersRegion();
+
+// The active pane is owned by the authoritative `file-browser` region (#2283).
 
 describe("useFileBrowser routing", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
   });
 
-  it('returns mode "none" with disconnected defaults when fileBrowserMode is none', () => {
-    useAppStore.setState({ fileBrowserMode: "none" });
+  it("the active pane transitions correctly through the region", () => {
+    useAppStore.getState().setFileBrowserMode("local");
+    expect(currentFileBrowsersView().mode).toBe("local");
 
-    // Call the hook logic directly without React rendering by replicating the
-    // routing switch. This avoids the need for a full component render.
-    const mode = useAppStore.getState().fileBrowserMode;
-    expect(mode).toBe("none");
-  });
+    useAppStore.getState().setFileBrowserMode("session");
+    expect(currentFileBrowsersView().mode).toBe("session");
 
-  it("fileBrowserMode transitions correctly", () => {
-    useAppStore.setState({ fileBrowserMode: "local" });
-    expect(useAppStore.getState().fileBrowserMode).toBe("local");
-
-    useAppStore.setState({ fileBrowserMode: "session" });
-    expect(useAppStore.getState().fileBrowserMode).toBe("session");
-
-    useAppStore.setState({ fileBrowserMode: "none" });
-    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+    useAppStore.getState().setFileBrowserMode("none");
+    expect(currentFileBrowsersView().mode).toBe("none");
   });
 });
 
@@ -142,7 +135,7 @@ describe("useFileBrowser hook (mode routing)", () => {
   });
 
   it('returns mode "none" with empty fileEntries when mode is none', () => {
-    useAppStore.setState({ fileBrowserMode: "none" });
+    seedFileBrowsers({ mode: "none" });
     let result: ReturnType<typeof useFileBrowser> | undefined;
 
     act(() => {
@@ -154,16 +147,18 @@ describe("useFileBrowser hook (mode routing)", () => {
     expect(result!.isConnected).toBe(false);
   });
 
-  // After the #2228 render cut the per-pane render fields (listing, cwd, loading,
-  // error) are sourced from the projected file-browser region — which, with no
-  // transport in this unit env, falls back to `appStore` verbatim. So the mode
-  // routing is asserted against the `appStore` per-mode slice; the file *actions*
-  // and `isConnected` still come from the per-mode hooks (mocked above).
+  // The active pane and each pane's per-render fields (listing, cwd, loading,
+  // error) are sourced from the authoritative `file-browser` region (#2283); the
+  // file *actions* and `isConnected` still come from the per-mode hooks (mocked
+  // above).
   const listing = (name: string) =>
     [{ name, path: `/${name}`, isDirectory: false }] as unknown as FileEntry[];
 
   it('returns mode "local" with local file entries', () => {
-    useAppStore.setState({ fileBrowserMode: "local", localFileEntries: listing("local-file.txt") });
+    seedFileBrowsers({
+      mode: "local",
+      local: { path: "/local", entries: listing("local-file.txt"), loading: false, error: null },
+    });
     let result: ReturnType<typeof useFileBrowser> | undefined;
 
     act(() => {
@@ -177,9 +172,14 @@ describe("useFileBrowser hook (mode routing)", () => {
   });
 
   it('returns mode "session" with session file entries', () => {
-    useAppStore.setState({
-      fileBrowserMode: "session",
-      sessionFileEntries: listing("session-file.txt"),
+    seedFileBrowsers({
+      mode: "session",
+      session: {
+        path: "/session",
+        entries: listing("session-file.txt"),
+        loading: false,
+        error: null,
+      },
     });
     let result: ReturnType<typeof useFileBrowser> | undefined;
 
