@@ -4071,7 +4071,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { ...nav, rootPanel, activePanelId: targetPanelId };
+        return {
+          ...nav,
+          rootPanel,
+          activePanelId: targetPanelId,
+          // Track the new tab's content in the by-id map (part of #2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     openLogViewerTab: () =>
@@ -4102,7 +4108,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          // Track the new tab's content in the by-id map (part of #2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     openNetworkDiagnosticTab: (tool, prefillHost, connectionId) =>
@@ -4133,7 +4144,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          // Track the new tab's content (incl. its diagnostic meta) in the by-id
+          // map (part of #2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     openEditorTab: (filePath, isRemote, permissions, sessionBrowser) =>
@@ -4155,24 +4172,32 @@ export const useAppStore = create<AppState>((set, get, store) => {
               t.editorMeta?.sessionKey === sessionKey
           );
           if (existing) {
+            // Refresh the backing session so a reconnected session works.
+            let refreshedMeta = existing.editorMeta;
+            if (isRemote && existing.editorMeta && sessionBrowser) {
+              refreshedMeta = {
+                ...existing.editorMeta,
+                sessionBrowser,
+                sessionKey,
+              };
+            }
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
               ...l,
-              tabs: l.tabs.map((t) => {
-                if (t.id !== existing.id) return { ...t, isActive: false };
-                // Refresh the backing session so a reconnected session works.
-                let updatedMeta = t.editorMeta;
-                if (isRemote && t.editorMeta && sessionBrowser) {
-                  updatedMeta = {
-                    ...t.editorMeta,
-                    sessionBrowser,
-                    sessionKey,
-                  };
-                }
-                return { ...t, isActive: true, editorMeta: updatedMeta };
-              }),
+              tabs: l.tabs.map((t) =>
+                t.id === existing.id
+                  ? { ...t, isActive: true, editorMeta: refreshedMeta }
+                  : { ...t, isActive: false }
+              ),
               activeTabId: existing.id,
             }));
-            return { rootPanel, activePanelId: leaf.id };
+            return {
+              rootPanel,
+              activePanelId: leaf.id,
+              // Keep the mapped content in sync with the refreshed meta (#2283).
+              tabContent: patchTabContentEntry(state.tabContent, existing.id, {
+                editorMeta: refreshedMeta,
+              }),
+            };
           }
         }
 
@@ -4197,7 +4222,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          // Track the new tab's content (incl. editorMeta) in the by-id map (#2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     openScratchEditorTab: (title, fileName, content) =>
@@ -4221,7 +4251,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          // Track the scratch editor's content (incl. editorMeta) in the map (#2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     openConnectionEditorTab: (connectionId, folderId) =>
@@ -4273,7 +4308,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          // Track the new tab's content (incl. connectionEditorMeta) in the map (#2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     openAgentDefinitionEditorTab: (agentId, definitionId, folderId) =>
@@ -4324,7 +4364,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          // Track the new tab's content (incl. connectionEditorMeta) in the map (#2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     editorDirtyTabs: {},
@@ -6804,7 +6849,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          // Track the new tab's content (incl. tunnelEditorMeta) in the map (#2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     // Embedded Servers — data + lifecycle provided by createEmbeddedServersSlice (#2113).
@@ -6835,7 +6885,16 @@ export const useAppStore = create<AppState>((set, get, store) => {
               ),
               activeTabId: existing.id,
             }));
-            return { rootPanel, activePanelId: leaf.id, selectedPluginId: pluginId };
+            return {
+              rootPanel,
+              activePanelId: leaf.id,
+              selectedPluginId: pluginId,
+              // Keep the mapped content in sync with the re-pointed title/meta (#2283).
+              tabContent: patchTabContentEntry(state.tabContent, existing.id, {
+                title,
+                pluginDetailMeta: { pluginId },
+              }),
+            };
           }
         }
 
@@ -6852,7 +6911,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId, selectedPluginId: pluginId };
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          selectedPluginId: pluginId,
+          // Track the new tab's content (incl. pluginDetailMeta) in the map (#2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     // Macro recording (#1674) + playback (#1675) provided by createMacrosSlice (#2114).
@@ -7381,7 +7446,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabs.push(newTab);
           return { ...leaf, tabs, activeTabId: newTab.id };
         });
-        return { rootPanel, activePanelId: targetPanelId };
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          // Track the new tab's content (incl. workspaceEditorMeta) in the map (#2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
       }),
 
     launchWorkspace: async (workspaceId) => {
