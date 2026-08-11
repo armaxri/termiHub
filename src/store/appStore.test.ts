@@ -36,7 +36,6 @@ vi.mock("@/services/api", () => ({
 import { useAppStore } from "./appStore";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { setupConnectionsRegion } from "@/test/connectionsHarness";
-import { setLayoutIntentsEnabled } from "./layoutBridge";
 import type { LeafPanel } from "@/types/terminal";
 import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import * as api from "@/services/api";
@@ -52,12 +51,9 @@ describe("appStore", () => {
     // cut (#2184) makes split/move async intent round-trips by default; here we
     // exercise the retained local reducer (the resilience fallback) directly.
     // The intent-routed path has its own coverage in appStore.layoutBridge.test.ts.
-    setLayoutIntentsEnabled(false);
   });
 
-  afterEach(() => {
-    setLayoutIntentsEnabled(null);
-  });
+  afterEach(() => {});
 
   describe("addTab", () => {
     it("adds a tab to the active panel", () => {

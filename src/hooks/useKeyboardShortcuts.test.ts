@@ -60,7 +60,6 @@ import {
 import { matchHotkeyWorkflow } from "@/services/workflowTriggers";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
-import { setLayoutIntentsEnabled } from "@/store/layoutBridge";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
@@ -99,7 +98,6 @@ describe("useKeyboardShortcuts", () => {
     // split-right/-down assert the split synchronously; pin to the local reducer
     // (the retained resilience fallback) since the mutation cut (#2184) makes the
     // intent path async by default. Intent path covered in appStore.layoutBridge.test.ts.
-    setLayoutIntentsEnabled(false);
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -108,7 +106,6 @@ describe("useKeyboardShortcuts", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
-    setLayoutIntentsEnabled(null);
   });
 
   describe("lifecycle", () => {

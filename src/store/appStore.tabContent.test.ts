@@ -384,4 +384,33 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
     // The settings tab is present in appStore's live tree.
     expect(allTabs().some((t) => t.contentType === "settings")).toBe(true);
   });
+
+  it("preserves directional lastActiveLeafId marks across mirror recompositions (#448)", () => {
+    const s = useAppStore.getState();
+    s.addTab("Shell", "local", LOCAL_CONFIG);
+    s.splitPanel("horizontal");
+    const root0 = useAppStore.getState().rootPanel as PanelNode & { id: string };
+    expect(root0.type).toBe("split");
+    const leaves = getAllLeaves(useAppStore.getState().rootPanel).map((l) => l.id);
+    expect(leaves).toHaveLength(2);
+    const [p1] = leaves;
+
+    // Focus a panel — the #448 subscription marks the root split's last-focused
+    // child. The mark lives only in appStore (the backend does not mark), so the
+    // mirror must re-apply it on every recompose.
+    s.setActivePanel(p1);
+    const markedRoot = useAppStore.getState().rootPanel as PanelNode & {
+      lastActiveLeafId?: string;
+    };
+    expect(markedRoot.lastActiveLeafId).toBe(p1);
+
+    // A subsequent mirror-firing op (a resize — no focus change) must not drop it.
+    s.setPanelSizes(root0.id, [70, 30]);
+    const afterRoot = useAppStore.getState().rootPanel as PanelNode & {
+      lastActiveLeafId?: string;
+      sizes?: number[];
+    };
+    expect(afterRoot.lastActiveLeafId).toBe(p1);
+    expect(afterRoot.sizes).toEqual([70, 30]);
+  });
 });

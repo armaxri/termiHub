@@ -1,18 +1,19 @@
 /**
- * appStore ↔ layout projection bridge wiring (#2283 slice D' — the un-gated
- * optimistic-fold overlay).
+ * appStore ↔ layout projection bridge wiring (#2283 slice E2 — the region as the
+ * sole writer of `appStore`'s layout).
  *
- * Drives the layout reducers through the **real**
+ * Drives the layout ops through the **real**
  * {@link import("./layoutBridge").mirrorLayoutIntent} path against an in-memory
  * backend double ({@link FakeLayoutTransport}) that folds the granular `layout.*`
  * intents like the Rust store. It pins the slice's contract:
  *
- * - the local reducer stays authoritative and **synchronous** — `appStore.rootPanel`
- *   updates at once (the timing win: no seed→await→reconcile round-trip);
- * - the same transition is mirrored into the region **synchronously** via an
- *   optimistic overlay, then reconciled when the backend's diff lands;
- * - a rejected dispatch rolls the overlay back while `appStore` keeps the local
- *   result — the retained instant-revert fallback (#2283 removal stays gated);
+ * - the local reducers are gone — `appStore.rootPanel` is composed by the
+ *   region→appStore mirror, synchronously via the optimistic overlay (the timing
+ *   win survives: no seed→await→reconcile round-trip before the tree updates);
+ * - each op dispatches its granular `layout.*` intent, and `appStore` converges to
+ *   the backend's authoritative folded view when the diff lands;
+ * - a rejected dispatch leaves `appStore` on the region's (unchanged) view — there
+ *   is no local fallback any more;
  * - tab **ids are preserved** across split / move / group-switch / tab-activation,
  *   so the live xterm DOM (keyed by tab id) is never remounted.
  */
@@ -43,9 +44,10 @@ vi.mock("@/components/ui", async () => {
 
 import { useAppStore } from "./appStore";
 import {
+  buildLayoutSnapshot,
   currentLayoutView,
   ensureLayoutRegionClient,
-  setLayoutIntentsEnabled,
+  reseedLayoutRegion,
 } from "./layoutBridge";
 
 function tab(id: string): TerminalTab {
@@ -103,49 +105,44 @@ let teardown: () => void;
 async function resetStore(root: PanelNode = seedTree(), activePanelId = "a"): Promise<void> {
   useAppStore.setState(useAppStore.getInitialState());
   useAppStore.setState({ rootPanel: root, activePanelId });
+  // Under E2 `appStore`'s layout is derived solely from the region, so seed the
+  // region to this tree (the mirror composes it back) rather than leaving the
+  // backend twin on its default view, which the mirror would otherwise compose
+  // over `appStore`.
+  const s = useAppStore.getState();
+  reseedLayoutRegion(buildLayoutSnapshot(s.tabGroups, s.activeTabGroupId, root, activePanelId));
+  await flush();
 }
 
 beforeEach(async () => {
   ({ transport, teardown } = installLayoutHarness());
-  setLayoutIntentsEnabled(null);
-  await resetStore();
-  // Pre-subscribe so the region's initial snapshot is adopted before any reducer
-  // dispatch — the fake fans snapshots synchronously, so subscribing first keeps
-  // versions monotonic (production's real transport is naturally ordered).
+  // Pre-subscribe so the region's initial snapshot is adopted before any dispatch —
+  // the fake fans snapshots synchronously, so subscribing first keeps versions
+  // monotonic (production's real transport is naturally ordered).
   await ensureLayoutRegionClient();
+  await resetStore();
 });
 
 afterEach(() => {
-  setLayoutIntentsEnabled(null);
   teardown();
 });
 
-describe("slice D' — synchronous local authority + optimistic region overlay", () => {
-  it("flag off: splitPanel mutates locally and dispatches nothing", () => {
-    setLayoutIntentsEnabled(false);
+describe("E2 — region is the sole writer of appStore's layout", () => {
+  it("splitPanel applies to rootPanel synchronously via the optimistic overlay", () => {
     useAppStore.getState().splitPanel("vertical");
-
-    expect(transport.kinds()).toHaveLength(0);
+    // No flush: the mirror composes the optimistic overlay synchronously, so
+    // `appStore.rootPanel` reflects the split at once (no local reducer any more).
     expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
   });
 
-  it("flag on: splitPanel applies to rootPanel SYNCHRONOUSLY (no await)", () => {
-    setLayoutIntentsEnabled(true);
+  it("the region overlay reflects the split synchronously, before any ack", () => {
     useAppStore.getState().splitPanel("vertical");
-    // No flush: the local reducer is the authoritative, synchronous writer.
-    expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
-  });
-
-  it("flag on: the region overlay reflects the split SYNCHRONOUSLY, before any ack", () => {
-    setLayoutIntentsEnabled(true);
-    useAppStore.getState().splitPanel("vertical");
-    // The optimistic overlay installs appStore's post-split tree at once.
     const root = regionActiveRoot(currentLayoutView());
     expect(root && getAllLeaves(root)).toHaveLength(3);
   });
 
-  it("flag on: dispatches replaceGroups (seed) then the granular layout.split", async () => {
-    setLayoutIntentsEnabled(true);
+  it("dispatches replaceGroups (seed) then the granular layout.split", async () => {
+    transport.dispatched.length = 0;
     useAppStore.getState().splitPanel("vertical");
     await flush();
     expect(transport.kinds()).toEqual(["layout.replaceGroups", "layout.split"]);
@@ -156,35 +153,30 @@ describe("slice D' — synchronous local authority + optimistic region overlay",
     });
   });
 
-  it("reconcile: the backend converges to the same tab layout after the diff lands", async () => {
-    setLayoutIntentsEnabled(true);
+  it("appStore converges to the backend's authoritative view after the diff lands", async () => {
     useAppStore.getState().reorderTabs("a", 0, 1);
     await flush();
-    // Non-id-generating op: the backend's authoritative view matches appStore.
+    // appStore's tree equals the backend's folded view — the mirror is deriving it.
     const backendRoot = regionActiveRoot(transport.regionView())!;
     expect(tabIds(backendRoot)).toEqual(tabIds(useAppStore.getState().rootPanel));
-    // …and the client's effective view reconciled to it (overlay pruned).
     expect(tabIds(regionActiveRoot(currentLayoutView())!)).toEqual(
       tabIds(useAppStore.getState().rootPanel)
     );
   });
 
-  it("rejected dispatch: overlay rolls back, appStore keeps the local result (fallback retained)", async () => {
-    setLayoutIntentsEnabled(true);
+  it("a rejected dispatch leaves appStore on the backend's (unchanged) view", async () => {
     transport.reject = true;
     useAppStore.getState().splitPanel("vertical");
-    // Local reducer already applied the split (authoritative + instant).
-    expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
     await flush();
-    // Still split locally — the retained fallback held through the rejection.
-    expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
-    // The optimistic overlay was rolled back (region did not adopt the change).
+    // No local reducer fallback any more: with the region rejecting the split, the
+    // authoritative view never adopted it, so appStore follows the region back.
+    expect(getAllLeaves(useAppStore.getState().rootPanel).length).toBeLessThan(3);
     const root = regionActiveRoot(currentLayoutView());
     expect(root && getAllLeaves(root).length).toBeLessThan(3);
   });
 });
 
-describe("slice D' — every listed op routes its granular intent", () => {
+describe("E2 — every listed op routes its granular intent", () => {
   const cases: { name: string; run: () => void; kind: string }[] = [
     {
       name: "splitPanel",
@@ -246,7 +238,6 @@ describe("slice D' — every listed op routes its granular intent", () => {
 
   for (const c of cases) {
     it(`${c.name} dispatches ${c.kind}`, async () => {
-      setLayoutIntentsEnabled(true);
       c.run();
       await flush();
       expect(transport.kinds()).toContain(c.kind);
@@ -254,7 +245,6 @@ describe("slice D' — every listed op routes its granular intent", () => {
   }
 
   it("addTab dispatches layout.addTab carrying the frontend-generated tab id", async () => {
-    setLayoutIntentsEnabled(true);
     const id = useAppStore.getState().addTab("New", "local", { type: "local", config: {} });
     await flush();
     const add = transport.dispatched.find((d) => d.kind === "layout.addTab");
@@ -263,14 +253,12 @@ describe("slice D' — every listed op routes its granular intent", () => {
   });
 
   it("closeTab dispatches layout.closeTabStructure", async () => {
-    setLayoutIntentsEnabled(true);
     useAppStore.getState().closeTab("t2", "a");
     await flush();
     expect(transport.kinds()).toContain("layout.closeTabStructure");
   });
 
   it("setActiveTab activates the tab in both appStore and the region", async () => {
-    setLayoutIntentsEnabled(true);
     useAppStore.getState().setActiveTab("t2", "a");
     await flush();
     expect(findLeaf(useAppStore.getState().rootPanel, "a")!.activeTabId).toBe("t2");
@@ -279,23 +267,20 @@ describe("slice D' — every listed op routes its granular intent", () => {
   });
 });
 
-describe("slice D' — tab id preservation (no live-terminal remount)", () => {
+describe("E2 — tab id preservation (no live-terminal remount)", () => {
   it("split preserves every existing tab id", () => {
-    setLayoutIntentsEnabled(true);
     const before = tabIds(useAppStore.getState().rootPanel);
     useAppStore.getState().splitPanel("vertical");
     expect(tabIds(useAppStore.getState().rootPanel)).toEqual(before);
   });
 
   it("drag-move (center) preserves the moved tab id and its stack neighbours", () => {
-    setLayoutIntentsEnabled(true);
     useAppStore.getState().splitPanelWithTab("t1", "a", "b", "center");
     const ids = tabIds(useAppStore.getState().rootPanel).sort();
     expect(ids).toEqual(["t1", "t2", "t3"]);
   });
 
   it("group switch keeps each group's tab ids intact", async () => {
-    setLayoutIntentsEnabled(true);
     // The seed tree lives in the first group. Add a fresh (empty) group — which
     // becomes active — then switch back to the first and assert its tabs survived.
     useAppStore.getState().addTabGroup("G2");
@@ -307,7 +292,6 @@ describe("slice D' — tab id preservation (no live-terminal remount)", () => {
   });
 
   it("tab activation never changes tab ids, only the active flag", () => {
-    setLayoutIntentsEnabled(true);
     const before = tabIds(useAppStore.getState().rootPanel);
     useAppStore.getState().setActiveTab("t2", "a");
     expect(tabIds(useAppStore.getState().rootPanel)).toEqual(before);
