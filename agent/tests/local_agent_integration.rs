@@ -13,7 +13,7 @@
 //!
 //! The binary is built automatically by cargo before the tests run.
 //!
-//! # Windows CI quarantine + contention control (#2495)
+//! # Windows CI contention control (#2495)
 //!
 //! These tests each spawn a live `termihub-agent --listen` process and drive it
 //! over a TCP client, and cargo runs them in parallel. They used to flake **only
@@ -48,25 +48,29 @@
 //!    deadline. See [`log_timing`]/[`read_response_line`].
 //!
 //! The #2501 per-process caps **reduced but did not eliminate** the flake — the
-//! random 10060 recurred on the Windows leg after they landed. Per the flake
-//! stop-condition, the `#[cfg_attr(windows, ignore … #2495)]` quarantine is
-//! therefore **kept in this change too**: the aggregate gate is a candidate
-//! deeper fix that must be *graded on Windows before* the tests are re-enabled
-//! per-PR, so unrelated PRs stay unblocked meanwhile. To grade it, run the
-//! quarantined subset on a Windows runner, stress-looped:
+//! random 10060 recurred on the Windows leg after they landed — which is why the
+//! aggregate concurrency gate above was added: bounding how many agents *cold-start
+//! at once* is the layer the per-process caps could not cover.
+//!
+//! **Un-quarantine grading probe (#2495, this change).** The
+//! `#[cfg_attr(windows, ignore … #2495)]` attributes that previously kept these
+//! live-agent-TCP tests off the Windows leg have now been **removed**, so the full
+//! suite runs on Windows CI again. This is a graded probe: it is trustworthy only
+//! if the Windows leg stays green across **many consecutive runs** — 3 green is not
+//! enough for a chronic flake. If the Windows leg flakes even once, the quarantine
+//! should be restored (re-add the attributes) and the deeper fix reopened. To grade
+//! locally on a Windows runner, run the suite stress-looped:
 //!
 //! ```sh
-//! cargo test -p termihub-agent --test local_agent_integration -- \
-//!   --ignored --nocapture   # with TERMIHUB_TEST_TIMING=1 for the phase breakdown
+//! cargo test -p termihub-agent --test local_agent_integration -- --nocapture
+//! #   with TERMIHUB_TEST_TIMING=1 for the phase breakdown
 //! ```
 //!
-//! Un-quarantine (remove the attributes) only once that holds across many
-//! consecutive runs — 3 green is not enough for a chronic flake. The timing
-//! lines tell us whether the gate closed the gap (small gate_wait + small
-//! cold_start + fast first response) or whether a residual phase is still slow.
-//! Tests that do not drive a live agent over TCP (the raw-socket read-deadline
-//! test, the dead-process fast-fail, the `--version` check, and the gate's own
-//! unit tests) are unaffected and stay enabled everywhere.
+//! The timing lines tell us whether the gate closed the gap (small gate_wait +
+//! small cold_start + fast first response) or whether a residual phase is still
+//! slow. Tests that do not drive a live agent over TCP (the raw-socket
+//! read-deadline test, the dead-process fast-fail, the `--version` check, and the
+//! gate's own unit tests) were never quarantined and run everywhere as before.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
@@ -1078,10 +1082,6 @@ fn agent_slots_bounds_concurrency_and_hands_off() {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn agent_starts_and_accepts_connections() {
     let agent = LocalAgent::spawn();
     // If we reach here, the agent bound a port and served the readiness probe
@@ -1090,10 +1090,6 @@ fn agent_starts_and_accepts_connections() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn agent_responds_to_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = connect_with_retry(&agent.addr);
@@ -1116,10 +1112,6 @@ fn agent_responds_to_initialize() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn agent_returns_error_for_unknown_method_before_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = connect_with_retry(&agent.addr);
@@ -1142,10 +1134,6 @@ fn agent_returns_error_for_unknown_method_before_initialize() {
 }
 
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn agent_handles_multiple_sequential_connections() {
     let agent = LocalAgent::spawn();
 
@@ -1536,10 +1524,6 @@ fn counters_in(text: &str, prefix: &str) -> Vec<u64> {
 /// Verify that creating a local shell session returns a valid session ID with
 /// status "running". This is the prerequisite for all other shell tests.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn shell_session_create_returns_session_id() {
     let agent = LocalAgent::spawn();
     let mut client = AgentClient::connect(&agent.addr);
@@ -1567,10 +1551,6 @@ fn shell_session_create_returns_session_id() {
 /// Verify that after attaching to a shell and writing a command, the agent
 /// delivers `connection.output` notifications containing the echoed text.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn shell_session_attach_and_receive_output() {
     let agent = LocalAgent::spawn();
     let mut client = AgentClient::connect(&agent.addr);
@@ -1604,10 +1584,6 @@ fn shell_session_attach_and_receive_output() {
 /// alive in memory. A second client should see the same session in the list
 /// with `attached: false`.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn shell_session_persists_across_client_disconnect() {
     let agent = LocalAgent::spawn();
     let session_id;
@@ -1658,10 +1634,6 @@ fn shell_session_persists_across_client_disconnect() {
 /// echo, then disconnects. A second client reconnects, re-attaches to the same
 /// session, and receives output — proving the shell process survived.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn shell_session_reattach_after_reconnect() {
     let agent = LocalAgent::spawn();
     let session_id;
@@ -1756,10 +1728,6 @@ fn shell_session_reattach_after_reconnect() {
 /// transport; a real stall makes `create_elapsed` blow past the ceiling (or the
 /// echo never arrives) rather than wedging the suite forever.
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn fresh_agent_after_reconnect_creates_session_over_surviving_registry() {
     // A registry endpoint the *test* owns, so it survives agent A's death — the
     // headless stand-in for the host-wide registry daemon that outlives an agent
@@ -2163,10 +2131,6 @@ impl Drop for RecoverableDaemon {
 /// Flow: attach → run `ls`/`dir` → detach → attach → buffer replay contains output.
 #[cfg(unix)]
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn persistent_shell_buffer_replayed_on_same_connection_reattach() {
     let setup = PersistentShellSetup::new();
     let mut client = setup.connect_client();
@@ -2230,10 +2194,6 @@ fn persistent_shell_buffer_replayed_on_same_connection_reattach() {
 /// buffer replay contains previous output.
 #[cfg(unix)]
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn persistent_shell_buffer_replayed_after_tcp_reconnect() {
     let setup = PersistentShellSetup::new();
 
@@ -2331,10 +2291,6 @@ fn persistent_shell_buffer_replayed_after_tcp_reconnect() {
 /// the session from state, and expose no session to re-attach.
 #[cfg(unix)]
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
     // ── Shared, agent-independent state: a temp dir + a manually-spawned daemon.
     // The daemon stands in for the detached, `setsid`'d session daemon that
@@ -2478,10 +2434,6 @@ fn fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
 /// yield `VARWAS--END`, so the probe would never arrive.
 #[cfg(unix)]
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn recovered_shell_preserves_environment_variable_across_agent_swap() {
     let mut daemon = RecoverableDaemon::new();
     let value = "hello123";
@@ -2573,10 +2525,6 @@ fn recovered_shell_preserves_environment_variable_across_agent_swap() {
 /// sleeps keyed to output timing, so they are deterministic under CI load.
 #[cfg(unix)]
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn daemon_shell_keeps_running_during_disconnect_and_after_recovery() {
     let mut daemon = RecoverableDaemon::new();
     let prefix = "TICK=";
@@ -2671,10 +2619,6 @@ fn daemon_shell_keeps_running_during_disconnect_and_after_recovery() {
 /// it receives comes from the replay — and there must be exactly one.
 #[cfg(unix)]
 #[test]
-#[cfg_attr(
-    windows,
-    ignore = "flaky under Windows-runner oversubscription; see #2495"
-)]
 fn recovered_session_buffer_replayed_exactly_once_on_reattach() {
     let setup = PersistentShellSetup::new();
     let tag = "REPLAYONCE-7f3a2b1c";
