@@ -48,6 +48,7 @@
 
 import {
   createTransport,
+  InMemoryTransport,
   newClientId,
   newIntentId,
   ProjectionClient,
@@ -297,7 +298,17 @@ export function setLayoutTransportForTest(t: Transport | null): void {
 
 function transport(): Transport {
   if (!transportInstance) {
-    transportInstance = createTransport();
+    // The region→appStore mirror (#2283 slice E1) needs a *constructable* transport
+    // in every environment so the client's synchronous optimistic overlay can drive
+    // it. `createTransport()` throws in a non-Tauri environment with no remote-client
+    // socket (headless unit tests; remote-client mode before its socket lands,
+    // #2166); fall back to a backend-less {@link InMemoryTransport} there so layout
+    // stays a working, region-derived projection rather than silently colliding.
+    try {
+      transportInstance = createTransport();
+    } catch {
+      transportInstance = new InMemoryTransport();
+    }
   }
   return transportInstance;
 }
@@ -494,6 +505,14 @@ export function mirrorLayoutIntent(
   preSnapshot: LayoutSnapshot,
   postSnapshot: LayoutSnapshot
 ): void {
+  // No-op guard (#2283 slice E1): a reducer that made no structural change — a
+  // defensive no-op such as dragging a tab onto its own group, or moving a tab
+  // that does not exist — leaves `pre` structurally equal to `post`. Skip the
+  // dispatch so the region→appStore mirror does not fire and needlessly re-derive
+  // an identical tree, which would churn object identity and re-render. There is
+  // nothing to sync: the region view is purely structural.
+  if (layoutSnapshotsEqual(preSnapshot, postSnapshot)) return;
+
   let client: ProjectionClient;
   try {
     client = layoutRegionClient();
@@ -671,6 +690,106 @@ export function composeRenderTree(
  * socket) surfaces as a rejection the caller can catch and fall back on. */
 export async function ensureLayoutRegionClient(): Promise<ProjectionClient> {
   return ensureSubscribed();
+}
+
+/** The `appStore` layout fields a region view composes into (the mirror's output). */
+export interface ComposedLayoutState {
+  rootPanel: PanelNode;
+  activePanelId: string | null;
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+}
+
+/**
+ * Compose `appStore`'s layout fields from a projected {@link LayoutView} — the
+ * inverse of {@link buildLayoutSnapshot}, and the core of the region→appStore
+ * mirror (#2283 slice E1). Structure comes from the view; each tab's rich content
+ * is re-attached by id via {@link reconcileNode} — preferring the flat
+ * `tabContent` map, falling back to the current tree's rich tabs for any id the
+ * map does not hold. Returns:
+ *
+ * - top-level `rootPanel`/`activePanelId` composed from the **active** group's
+ *   live tree,
+ * - `activeTabGroupId` from the view, and
+ * - `tabGroups`: **non-active** groups composed from the view; the **active**
+ *   group's entry kept verbatim from `curTabGroups` (`{ ...cur }`). This mirrors
+ *   `appStore`'s convention exactly — the active group's live tree lives at the
+ *   top level, so its `tabGroups` entry is intentionally left as the last-saved
+ *   (possibly stale) tree until a group switch re-saves it. Keeping it verbatim
+ *   makes the composed state byte-identical to the local reducers' result.
+ *
+ * Returns `null` (mirror skips, leaving `appStore` untouched) when the view is
+ * empty/absent, or when it references a tab absent from both the map and the
+ * current tree (a transient desync — e.g. the initial backend-default snapshot
+ * before the region is seeded from `appStore`). Callers gate with
+ * {@link viewMatchesTree} first, so on the happy path this composes cleanly.
+ */
+export function composeLayoutState(
+  view: LayoutView | null | undefined,
+  curRootPanel: PanelNode,
+  curTabGroups: TabGroup[],
+  tabContent: Record<string, TabContent>
+): ComposedLayoutState | null {
+  if (!view || !Array.isArray(view.groups) || view.groups.length === 0) return null;
+
+  // Content fallback: every current tab by id, across all groups. `tabContent`
+  // is preferred in `reconcileNode`; this covers ids the map does not track
+  // (e.g. editor/settings tabs). The active group's live tree (`curRootPanel`)
+  // is merged last so its up-to-date tabs win over any stale `tabGroups` copy.
+  const fallback = new Map<string, TerminalTab>();
+  for (const g of curTabGroups) {
+    for (const [id, tab] of collectTabs(g.rootPanel)) fallback.set(id, tab);
+  }
+  for (const [id, tab] of collectTabs(curRootPanel)) fallback.set(id, tab);
+
+  try {
+    const activeGroupId = view.activeGroupId;
+    const activeView = activeGroupOf(view);
+    if (!activeView) return null;
+
+    const tabGroups: TabGroup[] = view.groups.map((vg) => {
+      if (vg.id === activeGroupId) {
+        const cur = curTabGroups.find((g) => g.id === vg.id);
+        // Keep the active group's `appStore` entry verbatim (see doc): the live
+        // tree is the top-level `rootPanel`, not this entry.
+        if (cur) return { ...cur };
+      }
+      const entry: TabGroup = {
+        id: vg.id,
+        name: vg.name,
+        rootPanel: reconcileNode(vg.root, fallback, tabContent),
+        activePanelId: vg.activePanelId,
+      };
+      if (vg.color != null) entry.color = vg.color;
+      return entry;
+    });
+
+    return {
+      rootPanel: reconcileNode(activeView.root, fallback, tabContent),
+      activePanelId: activeView.activePanelId,
+      tabGroups,
+      activeTabGroupId: activeGroupId,
+    };
+  } catch (err) {
+    // A tab referenced by the view but absent from both sources: treat as a
+    // transient desync and leave `appStore` on its current tree.
+    logRenderFallback(err);
+    return null;
+  }
+}
+
+/**
+ * Register the region→appStore layout mirror (#2283 slice E1). `handler` is
+ * invoked with the region's current view on every change — synchronously on this
+ * client's own optimistic dispatch (so the mirror lands within the reducer call),
+ * and again when the authoritative diff/snapshot arrives. Subscribes the region
+ * (idempotent) so the stream is live. Returns an unsubscribe.
+ */
+export function subscribeLayoutRegion(handler: (view: LayoutView | undefined) => void): () => void {
+  const client = layoutRegionClient();
+  const off = client.onChange((state) => handler(state.view as LayoutView | undefined));
+  void ensureSubscribed().catch((err) => logRenderFallback(err));
+  return off;
 }
 
 /**

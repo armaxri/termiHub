@@ -246,10 +246,13 @@ import {
 } from "@/utils/panelTree";
 import {
   buildLayoutSnapshot,
+  composeLayoutState,
   type LayoutSnapshot,
   layoutIntentsEnabled,
   mirrorLayoutIntent,
   moveTabPayload,
+  subscribeLayoutRegion,
+  viewMatchesTree,
 } from "@/store/layoutBridge";
 import {
   ensureSessionSubscribed,
@@ -8212,6 +8215,33 @@ useAppStore.subscribe((state, prev) => {
       useAppStore.setState({ rootPanel: updated });
     }
   }
+});
+
+// Region→appStore layout mirror (#2283 slice E1). Derive `appStore`'s layout
+// fields from the `layout@<clientId>` projection whenever the region view is a
+// faithful structural mirror of the current tree. Every structural op already
+// pushes its result into the region via `mirrorLayoutIntent` (an optimistic
+// overlay that emits synchronously), so this composes that view straight back —
+// the region becoming the producer of the layout `appStore` renders from.
+//
+// In E1 this is a *pure addition*: the local reducers still run and write the
+// same result first, so the mirror is idempotent (it re-derives an identical
+// tree). The `viewMatchesTree` gate keeps it that way — it applies only when the
+// view already mirrors `appStore` (so the composed state equals the reducer's),
+// and skips a non-mirroring view such as the initial backend-default snapshot
+// before the region is seeded from `appStore`. E2 removes the local reducers,
+// at which point this mirror becomes the sole writer.
+subscribeLayoutRegion((view) => {
+  const state = useAppStore.getState();
+  const snapshot = buildLayoutSnapshot(
+    state.tabGroups,
+    state.activeTabGroupId,
+    state.rootPanel,
+    state.activePanelId
+  );
+  if (!viewMatchesTree(view, snapshot)) return;
+  const composed = composeLayoutState(view, state.rootPanel, state.tabGroups, state.tabContent);
+  if (composed) useAppStore.setState(composed);
 });
 
 /**

@@ -23,6 +23,7 @@ export type {
 } from "./types";
 export type { FrameHandler, Subscription, Transport } from "./Transport";
 export { TauriTransport } from "./TauriTransport";
+export { InMemoryTransport } from "./InMemoryTransport";
 export { WebSocketTransport, type JsonRpcSocket } from "./WebSocketTransport";
 export {
   ProjectionClient,
