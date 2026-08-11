@@ -3,9 +3,10 @@
  * server-side reconnect redrive #2454 / umbrella #2446).
  *
  * Covers the two new pieces this issue adds to `sessionBridge`:
- *  - {@link sessionBackendReattachEnabled} — the NEW default-off flag that switches
- *    a direct-connection reconnect from the client redrive to the attach-to-given-
- *    session path. Default off ⇒ behavior identical to `develop`.
+ *  - {@link sessionBackendReattachEnabled} — the flag that switches a
+ *    direct-connection reconnect from the client redrive to the attach-to-given-
+ *    session path. Default **on** (#2205 PR-B); the `"false"` override forces the
+ *    client-redrive fallback for an instant revert.
  *  - {@link waitForBackendReattachSessionId} — resolves the backend session id the
  *    server-side redrive publishes to the `session-lifecycle` region (keyed by tab
  *    id), so the terminal can re-attach I/O without calling `create_connection`.
@@ -100,15 +101,17 @@ afterEach(() => {
 });
 
 describe("sessionBackendReattachEnabled flag", () => {
-  it("defaults OFF and honours the programmatic override", () => {
-    // Default off ⇒ the client redrive path is unchanged (develop behavior).
-    expect(sessionBackendReattachEnabled()).toBe(false);
-    setSessionBackendReattachEnabled(true);
+  it("defaults ON and honours the programmatic override", () => {
+    // Default on (#2205 PR-B) ⇒ the backend is the sole reconnect authority.
+    // The `"false"` override still forces the client-redrive fallback for an
+    // instant revert.
     expect(sessionBackendReattachEnabled()).toBe(true);
     setSessionBackendReattachEnabled(false);
     expect(sessionBackendReattachEnabled()).toBe(false);
+    setSessionBackendReattachEnabled(true);
+    expect(sessionBackendReattachEnabled()).toBe(true);
     setSessionBackendReattachEnabled(null);
-    expect(sessionBackendReattachEnabled()).toBe(false);
+    expect(sessionBackendReattachEnabled()).toBe(true);
   });
 });
 

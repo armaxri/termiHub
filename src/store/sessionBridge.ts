@@ -253,18 +253,21 @@ export function setSessionBackendReattachEnabled(value: boolean | null): void {
  * re-attaches terminal I/O to a backend-chosen session id instead of driving the
  * reconnect itself via `create_connection` (#2457).
  *
- * **Off by default.** When on, a direct-connection reconnect no longer calls
- * `create_connection`; instead {@link waitForBackendReattachSessionId} reads the
- * new backend session id the server-side redrive publishes to the
- * `session-lifecycle` region and the terminal re-attaches to it. When off (the
- * default) the client redrive runs exactly as on `develop` — the terminal calls
- * `create_connection` on every reconnect — so behavior is byte-identical.
+ * **On by default (#2205 PR-B).** When on, a direct-connection reconnect no
+ * longer calls `create_connection`; instead {@link waitForBackendReattachSessionId}
+ * reads the new backend session id the server-side redrive publishes to the
+ * `session-lifecycle` region and the terminal re-attaches to it. The backend is
+ * the sole reconnect authority for both agent and direct-SSH tabs: the
+ * source-side drop fold arms the backend reconnect timer (#2476) and the redrive
+ * (#2454/#2512) re-establishes the transport itself, so no client
+ * `create_connection` redrive runs.
  *
- * This is the same flag the backend redrive wiring (#2454's remainder) gates on:
- * turning it on without both halves present would strand the reconnect, so it
- * stays off until that lands. Overridable at runtime for rollout / tests via
- * `window.__TERMIHUB_SESSION_BACKEND_REATTACH__` or
- * `localStorage["termihub.sessionBackendReattach"]` (`"true"` to force on).
+ * Both halves — the backend redrive (#2454/#2512) and the frontend re-attach
+ * (#2457) — are present, so the default flipped on once the extended-testing gate
+ * (#2283) opened. It remains overridable at runtime for an instant revert /
+ * rollout via `window.__TERMIHUB_SESSION_BACKEND_REATTACH__` or
+ * `localStorage["termihub.sessionBackendReattach"]` (`"false"` to force off,
+ * `"true"` to force on).
  */
 export function sessionBackendReattachEnabled(): boolean {
   if (backendReattachFlagOverride !== null) return backendReattachFlagOverride;
@@ -281,7 +284,7 @@ export function sessionBackendReattachEnabled(): boolean {
   } catch {
     // A missing/blocked window or storage just means "use the default".
   }
-  return false;
+  return true;
 }
 
 // ── Transport + region client (lazy, mirrors the tunnel slice) ─────────────────
