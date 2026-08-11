@@ -251,8 +251,8 @@ import {
   layoutIntentsEnabled,
   mirrorLayoutIntent,
   moveTabPayload,
+  reseedLayoutRegion,
   subscribeLayoutRegion,
-  viewMatchesTree,
 } from "@/store/layoutBridge";
 import {
   ensureSessionSubscribed,
@@ -8217,32 +8217,38 @@ useAppStore.subscribe((state, prev) => {
   }
 });
 
-// Region→appStore layout mirror (#2283 slice E1). Derive `appStore`'s layout
-// fields from the `layout@<clientId>` projection whenever the region view is a
-// faithful structural mirror of the current tree. Every structural op already
-// pushes its result into the region via `mirrorLayoutIntent` (an optimistic
-// overlay that emits synchronously), so this composes that view straight back —
-// the region becoming the producer of the layout `appStore` renders from.
+// Region→appStore layout mirror (#2283 slice E2). `appStore`'s layout fields
+// (`rootPanel`/`activePanelId`/`tabGroups`/`activeTabGroupId`) are now derived
+// **solely** from the `layout@<clientId>` projection: every structural op
+// dispatches only its region intent (an optimistic overlay that emits
+// synchronously), the non-intent writers reseed the region, and this mirror
+// composes that view back into `appStore` — the region is the sole authority for
+// the layout the UI renders (the local reducers were removed in this slice).
 //
-// In E1 this is a *pure addition*: the local reducers still run and write the
-// same result first, so the mirror is idempotent (it re-derives an identical
-// tree). The `viewMatchesTree` gate keeps it that way — it applies only when the
-// view already mirrors `appStore` (so the composed state equals the reducer's),
-// and skips a non-mirroring view such as the initial backend-default snapshot
-// before the region is seeded from `appStore`. E2 removes the local reducers,
-// at which point this mirror becomes the sole writer.
+// Unconditional (E1's `viewMatchesTree` gate is gone): the mirror composes on
+// every change. `composeLayoutState` guards against the transient cases — it
+// returns `null` for an empty/absent view (the initial backend-default snapshot
+// before the seed below lands) or a view that references a tab absent from both
+// the content map and the current tree — leaving `appStore` on its last-good
+// tree. Directional `lastActiveLeafId` marks are applied on top by the `#448`
+// subscription above and reseeded into the region so they survive convergence.
 subscribeLayoutRegion((view) => {
   const state = useAppStore.getState();
-  const snapshot = buildLayoutSnapshot(
-    state.tabGroups,
-    state.activeTabGroupId,
-    state.rootPanel,
-    state.activePanelId
-  );
-  if (!viewMatchesTree(view, snapshot)) return;
   const composed = composeLayoutState(view, state.rootPanel, state.tabGroups, state.tabContent);
   if (composed) useAppStore.setState(composed);
 });
+
+// Seed the region from `appStore`'s initial layout at startup so the mirror's
+// first composition reproduces the initial tree (rather than composing a
+// backend-default snapshot over it). Optimistic, so it lands synchronously.
+reseedLayoutRegion(
+  buildLayoutSnapshot(
+    useAppStore.getState().tabGroups,
+    useAppStore.getState().activeTabGroupId,
+    useAppStore.getState().rootPanel,
+    useAppStore.getState().activePanelId
+  )
+);
 
 /**
  * Render a settled restore/launch cohort's aggregate summary toast from the

@@ -724,6 +724,31 @@ export interface ComposedLayoutState {
  * before the region is seeded from `appStore`). Callers gate with
  * {@link viewMatchesTree} first, so on the happy path this composes cleanly.
  */
+/** Index a tree's directional `lastActiveLeafId` marks by split-container id. */
+function collectSplitMarks(node: PanelNode, into: Map<string, string>): void {
+  if (node.type === "split") {
+    if (node.lastActiveLeafId) into.set(node.id, node.lastActiveLeafId);
+    node.children.forEach((c) => collectSplitMarks(c, into));
+  }
+}
+
+/**
+ * Re-apply directional `lastActiveLeafId` marks (#448) from `prior` onto a freshly
+ * composed tree, by split-container id. The marks are a **frontend-only** derivation
+ * (the backend `set_active_panel` does not mark), so the region does not carry them;
+ * without this the region→appStore mirror would drop a split's last-focused-child
+ * memory every time it recomposes. A split absent from `prior` keeps whatever mark
+ * the composed tree already has.
+ */
+function preserveSplitMarks(node: PanelNode, marks: Map<string, string>): PanelNode {
+  if (node.type !== "split") return node;
+  const children = node.children.map((c) => preserveSplitMarks(c, marks));
+  const next: SplitContainer = { ...node, children };
+  const mark = marks.get(node.id);
+  if (mark !== undefined) next.lastActiveLeafId = mark;
+  return next;
+}
+
 export function composeLayoutState(
   view: LayoutView | null | undefined,
   curRootPanel: PanelNode,
@@ -742,6 +767,16 @@ export function composeLayoutState(
   }
   for (const [id, tab] of collectTabs(curRootPanel)) fallback.set(id, tab);
 
+  // Directional marks by group id, from the prior `appStore` trees (active group's
+  // live tree overriding its stale `tabGroups` entry) — re-applied onto each
+  // freshly composed tree so the mirror never drops a split's last-focused memory.
+  const marksByGroup = new Map<string, Map<string, string>>();
+  for (const g of curTabGroups) {
+    const m = new Map<string, string>();
+    collectSplitMarks(g.id === view.activeGroupId ? curRootPanel : g.rootPanel, m);
+    marksByGroup.set(g.id, m);
+  }
+
   try {
     const activeGroupId = view.activeGroupId;
     const activeView = activeGroupOf(view);
@@ -757,7 +792,10 @@ export function composeLayoutState(
       const entry: TabGroup = {
         id: vg.id,
         name: vg.name,
-        rootPanel: reconcileNode(vg.root, fallback, tabContent),
+        rootPanel: preserveSplitMarks(
+          reconcileNode(vg.root, fallback, tabContent),
+          marksByGroup.get(vg.id) ?? new Map()
+        ),
         activePanelId: vg.activePanelId,
       };
       if (vg.color != null) entry.color = vg.color;
@@ -765,7 +803,10 @@ export function composeLayoutState(
     });
 
     return {
-      rootPanel: reconcileNode(activeView.root, fallback, tabContent),
+      rootPanel: preserveSplitMarks(
+        reconcileNode(activeView.root, fallback, tabContent),
+        marksByGroup.get(activeGroupId) ?? new Map()
+      ),
       activePanelId: activeView.activePanelId,
       tabGroups,
       activeTabGroupId: activeGroupId,
@@ -790,6 +831,53 @@ export function subscribeLayoutRegion(handler: (view: LayoutView | undefined) =>
   const off = client.onChange((state) => handler(state.view as LayoutView | undefined));
   void ensureSubscribed().catch((err) => logRenderFallback(err));
   return off;
+}
+
+/**
+ * Reseed the layout region to `snapshot` **synchronously and optimistically**
+ * (#2283 slice E2). Installs `snapshot`'s view as the region's effective view at
+ * once via {@link ProjectionClient.dispatchOptimistic} — so the region→appStore
+ * mirror composes it immediately — and replaces the backend's layout via
+ * `layout.replaceGroups` so the authoritative store converges to the same view.
+ *
+ * This is the retained reseed-safety, relocated from the render-side gate to the
+ * write sites: the region has no granular intent for the ~15 **non-intent**
+ * structural writers (the tab openers, cross-window handoff, workspace restore,
+ * the agent-error→terminal conversion) or for the directional `lastActiveLeafId`
+ * marking, so each keeps its local `appStore` write and reseeds the region after,
+ * keeping the region a faithful mirror rather than letting it lag (which, with the
+ * unconditional mirror, would strand the just-written tab on the next diff).
+ *
+ * Never throws (resilience): a missing transport or a rejected dispatch is logged;
+ * `appStore` keeps its local write, and the next reseed re-syncs the region.
+ */
+export function reseedLayoutRegion(snapshot: LayoutSnapshot): void {
+  const view: LayoutView = {
+    groups: snapshot.groups.map(toMinimalGroup),
+    activeGroupId: snapshot.activeGroupId,
+  };
+  try {
+    const client = layoutRegionClient();
+    void ensureSubscribed().catch((err) => logBridgeFallback("subscribe", err));
+    const intent: Intent = {
+      intentId: newIntentId(),
+      kind: "layout.replaceGroups",
+      payload: { groups: view.groups, activeGroupId: view.activeGroupId },
+      clientId,
+    };
+    void client
+      .dispatchOptimistic(intent, () => view)
+      .then((ack) => {
+        if (ack.status === "rejected") {
+          logBridgeFallback("reseed", new Error(ack.error?.message ?? "rejected"));
+        }
+      })
+      .catch((err) => logBridgeFallback("reseed", err));
+  } catch (err) {
+    // No transport, or an incomplete client (e.g. a partial test stub): the local
+    // `appStore` write already landed, and the next reseed re-syncs the region.
+    logBridgeFallback("reseed", err);
+  }
 }
 
 /**
