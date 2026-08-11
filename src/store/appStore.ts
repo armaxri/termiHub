@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import {
   TerminalTab,
+  TabContent,
   LeafPanel,
   PanelNode,
   ConnectionConfig,
@@ -510,6 +511,22 @@ export interface AppState
   // Panels & Tabs
   rootPanel: PanelNode;
   activePanelId: string | null;
+  /**
+   * Flat by-id map of non-structural tab content (part of #2283 — the layout
+   * data-flow inversion). As the layout projection region takes over the panel
+   * **tree structure**, each tab's rich **content** (title, config, connection
+   * metadata, session id, all `*Meta` editor state, …) stays authoritative in
+   * `appStore`, keyed by tab id — mirroring the deliberate content retention in
+   * the file-browser inversion. Render composition
+   * ({@link import("./useLayoutRenderTree").useLayoutRenderTree}) sources content
+   * from here, falling back to the in-tree {@link TerminalTab} for any id not yet
+   * present (editor/settings/etc. tabs). Populated for tabs opened via `addTab`
+   * (and hydrated window-handoff tabs) and maintained on the content mutations
+   * that touch those tabs (title, session id, scrollback-replay flag); pruned in
+   * `closeTab`. In this behavior-preserving slice it merely duplicates content
+   * the tree still holds.
+   */
+  tabContent: Record<string, TabContent>;
   /**
    * Open a new tab and make it active.
    * @param title Tab title.
@@ -2530,6 +2547,41 @@ function createTab(
 }
 
 /**
+ * Project a rich {@link TerminalTab} onto its {@link TabContent} — everything
+ * except the structural `panelId`/`isActive`, which belong to the panel tree.
+ * This is the shape stored in `appStore.tabContent` (part of #2283).
+ */
+export function extractTabContent(tab: TerminalTab): TabContent {
+  const { panelId: _panelId, isActive: _isActive, ...content } = tab;
+  return content;
+}
+
+/** Insert/replace a tab's entry in the by-id content map from its rich form. */
+function setTabContentEntry(
+  map: Record<string, TabContent>,
+  tab: TerminalTab
+): Record<string, TabContent> {
+  return { ...map, [tab.id]: extractTabContent(tab) };
+}
+
+/**
+ * Patch specific content fields of a tab **already tracked** in the map. A tab
+ * absent from the map (e.g. an editor/settings tab that renders via the in-tree
+ * fallback) is left untouched — this preserves the invariant that the map holds
+ * only tabs whose every content mutation is instrumented, so a tracked entry is
+ * never stale.
+ */
+function patchTabContentEntry(
+  map: Record<string, TabContent>,
+  tabId: string,
+  patch: Partial<TabContent>
+): Record<string, TabContent> {
+  const current = map[tabId];
+  if (!current) return map;
+  return { ...map, [tabId]: { ...current, ...patch } };
+}
+
+/**
  * Serialize a tab into the view-model carried across a native-window boundary
  * (#1900). Placement (`panelId`/`isActive`) is dropped — the destination window
  * re-assigns it on hydrate — while `sessionId` anchors the re-attach to the same
@@ -3172,6 +3224,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabGroups,
           activePanelId: targetLeaf.id,
           releasedTransferSessions,
+          // Track the hydrated tab's content in the by-id map (part of #2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
         };
       }),
 
@@ -3731,6 +3785,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Panels & Tabs
     rootPanel: initialPanel,
     activePanelId: initialPanel.id,
+    // Flat by-id tab-content map (part of #2283). The initial panel is empty, so
+    // it starts empty and is populated as tabs open.
+    tabContent: {},
 
     getAllPanels: () => getAllLeaves(get().rootPanel),
 
@@ -3749,7 +3806,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const tabGroups = state.tabGroups.map((g) =>
           g.id === state.activeTabGroupId ? { ...g, rootPanel } : g
         );
-        return { rootPanel, tabGroups };
+        return {
+          rootPanel,
+          tabGroups,
+          // Mirror the cleared replay flag into the content map (part of #2283).
+          tabContent: patchTabContentEntry(state.tabContent, tabId, {
+            pendingScrollbackReplay: false,
+          }),
+        };
       }),
 
     setTabSessionId: (tabId, sessionId) => {
@@ -3776,6 +3840,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
             ...l,
             tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, sessionId } : t)),
           })),
+          // Mirror the session id into the content map (part of #2283).
+          tabContent: patchTabContentEntry(state.tabContent, tabId, { sessionId }),
         };
       });
 
@@ -3892,6 +3958,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         return {
           rootPanel,
           activePanelId: targetPanelId,
+          // Duplicate the new tab's content into the by-id map (part of #2283).
+          tabContent: setTabContentEntry(state.tabContent, newTab),
           tabHorizontalScrolling: { ...state.tabHorizontalScrolling, [newTab.id]: hsEnabled },
           ...(tabColor ? { tabColors: { ...state.tabColors, [newTab.id]: tabColor } } : {}),
           ...(hasTabOpts
@@ -4277,6 +4345,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const remainingHs = omitKey(state.tabHorizontalScrolling, tabId);
         const remainingDirty = omitKey(state.editorDirtyTabs, tabId);
         const remainingColors = omitKey(state.tabColors, tabId);
+        // Prune the closed tab's content from the by-id map (part of #2283).
+        const remainingTabContent = omitKey(state.tabContent, tabId);
         const remainingOpts = omitKey(state.tabTerminalOptions, tabId);
         const remainingSearch = omitKey(state.terminalSearchVisible, tabId);
         const remainingSpawnErrors = omitKey(state.terminalSpawnErrors, tabId);
@@ -4330,6 +4400,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             tabHorizontalScrolling: remainingHs,
             editorDirtyTabs: remainingDirty,
             tabColors: remainingColors,
+            tabContent: remainingTabContent,
             tabTerminalOptions: remainingOpts,
             terminalSearchVisible: remainingSearch,
             terminalSpawnErrors: remainingSpawnErrors,
@@ -4357,6 +4428,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           tabHorizontalScrolling: remainingHs,
           editorDirtyTabs: remainingDirty,
           tabColors: remainingColors,
+          tabContent: remainingTabContent,
           tabTerminalOptions: remainingOpts,
           terminalSearchVisible: remainingSearch,
           terminalSpawnErrors: remainingSpawnErrors,
@@ -5469,6 +5541,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
             ...l,
             tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, title: newTitle } : t)),
           })),
+          // Mirror the new title into the content map (part of #2283).
+          tabContent: patchTabContentEntry(state.tabContent, tabId, { title: newTitle }),
         };
       }),
 

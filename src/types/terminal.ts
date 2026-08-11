@@ -422,6 +422,20 @@ export interface TerminalTab {
 }
 
 /**
+ * The **non-structural** content of a {@link TerminalTab} — everything except
+ * its placement in the panel tree (`panelId`, `isActive`, which are derived from
+ * the layout structure). This is the shape stored in `appStore.tabContent`, the
+ * flat by-id content map that backs the layout data-flow inversion (part of
+ * #2283): as the layout projection region becomes authoritative for panel-tree
+ * **structure**, rich tab **content** (title, config, connection metadata,
+ * session id, all `*Meta` editor state, …) stays authoritative in `appStore`,
+ * keyed by tab id. `panelId`/`isActive` are intentionally omitted because they
+ * belong to the tree, not the content — the renderer re-derives them from the
+ * projected structure when it composes the render tree.
+ */
+export type TabContent = Omit<TerminalTab, "panelId" | "isActive">;
+
+/**
  * The minimal data needed to reopen a just-closed terminal tab from an
  * Undo/Reopen affordance — a fresh session is created, scrollback is not
  * restored. `null` reopen means the tab had no reconnectable config.
