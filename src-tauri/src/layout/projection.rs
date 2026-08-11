@@ -85,7 +85,11 @@ pub fn publish_layout(
     client_id: &str,
 ) -> Vec<ProducedRegion> {
     let region = layout_region(client_id);
-    match projector.publish(&region, store.snapshot(client_id)) {
+    // Group-aware widening (#2283 slice C): the region carries the full
+    // multi-group view `{ groups, activeGroupId }` so the frontend renders every
+    // tab group (composing the active one). Was the back-compat active-group
+    // `{ root, activePanelId }` through slice A/B.
+    match projector.publish(&region, store.snapshot_full(client_id)) {
         Some(version) => vec![ProducedRegion { region, version }],
         None => Vec::new(),
     }
