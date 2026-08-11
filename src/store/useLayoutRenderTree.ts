@@ -58,6 +58,11 @@ import type { PanelNode } from "@/types/terminal";
 export function useLayoutRenderTree(): PanelNode {
   const storeRoot = useAppStore((s) => s.rootPanel);
   const storeActivePanelId = useAppStore((s) => s.activePanelId);
+  // The authoritative by-id tab-content map (part of #2283). Render composition
+  // sources each tab's content from here, falling back to the in-tree tab for
+  // any id the map does not yet hold (editor/settings/etc.). Behaviour-preserving
+  // while the tree still carries the full tab.
+  const tabContent = useAppStore((s) => s.tabContent);
 
   // Read the flag once at mount: it flips only via dev tooling, and the
   // subscription lifecycle is keyed off it below.
@@ -116,7 +121,7 @@ export function useLayoutRenderTree(): PanelNode {
   return useMemo(() => {
     if (matches && view) {
       try {
-        return composeRenderTree(view, storeRoot);
+        return composeRenderTree(view, storeRoot, tabContent);
       } catch (err) {
         // A tab referenced by the view but absent from appStore — treat as a
         // desync and fall back rather than throw in render.
@@ -125,5 +130,5 @@ export function useLayoutRenderTree(): PanelNode {
       }
     }
     return storeRoot;
-  }, [matches, view, storeRoot]);
+  }, [matches, view, storeRoot, tabContent]);
 }

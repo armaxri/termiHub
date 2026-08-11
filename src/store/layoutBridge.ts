@@ -54,7 +54,14 @@ import {
   type IntentAck,
   type Transport,
 } from "@/services/transport";
-import type { DropEdge, LeafPanel, PanelNode, SplitContainer, TerminalTab } from "@/types/terminal";
+import type {
+  DropEdge,
+  LeafPanel,
+  PanelNode,
+  SplitContainer,
+  TabContent,
+  TerminalTab,
+} from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
 import { findLeafByTab } from "@/utils/panelTree";
 
@@ -278,22 +285,36 @@ export function collectTabs(node: PanelNode): Map<string, TerminalTab> {
 
 /**
  * Rebuild a rich {@link PanelNode} from a projected minimal tree, re-attaching
- * each tab's rich fields by id from `tabsById` (partial projection: the region
- * carries only structure + minimal tab identity). Per-leaf, `panelId` and
- * `isActive` are re-derived from the projected structure — exactly what the old
- * local reducers set — so `SplitView`'s selectors see an identical shape.
+ * each tab's rich fields by id (partial projection: the region carries only
+ * structure + minimal tab identity). Per-leaf, `panelId` and `isActive` are
+ * re-derived from the projected structure — exactly what the old local reducers
+ * set — so `SplitView`'s selectors see an identical shape.
  *
- * Throws if the projection references a tab absent from `tabsById`; the caller
- * treats that as a bridge failure and falls back to the local mutation.
+ * **Content source (part of #2283).** A tab's non-structural content is read
+ * from `contentById` — the flat by-id {@link TabContent} map that is becoming
+ * the authoritative content store as the tree thins — and **falls back** to the
+ * in-tree rich {@link TerminalTab} in `tabsById` when the id is absent from the
+ * map. In this behavior-preserving slice the map merely *duplicates* content the
+ * tree still holds, so both sources agree; the fallback keeps tabs that are not
+ * yet in the map (e.g. editor/settings tabs) rendering exactly as before.
+ * `contentById` is optional so the structural write-back path
+ * ({@link runLayoutIntent}) keeps reconstructing straight from the tree.
+ *
+ * Throws if the projection references a tab absent from **both** sources; the
+ * caller treats that as a bridge failure and falls back to the local mutation.
  */
-export function reconcileNode(node: MinimalNode, tabsById: Map<string, TerminalTab>): PanelNode {
+export function reconcileNode(
+  node: MinimalNode,
+  tabsById: Map<string, TerminalTab>,
+  contentById?: Record<string, TabContent>
+): PanelNode {
   if (node.type === "leaf") {
     const tabs: TerminalTab[] = node.tabs.map((mt) => {
-      const rich = tabsById.get(mt.id);
-      if (!rich) {
+      const base = contentById?.[mt.id] ?? tabsById.get(mt.id);
+      if (!base) {
         throw new Error(`layout reconcile: unknown tab ${mt.id}`);
       }
-      return { ...rich, panelId: node.id, isActive: mt.id === node.activeTabId };
+      return { ...base, panelId: node.id, isActive: mt.id === node.activeTabId };
     });
     const leaf: LeafPanel = {
       type: "leaf",
@@ -307,7 +328,7 @@ export function reconcileNode(node: MinimalNode, tabsById: Map<string, TerminalT
     type: "split",
     id: node.id,
     direction: node.direction,
-    children: node.children.map((c) => reconcileNode(c, tabsById)),
+    children: node.children.map((c) => reconcileNode(c, tabsById, contentById)),
   };
   if (node.sizes) split.sizes = node.sizes;
   if (node.lastActiveLeafId) split.lastActiveLeafId = node.lastActiveLeafId;
@@ -478,13 +499,19 @@ export function viewMatchesTree(
 
 /**
  * Compose the rich render tree from a projected view: **structure** from
- * `view.root`, **content** re-attached by tab id from `contentRoot`'s rich tabs.
- * Throws (via {@link reconcileNode}) if the view references a tab absent from
- * `contentRoot`; callers gate with {@link viewMatchesTree} first so this never
- * throws on the happy path.
+ * `view.root`, **content** re-attached by tab id — preferring the flat
+ * `contentById` {@link TabContent} map (part of #2283), and falling back to
+ * `contentRoot`'s in-tree rich tabs for any id the map does not yet hold. Throws
+ * (via {@link reconcileNode}) if the view references a tab absent from **both**;
+ * callers gate with {@link viewMatchesTree} first so this never throws on the
+ * happy path.
  */
-export function composeRenderTree(view: LayoutView, contentRoot: PanelNode): PanelNode {
-  return reconcileNode(view.root, collectTabs(contentRoot));
+export function composeRenderTree(
+  view: LayoutView,
+  contentRoot: PanelNode,
+  contentById?: Record<string, TabContent>
+): PanelNode {
+  return reconcileNode(view.root, collectTabs(contentRoot), contentById);
 }
 
 /** Ensure the layout region client is subscribed; the renderer's entry point.

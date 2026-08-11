@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, afterEach } from "vitest";
 
-import type { PanelNode, TerminalTab } from "@/types/terminal";
+import type { PanelNode, TabContent, TerminalTab } from "@/types/terminal";
 
 import {
   collectTabs,
@@ -34,6 +34,12 @@ function tab(id: string, extra: Partial<TerminalTab> = {}): TerminalTab {
     isActive: false,
     ...extra,
   } as TerminalTab;
+}
+
+/** The non-structural content of a `tab(id)` — its {@link TabContent} form. */
+function content(id: string, extra: Partial<TabContent> = {}): TabContent {
+  const { panelId: _p, isActive: _a, ...rest } = tab(id);
+  return { ...rest, ...extra };
 }
 
 /** Two-leaf split: `a` = [t1(active), t2], `b` = [t3]. */
@@ -203,6 +209,62 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
     expect(leafA.tabs[0].isActive).toBe(true);
     expect(leafA.tabs[0].panelId).toBe("a");
     expect(rich.sizes).toEqual([50, 50]);
+  });
+
+  it("composeRenderTree: content sourced from the tabContent map when present (#2283)", () => {
+    // The by-id content map wins over the in-tree tab: t1's title comes from the
+    // map, proving the render composition reads content from the map seam.
+    const contentById = {
+      t1: { ...content("t1"), title: "From map" },
+      t2: content("t2"),
+      t3: content("t3"),
+    };
+    const rich = composeRenderTree(view(), tree(), contentById) as Extract<
+      PanelNode,
+      { type: "split" }
+    >;
+    const leafA = rich.children[0] as Extract<PanelNode, { type: "leaf" }>;
+    expect(leafA.tabs[0].title).toBe("From map");
+    // Structure is still re-derived from the view, not the map.
+    expect(leafA.tabs[0].panelId).toBe("a");
+    expect(leafA.tabs[0].isActive).toBe(true);
+  });
+
+  it("composeRenderTree: falls back to the in-tree tab for ids absent from the map (#2283)", () => {
+    // Only t1 is in the map; t2/t3 must fall back to the in-tree TerminalTab so
+    // not-yet-mapped tabs render exactly as before.
+    const contentById = { t1: { ...content("t1"), title: "Mapped t1" } };
+    const rich = composeRenderTree(view(), tree(), contentById) as Extract<
+      PanelNode,
+      { type: "split" }
+    >;
+    const leafA = rich.children[0] as Extract<PanelNode, { type: "leaf" }>;
+    expect(leafA.tabs[0].title).toBe("Mapped t1"); // from map
+    expect(leafA.tabs[1].title).toBe("Tab t2"); // fallback to in-tree
+    const leafB = rich.children[1] as Extract<PanelNode, { type: "leaf" }>;
+    expect(leafB.tabs[0].title).toBe("Tab t3"); // fallback to in-tree
+  });
+
+  it("composeRenderTree output is identical whether content comes from the map or the tree (#2283)", () => {
+    // Parity: a map that faithfully mirrors the tree yields byte-identical output.
+    const contentById = { t1: content("t1"), t2: content("t2"), t3: content("t3") };
+    const fromTree = composeRenderTree(view(), tree());
+    const fromMap = composeRenderTree(view(), tree(), contentById);
+    expect(fromMap).toEqual(fromTree);
+  });
+
+  it("reconcileNode: falls back to the tree, then throws only when absent from BOTH sources (#2283)", () => {
+    const projected = {
+      type: "leaf" as const,
+      id: "a",
+      tabs: [{ id: "ghost", contentType: "terminal" }],
+      activeTabId: "ghost",
+    };
+    // Present in the content map (not the tree) → resolves via the map.
+    const viaMap = reconcileNode(projected, new Map(), { ghost: content("ghost") });
+    expect((viaMap as Extract<PanelNode, { type: "leaf" }>).tabs[0].title).toBe("Tab ghost");
+    // Absent from both an empty tree index and an empty map → throws.
+    expect(() => reconcileNode(projected, new Map(), {})).toThrow(/unknown tab ghost/);
   });
 });
 
