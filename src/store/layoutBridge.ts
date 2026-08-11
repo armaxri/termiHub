@@ -178,97 +178,6 @@ export function activeGroupOf(view: LayoutView): MinimalGroup | undefined {
   return view.groups.find((g) => g.id === view.activeGroupId) ?? view.groups[0];
 }
 
-// ── Feature flag (runtime-flippable so a dev build can verify the ON path) ─────
-
-interface LayoutFlagWindow {
-  __TERMIHUB_LAYOUT_INTENTS__?: boolean;
-  __TERMIHUB_LAYOUT_RENDER__?: boolean;
-  localStorage?: Storage;
-}
-
-let flagOverride: boolean | null = null;
-let renderFlagOverride: boolean | null = null;
-
-/**
- * Programmatic override for the layout-intents (mutation) flag (tests, and a
- * runtime toggle). `null` clears the override and falls back to the
- * window/localStorage signal, then to the default.
- */
-export function setLayoutIntentsEnabled(value: boolean | null): void {
-  flagOverride = value;
-}
-
-/**
- * Programmatic override for the render-from-projection flag (tests, runtime
- * toggle). `null` clears it and falls back to the window/localStorage signal,
- * then to the default.
- */
-export function setLayoutRenderFromProjectionEnabled(value: boolean | null): void {
-  renderFlagOverride = value;
-}
-
-/** Read a boolean feature signal from `window`/`localStorage`, else `dflt`. */
-function readFlag(
-  override: boolean | null,
-  windowKey: keyof LayoutFlagWindow,
-  storageKey: string,
-  dflt: boolean
-): boolean {
-  if (override !== null) return override;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as LayoutFlagWindow;
-      const wv = w[windowKey];
-      if (typeof wv === "boolean") return wv;
-      const ls = w.localStorage?.getItem(storageKey);
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return dflt;
-}
-
-/**
- * Whether structural layout **mutations** route through `layout.*` intents
- * (step 2) instead of editing `appStore.rootPanel` locally.
- *
- * **On by default** (#2184). The backend `LayoutStore` is authoritative for
- * mutations: split/move/merge run as asynchronous backend round-trips, with the
- * projected diff reconciled back into `appStore` by {@link reconcileNode}. The
- * behavioural (timing) change was verified parity-clean in a live GUI run before
- * flipping — split, drag-to-edge, drag-to-center, tab-move across panels, and
- * merge, with live-terminal scrollback surviving every op. Any dispatch/reconcile
- * failure still falls back to the local reducer, so a backend hiccup can never
- * break layout. Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_LAYOUT_INTENTS__` or `localStorage["termihub.layoutIntents"]`
- * (set `"false"` to restore the pre-cut local-mutation path).
- */
-export function layoutIntentsEnabled(): boolean {
-  return readFlag(flagOverride, "__TERMIHUB_LAYOUT_INTENTS__", "termihub.layoutIntents", true);
-}
-
-/**
- * Whether the **renderer** sources its panel/tab structure from the projected
- * `layout@<clientId>` render-list (step 3,
- * {@link import("./useLayoutRenderTree").useLayoutRenderTree}) rather than from
- * `appStore.rootPanel` directly.
- *
- * **On by default.** Parity-safe by construction: the renderer composes from the
- * projection only when its view structurally mirrors `appStore`'s tree, and
- * otherwise falls back to that tree verbatim — so the rendered output is always
- * identical to the pre-cut renderer, and live xterm DOM is reparented (never
- * remounted) because tab/panel ids are preserved. Independent of the mutation
- * cut: the region is seeded from `appStore` whether mutations are local or
- * intent-routed. Overridable for rollback / an A-B check (the renderer reads it
- * at mount, so a flip takes effect on reload) via
- * `window.__TERMIHUB_LAYOUT_RENDER__` or `localStorage["termihub.layoutRender"]`.
- */
-export function layoutRenderFromProjectionEnabled(): boolean {
-  return readFlag(renderFlagOverride, "__TERMIHUB_LAYOUT_RENDER__", "termihub.layoutRender", true);
-}
-
 // ── Transport + region client (sync-create, mirrors the file-browsers slice) ───
 
 // A stable per-session client identity. The client-scoped region is
@@ -652,38 +561,6 @@ function sizesEqual(a: number[] | undefined, b: number[] | undefined): boolean {
 }
 
 /**
- * Whether one projected {@link MinimalGroup} faithfully mirrors a rich
- * {@link GroupSnapshot} — same id, metadata, focused panel, and panel tree.
- */
-function minimalGroupMatches(view: MinimalGroup, snap: GroupSnapshot): boolean {
-  return (
-    view.id === snap.id &&
-    view.name === snap.name &&
-    (view.color ?? null) === (snap.color ?? null) &&
-    (view.activePanelId ?? null) === (snap.activePanelId ?? null) &&
-    minimalNodesEqual(toMinimalNode(snap.root), view.root)
-  );
-}
-
-/**
- * Whether a projected `view` is a faithful structural mirror of the whole
- * `snapshot` — **every** group matches in order (id, metadata, focused panel and
- * tree) and the active group id agrees (#2283 slice C). This is the gate that
- * decides if the renderer may source structure from the projection (true) or
- * must fall back to `appStore` (false). Widened from the single active tree so a
- * group add/close/rename/color/reorder (still local) reseeds the region.
- */
-export function viewMatchesTree(
-  view: LayoutView | null | undefined,
-  snapshot: LayoutSnapshot
-): boolean {
-  if (!view || !Array.isArray(view.groups)) return false;
-  if ((view.activeGroupId ?? null) !== (snapshot.activeGroupId ?? null)) return false;
-  if (view.groups.length !== snapshot.groups.length) return false;
-  return view.groups.every((vg, i) => minimalGroupMatches(vg, snapshot.groups[i]));
-}
-
-/**
  * Compose the rich render tree for the **active** group of a projected view:
  * **structure** from the active group's `root`, **content** re-attached by tab
  * id — preferring the flat `contentById` {@link TabContent} map (part of #2283),
@@ -918,23 +795,6 @@ export function reseedLayoutRegion(snapshot: LayoutSnapshot): void {
     // `appStore` write already landed, and the next reseed re-syncs the region.
     logBridgeFallback("reseed", err);
   }
-}
-
-/**
- * Seed the layout region with the whole multi-group layout so the projection
- * tracks `appStore`'s current structure (the render-side counterpart to the
- * mutation bridge's seed-before-mutate). Installs every group via
- * `layout.replaceGroups` (#2283 slice C). Idempotent server-side: replacing with
- * the same layout yields no diff.
- */
-export async function seedLayoutRegion(snapshot: LayoutSnapshot): Promise<void> {
-  throwIfRejected(
-    await dispatch("layout.replaceGroups", {
-      groups: snapshot.groups.map(toMinimalGroup),
-      activeGroupId: snapshot.activeGroupId,
-    }),
-    "replaceGroups"
-  );
 }
 
 /** Structural equality over two rich {@link LayoutSnapshot}s — used to de-dupe

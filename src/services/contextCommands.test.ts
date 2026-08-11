@@ -10,7 +10,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CONTEXT_COMMANDS } from "./contextCommands";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
-import { setLayoutIntentsEnabled } from "@/store/layoutBridge";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 
 /** Add a tab of the given content type and make it the active tab/panel. */
@@ -37,12 +36,9 @@ beforeEach(() => {
   // focus-panel sets up panels via a synchronous splitPanel; pin to the local
   // reducer (retained resilience fallback) since the mutation cut (#2184) makes
   // the intent path async by default.
-  setLayoutIntentsEnabled(false);
 });
 
-afterEach(() => {
-  setLayoutIntentsEnabled(null);
-});
+afterEach(() => {});
 
 describe("CONTEXT_COMMANDS registry", () => {
   it("registers exactly the context-bound actions from the issue", () => {

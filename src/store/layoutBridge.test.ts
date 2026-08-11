@@ -1,10 +1,11 @@
 /**
- * Unit tests for the layout projection bridge (#2151 step 2): the rich⇄minimal
+ * Unit tests for the layout projection bridge (#2151 / #2283): the rich⇄minimal
  * tree mapping, the reconcile that re-hydrates minimal-tab diffs into rich
- * `TerminalTab`s by id, and the feature flag. The dispatch/subscribe round-trip
- * is exercised at the appStore level in `appStore.layoutBridge.test.ts`.
+ * `TerminalTab`s by id, and `composeLayoutState` (the region→appStore mirror's
+ * core). The dispatch/subscribe round-trip is exercised at the appStore level in
+ * `appStore.layoutBridge.test.ts`.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 import type { PanelNode, TabContent, TerminalTab } from "@/types/terminal";
 
@@ -13,17 +14,11 @@ import {
   collectTabs,
   composeLayoutState,
   composeRenderTree,
-  type LayoutSnapshot,
   type LayoutView,
-  layoutIntentsEnabled,
-  layoutRenderFromProjectionEnabled,
   minimalNodesEqual,
   reconcileNode,
-  setLayoutIntentsEnabled,
-  setLayoutRenderFromProjectionEnabled,
   toMinimalGroup,
   toMinimalNode,
-  viewMatchesTree,
 } from "./layoutBridge";
 import type { TabGroup } from "@/types/terminal";
 
@@ -156,12 +151,6 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
     };
   }
 
-  /** A single-group `appStore` snapshot mirroring `view()`. */
-  function snapshot(root: PanelNode = tree(), activePanelId: string | null = "a"): LayoutSnapshot {
-    const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: root, activePanelId }];
-    return buildLayoutSnapshot(groups, "g1", root, activePanelId);
-  }
-
   it("minimalNodesEqual: a tree equals its own minimal projection", () => {
     expect(minimalNodesEqual(toMinimalNode(tree()), toMinimalNode(tree()))).toBe(true);
   });
@@ -191,79 +180,6 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
       ],
     });
     expect(minimalNodesEqual(base, otherActive)).toBe(false);
-  });
-
-  it("viewMatchesTree: true only when structure AND active panel align", () => {
-    expect(viewMatchesTree(view(), snapshot())).toBe(true);
-    // Active panel differs.
-    expect(viewMatchesTree(view(), snapshot(tree(), "b"))).toBe(false);
-    // A view missing a tab appStore still has (local add not yet in the region).
-    const stale: LayoutView = {
-      groups: [
-        {
-          id: "g1",
-          name: "Main",
-          root: toMinimalNode({
-            type: "split",
-            id: "root",
-            direction: "horizontal",
-            sizes: [50, 50],
-            children: [
-              { type: "leaf", id: "a", tabs: [tab("t1")], activeTabId: "t1" },
-              { type: "leaf", id: "b", tabs: [tab("t3")], activeTabId: "t3" },
-            ],
-          }),
-          activePanelId: "a",
-        },
-      ],
-      activeGroupId: "g1",
-    };
-    expect(viewMatchesTree(stale, snapshot())).toBe(false);
-    expect(viewMatchesTree(null, snapshot())).toBe(false);
-  });
-
-  it("viewMatchesTree (multi-group): all groups must match, in order (#2283)", () => {
-    // Two groups: g1 active holding the tree, g2 a single leaf.
-    const g2Root: PanelNode = { type: "leaf", id: "z", tabs: [tab("t9")], activeTabId: "t9" };
-    const groups: TabGroup[] = [
-      { id: "g1", name: "Main", rootPanel: tree(), activePanelId: "a" },
-      { id: "g2", name: "Second", rootPanel: g2Root, activePanelId: "z" },
-    ];
-    const snap = buildLayoutSnapshot(groups, "g1", tree(), "a");
-    const mirror: LayoutView = {
-      groups: [
-        { id: "g1", name: "Main", root: toMinimalNode(tree()), activePanelId: "a" },
-        { id: "g2", name: "Second", root: toMinimalNode(g2Root), activePanelId: "z" },
-      ],
-      activeGroupId: "g1",
-    };
-    expect(viewMatchesTree(mirror, snap)).toBe(true);
-
-    // A non-active group's tree drifts → the whole gate fails (forces a reseed).
-    const drifted: LayoutView = {
-      ...mirror,
-      groups: [
-        mirror.groups[0],
-        { id: "g2", name: "Second", root: toMinimalNode(tree()), activePanelId: "a" },
-      ],
-    };
-    expect(viewMatchesTree(drifted, snap)).toBe(false);
-
-    // Group metadata (name) drifts → fails.
-    const renamed: LayoutView = {
-      ...mirror,
-      groups: [{ ...mirror.groups[0], name: "Renamed" }, mirror.groups[1]],
-    };
-    expect(viewMatchesTree(renamed, snap)).toBe(false);
-
-    // activeGroupId differs → fails.
-    expect(viewMatchesTree({ ...mirror, activeGroupId: "g2" }, snap)).toBe(false);
-
-    // Group order / count differs → fails.
-    expect(viewMatchesTree({ ...mirror, groups: [mirror.groups[1], mirror.groups[0]] }, snap)).toBe(
-      false
-    );
-    expect(viewMatchesTree({ ...mirror, groups: [mirror.groups[0]] }, snap)).toBe(false);
   });
 
   it("composeRenderTree (multi-group): composes the active group whichever it is (#2283)", () => {
@@ -359,35 +275,6 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
     expect((viaMap as Extract<PanelNode, { type: "leaf" }>).tabs[0].title).toBe("Tab ghost");
     // Absent from both an empty tree index and an empty map → throws.
     expect(() => reconcileNode(projected, new Map(), {})).toThrow(/unknown tab ghost/);
-  });
-});
-
-describe("layoutBridge — feature flags", () => {
-  afterEach(() => {
-    setLayoutIntentsEnabled(null);
-    setLayoutRenderFromProjectionEnabled(null);
-  });
-
-  it("mutation cut is on by default (#2184: GUI-verified parity-clean)", () => {
-    setLayoutIntentsEnabled(null);
-    expect(layoutIntentsEnabled()).toBe(true);
-  });
-
-  it("render cut is on by default (step 3: parity-safe by construction)", () => {
-    setLayoutRenderFromProjectionEnabled(null);
-    expect(layoutRenderFromProjectionEnabled()).toBe(true);
-  });
-
-  it("honours programmatic overrides on each flag independently", () => {
-    setLayoutIntentsEnabled(true);
-    expect(layoutIntentsEnabled()).toBe(true);
-    setLayoutIntentsEnabled(false);
-    expect(layoutIntentsEnabled()).toBe(false);
-
-    setLayoutRenderFromProjectionEnabled(false);
-    expect(layoutRenderFromProjectionEnabled()).toBe(false);
-    setLayoutRenderFromProjectionEnabled(true);
-    expect(layoutRenderFromProjectionEnabled()).toBe(true);
   });
 });
 
