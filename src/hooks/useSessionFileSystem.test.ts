@@ -146,6 +146,13 @@ import { createRoot } from "react-dom/client";
 import { sessionWriteFile } from "@/services/api";
 import { useSessionFileSystem } from "./useSessionFileSystem";
 import { useAppStore } from "@/store/appStore";
+import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
+import {
+  seedFileBrowsers,
+  setupFileBrowsersRegion,
+} from "@/test/fileBrowsersRegionTestHarness";
+
+setupFileBrowsersRegion();
 
 describe("useSessionFileSystem — uploadFileFromPath API call", () => {
   let container: HTMLDivElement;
@@ -165,7 +172,8 @@ describe("useSessionFileSystem — uploadFileFromPath API call", () => {
   });
 
   it("calls sessionWriteFile with the correct remote path", async () => {
-    useAppStore.setState({ sessionFileBrowserId: "sess-1", sessionCurrentPath: "/remote/dir" });
+    useAppStore.setState({ sessionFileBrowserId: "sess-1" });
+    seedFileBrowsers({ session: { path: "/remote/dir", entries: [], loading: false, error: null } });
 
     let uploadFn: ((path: string) => Promise<void>) | undefined;
     function Harness() {
@@ -190,7 +198,8 @@ describe("useSessionFileSystem — uploadFileFromPath API call", () => {
   });
 
   it("calls sessionWriteFile with root-level path when sessionCurrentPath is /", async () => {
-    useAppStore.setState({ sessionFileBrowserId: "sess-1", sessionCurrentPath: "/" });
+    useAppStore.setState({ sessionFileBrowserId: "sess-1" });
+    seedFileBrowsers({ session: { path: "/", entries: [], loading: false, error: null } });
 
     let uploadFn: ((path: string) => Promise<void>) | undefined;
     function Harness() {
@@ -215,7 +224,8 @@ describe("useSessionFileSystem — uploadFileFromPath API call", () => {
   });
 
   it("does nothing when sessionFileBrowserId is null", async () => {
-    useAppStore.setState({ sessionFileBrowserId: null, sessionCurrentPath: "/remote/dir" });
+    useAppStore.setState({ sessionFileBrowserId: null });
+    seedFileBrowsers({ session: { path: "/remote/dir", entries: [], loading: false, error: null } });
 
     let uploadFn: ((path: string) => Promise<void>) | undefined;
     function Harness() {
@@ -245,8 +255,8 @@ describe("useSessionFileSystem — store integration", () => {
     expect(useAppStore.getState().sessionFileBrowserId).toBeNull();
   });
 
-  it("sessionCurrentPath starts at /", () => {
-    expect(useAppStore.getState().sessionCurrentPath).toBe("/");
+  it("the session pane path starts at /", () => {
+    expect(currentFileBrowsersView().session.path).toBe("/");
   });
 
   it("isConnected is false when sessionFileBrowserId is null", () => {
@@ -294,7 +304,8 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
   type SessionFs = ReturnType<typeof useSessionFileSystem>;
 
   async function mountHook(): Promise<SessionFs> {
-    useAppStore.setState({ sessionFileBrowserId: "ssh-1", sessionCurrentPath: "/remote/dir" });
+    useAppStore.setState({ sessionFileBrowserId: "ssh-1" });
+    seedFileBrowsers({ session: { path: "/remote/dir", entries: [], loading: false, error: null } });
     let api: SessionFs | undefined;
     function Harness() {
       api = useSessionFileSystem();
@@ -455,7 +466,8 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
   type SessionFs = ReturnType<typeof useSessionFileSystem>;
 
   async function mountHook(): Promise<SessionFs> {
-    useAppStore.setState({ sessionFileBrowserId: "docker-1", sessionCurrentPath: "/remote/dir" });
+    useAppStore.setState({ sessionFileBrowserId: "docker-1" });
+    seedFileBrowsers({ session: { path: "/remote/dir", entries: [], loading: false, error: null } });
     let api: SessionFs | undefined;
     function Harness() {
       api = useSessionFileSystem();
