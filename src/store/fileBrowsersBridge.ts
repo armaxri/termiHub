@@ -1,19 +1,18 @@
 /**
- * File-browsers projection bridge — Phase 5 render cut of the File-browsers
- * domain (#2228, part of #2139 and #2153).
+ * File-browsers projection bridge — the file-browser panel reads the
+ * **authoritative** client-scoped `file-browser@<clientId>` region (#2228
+ * hook-authoritative cut, part of #2139 / #2153; reducer removal #2283).
  *
- * The File-browsers **shadow** (PR #2272) landed a backend-authoritative,
- * client-scoped
- * [`FileBrowserStore`](../../src-tauri/src/file_browser_projection/store.rs)
- * served as the `file-browser@<clientId>` projection region, with `fileBrowser.*`
- * intents, but nothing in the UI touched it. This step makes the file-browser
- * panel ({@link import("../components/Sidebar/FileBrowser").FileBrowser}, via
- * {@link import("../hooks/useFileBrowser").useFileBrowser}) source its per-pane
- * UI state — the active pane, each pane's cwd / listing / loading / error, and the
- * copy-cut clipboard — from that region: the parity-safe render cut (the direct
- * analog of the client-scoped broadcast render cut
- * {@link import("./broadcastBridge")}, #2242, and the connections render cut
- * {@link import("./connectionsBridge")}, #2225).
+ * The client-scoped region, backed by the Rust
+ * [`FileBrowserStore`](../../src-tauri/src/file_browser_projection/store.rs), is the
+ * source of truth for the file-browser *view*: the active pane, each pane's cwd /
+ * listing / list-operation loading+error, and the copy-cut clipboard. Since the
+ * reducer removal (#2283) the `appStore` file-browser slice is gone, so this bridge
+ * is no longer a "mirror" of a local slice — it **is** the mutation path: the
+ * `appStore` file-browser actions do the async list op and report each transition
+ * through a granular `fileBrowser.*` intent, and every reader sources the view from
+ * this region ({@link import("./useProjectedFileBrowsers").useProjectedFileBrowsers}
+ * for components, {@link currentFileBrowsersView} for synchronous store-side reads).
  *
  * # Client-scoped region
  *
@@ -25,32 +24,29 @@
  *
  * # Scope — the browser *view*, not the session model
  *
- * This bridge mirrors only the **browser view**: which pane is active, each pane's
+ * This bridge owns only the **browser view**: which pane is active, each pane's
  * cwd / listing / list-operation loading+error, and the clipboard. It deliberately
  * leaves the backend session model on `appStore` — the live session id
  * (`sessionFileBrowserId`, which gates `isConnected`) and transfers stay `appStore`
- * reads. Since the SFTP convergence (#2313 / #2422) SSH browses through the session
- * pane like every other remote type; the legacy standalone SFTP pane and its
- * `sftpSessionId` model were retired, so only the `local` and `session` panes
- * remain.
+ * reads: that id is a per-client pointer to the active terminal session, set
+ * imperatively from the active tab, and is not part of the projected view. Since
+ * the SFTP convergence (#2313 / #2422) SSH browses through the session pane like
+ * every other remote type; the legacy standalone SFTP pane and its `sftpSessionId`
+ * model were retired, so only the `local` and `session` panes remain.
  *
- * # Strangler safety — flag-gated, on by default, faithful-mirror gate
+ * # Gap-free optimistic folding (#2533)
  *
- * The `appStore` file-browser slice is still authoritative (the mutation cut is a
- * later step). To keep the render cut parity-safe **independent of any mutation
- * flag**, the region is kept a faithful copy of `appStore` by
- * {@link seedFileBrowsersRegion} (a `fileBrowser.replace` whole-slice mirror, the
- * analog of the broadcast bridge's `broadcast.replace` seed), and the UI renders
- * from the region **only when it faithfully mirrors** `appStore`
- * ({@link fileBrowsersViewMirrors}); otherwise it falls back to `appStore`
- * verbatim. Because the gate guarantees the projected view deep-equals `appStore`'s
- * slice, the rendered output is value-identical to the pre-cut path.
- *
- * Gated by {@link fileBrowsersRenderFromProjectionEnabled} — **on by default**.
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_FILE_BROWSERS_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.fileBrowsersRenderFromProjection"]` (set `"false"` to
- * render straight from `appStore`).
+ * The backend `FileBrowserStore` applies the granular `fileBrowser.*` intents and
+ * broadcasts the authoritative diff, but the frontend needs several transitions to
+ * be reflected **synchronously** — the loading spinner the instant a navigation
+ * starts, the active-pane switch, and the clipboard a paste reads right after a
+ * copy. So each mutation is routed through the region client's
+ * {@link ProjectionClient.dispatchOptimistic}: the client-side twin of the Rust
+ * store reducer ({@link foldFor}) overlays the transition on
+ * the projected view at once, then the authoritative diff prunes the overlay when
+ * it lands (version-gated reconcile) — zero flash, no double-apply. The region
+ * client is created synchronously on first use so the overlay applies before its
+ * subscription has even started.
  */
 
 import {
@@ -58,7 +54,10 @@ import {
   newClientId,
   newIntentId,
   ProjectionClient,
+  type Intent,
   type IntentAck,
+  type OptimisticFold,
+  type ProjectionCacheState,
   type Transport,
 } from "@/services/transport";
 import type { FileClipboard } from "@/store/appStore";
@@ -66,7 +65,7 @@ import type { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 
 /** The active file-browser pane (twin of the Rust `mode` string; `"none"` is no
- * open browser). Mirrors the frontend `fileBrowserMode`. */
+ * open browser). */
 export type FileBrowserMode = "none" | "local" | "session";
 
 /** One browser pane's view: the directory it shows, its listing, and the
@@ -81,8 +80,7 @@ export interface FileBrowserPaneView {
 /**
  * The `file-browser@<clientId>` region view model — a twin of the Rust store
  * snapshot: the active pane, the two panes (local / session), and the copy-cut
- * clipboard. Each field matches the `appStore` slice one-to-one, so the render
- * cut is a pure parity swap.
+ * clipboard.
  */
 export interface FileBrowsersView {
   mode: FileBrowserMode;
@@ -107,128 +105,15 @@ export const EMPTY_FILE_BROWSERS_VIEW: FileBrowsersView = {
   clipboard: null,
 };
 
-// ── Render-cut feature flag (runtime-flippable, on by default) ─────────────────
-
-let renderFlagOverride: boolean | null = null;
-
-interface FileBrowsersRenderFlagWindow {
-  __TERMIHUB_FILE_BROWSERS_RENDER_FROM_PROJECTION__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the render-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
- */
-export function setFileBrowsersRenderFromProjectionEnabled(value: boolean | null): void {
-  renderFlagOverride = value;
-}
-
-/**
- * Whether the file-browser panel renders its per-pane UI state from the projected
- * `file-browser@<clientId>` region instead of reading `appStore`'s file-browser
- * slice directly.
- *
- * **On by default** — the render cut is parity-safe: the UI renders from the
- * region only when it faithfully mirrors `appStore` ({@link fileBrowsersViewMirrors}),
- * and otherwise falls back to `appStore` verbatim, so the output is value-identical
- * to the pre-cut path. Independent of the (later) mutation cut: the region is kept
- * a mirror of `appStore` by {@link seedFileBrowsersRegion}, so it is always
- * populated. Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_FILE_BROWSERS_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.fileBrowsersRenderFromProjection"]`.
- */
-export function fileBrowsersRenderFromProjectionEnabled(): boolean {
-  if (renderFlagOverride !== null) return renderFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as FileBrowsersRenderFlagWindow;
-      if (typeof w.__TERMIHUB_FILE_BROWSERS_RENDER_FROM_PROJECTION__ === "boolean") {
-        return w.__TERMIHUB_FILE_BROWSERS_RENDER_FROM_PROJECTION__;
-      }
-      const ls = w.localStorage?.getItem("termihub.fileBrowsersRenderFromProjection");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
-
-// ── Mutation-cut feature flag (runtime-flippable, on by default) ───────────────
-
-let mutationFlagOverride: boolean | null = null;
-
-interface FileBrowsersMutationFlagWindow {
-  __TERMIHUB_FILE_BROWSERS_INTENTS__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the mutation-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
- */
-export function setFileBrowsersIntentsEnabled(value: boolean | null): void {
-  mutationFlagOverride = value;
-}
-
-/**
- * Whether the file-browser UI-state actions (set the active pane, a pane's
- * directory-list start / success / failure, and the copy-cut clipboard) dispatch
- * granular `fileBrowser.*` intents so the client-scoped backend
- * {@link import("../../src-tauri/src/file_browser_projection/store").FileBrowserStore}
- * is authoritative — instead of only the render-cut {@link seedFileBrowsersRegion}
- * `fileBrowser.replace` whole-slice mirror driving the region.
- *
- * **On by default** (#2228 mutation cut). When on, each action mirrors its
- * transition through a `fileBrowser.*` intent (via {@link mirrorFileBrowserIntent}),
- * and the render-cut hook
- * ({@link import("./useProjectedFileBrowsers").useProjectedFileBrowsers}) reflects
- * the region back into the UI. The local `appStore` reducer path stays in place as
- * the render source and as a resilience / rollback fallback — any dispatch failure
- * is logged and the local mutation continues, so a backend hiccup can never break
- * the file browser (the reducer removal is a later step). When off, `appStore`
- * drives the slice purely locally (the pre-cut path). The flip was taken on the
- * automated parity tests plus the instant local fallback, mirroring the
- * connections (#2225) and agents (#2226) mutation cuts.
- *
- * Scope note: the session list operations mirror only the browser *view* fields
- * (path / listing / list flags); the backend session model (live session ids,
- * transfers) stays `appStore`-driven and is carried into the region by the
- * render-cut `fileBrowser.replace` mirror. Since the SFTP convergence
- * (#2313 / #2422) the legacy standalone SFTP pane and its `sftpSessionId` session
- * model were retired, leaving only the `local` and `session` panes.
- *
- * Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_FILE_BROWSERS_INTENTS__` or
- * `localStorage["termihub.fileBrowsersIntents"]` (set `"false"` to restore the
- * pre-cut local-mutation path; `"true"` to force on).
- */
-export function fileBrowsersIntentsEnabled(): boolean {
-  if (mutationFlagOverride !== null) return mutationFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as FileBrowsersMutationFlagWindow;
-      if (typeof w.__TERMIHUB_FILE_BROWSERS_INTENTS__ === "boolean") {
-        return w.__TERMIHUB_FILE_BROWSERS_INTENTS__;
-      }
-      const ls = w.localStorage?.getItem("termihub.fileBrowsersIntents");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
-
-// ── Transport + client-scoped region client (lazy, mirrors the broadcast slice) ─
+// ── Transport + region client (lazy, mirrors the session-lifecycle slice) ──────
 
 let transportInstance: Transport | null = null;
+/** The region client once its subscription has started (its snapshot adopted). */
 let regionClient: ProjectionClient | null = null;
+/** The region client instance the moment it is created — before `start()`
+ * resolves — so an optimistic dispatch can overlay on it synchronously (#2533).
+ * Same object as {@link regionClient} once started. */
+let creatingClient: ProjectionClient | null = null;
 let startPromise: Promise<ProjectionClient> | null = null;
 
 // A stable per-session client identity. The region is `file-browser@<clientId>` and
@@ -240,14 +125,16 @@ const clientId = newClientId();
 export const FILE_BROWSERS_REGION = `file-browser@${clientId}`;
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription / seed dedup. */
+ * drops any active subscription / cached view. */
 export function setFileBrowsersTransportForTest(t: Transport | null): void {
-  regionClient?.stop();
+  (regionClient ?? creatingClient)?.stop();
   regionClient = null;
+  creatingClient = null;
   startPromise = null;
   transportInstance = t;
   lastView = EMPTY_FILE_BROWSERS_VIEW;
-  lastSeededSignature = null;
+  lastViewSignature = JSON.stringify(EMPTY_FILE_BROWSERS_VIEW);
+  lastAppliedVersion = -1;
 }
 
 function transport(): Transport {
@@ -263,16 +150,17 @@ function transport(): Transport {
 export type FileBrowsersViewListener = (view: FileBrowsersView) => void;
 
 const viewListeners = new Set<FileBrowsersViewListener>();
+// The last projected view received, defaulting to the empty baseline so a
+// synchronous read before the first diff still returns a valid view.
 let lastView: FileBrowsersView = EMPTY_FILE_BROWSERS_VIEW;
-
-/**
- * Register a listener, invoked with the projected view on every diff. Returns an
- * unsubscribe. The region client is started on first use.
- */
-export function onFileBrowsersView(listener: FileBrowsersViewListener): () => void {
-  viewListeners.add(listener);
-  return () => viewListeners.delete(listener);
-}
+// A content signature of `lastView`, so an identical-content emit (e.g. a resync
+// re-delivering the same view with a fresh object identity) does not churn the view
+// identity or re-notify subscribers.
+let lastViewSignature: string = JSON.stringify(EMPTY_FILE_BROWSERS_VIEW);
+// The monotonic region version of `lastView`. A projected view strictly older than
+// this is stale and ignored, so a late-delivered snapshot can never clobber a newer
+// view; an optimistic overlay re-emitted at the same version still commits.
+let lastAppliedVersion = -1;
 
 /** Normalize a possibly-partial pane view into a full {@link FileBrowserPaneView}. */
 function normalizePane(pane: Partial<FileBrowserPaneView> | undefined): FileBrowserPaneView {
@@ -295,25 +183,73 @@ function normalizeView(view: Partial<FileBrowsersView> | undefined): FileBrowser
 }
 
 /**
+ * Commit a projected view (at its region `version`) as the current view and notify
+ * subscribers — but only when it is not stale and its content actually changed.
+ * Ignoring a strictly-older version stops a late-delivered snapshot from
+ * overwriting a newer view; preserving identity for unchanged content keeps the
+ * reader hook's value referentially stable. An optimistic overlay re-emitted at the
+ * same version still commits (its content changed), so gap-free feedback is not
+ * suppressed.
+ */
+function commitFileBrowsersView(next: FileBrowsersView, version: number): void {
+  if (version < lastAppliedVersion) return;
+  lastAppliedVersion = version;
+  const signature = JSON.stringify(next);
+  if (signature === lastViewSignature) return;
+  lastView = next;
+  lastViewSignature = signature;
+  for (const listener of viewListeners) {
+    try {
+      listener(next);
+    } catch (err) {
+      logFileBrowsersBridgeFallback("reconcile", err);
+    }
+  }
+}
+
+/**
+ * Register a listener, invoked with the projected view on every diff. Returns an
+ * unsubscribe. The region client is started on first use.
+ */
+export function onFileBrowsersView(listener: FileBrowsersViewListener): () => void {
+  viewListeners.add(listener);
+  return () => viewListeners.delete(listener);
+}
+
+/** Fan a region-client change out to the {@link onFileBrowsersView} listeners. */
+function fanOutFileBrowsersView(state: ProjectionCacheState): void {
+  commitFileBrowsersView(
+    normalizeView(state.view as Partial<FileBrowsersView> | undefined),
+    state.version
+  );
+}
+
+/**
+ * The region client instance, created (and its change fan-out registered) on first
+ * use — **synchronously**, before its subscription has started — so an optimistic
+ * dispatch can overlay on it at once (#2533). Returns the started
+ * {@link regionClient} once available, else the {@link creatingClient}. Throws only
+ * if the transport itself cannot be built (non-Tauri without a socket).
+ */
+function fileBrowsersRegionClient(): ProjectionClient {
+  if (regionClient) return regionClient;
+  if (!creatingClient) {
+    creatingClient = new ProjectionClient(transport(), FILE_BROWSERS_REGION);
+    creatingClient.onChange(fanOutFileBrowsersView);
+  }
+  return creatingClient;
+}
+
+/**
  * Ensure the `file-browser@<clientId>` region client is subscribed so projected
  * diffs are received and fanned out to the {@link onFileBrowsersView} listeners.
  * Idempotent and de-duplicated across concurrent callers; a transport/subscribe
- * failure is logged and rethrown so the caller can fall back to `appStore`.
+ * failure is logged and rethrown so the caller can react.
  */
 export function ensureFileBrowsersSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);
   if (!startPromise) {
-    const client = new ProjectionClient(transport(), FILE_BROWSERS_REGION);
-    client.onChange((state) => {
-      lastView = normalizeView(state.view as Partial<FileBrowsersView> | undefined);
-      for (const listener of viewListeners) {
-        try {
-          listener(lastView);
-        } catch (err) {
-          logFileBrowsersBridgeFallback("reconcile", err);
-        }
-      }
-    });
+    const client = fileBrowsersRegionClient();
     startPromise = client
       .start()
       .then(() => {
@@ -331,69 +267,37 @@ export function ensureFileBrowsersSubscribed(): Promise<ProjectionClient> {
 
 /** Drop the region subscription (tests / re-init). */
 export function stopFileBrowsersSubscription(): void {
-  regionClient?.stop();
+  (regionClient ?? creatingClient)?.stop();
   regionClient = null;
+  creatingClient = null;
   startPromise = null;
   lastView = EMPTY_FILE_BROWSERS_VIEW;
-  lastSeededSignature = null;
+  lastViewSignature = JSON.stringify(EMPTY_FILE_BROWSERS_VIEW);
+  lastAppliedVersion = -1;
 }
 
-/** The last view fanned out (for a hook that subscribes after the first diff). */
+/**
+ * The last projected view received (for a hook that subscribes after the first
+ * diff, and for synchronous store-side reads). Since the region is authoritative
+ * and every mutation overlays its transition synchronously (#2533), this is the
+ * frontend's current picture of the file-browser view; before the first diff it is
+ * the {@link EMPTY_FILE_BROWSERS_VIEW} baseline.
+ */
 export function currentFileBrowsersView(): FileBrowsersView {
   return lastView;
 }
 
-// ── Seed: keep the region a faithful mirror of appStore (fileBrowser.replace) ───
-
-let lastSeededSignature: string | null = null;
-
 /**
- * Seed the region with `appStore`'s whole file-browser slice via a
- * `fileBrowser.replace` intent, so the projection tracks `appStore`'s current
- * state while `appStore` stays authoritative (the render-side counterpart of the
- * broadcast bridge seed). De-duplicated: a slice identical to the last seeded one
- * is not re-dispatched. Never throws synchronously — a transport that cannot
- * dispatch surfaces as a rejected promise the caller logs and ignores (staying on
- * the `appStore` fallback). Idempotent server-side: replacing with the same
- * content yields no diff.
+ * Test-only: synchronously set the projected view and notify subscribers, without
+ * the async transport subscribe round-trip. The file-browsers region test harness
+ * uses this to seed the region so a reader that renders (or re-renders) sees the
+ * view without an explicit flush. Never call this from production code.
  */
-export function seedFileBrowsersRegion(view: FileBrowsersView): Promise<void> {
-  const signature = JSON.stringify(view);
-  if (signature === lastSeededSignature) return Promise.resolve();
-  // Set before dispatching so concurrent callers do not double-dispatch the seed.
-  lastSeededSignature = signature;
-  try {
-    return transport()
-      .dispatch({
-        intentId: newIntentId(),
-        kind: "fileBrowser.replace",
-        payload: {
-          mode: view.mode,
-          local: view.local,
-          session: view.session,
-          clipboard: view.clipboard,
-        },
-        clientId,
-      })
-      .then((ack: IntentAck) => {
-        if (ack.status === "rejected") {
-          // Let a later change retry the seed rather than latch on a failure.
-          lastSeededSignature = null;
-          throw new Error(ack.error?.message ?? "fileBrowser.replace rejected");
-        }
-      })
-      .catch((err) => {
-        lastSeededSignature = null;
-        throw err;
-      });
-  } catch (err) {
-    // A synchronous transport-construction failure (non-Tauri, no socket).
-    lastSeededSignature = null;
-    return Promise.reject(err instanceof Error ? err : new Error(String(err)));
-  }
+export function __emitFileBrowsersViewForTest(view: FileBrowsersView, version: number): void {
+  commitFileBrowsersView(normalizeView(view), version);
 }
 
-// ── Mutation cut: granular fileBrowser.* intent dispatch ──────────────────────
+// ── Mutation: granular fileBrowser.* intent dispatch (optimistically folded) ───
 
 /**
  * The concrete browser pane a `fileBrowser.*` load/reset intent targets. Unlike
@@ -403,11 +307,10 @@ export function seedFileBrowsersRegion(view: FileBrowsersView): Promise<void> {
 export type FileBrowserPane = "local" | "session";
 
 /**
- * The granular `fileBrowser.*` intent kinds the mutation cut dispatches (twins of
- * the Rust routes). Excludes `fileBrowser.replace`, which is the render-cut
- * whole-slice mirror ({@link seedFileBrowsersRegion}); the mutation cut drives the
- * region through these per-transition intents instead so the store becomes
- * authoritative.
+ * The granular `fileBrowser.*` intent kinds the mutation path dispatches (twins of
+ * the Rust routes). Excludes `fileBrowser.replace`, the retired render-cut
+ * whole-slice mirror — the authoritative path drives the region through these
+ * per-transition intents.
  */
 export type FileBrowserIntentKind =
   | "fileBrowser.setMode"
@@ -424,82 +327,118 @@ export function dispatchFileBrowserIntent(
   return transport().dispatch({ intentId: newIntentId(), kind, payload, clientId });
 }
 
+/** Resolve the concrete pane an intent's payload targets (defaults to `local`). */
+function paneOf(pane: unknown): FileBrowserPane {
+  return pane === "session" ? "session" : "local";
+}
+
 /**
- * Fire a granular `fileBrowser.*` intent to keep the client's backend store
- * authoritative, swallowing and logging any failure so the local `appStore`
- * mutation path is never disrupted by a bridge hiccup (the resilience fallback). A
- * no-op when the mutation cut is disabled ({@link fileBrowsersIntentsEnabled} off —
- * the rollback path). Never throws — a synchronous transport-construction failure
- * (non-Tauri, no socket) is caught and logged, leaving the UI on the local slice.
- * The twin of the connections bridge's
- * {@link import("./connectionsBridge").mirrorConnectionIntent}.
+ * The client-side optimistic transform for each `fileBrowser.*` intent — the twin
+ * of the Rust `FileBrowserStore` reducer (mirrors `file_browser_projection`). Given
+ * the current view and the intent payload, return the view as it should appear once
+ * the intent has been applied. Pure and immutable (never mutates the shared
+ * baseline). Returns `null` for an unknown kind, so the caller dispatches without an
+ * overlay.
+ */
+function foldFor(
+  kind: FileBrowserIntentKind,
+  payload: Record<string, unknown>
+): OptimisticFold | null {
+  switch (kind) {
+    case "fileBrowser.setMode":
+      return (view) => ({
+        ...normalizeView(view as Partial<FileBrowsersView>),
+        mode: (payload.mode as FileBrowserMode) ?? "none",
+      });
+    case "fileBrowser.loadStarted":
+      return (view) => {
+        const v = normalizeView(view as Partial<FileBrowsersView>);
+        const pane = paneOf(payload.pane);
+        return { ...v, [pane]: { ...v[pane], loading: true, error: null } };
+      };
+    case "fileBrowser.loadSucceeded":
+      return (view) => {
+        const v = normalizeView(view as Partial<FileBrowsersView>);
+        const pane = paneOf(payload.pane);
+        return {
+          ...v,
+          [pane]: {
+            path: (payload.path as string) ?? v[pane].path,
+            entries: (payload.entries as FileEntry[]) ?? [],
+            loading: false,
+            error: null,
+          },
+        };
+      };
+    case "fileBrowser.loadFailed":
+      return (view) => {
+        const v = normalizeView(view as Partial<FileBrowsersView>);
+        const pane = paneOf(payload.pane);
+        return {
+          ...v,
+          [pane]: { ...v[pane], loading: false, error: (payload.error as string | null) ?? null },
+        };
+      };
+    case "fileBrowser.setClipboard":
+      return (view) => ({
+        ...normalizeView(view as Partial<FileBrowsersView>),
+        clipboard: (payload.clipboard as FileClipboard | null) ?? null,
+      });
+    default:
+      return null;
+  }
+}
+
+/**
+ * Apply a `fileBrowser.*` transition to the client's authoritative region: overlay
+ * it on the projected view synchronously (so the loading spinner, pane switch, and
+ * clipboard are gap-free — #2533), then reconcile against the backend's diff. The
+ * `appStore` file-browser actions call this after doing the async list op; there is
+ * no local slice to keep in step (the reducer removal, #2283).
+ *
+ * Never throws (the resilience contract): a synchronous transport-construction
+ * failure (non-Tauri, no socket) or a rejected/failed dispatch is caught and
+ * logged, leaving the last-known view in place. A no-op / rejected intent rolls its
+ * overlay back at once ({@link ProjectionClient.dispatchOptimistic}), so a
+ * transition is never stranded.
  */
 export function mirrorFileBrowserIntent(
   kind: FileBrowserIntentKind,
   payload: Record<string, unknown>
 ): void {
-  if (!fileBrowsersIntentsEnabled()) return;
+  const fold = foldFor(kind, payload);
+  let client: ProjectionClient;
   try {
-    void dispatchFileBrowserIntent(kind, payload)
-      .then((ack) => {
-        if (ack.status === "rejected") {
-          logFileBrowsersBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
-        }
-      })
-      .catch((err) => logFileBrowsersBridgeFallback(kind, err));
+    client = fileBrowsersRegionClient();
   } catch (err) {
+    // No transport (e.g. non-Tauri without a socket): the projected view is the
+    // only source now, but a failed dispatch is a resilience event, not a crash.
     logFileBrowsersBridgeFallback(kind, err);
+    return;
   }
+
+  // Ensure the region is subscribed so the authoritative diff arrives to reconcile
+  // (prune) the overlay; a subscribe failure is logged and does not strand it — a
+  // later resync/snapshot reconciles it.
+  void ensureFileBrowsersSubscribed().catch((err) =>
+    logFileBrowsersBridgeFallback("subscribe", err)
+  );
+
+  const intent: Intent = { intentId: newIntentId(), kind, payload, clientId };
+  const overlay: OptimisticFold = fold ?? ((view) => view);
+
+  void client
+    .dispatchOptimistic(intent, overlay)
+    .then((ack) => {
+      if (ack.status === "rejected") {
+        logFileBrowsersBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+      }
+    })
+    .catch((err) => logFileBrowsersBridgeFallback(kind, err));
 }
 
-// ── Faithful-mirror gate ───────────────────────────────────────────────────────
-
-/**
- * Whether a projected `view` faithfully mirrors `appStore`'s file-browser slice —
- * the gate deciding whether the UI may render from the projection (true) or must
- * fall back to `appStore` (false). A deep value comparison of the active pane, the
- * three panes and the clipboard; because the projected records match the frontend
- * shapes one-to-one, a mirroring view is value-identical to the `appStore` slice,
- * so rendering from it can never diverge. The same faithful-mirror-gate idiom the
- * other domain render cuts use.
- */
-export function fileBrowsersViewMirrors(
-  view: FileBrowsersView | undefined,
-  slice: FileBrowsersView
-): boolean {
-  if (!view) return false;
-  return deepEqual(view, slice);
-}
-
-/**
- * A structural deep-equal for the JSON-ish file-browsers view model (objects,
- * arrays, and primitives — no functions/dates/maps). Numbers compare with `===`,
- * so an integer that round-tripped through JSON as a float (`22` vs `22.0`) still
- * matches. Exported for the bridge's parity tests.
- */
-export function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (typeof a !== typeof b) return false;
-  if (a === null || b === null) return a === b;
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    return a.every((v, i) => deepEqual(v, b[i]));
-  }
-  if (typeof a === "object" && typeof b === "object") {
-    const ao = a as Record<string, unknown>;
-    const bo = b as Record<string, unknown>;
-    const aKeys = Object.keys(ao);
-    const bKeys = Object.keys(bo);
-    if (aKeys.length !== bKeys.length) return false;
-    return aKeys.every(
-      (k) => Object.prototype.hasOwnProperty.call(bo, k) && deepEqual(ao[k], bo[k])
-    );
-  }
-  return false;
-}
-
-/** Log a bridge fallback so the appStore-path recovery is visible in the LogViewer. */
+/** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logFileBrowsersBridgeFallback(kind: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
-  frontendLog("file_browsers_bridge", `${kind} fell back to appStore file browsers: ${message}`);
+  frontendLog("file_browsers_bridge", `${kind} file-browser intent failed: ${message}`);
 }

@@ -1,6 +1,8 @@
 import { useCallback } from "react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
+import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
+import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import {
   localMkdir,
   localDelete,
@@ -14,12 +16,18 @@ import { FileEntry } from "@/types/connection";
 /**
  * Hook for local filesystem operations.
  * Same shape as useFileSystem for SFTP.
+ *
+ * The local pane's view (listing, cwd, loading, error) is sourced from the
+ * authoritative `file-browser` projection region (#2283) via
+ * {@link useProjectedFileBrowsers}; the file *actions* dispatch through the
+ * `appStore` file-browser actions, which report each transition to the region.
  */
 export function useLocalFileSystem() {
-  const fileEntries = useAppStore((s) => s.localFileEntries);
-  const currentPath = useAppStore((s) => s.localCurrentPath);
-  const isLoading = useAppStore((s) => s.localFileLoading);
-  const error = useAppStore((s) => s.localFileError);
+  const local = useProjectedFileBrowsers().local;
+  const fileEntries = local.entries;
+  const currentPath = local.path;
+  const isLoading = local.loading;
+  const error = local.error;
   const navigateLocal = useAppStore((s) => s.navigateLocal);
   const refreshLocal = useAppStore((s) => s.refreshLocal);
 
@@ -109,7 +117,7 @@ export function useLocalFileSystem() {
     const localPath = await save({ title: "Save file as...", defaultPath: fileName });
     if (!localPath) return;
     const isDir =
-      useAppStore.getState().localFileEntries.find((e) => e.path === filePath)?.isDirectory ??
+      currentFileBrowsersView().local.entries.find((e) => e.path === filePath)?.isDirectory ??
       false;
     await localCopyFile(filePath, localPath, isDir);
   }, []);
@@ -139,7 +147,7 @@ export function useLocalFileSystem() {
   );
 
   const pasteEntry = useCallback(async () => {
-    const clipboard = useAppStore.getState().fileClipboard;
+    const clipboard = currentFileBrowsersView().clipboard;
     if (!clipboard) return;
 
     const destDir = currentPath;

@@ -39,6 +39,7 @@ import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
+import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { Button, Tooltip, Progress, Input, toast } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
@@ -556,10 +557,13 @@ function useFileBrowserSync() {
   const navigateSession = useAppStore((s) => s.navigateSession);
   const setSessionFileBrowserId = useAppStore((s) => s.setSessionFileBrowserId);
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
-  const localCurrentPath = useAppStore((s) => s.localCurrentPath);
-  const sessionCurrentPath = useAppStore((s) => s.sessionCurrentPath);
+  // The file-browser view (active pane, per-pane cwd) is sourced from the
+  // authoritative `file-browser` projection region (#2283).
+  const projectedFileBrowsers = useProjectedFileBrowsers();
+  const localCurrentPath = projectedFileBrowsers.local.path;
+  const sessionCurrentPath = projectedFileBrowsers.session.path;
+  const fileBrowserMode = projectedFileBrowsers.mode;
   const { remoteAgents } = useProjectedAgents();
-  const fileBrowserMode = useAppStore((s) => s.fileBrowserMode);
   const globalFileBrowserEnabled = useProjectedSettings().fileBrowserEnabled;
 
   // Derive mode from active tab
@@ -695,7 +699,7 @@ function useFileBrowserSync() {
       return;
     }
 
-    const currentMode = useAppStore.getState().fileBrowserMode;
+    const currentMode = currentFileBrowsersView().mode;
     if (currentMode === "local") {
       if (cwd) {
         navigateLocal(wslDistro ? wslToWindowsPath(cwd, wslDistro) : cwd);
@@ -726,7 +730,7 @@ function useFileBrowserSync() {
   // so we fall back to the user's home directory (or WSL root for WSL tabs).
   useEffect(() => {
     if (fileBrowserMode !== "local") return;
-    const { localFileEntries } = useAppStore.getState();
+    const localFileEntries = currentFileBrowsersView().local.entries;
     if (localFileEntries.length > 0) return; // Already loaded
 
     if (cwd) {
@@ -743,7 +747,7 @@ function useFileBrowserSync() {
   // Auto-navigate when entering session mode with no entries loaded yet.
   useEffect(() => {
     if (fileBrowserMode !== "session" || !sessionFileBrowserId) return;
-    const { sessionFileEntries } = useAppStore.getState();
+    const sessionFileEntries = currentFileBrowsersView().session.entries;
     if (sessionFileEntries.length > 0) return; // Already loaded
     // Fall back to "~" so the agent resolves the home directory instead of "/".
     navigateSession(sessionFileBrowserId, cwd ?? "~");
@@ -757,7 +761,7 @@ function useFileBrowserSync() {
   // Callback to jump the file browser back to the terminal's current CWD.
   const navigateToCwd = useCallback(() => {
     if (!cwd) return;
-    const currentMode = useAppStore.getState().fileBrowserMode;
+    const currentMode = currentFileBrowsersView().mode;
     if (currentMode === "local") {
       navigateLocal(wslDistro ? wslToWindowsPath(cwd, wslDistro) : cwd);
     }
@@ -767,7 +771,7 @@ function useFileBrowserSync() {
   const cdToCurrentPath = useCallback(async () => {
     const sessionId = activeTab?.sessionId ?? null;
     if (!sessionId) return;
-    const { fileBrowserMode } = useAppStore.getState();
+    const fileBrowserMode = currentFileBrowsersView().mode;
 
     let path: string;
     if (fileBrowserMode === "local") {
