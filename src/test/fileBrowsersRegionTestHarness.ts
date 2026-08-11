@@ -35,13 +35,22 @@ import {
   FILE_BROWSERS_REGION,
   setFileBrowsersTransportForTest,
   stopFileBrowsersSubscription,
+  type FileBrowserPaneView,
   type FileBrowsersView,
 } from "@/store/fileBrowsersBridge";
 import type { FileClipboard } from "@/store/appStore";
 import type { FileEntry } from "@/types/connection";
 
+/** A partial file-browsers view (per-pane fields optional) for seeding helpers. */
+export interface PartialFileBrowsersView {
+  mode?: FileBrowsersView["mode"];
+  local?: Partial<FileBrowserPaneView>;
+  session?: Partial<FileBrowserPaneView>;
+  clipboard?: FileClipboard | null;
+}
+
 /** Build a full {@link FileBrowsersView} from a partial (deep-merged per pane). */
-export function fileBrowsersView(overrides: Partial<FileBrowsersView> = {}): FileBrowsersView {
+export function fileBrowsersView(overrides: PartialFileBrowsersView = {}): FileBrowsersView {
   return {
     mode: overrides.mode ?? EMPTY_FILE_BROWSERS_VIEW.mode,
     local: { ...EMPTY_FILE_BROWSERS_VIEW.local, ...overrides.local },
@@ -203,7 +212,7 @@ let activeHarness: { transport: FakeFileBrowsersTransport; teardown: () => void 
  * snapshot) and synchronously emits the view (so a reader mounting / re-rendering
  * now reflects it without the async subscribe round-trip).
  */
-export function seedFileBrowsers(partial: Partial<FileBrowsersView>): void {
+export function seedFileBrowsers(partial: PartialFileBrowsersView): void {
   if (!activeHarness) {
     throw new Error("seedFileBrowsers() requires setupFileBrowsersRegion() at module scope");
   }

@@ -44,10 +44,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 
 import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
-import {
-  seedFileBrowsers,
-  setupFileBrowsersRegion,
-} from "@/test/fileBrowsersRegionTestHarness";
+import { seedFileBrowsers, setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 
 setupFileBrowsersRegion();
 
@@ -190,7 +187,9 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
   });
 
   it("calls localCopyFile with the correct destination path", async () => {
-    seedFileBrowsers({ local: { path: "/destination/dir", entries: [], loading: false, error: null } });
+    seedFileBrowsers({
+      local: { path: "/destination/dir", entries: [], loading: false, error: null },
+    });
 
     let uploadFn: ((path: string) => Promise<void>) | undefined;
     function Harness() {

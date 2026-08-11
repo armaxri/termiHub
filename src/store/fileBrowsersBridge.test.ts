@@ -19,10 +19,7 @@ import {
   stopFileBrowsersSubscription,
   type FileBrowsersView,
 } from "./fileBrowsersBridge";
-import {
-  FakeFileBrowsersTransport,
-  fileBrowsersView,
-} from "@/test/fileBrowsersRegionTestHarness";
+import { FakeFileBrowsersTransport, fileBrowsersView } from "@/test/fileBrowsersRegionTestHarness";
 
 function entry(name: string, isDirectory = false): FileEntry {
   return {
@@ -113,13 +110,17 @@ describe("mirrorFileBrowserIntent — optimistic folding", () => {
     const unsub = onFileBrowsersView((v) => seen.push(v));
     mirrorFileBrowserIntent("fileBrowser.setMode", { mode: "local" });
     unsub();
-    expect(seen.at(-1)?.mode).toBe("local");
+    expect(seen[seen.length - 1]?.mode).toBe("local");
   });
 
   it("swallows a rejected dispatch without throwing (resilience)", async () => {
     setFileBrowsersTransportForTest({
       dispatch: () =>
-        Promise.resolve({ intentId: "x", status: "rejected", error: { code: 0, message: "no" } }),
+        Promise.resolve({
+          intentId: "x",
+          status: "rejected",
+          error: { code: "rejected", message: "no" },
+        }),
       subscribe: async (region, onFrame) => {
         void onFrame;
         return { snapshot: { kind: "snapshot", region, version: 0, view: {} }, unsubscribe() {} };

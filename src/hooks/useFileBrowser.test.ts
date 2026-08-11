@@ -79,10 +79,7 @@ vi.mock("./useSessionFileSystem", () => ({
 
 import { useAppStore } from "@/store/appStore";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
-import {
-  seedFileBrowsers,
-  setupFileBrowsersRegion,
-} from "@/test/fileBrowsersRegionTestHarness";
+import { seedFileBrowsers, setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import type { FileEntry } from "@/types/connection";
 import { useFileBrowser } from "./useFileBrowser";
 

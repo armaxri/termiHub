@@ -1,10 +1,12 @@
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { setupFileBrowsersRegion, seedFileBrowsers } from "@/test/fileBrowsersRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { flushAsync } from "@/test/flushAsync";
 import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
@@ -71,6 +73,7 @@ function setActiveTab(tab: TerminalTab) {
 
 setupSettingsRegion();
 setupAgentsRegion();
+setupFileBrowsersRegion();
 
 describe("FileBrowser – useFileBrowserSync", () => {
   beforeEach(() => {
@@ -112,7 +115,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("local");
+    expect(currentFileBrowsersView().mode).toBe("local");
   });
 
   it("sets fileBrowserMode to 'local' for a local tab with WSL shell type", () => {
@@ -130,7 +133,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("local");
+    expect(currentFileBrowsersView().mode).toBe("local");
   });
 
   it("sets fileBrowserMode to 'local' for a plain local tab", () => {
@@ -148,7 +151,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("local");
+    expect(currentFileBrowsersView().mode).toBe("local");
   });
 
   it("does not set fileBrowserMode to 'sftp' for a WSL tab even when capability claims true", () => {
@@ -182,7 +185,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("local");
+    expect(currentFileBrowsersView().mode).toBe("local");
   });
 
   it("sets fileBrowserMode to 'none' for a settings tab", () => {
@@ -200,7 +203,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+    expect(currentFileBrowsersView().mode).toBe("none");
   });
 
   it("sets fileBrowserMode to 'none' for unsupported connection types", () => {
@@ -218,7 +221,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+    expect(currentFileBrowsersView().mode).toBe("none");
   });
 
   // --- Protocol-agnostic (session-layer) browsing for non-SSH types (#1335) ---
@@ -262,7 +265,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
 
     // FTP must browse through the shared session layer, not the SSH-only
     // SftpManager path — an `sftp_open` with an FTP config could never connect.
-    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(currentFileBrowsersView().mode).toBe("session");
     expect(useAppStore.getState().sessionFileBrowserId).toBe("ftp-sess-1");
   });
 
@@ -293,7 +296,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(currentFileBrowsersView().mode).toBe("session");
     expect(useAppStore.getState().sessionFileBrowserId).toBe("ssh-sess-1");
     // No legacy SftpManager connect was attempted.
     expect(mockedInvoke).not.toHaveBeenCalledWith("sftp_open", expect.anything());
@@ -316,7 +319,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+    expect(currentFileBrowsersView().mode).toBe("none");
   });
 
   it("sets fileBrowserMode to 'none' for an FTP tab when the file browser is disabled", () => {
@@ -337,7 +340,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+    expect(currentFileBrowsersView().mode).toBe("none");
   });
 
   it("sets fileBrowserMode to 'session' for a Docker tab (shared session layer)", () => {
@@ -357,7 +360,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(currentFileBrowsersView().mode).toBe("session");
     expect(useAppStore.getState().sessionFileBrowserId).toBe("docker-sess-1");
   });
 
@@ -413,7 +416,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(currentFileBrowsersView().mode).toBe("session");
     expect(useAppStore.getState().sessionFileBrowserId).toBe("terminal-sess-1");
   });
 
@@ -469,7 +472,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+    expect(currentFileBrowsersView().mode).toBe("none");
   });
 
   it("sets fileBrowserMode to 'none' for remote-session tab when no agent found", () => {
@@ -492,7 +495,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
       );
     });
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("none");
+    expect(currentFileBrowsersView().mode).toBe("none");
   });
 
   // --- Navigation path conversion ---
@@ -514,7 +517,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("//wsl$/FedoraLinux-43/");
+    expect(currentFileBrowsersView().local.path).toBe("//wsl$/FedoraLinux-43/");
   });
 
   it("converts WSL /mnt/c CWD to Windows drive path for file browser", async () => {
@@ -537,7 +540,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/richtera");
+    expect(currentFileBrowsersView().local.path).toBe("C:/Users/richtera");
   });
 
   it("converts native WSL Linux path to UNC path for file browser", async () => {
@@ -560,7 +563,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("//wsl$/Ubuntu/home/user/projects");
+    expect(currentFileBrowsersView().local.path).toBe("//wsl$/Ubuntu/home/user/projects");
   });
 
   it("converts CWD for local tab with WSL shell type", async () => {
@@ -583,7 +586,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("D:/work");
+    expect(currentFileBrowsersView().local.path).toBe("D:/work");
   });
 
   it("does not apply WSL path conversion for plain local tabs", async () => {
@@ -606,7 +609,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/richtera");
+    expect(currentFileBrowsersView().local.path).toBe("C:/Users/richtera");
   });
 
   // Regression test for #555: PowerShell reports CWD via OSC 9;9 with backslashes.
@@ -631,7 +634,7 @@ describe("FileBrowser – useFileBrowserSync", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/testuser");
+    expect(currentFileBrowsersView().local.path).toBe("C:/Users/testuser");
   });
 });
 
@@ -708,9 +711,9 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       config: { type: "local", config: {} },
     });
     setActiveTab(localTab);
-    useAppStore.setState({
-      sidebarView: "files",
-      fileClipboard: {
+    useAppStore.setState({ sidebarView: "files" });
+    seedFileBrowsers({
+      clipboard: {
         entries: [
           {
             name: "copied.txt",
@@ -759,7 +762,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       sourcePath: "/home",
     });
 
-    const clipboard = useAppStore.getState().fileClipboard;
+    const clipboard = currentFileBrowsersView().clipboard;
     expect(clipboard).not.toBeNull();
     expect(clipboard?.entries[0].name).toBe("test.txt");
     expect(clipboard?.operation).toBe("copy");
@@ -783,7 +786,7 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       sourcePath: "/home",
     });
 
-    const clipboard = useAppStore.getState().fileClipboard;
+    const clipboard = currentFileBrowsersView().clipboard;
     expect(clipboard).not.toBeNull();
     expect(clipboard?.entries[0].name).toBe("mydir");
     expect(clipboard?.operation).toBe("cut");
@@ -806,10 +809,10 @@ describe("FileBrowser – Copy/Cut/Paste UI", () => {
       sourceMode: "local",
       sourcePath: "/home",
     });
-    expect(useAppStore.getState().fileClipboard).not.toBeNull();
+    expect(currentFileBrowsersView().clipboard).not.toBeNull();
 
     useAppStore.getState().setFileClipboard(null);
-    expect(useAppStore.getState().fileClipboard).toBeNull();
+    expect(currentFileBrowsersView().clipboard).toBeNull();
   });
 });
 
@@ -1333,7 +1336,7 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
     await flushAsync();
 
     // Path should be normalized
-    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users/testuser");
+    expect(currentFileBrowsersView().local.path).toBe("C:/Users/testuser");
 
     // Click the Up button — should navigate to "C:/Users"
     const upBtn = container.querySelector('[data-testid="file-browser-up"]') as HTMLButtonElement;
@@ -1344,7 +1347,7 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("C:/Users");
+    expect(currentFileBrowsersView().local.path).toBe("C:/Users");
   });
 
   it("Up button is disabled at Windows drive root (C:/)", async () => {
@@ -1368,7 +1371,7 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("C:/");
+    expect(currentFileBrowsersView().local.path).toBe("C:/");
     const upBtn = container.querySelector('[data-testid="file-browser-up"]') as HTMLButtonElement;
     expect(upBtn.disabled).toBe(true);
   });
@@ -1402,7 +1405,7 @@ describe("FileBrowser – Windows navigate-up (#555)", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("C:/");
+    expect(currentFileBrowsersView().local.path).toBe("C:/");
   });
 });
 
@@ -1428,10 +1431,10 @@ describe("FileBrowser – session mode initial path (#630)", () => {
   });
 
   it("navigates to ~ when entering session mode with no CWD", async () => {
-    useAppStore.setState({
-      fileBrowserMode: "session",
-      sessionFileBrowserId: "sess-remote",
-      sessionFileEntries: [],
+    useAppStore.setState({ sessionFileBrowserId: "sess-remote" });
+    seedFileBrowsers({
+      mode: "session",
+      session: { path: "/", entries: [], loading: false, error: null },
     });
 
     await act(async () => {
@@ -1546,7 +1549,7 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
       useAppStore.getState().navigateLocal("/home/user");
     });
     await flushAsync();
-    expect(useAppStore.getState().localCurrentPath).toBe("/home/user");
+    expect(currentFileBrowsersView().local.path).toBe("/home/user");
 
     // Click the Go to CWD button
     const btn = container.querySelector(
@@ -1557,7 +1560,7 @@ describe("FileBrowser – Go to Terminal CWD button", () => {
     });
     await flushAsync();
 
-    expect(useAppStore.getState().localCurrentPath).toBe("/home/user/projects");
+    expect(currentFileBrowsersView().local.path).toBe("/home/user/projects");
   });
 });
 
@@ -1655,7 +1658,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       rootCrumb.click();
     });
     await flushAsync();
-    expect(useAppStore.getState().localCurrentPath).toBe("/");
+    expect(currentFileBrowsersView().local.path).toBe("/");
   });
 
   it("reveals a path input prefilled with the current path when edit is clicked", async () => {
@@ -1689,7 +1692,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     await flushAsync();
-    expect(useAppStore.getState().localCurrentPath).toBe("/var/log");
+    expect(currentFileBrowsersView().local.path).toBe("/var/log");
   });
 
   it("cancels path editing on Escape without navigating", async () => {
@@ -1709,7 +1712,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
     });
     await flushAsync();
     expect(container.querySelector('[data-testid="file-browser-path-input"]')).toBeNull();
-    expect(useAppStore.getState().localCurrentPath).toBe("/home");
+    expect(currentFileBrowsersView().local.path).toBe("/home");
   });
 
   it("filters the list by name", async () => {
@@ -1737,7 +1740,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       list.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     });
     await flushAsync();
-    expect(useAppStore.getState().localCurrentPath).toBe("/home/bdir");
+    expect(currentFileBrowsersView().local.path).toBe("/home/bdir");
   });
 
   it("navigates up a level on Backspace", async () => {
@@ -1747,7 +1750,7 @@ describe("FileBrowser – navigation UX (#1361)", () => {
       list.dispatchEvent(new KeyboardEvent("keydown", { key: "Backspace", bubbles: true }));
     });
     await flushAsync();
-    expect(useAppStore.getState().localCurrentPath).toBe("/home");
+    expect(currentFileBrowsersView().local.path).toBe("/home");
   });
 
   it("selects all entries with Ctrl+A", async () => {
@@ -1899,7 +1902,7 @@ describe("FileBrowser – symlinks (#1513)", () => {
       linkRow.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
     await flushAsync();
-    expect(useAppStore.getState().localCurrentPath).toBe("/etc/target");
+    expect(currentFileBrowsersView().local.path).toBe("/etc/target");
   });
 });
 
@@ -1957,7 +1960,7 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
 
     // Falling into "sftp" here would point the browser at an SftpManager
     // session that does not exist for an FTP/Docker/agent-backed tab.
-    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(currentFileBrowsersView().mode).toBe("session");
     expect(useAppStore.getState().sessionFileBrowserId).toBe("ftp-sess-1");
   });
 
@@ -1966,7 +1969,7 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
 
     renderBrowser();
 
-    expect(useAppStore.getState().fileBrowserMode).toBe("local");
+    expect(currentFileBrowsersView().mode).toBe("local");
   });
 
   it("opens a session-backed editor tab when a file is activated in session mode", async () => {
@@ -1995,7 +1998,7 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
 
     renderBrowser();
     await flushAsync();
-    expect(useAppStore.getState().fileBrowserMode).toBe("session");
+    expect(currentFileBrowsersView().mode).toBe("session");
 
     const entry: FileEntry = {
       name: "config.yml",
@@ -2007,7 +2010,9 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
       writable: true,
     };
     act(() => {
-      useAppStore.setState({ sessionFileEntries: [entry], sessionCurrentPath: "/srv/app" });
+      seedFileBrowsers({
+        session: { path: "/srv/app", entries: [entry], loading: false, error: null },
+      });
     });
 
     // Double-clicking a file is the same code path as the "Edit" context item.

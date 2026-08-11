@@ -13,6 +13,7 @@ import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
@@ -95,6 +96,8 @@ function typeInto(input: HTMLInputElement, value: string) {
   setter.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
+
+setupFileBrowsersRegion();
 
 describe("FileBrowser — inline editors use the shared Input primitive (#1390)", () => {
   beforeEach(() => {
