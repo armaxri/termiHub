@@ -39,6 +39,7 @@
 //! | `layout.removePanel`        | `{ groupId?, panelId }`                        | drop a whole leaf panel, then simplify         |
 //! | `layout.reorderTabs`        | `{ groupId?, panelId, oldIndex, newIndex }`    | reorder a tab within its leaf                   |
 //! | `layout.setActivePanel`     | `{ groupId?, panelId }`                        | repoint the focused panel                       |
+//! | `layout.setActiveTab`       | `{ groupId?, tabId }`                          | focus a tab within its leaf                     |
 //! | `layout.resize`             | `{ groupId?, splitId, sizes }`                 | persist a split's child percentage sizes        |
 //! | `layout.replace`            | `{ root, activePanelId }`                      | install a tree over the active group (seed path)|
 //! | `layout.addGroup`           | `{ name? }`                                    | append a fresh group, make it active            |
@@ -207,6 +208,17 @@ pub fn register_layout_intents(registry: &mut HandlerRegistry, app_handle: AppHa
         let panel_id = required_str(intent, "panelId")?;
         store
             .set_active_panel(&intent.client_id, group.as_deref(), &panel_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &store, &intent.client_id))
+    });
+
+    let handle = app_handle.clone();
+    registry.route("layout.setActiveTab", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let group = optional_str(intent, "groupId");
+        let tab_id = required_str(intent, "tabId")?;
+        store
+            .set_active_tab(&intent.client_id, group.as_deref(), &tab_id)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &store, &intent.client_id))
     });

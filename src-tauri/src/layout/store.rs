@@ -460,6 +460,35 @@ impl LayoutStore {
         Ok(())
     }
 
+    /// `layout.setActiveTab` — focus a tab within its leaf. Finds the leaf holding
+    /// `tab_id` in the target group, sets that leaf's `active_tab_id` to `tab_id`,
+    /// and repoints the group's `active_panel_id` at that leaf. Rejects an unknown
+    /// tab. Mirrors the frontend `setActiveTab` reducer (and the "activate existing
+    /// tab" branch of every tab-opener).
+    pub fn set_active_tab(
+        &self,
+        client_id: &str,
+        group_id: Option<&str>,
+        tab_id: &str,
+    ) -> Result<(), LayoutError> {
+        let mut clients = self.lock();
+        let group = clients
+            .entry(client_id.to_string())
+            .or_insert_with(ClientLayout::seeded)
+            .group_mut(group_id)?;
+        let leaf_id = find_leaf_by_tab(&group.root, tab_id)
+            .ok_or_else(|| LayoutError::TabNotFound(tab_id.to_string()))?
+            .id
+            .clone();
+        group.root = update_leaf(&group.root, &leaf_id, |leaf| LeafPanel {
+            id: leaf.id.clone(),
+            tabs: leaf.tabs.clone(),
+            active_tab_id: Some(tab_id.to_string()),
+        });
+        group.active_panel_id = Some(leaf_id);
+        Ok(())
+    }
+
     /// `layout.resize` — persist the child percentage `sizes` of the split
     /// container `split_id` (normalized to sum to 100). Rejects a size array whose
     /// length does not match the split's child count.

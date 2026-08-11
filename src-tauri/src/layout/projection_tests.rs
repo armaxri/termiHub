@@ -165,6 +165,15 @@ fn registry_for(store: Arc<LayoutStore>) -> HandlerRegistry {
     });
 
     let s = store.clone();
+    registry.route("layout.setActiveTab", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
+        let tab_id = required_str(intent, "tabId")?;
+        s.set_active_tab(&intent.client_id, group.as_deref(), &tab_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
     registry.route("layout.resize", move |intent, projector| {
         let group = optional_str(intent, "groupId");
         let split_id = required_str(intent, "splitId")?;
@@ -850,6 +859,60 @@ fn close_group_route_rejects_the_last_group() {
     ));
     assert_eq!(ack.status, IntentStatus::Rejected);
     assert_eq!(ack.error.unwrap().code, "last_group");
+    assert_eq!(sink.diffs().len(), 0);
+    assert_eq!(projector.region_version(&region), Some(0));
+}
+
+#[test]
+fn set_active_tab_route_focuses_a_tab_and_converges() {
+    let store = seeded_store("A");
+    let (dispatcher, _region, sink, mut cache) = harness_for(store.clone());
+
+    // Activate t3 — it lives in panel b, so focus should repoint to b.
+    let ack = dispatcher.dispatch(intent("layout.setActiveTab", "A", json!({ "tabId": "t3" })));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    for diff in &sink.diffs() {
+        cache.apply(diff);
+    }
+    assert_eq!(
+        cache.view,
+        store.snapshot_full("A"),
+        "cache converges on authority"
+    );
+
+    let full = store.snapshot_full("A");
+    let root: PanelNode = serde_json::from_value(full["groups"][0]["root"].clone()).unwrap();
+    let b = termihub_core::layout::panel_tree::find_leaf(&root, "b").unwrap();
+    assert_eq!(
+        b.active_tab_id.as_deref(),
+        Some("t3"),
+        "tab focused via route"
+    );
+    assert_eq!(
+        full["groups"][0]["activePanelId"],
+        json!("b"),
+        "active panel repointed via route"
+    );
+}
+
+#[test]
+fn set_active_tab_route_rejects_an_unknown_tab() {
+    let store = seeded_store("A");
+    let region = layout_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot_full("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(&region, "sub", "A", sink.clone());
+
+    let ack = dispatcher.dispatch(intent(
+        "layout.setActiveTab",
+        "A",
+        json!({ "tabId": "ghost" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Rejected);
+    assert_eq!(ack.error.unwrap().code, "tab_not_found");
     assert_eq!(sink.diffs().len(), 0);
     assert_eq!(projector.region_version(&region), Some(0));
 }

@@ -447,6 +447,86 @@ fn set_active_panel_of_unknown_panel_is_rejected() {
     );
 }
 
+// ── setActiveTab ─────────────────────────────────────────────────────────────
+
+#[test]
+fn set_active_tab_focuses_the_tab_and_its_leaf() {
+    let store = LayoutStore::new();
+    // Single leaf `a` = [t1(active), t2, t3]. Activate t3.
+    let root = PanelNode::Leaf(LeafPanel {
+        id: "a".to_string(),
+        tabs: vec![tab("t1"), tab("t2"), tab("t3")],
+        active_tab_id: Some("t1".to_string()),
+    });
+    store.seed_for_test("C", root, Some("a".to_string()));
+    store.set_active_tab("C", None, "t3").unwrap();
+
+    let root = root_of(&store, "C");
+    let a = find_leaf(&root, "a").unwrap();
+    assert_eq!(a.active_tab_id.as_deref(), Some("t3"), "tab focused");
+    assert_eq!(
+        active_of(&store, "C").as_deref(),
+        Some("a"),
+        "panel focused"
+    );
+}
+
+#[test]
+fn set_active_tab_in_a_non_active_leaf_repoints_active_panel() {
+    let store = LayoutStore::new();
+    // two_panel_tree: a=[t1,t2], b=[t3]; focus starts on a. Activating t3 (in b)
+    // repoints the active panel onto b.
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    store.set_active_tab("C", None, "t3").unwrap();
+
+    assert_eq!(
+        active_of(&store, "C").as_deref(),
+        Some("b"),
+        "active panel repointed to the leaf holding the tab"
+    );
+    let root = root_of(&store, "C");
+    let b = find_leaf(&root, "b").unwrap();
+    assert_eq!(b.active_tab_id.as_deref(), Some("t3"));
+    // The other leaf is untouched.
+    let a = find_leaf(&root, "a").unwrap();
+    assert_eq!(
+        a.active_tab_id.as_deref(),
+        Some("t1"),
+        "a's active tab kept"
+    );
+}
+
+#[test]
+fn set_active_tab_of_unknown_tab_is_rejected() {
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    let err = store.set_active_tab("C", None, "ghost").unwrap_err();
+    assert_eq!(err, LayoutError::TabNotFound("ghost".to_string()));
+    assert_eq!(err.code(), "tab_not_found");
+}
+
+#[test]
+fn set_active_tab_targets_a_named_group() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    // g2 holds leaf z = [t9]; activate t9 in the inactive group g2.
+    store.set_active_tab("C", Some("g2"), "t9").unwrap();
+
+    let root_g2 = group_root(&store, "C", "g2");
+    let z = find_leaf(&root_g2, "z").unwrap();
+    assert_eq!(z.active_tab_id.as_deref(), Some("t9"));
+    // g2's active panel repointed onto z; the active group itself is unchanged.
+    let full = full_of(&store, "C");
+    assert_eq!(full["activeGroupId"], json!("g1"), "active group unchanged");
+    let g2 = full["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["id"] == json!("g2"))
+        .unwrap();
+    assert_eq!(g2["activePanelId"], json!("z"));
+}
+
 // ── resize ───────────────────────────────────────────────────────────────────
 
 #[test]
