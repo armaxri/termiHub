@@ -136,6 +136,10 @@ impl ClientLayout {
     }
 
     /// The full render-ready view model: `{ activeGroupId, groups: [...] }`.
+    ///
+    /// The authoritative shape a later slice flips the region and frontend onto;
+    /// not yet consumed by production wiring this slice (only [`snapshot_full`]).
+    #[allow(dead_code)]
     fn full_view(&self) -> Value {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
@@ -199,7 +203,9 @@ impl LayoutStore {
     }
 
     /// The full multi-group view for a client: `{ activeGroupId, groups: [...] }`.
-    /// The authoritative shape a later slice flips the region and frontend onto.
+    /// The authoritative shape a later slice flips the region and frontend onto;
+    /// exercised by the group-transform tests this slice, not yet by live wiring.
+    #[allow(dead_code)]
     pub fn snapshot_full(&self, client_id: &str) -> Value {
         self.lock()
             .entry(client_id.to_string())
@@ -370,7 +376,9 @@ impl LayoutStore {
         if find_leaf(&group.root, panel_id).is_none() {
             return Err(LayoutError::PanelNotFound(panel_id.to_string()));
         }
-        group.root = update_leaf(&group.root, panel_id, |leaf| with_tab_added(leaf, tab.clone()));
+        group.root = update_leaf(&group.root, panel_id, |leaf| {
+            with_tab_added(leaf, tab.clone())
+        });
         group.active_panel_id = Some(panel_id.to_string());
         Ok(())
     }

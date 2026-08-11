@@ -68,7 +68,7 @@ use tauri::{AppHandle, Manager};
 
 use termihub_core::layout::panel_tree::{PanelNode, Tab};
 
-use crate::layout::store::{ClientLayout, GroupLayout, LayoutError, LayoutStore};
+use crate::layout::store::{GroupLayout, LayoutError, LayoutStore};
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 
 /// The projection region id for a client's layout (`layout@<clientId>`).
@@ -350,9 +350,7 @@ fn parse_tab(intent: &Intent) -> Result<Tab, (String, String)> {
 }
 
 /// Parse a `layout.replaceGroups` payload `{ activeGroupId, groups: [GroupLayout] }`.
-fn parse_replace_groups(
-    intent: &Intent,
-) -> Result<(Vec<GroupLayout>, String), (String, String)> {
+fn parse_replace_groups(intent: &Intent) -> Result<(Vec<GroupLayout>, String), (String, String)> {
     let groups_value = intent
         .payload
         .get("groups")
@@ -364,7 +362,12 @@ fn parse_replace_groups(
         .get("activeGroupId")
         .and_then(Value::as_str)
         .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), "missing 'activeGroupId'".to_string()))?;
+        .ok_or_else(|| {
+            (
+                "bad_payload".to_string(),
+                "missing 'activeGroupId'".to_string(),
+            )
+        })?;
     Ok((groups, active_group_id))
 }
 
