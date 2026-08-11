@@ -1,71 +1,27 @@
 /**
- * appStore ↔ layout projection bridge wiring (#2151 step 2).
+ * appStore ↔ layout projection bridge wiring (#2283 slice D' — the un-gated
+ * optimistic-fold overlay).
  *
- * Drives the `splitPanel` mutation through a simulated backend (a fake transport
- * that applies the `layout.*` intent with the same panel-tree algebra the Rust
- * store uses, then pushes the diff to the region client) and asserts the
- * reconciled tree lands in `appStore.rootPanel` with the rich tabs preserved.
- * Also pins the strangler guarantees: flag-off keeps the local reducer, and a
- * rejected intent falls back to it.
+ * Drives the layout reducers through the **real**
+ * {@link import("./layoutBridge").mirrorLayoutIntent} path against an in-memory
+ * backend double ({@link FakeLayoutTransport}) that folds the granular `layout.*`
+ * intents like the Rust store. It pins the slice's contract:
+ *
+ * - the local reducer stays authoritative and **synchronous** — `appStore.rootPanel`
+ *   updates at once (the timing win: no seed→await→reconcile round-trip);
+ * - the same transition is mirrored into the region **synchronously** via an
+ *   optimistic overlay, then reconciled when the backend's diff lands;
+ * - a rejected dispatch rolls the overlay back while `appStore` keeps the local
+ *   result — the retained instant-revert fallback (#2283 removal stays gated);
+ * - tab **ids are preserved** across split / move / group-switch / tab-activation,
+ *   so the live xterm DOM (keyed by tab id) is never remounted.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { flushMacrotask } from "@/test/flushAsync";
 
-import type { LeafPanel, PanelNode } from "@/types/terminal";
-import {
-  createLeafPanel,
-  edgeToSplit,
-  findLeaf,
-  findLeafByTab,
-  generatePanelId,
-  getAllLeaves,
-  normalizeSizes,
-  removeLeaf,
-  simplifyTree,
-  splitLeaf,
-  updateLeaf,
-} from "@/utils/panelTree";
-
-interface RegionState {
-  version: number;
-  view: unknown;
-}
-
-/** One group in the simulated full multi-group region view (#2283 slice C). */
-interface MinimalGroupView {
-  id: string;
-  name: string;
-  color?: string;
-  root: PanelNode;
-  activePanelId: string | null;
-}
-/** The full region view the simulated backend publishes. */
-interface FullView {
-  groups: MinimalGroupView[];
-  activeGroupId: string;
-}
-
-const { backend, dispatched } = vi.hoisted(() => ({
-  backend: {
-    version: -1,
-    view: undefined as unknown,
-    listeners: new Set<(s: RegionState) => void>(),
-    reject: false,
-    push(view: unknown) {
-      this.version += 1;
-      this.view = view;
-      const snapshot = { version: this.version, view: this.view };
-      this.listeners.forEach((l) => l(snapshot));
-    },
-    reset() {
-      this.version = -1;
-      this.view = undefined;
-      this.listeners.clear();
-      this.reject = false;
-    },
-  },
-  dispatched: [] as { kind: string; payload: Record<string, unknown> }[],
-}));
+import type { PanelNode, TerminalTab } from "@/types/terminal";
+import { findLeaf, getAllLeaves } from "@/utils/panelTree";
+import { FakeLayoutTransport, installLayoutHarness } from "@/test/layoutRegionTestHarness";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -80,164 +36,17 @@ vi.mock("@/services/storage", () => ({
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn(() => vi.fn()) }));
 
-vi.mock("@/services/transport", () => ({
-  newClientId: () => "client-test",
-  newIntentId: () => "intent-test",
-  createTransport: () => ({
-    async dispatch(intent: { kind: string; payload: Record<string, unknown> }) {
-      dispatched.push({ kind: intent.kind, payload: intent.payload });
-      if (backend.reject) {
-        return {
-          intentId: "intent-test",
-          status: "rejected",
-          error: { code: "x", message: "nope" },
-        };
-      }
-      // The region carries the full multi-group view `{ groups, activeGroupId }`
-      // (#2283 slice C). Structural intents operate on the ACTIVE group; these
-      // helpers read/write the active group's tree while keeping the others.
-      const active = (): MinimalGroupView => {
-        const v = backend.view as FullView;
-        return v.groups.find((g) => g.id === v.activeGroupId) ?? v.groups[0];
-      };
-      const pushActive = (root: PanelNode, activePanelId: string | null): void => {
-        const v = backend.view as FullView;
-        const activeId = active().id;
-        const groups = v.groups.map((g) => (g.id === activeId ? { ...g, root, activePanelId } : g));
-        backend.push({ groups, activeGroupId: v.activeGroupId });
-      };
-
-      if (intent.kind === "layout.replaceGroups") {
-        backend.push({
-          groups: intent.payload.groups as MinimalGroupView[],
-          activeGroupId: intent.payload.activeGroupId as string,
-        });
-      } else if (intent.kind === "layout.split") {
-        const g = active();
-        const newLeaf = createLeafPanel();
-        let root = splitLeaf(
-          g.root,
-          intent.payload.panelId as string,
-          newLeaf,
-          intent.payload.direction as "horizontal" | "vertical",
-          intent.payload.position as "before" | "after"
-        );
-        root = simplifyTree(root);
-        pushActive(root, newLeaf.id);
-      } else if (intent.kind === "layout.moveTab") {
-        // Mirrors the Rust store's move_tab: detach (positional active fallback),
-        // place (center = append / edge = split), prune emptied source, simplify.
-        // It does NOT repoint the active panel — the frontend bridge does.
-        const g = active();
-        const tabId = intent.payload.tabId as string;
-        const target = intent.payload.targetPanelId as string;
-        const src = findLeafByTab(g.root, tabId)!;
-        const theTab = src.tabs.find((t) => t.id === tabId)!;
-        let root = updateLeaf(g.root, src.id, (leaf) => removeTabMinimal(leaf, tabId));
-        const splitInfo = edgeToSplit(intent.payload.edge as never);
-        if (!splitInfo) {
-          root = updateLeaf(root, target, (leaf) => ({
-            ...leaf,
-            tabs: [...leaf.tabs, { ...theTab }],
-            activeTabId: tabId,
-          }));
-        } else {
-          const newLeaf: LeafPanel = {
-            type: "leaf",
-            id: generatePanelId(),
-            tabs: [{ ...theTab }],
-            activeTabId: tabId,
-          };
-          root = splitLeaf(root, target, newLeaf, splitInfo.direction, splitInfo.position);
-        }
-        const src2 = findLeaf(root, src.id);
-        if (src2 && src2.tabs.length === 0) {
-          const removed = removeLeaf(root, src.id);
-          root = removed ?? root;
-        }
-        root = simplifyTree(root);
-        pushActive(root, g.activePanelId);
-      } else if (intent.kind === "layout.removePanel") {
-        // Mirrors the Rust store's remove_panel: drop the whole leaf, simplify,
-        // repoint focus onto the first survivor when the removed panel held it.
-        const g = active();
-        const panelId = intent.payload.panelId as string;
-        const removed = removeLeaf(g.root, panelId);
-        const root = removed ? simplifyTree(removed) : g.root;
-        let focus = g.activePanelId;
-        if (!focus || !findLeaf(root, focus)) {
-          focus = getAllLeaves(root)[0]?.id ?? null;
-        }
-        pushActive(root, focus);
-      } else if (intent.kind === "layout.reorderTabs") {
-        // Mirrors the Rust store's reorder_tabs: move a tab within its leaf,
-        // leaving focus untouched.
-        const g = active();
-        const panelId = intent.payload.panelId as string;
-        const oldIndex = intent.payload.oldIndex as number;
-        const newIndex = intent.payload.newIndex as number;
-        const root = updateLeaf(g.root, panelId, (leaf) => {
-          const tabs = [...leaf.tabs];
-          const [moved] = tabs.splice(oldIndex, 1);
-          tabs.splice(newIndex, 0, moved);
-          return { ...leaf, tabs };
-        });
-        pushActive(root, g.activePanelId);
-      } else if (intent.kind === "layout.setActivePanel") {
-        // Mirrors the Rust store's set_active_panel: repoint focus, tree unchanged.
-        const g = active();
-        pushActive(g.root, intent.payload.panelId as string);
-      } else if (intent.kind === "layout.resize") {
-        // Mirrors the Rust store's resize: set the split's normalized sizes.
-        const g = active();
-        const splitId = intent.payload.splitId as string;
-        const sizes = normalizeSizes(intent.payload.sizes as number[]);
-        const setSizes = (n: PanelNode): PanelNode => {
-          if (n.type === "leaf") return n;
-          const children = n.children.map(setSizes);
-          return n.id === splitId ? { ...n, children, sizes } : { ...n, children };
-        };
-        pushActive(setSizes(g.root), g.activePanelId);
-      }
-      return {
-        intentId: "intent-test",
-        status: "accepted",
-        produced: [{ region: "layout@client-test", version: backend.version }],
-      };
-    },
-    subscribe: vi.fn(),
-    resync: vi.fn(),
-  }),
-  ProjectionClient: class {
-    constructor(
-      _transport: unknown,
-      public readonly region: string
-    ) {}
-    get state(): RegionState {
-      return { version: backend.version, view: backend.view };
-    }
-    onChange(listener: (s: RegionState) => void) {
-      backend.listeners.add(listener);
-      return () => backend.listeners.delete(listener);
-    }
-    async start() {
-      backend.push({
-        groups: [{ id: "seed-group", name: "Main", root: createLeafPanel(), activePanelId: null }],
-        activeGroupId: "seed-group",
-      });
-    }
-    stop() {}
-  },
-}));
-
 vi.mock("@/components/ui", async () => {
   const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
   return { ...actual, toast: { loading: vi.fn(), success: vi.fn(), error: vi.fn() } };
 });
 
 import { useAppStore } from "./appStore";
-import { setLayoutIntentsEnabled } from "./layoutBridge";
-import type { TerminalTab } from "@/types/terminal";
+import {
+  currentLayoutView,
+  ensureLayoutRegionClient,
+  setLayoutIntentsEnabled,
+} from "./layoutBridge";
 
 function tab(id: string): TerminalTab {
   return {
@@ -252,33 +61,6 @@ function tab(id: string): TerminalTab {
   } as TerminalTab;
 }
 
-/** Minimal-view tab removal with the positional active fallback (Rust parity). */
-function removeTabMinimal(leaf: LeafPanel, tabId: string): LeafPanel {
-  const idx = leaf.tabs.findIndex((t) => t.id === tabId);
-  if (idx === -1) return leaf;
-  const tabs = leaf.tabs.filter((t) => t.id !== tabId);
-  let activeTabId = leaf.activeTabId;
-  if (activeTabId === tabId) {
-    activeTabId = tabs.length ? tabs[Math.min(idx, tabs.length - 1)].id : null;
-  }
-  return { ...leaf, tabs, activeTabId };
-}
-
-/**
- * A structural fingerprint of a tree, ignoring panel ids (which legitimately
- * differ between the local reducer and the store) but keeping tab id order and
- * per-leaf active tab — so two trees compare equal iff they place the same tabs
- * the same way. `activeTabs` records the tab ids of the focused panel.
- */
-function normalize(root: PanelNode, activePanelId: string | null): unknown {
-  const shape = (n: PanelNode): unknown =>
-    n.type === "leaf"
-      ? { leaf: n.tabs.map((t) => t.id), active: n.activeTabId }
-      : { split: n.direction, children: n.children.map(shape) };
-  const activeLeaf = activePanelId ? findLeaf(root, activePanelId) : null;
-  return { tree: shape(root), activeTabs: activeLeaf?.tabs.map((t) => t.id) ?? null };
-}
-
 function seedTree(): PanelNode {
   return {
     type: "split",
@@ -291,225 +73,244 @@ function seedTree(): PanelNode {
   };
 }
 
-async function flush() {
-  // Let the fire-and-forget bridge promise chain settle.
+/** Every tab id present anywhere in a tree, in leaf/order (id-preservation checks). */
+function tabIds(root: PanelNode): string[] {
+  return getAllLeaves(root).flatMap((l) => l.tabs.map((t) => t.id));
+}
+
+/**
+ * The active group's tree in a projected region view. Accepts both the client's
+ * effective {@link currentLayoutView} (minimal tabs) and the fake backend's
+ * {@link FakeLayoutTransport.regionView} (rich `PanelNode`) — both are read only
+ * for structure (`getAllLeaves` + tab ids), so a loose shape suffices.
+ */
+function regionActiveRoot(
+  view: { groups: { id: string; root: unknown }[]; activeGroupId: string } | undefined
+): PanelNode | undefined {
+  if (!view) return undefined;
+  const g = view.groups.find((x) => x.id === view.activeGroupId) ?? view.groups[0];
+  return g?.root as PanelNode | undefined;
+}
+
+async function flush(): Promise<void> {
   await flushMacrotask();
   await flushMacrotask();
 }
 
-describe("appStore layout bridge — splitPanel cut (#2151)", () => {
-  beforeEach(() => {
-    useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
-    backend.reset();
-    dispatched.length = 0;
-    setLayoutIntentsEnabled(null);
-  });
+let transport: FakeLayoutTransport;
+let teardown: () => void;
 
+async function resetStore(root: PanelNode = seedTree(), activePanelId = "a"): Promise<void> {
+  useAppStore.setState(useAppStore.getInitialState());
+  useAppStore.setState({ rootPanel: root, activePanelId });
+}
+
+beforeEach(async () => {
+  ({ transport, teardown } = installLayoutHarness());
+  setLayoutIntentsEnabled(null);
+  await resetStore();
+  // Pre-subscribe so the region's initial snapshot is adopted before any reducer
+  // dispatch — the fake fans snapshots synchronously, so subscribing first keeps
+  // versions monotonic (production's real transport is naturally ordered).
+  await ensureLayoutRegionClient();
+});
+
+afterEach(() => {
+  setLayoutIntentsEnabled(null);
+  teardown();
+});
+
+describe("slice D' — synchronous local authority + optimistic region overlay", () => {
   it("flag off: splitPanel mutates locally and dispatches nothing", () => {
     setLayoutIntentsEnabled(false);
     useAppStore.getState().splitPanel("vertical");
 
-    expect(dispatched).toHaveLength(0);
+    expect(transport.kinds()).toHaveLength(0);
     expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
   });
 
-  it("flag on: splitPanel seeds then dispatches layout.split and reconciles the diff", async () => {
+  it("flag on: splitPanel applies to rootPanel SYNCHRONOUSLY (no await)", () => {
+    setLayoutIntentsEnabled(true);
+    useAppStore.getState().splitPanel("vertical");
+    // No flush: the local reducer is the authoritative, synchronous writer.
+    expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
+  });
+
+  it("flag on: the region overlay reflects the split SYNCHRONOUSLY, before any ack", () => {
+    setLayoutIntentsEnabled(true);
+    useAppStore.getState().splitPanel("vertical");
+    // The optimistic overlay installs appStore's post-split tree at once.
+    const root = regionActiveRoot(currentLayoutView());
+    expect(root && getAllLeaves(root)).toHaveLength(3);
+  });
+
+  it("flag on: dispatches replaceGroups (seed) then the granular layout.split", async () => {
     setLayoutIntentsEnabled(true);
     useAppStore.getState().splitPanel("vertical");
     await flush();
-
-    // Seed-before-mutate: the whole multi-group layout is installed before the
-    // structural intent (#2283 slice C).
-    expect(dispatched.map((d) => d.kind)).toEqual(["layout.replaceGroups", "layout.split"]);
-    expect(dispatched[1].payload).toMatchObject({
+    expect(transport.kinds()).toEqual(["layout.replaceGroups", "layout.split"]);
+    expect(transport.dispatched[1].payload).toMatchObject({
       panelId: "a",
       direction: "vertical",
       position: "after",
     });
-
-    const root = useAppStore.getState().rootPanel;
-    const leaves = getAllLeaves(root);
-    expect(leaves).toHaveLength(3);
-    // The new empty leaf is focused.
-    const active = findLeaf(root, useAppStore.getState().activePanelId!);
-    expect(active?.tabs).toHaveLength(0);
-    // Existing rich tabs survived the round-trip (re-hydrated by id).
-    const a = findLeaf(root, "a")!;
-    expect(a.tabs.map((t) => t.id)).toEqual(["t1", "t2"]);
-    expect(a.tabs[0].title).toBe("Tab t1");
-    expect(a.tabs[0].sessionId).toBe("sess-t1");
   });
 
-  it("flag on but intent rejected: falls back to the local reducer", async () => {
+  it("reconcile: the backend converges to the same tab layout after the diff lands", async () => {
     setLayoutIntentsEnabled(true);
-    backend.reject = true;
-    useAppStore.getState().splitPanel("vertical");
+    useAppStore.getState().reorderTabs("a", 0, 1);
     await flush();
+    // Non-id-generating op: the backend's authoritative view matches appStore.
+    const backendRoot = regionActiveRoot(transport.regionView())!;
+    expect(tabIds(backendRoot)).toEqual(tabIds(useAppStore.getState().rootPanel));
+    // …and the client's effective view reconciled to it (overlay pruned).
+    expect(tabIds(regionActiveRoot(currentLayoutView())!)).toEqual(
+      tabIds(useAppStore.getState().rootPanel)
+    );
+  });
 
-    // Still ended up split — via the local fallback path.
+  it("rejected dispatch: overlay rolls back, appStore keeps the local result (fallback retained)", async () => {
+    setLayoutIntentsEnabled(true);
+    transport.reject = true;
+    useAppStore.getState().splitPanel("vertical");
+    // Local reducer already applied the split (authoritative + instant).
     expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
+    await flush();
+    // Still split locally — the retained fallback held through the rejection.
+    expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
+    // The optimistic overlay was rolled back (region did not adopt the change).
+    const root = regionActiveRoot(currentLayoutView());
+    expect(root && getAllLeaves(root).length).toBeLessThan(3);
   });
 });
 
-/**
- * Parity: the store-cut (flag on) path must place tabs identically to the local
- * reducer (flag off) for every operation cut in step 2. Runs the same operation
- * both ways from a fresh tree and compares the id-agnostic fingerprint.
- */
-describe("appStore layout bridge — cut ↔ local parity (#2151)", () => {
-  async function runBothWays(op: () => void): Promise<{ local: unknown; cut: unknown }> {
-    // Local (flag off).
-    useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
-    setLayoutIntentsEnabled(false);
-    op();
-    const s1 = useAppStore.getState();
-    const local = normalize(s1.rootPanel, s1.activePanelId);
+describe("slice D' — every listed op routes its granular intent", () => {
+  const cases: { name: string; run: () => void; kind: string }[] = [
+    {
+      name: "splitPanel",
+      run: () => useAppStore.getState().splitPanel("vertical"),
+      kind: "layout.split",
+    },
+    {
+      name: "removePanel",
+      run: () => useAppStore.getState().removePanel("b"),
+      kind: "layout.removePanel",
+    },
+    {
+      name: "setActivePanel",
+      run: () => useAppStore.getState().setActivePanel("b"),
+      kind: "layout.setActivePanel",
+    },
+    {
+      name: "setPanelSizes",
+      run: () => useAppStore.getState().setPanelSizes("root", [70, 30]),
+      kind: "layout.resize",
+    },
+    {
+      name: "reorderTabs",
+      run: () => useAppStore.getState().reorderTabs("a", 0, 1),
+      kind: "layout.reorderTabs",
+    },
+    {
+      name: "setActiveTab",
+      run: () => useAppStore.getState().setActiveTab("t2", "a"),
+      kind: "layout.setActiveTab",
+    },
+    {
+      name: "splitPanelWithTab (move)",
+      run: () => useAppStore.getState().splitPanelWithTab("t1", "a", "b", "center"),
+      kind: "layout.moveTab",
+    },
+    {
+      name: "addTabGroup",
+      run: () => useAppStore.getState().addTabGroup("Extra"),
+      kind: "layout.addGroup",
+    },
+    {
+      name: "renameTabGroup",
+      run: () => {
+        const gid = useAppStore.getState().activeTabGroupId;
+        useAppStore.getState().renameTabGroup(gid, "Renamed");
+      },
+      kind: "layout.renameGroup",
+    },
+    {
+      name: "setTabGroupColor",
+      run: () => {
+        const gid = useAppStore.getState().activeTabGroupId;
+        useAppStore.getState().setTabGroupColor(gid, "#abcdef");
+      },
+      kind: "layout.setGroupColor",
+    },
+  ];
 
-    // Cut (flag on) — same starting tree, backend simulated by the panel-tree algebra.
-    useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
-    backend.reset();
-    setLayoutIntentsEnabled(true);
-    op();
-    await flush();
-    const s2 = useAppStore.getState();
-    const cut = normalize(s2.rootPanel, s2.activePanelId);
-    return { local, cut };
+  for (const c of cases) {
+    it(`${c.name} dispatches ${c.kind}`, async () => {
+      setLayoutIntentsEnabled(true);
+      c.run();
+      await flush();
+      expect(transport.kinds()).toContain(c.kind);
+    });
   }
 
-  it("splitPanel produces an identical tree both ways", async () => {
-    const { local, cut } = await runBothWays(() => useAppStore.getState().splitPanel("vertical"));
-    expect(cut).toEqual(local);
-  });
-
-  it("drag-to-center (merge a tab into another panel) matches the local reducer", async () => {
-    const { local, cut } = await runBothWays(() =>
-      useAppStore.getState().splitPanelWithTab("t1", "a", "b", "center")
-    );
-    expect(cut).toEqual(local);
-  });
-
-  it("drag-to-edge (split a panel with a tab) matches the local reducer", async () => {
-    const { local, cut } = await runBothWays(() =>
-      useAppStore.getState().splitPanelWithTab("t3", "b", "a", "right")
-    );
-    expect(cut).toEqual(local);
-  });
-
-  it("removePanel drops the panel identically both ways (#2188)", async () => {
-    const { local, cut } = await runBothWays(() => useAppStore.getState().removePanel("a"));
-    expect(cut).toEqual(local);
-  });
-
-  it("removePanel keeps focus on a surviving panel identically both ways (#2188)", async () => {
-    // Focus starts on "a"; removing "b" must leave "a" focused on both paths.
-    const run = async (flag: boolean): Promise<unknown> => {
-      useAppStore.setState(useAppStore.getInitialState());
-      useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
-      backend.reset();
-      setLayoutIntentsEnabled(flag);
-      useAppStore.getState().removePanel("b");
-      await flush();
-      const s = useAppStore.getState();
-      return normalize(s.rootPanel, s.activePanelId);
-    };
-    expect(await run(true)).toEqual(await run(false));
-    expect(useAppStore.getState().activePanelId).toBe("a");
-  });
-
-  it("reorderTabs reorders within a leaf identically both ways (#2188)", async () => {
-    const { local, cut } = await runBothWays(() => useAppStore.getState().reorderTabs("a", 0, 1));
-    expect(cut).toEqual(local);
-  });
-
-  it("setActivePanel folds focus into the projection while applying locally (#2188)", async () => {
-    // Flag off (rollback): pure-local focus change, nothing dispatched.
-    useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
-    backend.reset();
-    dispatched.length = 0;
-    setLayoutIntentsEnabled(false);
-    useAppStore.getState().setActivePanel("b");
-    expect(useAppStore.getState().activePanelId).toBe("b");
-    expect(dispatched).toHaveLength(0);
-
-    // Flag on: focus applies synchronously (instant UX) AND folds into the region.
-    useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
-    backend.reset();
-    dispatched.length = 0;
+  it("addTab dispatches layout.addTab carrying the frontend-generated tab id", async () => {
     setLayoutIntentsEnabled(true);
-    useAppStore.getState().setActivePanel("b");
-    expect(useAppStore.getState().activePanelId).toBe("b");
+    const id = useAppStore.getState().addTab("New", "local", { type: "local", config: {} });
     await flush();
-    expect(dispatched.map((d) => d.kind)).toEqual([
-      "layout.replaceGroups",
-      "layout.setActivePanel",
-    ]);
-    // The projection's active group now tracks the folded focus.
-    const folded = backend.view as FullView;
-    const activeGroup = folded.groups.find((g) => g.id === folded.activeGroupId)!;
-    expect(activeGroup.activePanelId).toBe("b");
+    const add = transport.dispatched.find((d) => d.kind === "layout.addTab");
+    expect(add).toBeDefined();
+    expect((add!.payload as { tab: { id: string } }).tab.id).toBe(id);
   });
 
-  it("setActivePanel preserves zoom-follow both ways (#2188)", async () => {
-    const run = async (flag: boolean): Promise<string | null> => {
-      useAppStore.setState(useAppStore.getInitialState());
-      useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a", zoomedTabId: "t1" });
-      backend.reset();
-      setLayoutIntentsEnabled(flag);
-      // Switching focus to b, while zoomed, follows to b's active tab (t3).
-      useAppStore.getState().setActivePanel("b");
-      await flush();
-      return useAppStore.getState().zoomedTabId;
-    };
-    expect(await run(true)).toBe("t3");
-    expect(await run(false)).toBe("t3");
-  });
-
-  it("setPanelSizes persists identical split sizes both ways (#2188)", async () => {
-    const sizesOf = async (flag: boolean): Promise<number[] | undefined> => {
-      useAppStore.setState(useAppStore.getInitialState());
-      useAppStore.setState({ rootPanel: seedTree(), activePanelId: "a" });
-      backend.reset();
-      setLayoutIntentsEnabled(flag);
-      useAppStore.getState().setPanelSizes("root", [70, 30]);
-      await flush();
-      const root = useAppStore.getState().rootPanel;
-      return root.type === "split" ? root.sizes : undefined;
-    };
-    const cut = await sizesOf(true);
-    const local = await sizesOf(false);
-    expect(cut).toEqual(local);
-    expect(cut).toEqual([70, 30]);
-  });
-
-  it("dragging a middle active tab out preserves the source's focus both ways", async () => {
-    const threeTab = (): PanelNode => ({
-      type: "split",
-      id: "root",
-      direction: "horizontal",
-      children: [
-        { type: "leaf", id: "a", tabs: [tab("t1"), tab("t2"), tab("t3")], activeTabId: "t2" },
-        { type: "leaf", id: "b", tabs: [tab("t4")], activeTabId: "t4" },
-      ],
-    });
-    // Local.
-    useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ rootPanel: threeTab(), activePanelId: "a" });
-    setLayoutIntentsEnabled(false);
-    useAppStore.getState().splitPanelWithTab("t2", "a", "b", "center");
-    const local = normalize(useAppStore.getState().rootPanel, useAppStore.getState().activePanelId);
-    // Cut.
-    useAppStore.setState(useAppStore.getInitialState());
-    useAppStore.setState({ rootPanel: threeTab(), activePanelId: "a" });
-    backend.reset();
+  it("closeTab dispatches layout.closeTabStructure", async () => {
     setLayoutIntentsEnabled(true);
-    useAppStore.getState().splitPanelWithTab("t2", "a", "b", "center");
+    useAppStore.getState().closeTab("t2", "a");
     await flush();
-    const cut = normalize(useAppStore.getState().rootPanel, useAppStore.getState().activePanelId);
-    expect(cut).toEqual(local);
+    expect(transport.kinds()).toContain("layout.closeTabStructure");
+  });
+
+  it("setActiveTab activates the tab in both appStore and the region", async () => {
+    setLayoutIntentsEnabled(true);
+    useAppStore.getState().setActiveTab("t2", "a");
+    await flush();
+    expect(findLeaf(useAppStore.getState().rootPanel, "a")!.activeTabId).toBe("t2");
+    const regionA = findLeaf(regionActiveRoot(transport.regionView())!, "a");
+    expect(regionA!.activeTabId).toBe("t2");
+  });
+});
+
+describe("slice D' — tab id preservation (no live-terminal remount)", () => {
+  it("split preserves every existing tab id", () => {
+    setLayoutIntentsEnabled(true);
+    const before = tabIds(useAppStore.getState().rootPanel);
+    useAppStore.getState().splitPanel("vertical");
+    expect(tabIds(useAppStore.getState().rootPanel)).toEqual(before);
+  });
+
+  it("drag-move (center) preserves the moved tab id and its stack neighbours", () => {
+    setLayoutIntentsEnabled(true);
+    useAppStore.getState().splitPanelWithTab("t1", "a", "b", "center");
+    const ids = tabIds(useAppStore.getState().rootPanel).sort();
+    expect(ids).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("group switch keeps each group's tab ids intact", async () => {
+    setLayoutIntentsEnabled(true);
+    // The seed tree lives in the first group. Add a fresh (empty) group — which
+    // becomes active — then switch back to the first and assert its tabs survived.
+    useAppStore.getState().addTabGroup("G2");
+    await flush();
+    const firstGroup = useAppStore.getState().tabGroups[0].id;
+    useAppStore.getState().setActiveTabGroup(firstGroup);
+    await flush();
+    expect(tabIds(useAppStore.getState().rootPanel).sort()).toEqual(["t1", "t2", "t3"]);
+  });
+
+  it("tab activation never changes tab ids, only the active flag", () => {
+    setLayoutIntentsEnabled(true);
+    const before = tabIds(useAppStore.getState().rootPanel);
+    useAppStore.getState().setActiveTab("t2", "a");
+    expect(tabIds(useAppStore.getState().rootPanel)).toEqual(before);
+    expect(findLeaf(useAppStore.getState().rootPanel, "a")!.activeTabId).toBe("t2");
   });
 });

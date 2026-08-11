@@ -51,6 +51,7 @@ import {
   newClientId,
   newIntentId,
   ProjectionClient,
+  type Intent,
   type IntentAck,
   type Transport,
 } from "@/services/transport";
@@ -64,13 +65,6 @@ import type {
   TerminalTab,
 } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
-import { findLeafByTab } from "@/utils/panelTree";
-
-/** The structural result the bridge hands back to `appStore`. */
-export interface LayoutStructuralResult {
-  rootPanel: PanelNode;
-  activePanelId: string | null;
-}
 
 // ── Minimal projected shapes (twins of the Rust `layout` view model) ──────────
 
@@ -274,7 +268,7 @@ export function layoutRenderFromProjectionEnabled(): boolean {
   return readFlag(renderFlagOverride, "__TERMIHUB_LAYOUT_RENDER__", "termihub.layoutRender", true);
 }
 
-// ── Transport + region client (lazy, mirrors the tunnel slice) ─────────────────
+// ── Transport + region client (sync-create, mirrors the file-browsers slice) ───
 
 // A stable per-session client identity. The client-scoped region is
 // `layout@<clientId>`, and dispatched intents carry the same id, so this
@@ -283,8 +277,23 @@ const clientId = newClientId();
 const region = `layout@${clientId}`;
 
 let transportInstance: Transport | null = null;
+/** The region client once its subscription has started (its snapshot adopted). */
 let regionClient: ProjectionClient | null = null;
+/** The region client the moment it is created — before `start()` resolves — so an
+ * optimistic dispatch can overlay on it synchronously ({@link mirrorLayoutIntent}).
+ * Same object as {@link regionClient} once started. */
+let creatingClient: ProjectionClient | null = null;
 let startPromise: Promise<ProjectionClient> | null = null;
+
+/** Inject a transport for tests; `null` restores the lazily-created real one and
+ * drops any active subscription. */
+export function setLayoutTransportForTest(t: Transport | null): void {
+  (regionClient ?? creatingClient)?.stop();
+  regionClient = null;
+  creatingClient = null;
+  startPromise = null;
+  transportInstance = t;
+}
 
 function transport(): Transport {
   if (!transportInstance) {
@@ -294,13 +303,28 @@ function transport(): Transport {
 }
 
 /**
+ * The region client instance, created **synchronously** on first use — before its
+ * subscription has started — so an optimistic dispatch can overlay on it at once
+ * (mirrors `fileBrowsersRegionClient`). Returns the started {@link regionClient}
+ * once available, else the {@link creatingClient}. Throws only if the transport
+ * itself cannot be built (non-Tauri without a socket).
+ */
+function layoutRegionClient(): ProjectionClient {
+  if (regionClient) return regionClient;
+  if (!creatingClient) {
+    creatingClient = new ProjectionClient(transport(), region);
+  }
+  return creatingClient;
+}
+
+/**
  * Ensure the `layout@<clientId>` region client is subscribed, so intent diffs
  * are received. Idempotent and de-duplicated across concurrent callers.
  */
 function ensureSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);
   if (!startPromise) {
-    const client = new ProjectionClient(transport(), region);
+    const client = layoutRegionClient();
     startPromise = client
       .start()
       .then(() => {
@@ -313,6 +337,23 @@ function ensureSubscribed(): Promise<ProjectionClient> {
       });
   }
   return startPromise;
+}
+
+/** Drop the region subscription (tests / re-init). */
+export function stopLayoutSubscription(): void {
+  (regionClient ?? creatingClient)?.stop();
+  regionClient = null;
+  creatingClient = null;
+  startPromise = null;
+}
+
+/**
+ * The layout region's current effective (optimistically-overlaid) view — for
+ * synchronous test assertions on the projection. `undefined` before the client
+ * exists / its first snapshot.
+ */
+export function currentLayoutView(): LayoutView | undefined {
+  return (regionClient ?? creatingClient)?.state.view as LayoutView | undefined;
 }
 
 async function dispatch(kind: string, payload: unknown): Promise<IntentAck> {
@@ -418,93 +459,83 @@ export function reconcileNode(
   return split;
 }
 
-// ── Await a region version, then read the reconciled tree ─────────────────────
-
-/** Resolve once the region client has caught up to (at least) `version`. */
-function awaitVersion(client: ProjectionClient, version: number, timeoutMs = 4000): Promise<void> {
-  if (client.state.version >= version) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      unsubscribe();
-      reject(new Error(`layout region did not reach version ${version} in time`));
-    }, timeoutMs);
-    const unsubscribe = client.onChange((state) => {
-      if (state.version >= version) {
-        clearTimeout(timer);
-        unsubscribe();
-        resolve();
-      }
-    });
-  });
-}
+// ── Optimistic mirror: synchronous fold overlay + granular intent dispatch ─────
 
 /**
- * Run a structural layout mutation through the store: seed the store with the
- * current tree, dispatch `kind`, await the resulting diff, and reconcile it back
- * into `appStore`'s rich panel-tree shape.
+ * Optimistically mirror a layout mutation into the client's `layout@<clientId>`
+ * region (#2283 slice D', the un-gated timing win).
  *
- * The backend `move_tab` transform does not repoint the focused panel, but the
- * old local move/split-with-tab reducers all focus the tab's destination. So
- * when `focusTabId` is given, the reconciled `activePanelId` is re-derived as
- * the panel that now holds that tab — reproducing the old focus behaviour.
+ * The `appStore` reducer has **already** applied the mutation to its
+ * authoritative `rootPanel`/`tabGroups` — the retained instant-revert path that
+ * this slice deliberately keeps (the #2283 fallback removal stays gated). This
+ * function pushes the same transition into the projection region **without** the
+ * old `seed→await→reconcile` round-trip:
  *
- * # Group-aware seed (#2283 slice C)
+ * - it overlays `postSnapshot` — `appStore`'s already-transformed tree, so the
+ *   region matches `appStore`'s ids exactly — onto the region **synchronously**
+ *   via {@link ProjectionClient.dispatchOptimistic}, so the render path reflects
+ *   the mutation at once (no fallback flicker while a backend round-trip lands);
+ * - it seeds the backend to `preSnapshot` (fire-and-forget; the transport
+ *   preserves order) so the authoritative store applies the granular `kind`
+ *   intent to the correct pre-transform tree and converges to the same view,
+ *   at which point the optimistic overlay is pruned.
  *
- * Seed-before-mutate installs **every** tab group via `layout.replaceGroups`
- * (not just the active tree), so the region is a faithful multi-group mirror
- * before the transform runs. The structural intent still operates on the active
- * group (its `groupId` is omitted → the store's active group), and the active
- * group is read back out of the full view for reconcile.
- *
- * @param kind        the `layout.*` intent kind
- * @param payload     the intent payload
- * @param snapshot    `appStore`'s current multi-group snapshot (authority)
- * @param focusTabId  when set, focus the panel this tab landed in
- * @returns the reconciled `{ rootPanel, activePanelId }` for the **active** group
- * @throws  on a rejected/failed intent or an unreconcilable diff (caller falls
- *          back to the local mutation)
+ * Never throws (resilience): a transport-construction failure (non-Tauri without
+ * a socket) or a rejected/failed dispatch is caught and logged. `appStore`
+ * stays authoritative, so the render path's faithful-mirror gate simply keeps
+ * rendering `appStore.rootPanel` and {@link seedLayoutRegion} re-syncs the region
+ * — nothing is lost. A rejected optimistic dispatch rolls its overlay back at
+ * once ({@link ProjectionClient.dispatchOptimistic}), leaving the region on the
+ * backend's view while `appStore` holds the local result.
  */
-export async function runLayoutIntent(
+export function mirrorLayoutIntent(
   kind: string,
   payload: Record<string, unknown>,
-  snapshot: LayoutSnapshot,
-  focusTabId?: string
-): Promise<LayoutStructuralResult> {
-  const client = await ensureSubscribed();
-  const activeGroup =
-    snapshot.groups.find((g) => g.id === snapshot.activeGroupId) ?? snapshot.groups[0];
-  if (!activeGroup) {
-    throw new Error("layout snapshot has no active group");
-  }
-  const tabsById = collectTabs(activeGroup.root);
-
-  // Seed the store with appStore's authoritative multi-group layout, then
-  // transform the active group.
-  throwIfRejected(
-    await dispatch("layout.replaceGroups", {
-      groups: snapshot.groups.map(toMinimalGroup),
-      activeGroupId: snapshot.activeGroupId,
-    }),
-    "replaceGroups"
-  );
-  const ack = await dispatch(kind, payload);
-  throwIfRejected(ack, kind);
-
-  const produced = ack.produced?.find((p) => p.region === region);
-  if (produced) {
-    await awaitVersion(client, produced.version);
+  preSnapshot: LayoutSnapshot,
+  postSnapshot: LayoutSnapshot
+): void {
+  let client: ProjectionClient;
+  try {
+    client = layoutRegionClient();
+  } catch (err) {
+    // No transport (e.g. non-Tauri without a socket): appStore already holds the
+    // authoritative result, so a failed mirror is a resilience event, not a crash.
+    logBridgeFallback(kind, err);
+    return;
   }
 
-  const view = client.state.view as LayoutView | undefined;
-  const projectedGroup = view ? activeGroupOf(view) : undefined;
-  if (!projectedGroup || !projectedGroup.root) {
-    throw new Error("layout region has no active group after intent");
-  }
-  const rootPanel = reconcileNode(projectedGroup.root, tabsById);
-  const activePanelId = focusTabId
-    ? (findLeafByTab(rootPanel, focusTabId)?.id ?? projectedGroup.activePanelId)
-    : projectedGroup.activePanelId;
-  return { rootPanel, activePanelId };
+  // Ensure the region is subscribed so the authoritative diff arrives to prune the
+  // overlay; a subscribe failure is logged and does not strand it.
+  void ensureSubscribed().catch((err) => logBridgeFallback("subscribe", err));
+
+  const postView: LayoutView = {
+    groups: postSnapshot.groups.map(toMinimalGroup),
+    activeGroupId: postSnapshot.activeGroupId,
+  };
+
+  // Seed the authoritative backend to the pre-transform layout so the granular
+  // intent it then applies produces the same tree (fire-and-forget, ordered
+  // before the intent by the transport's FIFO delivery).
+  void dispatch("layout.replaceGroups", {
+    groups: preSnapshot.groups.map(toMinimalGroup),
+    activeGroupId: preSnapshot.activeGroupId,
+  })
+    .then((ack) => throwIfRejected(ack, "replaceGroups"))
+    .catch((err) => logBridgeFallback("replaceGroups", err));
+
+  // Dispatch the granular intent under a synchronous optimistic overlay that
+  // installs `postView` at once. The overlay is a last-writer constant (it
+  // ignores the baseline), so the region reflects the mutation even before the
+  // seed diff lands, and is pruned when the intent's version confirms.
+  const intent: Intent = { intentId: newIntentId(), kind, payload, clientId };
+  void client
+    .dispatchOptimistic(intent, () => postView)
+    .then((ack) => {
+      if (ack.status === "rejected") {
+        logBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+      }
+    })
+    .catch((err) => logBridgeFallback(kind, err));
 }
 
 /** Map a {@link DropEdge} to a `layout.moveTab` payload for a split-with-tab drop. */

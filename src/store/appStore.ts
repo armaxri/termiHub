@@ -248,9 +248,8 @@ import {
   buildLayoutSnapshot,
   type LayoutSnapshot,
   layoutIntentsEnabled,
-  logBridgeFallback,
+  mirrorLayoutIntent,
   moveTabPayload,
-  runLayoutIntent,
 } from "@/store/layoutBridge";
 import {
   ensureSessionSubscribed,
@@ -2567,6 +2566,30 @@ function setTabContentEntry(
 }
 
 /**
+ * Build a comprehensive by-id {@link TabContent} map from every tab across every
+ * group — the active group's live tree overriding its (stale) `tabGroups` entry
+ * (#2283 / #2539). Used where a whole layout is (re)built — workspace restore and
+ * the agent-error → terminal conversion — so **every** tab type, including
+ * `agent-error`, is tracked in the map rather than falling back to the in-tree
+ * copy. Tabs not present in any group are dropped, matching the map's invariant
+ * that it holds exactly the live tabs.
+ */
+function tabContentFromGroups(
+  tabGroups: TabGroup[],
+  activeGroupId?: string,
+  activeRoot?: PanelNode
+): Record<string, TabContent> {
+  const map: Record<string, TabContent> = {};
+  for (const g of tabGroups) {
+    const tree = activeRoot && g.id === activeGroupId ? activeRoot : g.rootPanel;
+    for (const leaf of getAllLeaves(tree)) {
+      for (const t of leaf.tabs) map[t.id] = extractTabContent(t);
+    }
+  }
+  return map;
+}
+
+/**
  * Patch specific content fields of a tab **already tracked** in the map. A tab
  * absent from the map (e.g. an editor/settings tab that renders via the in-tree
  * fallback) is left untouched — this preserves the invariant that the map holds
@@ -2585,8 +2608,8 @@ function patchTabContentEntry(
 
 /**
  * The rich multi-group {@link LayoutSnapshot} of `appStore`'s current layout —
- * the seed-before-mutate payload passed to {@link runLayoutIntent} (#2283 slice
- * C). The active group's live tree is the top-level `rootPanel`/`activePanelId`;
+ * the seed / overlay payload passed to {@link mirrorLayoutIntent} (#2283 slice
+ * D'). The active group's live tree is the top-level `rootPanel`/`activePanelId`;
  * every other group comes from its `tabGroups` entry.
  */
 function currentLayoutSnapshot(state: {
@@ -2884,11 +2907,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
     addTabGroup: (name) => {
       const newGroupId = generateGroupId();
       const newPanel = createLeafPanel();
+      const pre = currentLayoutSnapshot(get());
+      let assignedName = name ?? "";
       set((state) => {
         const groupCount = state.tabGroups.length + 1;
+        assignedName = name ?? `Group ${groupCount}`;
         const newGroup: TabGroup = {
           id: newGroupId,
-          name: name ?? `Group ${groupCount}`,
+          name: assignedName,
           rootPanel: newPanel,
           activePanelId: newPanel.id,
         };
@@ -2905,13 +2931,24 @@ export const useAppStore = create<AppState>((set, get, store) => {
           activePanelId: newPanel.id,
         };
       });
+      // Optimistic-fold overlay (#2283 slice D'): mirror the new group into the
+      // region via `layout.addGroup`. The backend assigns its own group id; the
+      // overlay carries appStore's, so the region matches until the next reseed.
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent(
+          "layout.addGroup",
+          { name: assignedName },
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
       return newGroupId;
     },
 
-    closeTabGroup: (groupId) =>
+    closeTabGroup: (groupId) => {
+      if (get().tabGroups.length <= 1) return; // sole group: no-op (backend rejects too)
+      const pre = currentLayoutSnapshot(get());
       set((state) => {
-        if (state.tabGroups.length <= 1) return state;
-
         const newGroups = state.tabGroups.filter((g) => g.id !== groupId);
 
         if (groupId !== state.activeTabGroupId) {
@@ -2929,23 +2966,52 @@ export const useAppStore = create<AppState>((set, get, store) => {
           rootPanel: newActiveGroup.rootPanel,
           activePanelId: newActiveGroup.activePanelId,
         };
-      }),
+      });
+      // Optimistic-fold overlay (#2283 slice D'): mirror the close into the region.
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent("layout.closeGroup", { groupId }, pre, currentLayoutSnapshot(get()));
+      }
+    },
 
-    renameTabGroup: (groupId, name) =>
+    renameTabGroup: (groupId, name) => {
+      const pre = currentLayoutSnapshot(get());
       set((state) => ({
         tabGroups: state.tabGroups.map((g) => (g.id === groupId ? { ...g, name } : g)),
-      })),
+      }));
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent(
+          "layout.renameGroup",
+          { groupId, name },
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
+    },
 
-    setTabGroupColor: (groupId, color) =>
+    setTabGroupColor: (groupId, color) => {
+      const pre = currentLayoutSnapshot(get());
       set((state) => ({
         tabGroups: state.tabGroups.map((g) =>
           g.id === groupId ? { ...g, color: color ?? undefined } : g
         ),
-      })),
+      }));
+      // Omit `color` when clearing so the backend's `optional_str` resolves to
+      // `None` and drops the accent (matching the local `color ?? undefined`).
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent(
+          "layout.setGroupColor",
+          color != null ? { groupId, color } : { groupId },
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
+    },
 
-    setActiveTabGroup: (groupId) =>
+    setActiveTabGroup: (groupId) => {
+      if (groupId === get().activeTabGroupId) return; // no-op
+      if (!get().tabGroups.some((g) => g.id === groupId)) return; // unknown group
+      const pre = currentLayoutSnapshot(get());
       set((state) => {
-        if (groupId === state.activeTabGroupId) return state;
         const targetGroup = state.tabGroups.find((g) => g.id === groupId);
         if (!targetGroup) return state;
         // Save current live state into the currently active group
@@ -2969,17 +3035,34 @@ export const useAppStore = create<AppState>((set, get, store) => {
           activePanelId: targetGroup.activePanelId,
           zoomedTabId: newZoomedTabId,
         };
-      }),
+      });
+      // Optimistic-fold overlay (#2283 slice D'): mirror the group switch into the
+      // region via `layout.setActiveGroup`.
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent("layout.setActiveGroup", { groupId }, pre, currentLayoutSnapshot(get()));
+      }
+    },
 
-    reorderTabGroups: (fromIndex, toIndex) =>
+    reorderTabGroups: (fromIndex, toIndex) => {
+      const pre = currentLayoutSnapshot(get());
       set((state) => {
         const groups = [...state.tabGroups];
         const [moved] = groups.splice(fromIndex, 1);
         groups.splice(toIndex, 0, moved);
         return { tabGroups: groups };
-      }),
+      });
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent(
+          "layout.reorderGroups",
+          { fromIndex, toIndex },
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
+    },
 
     moveTabToGroup: (tabId, fromPanelId, targetGroupId) => {
+      const pre = currentLayoutSnapshot(get());
       set((state) => {
         if (targetGroupId === state.activeTabGroupId) return state;
 
@@ -3033,13 +3116,24 @@ export const useAppStore = create<AppState>((set, get, store) => {
           activePanelId: newActivePanelId,
         };
       });
+      // Optimistic-fold overlay (#2283 slice D'): mirror the cross-group move into
+      // the region via `layout.moveTabToGroup`.
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent(
+          "layout.moveTabToGroup",
+          { tabId, fromPanelId, targetGroupId },
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
       // Moving a tab across groups changes broadcast membership when the source
       // or a target crosses the group boundary (#1980) — re-resolve so an
       // "all"/"panel" scope drops/adds it in the source's own group.
       get().refreshBroadcastMembership();
     },
 
-    addTabGroupWithTab: (tabId, fromPanelId) =>
+    addTabGroupWithTab: (tabId, fromPanelId) => {
+      const pre = currentLayoutSnapshot(get());
       set((state) => {
         // Find the tab in the active group's live rootPanel
         const sourceLeaf = getAllLeaves(state.rootPanel).find((l) => l.id === fromPanelId);
@@ -3096,7 +3190,19 @@ export const useAppStore = create<AppState>((set, get, store) => {
           rootPanel: newGroupRootPanel,
           activePanelId: newPanel.id,
         };
-      }),
+      });
+      // Optimistic-fold overlay (#2283 slice D'): mirror the "tab to new group"
+      // move into the region via `layout.addGroupWithTab`. The backend assigns its
+      // own group id; the overlay carries appStore's until the next reseed.
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent(
+          "layout.addGroupWithTab",
+          { tabId, fromPanelId },
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
+    },
 
     // ── Multi-window foundation (#1900) ──
     movingSessionIds: [],
@@ -3320,6 +3426,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
         activeTabGroupId: firstGroup.id,
         rootPanel: firstGroup.rootPanel,
         activePanelId: firstGroup.activePanelId,
+        // Track every restored tab — including `agent-error` — in the by-id
+        // content map so it resolves from `tabContent` (#2539).
+        tabContent: tabContentFromGroups(builtGroups),
       });
       const { pendingTabIds, preFailedCount } = collectRestoreCohort(builtGroups);
       get().beginRestoreCohort(pendingTabIds, preFailedCount);
@@ -3935,7 +4044,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
         spawned,
         initialCommand,
       } = options ?? {};
+      const pre = currentLayoutSnapshot(get());
       let createdTabId = "";
+      let addedPanelId = "";
+      let addedContentType = "terminal";
+      let addedSessionId: string | null = null;
       set((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
         const targetPanelId = panelId ?? state.activePanelId ?? allLeaves[0]?.id;
@@ -3958,6 +4071,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
         );
         const newTab: TerminalTab = connectionId ? { ...baseTab, connectionId } : baseTab;
         createdTabId = newTab.id;
+        addedPanelId = targetPanelId;
+        addedContentType = newTab.contentType;
+        addedSessionId = newTab.sessionId ?? null;
         const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
           const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
           tabs.push(newTab);
@@ -3989,6 +4105,23 @@ export const useAppStore = create<AppState>((set, get, store) => {
             : {}),
         };
       });
+      // Optimistic-fold overlay (#2283 slice D'): mirror the structural insert into
+      // the region via `layout.addTab`. The frontend-generated tab id is passed to
+      // the backend, so tab identity never diverges (the live xterm DOM, keyed by
+      // tab id, is never remounted). The tab's rich content stays in appStore's
+      // `tabContent` map / tree; the region carries only `{ id, sessionId,
+      // contentType }`.
+      if (layoutIntentsEnabled() && createdTabId && addedPanelId) {
+        mirrorLayoutIntent(
+          "layout.addTab",
+          {
+            panelId: addedPanelId,
+            tab: { id: createdTabId, sessionId: addedSessionId, contentType: addedContentType },
+          },
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
       // Record real terminal connections in the session history (#1883). Only
       // genuine connections carry a config; settings/editor/etc. tabs (which
       // pass a non-terminal contentType) are skipped. Fire-and-forget so tab
@@ -4388,6 +4521,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
     setPendingAttachedTabCloseConfirm: (req) => set({ pendingAttachedTabCloseConfirm: req }),
 
     closeTab: (tabId, panelId) => {
+      // Snapshot the pre-close layout for the region seed (#2283 slice D').
+      const preLayout = currentLayoutSnapshot(get());
+
       // Session-intents cut (#2203): the tab is gone — drop its lifecycle record
       // from the shared region so the store does not leak a dead session. Any
       // pending backend reconnect timer is cancelled by `session.remove`.
@@ -4531,31 +4667,59 @@ export const useAppStore = create<AppState>((set, get, store) => {
           get().removeBroadcastTarget(tabId);
         }
       }
+
+      // Optimistic-fold overlay (#2283 slice D'): mirror the structural close into
+      // the region via `layout.closeTabStructure` (the structural half only —
+      // session teardown stayed above). appStore is authoritative; the overlay
+      // installs the post-close tree.
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent(
+          "layout.closeTabStructure",
+          { tabId },
+          preLayout,
+          currentLayoutSnapshot(get())
+        );
+      }
     },
 
-    setActiveTab: (tabId, panelId) =>
-      set((state) => {
-        const newRootPanel = updateLeaf(state.rootPanel, panelId, (leaf) => ({
-          ...leaf,
-          tabs: leaf.tabs.map((t) => ({ ...t, isActive: t.id === tabId })),
-          activeTabId: tabId,
-        }));
+    setActiveTab: (tabId, panelId) => {
+      // Local reducer — the authoritative, synchronous writer and the retained
+      // instant-revert fallback. Focuses `tabId` within its leaf and repoints the
+      // active panel, following the zoom overlay when it shows a tab of that leaf.
+      const applyLocal = () =>
+        set((state) => {
+          const newRootPanel = updateLeaf(state.rootPanel, panelId, (leaf) => ({
+            ...leaf,
+            tabs: leaf.tabs.map((t) => ({ ...t, isActive: t.id === tabId })),
+            activeTabId: tabId,
+          }));
 
-        // If the zoom overlay is showing a tab from the same panel, follow the switch
-        let newZoomedTabId = state.zoomedTabId;
-        if (state.zoomedTabId !== null) {
-          const panelLeaf = findLeaf(state.rootPanel, panelId);
-          if (panelLeaf?.tabs.some((t) => t.id === state.zoomedTabId)) {
-            newZoomedTabId = tabId;
+          // If the zoom overlay is showing a tab from the same panel, follow the switch
+          let newZoomedTabId = state.zoomedTabId;
+          if (state.zoomedTabId !== null) {
+            const panelLeaf = findLeaf(state.rootPanel, panelId);
+            if (panelLeaf?.tabs.some((t) => t.id === state.zoomedTabId)) {
+              newZoomedTabId = tabId;
+            }
           }
-        }
 
-        return {
-          rootPanel: newRootPanel,
-          activePanelId: panelId,
-          zoomedTabId: newZoomedTabId,
-        };
-      }),
+          return {
+            rootPanel: newRootPanel,
+            activePanelId: panelId,
+            zoomedTabId: newZoomedTabId,
+          };
+        });
+
+      // Optimistic-fold overlay (#2283 slice D'): apply locally (authoritative),
+      // then mirror the tab focus into the region via `layout.setActiveTab` — the
+      // structural "focus a tab within its leaf" primitive added for this slice.
+      // The backend derives the leaf from the tab id and repoints its active panel.
+      const pre = currentLayoutSnapshot(get());
+      applyLocal();
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent("layout.setActiveTab", { tabId }, pre, currentLayoutSnapshot(get()));
+      }
+    },
 
     moveTab: (tabId, fromPanelId, toPanelId, newIndex) =>
       set((state) => {
@@ -4594,8 +4758,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }),
 
     reorderTabs: (panelId, oldIndex, newIndex) => {
-      // Local reducer — the retained rollback/resilience fallback (see
-      // `splitPanel`). Reorders a tab within its leaf, leaving focus untouched.
+      // Local reducer — the authoritative, synchronous writer and the retained
+      // instant-revert fallback (see `splitPanel`). Reorders a tab within its
+      // leaf, leaving focus untouched.
       const applyLocal = () =>
         set((state) => ({
           rootPanel: updateLeaf(state.rootPanel, panelId, (leaf) => {
@@ -4606,30 +4771,28 @@ export const useAppStore = create<AppState>((set, get, store) => {
           }),
         }));
 
-      // Structural reorder cut (#2188): route through `layout.reorderTabs`; the
-      // backend LayoutStore reorders and reconcileNode writes the reconciled
-      // tree. Focus is unchanged, so only `rootPanel` is applied. Any failure
-      // falls back to the local reducer.
-      if (!layoutIntentsEnabled()) return applyLocal();
-      void runLayoutIntent(
-        "layout.reorderTabs",
-        { panelId, oldIndex, newIndex },
-        currentLayoutSnapshot(get())
-      )
-        .then((res) => set({ rootPanel: res.rootPanel }))
-        .catch((err) => {
-          logBridgeFallback("layout.reorderTabs", err);
-          applyLocal();
-        });
+      // Optimistic-fold overlay (#2283 slice D'): apply the authoritative local
+      // reorder synchronously, then mirror the same transition into the region
+      // via `layout.reorderTabs` so the projection stays in step without a
+      // seed→await round-trip. appStore stays authoritative and the fallback is
+      // retained (the #2283 reducer removal remains gated).
+      const pre = currentLayoutSnapshot(get());
+      applyLocal();
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent(
+          "layout.reorderTabs",
+          { panelId, oldIndex, newIndex },
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
     },
 
     splitPanel: (direction) => {
-      // Local reducer. Since #2184 the intent path below is the default, so this
-      // is the retained resilience/rollback fallback: it runs when the flag is
-      // explicitly off (rollback) or an intent dispatch/reconcile fails, so a
-      // backend hiccup can never break layout. Not a duplicate algebra — it
+      // Local reducer — the authoritative, synchronous writer, and the retained
+      // instant-revert fallback (the #2283 reducer removal stays gated). It
       // orchestrates the shared `@/utils/panelTree` helpers (the same seam the
-      // Rust store ports), so keeping it costs no drift, only a safety net.
+      // Rust store ports), so it never drifts from the region's `layout.split`.
       const applyLocal = () =>
         set((state) => {
           const dir = direction ?? "horizontal";
@@ -4642,23 +4805,22 @@ export const useAppStore = create<AppState>((set, get, store) => {
           return { rootPanel, activePanelId: newLeaf.id };
         });
 
-      // Structural split cut (#2151 step 2, default-on since #2184): route
-      // through the `layout.split` intent; the backend LayoutStore mutates and
-      // reconcileNode is the authoritative writer of the reconciled tree. On any
-      // failure fall back to the local reducer so layout never breaks.
-      if (!layoutIntentsEnabled()) return applyLocal();
+      // Optimistic-fold overlay (#2283 slice D'): apply the authoritative local
+      // split synchronously, then mirror it into the region via `layout.split`.
+      // The split targets the pre-split active panel; the backend focuses its
+      // new leaf, matching the local reducer. appStore stays authoritative and
+      // the local reducer is retained as the instant-revert fallback.
+      const pre = currentLayoutSnapshot(get());
       const { activePanelId } = get();
-      if (!activePanelId) return applyLocal();
-      void runLayoutIntent(
-        "layout.split",
-        { panelId: activePanelId, direction: direction ?? "horizontal", position: "after" },
-        currentLayoutSnapshot(get())
-      )
-        .then((res) => set(res))
-        .catch((err) => {
-          logBridgeFallback("layout.split", err);
-          applyLocal();
-        });
+      applyLocal();
+      if (layoutIntentsEnabled() && activePanelId) {
+        mirrorLayoutIntent(
+          "layout.split",
+          { panelId: activePanelId, direction: direction ?? "horizontal", position: "after" },
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
     },
 
     removePanel: (panelId) => {
@@ -4679,20 +4841,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
           return { rootPanel, activePanelId };
         });
 
-      // Structural remove cut (#2188): route through `layout.removePanel` — a
-      // dedicated transform, since `merge` preserves the tabs and
-      // `closeTabStructure` is per-tab, so neither models "discard the whole
-      // panel". The sole-leaf case is a no-op both here and in the store. Any
-      // failure falls back to the local reducer.
-      if (!layoutIntentsEnabled()) return applyLocal();
-      const { rootPanel } = get();
-      if (getAllLeaves(rootPanel).length <= 1) return;
-      void runLayoutIntent("layout.removePanel", { panelId }, currentLayoutSnapshot(get()))
-        .then((res) => set(res))
-        .catch((err) => {
-          logBridgeFallback("layout.removePanel", err);
-          applyLocal();
-        });
+      // Optimistic-fold overlay (#2283 slice D'): the sole-leaf case is a no-op
+      // both here and in the store, so skip it. Otherwise apply the authoritative
+      // local remove synchronously, then mirror it into the region via
+      // `layout.removePanel`. appStore stays authoritative; the local reducer is
+      // the retained instant-revert fallback.
+      if (getAllLeaves(get().rootPanel).length <= 1) return;
+      const pre = currentLayoutSnapshot(get());
+      applyLocal();
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent("layout.removePanel", { panelId }, pre, currentLayoutSnapshot(get()));
+      }
     },
 
     setActivePanel: (panelId) => {
@@ -4710,19 +4869,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
           return { activePanelId: panelId, zoomedTabId: newZoomedTabId };
         });
 
-      // Focus is projection state (`activePanelId`), so fold it into the layout
-      // region (#2188): apply locally for instant UX, then best-effort push the
-      // focus through `layout.setActivePanel` so the backend stays authoritative
-      // and the render-from-projection mirror keeps matching. The reconciled
-      // result is ignored — the local set already landed — and a failure is just
-      // logged (the projection catches up on the next seed).
+      // Focus is projection state (`activePanelId`): apply locally for instant UX
+      // (authoritative), then mirror it into the region via `layout.setActivePanel`
+      // (#2283 slice D') so the projection stays in step synchronously. A failure
+      // is logged; the local set already landed.
+      const pre = currentLayoutSnapshot(get());
       applyLocal();
-      if (!layoutIntentsEnabled()) return;
-      void runLayoutIntent(
-        "layout.setActivePanel",
-        { panelId },
-        currentLayoutSnapshot(get())
-      ).catch((err) => logBridgeFallback("layout.setActivePanel", err));
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent("layout.setActivePanel", { panelId }, pre, currentLayoutSnapshot(get()));
+      }
     },
 
     setPanelSizes: (splitId, sizes) => {
@@ -4732,16 +4887,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const applyLocal = () =>
         set((state) => ({ rootPanel: setSplitSizesInTree(state.rootPanel, splitId, sizes) }));
 
-      // Resize cut (#2188): route through `layout.resize`; the backend persists
-      // the normalized sizes and reconcileNode writes the reconciled tree. Only
-      // `rootPanel` changes. Any failure falls back to the local reducer.
-      if (!layoutIntentsEnabled()) return applyLocal();
-      void runLayoutIntent("layout.resize", { splitId, sizes }, currentLayoutSnapshot(get()))
-        .then((res) => set({ rootPanel: res.rootPanel }))
-        .catch((err) => {
-          logBridgeFallback("layout.resize", err);
-          applyLocal();
-        });
+      // Optimistic-fold overlay (#2283 slice D'): apply the authoritative local
+      // resize synchronously, then mirror it into the region via `layout.resize`.
+      // appStore stays authoritative; the local reducer is the retained fallback.
+      const pre = currentLayoutSnapshot(get());
+      applyLocal();
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent("layout.resize", { splitId, sizes }, pre, currentLayoutSnapshot(get()));
+      }
     },
 
     splitPanelWithTab: (tabId, fromPanelId, targetPanelId, edge) => {
@@ -4820,30 +4973,22 @@ export const useAppStore = create<AppState>((set, get, store) => {
           return { rootPanel, activePanelId: newLeaf.id };
         });
 
-      // Tab-carrying drop cut (#2151 step 2, default-on since #2184): maps to
-      // `layout.moveTab` (center = merge into the target stack, edge = split the
-      // target). The backend collapses an emptied self-drop source but the local
-      // reducer keeps it, so the single-tab self-edge-drop corner stays on the
-      // local path to preserve exact parity; everything else routes through the
-      // store, with reconcileNode as the authoritative writer.
-      if (!layoutIntentsEnabled()) return applyLocal();
-      const { rootPanel } = get();
-      const sourceLeaf = findLeaf(rootPanel, fromPanelId);
-      const selfEdgeSingleTab =
-        edge !== "center" && fromPanelId === targetPanelId && (sourceLeaf?.tabs.length ?? 0) <= 1;
-      if (!sourceLeaf || selfEdgeSingleTab) return applyLocal();
-
-      void runLayoutIntent(
-        "layout.moveTab",
-        moveTabPayload(tabId, targetPanelId, edge),
-        currentLayoutSnapshot(get()),
-        tabId
-      )
-        .then((res) => set(res))
-        .catch((err) => {
-          logBridgeFallback("layout.moveTab", err);
-          applyLocal();
-        });
+      // Optimistic-fold overlay (#2283 slice D'): apply the authoritative local
+      // move synchronously (it keeps an emptied self-drop source that the backend
+      // would collapse — appStore stays authoritative, so its result wins), then
+      // mirror it into the region via `layout.moveTab` (center = merge into the
+      // target stack, edge = split the target). The overlay installs appStore's
+      // result, so any backend divergence self-heals on the next seed.
+      const pre = currentLayoutSnapshot(get());
+      applyLocal();
+      if (layoutIntentsEnabled()) {
+        mirrorLayoutIntent(
+          "layout.moveTab",
+          moveTabPayload(tabId, targetPanelId, edge),
+          pre,
+          currentLayoutSnapshot(get())
+        );
+      }
     },
 
     // Connections — the saved-connection / folder tree is region-authoritative
@@ -6551,10 +6696,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
         return { ...panel, tabs: updatedTabs };
       };
 
-      set((s) => ({
-        rootPanel: convertPanel(s.rootPanel),
-        tabGroups: s.tabGroups.map((g) => ({ ...g, rootPanel: convertPanel(g.rootPanel) })),
-      }));
+      set((s) => {
+        const rootPanel = convertPanel(s.rootPanel);
+        const tabGroups = s.tabGroups.map((g) => ({ ...g, rootPanel: convertPanel(g.rootPanel) }));
+        return {
+          rootPanel,
+          tabGroups,
+          // Instrument the agent-error → terminal conversion so the by-id content
+          // map never goes stale (#2539): re-track every tab from the converted
+          // trees, so a resolved tab now resolves as a `terminal` from `tabContent`.
+          tabContent: tabContentFromGroups(tabGroups, s.activeTabGroupId, rootPanel),
+        };
+      });
     },
 
     // File browser — the view is owned by the authoritative `file-browser` region
@@ -7635,6 +7788,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
           rootPanel: firstGroup.rootPanel,
           activePanelId: firstGroup.activePanelId,
           activeWorkspaceName: definition.name,
+          // Track every restored tab — including `agent-error` — in the by-id
+          // content map so it resolves from `tabContent` (#2539).
+          tabContent: tabContentFromGroups(builtGroups),
         });
         // GAP G4 (#1146): register the placed tabs as a cohort so a single
         // summary toast fires once every tab has connected or failed.
@@ -7840,6 +7996,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
           activeTabGroupId: activeGroup.id,
           rootPanel: activeGroup.rootPanel,
           activePanelId: activeGroup.activePanelId,
+          // Track every restored tab — including `agent-error` — in the by-id
+          // content map so it resolves from `tabContent` (#2539).
+          tabContent: tabContentFromGroups(builtGroups),
         });
         // GAP G4 (#1146): register the placed tabs as a cohort so a single
         // summary toast fires once every tab has connected or failed.
