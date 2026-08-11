@@ -94,10 +94,14 @@ function allTabs(): TerminalTab[] {
   return getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
 }
 
-/** The projected (minimal) view of the current tree, focused on the active panel. */
+/** The projected (multi-group) view of the current tree — a single active group
+ * holding the current panel tree (#2283 slice C). */
 function currentView(): LayoutView {
   const { rootPanel, activePanelId } = useAppStore.getState();
-  return { root: toMinimalNode(rootPanel), activePanelId };
+  return {
+    groups: [{ id: "g", name: "Main", root: toMinimalNode(rootPanel), activePanelId }],
+    activeGroupId: "g",
+  };
 }
 
 describe("appStore — tabContent by-id map (#2283)", () => {
@@ -165,7 +169,7 @@ describe("appStore — tabContent by-id map (#2283)", () => {
   });
 
   it("render parity: composing from the map equals composing from the in-tree tab", () => {
-    // A mix of a terminal tab (mapped) and an editor tab (not mapped → fallback).
+    // A mix of a terminal tab and an editor tab — both mapped since slice C.
     useAppStore.getState().addTab("Shell", "local", LOCAL_CONFIG);
     useAppStore.getState().openScratchEditorTab("Notes", "notes.md", "hello");
     useAppStore.getState().addTab("Shell 2", "local", LOCAL_CONFIG);
@@ -191,6 +195,98 @@ describe("appStore — tabContent by-id map (#2283)", () => {
     expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(
       composeRenderTree(view, rootPanel)
     );
+    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(rootPanel);
+  });
+});
+
+describe("appStore — comprehensive tabContent map for every tab type (#2283 slice C)", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  /** Open a tab of each instrumented content type into the active panel. */
+  function openOneOfEach(): void {
+    const s = useAppStore.getState();
+    s.addTab("Shell", "local", LOCAL_CONFIG);
+    s.openSettingsTab();
+    s.openLogViewerTab();
+    s.openNetworkDiagnosticTab("ping");
+    s.openScratchEditorTab("Notes", "notes.md", "hi");
+    s.openConnectionEditorTab("new");
+    s.openTunnelEditorTab(null);
+    s.openWorkspaceEditorTab(null);
+    s.selectPlugin("p1");
+  }
+
+  it("every rendered tab resolves its content from the map (no fallback needed)", () => {
+    openOneOfEach();
+    const { rootPanel, tabContent } = useAppStore.getState();
+
+    for (const leaf of getAllLeaves(rootPanel)) {
+      for (const t of leaf.tabs) {
+        // The map holds a content-identical entry for EVERY tab in the tree.
+        expect(tabContent[t.id]).toBeDefined();
+        expect(tabContent[t.id]).toEqual(extractTabContent(t));
+      }
+    }
+
+    // Composing from the map is byte-identical to the in-tree fallback and to the
+    // authoritative tree — so the in-tree fallback is now belt-and-suspenders.
+    const view = currentView();
+    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(
+      composeRenderTree(view, rootPanel)
+    );
+    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(rootPanel);
+  });
+
+  it.each([
+    ["settings", () => useAppStore.getState().openSettingsTab()],
+    ["log-viewer", () => useAppStore.getState().openLogViewerTab()],
+    ["network-diagnostic", () => useAppStore.getState().openNetworkDiagnosticTab("ping")],
+    ["editor", () => useAppStore.getState().openScratchEditorTab("N", "n.md", "x")],
+    ["connection-editor", () => useAppStore.getState().openConnectionEditorTab("new")],
+    ["tunnel-editor", () => useAppStore.getState().openTunnelEditorTab(null)],
+    ["workspace-editor", () => useAppStore.getState().openWorkspaceEditorTab(null)],
+    ["plugin-detail", () => useAppStore.getState().selectPlugin("p1")],
+  ])("%s: open tracks content, close prunes it", (type, open) => {
+    open();
+    const tab = allTabs().find((t) => t.contentType === type)!;
+    expect(tab).toBeDefined();
+    expect(useAppStore.getState().tabContent[tab.id]).toEqual(extractTabContent(tab));
+
+    useAppStore.getState().closeTab(tab.id, tab.panelId);
+    expect(useAppStore.getState().tabContent[tab.id]).toBeUndefined();
+  });
+
+  it("selectPlugin reuse re-points meta and keeps the map in sync", () => {
+    useAppStore.getState().selectPlugin("p1");
+    const first = allTabs().find((t) => t.contentType === "plugin-detail")!;
+    expect(useAppStore.getState().tabContent[first.id]).toEqual(extractTabContent(first));
+
+    // Selecting another plugin REUSES the single plugin-detail tab (re-points its
+    // meta) rather than opening a second — the map entry must follow.
+    useAppStore.getState().selectPlugin("p2");
+    const reused = allTabs().find((t) => t.contentType === "plugin-detail")!;
+    expect(reused.id).toBe(first.id);
+    expect((reused as { pluginDetailMeta?: { pluginId: string } }).pluginDetailMeta?.pluginId).toBe(
+      "p2"
+    );
+    expect(useAppStore.getState().tabContent[reused.id]).toEqual(extractTabContent(reused));
+  });
+
+  it("openScratchEditorTab tracks editorMeta; render parity holds", () => {
+    useAppStore.getState().openScratchEditorTab("Notes", "notes.md", "content");
+    const tab = allTabs().find((t) => t.contentType === "editor")!;
+    // The editorMeta rides in the map entry (content, not structure).
+    expect(useAppStore.getState().tabContent[tab.id]).toEqual(extractTabContent(tab));
+    expect(
+      (useAppStore.getState().tabContent[tab.id] as { editorMeta?: { scratch?: boolean } })
+        .editorMeta?.scratch
+    ).toBe(true);
+
+    const { rootPanel, tabContent } = useAppStore.getState();
+    const view = currentView();
     expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(rootPanel);
   });
 });

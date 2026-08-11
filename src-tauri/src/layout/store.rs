@@ -137,9 +137,9 @@ impl ClientLayout {
 
     /// The full render-ready view model: `{ activeGroupId, groups: [...] }`.
     ///
-    /// The authoritative shape a later slice flips the region and frontend onto;
-    /// not yet consumed by production wiring this slice (only [`snapshot_full`]).
-    #[allow(dead_code)]
+    /// The authoritative shape the live `layout@<clientId>` region carries since
+    /// the group-aware widening (#2283 slice C): [`publish_layout`] publishes it
+    /// via [`snapshot_full`] so the frontend renders every tab group.
     fn full_view(&self) -> Value {
         serde_json::to_value(self).unwrap_or(Value::Null)
     }
@@ -189,12 +189,14 @@ impl LayoutStore {
         Self::default()
     }
 
-    /// The current **back-compat** render-ready view for a client (seeding it if
+    /// The **back-compat** render-ready view for a client (seeding it if
     /// unknown): the active group's `{ root, activePanelId }`.
     ///
-    /// Pure with respect to layout structure — it never mutates an existing
-    /// client — so the projector can safely diff two consecutive snapshots. This
-    /// keeps the live `layout@<clientId>` region shape unchanged this slice.
+    /// Retained accessor: since the group-aware widening (#2283 slice C) the live
+    /// `layout@<clientId>` region carries [`snapshot_full`] instead, so this is no
+    /// longer published — kept (and unit-tested) as the documented back-compat
+    /// active-group shape / a rollback seam. Pure with respect to layout structure.
+    #[allow(dead_code)]
     pub fn snapshot(&self, client_id: &str) -> Value {
         self.lock()
             .entry(client_id.to_string())
@@ -203,9 +205,9 @@ impl LayoutStore {
     }
 
     /// The full multi-group view for a client: `{ activeGroupId, groups: [...] }`.
-    /// The authoritative shape a later slice flips the region and frontend onto;
-    /// exercised by the group-transform tests this slice, not yet by live wiring.
-    #[allow(dead_code)]
+    /// The authoritative shape the live `layout@<clientId>` region carries since
+    /// the group-aware widening (#2283 slice C): [`publish_layout`] publishes it so
+    /// the frontend renders every tab group (composing the active one).
     pub fn snapshot_full(&self, client_id: &str) -> Value {
         self.lock()
             .entry(client_id.to_string())

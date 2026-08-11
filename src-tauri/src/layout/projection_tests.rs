@@ -336,7 +336,7 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     let region = layout_region("A");
 
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
 
     let snap_a = projector.subscribe(&region, "sub-a", "A", Arc::new(VecSink::new()));
     let snap_b = projector.subscribe(&region, "sub-b", "A", Arc::new(VecSink::new()));
@@ -344,9 +344,13 @@ fn subscribe_returns_the_seeded_snapshot_identically_to_every_subscriber() {
     assert_eq!(snap_a.version, 0);
     assert_eq!(snap_a, snap_b, "a late joiner gets an identical baseline");
     assert_eq!(snap_a.region, "layout@A");
-    // The view model is the panel tree + focused panel.
-    assert_eq!(snap_a.view["activePanelId"], json!("a"));
-    assert_eq!(snap_a.view["root"]["type"], json!("split"));
+    // The view model is the full multi-group view: one group holding the panel
+    // tree + focused panel, and the active-group id (#2283 slice C).
+    let groups = snap_a.view["groups"].as_array().expect("groups array");
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0]["activePanelId"], json!("a"));
+    assert_eq!(groups[0]["root"]["type"], json!("split"));
+    assert_eq!(snap_a.view["activeGroupId"], groups[0]["id"]);
 }
 
 #[test]
@@ -354,7 +358,7 @@ fn split_intent_produces_one_diff_fanned_to_two_subscribers() {
     let store = seeded_store("A");
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
     let sink_a = Arc::new(VecSink::new());
@@ -388,7 +392,7 @@ fn split_intent_produces_one_diff_fanned_to_two_subscribers() {
     cache_a.apply(&diffs_a[0]);
     assert_eq!(
         cache_a.view,
-        store.snapshot("A"),
+        store.snapshot_full("A"),
         "cache converges on authority"
     );
 }
@@ -398,7 +402,7 @@ fn move_and_close_intents_advance_the_region_monotonically() {
     let store = seeded_store("A");
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
     let sink = Arc::new(VecSink::new());
@@ -427,7 +431,7 @@ fn move_and_close_intents_advance_the_region_monotonically() {
     assert_eq!(cache.version, 2);
     assert_eq!(
         cache.view,
-        store.snapshot("A"),
+        store.snapshot_full("A"),
         "cache converges on authority"
     );
 }
@@ -441,7 +445,7 @@ fn replace_seeds_a_tree_then_a_structural_intent_round_trips() {
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
     // Lazily seeds an empty leaf; the region exists before the first replace.
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
     let sink = Arc::new(VecSink::new());
@@ -472,11 +476,12 @@ fn replace_seeds_a_tree_then_a_structural_intent_round_trips() {
     assert_eq!(cache.version, 2);
     assert_eq!(
         cache.view,
-        store.snapshot("A"),
+        store.snapshot_full("A"),
         "cache converges on authority"
     );
     // t1 landed in b; a is left with t2 — tab count is conserved across the seed.
-    let root: PanelNode = serde_json::from_value(store.snapshot("A")["root"].clone()).unwrap();
+    let root: PanelNode =
+        serde_json::from_value(store.snapshot_full("A")["groups"][0]["root"].clone()).unwrap();
     assert_eq!(
         termihub_core::layout::panel_tree::count_tabs_in_tree(&root),
         3
@@ -504,7 +509,7 @@ fn the_step2b_intents_round_trip_and_converge_on_authority() {
     store.seed_for_test("A", tree, Some("a".to_string()));
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
     let sink = Arc::new(VecSink::new());
@@ -540,12 +545,13 @@ fn the_step2b_intents_round_trip_and_converge_on_authority() {
     assert_eq!(cache.version, 4);
     assert_eq!(
         cache.view,
-        store.snapshot("A"),
+        store.snapshot_full("A"),
         "cache converges on authority"
     );
 
     // Final assertions on the authoritative tree.
-    let root: PanelNode = serde_json::from_value(store.snapshot("A")["root"].clone()).unwrap();
+    let root: PanelNode =
+        serde_json::from_value(store.snapshot_full("A")["groups"][0]["root"].clone()).unwrap();
     let a = termihub_core::layout::panel_tree::find_leaf(&root, "a").unwrap();
     assert_eq!(
         a.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
@@ -557,7 +563,7 @@ fn the_step2b_intents_round_trip_and_converge_on_authority() {
         "removePanel dropped b"
     );
     assert_eq!(
-        store.snapshot("A")["activePanelId"],
+        store.snapshot_full("A")["groups"][0]["activePanelId"],
         json!("c"),
         "focus folded into the projection"
     );
@@ -568,7 +574,7 @@ fn a_bad_reorder_index_is_rejected_without_advancing() {
     let store = seeded_store("A");
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
     let sink = Arc::new(VecSink::new());
     projector.subscribe(&region, "sub", "A", sink.clone());
@@ -593,8 +599,8 @@ fn intents_are_client_scoped_across_regions() {
     store.seed_for_test("B", two_panel_tree(), Some("a".to_string()));
 
     let projector = Arc::new(Projector::new());
-    projector.register_region(&layout_region("A"), store.snapshot("A"));
-    projector.register_region(&layout_region("B"), store.snapshot("B"));
+    projector.register_region(&layout_region("A"), store.snapshot_full("A"));
+    projector.register_region(&layout_region("B"), store.snapshot_full("B"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
     let sink_a = Arc::new(VecSink::new());
@@ -619,7 +625,7 @@ fn a_rejected_intent_advances_nothing() {
     let store = seeded_store("A");
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
     let sink = Arc::new(VecSink::new());
@@ -642,7 +648,7 @@ fn a_dead_subscriber_is_reaped_and_others_keep_receiving() {
     let store = seeded_store("A");
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
 
     let live = Arc::new(VecSink::new());
@@ -668,7 +674,7 @@ fn a_dead_subscriber_is_reaped_and_others_keep_receiving() {
 fn harness_for(store: Arc<LayoutStore>) -> (Dispatcher, String, Arc<VecSink>, ClientCache) {
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
     let sink = Arc::new(VecSink::new());
     let snap = projector.subscribe(&region, "sub", "A", sink.clone());
@@ -693,11 +699,12 @@ fn add_tab_route_inserts_a_tab_and_converges() {
     }
     assert_eq!(
         cache.view,
-        store.snapshot("A"),
+        store.snapshot_full("A"),
         "cache converges on authority"
     );
 
-    let root: PanelNode = serde_json::from_value(store.snapshot("A")["root"].clone()).unwrap();
+    let root: PanelNode =
+        serde_json::from_value(store.snapshot_full("A")["groups"][0]["root"].clone()).unwrap();
     let b = termihub_core::layout::panel_tree::find_leaf(&root, "b").unwrap();
     assert!(
         b.tabs.iter().any(|t| t.id == "new"),
@@ -706,7 +713,7 @@ fn add_tab_route_inserts_a_tab_and_converges() {
 }
 
 #[test]
-fn add_group_route_appends_a_group_and_switches_the_back_compat_view() {
+fn add_group_route_appends_a_group_and_widens_the_full_view() {
     let store = seeded_store("A");
     let (dispatcher, region, sink, mut cache) = harness_for(store.clone());
 
@@ -720,27 +727,30 @@ fn add_group_route_appends_a_group_and_switches_the_back_compat_view() {
     assert_eq!(full["activeGroupId"], groups[1]["id"]);
     assert_eq!(groups[1]["name"], json!("Extra"));
 
-    // The back-compat region followed the active group (now an empty leaf).
+    // The multi-group region carries every group, so adding one moves the view:
+    // one diff, and the cache converges on the widened authority (#2283 slice C).
     let _ = region;
     for diff in &sink.diffs() {
         cache.apply(diff);
     }
     assert_eq!(
         cache.view,
-        store.snapshot("A"),
-        "region tracks the active group"
+        store.snapshot_full("A"),
+        "region carries the full multi-group view"
     );
+    assert_eq!(cache.view["groups"].as_array().unwrap().len(), 2);
 }
 
 #[test]
-fn rename_group_route_is_accepted_and_updates_authority() {
+fn rename_group_route_moves_the_full_view_and_updates_authority() {
     let store = seeded_store("A");
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
     let sink = Arc::new(VecSink::new());
-    projector.subscribe(&region, "sub", "A", sink.clone());
+    let snap = projector.subscribe(&region, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
 
     let group_id = store.snapshot_full("A")["activeGroupId"]
         .as_str()
@@ -752,13 +762,14 @@ fn rename_group_route_is_accepted_and_updates_authority() {
         json!({ "groupId": group_id, "name": "Renamed" }),
     ));
     assert_eq!(ack.status, IntentStatus::Accepted);
-    // A metadata-only change: the back-compat region view is unchanged, so no diff.
-    assert_eq!(
-        sink.diffs().len(),
-        0,
-        "rename does not move the back-compat view"
-    );
-    assert_eq!(projector.region_version(&region), Some(0));
+    // The full view carries group metadata, so a rename now moves the region:
+    // exactly one diff, and the cache converges on the renamed authority.
+    assert_eq!(sink.diffs().len(), 1, "rename moves the full view");
+    assert_eq!(projector.region_version(&region), Some(1));
+    for diff in &sink.diffs() {
+        cache.apply(diff);
+    }
+    assert_eq!(cache.view, store.snapshot_full("A"));
     assert_eq!(
         store.snapshot_full("A")["groups"][0]["name"],
         json!("Renamed")
@@ -823,7 +834,7 @@ fn close_group_route_rejects_the_last_group() {
     let store = seeded_store("A");
     let region = layout_region("A");
     let projector = Arc::new(Projector::new());
-    projector.register_region(&region, store.snapshot("A"));
+    projector.register_region(&region, store.snapshot_full("A"));
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
     let sink = Arc::new(VecSink::new());
     projector.subscribe(&region, "sub", "A", sink.clone());

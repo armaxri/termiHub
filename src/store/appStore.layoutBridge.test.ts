@@ -31,6 +31,20 @@ interface RegionState {
   view: unknown;
 }
 
+/** One group in the simulated full multi-group region view (#2283 slice C). */
+interface MinimalGroupView {
+  id: string;
+  name: string;
+  color?: string;
+  root: PanelNode;
+  activePanelId: string | null;
+}
+/** The full region view the simulated backend publishes. */
+interface FullView {
+  groups: MinimalGroupView[];
+  activeGroupId: string;
+}
+
 const { backend, dispatched } = vi.hoisted(() => ({
   backend: {
     version: -1,
@@ -79,30 +93,47 @@ vi.mock("@/services/transport", () => ({
           error: { code: "x", message: "nope" },
         };
       }
-      if (intent.kind === "layout.replace") {
-        backend.push({ root: intent.payload.root, activePanelId: intent.payload.activePanelId });
+      // The region carries the full multi-group view `{ groups, activeGroupId }`
+      // (#2283 slice C). Structural intents operate on the ACTIVE group; these
+      // helpers read/write the active group's tree while keeping the others.
+      const active = (): MinimalGroupView => {
+        const v = backend.view as FullView;
+        return v.groups.find((g) => g.id === v.activeGroupId) ?? v.groups[0];
+      };
+      const pushActive = (root: PanelNode, activePanelId: string | null): void => {
+        const v = backend.view as FullView;
+        const activeId = active().id;
+        const groups = v.groups.map((g) => (g.id === activeId ? { ...g, root, activePanelId } : g));
+        backend.push({ groups, activeGroupId: v.activeGroupId });
+      };
+
+      if (intent.kind === "layout.replaceGroups") {
+        backend.push({
+          groups: intent.payload.groups as MinimalGroupView[],
+          activeGroupId: intent.payload.activeGroupId as string,
+        });
       } else if (intent.kind === "layout.split") {
-        const view = backend.view as { root: PanelNode };
+        const g = active();
         const newLeaf = createLeafPanel();
         let root = splitLeaf(
-          view.root,
+          g.root,
           intent.payload.panelId as string,
           newLeaf,
           intent.payload.direction as "horizontal" | "vertical",
           intent.payload.position as "before" | "after"
         );
         root = simplifyTree(root);
-        backend.push({ root, activePanelId: newLeaf.id });
+        pushActive(root, newLeaf.id);
       } else if (intent.kind === "layout.moveTab") {
         // Mirrors the Rust store's move_tab: detach (positional active fallback),
         // place (center = append / edge = split), prune emptied source, simplify.
         // It does NOT repoint the active panel — the frontend bridge does.
-        const view = backend.view as { root: PanelNode; activePanelId: string | null };
+        const g = active();
         const tabId = intent.payload.tabId as string;
         const target = intent.payload.targetPanelId as string;
-        const src = findLeafByTab(view.root, tabId)!;
+        const src = findLeafByTab(g.root, tabId)!;
         const theTab = src.tabs.find((t) => t.id === tabId)!;
-        let root = updateLeaf(view.root, src.id, (leaf) => removeTabMinimal(leaf, tabId));
+        let root = updateLeaf(g.root, src.id, (leaf) => removeTabMinimal(leaf, tabId));
         const splitInfo = edgeToSplit(intent.payload.edge as never);
         if (!splitInfo) {
           root = updateLeaf(root, target, (leaf) => ({
@@ -125,40 +156,40 @@ vi.mock("@/services/transport", () => ({
           root = removed ?? root;
         }
         root = simplifyTree(root);
-        backend.push({ root, activePanelId: view.activePanelId });
+        pushActive(root, g.activePanelId);
       } else if (intent.kind === "layout.removePanel") {
         // Mirrors the Rust store's remove_panel: drop the whole leaf, simplify,
         // repoint focus onto the first survivor when the removed panel held it.
-        const view = backend.view as { root: PanelNode; activePanelId: string | null };
+        const g = active();
         const panelId = intent.payload.panelId as string;
-        const removed = removeLeaf(view.root, panelId);
-        const root = removed ? simplifyTree(removed) : view.root;
-        let active = view.activePanelId;
-        if (!active || !findLeaf(root, active)) {
-          active = getAllLeaves(root)[0]?.id ?? null;
+        const removed = removeLeaf(g.root, panelId);
+        const root = removed ? simplifyTree(removed) : g.root;
+        let focus = g.activePanelId;
+        if (!focus || !findLeaf(root, focus)) {
+          focus = getAllLeaves(root)[0]?.id ?? null;
         }
-        backend.push({ root, activePanelId: active });
+        pushActive(root, focus);
       } else if (intent.kind === "layout.reorderTabs") {
         // Mirrors the Rust store's reorder_tabs: move a tab within its leaf,
         // leaving focus untouched.
-        const view = backend.view as { root: PanelNode; activePanelId: string | null };
+        const g = active();
         const panelId = intent.payload.panelId as string;
         const oldIndex = intent.payload.oldIndex as number;
         const newIndex = intent.payload.newIndex as number;
-        const root = updateLeaf(view.root, panelId, (leaf) => {
+        const root = updateLeaf(g.root, panelId, (leaf) => {
           const tabs = [...leaf.tabs];
           const [moved] = tabs.splice(oldIndex, 1);
           tabs.splice(newIndex, 0, moved);
           return { ...leaf, tabs };
         });
-        backend.push({ root, activePanelId: view.activePanelId });
+        pushActive(root, g.activePanelId);
       } else if (intent.kind === "layout.setActivePanel") {
         // Mirrors the Rust store's set_active_panel: repoint focus, tree unchanged.
-        const view = backend.view as { root: PanelNode };
-        backend.push({ root: view.root, activePanelId: intent.payload.panelId as string });
+        const g = active();
+        pushActive(g.root, intent.payload.panelId as string);
       } else if (intent.kind === "layout.resize") {
         // Mirrors the Rust store's resize: set the split's normalized sizes.
-        const view = backend.view as { root: PanelNode; activePanelId: string | null };
+        const g = active();
         const splitId = intent.payload.splitId as string;
         const sizes = normalizeSizes(intent.payload.sizes as number[]);
         const setSizes = (n: PanelNode): PanelNode => {
@@ -166,7 +197,7 @@ vi.mock("@/services/transport", () => ({
           const children = n.children.map(setSizes);
           return n.id === splitId ? { ...n, children, sizes } : { ...n, children };
         };
-        backend.push({ root: setSizes(view.root), activePanelId: view.activePanelId });
+        pushActive(setSizes(g.root), g.activePanelId);
       }
       return {
         intentId: "intent-test",
@@ -190,7 +221,10 @@ vi.mock("@/services/transport", () => ({
       return () => backend.listeners.delete(listener);
     }
     async start() {
-      backend.push({ root: createLeafPanel(), activePanelId: null });
+      backend.push({
+        groups: [{ id: "seed-group", name: "Main", root: createLeafPanel(), activePanelId: null }],
+        activeGroupId: "seed-group",
+      });
     }
     stop() {}
   },
@@ -285,8 +319,9 @@ describe("appStore layout bridge — splitPanel cut (#2151)", () => {
     useAppStore.getState().splitPanel("vertical");
     await flush();
 
-    // Seed-before-mutate: replace precedes the structural intent.
-    expect(dispatched.map((d) => d.kind)).toEqual(["layout.replace", "layout.split"]);
+    // Seed-before-mutate: the whole multi-group layout is installed before the
+    // structural intent (#2283 slice C).
+    expect(dispatched.map((d) => d.kind)).toEqual(["layout.replaceGroups", "layout.split"]);
     expect(dispatched[1].payload).toMatchObject({
       panelId: "a",
       direction: "vertical",
@@ -409,9 +444,14 @@ describe("appStore layout bridge — cut ↔ local parity (#2151)", () => {
     useAppStore.getState().setActivePanel("b");
     expect(useAppStore.getState().activePanelId).toBe("b");
     await flush();
-    expect(dispatched.map((d) => d.kind)).toEqual(["layout.replace", "layout.setActivePanel"]);
-    // The projection now tracks the folded focus.
-    expect((backend.view as { activePanelId: string }).activePanelId).toBe("b");
+    expect(dispatched.map((d) => d.kind)).toEqual([
+      "layout.replaceGroups",
+      "layout.setActivePanel",
+    ]);
+    // The projection's active group now tracks the folded focus.
+    const folded = backend.view as FullView;
+    const activeGroup = folded.groups.find((g) => g.id === folded.activeGroupId)!;
+    expect(activeGroup.activePanelId).toBe("b");
   });
 
   it("setActivePanel preserves zoom-follow both ways (#2188)", async () => {

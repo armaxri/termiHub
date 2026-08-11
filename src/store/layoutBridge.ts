@@ -60,6 +60,7 @@ import type {
   PanelNode,
   SplitContainer,
   TabContent,
+  TabGroup,
   TerminalTab,
 } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
@@ -94,10 +95,92 @@ interface MinimalSplit {
 }
 export type MinimalNode = MinimalLeaf | MinimalSplit;
 
-/** The `layout@<clientId>` region view model: tree + focused panel. */
-export interface LayoutView {
+/**
+ * One projected tab group (twin of the Rust `GroupLayout`): its panel tree plus
+ * metadata and focused panel. `color` is omitted when unset.
+ */
+export interface MinimalGroup {
+  id: string;
+  name: string;
+  color?: string;
   root: MinimalNode;
   activePanelId: string | null;
+}
+
+/**
+ * The `layout@<clientId>` region view model — the full multi-group view emitted
+ * by `LayoutStore::snapshot_full()` (#2283 slice C): every tab group plus the
+ * active group id. The renderer composes the **active** group; the rest are
+ * carried so the region is a faithful mirror of `appStore`'s groups.
+ */
+export interface LayoutView {
+  groups: MinimalGroup[];
+  activeGroupId: string;
+}
+
+/**
+ * One tab group in the rich `appStore`-side snapshot: the authoritative panel
+ * tree (rich {@link PanelNode}) plus metadata and focused panel. Built by
+ * {@link buildLayoutSnapshot} from `appStore.tabGroups` with the active group's
+ * live tree overlaid.
+ */
+export interface GroupSnapshot {
+  id: string;
+  name: string;
+  color?: string;
+  root: PanelNode;
+  activePanelId: string | null;
+}
+
+/** The rich `appStore`-side multi-group snapshot: the seed/gate input. */
+export interface LayoutSnapshot {
+  groups: GroupSnapshot[];
+  activeGroupId: string;
+}
+
+/**
+ * Build the rich {@link LayoutSnapshot} from `appStore`'s group state. Only the
+ * **active** group's live tree lives at the top-level `rootPanel`/`activePanelId`
+ * (the matching `tabGroups` entry is stale until a switch), so the active group
+ * is overlaid from those while the rest come from their `tabGroups` entries.
+ */
+export function buildLayoutSnapshot(
+  tabGroups: TabGroup[],
+  activeGroupId: string,
+  activeRoot: PanelNode,
+  activeRootActivePanelId: string | null
+): LayoutSnapshot {
+  return {
+    groups: tabGroups.map((g) => {
+      const isActive = g.id === activeGroupId;
+      const snap: GroupSnapshot = {
+        id: g.id,
+        name: g.name,
+        root: isActive ? activeRoot : g.rootPanel,
+        activePanelId: isActive ? activeRootActivePanelId : g.activePanelId,
+      };
+      if (g.color != null) snap.color = g.color;
+      return snap;
+    }),
+    activeGroupId,
+  };
+}
+
+/** Project a rich {@link GroupSnapshot} to its minimal wire form (for seeding). */
+export function toMinimalGroup(group: GroupSnapshot): MinimalGroup {
+  const minimal: MinimalGroup = {
+    id: group.id,
+    name: group.name,
+    root: toMinimalNode(group.root),
+    activePanelId: group.activePanelId,
+  };
+  if (group.color != null) minimal.color = group.color;
+  return minimal;
+}
+
+/** The active group of a projected view (falls back to the first group). */
+export function activeGroupOf(view: LayoutView): MinimalGroup | undefined {
+  return view.groups.find((g) => g.id === view.activeGroupId) ?? view.groups[0];
 }
 
 // ── Feature flag (runtime-flippable so a dev build can verify the ON path) ─────
@@ -365,29 +448,44 @@ function awaitVersion(client: ProjectionClient, version: number, timeoutMs = 400
  * when `focusTabId` is given, the reconciled `activePanelId` is re-derived as
  * the panel that now holds that tab — reproducing the old focus behaviour.
  *
+ * # Group-aware seed (#2283 slice C)
+ *
+ * Seed-before-mutate installs **every** tab group via `layout.replaceGroups`
+ * (not just the active tree), so the region is a faithful multi-group mirror
+ * before the transform runs. The structural intent still operates on the active
+ * group (its `groupId` is omitted → the store's active group), and the active
+ * group is read back out of the full view for reconcile.
+ *
  * @param kind        the `layout.*` intent kind
  * @param payload     the intent payload
- * @param root        `appStore`'s current `rootPanel` (authoritative structure)
- * @param active      `appStore`'s current `activePanelId`
+ * @param snapshot    `appStore`'s current multi-group snapshot (authority)
  * @param focusTabId  when set, focus the panel this tab landed in
- * @returns the reconciled `{ rootPanel, activePanelId }` to apply to `appStore`
+ * @returns the reconciled `{ rootPanel, activePanelId }` for the **active** group
  * @throws  on a rejected/failed intent or an unreconcilable diff (caller falls
  *          back to the local mutation)
  */
 export async function runLayoutIntent(
   kind: string,
   payload: Record<string, unknown>,
-  root: PanelNode,
-  active: string | null,
+  snapshot: LayoutSnapshot,
   focusTabId?: string
 ): Promise<LayoutStructuralResult> {
   const client = await ensureSubscribed();
-  const tabsById = collectTabs(root);
+  const activeGroup =
+    snapshot.groups.find((g) => g.id === snapshot.activeGroupId) ?? snapshot.groups[0];
+  if (!activeGroup) {
+    throw new Error("layout snapshot has no active group");
+  }
+  const tabsById = collectTabs(activeGroup.root);
 
-  // Seed the store with appStore's authoritative tree, then transform it.
+  // Seed the store with appStore's authoritative multi-group layout, then
+  // transform the active group.
   throwIfRejected(
-    await dispatch("layout.replace", { root: toMinimalNode(root), activePanelId: active }),
-    "replace"
+    await dispatch("layout.replaceGroups", {
+      groups: snapshot.groups.map(toMinimalGroup),
+      activeGroupId: snapshot.activeGroupId,
+    }),
+    "replaceGroups"
   );
   const ack = await dispatch(kind, payload);
   throwIfRejected(ack, kind);
@@ -398,13 +496,14 @@ export async function runLayoutIntent(
   }
 
   const view = client.state.view as LayoutView | undefined;
-  if (!view || !view.root) {
-    throw new Error("layout region has no view after intent");
+  const projectedGroup = view ? activeGroupOf(view) : undefined;
+  if (!projectedGroup || !projectedGroup.root) {
+    throw new Error("layout region has no active group after intent");
   }
-  const rootPanel = reconcileNode(view.root, tabsById);
+  const rootPanel = reconcileNode(projectedGroup.root, tabsById);
   const activePanelId = focusTabId
-    ? (findLeafByTab(rootPanel, focusTabId)?.id ?? view.activePanelId)
-    : view.activePanelId;
+    ? (findLeafByTab(rootPanel, focusTabId)?.id ?? projectedGroup.activePanelId)
+    : projectedGroup.activePanelId;
   return { rootPanel, activePanelId };
 }
 
@@ -483,35 +582,57 @@ function sizesEqual(a: number[] | undefined, b: number[] | undefined): boolean {
 }
 
 /**
- * Whether a projected `view` is a faithful structural mirror of `root` +
- * `activePanelId` — the gate that decides if the renderer may source structure
- * from the projection (true) or must fall back to `appStore` (false).
+ * Whether one projected {@link MinimalGroup} faithfully mirrors a rich
+ * {@link GroupSnapshot} — same id, metadata, focused panel, and panel tree.
  */
-export function viewMatchesTree(
-  view: LayoutView | null | undefined,
-  root: PanelNode,
-  activePanelId: string | null
-): boolean {
-  if (!view || !view.root) return false;
-  if ((view.activePanelId ?? null) !== (activePanelId ?? null)) return false;
-  return minimalNodesEqual(toMinimalNode(root), view.root);
+function minimalGroupMatches(view: MinimalGroup, snap: GroupSnapshot): boolean {
+  return (
+    view.id === snap.id &&
+    view.name === snap.name &&
+    (view.color ?? null) === (snap.color ?? null) &&
+    (view.activePanelId ?? null) === (snap.activePanelId ?? null) &&
+    minimalNodesEqual(toMinimalNode(snap.root), view.root)
+  );
 }
 
 /**
- * Compose the rich render tree from a projected view: **structure** from
- * `view.root`, **content** re-attached by tab id — preferring the flat
- * `contentById` {@link TabContent} map (part of #2283), and falling back to
- * `contentRoot`'s in-tree rich tabs for any id the map does not yet hold. Throws
- * (via {@link reconcileNode}) if the view references a tab absent from **both**;
- * callers gate with {@link viewMatchesTree} first so this never throws on the
- * happy path.
+ * Whether a projected `view` is a faithful structural mirror of the whole
+ * `snapshot` — **every** group matches in order (id, metadata, focused panel and
+ * tree) and the active group id agrees (#2283 slice C). This is the gate that
+ * decides if the renderer may source structure from the projection (true) or
+ * must fall back to `appStore` (false). Widened from the single active tree so a
+ * group add/close/rename/color/reorder (still local) reseeds the region.
+ */
+export function viewMatchesTree(
+  view: LayoutView | null | undefined,
+  snapshot: LayoutSnapshot
+): boolean {
+  if (!view || !Array.isArray(view.groups)) return false;
+  if ((view.activeGroupId ?? null) !== (snapshot.activeGroupId ?? null)) return false;
+  if (view.groups.length !== snapshot.groups.length) return false;
+  return view.groups.every((vg, i) => minimalGroupMatches(vg, snapshot.groups[i]));
+}
+
+/**
+ * Compose the rich render tree for the **active** group of a projected view:
+ * **structure** from the active group's `root`, **content** re-attached by tab
+ * id — preferring the flat `contentById` {@link TabContent} map (part of #2283),
+ * and falling back to `activeContentRoot`'s in-tree rich tabs for any id the map
+ * does not yet hold. `activeContentRoot` is `appStore`'s active-group rich tree
+ * (its `rootPanel`). Throws (via {@link reconcileNode}) if the view references a
+ * tab absent from **both**; callers gate with {@link viewMatchesTree} first so
+ * this never throws on the happy path.
  */
 export function composeRenderTree(
   view: LayoutView,
-  contentRoot: PanelNode,
+  activeContentRoot: PanelNode,
   contentById?: Record<string, TabContent>
 ): PanelNode {
-  return reconcileNode(view.root, collectTabs(contentRoot), contentById);
+  const group = activeGroupOf(view);
+  if (!group) {
+    throw new Error("layout view has no active group");
+  }
+  return reconcileNode(group.root, collectTabs(activeContentRoot), contentById);
 }
 
 /** Ensure the layout region client is subscribed; the renderer's entry point.
@@ -522,19 +643,37 @@ export async function ensureLayoutRegionClient(): Promise<ProjectionClient> {
 }
 
 /**
- * Seed the layout region with a whole tree so the projection tracks
- * `appStore`'s current structure (the render-side counterpart to the mutation
- * bridge's seed-before-mutate). Idempotent server-side: replacing with the same
- * tree yields no diff.
+ * Seed the layout region with the whole multi-group layout so the projection
+ * tracks `appStore`'s current structure (the render-side counterpart to the
+ * mutation bridge's seed-before-mutate). Installs every group via
+ * `layout.replaceGroups` (#2283 slice C). Idempotent server-side: replacing with
+ * the same layout yields no diff.
  */
-export async function seedLayoutRegion(
-  root: PanelNode,
-  activePanelId: string | null
-): Promise<void> {
+export async function seedLayoutRegion(snapshot: LayoutSnapshot): Promise<void> {
   throwIfRejected(
-    await dispatch("layout.replace", { root: toMinimalNode(root), activePanelId }),
-    "replace"
+    await dispatch("layout.replaceGroups", {
+      groups: snapshot.groups.map(toMinimalGroup),
+      activeGroupId: snapshot.activeGroupId,
+    }),
+    "replaceGroups"
   );
+}
+
+/** Structural equality over two rich {@link LayoutSnapshot}s — used to de-dupe
+ * reseeds (a settled layout is not reseeded on every render). */
+export function layoutSnapshotsEqual(a: LayoutSnapshot, b: LayoutSnapshot): boolean {
+  if ((a.activeGroupId ?? null) !== (b.activeGroupId ?? null)) return false;
+  if (a.groups.length !== b.groups.length) return false;
+  return a.groups.every((g, i) => {
+    const o = b.groups[i];
+    return (
+      g.id === o.id &&
+      g.name === o.name &&
+      (g.color ?? null) === (o.color ?? null) &&
+      (g.activePanelId ?? null) === (o.activePanelId ?? null) &&
+      minimalNodesEqual(toMinimalNode(g.root), toMinimalNode(o.root))
+    );
+  });
 }
 
 /** Log a render-path fallback so the projection-cut recovery is visible. */
