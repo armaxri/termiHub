@@ -74,80 +74,186 @@ fn registry_for(store: Arc<LayoutStore>) -> HandlerRegistry {
 
     let s = store.clone();
     registry.route("layout.split", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let panel_id = required_str(intent, "panelId")?;
         let direction: Direction = required_enum(intent, "direction")?;
         let position: Position = required_enum(intent, "position")?;
-        s.split(&intent.client_id, &panel_id, direction, position)
-            .map_err(to_ack_err)?;
+        s.split(
+            &intent.client_id,
+            group.as_deref(),
+            &panel_id,
+            direction,
+            position,
+        )
+        .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.merge", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let source = required_str(intent, "sourcePanelId")?;
         let target = required_str(intent, "targetPanelId")?;
-        s.merge(&intent.client_id, &source, &target)
+        s.merge(&intent.client_id, group.as_deref(), &source, &target)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.moveTab", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let tab_id = required_str(intent, "tabId")?;
         let target = required_str(intent, "targetPanelId")?;
         let edge: DropEdge = required_enum(intent, "edge")?;
-        s.move_tab(&intent.client_id, &tab_id, &target, edge)
+        s.move_tab(&intent.client_id, group.as_deref(), &tab_id, &target, edge)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.closeTabStructure", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let tab_id = required_str(intent, "tabId")?;
-        s.close_tab_structure(&intent.client_id, &tab_id)
+        s.close_tab_structure(&intent.client_id, group.as_deref(), &tab_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.addTab", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
+        let panel_id = required_str(intent, "panelId")?;
+        let tab = parse_tab(intent)?;
+        s.add_tab(&intent.client_id, group.as_deref(), &panel_id, tab)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.removePanel", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let panel_id = required_str(intent, "panelId")?;
-        s.remove_panel(&intent.client_id, &panel_id)
+        s.remove_panel(&intent.client_id, group.as_deref(), &panel_id)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.reorderTabs", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let panel_id = required_str(intent, "panelId")?;
         let old_index = required_usize(intent, "oldIndex")?;
         let new_index = required_usize(intent, "newIndex")?;
-        s.reorder_tabs(&intent.client_id, &panel_id, old_index, new_index)
-            .map_err(to_ack_err)?;
+        s.reorder_tabs(
+            &intent.client_id,
+            group.as_deref(),
+            &panel_id,
+            old_index,
+            new_index,
+        )
+        .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.setActivePanel", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let panel_id = required_str(intent, "panelId")?;
-        s.set_active_panel(&intent.client_id, &panel_id)
+        s.set_active_panel(&intent.client_id, group.as_deref(), &panel_id)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.resize", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let split_id = required_str(intent, "splitId")?;
         let sizes = required_sizes(intent, "sizes")?;
-        s.resize(&intent.client_id, &split_id, sizes)
+        s.resize(&intent.client_id, group.as_deref(), &split_id, sizes)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.replace", move |intent, projector| {
+        let (root, active_panel_id) = parse_replace(intent)?;
+        s.replace(&intent.client_id, root, active_panel_id);
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.addGroup", move |intent, projector| {
+        let name = optional_str(intent, "name");
+        s.add_group(&intent.client_id, name);
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.closeGroup", move |intent, projector| {
+        let group_id = required_str(intent, "groupId")?;
+        s.close_group(&intent.client_id, &group_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.renameGroup", move |intent, projector| {
+        let group_id = required_str(intent, "groupId")?;
+        let name = required_str(intent, "name")?;
+        s.rename_group(&intent.client_id, &group_id, name)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.setGroupColor", move |intent, projector| {
+        let group_id = required_str(intent, "groupId")?;
+        let color = optional_str(intent, "color");
+        s.set_group_color(&intent.client_id, &group_id, color)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.setActiveGroup", move |intent, projector| {
+        let group_id = required_str(intent, "groupId")?;
+        s.set_active_group(&intent.client_id, &group_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.reorderGroups", move |intent, projector| {
+        let from_index = required_usize(intent, "fromIndex")?;
+        let to_index = required_usize(intent, "toIndex")?;
+        s.reorder_groups(&intent.client_id, from_index, to_index)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.moveTabToGroup", move |intent, projector| {
+        let tab_id = required_str(intent, "tabId")?;
+        let from_panel_id = required_str(intent, "fromPanelId")?;
+        let target_group_id = required_str(intent, "targetGroupId")?;
+        s.move_tab_to_group(&intent.client_id, &tab_id, &from_panel_id, &target_group_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.addGroupWithTab", move |intent, projector| {
+        let tab_id = required_str(intent, "tabId")?;
+        let from_panel_id = required_str(intent, "fromPanelId")?;
+        s.add_group_with_tab(&intent.client_id, &tab_id, &from_panel_id)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store;
-    registry.route("layout.replace", move |intent, projector| {
-        let (root, active_panel_id) = parse_replace(intent)?;
-        s.replace(&intent.client_id, root, active_panel_id);
+    registry.route("layout.replaceGroups", move |intent, projector| {
+        let (groups, active_group_id) = parse_replace_groups(intent)?;
+        s.replace_groups(&intent.client_id, groups, active_group_id);
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
@@ -553,4 +659,191 @@ fn a_dead_subscriber_is_reaped_and_others_keep_receiving() {
 
     assert_eq!(projector.subscriber_count(&region), 1, "dead reaped");
     assert_eq!(live.diffs().len(), 1, "live subscriber still receives");
+}
+
+// ── New route parity: addTab / group-level intents (#2283 slice A) ────────────
+
+/// Wire a projector + dispatcher over `store` for client `A`, returning the
+/// dispatcher, the region id, a subscribed sink, and the seeded client cache.
+fn harness_for(store: Arc<LayoutStore>) -> (Dispatcher, String, Arc<VecSink>, ClientCache) {
+    let region = layout_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(&region, "sub", "A", sink.clone());
+    let cache = ClientCache::from_snapshot(&snap);
+    (dispatcher, region, sink, cache)
+}
+
+#[test]
+fn add_tab_route_inserts_a_tab_and_converges() {
+    let store = seeded_store("A");
+    let (dispatcher, _region, sink, mut cache) = harness_for(store.clone());
+
+    let ack = dispatcher.dispatch(intent(
+        "layout.addTab",
+        "A",
+        json!({ "panelId": "b", "tab": { "id": "new", "contentType": "terminal" } }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    for diff in &sink.diffs() {
+        cache.apply(diff);
+    }
+    assert_eq!(
+        cache.view,
+        store.snapshot("A"),
+        "cache converges on authority"
+    );
+
+    let root: PanelNode = serde_json::from_value(store.snapshot("A")["root"].clone()).unwrap();
+    let b = termihub_core::layout::panel_tree::find_leaf(&root, "b").unwrap();
+    assert!(
+        b.tabs.iter().any(|t| t.id == "new"),
+        "tab inserted via route"
+    );
+}
+
+#[test]
+fn add_group_route_appends_a_group_and_switches_the_back_compat_view() {
+    let store = seeded_store("A");
+    let (dispatcher, region, sink, mut cache) = harness_for(store.clone());
+
+    let ack = dispatcher.dispatch(intent("layout.addGroup", "A", json!({ "name": "Extra" })));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    // The full authority now has two groups with the new one active.
+    let full = store.snapshot_full("A");
+    let groups = full["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(full["activeGroupId"], groups[1]["id"]);
+    assert_eq!(groups[1]["name"], json!("Extra"));
+
+    // The back-compat region followed the active group (now an empty leaf).
+    let _ = region;
+    for diff in &sink.diffs() {
+        cache.apply(diff);
+    }
+    assert_eq!(
+        cache.view,
+        store.snapshot("A"),
+        "region tracks the active group"
+    );
+}
+
+#[test]
+fn rename_group_route_is_accepted_and_updates_authority() {
+    let store = seeded_store("A");
+    let region = layout_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(&region, "sub", "A", sink.clone());
+
+    let group_id = store.snapshot_full("A")["activeGroupId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let ack = dispatcher.dispatch(intent(
+        "layout.renameGroup",
+        "A",
+        json!({ "groupId": group_id, "name": "Renamed" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    // A metadata-only change: the back-compat region view is unchanged, so no diff.
+    assert_eq!(
+        sink.diffs().len(),
+        0,
+        "rename does not move the back-compat view"
+    );
+    assert_eq!(projector.region_version(&region), Some(0));
+    assert_eq!(
+        store.snapshot_full("A")["groups"][0]["name"],
+        json!("Renamed")
+    );
+}
+
+#[test]
+fn replace_groups_route_installs_a_multi_group_layout_then_routes_operate() {
+    let store = Arc::new(LayoutStore::new());
+    let (dispatcher, _region, _sink, _cache) = harness_for(store.clone());
+
+    // Install two groups; g1 active holding two_panel_tree, g2 a single leaf.
+    let ack = dispatcher.dispatch(intent(
+        "layout.replaceGroups",
+        "A",
+        json!({
+            "activeGroupId": "g1",
+            "groups": [
+                { "id": "g1", "name": "Main", "root": two_panel_tree(), "activePanelId": "a" },
+                {
+                    "id": "g2",
+                    "name": "Second",
+                    "root": leaf_node("z", &["t9"]),
+                    "activePanelId": "z"
+                }
+            ]
+        }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    assert_eq!(
+        store.snapshot_full("A")["groups"].as_array().unwrap().len(),
+        2
+    );
+
+    // Move t3 (panel b of active g1) into g2 via the route.
+    let ack = dispatcher.dispatch(intent(
+        "layout.moveTabToGroup",
+        "A",
+        json!({ "tabId": "t3", "fromPanelId": "b", "targetGroupId": "g2" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let full = store.snapshot_full("A");
+    let g2_root: PanelNode = serde_json::from_value(
+        full["groups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|g| g["id"] == json!("g2"))
+            .unwrap()["root"]
+            .clone(),
+    )
+    .unwrap();
+    assert!(
+        termihub_core::layout::panel_tree::find_leaf_by_tab(&g2_root, "t3").is_some(),
+        "t3 landed in g2 via the route"
+    );
+}
+
+#[test]
+fn close_group_route_rejects_the_last_group() {
+    let store = seeded_store("A");
+    let region = layout_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(&region, "sub", "A", sink.clone());
+
+    let group_id = store.snapshot_full("A")["activeGroupId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let ack = dispatcher.dispatch(intent(
+        "layout.closeGroup",
+        "A",
+        json!({ "groupId": group_id }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Rejected);
+    assert_eq!(ack.error.unwrap().code, "last_group");
+    assert_eq!(sink.diffs().len(), 0);
+    assert_eq!(projector.region_version(&region), Some(0));
+}
+
+/// A leaf `PanelNode` value for JSON payload fixtures.
+fn leaf_node(id: &str, tab_ids: &[&str]) -> PanelNode {
+    PanelNode::Leaf(leaf(id, tab_ids))
 }

@@ -7,7 +7,7 @@
 //! assert the tree invariants hold after every step.
 
 use proptest::prelude::*;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::*;
 use termihub_core::layout::panel_tree::{
@@ -117,7 +117,7 @@ fn replace_installs_a_whole_tree_over_the_seeded_empty_leaf() {
 
     // A subsequent structural transform now operates on the installed tree.
     store
-        .move_tab("C", "t1", "b", DropEdge::Center)
+        .move_tab("C", None, "t1", "b", DropEdge::Center)
         .expect("move on the replaced tree");
     let root = root_of(&store, "C");
     assert_eq!(
@@ -144,7 +144,7 @@ fn split_inserts_a_new_empty_focused_leaf_and_preserves_tab_count() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     store
-        .split("C", "b", Direction::Vertical, Position::After)
+        .split("C", None, "b", Direction::Vertical, Position::After)
         .unwrap();
 
     let root = root_of(&store, "C");
@@ -161,7 +161,7 @@ fn split_of_unknown_panel_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     let err = store
-        .split("C", "nope", Direction::Horizontal, Position::After)
+        .split("C", None, "nope", Direction::Horizontal, Position::After)
         .unwrap_err();
     assert_eq!(err, LayoutError::PanelNotFound("nope".to_string()));
     assert_eq!(err.code(), "panel_not_found");
@@ -173,7 +173,7 @@ fn split_of_unknown_panel_is_rejected() {
 fn merge_moves_all_tabs_into_target_and_drops_the_source() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.merge("C", "a", "b").unwrap();
+    store.merge("C", None, "a", "b").unwrap();
 
     let root = root_of(&store, "C");
     // The tree simplifies to the single surviving leaf `b` holding all 3 tabs.
@@ -191,7 +191,7 @@ fn merge_into_self_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.merge("C", "a", "a").unwrap_err(),
+        store.merge("C", None, "a", "a").unwrap_err(),
         LayoutError::SamePanel
     );
 }
@@ -201,7 +201,7 @@ fn merge_with_unknown_source_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.merge("C", "ghost", "b").unwrap_err(),
+        store.merge("C", None, "ghost", "b").unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
 }
@@ -212,7 +212,9 @@ fn merge_with_unknown_source_is_rejected() {
 fn move_tab_center_drops_the_tab_into_the_target_stack() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.move_tab("C", "t1", "b", DropEdge::Center).unwrap();
+    store
+        .move_tab("C", None, "t1", "b", DropEdge::Center)
+        .unwrap();
 
     let root = root_of(&store, "C");
     assert_eq!(count_tabs_in_tree(&root), 3, "tab count preserved");
@@ -227,7 +229,9 @@ fn move_tab_center_drops_the_tab_into_the_target_stack() {
 fn move_tab_edge_splits_the_target_into_a_new_leaf() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.move_tab("C", "t3", "a", DropEdge::Right).unwrap();
+    store
+        .move_tab("C", None, "t3", "a", DropEdge::Right)
+        .unwrap();
 
     let root = root_of(&store, "C");
     // b held only t3; moving it out empties and prunes b. t3 lands in a fresh
@@ -251,7 +255,7 @@ fn move_tab_of_unknown_tab_is_rejected() {
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
         store
-            .move_tab("C", "ghost", "b", DropEdge::Center)
+            .move_tab("C", None, "ghost", "b", DropEdge::Center)
             .unwrap_err(),
         LayoutError::TabNotFound("ghost".to_string()),
     );
@@ -271,7 +275,7 @@ fn removing_a_middle_active_tab_falls_back_positionally_like_the_frontend() {
         active_tab_id: Some("t2".to_string()),
     });
     store.seed_for_test("C", root, Some("a".to_string()));
-    store.close_tab_structure("C", "t2").unwrap();
+    store.close_tab_structure("C", None, "t2").unwrap();
 
     let root = root_of(&store, "C");
     let a = find_leaf(&root, "a").unwrap();
@@ -286,7 +290,7 @@ fn removing_a_middle_active_tab_falls_back_positionally_like_the_frontend() {
 fn close_tab_removes_one_tab_keeping_a_non_empty_leaf() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.close_tab_structure("C", "t1").unwrap();
+    store.close_tab_structure("C", None, "t1").unwrap();
 
     let root = root_of(&store, "C");
     assert_eq!(count_tabs_in_tree(&root), 2, "one tab removed");
@@ -300,7 +304,7 @@ fn close_tab_removes_one_tab_keeping_a_non_empty_leaf() {
 fn close_last_tab_in_a_leaf_prunes_and_simplifies() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("b".to_string()));
-    store.close_tab_structure("C", "t3").unwrap();
+    store.close_tab_structure("C", None, "t3").unwrap();
 
     let root = root_of(&store, "C");
     // b emptied → pruned → split simplified to just a.
@@ -317,7 +321,7 @@ fn close_of_unknown_tab_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.close_tab_structure("C", "ghost").unwrap_err(),
+        store.close_tab_structure("C", None, "ghost").unwrap_err(),
         LayoutError::TabNotFound("ghost".to_string()),
     );
 }
@@ -328,7 +332,7 @@ fn close_of_unknown_tab_is_rejected() {
 fn remove_panel_drops_the_whole_leaf_and_simplifies() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.remove_panel("C", "a").unwrap();
+    store.remove_panel("C", None, "a").unwrap();
 
     let root = root_of(&store, "C");
     // a (and its two tabs) is gone; the split simplifies to the single leaf b.
@@ -344,7 +348,7 @@ fn remove_panel_drops_the_whole_leaf_and_simplifies() {
 fn remove_panel_keeps_focus_when_a_different_panel_is_removed() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.remove_panel("C", "b").unwrap();
+    store.remove_panel("C", None, "b").unwrap();
     // a was focused and survives → focus unchanged (frontend parity).
     assert_eq!(active_of(&store, "C").as_deref(), Some("a"));
 }
@@ -354,7 +358,7 @@ fn remove_panel_on_the_sole_leaf_is_a_no_op() {
     let store = LayoutStore::new();
     let root = PanelNode::Leaf(leaf("only", &["t1"]));
     store.seed_for_test("C", root, Some("only".to_string()));
-    store.remove_panel("C", "only").unwrap();
+    store.remove_panel("C", None, "only").unwrap();
 
     let root = root_of(&store, "C");
     // The app always keeps one panel; the sole leaf is untouched.
@@ -368,7 +372,7 @@ fn remove_panel_of_unknown_panel_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.remove_panel("C", "ghost").unwrap_err(),
+        store.remove_panel("C", None, "ghost").unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
 }
@@ -385,7 +389,7 @@ fn reorder_tabs_moves_a_tab_within_its_leaf_keeping_active() {
     });
     store.seed_for_test("C", root, Some("a".to_string()));
     // Move t1 (index 0) to index 2.
-    store.reorder_tabs("C", "a", 0, 2).unwrap();
+    store.reorder_tabs("C", None, "a", 0, 2).unwrap();
 
     let root = root_of(&store, "C");
     let a = find_leaf(&root, "a").unwrap();
@@ -404,7 +408,7 @@ fn reorder_tabs_rejects_an_out_of_range_index() {
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     // b holds one tab → index 1 is out of range.
     assert_eq!(
-        store.reorder_tabs("C", "b", 1, 0).unwrap_err(),
+        store.reorder_tabs("C", None, "b", 1, 0).unwrap_err(),
         LayoutError::IndexOutOfRange,
     );
     assert_eq!(LayoutError::IndexOutOfRange.code(), "bad_payload");
@@ -415,7 +419,7 @@ fn reorder_tabs_of_unknown_panel_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.reorder_tabs("C", "ghost", 0, 0).unwrap_err(),
+        store.reorder_tabs("C", None, "ghost", 0, 0).unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
 }
@@ -427,7 +431,7 @@ fn set_active_panel_repoints_focus_without_touching_the_tree() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     let before = root_of(&store, "C");
-    store.set_active_panel("C", "b").unwrap();
+    store.set_active_panel("C", None, "b").unwrap();
 
     assert_eq!(active_of(&store, "C").as_deref(), Some("b"), "focus moved");
     assert_eq!(root_of(&store, "C"), before, "tree unchanged");
@@ -438,7 +442,7 @@ fn set_active_panel_of_unknown_panel_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.set_active_panel("C", "ghost").unwrap_err(),
+        store.set_active_panel("C", None, "ghost").unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
 }
@@ -450,7 +454,7 @@ fn resize_persists_normalized_sizes_on_the_split() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     // Supply sizes that do not sum to 100 → stored normalized.
-    store.resize("C", "root", vec![30.0, 10.0]).unwrap();
+    store.resize("C", None, "root", vec![30.0, 10.0]).unwrap();
 
     let root = root_of(&store, "C");
     match root {
@@ -469,7 +473,7 @@ fn resize_rejects_a_mismatched_size_count() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.resize("C", "root", vec![100.0]).unwrap_err(),
+        store.resize("C", None, "root", vec![100.0]).unwrap_err(),
         LayoutError::SizeMismatch,
     );
     assert_eq!(LayoutError::SizeMismatch.code(), "bad_payload");
@@ -480,9 +484,548 @@ fn resize_of_unknown_split_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.resize("C", "ghost", vec![50.0, 50.0]).unwrap_err(),
+        store
+            .resize("C", None, "ghost", vec![50.0, 50.0])
+            .unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
+}
+
+// ── Multi-group fixtures ─────────────────────────────────────────────────────
+
+fn group(id: &str, name: &str, root: PanelNode, active: Option<&str>) -> GroupLayout {
+    GroupLayout {
+        id: id.to_string(),
+        name: name.to_string(),
+        color: None,
+        root,
+        active_panel_id: active.map(str::to_string),
+    }
+}
+
+/// A two-group client: active `g1` holds `two_panel_tree`; `g2` holds a single
+/// leaf `z` with tab `t9`.
+fn two_group_client() -> ClientLayout {
+    ClientLayout {
+        groups: vec![
+            group("g1", "Main", two_panel_tree(), Some("a")),
+            group(
+                "g2",
+                "Second",
+                PanelNode::Leaf(leaf("z", &["t9"])),
+                Some("z"),
+            ),
+        ],
+        active_group_id: "g1".to_string(),
+    }
+}
+
+fn full_of(store: &LayoutStore, client: &str) -> Value {
+    store.snapshot_full(client)
+}
+
+fn group_root(store: &LayoutStore, client: &str, group_id: &str) -> PanelNode {
+    let full = store.snapshot_full(client);
+    let groups = full["groups"].as_array().expect("groups array");
+    let g = groups
+        .iter()
+        .find(|g| g["id"] == json!(group_id))
+        .expect("group present");
+    serde_json::from_value(g["root"].clone()).expect("group root deserializes")
+}
+
+// ── Back-compat + full view ──────────────────────────────────────────────────
+
+#[test]
+fn snapshot_is_the_active_groups_back_compat_view() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    // Back-compat shape is unchanged: { root, activePanelId } for the active group.
+    let snap = store.snapshot("C");
+    assert_eq!(snap["activePanelId"], json!("a"));
+    assert_eq!(count_tabs_in_tree(&root_of(&store, "C")), 3, "g1's tree");
+    assert!(snap.get("groups").is_none(), "no multi-group keys leak");
+
+    // Switching the active group re-points the back-compat view at g2.
+    store.set_active_group("C", "g2").unwrap();
+    assert_eq!(store.snapshot("C")["activePanelId"], json!("z"));
+    assert_eq!(count_tabs_in_tree(&root_of(&store, "C")), 1, "g2's tree");
+}
+
+#[test]
+fn snapshot_full_lists_every_group_and_the_active_id() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    let full = full_of(&store, "C");
+    assert_eq!(full["activeGroupId"], json!("g1"));
+    let groups = full["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["id"], json!("g1"));
+    assert_eq!(groups[0]["name"], json!("Main"));
+    assert_eq!(groups[1]["id"], json!("g2"));
+    // Unset colour is omitted, matching the frontend optional field.
+    assert!(groups[0].get("color").is_none());
+}
+
+#[test]
+fn a_never_touched_client_seeds_one_group() {
+    let store = LayoutStore::new();
+    let full = full_of(&store, "C");
+    let groups = full["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 1, "one seeded group");
+    assert_eq!(groups[0]["name"], json!("Main"));
+    assert_eq!(full["activeGroupId"], groups[0]["id"]);
+}
+
+// ── group_id scoping / isolation ─────────────────────────────────────────────
+
+#[test]
+fn an_omitted_group_id_targets_the_active_group() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    // None → active group g1 gains a leaf; g2 is untouched.
+    store
+        .split("C", None, "b", Direction::Vertical, Position::After)
+        .unwrap();
+    assert_eq!(get_all_leaves(&group_root(&store, "C", "g1")).len(), 3);
+    assert_eq!(get_all_leaves(&group_root(&store, "C", "g2")).len(), 1);
+}
+
+#[test]
+fn a_group_id_scopes_a_transform_to_that_group_only() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    let g1_before = group_root(&store, "C", "g1");
+    // Split inside the *inactive* group g2; g1 must be byte-identical afterwards.
+    store
+        .split("C", Some("g2"), "z", Direction::Horizontal, Position::After)
+        .unwrap();
+    assert_eq!(
+        get_all_leaves(&group_root(&store, "C", "g2")).len(),
+        2,
+        "g2 mutated"
+    );
+    assert_eq!(
+        group_root(&store, "C", "g1"),
+        g1_before,
+        "g1 never touched by a g2-scoped mutation"
+    );
+}
+
+#[test]
+fn a_transform_on_an_unknown_group_is_rejected() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    let err = store
+        .split(
+            "C",
+            Some("ghost"),
+            "a",
+            Direction::Horizontal,
+            Position::After,
+        )
+        .unwrap_err();
+    assert_eq!(err, LayoutError::GroupNotFound("ghost".to_string()));
+    assert_eq!(err.code(), "group_not_found");
+}
+
+// ── addTab ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn add_tab_inserts_and_focuses_a_minimal_tab() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    store.add_tab("C", None, "b", tab("new")).unwrap();
+
+    let root_g1 = group_root(&store, "C", "g1");
+    let b = find_leaf(&root_g1, "b").unwrap();
+    assert_eq!(
+        b.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        vec!["t3", "new"]
+    );
+    assert_eq!(b.active_tab_id.as_deref(), Some("new"), "new tab focused");
+    assert_eq!(
+        store.snapshot("C")["activePanelId"],
+        json!("b"),
+        "panel focused"
+    );
+}
+
+#[test]
+fn add_tab_targets_a_named_group() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    store.add_tab("C", Some("g2"), "z", tab("new")).unwrap();
+    let root_g2 = group_root(&store, "C", "g2");
+    let z = find_leaf(&root_g2, "z").unwrap();
+    assert!(z.tabs.iter().any(|t| t.id == "new"));
+}
+
+#[test]
+fn add_tab_on_an_unknown_panel_is_rejected() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    assert_eq!(
+        store.add_tab("C", None, "ghost", tab("new")).unwrap_err(),
+        LayoutError::PanelNotFound("ghost".to_string()),
+    );
+}
+
+#[test]
+fn add_tab_then_close_tab_round_trips() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    let before = count_tabs_in_tree(&group_root(&store, "C", "g1"));
+    store.add_tab("C", None, "b", tab("ephemeral")).unwrap();
+    assert_eq!(
+        count_tabs_in_tree(&group_root(&store, "C", "g1")),
+        before + 1
+    );
+    store.close_tab_structure("C", None, "ephemeral").unwrap();
+    assert_eq!(
+        count_tabs_in_tree(&group_root(&store, "C", "g1")),
+        before,
+        "close undoes the add"
+    );
+}
+
+// ── addGroup ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn add_group_appends_an_empty_group_and_activates_it() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    let new_id = store.add_group("C", None);
+
+    let full = full_of(&store, "C");
+    let groups = full["groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 3, "group appended");
+    assert_eq!(full["activeGroupId"], json!(new_id), "new group is active");
+    assert_eq!(
+        groups[2]["name"],
+        json!("Group 3"),
+        "default name uses count"
+    );
+    // The new group is a single empty focused leaf.
+    let root = group_root(&store, "C", &new_id);
+    let leaves = get_all_leaves(&root);
+    assert_eq!(leaves.len(), 1);
+    assert!(leaves[0].tabs.is_empty());
+}
+
+#[test]
+fn add_group_honours_an_explicit_name() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    let id = store.add_group("C", Some("Custom".to_string()));
+    let root_name = full_of(&store, "C")["groups"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["id"] == json!(id))
+        .unwrap()["name"]
+        .clone();
+    assert_eq!(root_name, json!("Custom"));
+}
+
+// ── closeGroup ───────────────────────────────────────────────────────────────
+
+#[test]
+fn close_inactive_group_removes_only_it_and_keeps_active() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    store.close_group("C", "g2").unwrap();
+    let full = full_of(&store, "C");
+    assert_eq!(full["groups"].as_array().unwrap().len(), 1);
+    assert_eq!(full["activeGroupId"], json!("g1"), "active unchanged");
+}
+
+#[test]
+fn close_active_group_repoints_to_the_previous_group() {
+    let store = LayoutStore::new();
+    // Three groups g1,g2,g3; active g2 (index 1). Closing g2 → max(0,1-1)=0 → g1.
+    let client = ClientLayout {
+        groups: vec![
+            group("g1", "A", PanelNode::Leaf(leaf("a", &["t1"])), Some("a")),
+            group("g2", "B", PanelNode::Leaf(leaf("b", &["t2"])), Some("b")),
+            group("g3", "C", PanelNode::Leaf(leaf("c", &["t3"])), Some("c")),
+        ],
+        active_group_id: "g2".to_string(),
+    };
+    store.seed_groups_for_test("C", client);
+    store.close_group("C", "g2").unwrap();
+    assert_eq!(full_of(&store, "C")["activeGroupId"], json!("g1"));
+}
+
+#[test]
+fn closing_the_last_group_is_rejected() {
+    let store = LayoutStore::new();
+    // Fresh client → one seeded group.
+    let err = store
+        .close_group("C", &current_active_group(&store, "C"))
+        .unwrap_err();
+    assert_eq!(err, LayoutError::LastGroup);
+    assert_eq!(err.code(), "last_group");
+}
+
+#[test]
+fn closing_an_unknown_group_is_rejected() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    assert_eq!(
+        store.close_group("C", "ghost").unwrap_err(),
+        LayoutError::GroupNotFound("ghost".to_string()),
+    );
+}
+
+// ── rename / colour / setActive / reorder ────────────────────────────────────
+
+#[test]
+fn rename_group_sets_the_name() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    store
+        .rename_group("C", "g2", "Renamed".to_string())
+        .unwrap();
+    let name = full_of(&store, "C")["groups"].as_array().unwrap()[1]["name"].clone();
+    assert_eq!(name, json!("Renamed"));
+}
+
+#[test]
+fn set_group_color_sets_then_clears() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    store
+        .set_group_color("C", "g1", Some("#ff0000".to_string()))
+        .unwrap();
+    assert_eq!(
+        full_of(&store, "C")["groups"].as_array().unwrap()[0]["color"],
+        json!("#ff0000")
+    );
+    store.set_group_color("C", "g1", None).unwrap();
+    assert!(
+        full_of(&store, "C")["groups"].as_array().unwrap()[0]
+            .get("color")
+            .is_none(),
+        "cleared colour is omitted"
+    );
+}
+
+#[test]
+fn set_active_group_switches_and_rejects_unknown() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    store.set_active_group("C", "g2").unwrap();
+    assert_eq!(full_of(&store, "C")["activeGroupId"], json!("g2"));
+    assert_eq!(
+        store.set_active_group("C", "ghost").unwrap_err(),
+        LayoutError::GroupNotFound("ghost".to_string()),
+    );
+}
+
+#[test]
+fn reorder_groups_moves_a_group() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    // Move g1 (index 0) to index 1 → order becomes [g2, g1].
+    store.reorder_groups("C", 0, 1).unwrap();
+    let groups = full_of(&store, "C")["groups"].clone();
+    let ids: Vec<&str> = groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|g| g["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["g2", "g1"]);
+    assert_eq!(
+        full_of(&store, "C")["activeGroupId"],
+        json!("g1"),
+        "active id stable"
+    );
+}
+
+#[test]
+fn reorder_groups_rejects_an_out_of_range_index() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    assert_eq!(
+        store.reorder_groups("C", 0, 5).unwrap_err(),
+        LayoutError::IndexOutOfRange,
+    );
+}
+
+// ── moveTabToGroup (cross-tree) ──────────────────────────────────────────────
+
+#[test]
+fn move_tab_to_group_moves_a_tab_across_trees() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    // Move t3 (sole tab of panel b in active g1) into g2.
+    store.move_tab_to_group("C", "t3", "b", "g2").unwrap();
+
+    // g1: b emptied → pruned → only a (t1,t2) survives.
+    let g1 = group_root(&store, "C", "g1");
+    assert_eq!(count_tabs_in_tree(&g1), 2, "t3 left g1");
+    assert!(find_leaf(&g1, "b").is_none(), "emptied source panel pruned");
+    // g2: t3 appended to z's stack and focused there.
+    let root_g2 = group_root(&store, "C", "g2");
+    let z = find_leaf(&root_g2, "z").unwrap();
+    assert_eq!(
+        z.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        vec!["t9", "t3"]
+    );
+    assert_eq!(
+        z.active_tab_id.as_deref(),
+        Some("t3"),
+        "moved tab focused in target"
+    );
+}
+
+#[test]
+fn move_tab_to_group_keeps_a_shared_panel_when_it_still_has_tabs() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    // Move t1 out of panel a (which still holds t2) → a survives, not pruned.
+    store.move_tab_to_group("C", "t1", "a", "g2").unwrap();
+    let root_g1 = group_root(&store, "C", "g1");
+    let a = find_leaf(&root_g1, "a").unwrap();
+    assert_eq!(
+        a.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        vec!["t2"]
+    );
+    assert_eq!(count_tabs_in_tree(&group_root(&store, "C", "g2")), 2);
+}
+
+#[test]
+fn move_tab_to_group_is_a_no_op_when_target_is_active() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    let before = full_of(&store, "C");
+    store.move_tab_to_group("C", "t1", "a", "g1").unwrap();
+    assert_eq!(
+        full_of(&store, "C"),
+        before,
+        "no change when target == active"
+    );
+}
+
+#[test]
+fn move_tab_to_group_rejects_unknown_target_and_tab() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    assert_eq!(
+        store
+            .move_tab_to_group("C", "t1", "a", "ghost")
+            .unwrap_err(),
+        LayoutError::GroupNotFound("ghost".to_string()),
+    );
+    assert_eq!(
+        store.move_tab_to_group("C", "nope", "a", "g2").unwrap_err(),
+        LayoutError::TabNotFound("nope".to_string()),
+    );
+}
+
+// ── addGroupWithTab (cross-tree) ─────────────────────────────────────────────
+
+#[test]
+fn add_group_with_tab_creates_a_new_active_group_holding_the_tab() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    let new_id = store.add_group_with_tab("C", "t1", "a").unwrap();
+
+    let full = full_of(&store, "C");
+    assert_eq!(
+        full["groups"].as_array().unwrap().len(),
+        3,
+        "group appended"
+    );
+    assert_eq!(full["activeGroupId"], json!(new_id), "new group active");
+    // Source g1 lost t1 (a still holds t2 — not pruned).
+    let root_g1 = group_root(&store, "C", "g1");
+    let a = find_leaf(&root_g1, "a").unwrap();
+    assert_eq!(
+        a.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        vec!["t2"]
+    );
+    // The new group holds exactly t1, focused.
+    let root = group_root(&store, "C", &new_id);
+    let leaves = get_all_leaves(&root);
+    assert_eq!(leaves.len(), 1);
+    assert_eq!(
+        leaves[0]
+            .tabs
+            .iter()
+            .map(|t| t.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["t1"]
+    );
+    assert_eq!(leaves[0].active_tab_id.as_deref(), Some("t1"));
+}
+
+#[test]
+fn add_group_with_tab_rejects_an_unknown_tab() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    assert_eq!(
+        store.add_group_with_tab("C", "nope", "a").unwrap_err(),
+        LayoutError::TabNotFound("nope".to_string()),
+    );
+}
+
+// ── replaceGroups ────────────────────────────────────────────────────────────
+
+#[test]
+fn replace_groups_installs_a_whole_multi_group_layout() {
+    let store = LayoutStore::new();
+    // A fresh client (one group) is replaced by a two-group install.
+    store.replace_groups("C", two_group_client().groups, "g2".to_string());
+    let full = full_of(&store, "C");
+    assert_eq!(full["groups"].as_array().unwrap().len(), 2);
+    assert_eq!(full["activeGroupId"], json!("g2"));
+    // Back-compat view now reflects g2.
+    assert_eq!(store.snapshot("C")["activePanelId"], json!("z"));
+}
+
+#[test]
+fn replace_groups_repoints_a_dangling_active_group_and_active_panel() {
+    let store = LayoutStore::new();
+    // active_group_id names no present group; g1's active panel is a ghost.
+    let groups = vec![group("g1", "A", two_panel_tree(), Some("ghost"))];
+    store.replace_groups("C", groups, "nope".to_string());
+    let full = full_of(&store, "C");
+    assert_eq!(
+        full["activeGroupId"],
+        json!("g1"),
+        "active group repointed to first"
+    );
+    // The dangling active panel was repointed at a real leaf.
+    let active = store.snapshot("C")["activePanelId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(find_leaf(&root_of(&store, "C"), &active).is_some());
+}
+
+#[test]
+fn replace_groups_with_no_groups_falls_back_to_a_seeded_client() {
+    let store = LayoutStore::new();
+    store.seed_groups_for_test("C", two_group_client());
+    store.replace_groups("C", Vec::new(), "whatever".to_string());
+    let full = full_of(&store, "C");
+    assert_eq!(
+        full["groups"].as_array().unwrap().len(),
+        1,
+        "seeded fallback"
+    );
+    assert_eq!(full["groups"].as_array().unwrap()[0]["name"], json!("Main"));
+}
+
+/// The active group id of a client (reads the full view).
+fn current_active_group(store: &LayoutStore, client: &str) -> String {
+    store.snapshot_full(client)["activeGroupId"]
+        .as_str()
+        .expect("active group id")
+        .to_string()
 }
 
 // ── Property tests over the transforms ───────────────────────────────────────
@@ -530,12 +1073,12 @@ proptest! {
                 0 => {
                     let direction = if e % 2 == 0 { Direction::Horizontal } else { Direction::Vertical };
                     let position = if (e / 2) % 2 == 0 { Position::Before } else { Position::After };
-                    store.split(client, &src_id, direction, position).unwrap();
+                    store.split(client, None, &src_id, direction, position).unwrap();
                     prop_assert_eq!(count_tabs_in_tree(&root_of(&store, client)), before);
                 }
                 1 => {
                     if src_id != tgt_id {
-                        store.merge(client, &src_id, &tgt_id).unwrap();
+                        store.merge(client, None, &src_id, &tgt_id).unwrap();
                         prop_assert_eq!(count_tabs_in_tree(&root_of(&store, client)), before);
                     }
                 }
@@ -543,14 +1086,14 @@ proptest! {
                     if let Some(t) = src.tabs.first() {
                         let tab_id = t.id.clone();
                         let edge = ALL_EDGES[e as usize % ALL_EDGES.len()];
-                        store.move_tab(client, &tab_id, &tgt_id, edge).unwrap();
+                        store.move_tab(client, None, &tab_id, &tgt_id, edge).unwrap();
                         prop_assert_eq!(count_tabs_in_tree(&root_of(&store, client)), before);
                     }
                 }
                 _ => {
                     if let Some(t) = src.tabs.first() {
                         let tab_id = t.id.clone();
-                        store.close_tab_structure(client, &tab_id).unwrap();
+                        store.close_tab_structure(client, None, &tab_id).unwrap();
                         prop_assert_eq!(count_tabs_in_tree(&root_of(&store, client)), before - 1);
                     }
                 }
