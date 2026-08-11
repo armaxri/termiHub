@@ -2914,6 +2914,21 @@ export const useAppStore = create<AppState>((set, get, store) => {
    * the non-intent structural writers (openers, handoff, restore, conversion). */
   const reseedLayout = (): void => reseedLayoutRegion(currentLayoutSnapshot(get()));
 
+  /**
+   * `set` for a **non-intent** structural writer (#2283 slice E2): it writes the
+   * layout locally (there is no granular `layout.*` intent for it — the singleton
+   * tab openers, cross-window handoff, restore, the agent-error→terminal
+   * conversion) and then reseeds the region so it never lags. Without the reseed
+   * the unconditional mirror would recompose an older region view over the
+   * just-written tab on the next convergence diff and strand it.
+   */
+  const setAndReseed = (
+    partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)
+  ): void => {
+    set(partial as Parameters<typeof set>[0]);
+    reseedLayout();
+  };
+
   return {
     // Domain slices (#2077) — extracted from this monolith, spread in first so
     // the root store keeps the same public shape and behavior.
@@ -3354,10 +3369,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
           ...transferMoved,
         };
       });
+      // Non-intent structural writer (#2283 slice E2): reseed the region after the
+      // local tree removal so it does not lag.
+      reseedLayout();
     },
 
     hydrateHandoffTab: (record) =>
-      set((state) => {
+      setAndReseed((state) => {
         const h = record.tab;
         const targetLeaf = getAllLeaves(state.rootPanel)[0];
         if (!targetLeaf) return state;
@@ -3472,7 +3490,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // GAP G5 (#1146): raise the guard before placing the layout so this
       // window's auto-report subscription does not report a mid-hydrate tree.
       beginRestoreGuard(set);
-      set({
+      setAndReseed({
         tabGroups: builtGroups,
         activeTabGroupId: firstGroup.id,
         rootPanel: firstGroup.rootPanel,
@@ -4222,7 +4240,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     pendingSettingsPluginId: null,
 
     openSettingsTab: (target) =>
-      set((state) => {
+      setAndReseed((state) => {
         // Deep-link target (#2000): a null category leaves the panel's current
         // category alone, so a plain open never resets it to General.
         const nav = {
@@ -4266,7 +4284,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }),
 
     openLogViewerTab: () =>
-      set((state) => {
+      setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
         // Look for an existing log-viewer tab
@@ -4302,7 +4320,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }),
 
     openNetworkDiagnosticTab: (tool, prefillHost, connectionId) =>
-      set((state) => {
+      setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
         const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
@@ -4339,7 +4357,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }),
 
     openEditorTab: (filePath, isRemote, permissions, sessionBrowser) =>
-      set((state) => {
+      setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
         // Stable identity of the backing session, so the same path opened from
@@ -4416,7 +4434,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }),
 
     openScratchEditorTab: (title, fileName, content) =>
-      set((state) => {
+      setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
         const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
         if (!targetPanelId) return state;
@@ -4445,7 +4463,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }),
 
     openConnectionEditorTab: (connectionId, folderId) =>
-      set((state) => {
+      setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
         // Look for an existing connection-editor tab for this connection
@@ -4502,7 +4520,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }),
 
     openAgentDefinitionEditorTab: (agentId, definitionId, folderId) =>
-      set((state) => {
+      setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
         // Look for an existing editor tab for this agent definition
@@ -6707,7 +6725,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         return { ...panel, tabs: updatedTabs };
       };
 
-      set((s) => {
+      setAndReseed((s) => {
         const rootPanel = convertPanel(s.rootPanel);
         const tabGroups = s.tabGroups.map((g) => ({ ...g, rootPanel: convertPanel(g.rootPanel) }));
         return {
@@ -6973,7 +6991,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     openTunnelEditorTab: (tunnelId) =>
-      set((state) => {
+      setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
         // Look for an existing tunnel-editor tab for this tunnel
@@ -7568,7 +7586,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     openWorkspaceEditorTab: (workspaceId) =>
-      set((state) => {
+      setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
 
         // Look for an existing workspace-editor tab for this workspace
@@ -7793,7 +7811,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // connects that follow — do not persist a mid-launch snapshot over the
         // previously-good session.
         beginRestoreGuard(set);
-        set({
+        setAndReseed({
           tabGroups: builtGroups,
           activeTabGroupId: firstGroup.id,
           rootPanel: firstGroup.rootPanel,
@@ -8002,7 +8020,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // auto-save subscription that fires from this very `set` — and the
         // per-tab connects that follow — are skipped until the cohort settles.
         beginRestoreGuard(set);
-        set({
+        setAndReseed({
           tabGroups: builtGroups,
           activeTabGroupId: activeGroup.id,
           rootPanel: activeGroup.rootPanel,
