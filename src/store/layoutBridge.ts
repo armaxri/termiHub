@@ -286,8 +286,25 @@ let regionClient: ProjectionClient | null = null;
 let creatingClient: ProjectionClient | null = null;
 let startPromise: Promise<ProjectionClient> | null = null;
 
+/**
+ * Registered region→appStore mirror handlers (#2283 slice E2). Kept in a set so
+ * they are **re-attached** whenever the client is (re)created — a transport swap
+ * ({@link setLayoutTransportForTest}) or {@link stopLayoutSubscription} drops the
+ * old client and its listeners, and with the local reducers gone the mirror is
+ * the *sole* writer of `appStore`'s layout, so it must not be orphaned by a reset.
+ */
+const layoutMirrorHandlers = new Set<(view: LayoutView | undefined) => void>();
+
+/** Attach every registered mirror handler's `onChange` to a freshly-made client. */
+function attachLayoutMirrorHandlers(client: ProjectionClient): void {
+  for (const handler of layoutMirrorHandlers) {
+    client.onChange((state) => handler(state.view as LayoutView | undefined));
+  }
+}
+
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription. */
+ * drops any active subscription. Registered mirror handlers survive and re-attach
+ * to the next client. */
 export function setLayoutTransportForTest(t: Transport | null): void {
   (regionClient ?? creatingClient)?.stop();
   regionClient = null;
@@ -324,6 +341,9 @@ function layoutRegionClient(): ProjectionClient {
   if (regionClient) return regionClient;
   if (!creatingClient) {
     creatingClient = new ProjectionClient(transport(), region);
+    // Re-bind the region→appStore mirror to the new client (E2): a transport swap
+    // or subscription reset drops the previous client and its listeners.
+    attachLayoutMirrorHandlers(creatingClient);
   }
   return creatingClient;
 }
@@ -785,9 +805,16 @@ export function composeLayoutState(
     const tabGroups: TabGroup[] = view.groups.map((vg) => {
       if (vg.id === activeGroupId) {
         const cur = curTabGroups.find((g) => g.id === vg.id);
-        // Keep the active group's `appStore` entry verbatim (see doc): the live
-        // tree is the top-level `rootPanel`, not this entry.
-        if (cur) return { ...cur };
+        // Keep the active group's `appStore` entry's tree/activePanelId (the live
+        // tree is the top-level `rootPanel`, so this entry is intentionally stale),
+        // but track its metadata (name/color) from the region view — a rename or
+        // recolor of the active group changes only that.
+        if (cur) {
+          const entry: TabGroup = { ...cur, name: vg.name };
+          if (vg.color != null) entry.color = vg.color;
+          else delete entry.color;
+          return entry;
+        }
       }
       const entry: TabGroup = {
         id: vg.id,
@@ -827,10 +854,23 @@ export function composeLayoutState(
  * (idempotent) so the stream is live. Returns an unsubscribe.
  */
 export function subscribeLayoutRegion(handler: (view: LayoutView | undefined) => void): () => void {
+  const alreadyRegistered = layoutMirrorHandlers.has(handler);
+  layoutMirrorHandlers.add(handler);
+  // Attach to the current client now. If the client did not yet exist,
+  // `layoutRegionClient()` creates it and `attachLayoutMirrorHandlers` binds every
+  // registered handler (including this one) — so only bind here when the client was
+  // already live and would not have picked this handler up on creation.
+  const hadClient = regionClient !== null || creatingClient !== null;
   const client = layoutRegionClient();
-  const off = client.onChange((state) => handler(state.view as LayoutView | undefined));
+  let off = (): void => {};
+  if (hadClient && !alreadyRegistered) {
+    off = client.onChange((state) => handler(state.view as LayoutView | undefined));
+  }
   void ensureSubscribed().catch((err) => logRenderFallback(err));
-  return off;
+  return () => {
+    layoutMirrorHandlers.delete(handler);
+    off();
+  };
 }
 
 /**
