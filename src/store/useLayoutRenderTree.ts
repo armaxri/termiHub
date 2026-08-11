@@ -35,15 +35,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAppStore } from "@/store/appStore";
 import {
+  buildLayoutSnapshot,
   composeRenderTree,
   ensureLayoutRegionClient,
+  type LayoutSnapshot,
   type LayoutView,
   layoutRenderFromProjectionEnabled,
+  layoutSnapshotsEqual,
   logRenderFallback,
-  type MinimalNode,
-  minimalNodesEqual,
   seedLayoutRegion,
-  toMinimalNode,
   viewMatchesTree,
 } from "@/store/layoutBridge";
 import type { ProjectionCacheState, ProjectionClient } from "@/services/transport";
@@ -58,6 +58,12 @@ import type { PanelNode } from "@/types/terminal";
 export function useLayoutRenderTree(): PanelNode {
   const storeRoot = useAppStore((s) => s.rootPanel);
   const storeActivePanelId = useAppStore((s) => s.activePanelId);
+  // The full group model: `tabGroups` + the active group id, with the active
+  // group's live tree carried at top-level `rootPanel`/`activePanelId` (#2283
+  // slice C). The region mirrors all groups; the renderer composes the active
+  // one.
+  const tabGroups = useAppStore((s) => s.tabGroups);
+  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
   // The authoritative by-id tab-content map (part of #2283). Render composition
   // sources each tab's content from here, falling back to the in-tree tab for
   // any id the map does not yet hold (editor/settings/etc.). Behaviour-preserving
@@ -70,7 +76,14 @@ export function useLayoutRenderTree(): PanelNode {
 
   const [regionState, setRegionState] = useState<ProjectionCacheState | null>(null);
   const clientRef = useRef<ProjectionClient | null>(null);
-  const lastSeeded = useRef<{ root: MinimalNode; activePanelId: string | null } | null>(null);
+  const lastSeeded = useRef<LayoutSnapshot | null>(null);
+
+  // The rich multi-group snapshot appStore is authoritative for — the seed
+  // payload and the faithful-mirror gate's reference.
+  const snapshot = useMemo<LayoutSnapshot>(
+    () => buildLayoutSnapshot(tabGroups, activeTabGroupId, storeRoot, storeActivePanelId),
+    [tabGroups, activeTabGroupId, storeRoot, storeActivePanelId]
+  );
 
   // Subscribe to the layout region while enabled; a transport that cannot
   // subscribe (non-Tauri without a socket) just leaves the renderer on the
@@ -95,32 +108,27 @@ export function useLayoutRenderTree(): PanelNode {
   }, [enabled]);
 
   const view = regionState?.view as LayoutView | undefined;
-  const matches = enabled && viewMatchesTree(view, storeRoot, storeActivePanelId);
+  const matches = enabled && viewMatchesTree(view, snapshot);
 
-  // Keep the region a faithful mirror of appStore's structure. When the view is
-  // not a mirror (initial single-leaf snapshot, or a local non-intent edit),
-  // seed it with the current tree so composing can resume. De-duped so a settled
-  // tree is not reseeded on every render.
+  // Keep the region a faithful mirror of appStore's multi-group structure. When
+  // the view is not a mirror (initial single-leaf snapshot, or a local non-intent
+  // edit — including a group add/close/rename/color/reorder), seed the whole
+  // layout so composing can resume. De-duped so a settled layout is not reseeded
+  // on every render.
   useEffect(() => {
     if (!enabled || !clientRef.current || matches) return;
-    const minimal = toMinimalNode(storeRoot);
     const prev = lastSeeded.current;
-    if (
-      prev &&
-      prev.activePanelId === storeActivePanelId &&
-      minimalNodesEqual(prev.root, minimal)
-    ) {
-      return;
-    }
-    lastSeeded.current = { root: minimal, activePanelId: storeActivePanelId };
-    seedLayoutRegion(storeRoot, storeActivePanelId).catch((err) => logRenderFallback(err));
+    if (prev && layoutSnapshotsEqual(prev, snapshot)) return;
+    lastSeeded.current = snapshot;
+    seedLayoutRegion(snapshot).catch((err) => logRenderFallback(err));
     // `regionState` is a dep so the seed re-evaluates once the region snapshot
     // first arrives (which sets `clientRef` but may leave `matches` false).
-  }, [enabled, matches, storeRoot, storeActivePanelId, regionState]);
+  }, [enabled, matches, snapshot, regionState]);
 
   return useMemo(() => {
     if (matches && view) {
       try {
+        // Content fallback comes from the active group's rich tree (`storeRoot`).
         return composeRenderTree(view, storeRoot, tabContent);
       } catch (err) {
         // A tab referenced by the view but absent from appStore — treat as a

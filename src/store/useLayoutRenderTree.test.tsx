@@ -62,8 +62,11 @@ vi.mock("@/services/transport", () => ({
   createTransport: () => ({
     async dispatch(intent: { kind: string; payload: Record<string, unknown> }) {
       dispatched.push({ kind: intent.kind, payload: intent.payload });
-      if (intent.kind === "layout.replace" && backend.applyReplace) {
-        backend.push({ root: intent.payload.root, activePanelId: intent.payload.activePanelId });
+      if (intent.kind === "layout.replaceGroups" && backend.applyReplace) {
+        backend.push({
+          groups: intent.payload.groups,
+          activeGroupId: intent.payload.activeGroupId,
+        });
       }
       return {
         intentId: "intent-test",
@@ -87,10 +90,18 @@ vi.mock("@/services/transport", () => ({
       return () => backend.listeners.delete(listener);
     }
     async start() {
-      // The store seeds an unknown client's region to a single empty leaf.
+      // The store seeds an unknown client's region to a single "Main" group with
+      // one empty leaf (the full multi-group view — #2283 slice C).
       backend.push({
-        root: { type: "leaf", id: "seed", tabs: [], activeTabId: null },
-        activePanelId: "seed",
+        groups: [
+          {
+            id: "seed-group",
+            name: "Main",
+            root: { type: "leaf", id: "seed", tabs: [], activeTabId: null },
+            activePanelId: "seed",
+          },
+        ],
+        activeGroupId: "seed-group",
       });
     }
     stop() {}
@@ -186,7 +197,7 @@ describe("useLayoutRenderTree (#2151 step 3)", () => {
 
     // The initial snapshot was a single empty leaf (not a mirror) → the hook
     // seeded the region with appStore's tree.
-    expect(dispatched.map((d) => d.kind)).toContain("layout.replace");
+    expect(dispatched.map((d) => d.kind)).toContain("layout.replaceGroups");
 
     // Composed from the projection: structurally identical to appStore's tree.
     const store = useAppStore.getState().rootPanel;
@@ -207,8 +218,38 @@ describe("useLayoutRenderTree (#2151 step 3)", () => {
     await mount();
 
     // Seed was attempted, but the region did not advance to a mirror.
-    expect(dispatched.map((d) => d.kind)).toContain("layout.replace");
+    expect(dispatched.map((d) => d.kind)).toContain("layout.replaceGroups");
     // Renderer fell back to appStore's tree rather than showing the stale leaf.
     expect(latest).toBe(useAppStore.getState().rootPanel);
+  });
+
+  it("multi-group: seeds every group and composes the active one (#2283)", async () => {
+    // Two groups: the active one holds seedTree(), a second holds a single leaf.
+    const secondRoot: PanelNode = {
+      type: "leaf",
+      id: "z",
+      tabs: [tab("t9")],
+      activeTabId: "t9",
+    };
+    const groups = useAppStore.getState().tabGroups;
+    const activeId = useAppStore.getState().activeTabGroupId;
+    useAppStore.setState({
+      tabGroups: [
+        { ...groups[0] },
+        { id: "group-2", name: "Second", rootPanel: secondRoot, activePanelId: "z" },
+      ],
+      activeTabGroupId: activeId,
+    });
+    setLayoutRenderFromProjectionEnabled(true);
+    await mount();
+
+    // The seed installs BOTH groups via replaceGroups.
+    const seed = dispatched.find((d) => d.kind === "layout.replaceGroups");
+    expect(seed).toBeDefined();
+    expect((seed!.payload.groups as unknown[]).length).toBe(2);
+
+    // The renderer composes the ACTIVE group's tree (seedTree), not the second.
+    expect(latest).not.toBeNull();
+    expect(toMinimalNode(latest!)).toEqual(toMinimalNode(useAppStore.getState().rootPanel));
   });
 });

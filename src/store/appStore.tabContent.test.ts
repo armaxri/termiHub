@@ -94,10 +94,14 @@ function allTabs(): TerminalTab[] {
   return getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
 }
 
-/** The projected (minimal) view of the current tree, focused on the active panel. */
+/** The projected (multi-group) view of the current tree — a single active group
+ * holding the current panel tree (#2283 slice C). */
 function currentView(): LayoutView {
   const { rootPanel, activePanelId } = useAppStore.getState();
-  return { root: toMinimalNode(rootPanel), activePanelId };
+  return {
+    groups: [{ id: "g", name: "Main", root: toMinimalNode(rootPanel), activePanelId }],
+    activeGroupId: "g",
+  };
 }
 
 describe("appStore — tabContent by-id map (#2283)", () => {

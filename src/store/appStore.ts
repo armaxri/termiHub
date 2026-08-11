@@ -245,6 +245,8 @@ import {
   normalizeSizes,
 } from "@/utils/panelTree";
 import {
+  buildLayoutSnapshot,
+  type LayoutSnapshot,
   layoutIntentsEnabled,
   logBridgeFallback,
   moveTabPayload,
@@ -2582,6 +2584,26 @@ function patchTabContentEntry(
 }
 
 /**
+ * The rich multi-group {@link LayoutSnapshot} of `appStore`'s current layout —
+ * the seed-before-mutate payload passed to {@link runLayoutIntent} (#2283 slice
+ * C). The active group's live tree is the top-level `rootPanel`/`activePanelId`;
+ * every other group comes from its `tabGroups` entry.
+ */
+function currentLayoutSnapshot(state: {
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+  rootPanel: PanelNode;
+  activePanelId: string | null;
+}): LayoutSnapshot {
+  return buildLayoutSnapshot(
+    state.tabGroups,
+    state.activeTabGroupId,
+    state.rootPanel,
+    state.activePanelId
+  );
+}
+
+/**
  * Serialize a tab into the view-model carried across a native-window boundary
  * (#1900). Placement (`panelId`/`isActive`) is dropped — the destination window
  * re-assigns it on hydrate — while `sessionId` anchors the re-attach to the same
@@ -4544,12 +4566,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // tree. Focus is unchanged, so only `rootPanel` is applied. Any failure
       // falls back to the local reducer.
       if (!layoutIntentsEnabled()) return applyLocal();
-      const { rootPanel, activePanelId } = get();
       void runLayoutIntent(
         "layout.reorderTabs",
         { panelId, oldIndex, newIndex },
-        rootPanel,
-        activePanelId
+        currentLayoutSnapshot(get())
       )
         .then((res) => set({ rootPanel: res.rootPanel }))
         .catch((err) => {
@@ -4582,13 +4602,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // reconcileNode is the authoritative writer of the reconciled tree. On any
       // failure fall back to the local reducer so layout never breaks.
       if (!layoutIntentsEnabled()) return applyLocal();
-      const { rootPanel, activePanelId } = get();
+      const { activePanelId } = get();
       if (!activePanelId) return applyLocal();
       void runLayoutIntent(
         "layout.split",
         { panelId: activePanelId, direction: direction ?? "horizontal", position: "after" },
-        rootPanel,
-        activePanelId
+        currentLayoutSnapshot(get())
       )
         .then((res) => set(res))
         .catch((err) => {
@@ -4621,9 +4640,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // panel". The sole-leaf case is a no-op both here and in the store. Any
       // failure falls back to the local reducer.
       if (!layoutIntentsEnabled()) return applyLocal();
-      const { rootPanel, activePanelId } = get();
+      const { rootPanel } = get();
       if (getAllLeaves(rootPanel).length <= 1) return;
-      void runLayoutIntent("layout.removePanel", { panelId }, rootPanel, activePanelId)
+      void runLayoutIntent("layout.removePanel", { panelId }, currentLayoutSnapshot(get()))
         .then((res) => set(res))
         .catch((err) => {
           logBridgeFallback("layout.removePanel", err);
@@ -4654,10 +4673,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // logged (the projection catches up on the next seed).
       applyLocal();
       if (!layoutIntentsEnabled()) return;
-      const { rootPanel, activePanelId } = get();
-      void runLayoutIntent("layout.setActivePanel", { panelId }, rootPanel, activePanelId).catch(
-        (err) => logBridgeFallback("layout.setActivePanel", err)
-      );
+      void runLayoutIntent(
+        "layout.setActivePanel",
+        { panelId },
+        currentLayoutSnapshot(get())
+      ).catch((err) => logBridgeFallback("layout.setActivePanel", err));
     },
 
     setPanelSizes: (splitId, sizes) => {
@@ -4671,8 +4691,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // the normalized sizes and reconcileNode writes the reconciled tree. Only
       // `rootPanel` changes. Any failure falls back to the local reducer.
       if (!layoutIntentsEnabled()) return applyLocal();
-      const { rootPanel, activePanelId } = get();
-      void runLayoutIntent("layout.resize", { splitId, sizes }, rootPanel, activePanelId)
+      void runLayoutIntent("layout.resize", { splitId, sizes }, currentLayoutSnapshot(get()))
         .then((res) => set({ rootPanel: res.rootPanel }))
         .catch((err) => {
           logBridgeFallback("layout.resize", err);
@@ -4763,7 +4782,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // local path to preserve exact parity; everything else routes through the
       // store, with reconcileNode as the authoritative writer.
       if (!layoutIntentsEnabled()) return applyLocal();
-      const { rootPanel, activePanelId } = get();
+      const { rootPanel } = get();
       const sourceLeaf = findLeaf(rootPanel, fromPanelId);
       const selfEdgeSingleTab =
         edge !== "center" && fromPanelId === targetPanelId && (sourceLeaf?.tabs.length ?? 0) <= 1;
@@ -4772,8 +4791,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       void runLayoutIntent(
         "layout.moveTab",
         moveTabPayload(tabId, targetPanelId, edge),
-        rootPanel,
-        activePanelId,
+        currentLayoutSnapshot(get()),
         tabId
       )
         .then((res) => set(res))

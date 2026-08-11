@@ -9,8 +9,10 @@ import { describe, it, expect, afterEach } from "vitest";
 import type { PanelNode, TabContent, TerminalTab } from "@/types/terminal";
 
 import {
+  buildLayoutSnapshot,
   collectTabs,
   composeRenderTree,
+  type LayoutSnapshot,
   type LayoutView,
   layoutIntentsEnabled,
   layoutRenderFromProjectionEnabled,
@@ -21,6 +23,7 @@ import {
   toMinimalNode,
   viewMatchesTree,
 } from "./layoutBridge";
+import type { TabGroup } from "@/types/terminal";
 
 function tab(id: string, extra: Partial<TerminalTab> = {}): TerminalTab {
   return {
@@ -142,13 +145,23 @@ describe("layoutBridge — tree mapping", () => {
 });
 
 describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () => {
-  /** The projected (minimal) view of `tree()`, focused on panel `a`. */
+  /** The projected multi-group view of `tree()`: a single active group `g1`
+   * holding the tree, focused on panel `a` (#2283 slice C). */
   function view(): LayoutView {
-    return { root: toMinimalNode(tree()), activePanelId: "a" };
+    return {
+      groups: [{ id: "g1", name: "Main", root: toMinimalNode(tree()), activePanelId: "a" }],
+      activeGroupId: "g1",
+    };
+  }
+
+  /** A single-group `appStore` snapshot mirroring `view()`. */
+  function snapshot(root: PanelNode = tree(), activePanelId: string | null = "a"): LayoutSnapshot {
+    const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: root, activePanelId }];
+    return buildLayoutSnapshot(groups, "g1", root, activePanelId);
   }
 
   it("minimalNodesEqual: a tree equals its own minimal projection", () => {
-    expect(minimalNodesEqual(toMinimalNode(tree()), view().root)).toBe(true);
+    expect(minimalNodesEqual(toMinimalNode(tree()), toMinimalNode(tree()))).toBe(true);
   });
 
   it("minimalNodesEqual: sensitive to tab order, active tab, sizes, and direction", () => {
@@ -179,25 +192,104 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
   });
 
   it("viewMatchesTree: true only when structure AND active panel align", () => {
-    expect(viewMatchesTree(view(), tree(), "a")).toBe(true);
+    expect(viewMatchesTree(view(), snapshot())).toBe(true);
     // Active panel differs.
-    expect(viewMatchesTree(view(), tree(), "b")).toBe(false);
+    expect(viewMatchesTree(view(), snapshot(tree(), "b"))).toBe(false);
     // A view missing a tab appStore still has (local add not yet in the region).
     const stale: LayoutView = {
-      root: toMinimalNode({
-        type: "split",
-        id: "root",
-        direction: "horizontal",
-        sizes: [50, 50],
-        children: [
-          { type: "leaf", id: "a", tabs: [tab("t1")], activeTabId: "t1" },
-          { type: "leaf", id: "b", tabs: [tab("t3")], activeTabId: "t3" },
-        ],
-      }),
-      activePanelId: "a",
+      groups: [
+        {
+          id: "g1",
+          name: "Main",
+          root: toMinimalNode({
+            type: "split",
+            id: "root",
+            direction: "horizontal",
+            sizes: [50, 50],
+            children: [
+              { type: "leaf", id: "a", tabs: [tab("t1")], activeTabId: "t1" },
+              { type: "leaf", id: "b", tabs: [tab("t3")], activeTabId: "t3" },
+            ],
+          }),
+          activePanelId: "a",
+        },
+      ],
+      activeGroupId: "g1",
     };
-    expect(viewMatchesTree(stale, tree(), "a")).toBe(false);
-    expect(viewMatchesTree(null, tree(), "a")).toBe(false);
+    expect(viewMatchesTree(stale, snapshot())).toBe(false);
+    expect(viewMatchesTree(null, snapshot())).toBe(false);
+  });
+
+  it("viewMatchesTree (multi-group): all groups must match, in order (#2283)", () => {
+    // Two groups: g1 active holding the tree, g2 a single leaf.
+    const g2Root: PanelNode = { type: "leaf", id: "z", tabs: [tab("t9")], activeTabId: "t9" };
+    const groups: TabGroup[] = [
+      { id: "g1", name: "Main", rootPanel: tree(), activePanelId: "a" },
+      { id: "g2", name: "Second", rootPanel: g2Root, activePanelId: "z" },
+    ];
+    const snap = buildLayoutSnapshot(groups, "g1", tree(), "a");
+    const mirror: LayoutView = {
+      groups: [
+        { id: "g1", name: "Main", root: toMinimalNode(tree()), activePanelId: "a" },
+        { id: "g2", name: "Second", root: toMinimalNode(g2Root), activePanelId: "z" },
+      ],
+      activeGroupId: "g1",
+    };
+    expect(viewMatchesTree(mirror, snap)).toBe(true);
+
+    // A non-active group's tree drifts → the whole gate fails (forces a reseed).
+    const drifted: LayoutView = {
+      ...mirror,
+      groups: [
+        mirror.groups[0],
+        { id: "g2", name: "Second", root: toMinimalNode(tree()), activePanelId: "a" },
+      ],
+    };
+    expect(viewMatchesTree(drifted, snap)).toBe(false);
+
+    // Group metadata (name) drifts → fails.
+    const renamed: LayoutView = {
+      ...mirror,
+      groups: [{ ...mirror.groups[0], name: "Renamed" }, mirror.groups[1]],
+    };
+    expect(viewMatchesTree(renamed, snap)).toBe(false);
+
+    // activeGroupId differs → fails.
+    expect(viewMatchesTree({ ...mirror, activeGroupId: "g2" }, snap)).toBe(false);
+
+    // Group order / count differs → fails.
+    expect(viewMatchesTree({ ...mirror, groups: [mirror.groups[1], mirror.groups[0]] }, snap)).toBe(
+      false
+    );
+    expect(viewMatchesTree({ ...mirror, groups: [mirror.groups[0]] }, snap)).toBe(false);
+  });
+
+  it("composeRenderTree (multi-group): composes the active group whichever it is (#2283)", () => {
+    // g1 = tree(); g2 = a single-leaf tree. The composed output tracks the active
+    // group, and tab/panel ids are preserved (xterm reparents, never remounts).
+    const g2Root: PanelNode = {
+      type: "leaf",
+      id: "z",
+      tabs: [tab("t9")],
+      activeTabId: "t9",
+    };
+    const two: LayoutView = {
+      groups: [
+        { id: "g1", name: "Main", root: toMinimalNode(tree()), activePanelId: "a" },
+        { id: "g2", name: "Second", root: toMinimalNode(g2Root), activePanelId: "z" },
+      ],
+      activeGroupId: "g1",
+    };
+    // Active = g1 → composes tree() from g1's rich root (structure preserved;
+    // reconcile re-derives panelId/isActive).
+    expect(toMinimalNode(composeRenderTree(two, tree()))).toEqual(toMinimalNode(tree()));
+    // Switch active to g2 → composes the g2 tree from g2's rich root, ids intact.
+    const g2 = composeRenderTree({ ...two, activeGroupId: "g2" }, g2Root) as Extract<
+      PanelNode,
+      { type: "leaf" }
+    >;
+    expect(g2.id).toBe("z");
+    expect(g2.tabs.map((t) => t.id)).toEqual(["t9"]);
   });
 
   it("composeRenderTree: structure from the view, rich content from appStore by id", () => {
