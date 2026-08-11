@@ -25,4 +25,4 @@
 pub mod projection;
 pub mod store;
 
-pub use store::LayoutStore;
+pub use store::{ClientLayout, GroupLayout, LayoutStore};

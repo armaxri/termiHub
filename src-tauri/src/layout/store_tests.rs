@@ -117,7 +117,7 @@ fn replace_installs_a_whole_tree_over_the_seeded_empty_leaf() {
 
     // A subsequent structural transform now operates on the installed tree.
     store
-        .move_tab("C", "t1", "b", DropEdge::Center)
+        .move_tab("C", None, "t1", "b", DropEdge::Center)
         .expect("move on the replaced tree");
     let root = root_of(&store, "C");
     assert_eq!(
@@ -144,7 +144,7 @@ fn split_inserts_a_new_empty_focused_leaf_and_preserves_tab_count() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     store
-        .split("C", "b", Direction::Vertical, Position::After)
+        .split("C", None, "b", Direction::Vertical, Position::After)
         .unwrap();
 
     let root = root_of(&store, "C");
@@ -161,7 +161,7 @@ fn split_of_unknown_panel_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     let err = store
-        .split("C", "nope", Direction::Horizontal, Position::After)
+        .split("C", None, "nope", Direction::Horizontal, Position::After)
         .unwrap_err();
     assert_eq!(err, LayoutError::PanelNotFound("nope".to_string()));
     assert_eq!(err.code(), "panel_not_found");
@@ -173,7 +173,7 @@ fn split_of_unknown_panel_is_rejected() {
 fn merge_moves_all_tabs_into_target_and_drops_the_source() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.merge("C", "a", "b").unwrap();
+    store.merge("C", None, "a", "b").unwrap();
 
     let root = root_of(&store, "C");
     // The tree simplifies to the single surviving leaf `b` holding all 3 tabs.
@@ -191,7 +191,7 @@ fn merge_into_self_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.merge("C", "a", "a").unwrap_err(),
+        store.merge("C", None, "a", "a").unwrap_err(),
         LayoutError::SamePanel
     );
 }
@@ -201,7 +201,7 @@ fn merge_with_unknown_source_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.merge("C", "ghost", "b").unwrap_err(),
+        store.merge("C", None, "ghost", "b").unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
 }
@@ -212,7 +212,7 @@ fn merge_with_unknown_source_is_rejected() {
 fn move_tab_center_drops_the_tab_into_the_target_stack() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.move_tab("C", "t1", "b", DropEdge::Center).unwrap();
+    store.move_tab("C", None, "t1", "b", DropEdge::Center).unwrap();
 
     let root = root_of(&store, "C");
     assert_eq!(count_tabs_in_tree(&root), 3, "tab count preserved");
@@ -227,7 +227,7 @@ fn move_tab_center_drops_the_tab_into_the_target_stack() {
 fn move_tab_edge_splits_the_target_into_a_new_leaf() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.move_tab("C", "t3", "a", DropEdge::Right).unwrap();
+    store.move_tab("C", None, "t3", "a", DropEdge::Right).unwrap();
 
     let root = root_of(&store, "C");
     // b held only t3; moving it out empties and prunes b. t3 lands in a fresh
@@ -251,7 +251,7 @@ fn move_tab_of_unknown_tab_is_rejected() {
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
         store
-            .move_tab("C", "ghost", "b", DropEdge::Center)
+            .move_tab("C", None, "ghost", "b", DropEdge::Center)
             .unwrap_err(),
         LayoutError::TabNotFound("ghost".to_string()),
     );
@@ -271,7 +271,7 @@ fn removing_a_middle_active_tab_falls_back_positionally_like_the_frontend() {
         active_tab_id: Some("t2".to_string()),
     });
     store.seed_for_test("C", root, Some("a".to_string()));
-    store.close_tab_structure("C", "t2").unwrap();
+    store.close_tab_structure("C", None, "t2").unwrap();
 
     let root = root_of(&store, "C");
     let a = find_leaf(&root, "a").unwrap();
@@ -286,7 +286,7 @@ fn removing_a_middle_active_tab_falls_back_positionally_like_the_frontend() {
 fn close_tab_removes_one_tab_keeping_a_non_empty_leaf() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.close_tab_structure("C", "t1").unwrap();
+    store.close_tab_structure("C", None, "t1").unwrap();
 
     let root = root_of(&store, "C");
     assert_eq!(count_tabs_in_tree(&root), 2, "one tab removed");
@@ -300,7 +300,7 @@ fn close_tab_removes_one_tab_keeping_a_non_empty_leaf() {
 fn close_last_tab_in_a_leaf_prunes_and_simplifies() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("b".to_string()));
-    store.close_tab_structure("C", "t3").unwrap();
+    store.close_tab_structure("C", None, "t3").unwrap();
 
     let root = root_of(&store, "C");
     // b emptied → pruned → split simplified to just a.
@@ -317,7 +317,7 @@ fn close_of_unknown_tab_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.close_tab_structure("C", "ghost").unwrap_err(),
+        store.close_tab_structure("C", None, "ghost").unwrap_err(),
         LayoutError::TabNotFound("ghost".to_string()),
     );
 }
@@ -328,7 +328,7 @@ fn close_of_unknown_tab_is_rejected() {
 fn remove_panel_drops_the_whole_leaf_and_simplifies() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.remove_panel("C", "a").unwrap();
+    store.remove_panel("C", None, "a").unwrap();
 
     let root = root_of(&store, "C");
     // a (and its two tabs) is gone; the split simplifies to the single leaf b.
@@ -344,7 +344,7 @@ fn remove_panel_drops_the_whole_leaf_and_simplifies() {
 fn remove_panel_keeps_focus_when_a_different_panel_is_removed() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
-    store.remove_panel("C", "b").unwrap();
+    store.remove_panel("C", None, "b").unwrap();
     // a was focused and survives → focus unchanged (frontend parity).
     assert_eq!(active_of(&store, "C").as_deref(), Some("a"));
 }
@@ -354,7 +354,7 @@ fn remove_panel_on_the_sole_leaf_is_a_no_op() {
     let store = LayoutStore::new();
     let root = PanelNode::Leaf(leaf("only", &["t1"]));
     store.seed_for_test("C", root, Some("only".to_string()));
-    store.remove_panel("C", "only").unwrap();
+    store.remove_panel("C", None, "only").unwrap();
 
     let root = root_of(&store, "C");
     // The app always keeps one panel; the sole leaf is untouched.
@@ -368,7 +368,7 @@ fn remove_panel_of_unknown_panel_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.remove_panel("C", "ghost").unwrap_err(),
+        store.remove_panel("C", None, "ghost").unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
 }
@@ -385,7 +385,7 @@ fn reorder_tabs_moves_a_tab_within_its_leaf_keeping_active() {
     });
     store.seed_for_test("C", root, Some("a".to_string()));
     // Move t1 (index 0) to index 2.
-    store.reorder_tabs("C", "a", 0, 2).unwrap();
+    store.reorder_tabs("C", None, "a", 0, 2).unwrap();
 
     let root = root_of(&store, "C");
     let a = find_leaf(&root, "a").unwrap();
@@ -404,7 +404,7 @@ fn reorder_tabs_rejects_an_out_of_range_index() {
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     // b holds one tab → index 1 is out of range.
     assert_eq!(
-        store.reorder_tabs("C", "b", 1, 0).unwrap_err(),
+        store.reorder_tabs("C", None, "b", 1, 0).unwrap_err(),
         LayoutError::IndexOutOfRange,
     );
     assert_eq!(LayoutError::IndexOutOfRange.code(), "bad_payload");
@@ -415,7 +415,7 @@ fn reorder_tabs_of_unknown_panel_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.reorder_tabs("C", "ghost", 0, 0).unwrap_err(),
+        store.reorder_tabs("C", None, "ghost", 0, 0).unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
 }
@@ -427,7 +427,7 @@ fn set_active_panel_repoints_focus_without_touching_the_tree() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     let before = root_of(&store, "C");
-    store.set_active_panel("C", "b").unwrap();
+    store.set_active_panel("C", None, "b").unwrap();
 
     assert_eq!(active_of(&store, "C").as_deref(), Some("b"), "focus moved");
     assert_eq!(root_of(&store, "C"), before, "tree unchanged");
@@ -438,7 +438,7 @@ fn set_active_panel_of_unknown_panel_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.set_active_panel("C", "ghost").unwrap_err(),
+        store.set_active_panel("C", None, "ghost").unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
 }
@@ -450,7 +450,7 @@ fn resize_persists_normalized_sizes_on_the_split() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     // Supply sizes that do not sum to 100 → stored normalized.
-    store.resize("C", "root", vec![30.0, 10.0]).unwrap();
+    store.resize("C", None, "root", vec![30.0, 10.0]).unwrap();
 
     let root = root_of(&store, "C");
     match root {
@@ -469,7 +469,7 @@ fn resize_rejects_a_mismatched_size_count() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.resize("C", "root", vec![100.0]).unwrap_err(),
+        store.resize("C", None, "root", vec![100.0]).unwrap_err(),
         LayoutError::SizeMismatch,
     );
     assert_eq!(LayoutError::SizeMismatch.code(), "bad_payload");
@@ -480,7 +480,7 @@ fn resize_of_unknown_split_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     assert_eq!(
-        store.resize("C", "ghost", vec![50.0, 50.0]).unwrap_err(),
+        store.resize("C", None, "ghost", vec![50.0, 50.0]).unwrap_err(),
         LayoutError::PanelNotFound("ghost".to_string()),
     );
 }
@@ -530,12 +530,12 @@ proptest! {
                 0 => {
                     let direction = if e % 2 == 0 { Direction::Horizontal } else { Direction::Vertical };
                     let position = if (e / 2) % 2 == 0 { Position::Before } else { Position::After };
-                    store.split(client, &src_id, direction, position).unwrap();
+                    store.split(client, None, &src_id, direction, position).unwrap();
                     prop_assert_eq!(count_tabs_in_tree(&root_of(&store, client)), before);
                 }
                 1 => {
                     if src_id != tgt_id {
-                        store.merge(client, &src_id, &tgt_id).unwrap();
+                        store.merge(client, None, &src_id, &tgt_id).unwrap();
                         prop_assert_eq!(count_tabs_in_tree(&root_of(&store, client)), before);
                     }
                 }
@@ -543,14 +543,14 @@ proptest! {
                     if let Some(t) = src.tabs.first() {
                         let tab_id = t.id.clone();
                         let edge = ALL_EDGES[e as usize % ALL_EDGES.len()];
-                        store.move_tab(client, &tab_id, &tgt_id, edge).unwrap();
+                        store.move_tab(client, None, &tab_id, &tgt_id, edge).unwrap();
                         prop_assert_eq!(count_tabs_in_tree(&root_of(&store, client)), before);
                     }
                 }
                 _ => {
                     if let Some(t) = src.tabs.first() {
                         let tab_id = t.id.clone();
-                        store.close_tab_structure(client, &tab_id).unwrap();
+                        store.close_tab_structure(client, None, &tab_id).unwrap();
                         prop_assert_eq!(count_tabs_in_tree(&root_of(&store, client)), before - 1);
                     }
                 }

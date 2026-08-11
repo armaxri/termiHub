@@ -74,80 +74,186 @@ fn registry_for(store: Arc<LayoutStore>) -> HandlerRegistry {
 
     let s = store.clone();
     registry.route("layout.split", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let panel_id = required_str(intent, "panelId")?;
         let direction: Direction = required_enum(intent, "direction")?;
         let position: Position = required_enum(intent, "position")?;
-        s.split(&intent.client_id, &panel_id, direction, position)
-            .map_err(to_ack_err)?;
+        s.split(
+            &intent.client_id,
+            group.as_deref(),
+            &panel_id,
+            direction,
+            position,
+        )
+        .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.merge", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let source = required_str(intent, "sourcePanelId")?;
         let target = required_str(intent, "targetPanelId")?;
-        s.merge(&intent.client_id, &source, &target)
+        s.merge(&intent.client_id, group.as_deref(), &source, &target)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.moveTab", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let tab_id = required_str(intent, "tabId")?;
         let target = required_str(intent, "targetPanelId")?;
         let edge: DropEdge = required_enum(intent, "edge")?;
-        s.move_tab(&intent.client_id, &tab_id, &target, edge)
+        s.move_tab(&intent.client_id, group.as_deref(), &tab_id, &target, edge)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.closeTabStructure", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let tab_id = required_str(intent, "tabId")?;
-        s.close_tab_structure(&intent.client_id, &tab_id)
+        s.close_tab_structure(&intent.client_id, group.as_deref(), &tab_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.addTab", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
+        let panel_id = required_str(intent, "panelId")?;
+        let tab = parse_tab(intent)?;
+        s.add_tab(&intent.client_id, group.as_deref(), &panel_id, tab)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.removePanel", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let panel_id = required_str(intent, "panelId")?;
-        s.remove_panel(&intent.client_id, &panel_id)
+        s.remove_panel(&intent.client_id, group.as_deref(), &panel_id)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.reorderTabs", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let panel_id = required_str(intent, "panelId")?;
         let old_index = required_usize(intent, "oldIndex")?;
         let new_index = required_usize(intent, "newIndex")?;
-        s.reorder_tabs(&intent.client_id, &panel_id, old_index, new_index)
-            .map_err(to_ack_err)?;
+        s.reorder_tabs(
+            &intent.client_id,
+            group.as_deref(),
+            &panel_id,
+            old_index,
+            new_index,
+        )
+        .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.setActivePanel", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let panel_id = required_str(intent, "panelId")?;
-        s.set_active_panel(&intent.client_id, &panel_id)
+        s.set_active_panel(&intent.client_id, group.as_deref(), &panel_id)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store.clone();
     registry.route("layout.resize", move |intent, projector| {
+        let group = optional_str(intent, "groupId");
         let split_id = required_str(intent, "splitId")?;
         let sizes = required_sizes(intent, "sizes")?;
-        s.resize(&intent.client_id, &split_id, sizes)
+        s.resize(&intent.client_id, group.as_deref(), &split_id, sizes)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.replace", move |intent, projector| {
+        let (root, active_panel_id) = parse_replace(intent)?;
+        s.replace(&intent.client_id, root, active_panel_id);
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.addGroup", move |intent, projector| {
+        let name = optional_str(intent, "name");
+        s.add_group(&intent.client_id, name);
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.closeGroup", move |intent, projector| {
+        let group_id = required_str(intent, "groupId")?;
+        s.close_group(&intent.client_id, &group_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.renameGroup", move |intent, projector| {
+        let group_id = required_str(intent, "groupId")?;
+        let name = required_str(intent, "name")?;
+        s.rename_group(&intent.client_id, &group_id, name)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.setGroupColor", move |intent, projector| {
+        let group_id = required_str(intent, "groupId")?;
+        let color = optional_str(intent, "color");
+        s.set_group_color(&intent.client_id, &group_id, color)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.setActiveGroup", move |intent, projector| {
+        let group_id = required_str(intent, "groupId")?;
+        s.set_active_group(&intent.client_id, &group_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.reorderGroups", move |intent, projector| {
+        let from_index = required_usize(intent, "fromIndex")?;
+        let to_index = required_usize(intent, "toIndex")?;
+        s.reorder_groups(&intent.client_id, from_index, to_index)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.moveTabToGroup", move |intent, projector| {
+        let tab_id = required_str(intent, "tabId")?;
+        let from_panel_id = required_str(intent, "fromPanelId")?;
+        let target_group_id = required_str(intent, "targetGroupId")?;
+        s.move_tab_to_group(&intent.client_id, &tab_id, &from_panel_id, &target_group_id)
+            .map_err(to_ack_err)?;
+        Ok(publish_layout(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
+    registry.route("layout.addGroupWithTab", move |intent, projector| {
+        let tab_id = required_str(intent, "tabId")?;
+        let from_panel_id = required_str(intent, "fromPanelId")?;
+        s.add_group_with_tab(&intent.client_id, &tab_id, &from_panel_id)
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
     let s = store;
-    registry.route("layout.replace", move |intent, projector| {
-        let (root, active_panel_id) = parse_replace(intent)?;
-        s.replace(&intent.client_id, root, active_panel_id);
+    registry.route("layout.replaceGroups", move |intent, projector| {
+        let (groups, active_group_id) = parse_replace_groups(intent)?;
+        s.replace_groups(&intent.client_id, groups, active_group_id);
         Ok(publish_layout(projector, &s, &intent.client_id))
     });
 
