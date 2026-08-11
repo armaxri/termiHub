@@ -480,7 +480,8 @@ fn replace_seeds_a_tree_then_a_structural_intent_round_trips() {
         "cache converges on authority"
     );
     // t1 landed in b; a is left with t2 — tab count is conserved across the seed.
-    let root: PanelNode = serde_json::from_value(store.snapshot_full("A")["groups"][0]["root"].clone()).unwrap();
+    let root: PanelNode =
+        serde_json::from_value(store.snapshot_full("A")["groups"][0]["root"].clone()).unwrap();
     assert_eq!(
         termihub_core::layout::panel_tree::count_tabs_in_tree(&root),
         3
@@ -549,7 +550,8 @@ fn the_step2b_intents_round_trip_and_converge_on_authority() {
     );
 
     // Final assertions on the authoritative tree.
-    let root: PanelNode = serde_json::from_value(store.snapshot_full("A")["groups"][0]["root"].clone()).unwrap();
+    let root: PanelNode =
+        serde_json::from_value(store.snapshot_full("A")["groups"][0]["root"].clone()).unwrap();
     let a = termihub_core::layout::panel_tree::find_leaf(&root, "a").unwrap();
     assert_eq!(
         a.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
@@ -701,7 +703,8 @@ fn add_tab_route_inserts_a_tab_and_converges() {
         "cache converges on authority"
     );
 
-    let root: PanelNode = serde_json::from_value(store.snapshot_full("A")["groups"][0]["root"].clone()).unwrap();
+    let root: PanelNode =
+        serde_json::from_value(store.snapshot_full("A")["groups"][0]["root"].clone()).unwrap();
     let b = termihub_core::layout::panel_tree::find_leaf(&root, "b").unwrap();
     assert!(
         b.tabs.iter().any(|t| t.id == "new"),
