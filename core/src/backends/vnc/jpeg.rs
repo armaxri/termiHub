@@ -108,7 +108,7 @@ mod tests {
         assert_near(img.rgba[mid], 0, "R");
         assert_near(img.rgba[mid + 1], 200, "G");
         assert_near(img.rgba[mid + 2], 0, "B");
-        for px in img.rgba.chunks_exact(4) {
+        for px in img.rgba.as_chunks::<4>().0 {
             assert_eq!(px[3], 255, "alpha must be opaque");
         }
     }

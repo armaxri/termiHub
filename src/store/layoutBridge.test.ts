@@ -1,27 +1,24 @@
 /**
- * Unit tests for the layout projection bridge (#2151 step 2): the rich⇄minimal
+ * Unit tests for the layout projection bridge (#2151 / #2283): the rich⇄minimal
  * tree mapping, the reconcile that re-hydrates minimal-tab diffs into rich
- * `TerminalTab`s by id, and the feature flag. The dispatch/subscribe round-trip
- * is exercised at the appStore level in `appStore.layoutBridge.test.ts`.
+ * `TerminalTab`s by id, and `composeLayoutState` (the region→appStore mirror's
+ * core). The dispatch/subscribe round-trip is exercised at the appStore level in
+ * `appStore.layoutBridge.test.ts`.
  */
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 import type { PanelNode, TabContent, TerminalTab } from "@/types/terminal";
 
 import {
   buildLayoutSnapshot,
   collectTabs,
+  composeLayoutState,
   composeRenderTree,
-  type LayoutSnapshot,
   type LayoutView,
-  layoutIntentsEnabled,
-  layoutRenderFromProjectionEnabled,
   minimalNodesEqual,
   reconcileNode,
-  setLayoutIntentsEnabled,
-  setLayoutRenderFromProjectionEnabled,
+  toMinimalGroup,
   toMinimalNode,
-  viewMatchesTree,
 } from "./layoutBridge";
 import type { TabGroup } from "@/types/terminal";
 
@@ -154,12 +151,6 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
     };
   }
 
-  /** A single-group `appStore` snapshot mirroring `view()`. */
-  function snapshot(root: PanelNode = tree(), activePanelId: string | null = "a"): LayoutSnapshot {
-    const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: root, activePanelId }];
-    return buildLayoutSnapshot(groups, "g1", root, activePanelId);
-  }
-
   it("minimalNodesEqual: a tree equals its own minimal projection", () => {
     expect(minimalNodesEqual(toMinimalNode(tree()), toMinimalNode(tree()))).toBe(true);
   });
@@ -189,79 +180,6 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
       ],
     });
     expect(minimalNodesEqual(base, otherActive)).toBe(false);
-  });
-
-  it("viewMatchesTree: true only when structure AND active panel align", () => {
-    expect(viewMatchesTree(view(), snapshot())).toBe(true);
-    // Active panel differs.
-    expect(viewMatchesTree(view(), snapshot(tree(), "b"))).toBe(false);
-    // A view missing a tab appStore still has (local add not yet in the region).
-    const stale: LayoutView = {
-      groups: [
-        {
-          id: "g1",
-          name: "Main",
-          root: toMinimalNode({
-            type: "split",
-            id: "root",
-            direction: "horizontal",
-            sizes: [50, 50],
-            children: [
-              { type: "leaf", id: "a", tabs: [tab("t1")], activeTabId: "t1" },
-              { type: "leaf", id: "b", tabs: [tab("t3")], activeTabId: "t3" },
-            ],
-          }),
-          activePanelId: "a",
-        },
-      ],
-      activeGroupId: "g1",
-    };
-    expect(viewMatchesTree(stale, snapshot())).toBe(false);
-    expect(viewMatchesTree(null, snapshot())).toBe(false);
-  });
-
-  it("viewMatchesTree (multi-group): all groups must match, in order (#2283)", () => {
-    // Two groups: g1 active holding the tree, g2 a single leaf.
-    const g2Root: PanelNode = { type: "leaf", id: "z", tabs: [tab("t9")], activeTabId: "t9" };
-    const groups: TabGroup[] = [
-      { id: "g1", name: "Main", rootPanel: tree(), activePanelId: "a" },
-      { id: "g2", name: "Second", rootPanel: g2Root, activePanelId: "z" },
-    ];
-    const snap = buildLayoutSnapshot(groups, "g1", tree(), "a");
-    const mirror: LayoutView = {
-      groups: [
-        { id: "g1", name: "Main", root: toMinimalNode(tree()), activePanelId: "a" },
-        { id: "g2", name: "Second", root: toMinimalNode(g2Root), activePanelId: "z" },
-      ],
-      activeGroupId: "g1",
-    };
-    expect(viewMatchesTree(mirror, snap)).toBe(true);
-
-    // A non-active group's tree drifts → the whole gate fails (forces a reseed).
-    const drifted: LayoutView = {
-      ...mirror,
-      groups: [
-        mirror.groups[0],
-        { id: "g2", name: "Second", root: toMinimalNode(tree()), activePanelId: "a" },
-      ],
-    };
-    expect(viewMatchesTree(drifted, snap)).toBe(false);
-
-    // Group metadata (name) drifts → fails.
-    const renamed: LayoutView = {
-      ...mirror,
-      groups: [{ ...mirror.groups[0], name: "Renamed" }, mirror.groups[1]],
-    };
-    expect(viewMatchesTree(renamed, snap)).toBe(false);
-
-    // activeGroupId differs → fails.
-    expect(viewMatchesTree({ ...mirror, activeGroupId: "g2" }, snap)).toBe(false);
-
-    // Group order / count differs → fails.
-    expect(viewMatchesTree({ ...mirror, groups: [mirror.groups[1], mirror.groups[0]] }, snap)).toBe(
-      false
-    );
-    expect(viewMatchesTree({ ...mirror, groups: [mirror.groups[0]] }, snap)).toBe(false);
   });
 
   it("composeRenderTree (multi-group): composes the active group whichever it is (#2283)", () => {
@@ -360,31 +278,138 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
   });
 });
 
-describe("layoutBridge — feature flags", () => {
-  afterEach(() => {
-    setLayoutIntentsEnabled(null);
-    setLayoutRenderFromProjectionEnabled(null);
+describe("layoutBridge — composeLayoutState (region→appStore mirror, #2283 slice E1)", () => {
+  /** A well-formed tab: `panelId`/`isActive` consistent with its leaf, so a
+   * reconcile round-trip reproduces it exactly (as the reducers keep them). */
+  function wtab(id: string, panelId: string, active: boolean, extra: Partial<TerminalTab> = {}) {
+    return tab(id, { panelId, isActive: active, ...extra });
+  }
+
+  /** Two-leaf split with consistent tab fields and a directional mark on `root`. */
+  function wtree(): PanelNode {
+    return {
+      type: "split",
+      id: "root",
+      direction: "horizontal",
+      sizes: [40, 60],
+      lastActiveLeafId: "a",
+      children: [
+        {
+          type: "leaf",
+          id: "a",
+          tabs: [wtab("t1", "a", true), wtab("t2", "a", false)],
+          activeTabId: "t1",
+        },
+        { type: "leaf", id: "b", tabs: [wtab("t3", "b", true)], activeTabId: "t3" },
+      ],
+    };
+  }
+
+  function g2tree(): PanelNode {
+    return { type: "leaf", id: "g2root", tabs: [wtab("t9", "g2root", true)], activeTabId: "t9" };
+  }
+
+  function contentMap(...ids: string[]): Record<string, TabContent> {
+    return Object.fromEntries(ids.map((id) => [id, content(id)]));
+  }
+
+  function viewFrom(
+    groups: TabGroup[],
+    activeGroupId: string,
+    activeRoot: PanelNode,
+    activePanelId: string | null
+  ): LayoutView {
+    const snap = buildLayoutSnapshot(groups, activeGroupId, activeRoot, activePanelId);
+    return { groups: snap.groups.map(toMinimalGroup), activeGroupId };
+  }
+
+  it("is the faithful inverse of buildLayoutSnapshot for a multi-group layout", () => {
+    const g1Root = wtree();
+    const groups: TabGroup[] = [
+      { id: "g1", name: "Main", rootPanel: g1Root, activePanelId: "a" },
+      { id: "g2", name: "Two", color: "#f00", rootPanel: g2tree(), activePanelId: "g2root" },
+    ];
+    const view = viewFrom(groups, "g1", g1Root, "a");
+    const composed = composeLayoutState(view, g1Root, groups, contentMap("t1", "t2", "t3", "t9"));
+
+    expect(composed).not.toBeNull();
+    expect(composed!.rootPanel).toEqual(g1Root);
+    expect(composed!.activePanelId).toBe("a");
+    expect(composed!.activeTabGroupId).toBe("g1");
+    expect(composed!.tabGroups).toEqual(groups);
+    // The directional mark on `root` survives the projection round-trip.
+    expect((composed!.rootPanel as { lastActiveLeafId?: string }).lastActiveLeafId).toBe("a");
   });
 
-  it("mutation cut is on by default (#2184: GUI-verified parity-clean)", () => {
-    setLayoutIntentsEnabled(null);
-    expect(layoutIntentsEnabled()).toBe(true);
+  it("re-attaches tab content from the current tree when tabContent lacks the id", () => {
+    const g1Root = wtree();
+    const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: g1Root, activePanelId: "a" }];
+    const view = viewFrom(groups, "g1", g1Root, "a");
+    // Empty tabContent → every tab resolves via the current-tree fallback.
+    const composed = composeLayoutState(view, g1Root, groups, {});
+    expect(composed!.rootPanel).toEqual(g1Root);
   });
 
-  it("render cut is on by default (step 3: parity-safe by construction)", () => {
-    setLayoutRenderFromProjectionEnabled(null);
-    expect(layoutRenderFromProjectionEnabled()).toBe(true);
+  it("prefers tabContent over the in-tree copy for a tab's content", () => {
+    const g1Root = wtree();
+    const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: g1Root, activePanelId: "a" }];
+    const view = viewFrom(groups, "g1", g1Root, "a");
+    const composed = composeLayoutState(view, g1Root, groups, {
+      t1: content("t1", { title: "Overridden" }),
+    });
+    const leafA = (composed!.rootPanel as { children: PanelNode[] }).children[0] as {
+      tabs: TerminalTab[];
+    };
+    expect(leafA.tabs[0].title).toBe("Overridden");
   });
 
-  it("honours programmatic overrides on each flag independently", () => {
-    setLayoutIntentsEnabled(true);
-    expect(layoutIntentsEnabled()).toBe(true);
-    setLayoutIntentsEnabled(false);
-    expect(layoutIntentsEnabled()).toBe(false);
+  it("keeps the active group's tabGroups entry verbatim (appStore staleness convention)", () => {
+    // The active group's live tree is the top-level rootPanel; its tabGroups
+    // entry is intentionally left as the last-saved (stale) tree.
+    const liveRoot = wtree();
+    const staleEntry: PanelNode = {
+      type: "leaf",
+      id: "stale",
+      tabs: [wtab("t1", "stale", true)],
+      activeTabId: "t1",
+    };
+    const groups: TabGroup[] = [
+      { id: "g1", name: "Main", rootPanel: staleEntry, activePanelId: "stale" },
+    ];
+    const view = viewFrom(groups, "g1", liveRoot, "a");
+    const composed = composeLayoutState(view, liveRoot, groups, contentMap("t1", "t2", "t3"));
+    // Top-level rootPanel is the live tree; the active group's entry stays stale.
+    expect(composed!.rootPanel).toEqual(liveRoot);
+    expect(composed!.tabGroups[0].rootPanel).toBe(staleEntry);
+  });
 
-    setLayoutRenderFromProjectionEnabled(false);
-    expect(layoutRenderFromProjectionEnabled()).toBe(false);
-    setLayoutRenderFromProjectionEnabled(true);
-    expect(layoutRenderFromProjectionEnabled()).toBe(true);
+  it("returns null for an empty/absent view (mirror leaves appStore untouched)", () => {
+    const root = wtree();
+    const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: root, activePanelId: "a" }];
+    expect(composeLayoutState(undefined, root, groups, {})).toBeNull();
+    expect(composeLayoutState(null, root, groups, {})).toBeNull();
+    expect(composeLayoutState({ groups: [], activeGroupId: "g1" }, root, groups, {})).toBeNull();
+  });
+
+  it("returns null when the view references a tab absent from both sources", () => {
+    const root = wtree();
+    const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: root, activePanelId: "a" }];
+    const ghost: LayoutView = {
+      groups: [
+        {
+          id: "g1",
+          name: "Main",
+          root: {
+            type: "leaf",
+            id: "a",
+            tabs: [{ id: "ghost", contentType: "terminal" }],
+            activeTabId: "ghost",
+          },
+          activePanelId: "a",
+        },
+      ],
+      activeGroupId: "g1",
+    };
+    expect(composeLayoutState(ghost, root, groups, {})).toBeNull();
   });
 });

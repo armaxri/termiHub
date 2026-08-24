@@ -48,6 +48,7 @@
 
 import {
   createTransport,
+  InMemoryTransport,
   newClientId,
   newIntentId,
   ProjectionClient,
@@ -177,97 +178,6 @@ export function activeGroupOf(view: LayoutView): MinimalGroup | undefined {
   return view.groups.find((g) => g.id === view.activeGroupId) ?? view.groups[0];
 }
 
-// ── Feature flag (runtime-flippable so a dev build can verify the ON path) ─────
-
-interface LayoutFlagWindow {
-  __TERMIHUB_LAYOUT_INTENTS__?: boolean;
-  __TERMIHUB_LAYOUT_RENDER__?: boolean;
-  localStorage?: Storage;
-}
-
-let flagOverride: boolean | null = null;
-let renderFlagOverride: boolean | null = null;
-
-/**
- * Programmatic override for the layout-intents (mutation) flag (tests, and a
- * runtime toggle). `null` clears the override and falls back to the
- * window/localStorage signal, then to the default.
- */
-export function setLayoutIntentsEnabled(value: boolean | null): void {
-  flagOverride = value;
-}
-
-/**
- * Programmatic override for the render-from-projection flag (tests, runtime
- * toggle). `null` clears it and falls back to the window/localStorage signal,
- * then to the default.
- */
-export function setLayoutRenderFromProjectionEnabled(value: boolean | null): void {
-  renderFlagOverride = value;
-}
-
-/** Read a boolean feature signal from `window`/`localStorage`, else `dflt`. */
-function readFlag(
-  override: boolean | null,
-  windowKey: keyof LayoutFlagWindow,
-  storageKey: string,
-  dflt: boolean
-): boolean {
-  if (override !== null) return override;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as LayoutFlagWindow;
-      const wv = w[windowKey];
-      if (typeof wv === "boolean") return wv;
-      const ls = w.localStorage?.getItem(storageKey);
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return dflt;
-}
-
-/**
- * Whether structural layout **mutations** route through `layout.*` intents
- * (step 2) instead of editing `appStore.rootPanel` locally.
- *
- * **On by default** (#2184). The backend `LayoutStore` is authoritative for
- * mutations: split/move/merge run as asynchronous backend round-trips, with the
- * projected diff reconciled back into `appStore` by {@link reconcileNode}. The
- * behavioural (timing) change was verified parity-clean in a live GUI run before
- * flipping — split, drag-to-edge, drag-to-center, tab-move across panels, and
- * merge, with live-terminal scrollback surviving every op. Any dispatch/reconcile
- * failure still falls back to the local reducer, so a backend hiccup can never
- * break layout. Overridable at runtime for rollback / tests via
- * `window.__TERMIHUB_LAYOUT_INTENTS__` or `localStorage["termihub.layoutIntents"]`
- * (set `"false"` to restore the pre-cut local-mutation path).
- */
-export function layoutIntentsEnabled(): boolean {
-  return readFlag(flagOverride, "__TERMIHUB_LAYOUT_INTENTS__", "termihub.layoutIntents", true);
-}
-
-/**
- * Whether the **renderer** sources its panel/tab structure from the projected
- * `layout@<clientId>` render-list (step 3,
- * {@link import("./useLayoutRenderTree").useLayoutRenderTree}) rather than from
- * `appStore.rootPanel` directly.
- *
- * **On by default.** Parity-safe by construction: the renderer composes from the
- * projection only when its view structurally mirrors `appStore`'s tree, and
- * otherwise falls back to that tree verbatim — so the rendered output is always
- * identical to the pre-cut renderer, and live xterm DOM is reparented (never
- * remounted) because tab/panel ids are preserved. Independent of the mutation
- * cut: the region is seeded from `appStore` whether mutations are local or
- * intent-routed. Overridable for rollback / an A-B check (the renderer reads it
- * at mount, so a flip takes effect on reload) via
- * `window.__TERMIHUB_LAYOUT_RENDER__` or `localStorage["termihub.layoutRender"]`.
- */
-export function layoutRenderFromProjectionEnabled(): boolean {
-  return readFlag(renderFlagOverride, "__TERMIHUB_LAYOUT_RENDER__", "termihub.layoutRender", true);
-}
-
 // ── Transport + region client (sync-create, mirrors the file-browsers slice) ───
 
 // A stable per-session client identity. The client-scoped region is
@@ -285,8 +195,25 @@ let regionClient: ProjectionClient | null = null;
 let creatingClient: ProjectionClient | null = null;
 let startPromise: Promise<ProjectionClient> | null = null;
 
+/**
+ * Registered region→appStore mirror handlers (#2283 slice E2). Kept in a set so
+ * they are **re-attached** whenever the client is (re)created — a transport swap
+ * ({@link setLayoutTransportForTest}) or {@link stopLayoutSubscription} drops the
+ * old client and its listeners, and with the local reducers gone the mirror is
+ * the *sole* writer of `appStore`'s layout, so it must not be orphaned by a reset.
+ */
+const layoutMirrorHandlers = new Set<(view: LayoutView | undefined) => void>();
+
+/** Attach every registered mirror handler's `onChange` to a freshly-made client. */
+function attachLayoutMirrorHandlers(client: ProjectionClient): void {
+  for (const handler of layoutMirrorHandlers) {
+    client.onChange((state) => handler(state.view as LayoutView | undefined));
+  }
+}
+
 /** Inject a transport for tests; `null` restores the lazily-created real one and
- * drops any active subscription. */
+ * drops any active subscription. Registered mirror handlers survive and re-attach
+ * to the next client. */
 export function setLayoutTransportForTest(t: Transport | null): void {
   (regionClient ?? creatingClient)?.stop();
   regionClient = null;
@@ -297,7 +224,17 @@ export function setLayoutTransportForTest(t: Transport | null): void {
 
 function transport(): Transport {
   if (!transportInstance) {
-    transportInstance = createTransport();
+    // The region→appStore mirror (#2283 slice E1) needs a *constructable* transport
+    // in every environment so the client's synchronous optimistic overlay can drive
+    // it. `createTransport()` throws in a non-Tauri environment with no remote-client
+    // socket (headless unit tests; remote-client mode before its socket lands,
+    // #2166); fall back to a backend-less {@link InMemoryTransport} there so layout
+    // stays a working, region-derived projection rather than silently colliding.
+    try {
+      transportInstance = createTransport();
+    } catch {
+      transportInstance = new InMemoryTransport();
+    }
   }
   return transportInstance;
 }
@@ -313,6 +250,9 @@ function layoutRegionClient(): ProjectionClient {
   if (regionClient) return regionClient;
   if (!creatingClient) {
     creatingClient = new ProjectionClient(transport(), region);
+    // Re-bind the region→appStore mirror to the new client (E2): a transport swap
+    // or subscription reset drops the previous client and its listeners.
+    attachLayoutMirrorHandlers(creatingClient);
   }
   return creatingClient;
 }
@@ -494,6 +434,14 @@ export function mirrorLayoutIntent(
   preSnapshot: LayoutSnapshot,
   postSnapshot: LayoutSnapshot
 ): void {
+  // No-op guard (#2283 slice E1): a reducer that made no structural change — a
+  // defensive no-op such as dragging a tab onto its own group, or moving a tab
+  // that does not exist — leaves `pre` structurally equal to `post`. Skip the
+  // dispatch so the region→appStore mirror does not fire and needlessly re-derive
+  // an identical tree, which would churn object identity and re-render. There is
+  // nothing to sync: the region view is purely structural.
+  if (layoutSnapshotsEqual(preSnapshot, postSnapshot)) return;
+
   let client: ProjectionClient;
   try {
     client = layoutRegionClient();
@@ -613,38 +561,6 @@ function sizesEqual(a: number[] | undefined, b: number[] | undefined): boolean {
 }
 
 /**
- * Whether one projected {@link MinimalGroup} faithfully mirrors a rich
- * {@link GroupSnapshot} — same id, metadata, focused panel, and panel tree.
- */
-function minimalGroupMatches(view: MinimalGroup, snap: GroupSnapshot): boolean {
-  return (
-    view.id === snap.id &&
-    view.name === snap.name &&
-    (view.color ?? null) === (snap.color ?? null) &&
-    (view.activePanelId ?? null) === (snap.activePanelId ?? null) &&
-    minimalNodesEqual(toMinimalNode(snap.root), view.root)
-  );
-}
-
-/**
- * Whether a projected `view` is a faithful structural mirror of the whole
- * `snapshot` — **every** group matches in order (id, metadata, focused panel and
- * tree) and the active group id agrees (#2283 slice C). This is the gate that
- * decides if the renderer may source structure from the projection (true) or
- * must fall back to `appStore` (false). Widened from the single active tree so a
- * group add/close/rename/color/reorder (still local) reseeds the region.
- */
-export function viewMatchesTree(
-  view: LayoutView | null | undefined,
-  snapshot: LayoutSnapshot
-): boolean {
-  if (!view || !Array.isArray(view.groups)) return false;
-  if ((view.activeGroupId ?? null) !== (snapshot.activeGroupId ?? null)) return false;
-  if (view.groups.length !== snapshot.groups.length) return false;
-  return view.groups.every((vg, i) => minimalGroupMatches(vg, snapshot.groups[i]));
-}
-
-/**
  * Compose the rich render tree for the **active** group of a projected view:
  * **structure** from the active group's `root`, **content** re-attached by tab
  * id — preferring the flat `contentById` {@link TabContent} map (part of #2283),
@@ -673,21 +589,212 @@ export async function ensureLayoutRegionClient(): Promise<ProjectionClient> {
   return ensureSubscribed();
 }
 
+/** The `appStore` layout fields a region view composes into (the mirror's output). */
+export interface ComposedLayoutState {
+  rootPanel: PanelNode;
+  activePanelId: string | null;
+  tabGroups: TabGroup[];
+  activeTabGroupId: string;
+}
+
 /**
- * Seed the layout region with the whole multi-group layout so the projection
- * tracks `appStore`'s current structure (the render-side counterpart to the
- * mutation bridge's seed-before-mutate). Installs every group via
- * `layout.replaceGroups` (#2283 slice C). Idempotent server-side: replacing with
- * the same layout yields no diff.
+ * Compose `appStore`'s layout fields from a projected {@link LayoutView} — the
+ * inverse of {@link buildLayoutSnapshot}, and the core of the region→appStore
+ * mirror (#2283 slice E1). Structure comes from the view; each tab's rich content
+ * is re-attached by id via {@link reconcileNode} — preferring the flat
+ * `tabContent` map, falling back to the current tree's rich tabs for any id the
+ * map does not hold. Returns:
+ *
+ * - top-level `rootPanel`/`activePanelId` composed from the **active** group's
+ *   live tree,
+ * - `activeTabGroupId` from the view, and
+ * - `tabGroups`: **non-active** groups composed from the view; the **active**
+ *   group's entry kept verbatim from `curTabGroups` (`{ ...cur }`). This mirrors
+ *   `appStore`'s convention exactly — the active group's live tree lives at the
+ *   top level, so its `tabGroups` entry is intentionally left as the last-saved
+ *   (possibly stale) tree until a group switch re-saves it. Keeping it verbatim
+ *   makes the composed state byte-identical to the local reducers' result.
+ *
+ * Returns `null` (mirror skips, leaving `appStore` untouched) when the view is
+ * empty/absent, or when it references a tab absent from both the map and the
+ * current tree (a transient desync — e.g. the initial backend-default snapshot
+ * before the region is seeded from `appStore`). Callers gate with
+ * {@link viewMatchesTree} first, so on the happy path this composes cleanly.
  */
-export async function seedLayoutRegion(snapshot: LayoutSnapshot): Promise<void> {
-  throwIfRejected(
-    await dispatch("layout.replaceGroups", {
-      groups: snapshot.groups.map(toMinimalGroup),
-      activeGroupId: snapshot.activeGroupId,
-    }),
-    "replaceGroups"
-  );
+/** Index a tree's directional `lastActiveLeafId` marks by split-container id. */
+function collectSplitMarks(node: PanelNode, into: Map<string, string>): void {
+  if (node.type === "split") {
+    if (node.lastActiveLeafId) into.set(node.id, node.lastActiveLeafId);
+    node.children.forEach((c) => collectSplitMarks(c, into));
+  }
+}
+
+/**
+ * Re-apply directional `lastActiveLeafId` marks (#448) from `prior` onto a freshly
+ * composed tree, by split-container id. The marks are a **frontend-only** derivation
+ * (the backend `set_active_panel` does not mark), so the region does not carry them;
+ * without this the region→appStore mirror would drop a split's last-focused-child
+ * memory every time it recomposes. A split absent from `prior` keeps whatever mark
+ * the composed tree already has.
+ */
+function preserveSplitMarks(node: PanelNode, marks: Map<string, string>): PanelNode {
+  if (node.type !== "split") return node;
+  const children = node.children.map((c) => preserveSplitMarks(c, marks));
+  const next: SplitContainer = { ...node, children };
+  const mark = marks.get(node.id);
+  if (mark !== undefined) next.lastActiveLeafId = mark;
+  return next;
+}
+
+export function composeLayoutState(
+  view: LayoutView | null | undefined,
+  curRootPanel: PanelNode,
+  curTabGroups: TabGroup[],
+  tabContent: Record<string, TabContent>
+): ComposedLayoutState | null {
+  if (!view || !Array.isArray(view.groups) || view.groups.length === 0) return null;
+
+  // Content fallback: every current tab by id, across all groups. `tabContent`
+  // is preferred in `reconcileNode`; this covers ids the map does not track
+  // (e.g. editor/settings tabs). The active group's live tree (`curRootPanel`)
+  // is merged last so its up-to-date tabs win over any stale `tabGroups` copy.
+  const fallback = new Map<string, TerminalTab>();
+  for (const g of curTabGroups) {
+    for (const [id, tab] of collectTabs(g.rootPanel)) fallback.set(id, tab);
+  }
+  for (const [id, tab] of collectTabs(curRootPanel)) fallback.set(id, tab);
+
+  // Directional marks by group id, from the prior `appStore` trees (active group's
+  // live tree overriding its stale `tabGroups` entry) — re-applied onto each
+  // freshly composed tree so the mirror never drops a split's last-focused memory.
+  const marksByGroup = new Map<string, Map<string, string>>();
+  for (const g of curTabGroups) {
+    const m = new Map<string, string>();
+    collectSplitMarks(g.id === view.activeGroupId ? curRootPanel : g.rootPanel, m);
+    marksByGroup.set(g.id, m);
+  }
+
+  try {
+    const activeGroupId = view.activeGroupId;
+    const activeView = activeGroupOf(view);
+    if (!activeView) return null;
+
+    const tabGroups: TabGroup[] = view.groups.map((vg) => {
+      if (vg.id === activeGroupId) {
+        const cur = curTabGroups.find((g) => g.id === vg.id);
+        // Keep the active group's `appStore` entry's tree/activePanelId (the live
+        // tree is the top-level `rootPanel`, so this entry is intentionally stale),
+        // but track its metadata (name/color) from the region view — a rename or
+        // recolor of the active group changes only that.
+        if (cur) {
+          const entry: TabGroup = { ...cur, name: vg.name };
+          if (vg.color != null) entry.color = vg.color;
+          else delete entry.color;
+          return entry;
+        }
+      }
+      const entry: TabGroup = {
+        id: vg.id,
+        name: vg.name,
+        rootPanel: preserveSplitMarks(
+          reconcileNode(vg.root, fallback, tabContent),
+          marksByGroup.get(vg.id) ?? new Map()
+        ),
+        activePanelId: vg.activePanelId,
+      };
+      if (vg.color != null) entry.color = vg.color;
+      return entry;
+    });
+
+    return {
+      rootPanel: preserveSplitMarks(
+        reconcileNode(activeView.root, fallback, tabContent),
+        marksByGroup.get(activeGroupId) ?? new Map()
+      ),
+      activePanelId: activeView.activePanelId,
+      tabGroups,
+      activeTabGroupId: activeGroupId,
+    };
+  } catch (err) {
+    // A tab referenced by the view but absent from both sources: treat as a
+    // transient desync and leave `appStore` on its current tree.
+    logRenderFallback(err);
+    return null;
+  }
+}
+
+/**
+ * Register the region→appStore layout mirror (#2283 slice E1). `handler` is
+ * invoked with the region's current view on every change — synchronously on this
+ * client's own optimistic dispatch (so the mirror lands within the reducer call),
+ * and again when the authoritative diff/snapshot arrives. Subscribes the region
+ * (idempotent) so the stream is live. Returns an unsubscribe.
+ */
+export function subscribeLayoutRegion(handler: (view: LayoutView | undefined) => void): () => void {
+  const alreadyRegistered = layoutMirrorHandlers.has(handler);
+  layoutMirrorHandlers.add(handler);
+  // Attach to the current client now. If the client did not yet exist,
+  // `layoutRegionClient()` creates it and `attachLayoutMirrorHandlers` binds every
+  // registered handler (including this one) — so only bind here when the client was
+  // already live and would not have picked this handler up on creation.
+  const hadClient = regionClient !== null || creatingClient !== null;
+  const client = layoutRegionClient();
+  let off = (): void => {};
+  if (hadClient && !alreadyRegistered) {
+    off = client.onChange((state) => handler(state.view as LayoutView | undefined));
+  }
+  void ensureSubscribed().catch((err) => logRenderFallback(err));
+  return () => {
+    layoutMirrorHandlers.delete(handler);
+    off();
+  };
+}
+
+/**
+ * Reseed the layout region to `snapshot` **synchronously and optimistically**
+ * (#2283 slice E2). Installs `snapshot`'s view as the region's effective view at
+ * once via {@link ProjectionClient.dispatchOptimistic} — so the region→appStore
+ * mirror composes it immediately — and replaces the backend's layout via
+ * `layout.replaceGroups` so the authoritative store converges to the same view.
+ *
+ * This is the retained reseed-safety, relocated from the render-side gate to the
+ * write sites: the region has no granular intent for the ~15 **non-intent**
+ * structural writers (the tab openers, cross-window handoff, workspace restore,
+ * the agent-error→terminal conversion) or for the directional `lastActiveLeafId`
+ * marking, so each keeps its local `appStore` write and reseeds the region after,
+ * keeping the region a faithful mirror rather than letting it lag (which, with the
+ * unconditional mirror, would strand the just-written tab on the next diff).
+ *
+ * Never throws (resilience): a missing transport or a rejected dispatch is logged;
+ * `appStore` keeps its local write, and the next reseed re-syncs the region.
+ */
+export function reseedLayoutRegion(snapshot: LayoutSnapshot): void {
+  const view: LayoutView = {
+    groups: snapshot.groups.map(toMinimalGroup),
+    activeGroupId: snapshot.activeGroupId,
+  };
+  try {
+    const client = layoutRegionClient();
+    void ensureSubscribed().catch((err) => logBridgeFallback("subscribe", err));
+    const intent: Intent = {
+      intentId: newIntentId(),
+      kind: "layout.replaceGroups",
+      payload: { groups: view.groups, activeGroupId: view.activeGroupId },
+      clientId,
+    };
+    void client
+      .dispatchOptimistic(intent, () => view)
+      .then((ack) => {
+        if (ack.status === "rejected") {
+          logBridgeFallback("reseed", new Error(ack.error?.message ?? "rejected"));
+        }
+      })
+      .catch((err) => logBridgeFallback("reseed", err));
+  } catch (err) {
+    // No transport, or an incomplete client (e.g. a partial test stub): the local
+    // `appStore` write already landed, and the next reseed re-syncs the region.
+    logBridgeFallback("reseed", err);
+  }
 }
 
 /** Structural equality over two rich {@link LayoutSnapshot}s — used to de-dupe

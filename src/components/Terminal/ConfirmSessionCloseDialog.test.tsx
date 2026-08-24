@@ -3,7 +3,6 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
-import { setLayoutIntentsEnabled } from "@/store/layoutBridge";
 import { ConfirmSessionCloseDialog } from "./ConfirmSessionCloseDialog";
 
 const toastSuccess = vi.fn();
@@ -30,7 +29,6 @@ describe("ConfirmSessionCloseDialog", () => {
     // The panel-kind spec splits synchronously before rendering; pin to the local
     // reducer (retained resilience fallback) since the mutation cut (#2184) makes
     // the intent path async by default.
-    setLayoutIntentsEnabled(false);
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -41,7 +39,6 @@ describe("ConfirmSessionCloseDialog", () => {
     act(() => root.unmount());
     container.remove();
     vi.clearAllMocks();
-    setLayoutIntentsEnabled(null);
   });
 
   it("renders nothing when no request is pending", () => {

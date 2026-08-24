@@ -1,142 +1,22 @@
 /**
- * `useLayoutRenderTree` — the renderer's cut to the projected layout render-list
- * (#2151 step 3, part of #2139).
+ * `useLayoutRenderTree` — the renderer's handle on the active tab group's panel
+ * tree (#2151, part of #2139; finalized in #2283 slice E2).
  *
- * `SplitView` renders the active tab group's panel tree. Through step 2 that
- * tree came straight from `appStore.rootPanel` (a mirror the mutation bridge
- * reconciled from the `layout@<clientId>` projection). Step 3 makes the
- * **renderer** source its structure from the projection directly and overlay
- * per-tab content from `appStore` — the partial-projection seam (Decision #2:
- * the layout region carries only panel structure + minimal tab identity; title,
- * colour, session status, broadcast and zoom stay in `appStore`).
- *
- * The hook returns a rich {@link PanelNode} — structure from the projection,
- * content re-attached by tab id from `appStore`'s current tree — so `SplitView`
- * consumes it exactly where it used to read `appStore.rootPanel` (one call
- * site). Because the composed tree preserves every `tab.id`/`panel.id`, the live
- * xterm DOM is reparented, never remounted (see {@link composeRenderTree}).
- *
- * # Safety (strangler)
- *
- * - **Gated** by {@link layoutRenderFromProjectionEnabled}. Flag off → the hook
- *   returns `appStore.rootPanel` verbatim, so the renderer is byte-for-byte
- *   unchanged.
- * - **Faithful-mirror gate.** The projection drives the render only when its
- *   view is a structural mirror of `appStore`'s tree ({@link viewMatchesTree}).
- *   Tab create/close/reorder/activate are not yet layout intents, so they edit
- *   `appStore` locally and momentarily desync the region; while desynced the
- *   hook falls back to `appStore.rootPanel` (never a stale tree) and
- *   {@link seedLayoutRegion} catches the region up so composing resumes. The
- *   gate guarantees the composed tree is structurally identical to
- *   `appStore.rootPanel`, so rendering can never diverge from the pre-cut output.
+ * `SplitView` renders the active group's tree. Since the layout data-flow
+ * inversion completed (#2283 slice E2), `appStore.rootPanel` is **no longer an
+ * independent authoritative store** — it is composed by the region→appStore
+ * mirror from the `layout@<clientId>` projection (structure) plus `appStore`'s
+ * by-id tab content. So the renderer simply reads that region-derived tree; the
+ * earlier strangler machinery (a runtime flag, a faithful-mirror gate, and a
+ * seed-on-drift effect that let the renderer source structure straight from the
+ * projection while `appStore` was still authoritative) is gone.
  */
-
-import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAppStore } from "@/store/appStore";
-import {
-  buildLayoutSnapshot,
-  composeRenderTree,
-  ensureLayoutRegionClient,
-  type LayoutSnapshot,
-  type LayoutView,
-  layoutRenderFromProjectionEnabled,
-  layoutSnapshotsEqual,
-  logRenderFallback,
-  seedLayoutRegion,
-  viewMatchesTree,
-} from "@/store/layoutBridge";
-import type { ProjectionCacheState, ProjectionClient } from "@/services/transport";
 import type { PanelNode } from "@/types/terminal";
 
-/**
- * The active tab group's panel tree for rendering: structure sourced from the
- * projected layout region when it faithfully mirrors `appStore`, otherwise
- * `appStore.rootPanel` verbatim (flag off, region not yet caught up, or a
- * transport that cannot subscribe).
- */
+/** The active tab group's panel tree for rendering — the region-derived
+ * `appStore.rootPanel` (composed by the layout mirror). */
 export function useLayoutRenderTree(): PanelNode {
-  const storeRoot = useAppStore((s) => s.rootPanel);
-  const storeActivePanelId = useAppStore((s) => s.activePanelId);
-  // The full group model: `tabGroups` + the active group id, with the active
-  // group's live tree carried at top-level `rootPanel`/`activePanelId` (#2283
-  // slice C). The region mirrors all groups; the renderer composes the active
-  // one.
-  const tabGroups = useAppStore((s) => s.tabGroups);
-  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
-  // The authoritative by-id tab-content map (part of #2283). Render composition
-  // sources each tab's content from here, falling back to the in-tree tab for
-  // any id the map does not yet hold (editor/settings/etc.). Behaviour-preserving
-  // while the tree still carries the full tab.
-  const tabContent = useAppStore((s) => s.tabContent);
-
-  // Read the flag once at mount: it flips only via dev tooling, and the
-  // subscription lifecycle is keyed off it below.
-  const [enabled] = useState(() => layoutRenderFromProjectionEnabled());
-
-  const [regionState, setRegionState] = useState<ProjectionCacheState | null>(null);
-  const clientRef = useRef<ProjectionClient | null>(null);
-  const lastSeeded = useRef<LayoutSnapshot | null>(null);
-
-  // The rich multi-group snapshot appStore is authoritative for — the seed
-  // payload and the faithful-mirror gate's reference.
-  const snapshot = useMemo<LayoutSnapshot>(
-    () => buildLayoutSnapshot(tabGroups, activeTabGroupId, storeRoot, storeActivePanelId),
-    [tabGroups, activeTabGroupId, storeRoot, storeActivePanelId]
-  );
-
-  // Subscribe to the layout region while enabled; a transport that cannot
-  // subscribe (non-Tauri without a socket) just leaves the renderer on the
-  // appStore fallback.
-  useEffect(() => {
-    if (!enabled) return;
-    let cancelled = false;
-    let unsubscribe = (): void => {};
-    ensureLayoutRegionClient()
-      .then((client) => {
-        if (cancelled) return;
-        clientRef.current = client;
-        setRegionState(client.state);
-        unsubscribe = client.onChange((state) => setRegionState(state));
-      })
-      .catch((err) => logRenderFallback(err));
-    return () => {
-      cancelled = true;
-      unsubscribe();
-      clientRef.current = null;
-    };
-  }, [enabled]);
-
-  const view = regionState?.view as LayoutView | undefined;
-  const matches = enabled && viewMatchesTree(view, snapshot);
-
-  // Keep the region a faithful mirror of appStore's multi-group structure. When
-  // the view is not a mirror (initial single-leaf snapshot, or a local non-intent
-  // edit — including a group add/close/rename/color/reorder), seed the whole
-  // layout so composing can resume. De-duped so a settled layout is not reseeded
-  // on every render.
-  useEffect(() => {
-    if (!enabled || !clientRef.current || matches) return;
-    const prev = lastSeeded.current;
-    if (prev && layoutSnapshotsEqual(prev, snapshot)) return;
-    lastSeeded.current = snapshot;
-    seedLayoutRegion(snapshot).catch((err) => logRenderFallback(err));
-    // `regionState` is a dep so the seed re-evaluates once the region snapshot
-    // first arrives (which sets `clientRef` but may leave `matches` false).
-  }, [enabled, matches, snapshot, regionState]);
-
-  return useMemo(() => {
-    if (matches && view) {
-      try {
-        // Content fallback comes from the active group's rich tree (`storeRoot`).
-        return composeRenderTree(view, storeRoot, tabContent);
-      } catch (err) {
-        // A tab referenced by the view but absent from appStore — treat as a
-        // desync and fall back rather than throw in render.
-        logRenderFallback(err);
-        return storeRoot;
-      }
-    }
-    return storeRoot;
-  }, [matches, view, storeRoot, tabContent]);
+  return useAppStore((s) => s.rootPanel);
 }

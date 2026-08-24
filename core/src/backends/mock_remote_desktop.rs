@@ -171,7 +171,7 @@ fn moving_block(width: u16, height: u16, i: u32) -> DirtyRect {
     let r = (80 + (i * 9) % 160) as u8;
     let g = (120 + (i * 5) % 120) as u8;
     let b = 220u8;
-    for px in data.chunks_exact_mut(4) {
+    for px in data.as_chunks_mut::<4>().0 {
         px[0] = r;
         px[1] = g;
         px[2] = b;
