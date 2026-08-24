@@ -113,9 +113,11 @@ trap cleanup EXIT
 seed_experimental_features
 rm -f "$STATE_FILE" 2>/dev/null || true
 
-# SC2257: the `i++` below is literal text inside this operator-facing heredoc
-# (a command for the human to type into the app's shell tab), not executed here.
-# shellcheck disable=SC2257
+# The counter one-liner below is literal text for the operator to type into the
+# app's shell tab. Its `$((i++))` is escaped (`\$`) so this unquoted heredoc does
+# NOT arithmetic-expand it at print time — an unescaped `$((i++))` trips `set -u`
+# ("i: unbound variable") and aborts the script before the app launches (#2545).
+# `$TRANSPORT`/`$AGENT_LABEL` below are intentionally expanded.
 cat <<CHECKLIST
 
 ============================================================================
@@ -150,7 +152,7 @@ FOLLOW THESE STEPS (each line states the expected result):
 
 4. THE #2512 HEADLINE — start a long-running process in that SAME tab so we can
    prove it survives the outage. Type (a 1 Hz counter that never stops):
-      i=0; while true; do echo $((i++)); sleep 1; done
+      i=0; while true; do echo \$((i++)); sleep 1; done
    EXPECT: the tab prints a new number every second (0, 1, 2, ...). Let it run.
    Note roughly which number it has reached, then leave it counting.
 
