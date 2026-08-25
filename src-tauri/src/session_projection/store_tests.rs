@@ -420,3 +420,96 @@ fn session_lost_serializes_as_session_lost_for_the_frontend() {
         serde_json::json!("sessionLost")
     );
 }
+
+// ── Agent transient-transport-break reconnecting (#2555) ─────────────────────────
+
+#[test]
+fn agent_transport_reconnecting_shows_reconnecting_without_arming_the_loop() {
+    // A transient agent-transport break (the in-task `reconnect_agent` case)
+    // recovers the hosted session **in place** — no backoff loop runs. So the
+    // fold must show `Reconnecting` for the overlay yet keep the reconnect engine
+    // **Idle**, so the backend timer driver never arms (it arms only on a
+    // `Waiting` phase) and never double-drives the transport the agent I/O task is
+    // already re-establishing (#2555).
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_backend_session_id("tab-1", Some("backend-sess-1".to_string()));
+
+    store.agent_transport_reconnecting("tab-1", Some("connection reset".to_string()));
+
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(s.status, SessionStatus::Reconnecting);
+    assert_eq!(
+        s.reconnect.phase,
+        ReconnectPhase::Idle,
+        "the loop must stay idle so the backend timer never arms (no double-drive)"
+    );
+    assert_eq!(
+        s.reconnect_error.as_deref(),
+        Some("connection reset"),
+        "the trigger cause is surfaced while reconnecting"
+    );
+    assert_eq!(
+        s.backend_session_id.as_deref(),
+        Some("backend-sess-1"),
+        "the live session survives the transient break in place — keep the re-attach id"
+    );
+    assert_eq!(s.end_reason, None);
+}
+
+#[test]
+fn agent_transport_reconnecting_then_connected_recovers_in_place() {
+    // The transport came back and the live agent session survived: fold back to
+    // `Connected`, clearing the reconnect-trigger cause and keeping the re-attach
+    // id (the same live session resumes output).
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_backend_session_id("tab-1", Some("backend-sess-1".to_string()));
+    store.agent_transport_reconnecting("tab-1", Some("connection reset".to_string()));
+
+    store.connected("tab-1");
+
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(s.status, SessionStatus::Connected);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+    assert_eq!(
+        s.reconnect_error, None,
+        "the trigger cause clears on recovery"
+    );
+    assert_eq!(
+        s.backend_session_id.as_deref(),
+        Some("backend-sess-1"),
+        "the surviving live session keeps its re-attach id"
+    );
+}
+
+#[test]
+fn agent_transport_reconnecting_then_dropped_resolves_off_reconnecting() {
+    // The transport came back but the live agent session was gone (recovery
+    // failed): the resolver folds the session off `Reconnecting` — the region is
+    // never left stuck reconnecting (#2555).
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.agent_transport_reconnecting("tab-1", Some("connection reset".to_string()));
+
+    store.dropped("tab-1", None);
+
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(s.status, SessionStatus::Disconnected);
+    assert_eq!(s.end_reason, Some(EndReason::Unexpected));
+    assert_eq!(s.reconnect_error, None);
+}
+
+#[test]
+fn agent_transport_reconnecting_is_a_noop_status_for_an_unknown_session() {
+    // Lazily creates the entry (mirrors the other fold methods) so a fold that
+    // races ahead of the connect record still lands a coherent reconnecting state.
+    let store = deterministic_store();
+    store.agent_transport_reconnecting("tab-unknown", None);
+    let s = store.get("tab-unknown").unwrap();
+    assert_eq!(s.status, SessionStatus::Reconnecting);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+}

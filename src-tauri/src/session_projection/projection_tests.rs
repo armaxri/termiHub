@@ -98,6 +98,14 @@ fn registry_for(store: Arc<SessionLifecycleStore>) -> HandlerRegistry {
         s.set_reconnect_trigger(&required_id(intent)?, opt_error(intent));
         Ok(publish_sessions(projector, &s))
     });
+    let s = store.clone();
+    registry.route(
+        "session.agentTransportReconnecting",
+        move |intent, projector| {
+            s.agent_transport_reconnecting(&required_id(intent)?, opt_error(intent));
+            Ok(publish_sessions(projector, &s))
+        },
+    );
     let s = store;
     registry.route("session.remove", move |intent, projector| {
         s.remove(&required_id(intent)?);
@@ -810,5 +818,54 @@ fn server_side_drop_folds_match_the_client_routes() {
         server_d.snapshot(),
         client_d.snapshot(),
         "the server dropped fold reproduces the client dropped route exactly"
+    );
+}
+
+#[test]
+fn agent_transport_reconnecting_projects_reconnecting_without_arming_the_loop() {
+    // #2555: the transient agent-transport-break fold surfaces `Reconnecting`
+    // through the region for the overlay, while the reconnect engine stays `idle`
+    // — so the backend timer driver (which arms only on a `waiting` phase) never
+    // starts a redrive that would double-drive the transport the agent I/O task is
+    // already re-establishing.
+    let store = seeded_store(); // s2 is connected
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    let ack = dispatcher.dispatch(intent(
+        "session.agentTransportReconnecting",
+        json!({ "sessionId": "s2", "error": "connection reset" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "exactly one diff for the fold");
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
+    assert_eq!(
+        cache.view["sessions"]["s2"]["status"],
+        json!("reconnecting")
+    );
+    assert_eq!(
+        cache.view["sessions"]["s2"]["reconnect"]["phase"],
+        json!("idle"),
+        "the loop is idle — the backend timer never arms (no double-drive)"
+    );
+    assert_eq!(
+        cache.view["sessions"]["s2"]["reconnectError"],
+        json!("connection reset")
+    );
+
+    // Recovery in place: the same session folds back to connected via the
+    // existing `session.connected` route (the survived-recovery resolver).
+    dispatcher.dispatch(intent("session.connected", json!({ "sessionId": "s2" })));
+    assert_eq!(
+        store.snapshot()["sessions"]["s2"]["status"],
+        json!("connected")
     );
 }
