@@ -2232,7 +2232,15 @@ export function wireSessionReconnectObserver(): void {
       }
     });
   }
-  ensureSessionSubscribed().catch((err) => logSessionBridgeFallback("subscribe", err));
+  // `ensureSessionSubscribed` builds the transport eagerly, so a non-Tauri env
+  // without a socket throws synchronously (not just a rejection) — guard both, so
+  // the eager module-init wiring never throws at import (best-effort, like the
+  // overlay hooks that also subscribe).
+  try {
+    ensureSessionSubscribed().catch((err) => logSessionBridgeFallback("subscribe", err));
+  } catch (err) {
+    logSessionBridgeFallback("subscribe", err);
+  }
 }
 
 /**
