@@ -2189,6 +2189,17 @@ function onReconnectCommandForTab(tab: TerminalTab | undefined): string | undefi
 }
 
 /**
+ * The trimmed on-reconnect command for a tab id (#1978), or `undefined` when none
+ * is set / the tab is gone. The exported entry the reconnect-countdown overlay
+ * uses to re-attach the per-client presentation onto the projected loop record
+ * ({@link import("./useSessionLifecycle").useSessionAutoReconnect}) now that the
+ * region — not a local `appStore` record — is the source of the loop (#2205).
+ */
+export function onReconnectCommandForTabId(tabId: string): string | undefined {
+  return onReconnectCommandForTab(findTabById(tabId));
+}
+
+/**
  * Find a terminal tab by id across the active panel tree (#1978 helper). Used by
  * the auto-reconnect loop to read a tab's live connection config when settling.
  */
