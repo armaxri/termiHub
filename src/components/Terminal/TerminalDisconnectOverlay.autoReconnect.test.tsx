@@ -73,9 +73,6 @@ describe("TerminalDisconnectOverlay — agentless auto-reconnect variant (#1962)
       terminalExitedTabs: { "tab-1": true },
       terminalDisconnectErrors: {},
       terminalViewMode: {},
-      terminalReconnectingTabs: {},
-      terminalReconnectTriggerErrors: {},
-      terminalAutoReconnect: {},
     });
   });
 

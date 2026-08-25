@@ -16,7 +16,6 @@ import {
   idleReconnect,
   reconnecting,
 } from "@/test/sessionLifecycleRegionTestHarness";
-import type { TerminalAutoReconnectState } from "@/types/terminal";
 
 // Stub lucide-react icons used in the overlay.
 vi.mock("lucide-react", () => ({
@@ -31,17 +30,6 @@ vi.mock("lucide-react", () => ({
 }));
 
 const TAB = "tab-1";
-
-function record(over: Partial<TerminalAutoReconnectState> = {}): TerminalAutoReconnectState {
-  return {
-    phase: "waiting",
-    attempt: 1,
-    maxAttempts: 10,
-    delayMs: 3_000,
-    nextAttemptAt: Date.now() + 3_000,
-    ...over,
-  };
-}
 
 /** Flush the bridge's async subscribe + fan-out so the projected snapshot lands. */
 async function flush(): Promise<void> {
@@ -68,9 +56,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
       terminalExitedTabs: { [TAB]: true },
       terminalDisconnectErrors: {},
       terminalViewMode: {},
-      terminalReconnectingTabs: {},
-      terminalReconnectTriggerErrors: {},
-      terminalAutoReconnect: {},
     });
   });
 
@@ -84,7 +69,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
   });
 
   it("renders the countdown from a mirroring projected snapshot", async () => {
-    useAppStore.setState({ terminalAutoReconnect: { [TAB]: record({ attempt: 1 }) } });
     transport.setSession(TAB, reconnecting({ phase: "waiting", attempt: 1, delayMs: 3_000 }));
 
     act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
@@ -101,7 +85,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     // The region is the sole source of the reconnect loop (#2205 PR-B): a local
     // `appStore` record at a different attempt does NOT override it — the overlay
     // renders the region's attempt (7 ⇒ "Attempt 8 of 10"), not the local one.
-    useAppStore.setState({ terminalAutoReconnect: { [TAB]: record({ attempt: 1 }) } });
     transport.setSession(TAB, reconnecting({ phase: "waiting", attempt: 7, delayMs: 99_000 }));
 
     act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
@@ -117,7 +100,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     // render-cut flag no longer gates it — the region drives the countdown even
     // with the flag off, and the hook still subscribes to source it.
     setSessionRenderFromProjectionEnabled(false);
-    useAppStore.setState({ terminalAutoReconnect: { [TAB]: record({ attempt: 9 }) } });
     transport.setSession(TAB, reconnecting({ phase: "waiting", attempt: 3, delayMs: 1_000 }));
 
     act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
@@ -130,7 +112,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
   });
 
   it("renders the reconnecting spinner sourced from a mirroring projected snapshot", async () => {
-    useAppStore.setState({ terminalReconnectingTabs: { [TAB]: true } });
     transport.setSession(TAB, reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
 
     act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
@@ -162,10 +143,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
   });
 
   it("renders the reconnect-trigger error sourced from a mirroring region snapshot (#2442)", async () => {
-    useAppStore.setState({
-      terminalReconnectingTabs: { [TAB]: true },
-      terminalReconnectTriggerErrors: { [TAB]: "connection reset" },
-    });
     transport.setSession(
       TAB,
       reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }, "connection reset")
@@ -185,10 +162,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     // The reconnect-trigger cause is region-owned since #2205 PR-B: a divergent
     // local `appStore` value does not override it — the overlay shows the region's
     // cause, not the local one.
-    useAppStore.setState({
-      terminalReconnectingTabs: { [TAB]: true },
-      terminalReconnectTriggerErrors: { [TAB]: "local cause" },
-    });
     transport.setSession(
       TAB,
       reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }, "region cause")

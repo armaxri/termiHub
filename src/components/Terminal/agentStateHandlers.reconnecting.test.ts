@@ -12,16 +12,11 @@
  * feedback during a drop. Tabs that already have a session keep the existing
  * behaviour (reconnecting spinner overlay).
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useAppStore } from "@/store/appStore";
-import {
-  currentSessionView,
-  setSessionIntentsEnabled,
-  setSessionTransportForTest,
-  stopSessionSubscription,
-} from "@/store/sessionBridge";
-import { FakeSessionTransport } from "@/test/sessionLifecycleRegionTestHarness";
+import { currentSessionView } from "@/store/sessionBridge";
+import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
 import { applyAgentReconnecting } from "./agentStateHandlers";
 
 vi.mock("@/services/storage", () => ({
@@ -68,6 +63,15 @@ function findAgentTerminalTabs(agentId: string) {
 }
 
 describe("applyAgentReconnecting (G8, #1242)", () => {
+  // The reconnecting state moved off `appStore` into the projected
+  // `session-lifecycle` region (#2205 PR-B / #2555): a live-session tab is folded
+  // to `reconnecting` there via `session.agentTransportReconnecting`, so the
+  // harness wires the region transport + intents and the assertions read the
+  // region (the sole reconnecting source) rather than the removed local slices.
+  // `applyAgentReconnecting` folds the region synchronously via the optimistic
+  // `session.agentTransportReconnecting` intent, so no transport handle is needed.
+  installSessionLifecycleHarness();
+
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
@@ -85,11 +89,10 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
 
     applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
-    const state = useAppStore.getState();
     // The tab is parked waiting for this agent (honest feedback), not skipped.
-    expect(state.terminalWaitingForAgent[tab.id]).toBe("agent-1");
-    // It must not be shown the reconnecting spinner (that's for live sessions).
-    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+    expect(useAppStore.getState().terminalWaitingForAgent[tab.id]).toBe("agent-1");
+    // It must not be folded to reconnecting in the region (that's for live sessions).
+    expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
   });
 
   it("marks an active-session agent tab as reconnecting (unchanged)", () => {
@@ -103,10 +106,10 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
 
     applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
-    const state = useAppStore.getState();
-    expect(state.terminalReconnectingTabs[tab.id]).toBe(true);
+    // The region — the sole reconnecting source — is folded to reconnecting.
+    expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
     // A live-session tab is not parked as waiting.
-    expect(state.terminalWaitingForAgent[tab.id]).toBeUndefined();
+    expect(useAppStore.getState().terminalWaitingForAgent[tab.id]).toBeUndefined();
   });
 
   it("records the trigger error on reconnecting active-session tabs", () => {
@@ -120,26 +123,13 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
 
     applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), "connection reset");
 
-    const state = useAppStore.getState();
-    expect(state.terminalReconnectingTabs[tab.id]).toBe(true);
-    expect(state.terminalReconnectTriggerErrors[tab.id]).toBe("connection reset");
+    // The region folds to reconnecting and records the trigger cause the overlay shows.
+    const life = currentSessionView()[tab.id];
+    expect(life?.status).toBe("reconnecting");
+    expect(life?.reconnectError).toBe("connection reset");
   });
 
   describe("session-lifecycle region fold (#2555, closes the #2554 overlay gap)", () => {
-    let transport: FakeSessionTransport;
-
-    beforeEach(() => {
-      transport = new FakeSessionTransport();
-      setSessionTransportForTest(transport);
-      setSessionIntentsEnabled(true);
-    });
-
-    afterEach(() => {
-      stopSessionSubscription();
-      setSessionTransportForTest(null);
-      setSessionIntentsEnabled(null);
-    });
-
     it("folds a live-session agent tab to reconnecting in the region (overlay/tab-dot source)", () => {
       const store = useAppStore.getState();
       store.addTab("Shell", "remote-session", {
@@ -192,9 +182,9 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
     applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
     const state = useAppStore.getState();
-    expect(state.terminalReconnectingTabs[live.id]).toBe(true);
+    expect(currentSessionView()[live.id]?.status).toBe("reconnecting");
     expect(state.terminalWaitingForAgent[live.id]).toBeUndefined();
     expect(state.terminalWaitingForAgent[spawning.id]).toBe("agent-1");
-    expect(state.terminalReconnectingTabs[spawning.id]).toBeUndefined();
+    expect(currentSessionView()[spawning.id]?.status).not.toBe("reconnecting");
   });
 });

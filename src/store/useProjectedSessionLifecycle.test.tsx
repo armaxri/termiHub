@@ -46,8 +46,6 @@ afterEach(() => {
   root = null;
   container = null;
   useAppStore.setState({
-    terminalConnecting: {},
-    terminalReconnectingTabs: {},
     terminalDisconnectErrors: {},
   });
 });
@@ -61,7 +59,6 @@ describe("useProjectedSessionLifecycle (per tab)", () => {
   }
 
   it("sources connecting from a mirroring projected snapshot", async () => {
-    useAppStore.setState({ terminalConnecting: { [TAB]: true } });
     harness.transport.setSession(TAB, connecting());
     let latest: ProjectedSessionLifecycleSlice | undefined;
     mount(<Probe onValue={(v) => (latest = v)} />);
@@ -72,10 +69,6 @@ describe("useProjectedSessionLifecycle (per tab)", () => {
   });
 
   it("sources reconnecting and the disconnect error from mirroring snapshots", async () => {
-    useAppStore.setState({
-      terminalReconnectingTabs: { [TAB]: true },
-      terminalDisconnectErrors: {},
-    });
     harness.transport.setSession(
       TAB,
       reconnecting({ phase: "waiting", attempt: 1, delayMs: 3000 })
@@ -87,7 +80,6 @@ describe("useProjectedSessionLifecycle (per tab)", () => {
 
     // Now a failed disconnect with a matching error string.
     useAppStore.setState({
-      terminalReconnectingTabs: {},
       terminalDisconnectErrors: { [TAB]: "auth failed" },
     });
     act(() => harness.transport.setSession(TAB, failed("auth failed")));
@@ -136,8 +128,6 @@ describe("useProjectedSessionLifecycleMaps (list consumers)", () => {
 
   it("mirrors the appStore maps sourced through the region", async () => {
     useAppStore.setState({
-      terminalConnecting: { a: true },
-      terminalReconnectingTabs: { b: true },
       terminalDisconnectErrors: { c: "boom" },
     });
     harness.transport.setSession("a", connecting());

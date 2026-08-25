@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-// The auto-reconnect loop lives entirely in the store and its pure state machine;
-// it never calls the backend directly (it re-drives the existing reconnect path),
-// so the service mocks only need to satisfy module import.
+// Since #2205 PR-B the resilient-reconnect loop is owned by the backend redrive
+// via the `session-lifecycle` region — the client no longer runs a backoff engine.
+// These tests assert the region-authoritative contract (drop → session.reconnect,
+// backend attempt edge → re-drive, cancel → session.cancelReconnect) plus the
+// surviving on-reconnect command. The service mocks only satisfy module import.
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
     Promise.resolve({ connections: [], folders: [], agents: [], externalErrors: [] })
@@ -52,19 +54,102 @@ vi.mock("@/services/api", () => ({
   sessionGetCapabilities: vi.fn(() => Promise.resolve({})),
 }));
 
-import { useAppStore } from "./appStore";
-import { getAllLeaves } from "@/utils/panelTree";
-import { DEFAULT_BACKOFF } from "@/utils/reconnectBackoff";
-import { registerTerminalInputInjector } from "@/services/macroPlayback";
-import { setSessionIntentsEnabled } from "./sessionBridge";
+import type {
+  FrameHandler,
+  Intent,
+  IntentAck,
+  ProjectionFrame,
+  SnapshotFrame,
+  Subscription,
+  Transport,
+} from "@/services/transport";
 
-function findTab(tabId: string) {
-  const state = useAppStore.getState();
-  return [
-    ...getAllLeaves(state.rootPanel).flatMap((l) => l.tabs),
-    ...state.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-  ].find((t) => t.id === tabId);
+import { useAppStore } from "./appStore";
+import { registerTerminalInputInjector } from "@/services/macroPlayback";
+import {
+  currentSessionView,
+  SESSION_LIFECYCLE_REGION,
+  setSessionIntentsEnabled,
+  setSessionTransportForTest,
+  stopSessionSubscription,
+  type ProjectedSessionLifecycle,
+} from "./sessionBridge";
+
+/**
+ * A `session-lifecycle` substrate double: records dispatched intents and folds
+ * the reconnect-relevant ones (`session.reconnect` → reconnecting/waiting) so the
+ * region reflects them, plus `fireAttempt` to simulate the backend timer's
+ * Waiting→Connecting edge. The client engine is gone (#2205 PR-B), so these tests
+ * assert the region-authoritative contract, not a local backoff loop.
+ */
+class FakeTransport implements Transport {
+  dispatched: Intent[] = [];
+  private sessions: Record<string, ProjectedSessionLifecycle> = {};
+  private version = 0;
+  private handlers: FrameHandler[] = [];
+
+  async dispatch(intent: Intent): Promise<IntentAck> {
+    this.dispatched.push(intent);
+    const id = (intent.payload as { sessionId: string }).sessionId;
+    if (intent.kind === "session.reconnect") {
+      this.sessions[id] = {
+        status: "reconnecting",
+        reconnect: { phase: "waiting", attempt: 0, delayMs: 1000 },
+      };
+      this.version += 1;
+      this.fan();
+    }
+    const produced =
+      intent.kind === "session.reconnect"
+        ? [{ region: SESSION_LIFECYCLE_REGION, version: this.version }]
+        : [];
+    return { intentId: intent.intentId, status: "accepted", produced };
+  }
+
+  async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
+    this.handlers.push(onFrame);
+    return {
+      snapshot: this.snapshot(region),
+      unsubscribe: () => {
+        this.handlers = this.handlers.filter((h) => h !== onFrame);
+      },
+    };
+  }
+
+  async resync(): Promise<SnapshotFrame | null> {
+    return null;
+  }
+
+  kinds(): string[] {
+    return this.dispatched.map((i) => i.kind);
+  }
+
+  /** Simulate the backend timer firing the Waiting→Connecting edge. */
+  fireAttempt(id: string, attempt: number): void {
+    this.sessions[id] = {
+      status: "reconnecting",
+      reconnect: { phase: "connecting", attempt, delayMs: 0 },
+    };
+    this.version += 1;
+    this.fan();
+  }
+
+  private snapshot(region: string): SnapshotFrame {
+    return {
+      kind: "snapshot",
+      region,
+      version: this.version,
+      view: structuredClone({ sessions: this.sessions }),
+    };
+  }
+
+  private fan(): void {
+    const frame: ProjectionFrame = this.snapshot(SESSION_LIFECYCLE_REGION);
+    for (const h of this.handlers) h(frame);
+  }
 }
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
 
 /** Create a plain-SSH terminal tab; `resilient` toggles the per-connection opt-in. */
 function makeSshTab(
@@ -88,187 +173,119 @@ function makeSshTab(
   );
 }
 
-const auto = (tabId: string) => useAppStore.getState().terminalAutoReconnect[tabId];
+function reconnectKinds(fake: FakeTransport, tabId: string): string[] {
+  return fake.dispatched
+    .filter((i) => (i.payload as { sessionId: string }).sessionId === tabId)
+    .map((i) => i.kind);
+}
 
-describe("appStore — agentless auto-reconnect (#1962)", () => {
+describe("appStore — resilient reconnect is region-authoritative (#1962 / #2205 PR-B)", () => {
+  let fake: FakeTransport;
+
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
-    vi.useFakeTimers();
-    // Pin the local `setTimeout` reconnect loop: these tests assert the local
-    // reducer/timer path, which stays as the resilience fallback after the
-    // session mutation cut flipped on by default (#2152). The intent path keeps
-    // its own coverage in sessionBridge/appStore.sessionBridge tests.
-    setSessionIntentsEnabled(false);
+    fake = new FakeTransport();
+    setSessionTransportForTest(fake);
+    setSessionIntentsEnabled(true);
   });
 
   afterEach(() => {
+    stopSessionSubscription();
+    setSessionTransportForTest(null);
     setSessionIntentsEnabled(null);
-    vi.clearAllTimers();
-    vi.useRealTimers();
   });
 
-  it("starts a backoff loop when an opted-in SSH tab drops unexpectedly", () => {
+  it("folds session.reconnect + region reconnecting when an opted-in SSH tab drops", async () => {
     const tabId = makeSshTab(true);
 
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    await flush();
 
-    const state = auto(tabId);
-    expect(state).toBeDefined();
-    expect(state.phase).toBe("waiting");
-    expect(state.attempt).toBe(0);
-    expect(state.maxAttempts).toBe(DEFAULT_BACKOFF.maxAttempts);
-    // First delay is the base delay ± jitter.
-    expect(state.delayMs).toBeGreaterThan(0);
-    expect(state.delayMs).toBeLessThanOrEqual(
-      Math.round(DEFAULT_BACKOFF.baseDelayMs * (1 + DEFAULT_BACKOFF.jitterRatio)) + 1
-    );
+    expect(reconnectKinds(fake, tabId)).toContain("session.reconnect");
+    expect(currentSessionView()[tabId]?.status).toBe("reconnecting");
+    expect(currentSessionView()[tabId]?.reconnect.phase).toBe("waiting");
   });
 
-  it("does NOT auto-reconnect when the connection did not opt in", () => {
+  it("dispatches session.dropped (not reconnect) when the connection did not opt in", async () => {
     const tabId = makeSshTab(false);
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    expect(auto(tabId)).toBeUndefined();
+    await flush();
+
+    const kinds = reconnectKinds(fake, tabId);
+    expect(kinds).toContain("session.dropped");
+    expect(kinds).not.toContain("session.reconnect");
     // The standard disconnect overlay path still applies.
     expect(useAppStore.getState().terminalExitedTabs[tabId]).toBe(true);
   });
 
-  it("does NOT auto-reconnect on a clean exit or a user kill", () => {
+  it("does NOT reconnect on a clean exit or a user kill", async () => {
     const cleanTab = makeSshTab(true);
     useAppStore.getState().setTerminalExited(cleanTab, { code: 0, reason: "clean" });
-    expect(auto(cleanTab)).toBeUndefined();
-
     const killedTab = makeSshTab(true);
     useAppStore.getState().setTerminalExited(killedTab, { code: null, reason: "killed" });
-    expect(auto(killedTab)).toBeUndefined();
+    await flush();
+
+    expect(reconnectKinds(fake, cleanTab)).not.toContain("session.reconnect");
+    // A clean exit mirrors nothing; a user kill is a graceful disconnect.
+    expect(reconnectKinds(fake, killedTab)).not.toContain("session.reconnect");
+    expect(reconnectKinds(fake, killedTab)).toContain("session.disconnect");
   });
 
-  it("fires the connect attempt when the backoff timer elapses", () => {
+  it("re-drives the tab when the backend timer projects Waiting→Connecting", async () => {
     const tabId = makeSshTab(true);
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    await flush();
     const retryBefore = useAppStore.getState().terminalRetryCounters[tabId] ?? 0;
 
-    vi.advanceTimersByTime(auto(tabId).delayMs);
+    fake.fireAttempt(tabId, 1);
+    await flush();
 
-    const state = auto(tabId);
-    expect(state.phase).toBe("connecting");
-    expect(state.attempt).toBe(1);
-    // reconnectTerminal was invoked → retry counter bumped, connecting overlay armed.
-    expect(useAppStore.getState().terminalRetryCounters[tabId]).toBe(retryBefore + 1);
-    expect(useAppStore.getState().terminalConnecting[tabId]).toBe(true);
+    // The region observer re-drives the tab (bumps its retry counter) so the
+    // Terminal effect re-runs and re-attaches to the fresh backend session id.
+    expect(useAppStore.getState().terminalRetryCounters[tabId] ?? 0).toBe(retryBefore + 1);
   });
 
-  it("settles the loop when the reconnect attempt succeeds", () => {
+  it("cancel dispatches session.cancelReconnect and marks the tab exited", async () => {
     const tabId = makeSshTab(true);
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    vi.advanceTimersByTime(auto(tabId).delayMs);
-    expect(auto(tabId).phase).toBe("connecting");
-
-    // A session id landing is the success signal.
-    useAppStore.getState().setTabSessionId(tabId, "sess-2");
-
-    expect(auto(tabId)).toBeUndefined();
-  });
-
-  it("backs off further after a failed attempt, with a longer delay", () => {
-    const tabId = makeSshTab(true);
-    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-
-    vi.advanceTimersByTime(auto(tabId).delayMs); // attempt 1 (connecting)
-    expect(auto(tabId).phase).toBe("connecting");
-
-    // A direct-SSH failed attempt surfaces via setTerminalSpawnError.
-    useAppStore.getState().setTerminalSpawnError(tabId, "connection refused");
-
-    const state = auto(tabId);
-    expect(state.phase).toBe("waiting");
-    expect(state.attempt).toBe(1);
-    // Delay for attempt #2 is around base*factor, larger than the base window.
-    expect(state.delayMs).toBeGreaterThan(
-      Math.round(DEFAULT_BACKOFF.baseDelayMs * (1 - DEFAULT_BACKOFF.jitterRatio))
-    );
-    // The failed attempt's spawn error is suppressed so it does not compete with
-    // the countdown overlay.
-    expect(useAppStore.getState().terminalSpawnErrors[tabId]).toBeUndefined();
-  });
-
-  it("gives up after exhausting maxAttempts and shows the reconnect-failed overlay", () => {
-    const tabId = makeSshTab(true);
-    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-
-    // Drive attempt→failure until the loop gives up.
-    for (let i = 0; i < DEFAULT_BACKOFF.maxAttempts; i++) {
-      const state = auto(tabId);
-      if (!state) break;
-      expect(state.phase).toBe("waiting");
-      vi.advanceTimersByTime(state.delayMs);
-      expect(auto(tabId).phase).toBe("connecting");
-      useAppStore.getState().setTerminalSpawnError(tabId, "connection refused");
-    }
-
-    // Loop cleared; the standard "Reconnect failed" overlay takes over.
-    expect(auto(tabId)).toBeUndefined();
-    expect(useAppStore.getState().terminalExitedTabs[tabId]).toBe(true);
-    expect(useAppStore.getState().terminalDisconnectErrors[tabId]).toBe("connection refused");
-  });
-
-  it("cancel stops the loop and leaves the manual disconnect overlay", () => {
-    const tabId = makeSshTab(true);
-    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    expect(auto(tabId).phase).toBe("waiting");
+    await flush();
+    expect(currentSessionView()[tabId]?.status).toBe("reconnecting");
 
     useAppStore.getState().cancelAutoReconnect(tabId);
+    await flush();
 
-    expect(auto(tabId)).toBeUndefined();
+    expect(reconnectKinds(fake, tabId)).toContain("session.cancelReconnect");
     expect(useAppStore.getState().terminalExitedTabs[tabId]).toBe(true);
-    // A cancelled loop must not schedule any further attempt.
-    const retryBefore = useAppStore.getState().terminalRetryCounters[tabId] ?? 0;
-    vi.advanceTimersByTime(60_000);
-    expect(useAppStore.getState().terminalRetryCounters[tabId] ?? 0).toBe(retryBefore);
   });
 
-  it("cancel is a no-op when no loop is active", () => {
+  it("cancel is a no-op when the region shows no active reconnect", async () => {
     const tabId = makeSshTab(true);
     expect(() => useAppStore.getState().cancelAutoReconnect(tabId)).not.toThrow();
-    expect(auto(tabId)).toBeUndefined();
+    await flush();
+    expect(reconnectKinds(fake, tabId)).not.toContain("session.cancelReconnect");
   });
 
-  it("a re-drop after a successful reconnect restarts the loop", () => {
+  it("re-drop after settling re-arms the region reconnect", async () => {
     const tabId = makeSshTab(true);
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    vi.advanceTimersByTime(auto(tabId).delayMs);
+    await flush();
+    // Settle (reconnect succeeded elsewhere) then drop again.
+    useAppStore.getState().reconnectTerminal(tabId);
     useAppStore.getState().setTabSessionId(tabId, "sess-2");
-    expect(auto(tabId)).toBeUndefined();
-
-    // Link drops again → fresh loop from attempt 1.
+    fake.dispatched.length = 0;
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    expect(auto(tabId).phase).toBe("waiting");
-    expect(auto(tabId).attempt).toBe(0);
-  });
-
-  it("clears the pending backoff timer when the tab is closed", () => {
-    const tabId = makeSshTab(true);
-    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    expect(auto(tabId).phase).toBe("waiting");
-
-    const panelId = findTab(tabId)!.panelId;
-    useAppStore.getState().closeTab(tabId, panelId);
-
-    expect(auto(tabId)).toBeUndefined();
-    // No timer should fire against the gone tab.
-    expect(() => vi.advanceTimersByTime(60_000)).not.toThrow();
-    expect(findTab(tabId)).toBeUndefined();
+    await flush();
+    expect(reconnectKinds(fake, tabId)).toContain("session.reconnect");
   });
 });
 
-describe("appStore — on-reconnect command (#1978)", () => {
+describe("appStore — on-reconnect command (#1978 / #2205 PR-B)", () => {
   let injected: Array<{ tabId: string; data: string }>;
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
-    vi.useFakeTimers();
-    // Pin the local `setTimeout` reconnect loop — see the note above. The local
-    // reducer/timer path is the resilience fallback after the session mutation
-    // cut flipped on by default (#2152).
+    // The on-reconnect command trigger is independent of the region mutation cut;
+    // keep intents off so setTabSessionId's `session.connected` mirror is inert.
     setSessionIntentsEnabled(false);
     injected = [];
     registerTerminalInputInjector((tabId, data) => {
@@ -280,24 +297,18 @@ describe("appStore — on-reconnect command (#1978)", () => {
   afterEach(() => {
     setSessionIntentsEnabled(null);
     registerTerminalInputInjector(null);
-    vi.clearAllTimers();
-    vi.useRealTimers();
   });
 
-  /** Drive a tab through drop → attempt → successful reconnect. */
-  function reconnectSuccessfully(tabId: string): void {
-    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    vi.advanceTimersByTime(auto(tabId).delayMs);
-    expect(auto(tabId).phase).toBe("connecting");
-    useAppStore.getState().setTabSessionId(tabId, "sess-2");
-    expect(auto(tabId)).toBeUndefined();
+  /** Drive a resilient tab through a reconnect that succeeds (retry counter bumped,
+   * then a fresh session id lands). */
+  function reconnectSuccessfully(tabId: string, sessionId = "sess-2"): void {
+    useAppStore.getState().reconnectTerminal(tabId); // bumps the retry counter
+    useAppStore.getState().setTabSessionId(tabId, sessionId);
   }
 
-  it("runs the configured command once after a successful auto-reconnect", () => {
+  it("runs the configured command once after a successful reconnect", () => {
     const tabId = makeSshTab(true, "sess-1", "tmux attach");
-
     reconnectSuccessfully(tabId);
-
     expect(injected).toEqual([{ tabId, data: "tmux attach\n" }]);
   });
 
@@ -319,37 +330,38 @@ describe("appStore — on-reconnect command (#1978)", () => {
     expect(injected).toEqual([]);
   });
 
-  it("does not run the command on the initial connect (no active loop)", () => {
+  it("does not run the command on the initial connect (retry counter at 0)", () => {
     const tabId = makeSshTab(true, null, "tmux attach");
-    // A first-ever session id landing with no loop in flight must not fire it.
     useAppStore.getState().setTabSessionId(tabId, "sess-1");
     expect(injected).toEqual([]);
   });
 
-  it("does not run the command when the loop is cancelled before success", () => {
+  it("does not run the command for a non-resilient tab", () => {
+    const tabId = makeSshTab(false, "sess-1", "tmux attach");
+    reconnectSuccessfully(tabId);
+    expect(injected).toEqual([]);
+  });
+
+  it("does not run the command when the reconnect never succeeds", () => {
     const tabId = makeSshTab(true, "sess-1", "tmux attach");
-    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    expect(auto(tabId).phase).toBe("waiting");
-    useAppStore.getState().cancelAutoReconnect(tabId);
+    useAppStore.getState().reconnectTerminal(tabId);
+    // No fresh session id lands → the command never fires.
     expect(injected).toEqual([]);
   });
 
   it("runs the command again on each subsequent successful reconnect", () => {
     const tabId = makeSshTab(true, "sess-1", "tmux attach");
-    reconnectSuccessfully(tabId);
-    // A fresh drop and reconnect fires the command a second time.
-    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    vi.advanceTimersByTime(auto(tabId).delayMs);
-    useAppStore.getState().setTabSessionId(tabId, "sess-3");
+    reconnectSuccessfully(tabId, "sess-2");
+    reconnectSuccessfully(tabId, "sess-3");
     expect(injected).toEqual([
       { tabId, data: "tmux attach\n" },
       { tabId, data: "tmux attach\n" },
     ]);
   });
 
-  it("exposes the command in the loop display state for the overlay", () => {
+  it("exposes the command via onReconnectCommandForTabId for the overlay", async () => {
+    const { onReconnectCommandForTabId } = await import("./appStore");
     const tabId = makeSshTab(true, "sess-1", "tmux attach");
-    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-    expect(auto(tabId).onReconnectCommand).toBe("tmux attach");
+    expect(onReconnectCommandForTabId(tabId)).toBe("tmux attach");
   });
 });

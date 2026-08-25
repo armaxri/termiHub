@@ -35,7 +35,6 @@ function seedConnecting(tabId: string = TAB_ID): void {
 
 function resetStore() {
   useAppStore.setState({
-    terminalConnecting: {},
     terminalSpawnErrors: {},
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},

@@ -16,6 +16,17 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { useAppStore } from "@/store/appStore";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
+import {
+  currentSessionView,
+  ensureSessionSubscribed,
+  setSessionBackendReattachEnabled,
+} from "@/store/sessionBridge";
+import {
+  connected,
+  installSessionLifecycleHarness,
+  reconnecting,
+} from "@/test/sessionLifecycleRegionTestHarness";
+import { applyAgentReconnecting } from "./agentStateHandlers";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -91,13 +102,24 @@ function findAgentTerminalTabs(agentId: string) {
 setupAgentsRegion();
 
 describe("agent-state-change tab discovery — regression for empty agentSessions", () => {
+  // Reconnecting state moved off `appStore` into the projected `session-lifecycle`
+  // region (#2205 PR-B / #2555): the real handler folds a live-session tab to
+  // `reconnecting` via `applyAgentReconnecting` and gates the `connected`
+  // transition on the region status. Wire the region harness so the fold lands,
+  // and pin `sessionBackendReattach` OFF so these remote-session tabs take the
+  // develop-parity (non-resilient) path — `setTerminalExited` then never re-folds
+  // the region back to reconnecting via `session.reconnect`.
+  installSessionLifecycleHarness();
+
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
+    setSessionBackendReattachEnabled(false);
     vi.useFakeTimers();
   });
 
   afterEach(() => {
+    setSessionBackendReattachEnabled(null);
     vi.useRealTimers();
   });
 
@@ -176,13 +198,10 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     // Simulate that the session was established.
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
 
-    // Simulate fixed "reconnecting" handler:
-    for (const t of findAgentTerminalTabs("agent-1")) {
-      if (!t.sessionId) continue;
-      useAppStore.getState().setTerminalReconnecting(t.id, true);
-    }
+    // The real "reconnecting" handler folds live-session tabs to reconnecting.
+    applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
-    expect(useAppStore.getState().terminalReconnectingTabs[tab.id]).toBe(true);
+    expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
   });
 
   it("'reconnecting' skips tabs without an established session", () => {
@@ -195,12 +214,11 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     // sessionId is still null (session not established yet).
     expect(tab.sessionId).toBeNull();
 
-    for (const t of findAgentTerminalTabs("agent-1")) {
-      if (!t.sessionId) continue;
-      useAppStore.getState().setTerminalReconnecting(t.id, true);
-    }
+    applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
-    expect(useAppStore.getState().terminalReconnectingTabs[tab.id]).toBeUndefined();
+    // A spawning tab is parked waiting instead of being folded to reconnecting.
+    expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
+    expect(useAppStore.getState().terminalWaitingForAgent[tab.id]).toBe("agent-1");
   });
 
   // ── State machine: connected (after auto-reconnect) ────────────────────────
@@ -213,20 +231,19 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     });
     const tab = getAllTerminalTabs()[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
-    // Simulate prior "reconnecting" state.
-    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+    // Simulate prior "reconnecting" state (folded into the region).
+    applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
-    // Simulate fixed "connected" handler — transitions reconnecting → exited.
+    // Simulate fixed "connected" handler — transitions reconnecting → exited. The
+    // handler now gates on the region status (the sole reconnecting source).
     for (const t of findAgentTerminalTabs("agent-1")) {
-      if (useAppStore.getState().terminalReconnectingTabs[t.id]) {
+      if (currentSessionView()[t.id]?.status === "reconnecting") {
         useAppStore.getState().setTerminalExited(t.id);
       }
     }
 
-    const state = useAppStore.getState();
-    // Overlay should now show "Session disconnected" (not the reconnecting spinner).
-    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
-    expect(state.terminalExitedTabs[tab.id]).toBe(true);
+    // Overlay should now show "Session disconnected" (exited flag set).
+    expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
   });
 
   it("'connected' on initial connect does not mark tabs as exited", () => {
@@ -241,14 +258,14 @@ describe("agent-state-change tab discovery — regression for empty agentSession
 
     // Simulate fixed "connected" handler — should be a no-op for this tab.
     for (const t of findAgentTerminalTabs("agent-1")) {
-      if (useAppStore.getState().terminalReconnectingTabs[t.id]) {
+      if (currentSessionView()[t.id]?.status === "reconnecting") {
         useAppStore.getState().setTerminalExited(t.id);
       }
     }
 
     const state = useAppStore.getState();
     expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
-    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+    expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
   });
 
   // ── State machine: disconnected ─────────────────────────────────────────────
@@ -301,7 +318,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     });
     const tab = getAllTerminalTabs()[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
-    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+    applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
     // Simulate "disconnected" with error (all retries exhausted):
     for (const t of findAgentTerminalTabs("agent-1")) {
@@ -312,9 +329,9 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     }
 
     const state = useAppStore.getState();
-    // Reconnecting spinner must be cleared before the error overlay is shown.
-    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+    // The tab lands exited so the "Reconnect failed" error overlay is shown.
     expect(state.terminalExitedTabs[tab.id]).toBe(true);
+    expect(state.terminalDisconnectErrors[tab.id]).toBe("Failed to reconnect after 10 attempts");
   });
 });
 
@@ -331,13 +348,40 @@ describe("agent-state-change tab discovery — regression for empty agentSession
  * they are NOT in the recovered list.
  */
 describe("agent-state-change 'connected': session recovery after power cycle", () => {
+  // Reconnecting state is region-sourced now (#2205 PR-B): the handler gates the
+  // resume-vs-exit decision on the projected `session-lifecycle` status, so seed
+  // the region via the harness transport rather than the removed
+  // `terminalReconnectingTabs` slice. `sessionBackendReattach` OFF ⇒ the exit
+  // path's `setTerminalExited` folds `session.dropped` (terminal), never
+  // re-folding the region back to reconnecting.
+  const harness = installSessionLifecycleHarness();
+
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
+    setSessionBackendReattachEnabled(false);
   });
 
-  /** Simulate the fixed 'connected' handler with a given recovered-sessions list. */
-  async function simulateConnectedHandler(agentId: string, recoveredSessionIds: string[]) {
+  afterEach(() => {
+    setSessionBackendReattachEnabled(null);
+  });
+
+  /** Seed a tab into the region as reconnecting (the prior-disconnect state). */
+  async function seedReconnecting(tabId: string) {
+    await ensureSessionSubscribed();
+    harness.transport.setSession(
+      tabId,
+      reconnecting({ phase: "waiting", attempt: 0, delayMs: 1000 })
+    );
+  }
+
+  /**
+   * Simulate the fixed 'connected' handler with a given recovered-sessions list.
+   * The decision is gated on the region status (the sole reconnecting source); a
+   * survived session folds the region `reconnecting → connected`, a lost one marks
+   * the tab exited (the "Session disconnected" overlay).
+   */
+  function simulateConnectedHandler(agentId: string, recoveredSessionIds: string[]) {
     const store = useAppStore.getState();
     const allTabs = [
       ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
@@ -351,9 +395,10 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
 
     const recovered = new Set(recoveredSessionIds);
     for (const tab of agentTerminalTabs) {
-      if (!store.terminalReconnectingTabs[tab.id]) continue;
+      if (currentSessionView()[tab.id]?.status !== "reconnecting") continue;
       if (tab.sessionId && recovered.has(tab.sessionId)) {
-        useAppStore.getState().setTerminalReconnecting(tab.id, false);
+        // Session survived — the region resolves reconnecting → connected.
+        harness.transport.setSession(tab.id, connected());
       } else {
         useAppStore.getState().setTerminalExited(tab.id);
       }
@@ -368,13 +413,13 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
     });
     const tab = getAllTerminalTabs()[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
-    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+    await seedReconnecting(tab.id);
 
-    await simulateConnectedHandler("agent-1", ["session-123"]);
+    simulateConnectedHandler("agent-1", ["session-123"]);
 
     const state = useAppStore.getState();
-    // Reconnecting spinner cleared — session resumes automatically.
-    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+    // Reconnecting resolved — session resumes automatically (region → connected).
+    expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
     // Must NOT be marked as exited.
     expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
   });
@@ -387,13 +432,11 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
     });
     const tab = getAllTerminalTabs()[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
-    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+    await seedReconnecting(tab.id);
 
-    await simulateConnectedHandler("agent-1", []); // no sessions recovered
+    simulateConnectedHandler("agent-1", []); // no sessions recovered
 
-    const state = useAppStore.getState();
-    expect(state.terminalExitedTabs[tab.id]).toBe(true);
-    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+    expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
   });
 
   it("handles mixed recovery: resumes surviving sessions, exits dead ones", async () => {
@@ -409,14 +452,14 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
     const [tabA, tabB] = getAllTerminalTabs();
     useAppStore.getState().setTabSessionId(tabA.id, "session-aaa");
     useAppStore.getState().setTabSessionId(tabB.id, "session-bbb");
-    useAppStore.getState().setTerminalReconnecting(tabA.id, true);
-    useAppStore.getState().setTerminalReconnecting(tabB.id, true);
+    await seedReconnecting(tabA.id);
+    await seedReconnecting(tabB.id);
 
     // Only session-aaa recovered.
-    await simulateConnectedHandler("agent-1", ["session-aaa"]);
+    simulateConnectedHandler("agent-1", ["session-aaa"]);
 
     const state = useAppStore.getState();
-    expect(state.terminalReconnectingTabs[tabA.id]).toBeUndefined();
+    expect(currentSessionView()[tabA.id]?.status).not.toBe("reconnecting");
     expect(state.terminalExitedTabs[tabA.id]).toBeUndefined(); // resumed
     expect(state.terminalExitedTabs[tabB.id]).toBe(true); // not recovered
   });
@@ -429,13 +472,12 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
     });
     const tab = getAllTerminalTabs()[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
-    useAppStore.getState().setTerminalReconnecting(tab.id, true);
+    await seedReconnecting(tab.id);
 
     // Simulate catch branch: recoveredSessionIds is empty Set.
-    await simulateConnectedHandler("agent-1", []);
+    simulateConnectedHandler("agent-1", []);
 
-    const state = useAppStore.getState();
-    expect(state.terminalExitedTabs[tab.id]).toBe(true);
+    expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
   });
 
   it("does not affect tabs that are not in reconnecting state", async () => {
@@ -447,12 +489,13 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
     const tab = getAllTerminalTabs()[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
     // Tab is NOT in reconnecting state (newly opened tab, not affected by the outage).
+    await ensureSessionSubscribed();
 
-    await simulateConnectedHandler("agent-1", []);
+    simulateConnectedHandler("agent-1", []);
 
     const state = useAppStore.getState();
     expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
-    expect(state.terminalReconnectingTabs[tab.id]).toBeUndefined();
+    expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
   });
 });
 
@@ -470,9 +513,22 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
  * connection-overlay state by calling reconnectTerminal.
  */
 describe("agent-state-change 'connected': restart tabs in auto-retry/failure state", () => {
+  // The "actively connecting" gate is region-sourced now (#2205 PR-B): the handler
+  // reads the projected `connecting` status, not the removed `terminalConnecting`
+  // slice. Wire the region harness so `setTerminalConnecting` folds the region
+  // (`session.connect`), and pin `sessionBackendReattach` OFF so `reconnectTerminal`
+  // arms the fixed "connecting" wall-clock deadline (the surviving connect signal)
+  // instead of deferring to the backend loop.
+  installSessionLifecycleHarness();
+
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
+    setSessionBackendReattachEnabled(false);
+  });
+
+  afterEach(() => {
+    setSessionBackendReattachEnabled(null);
   });
 
   /** Simulate the new loop added for auto-retry tab restart. */
@@ -492,7 +548,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
       const hasSpawnError = !!store.terminalSpawnErrors[tab.id];
       const isAutoRetrying = (store.terminalAutoRetryCount[tab.id] ?? 0) > 0;
       const wasWaiting = !!store.terminalWaitingForAgent[tab.id];
-      const isConnecting = store.terminalConnecting[tab.id] ?? false;
+      const isConnecting = currentSessionView()[tab.id]?.status === "connecting";
       if ((hasSpawnError || isAutoRetrying) && !wasWaiting && !isConnecting) {
         store.reconnectTerminal(tab.id);
       }
@@ -512,9 +568,10 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
     simulateRetryRestartLoop("agent-1");
 
     const state = useAppStore.getState();
-    // reconnectTerminal should have cleared the retry state and set connecting.
+    // reconnectTerminal should have cleared the retry state and armed the
+    // "connecting" deadline (the surviving connect signal after #2205 PR-B).
     expect(state.terminalAutoRetryCount[tab.id]).toBeUndefined();
-    expect(state.terminalConnecting[tab.id]).toBe(true);
+    expect(state.terminalConnectDeadline[tab.id]?.kind).toBe("connecting");
   });
 
   it("restarts a tab in 'Connection failed' state when agent reconnects", () => {
@@ -530,9 +587,9 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
     simulateRetryRestartLoop("agent-1");
 
     const state = useAppStore.getState();
-    // reconnectTerminal should have cleared the error and set connecting.
+    // reconnectTerminal should have cleared the error and armed the connect deadline.
     expect(state.terminalSpawnErrors[tab.id]).toBeUndefined();
-    expect(state.terminalConnecting[tab.id]).toBe(true);
+    expect(state.terminalConnectDeadline[tab.id]?.kind).toBe("connecting");
   });
 
   it("does not restart a tab that is actively connecting (createTerminal in-flight)", () => {
@@ -542,7 +599,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
       config: { agentId: "agent-1", sessionType: "shell" },
     });
     const tab = getAllTerminalTabs()[0];
-    // Simulate: createTerminal is in-flight.
+    // Simulate: createTerminal is in-flight (region folded to connecting).
     store.setTerminalAutoRetrying(tab.id, 1);
     store.setTerminalConnecting(tab.id, true);
 
@@ -551,7 +608,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
     const state = useAppStore.getState();
     // Must NOT call reconnectTerminal — don't interrupt an in-flight attempt.
     expect(state.terminalAutoRetryCount[tab.id]).toBe(1);
-    expect(state.terminalConnecting[tab.id]).toBe(true);
+    expect(currentSessionView()[tab.id]?.status).toBe("connecting");
   });
 
   it("does not restart a tab that is waiting for agent (already handled)", () => {
@@ -585,7 +642,8 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
     simulateRetryRestartLoop("agent-1");
 
     const state = useAppStore.getState();
-    expect(state.terminalConnecting[tab.id]).toBeUndefined();
+    // No reconnect was kicked off, so no connect deadline was armed.
+    expect(state.terminalConnectDeadline[tab.id]).toBeUndefined();
     expect(state.terminalAutoRetryCount[tab.id]).toBeUndefined();
   });
 });
