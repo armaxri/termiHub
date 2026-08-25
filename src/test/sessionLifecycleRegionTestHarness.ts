@@ -13,9 +13,8 @@
  * It generalises the in-memory region double first written inline in
  * `TerminalDisconnectOverlay.projection.test.tsx` (#2204): {@link FakeSessionTransport}
  * holds one `{ sessions }` view and fans a fresh snapshot to every subscriber on
- * each mutation. {@link installSessionLifecycleHarness} wires it (plus the render /
- * intent flags) into a `beforeEach` / `afterEach` pair and hands back a small handle
- * for seeding sessions. The `connecting` / `reconnecting` / `disconnected` /
+ * each mutation. {@link installSessionLifecycleHarness} wires it into a
+ * `beforeEach` / `afterEach` pair and hands back a small handle for seeding sessions. The `connecting` / `reconnecting` / `disconnected` /
  * `connected` builders produce the twin serde shapes the Rust `SessionLifecycleStore`
  * serialises.
  *
@@ -39,8 +38,6 @@ import type {
 } from "@/services/transport";
 import {
   SESSION_LIFECYCLE_REGION,
-  setSessionIntentsEnabled,
-  setSessionRenderFromProjectionEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
   type ProjectedReconnect,
@@ -112,30 +109,20 @@ export interface SessionLifecycleHarness {
 
 /**
  * Install the `session-lifecycle` region double for a test suite: wire the fake
- * transport and turn the render / intent flags on in `beforeEach`, and tear the
- * subscription / transport / flag overrides down in `afterEach`. Returns a handle
- * whose `transport` is refreshed for each test.
- *
- * @param renderFromProjection Whether the render cut is on (default `true`). Pass
- *   `false` to exercise the flag-off fallback path.
+ * transport in `beforeEach`, and tear the subscription / transport down in
+ * `afterEach`. Returns a handle whose `transport` is refreshed for each test.
  */
-export function installSessionLifecycleHarness(
-  renderFromProjection = true
-): SessionLifecycleHarness {
+export function installSessionLifecycleHarness(): SessionLifecycleHarness {
   const handle: SessionLifecycleHarness = { transport: new FakeSessionTransport() };
 
   beforeEach(() => {
     handle.transport = new FakeSessionTransport();
     setSessionTransportForTest(handle.transport);
-    setSessionRenderFromProjectionEnabled(renderFromProjection);
-    setSessionIntentsEnabled(true);
   });
 
   afterEach(() => {
     stopSessionSubscription();
     setSessionTransportForTest(null);
-    setSessionRenderFromProjectionEnabled(null);
-    setSessionIntentsEnabled(null);
   });
 
   return handle;

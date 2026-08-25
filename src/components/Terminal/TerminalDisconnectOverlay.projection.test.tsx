@@ -4,12 +4,7 @@ import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
-import {
-  setSessionIntentsEnabled,
-  setSessionRenderFromProjectionEnabled,
-  setSessionTransportForTest,
-  stopSessionSubscription,
-} from "@/store/sessionBridge";
+import { setSessionTransportForTest, stopSessionSubscription } from "@/store/sessionBridge";
 import {
   failed,
   FakeSessionTransport,
@@ -50,8 +45,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     root = createRoot(container);
     transport = new FakeSessionTransport();
     setSessionTransportForTest(transport);
-    setSessionRenderFromProjectionEnabled(true);
-    setSessionIntentsEnabled(true);
     useAppStore.setState({
       terminalExitedTabs: { [TAB]: true },
       terminalDisconnectErrors: {},
@@ -64,8 +57,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     container.remove();
     stopSessionSubscription();
     setSessionTransportForTest(null);
-    setSessionRenderFromProjectionEnabled(null);
-    setSessionIntentsEnabled(null);
   });
 
   it("renders the countdown from a mirroring projected snapshot", async () => {
@@ -95,11 +86,9 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     expect(countdown?.textContent).not.toContain("Attempt 2 of 10");
   });
 
-  it("keeps sourcing the countdown from the region regardless of the render flag", async () => {
-    // The reconnect loop moved off `appStore` entirely (#2205 PR-B), so the
-    // render-cut flag no longer gates it — the region drives the countdown even
-    // with the flag off, and the hook still subscribes to source it.
-    setSessionRenderFromProjectionEnabled(false);
+  it("sources the countdown purely from the region", async () => {
+    // The reconnect loop moved off `appStore` entirely (#2205 PR-B): the region
+    // drives the countdown and the hook subscribes to source it.
     transport.setSession(TAB, reconnecting({ phase: "waiting", attempt: 3, delayMs: 1_000 }));
 
     act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));

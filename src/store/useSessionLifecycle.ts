@@ -15,16 +15,13 @@
  * anchor, on-reconnect command) re-attached from the local record — the
  * partial-projection seam ({@link effectiveAutoReconnect}).
  *
- * # Safety (strangler)
+ * # Safety
  *
- * - **Gated** by {@link sessionRenderFromProjectionEnabled} (on by default). Flag
- *   off ⇒ the hook returns `appStore`'s record verbatim.
  * - **Faithful-mirror gate.** The projection sources the render only when its
  *   `reconnect` detail mirrors the local record ({@link projectedReconnectMirrors});
  *   otherwise the hook falls back to the local record (never a stale one). The
- *   local record always seeds the effective view, so it is populated even when
- *   nothing has written the backend region ({@link sessionIntentsEnabled} off) —
- *   making the cut parity-safe and independent of the mutation flag.
+ *   local record always seeds the effective view, so it is populated even before
+ *   anything has written the backend region — making the cut parity-safe.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -51,8 +48,8 @@ import type { TerminalAutoReconnectState } from "@/types/terminal";
 /**
  * The auto-reconnect display record for one tab: loop numbers sourced from the
  * projected `session-lifecycle` region when it faithfully mirrors `appStore`,
- * otherwise `appStore`'s `terminalAutoReconnect` record verbatim (flag off, region
- * not yet populated / mirroring, or a transport that cannot subscribe).
+ * otherwise `appStore`'s `terminalAutoReconnect` record verbatim (region not yet
+ * populated / mirroring, or a transport that cannot subscribe).
  * `undefined` when no auto-reconnect loop is active for the tab.
  */
 export function useSessionAutoReconnect(tabId: string): TerminalAutoReconnectState | undefined {

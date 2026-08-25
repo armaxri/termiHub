@@ -86,7 +86,6 @@ import { useAppStore } from "./appStore";
 import {
   SESSION_LIFECYCLE_REGION,
   setSessionBackendReattachEnabled,
-  setSessionIntentsEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
   type ProjectedSessionLifecycle,
@@ -180,13 +179,11 @@ describe("appStore — the backend owns the reconnect outcome (#2454 / #2205 PR-
     useAppStore.setState(useAppStore.getInitialState());
     fake = new RecordingTransport();
     setSessionTransportForTest(fake);
-    setSessionIntentsEnabled(true);
   });
 
   afterEach(() => {
     stopSessionSubscription();
     setSessionTransportForTest(null);
-    setSessionIntentsEnabled(null);
     setSessionBackendReattachEnabled(null);
   });
 

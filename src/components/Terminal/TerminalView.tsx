@@ -14,11 +14,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import {
-  currentSessionView,
-  mirrorSessionIntent,
-  sessionIntentsEnabled,
-} from "@/store/sessionBridge";
+import { currentSessionView, mirrorSessionIntent } from "@/store/sessionBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
@@ -180,9 +176,7 @@ export function TerminalView() {
               // resolution for a *gone* session runs in the else branch below via
               // `setTerminalExited`). The region is the sole reconnecting source
               // (#2205 PR-B), so without this it would stay stuck reconnecting.
-              if (sessionIntentsEnabled()) {
-                mirrorSessionIntent("session.connected", tab.id);
-              }
+              mirrorSessionIntent("session.connected", tab.id);
               markedResumed++;
             } else {
               // Session is gone — show the "Session disconnected" overlay.

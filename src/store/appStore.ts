@@ -254,7 +254,6 @@ import {
   mirrorSessionIntent,
   onSessionView,
   sessionBackendReattachEnabled,
-  sessionIntentsEnabled,
 } from "@/store/sessionBridge";
 import {
   currentMonitorsView,
@@ -3863,9 +3862,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }
         // Session-intents cut (#2203): the connect / reconnect succeeded — settle
         // the tab live in the region (the sole reconnect authority, #2205 PR-B).
-        if (sessionIntentsEnabled()) {
-          mirrorSessionIntent("session.connected", tabId);
-        }
+        mirrorSessionIntent("session.connected", tabId);
 
         // On-connect workflow triggers (#1855): a terminal session that opened
         // for a saved connection runs any workflow bound to that connection,
@@ -4385,7 +4382,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Session-intents cut (#2203): the tab is gone — drop its lifecycle record
       // from the shared region so the store does not leak a dead session. Any
       // pending backend reconnect timer is cancelled by `session.remove`.
-      if (sessionIntentsEnabled()) mirrorSessionIntent("session.remove", tabId);
+      mirrorSessionIntent("session.remove", tabId);
 
       // Relinquish backend ownership of this tab's live session (#1939). A closed
       // tab's session is torn down here (or already exited), so its
@@ -5601,11 +5598,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // `session.connect` would reset it (#2205 PR-B). The projected `connecting`
       // status now drives the overlay directly, so there is no local field to write
       // — only the wall-clock connect deadline is armed here.
-      if (
-        sessionIntentsEnabled() &&
-        connecting &&
-        currentSessionView()[tabId]?.status !== "reconnecting"
-      ) {
+      if (connecting && currentSessionView()[tabId]?.status !== "reconnecting") {
         mirrorSessionIntent("session.connect", tabId);
       }
       set((state) => ({
@@ -5718,16 +5711,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
       //    drives the backoff loop and re-establishes the transport). Only an
       //    unexpected drop qualifies — a clean exit or a user kill never reconnects;
       //  - any other unexpected drop is a terminal `session.dropped`.
-      if (sessionIntentsEnabled()) {
-        if (info?.reason === "killed") {
-          mirrorSessionIntent("session.disconnect", tabId);
-        } else if (info?.reason === "dropped") {
-          const tab = collectLiveTabs(get()).find((t) => t.id === tabId);
-          if (isResilientReconnectTab(tab)) {
-            mirrorSessionIntent("session.reconnect", tabId);
-          } else {
-            mirrorSessionIntent("session.dropped", tabId);
-          }
+      if (info?.reason === "killed") {
+        mirrorSessionIntent("session.disconnect", tabId);
+      } else if (info?.reason === "dropped") {
+        const tab = collectLiveTabs(get()).find((t) => t.id === tabId);
+        if (isResilientReconnectTab(tab)) {
+          mirrorSessionIntent("session.reconnect", tabId);
+        } else {
+          mirrorSessionIntent("session.dropped", tabId);
         }
       }
     },
@@ -5753,7 +5744,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // reconnecting — the backend redrive owns that loop's outcome and folds the
       // give-up itself (#2205 PR-B), so a client `connectFailed` would be a
       // divergent second signal.
-      if (sessionIntentsEnabled() && currentSessionView()[tabId]?.status !== "reconnecting") {
+      if (currentSessionView()[tabId]?.status !== "reconnecting") {
         mirrorSessionIntent("session.connectFailed", tabId, error);
       }
       set((state) => ({
@@ -5934,9 +5925,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // The user stopped the loop: fold the region out of reconnecting
       // (`session.cancelReconnect` → disconnected, `endReason: user`) — the backend
       // is the sole reconnect authority.
-      if (sessionIntentsEnabled()) {
-        mirrorSessionIntent("session.cancelReconnect", tabId, error ?? undefined);
-      }
+      mirrorSessionIntent("session.cancelReconnect", tabId, error ?? undefined);
       if (error) {
         // Stopped with a reason (attempts exhausted): show the "Reconnect failed"
         // overlay with that message.

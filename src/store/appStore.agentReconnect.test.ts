@@ -73,7 +73,7 @@ import {
   isResilientReconnectTabId,
   isBackendDrivenAgentReconnectTabId,
 } from "./appStore";
-import { setSessionBackendReattachEnabled, setSessionIntentsEnabled } from "./sessionBridge";
+import { setSessionBackendReattachEnabled } from "./sessionBridge";
 
 /** A non-persistent agent (remote-session) shell tab. */
 function makeAgentTab(): string {
@@ -103,12 +103,10 @@ function makeSshTab(): string {
 
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
-  setSessionIntentsEnabled(true); // underlying cut default-on
 });
 
 afterEach(() => {
   setSessionBackendReattachEnabled(null);
-  setSessionIntentsEnabled(null);
 });
 
 describe("agent tab resilient classification (#2476)", () => {
