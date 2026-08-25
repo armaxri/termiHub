@@ -51,6 +51,7 @@ import type { TerminalAutoReconnectState } from "@/types/terminal";
 import {
   DEFAULT_BACKOFF,
   initialReconnectState,
+  reconnectReducer,
   type BackoffConfig,
   type ReconnectPhase,
 } from "@/utils/reconnectBackoff";
@@ -401,6 +402,31 @@ const OPTIMISTIC_SESSION_FOLDS: Partial<Record<SessionIntentKind, SessionOptimis
     ...view,
     sessions: { ...view.sessions, [sessionId]: projectedConnecting() },
   }),
+  // A genuine drop that arms the resilient-reconnect loop (#2205 PR-B): surface
+  // `reconnecting` synchronously (gap-free) so the disconnect overlay + tab dot
+  // switch off the connected state the instant the drop is folded, with no local
+  // `terminalReconnectingTabs` write. Twin of the Rust
+  // `SessionLifecycleStore::reconnect` fold — feed the engine a `Drop` (idle /
+  // connected → `Waiting`, arming the first backoff window; a mid-loop drop is a
+  // no-op), force `status = reconnecting`, and clear the stale re-attach id
+  // (`sessionId`), end reason and reconnect-trigger cause. The backend redrive is
+  // the sole reconnect driver from here — the authoritative diff reconciles the
+  // jittered backoff delay this optimistic overlay estimated.
+  "session.reconnect": (view, sessionId) => {
+    const prev = view.sessions[sessionId];
+    const reconnect = reconnectReducer(
+      prev?.reconnect ?? initialReconnectState,
+      "drop",
+      DEFAULT_BACKOFF
+    );
+    return {
+      ...view,
+      sessions: {
+        ...view.sessions,
+        [sessionId]: { status: "reconnecting", reconnect },
+      },
+    };
+  },
   // A transient agent-transport break (#2555): surface `reconnecting` for the
   // overlay/tab dot synchronously (gap-free), the twin of the Rust
   // `SessionLifecycleStore::agent_transport_reconnecting` fold — status-only, the

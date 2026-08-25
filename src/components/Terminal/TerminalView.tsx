@@ -168,18 +168,18 @@ export function TerminalView() {
             // rather than the local `terminalReconnectingTabs` slice (#2205 PR-B).
             if (reconnectingView[tab.id]?.status !== "reconnecting") continue;
             if (tab.sessionId && recoveredSessionIds.has(tab.sessionId)) {
-              // Session survived — clear the spinner; output will resume automatically.
+              // Session survived — output resumes automatically once the region
+              // leaves reconnecting.
               frontendLog(
                 "disconnect",
                 `agent connected: session recovered for tab=${tab.id} session=${tab.sessionId}, resuming`
               );
-              store.setTerminalReconnecting(tab.id, false);
               // The survived-recovery resolver for the region fold (#2555): the
               // live session came back in place, so fold the `session-lifecycle`
               // region entry `reconnecting → connected` (the twin `disconnect`
               // resolution for a *gone* session runs in the else branch below via
-              // `setTerminalExited`). Without this the region — the sole
-              // reconnecting source after #2554 — would stay stuck reconnecting.
+              // `setTerminalExited`). The region is the sole reconnecting source
+              // (#2205 PR-B), so without this it would stay stuck reconnecting.
               if (sessionIntentsEnabled()) {
                 mirrorSessionIntent("session.connected", tab.id);
               }

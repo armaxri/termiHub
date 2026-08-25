@@ -149,7 +149,7 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
 export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayProps) {
   const reconnectTerminal = useAppStore((s) => s.reconnectTerminal);
   const dismissTerminalDisconnect = useAppStore((s) => s.dismissTerminalDisconnect);
-  const setTerminalExited = useAppStore((s) => s.setTerminalExited);
+  const cancelAutoReconnect = useAppStore((s) => s.cancelAutoReconnect);
   const startFreshShellForTab = useAppStore((s) => s.startFreshShellForTab);
   // Render cut (#2205 PR-A / #2442): the disconnect error, reconnect flag and the
   // reconnect-trigger error are all sourced from the projected `session-lifecycle`
@@ -178,9 +178,12 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
     dismissTerminalDisconnect(tabId);
   }, [tabId, dismissTerminalDisconnect]);
 
+  // Stop the reconnecting loop (#2205 PR-B): fold the region out of reconnecting
+  // via `session.cancelReconnect` (a clean user cancel → disconnected, `endReason:
+  // user`), landing the tab on the standard disconnect overlay.
   const handleStop = useCallback(() => {
-    setTerminalExited(tabId);
-  }, [tabId, setTerminalExited]);
+    cancelAutoReconnect(tabId);
+  }, [tabId, cancelAutoReconnect]);
 
   const handleStartNewShell = useCallback(() => {
     startFreshShellForTab(tabId);
