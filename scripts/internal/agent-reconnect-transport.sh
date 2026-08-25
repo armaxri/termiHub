@@ -151,6 +151,21 @@ sshd_transport_pids() {
 # session that outlived it) still holds a socket on the dev-agent port.
 transport_up() { [ -n "$(sshd_transport_pids)" ]; }
 
+# Every PID `drop` must reap for a FULL transport sever: the comm-matched
+# sshd-family processes UNION the socket-identified LISTENER pid. The listener is
+# added by SOCKET STATE (`listener_pid`, `lsof -sTCP:LISTEN`, comm-independent) as
+# a belt-and-suspenders against a future `comm` quirk silently sparing it again
+# (the #2550 class) — the whole prolonged outage hinges on the listener being
+# gone, so it must never be missed even if the comm match regresses.
+drop_victim_pids() {
+    { sshd_transport_pids; listener_pid; } | grep -E '^[0-9]+$' | sort -un
+}
+
+# True while EITHER an sshd-family process (comm) OR a LISTEN socket (state)
+# remains on the port. `drop` gates success on this, not on `transport_up` alone,
+# so a listener the comm match failed to classify can never read as "severed".
+transport_or_listener_up() { transport_up || is_listening; }
+
 # The sshd config path of a running master: prefer its own argv (`-f <path>`),
 # else fall back to the newest dev.sh-created sshd config dir.
 config_of() {
@@ -174,7 +189,7 @@ do_drop() {
     # listener AND/OR any ESTABLISHED session that outlived it (#2510). Empty
     # means the transport really is severed already.
     local victims
-    victims="$(sshd_transport_pids | tr '\n' ' ')"
+    victims="$(drop_victim_pids | tr '\n' ' ')"
     if [ -z "${victims// /}" ]; then
         echo "[transport] already down — no sshd transport on 127.0.0.1:$PORT."
         return 0
@@ -198,22 +213,24 @@ do_drop() {
     # shellcheck disable=SC2086 # word-splitting the PID list is intended.
     kill -TERM $victims 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-        transport_up || break
+        transport_or_listener_up || break
         sleep 0.2
     done
-    if transport_up; then
+    if transport_or_listener_up; then
         # Re-collect: established children may have been re-forked with new pids.
-        victims="$(sshd_transport_pids | tr '\n' ' ')"
+        victims="$(drop_victim_pids | tr '\n' ' ')"
         # shellcheck disable=SC2086
         kill -KILL $victims 2>/dev/null || true
         for _ in 1 2 3 4 5; do
-            transport_up || break
+            transport_or_listener_up || break
             sleep 0.2
         done
     fi
 
-    if transport_up; then
-        echo "[transport] WARNING: sshd transport still up on :$PORT after kill." >&2
+    if transport_or_listener_up; then
+        echo "[transport] WARNING: sshd transport still up on :$PORT after kill" \
+            "(transport_up=$(transport_up && echo yes || echo no)," \
+            "listening=$(is_listening && echo yes || echo no))." >&2
         return 1
     fi
     echo "[transport] DROPPED — dev-agent SSH transport on 127.0.0.1:$PORT is severed."
