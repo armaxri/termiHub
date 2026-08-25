@@ -3469,6 +3469,88 @@ mod russh_reconnect_tests {
         let _ = cmd.stderr(Stdio::null()).status();
     }
 
+    /// The normalised command name of a pid, reduced to what the sshd-family match
+    /// keys on. Mirrors `agent-reconnect-transport.sh`'s `comm_of` (#2550): on
+    /// macOS 26 / OpenSSH 10 `ps -o comm=` is the rewritten process TITLE whose
+    /// first token carries a trailing colon (`sshd:`, `sshd-session:`), so take the
+    /// first token, basename it, and strip a trailing colon.
+    fn comm_of(pid: u32) -> String {
+        let out = match Command::new("ps")
+            .args(["-o", "comm=", "-p", &pid.to_string()])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return String::new(),
+        };
+        let raw = String::from_utf8_lossy(&out.stdout);
+        let first = raw.split_whitespace().next().unwrap_or("");
+        let base = first.rsplit('/').next().unwrap_or(first);
+        base.strip_suffix(':').unwrap_or(base).to_string()
+    }
+
+    /// Whether a normalised comm names an sshd-family transport process — the
+    /// master listener (`sshd`) or a per-connection handler (`sshd-session`,
+    /// `sshd-sess`, `sshd-auth`, …). Matches the shell harness's `is_sshd_family`.
+    fn is_sshd_family(comm: &str) -> bool {
+        comm == "sshd" || comm.starts_with("sshd-")
+    }
+
+    /// SIGKILL only the **sshd-family** processes in the subtree rooted at `root`
+    /// (the master listener + its per-connection handlers), sparing the
+    /// `termihub-agent --stdio` the handler exec'd and — crucially — the setsid'd
+    /// session **daemon** that agent spawned.
+    ///
+    /// This is the automated analog of the *fixed* `agent-reconnect-transport.sh
+    /// drop` (#2550): killing the sshd handler closes the SSH channel, so the
+    /// `--stdio` agent hits EOF and exits on its own, while the reparented daemon
+    /// (a different session/pgroup) keeps its shell + running process alive for the
+    /// recovery. `kill_subtree` above kills the daemon too (it is still a ppid-child
+    /// at kill time, #2508/#995), so it can only test *fresh-create* recovery —
+    /// this daemon-sparing variant is what lets a test assert **live-session
+    /// continuity** (#2512). Scoped to our own sshd's subtree, comm-matched, never a
+    /// name-pattern kill.
+    fn kill_sshd_only(root: u32) {
+        let out = match Command::new("ps")
+            .args(["-ax", "-o", "pid=,ppid="])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return,
+        };
+        let mut children: std::collections::HashMap<u32, Vec<u32>> =
+            std::collections::HashMap::new();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let mut it = line.split_whitespace();
+            if let (Some(pid), Some(ppid)) = (it.next(), it.next()) {
+                if let (Ok(pid), Ok(ppid)) = (pid.parse::<u32>(), ppid.parse::<u32>()) {
+                    children.entry(ppid).or_default().push(pid);
+                }
+            }
+        }
+        // Walk the whole subtree, but select ONLY sshd-family pids to kill.
+        let mut victims = Vec::new();
+        let mut stack = vec![root];
+        while let Some(pid) = stack.pop() {
+            if is_sshd_family(&comm_of(pid)) {
+                victims.push(pid);
+            }
+            if let Some(kids) = children.get(&pid) {
+                stack.extend(kids.iter().copied());
+            }
+        }
+        if victims.is_empty() {
+            return;
+        }
+        // Kill leaves first so the master cannot re-fork a handler mid-teardown.
+        victims.reverse();
+        let mut cmd = Command::new("kill");
+        cmd.arg("-KILL");
+        for pid in &victims {
+            cmd.arg(pid.to_string());
+        }
+        let _ = cmd.stderr(Stdio::null()).status();
+    }
+
     /// A killable/restartable loopback `sshd` with the real agent binary
     /// reachable over key auth — the Rust analog of the Python `LocalAgentSshd`
     /// (#2481). `start`/`stop` own the whole process tree so a `stop` severs an
@@ -3583,6 +3665,28 @@ mod russh_reconnect_tests {
             if let Some(mut child) = self.child.take() {
                 kill_subtree(child.id());
                 let _ = child.kill();
+                let _ = child.wait();
+            }
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < deadline {
+                if !is_listening(self.port) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
+        /// Sever the transport the way the fixed `drop` harness does: kill only the
+        /// sshd master + handlers, **sparing the setsid'd session daemon** so a live
+        /// session survives the outage (the #2512 continuity path). The established
+        /// russh channel still goes down (the handler is gone), but the daemon keeps
+        /// the shell + its running process alive for the reconnect to recover.
+        ///
+        /// Reaps our master `Child` handle (it is now dead) so no zombie lingers,
+        /// and waits for the port to close so `start()` can rebind it.
+        fn stop_sparing_daemon(&mut self) {
+            if let Some(mut child) = self.child.take() {
+                kill_sshd_only(child.id());
                 let _ = child.wait();
             }
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -3884,6 +3988,283 @@ mod russh_reconnect_tests {
 
         // Explicit teardown so the sshd tree (and the agent it spawned) are gone
         // before the temp dir is removed.
+        drop(channel2);
+        drop(session2);
+        sshd.stop();
+    }
+
+    /// Read `connection.output` notifications off the channel, tracking the highest
+    /// `TICK=<n>` counter value seen, and return it once `want(max)` holds — else the
+    /// last-seen max (or `None`) at the deadline.
+    ///
+    /// The counter loop prints `TICK=$i`; only *executed* output (`TICK=0`,
+    /// `TICK=1`, …) carries a digit, while the one-time keystroke echo of the
+    /// command line contains the literal `TICK=$i` (no digit) — so the echoed
+    /// command can never be mistaken for a counter value.
+    async fn read_counter_until(
+        channel: &mut russh::Channel<russh::client::Msg>,
+        want: impl Fn(u64) -> bool,
+        deadline: Instant,
+    ) -> Option<u64> {
+        let mut buf = String::new();
+        let mut max: Option<u64> = None;
+        while Instant::now() < deadline {
+            let read = tokio::time::timeout(
+                Duration::from_millis(500),
+                read_handshake_line(channel, "test-agent", &mut buf),
+            )
+            .await;
+            match read {
+                Ok(Some(line)) => {
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) =
+                        jsonrpc::parse_message(&line)
+                    {
+                        if method == "connection.output" {
+                            if let Some(data) = params["data"].as_str() {
+                                if let Ok(bytes) = B64.decode(data) {
+                                    let text = String::from_utf8_lossy(&bytes);
+                                    for tail in text.split("TICK=").skip(1) {
+                                        let digits: String = tail
+                                            .chars()
+                                            .take_while(|c| c.is_ascii_digit())
+                                            .collect();
+                                        if let Ok(v) = digits.parse::<u64>() {
+                                            max = Some(max.map_or(v, |m| m.max(v)));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if let Some(m) = max {
+                        if want(m) {
+                            return Some(m);
+                        }
+                    }
+                }
+                Ok(None) => return max, // channel closed
+                Err(_) => continue,     // read timeout — re-check the deadline
+            }
+        }
+        max
+    }
+
+    /// The #2512 continuity invariant over a REAL SSH transport, headless: a
+    /// daemon-backed session's running process survives a genuine transport drop and
+    /// is CONTINUED — same session id, same live process — after the backend
+    /// re-establishes the transport. It must not restart (counter back to 0) or pause
+    /// (counter unchanged). This is the automated form of the manual
+    /// `verify-agent-reconnect.sh` grade's headline check.
+    ///
+    /// Distinct from `..._drives_fresh_create` above: that kills the whole sshd tree,
+    /// taking the setsid'd daemon with it (#2508/#995), so it can only prove
+    /// *fresh-create* recovery. This severs the transport with `stop_sparing_daemon`
+    /// — killing only the sshd master + handlers — so the daemon and its running
+    /// process live through the outage and can be re-attached to.
+    ///
+    /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips gracefully
+    /// otherwise (mirrors the fresh-create test and the Docker sftp integration test).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn reconnect_reattaches_same_daemon_session_and_process_keeps_running() {
+        let Some(sshd) = find_sshd() else {
+            eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
+            return;
+        };
+        let Some(agent_bin) = find_agent_binary() else {
+            eprintln!(
+                "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
+                 (or set TERMIHUB_TEST_AGENT_BIN)"
+            );
+            return;
+        };
+
+        trust_all_host_keys();
+
+        let mut sshd = LocalAgentSshd::new(sshd, agent_bin).expect("stand up local agent sshd");
+        sshd.start();
+
+        let config = sshd.agent_config();
+        let settings = AgentSettings::default();
+        let alive = Arc::new(AtomicBool::new(true));
+        let mut request_id = 0u64;
+
+        // ── Establish, create a DAEMON-BACKED session ("local" is persistent, so the
+        // agent runs it in a setsid'd daemon subprocess), attach, and start a
+        // self-incrementing counter in it.
+        let (session, mut channel, _buffered) =
+            reconnect_agent(&config, &settings, &mut request_id, &alive)
+                .await
+                .expect("initial agent establishment over local sshd failed");
+
+        let created = channel_rpc(
+            &mut channel,
+            &mut request_id,
+            "connection.create",
+            serde_json::json!({ "type": "local", "title": "continuity", "config": {} }),
+        )
+        .await
+        .expect("connection.create (persistent local shell) failed");
+        let sid = created["session_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("create response missing session_id: {created}"))
+            .to_string();
+
+        channel_rpc(
+            &mut channel,
+            &mut request_id,
+            "connection.attach",
+            serde_json::json!({ "session_id": sid }),
+        )
+        .await
+        .expect("initial attach failed");
+
+        // Fire-and-forget: a 5 Hz counter that never stops (echoes `TICK=<n>`).
+        request_id += 1;
+        let counter_cmd = "i=0; while true; do echo TICK=$i; i=$((i+1)); sleep 0.2; done\n";
+        let write_line = serialize_request(
+            request_id,
+            "connection.write",
+            serde_json::json!({ "session_id": sid, "data": B64.encode(counter_cmd.as_bytes()) }),
+        )
+        .expect("serialize write");
+        channel
+            .data(write_line.as_bytes())
+            .await
+            .expect("write counter command");
+
+        let before =
+            read_counter_until(&mut channel, |m| m >= 3, Instant::now() + RECOVERY_CEILING)
+                .await
+                .expect("counter never produced TICK values before the drop");
+        assert!(
+            before >= 3,
+            "counter not clearly running before drop: {before}"
+        );
+
+        // ── Real transport drop, SPARING the daemon: the established russh channel
+        // must go down (genuine transport loss), but the daemon keeps the counter
+        // running with nobody attached.
+        sshd.stop_sparing_daemon();
+        let channel_closed = {
+            let close_deadline = Instant::now() + Duration::from_secs(10);
+            let mut buf = String::new();
+            loop {
+                if Instant::now() >= close_deadline {
+                    break false;
+                }
+                match tokio::time::timeout(
+                    Duration::from_millis(500),
+                    read_handshake_line(&mut channel, "test-agent", &mut buf),
+                )
+                .await
+                {
+                    Ok(None) => break true,  // channel closed — transport is down
+                    Ok(Some(_)) => continue, // drain any buffered line
+                    Err(_) => continue,      // read timeout — keep polling
+                }
+            }
+        };
+        assert!(
+            channel_closed,
+            "the russh channel did not close after stop_sparing_daemon — the transport \
+             drop was not real"
+        );
+        drop(channel);
+        drop(session);
+
+        // Disconnected gap: no agent attached, but the daemon's counter keeps ticking.
+        std::thread::sleep(Duration::from_millis(1500));
+
+        // ── Restore + reconnect: the fresh `--stdio` agent's startup recovery
+        // re-adopts the surviving daemon session.
+        sshd.start();
+        let (session2, mut channel2, _buffered2) =
+            reconnect_agent(&config, &settings, &mut request_id, &alive)
+                .await
+                .expect("reconnect_agent failed to re-establish the russh transport");
+
+        // Same-session recovery: the SAME id must reappear (not a fresh one).
+        let list = channel_rpc(
+            &mut channel2,
+            &mut request_id,
+            "connection.list",
+            serde_json::json!({}),
+        )
+        .await
+        .expect("connection.list after reconnect failed");
+        let recovered = list["sessions"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .any(|s| s["session_id"].as_str() == Some(sid.as_str()))
+            })
+            .unwrap_or(false);
+        assert!(
+            recovered,
+            "daemon session {sid} was not recovered after reconnect (a fresh shell, not the \
+             continued one) — list: {list}"
+        );
+
+        // Re-attach to the SAME id — never a fresh create.
+        channel_rpc(
+            &mut channel2,
+            &mut request_id,
+            "connection.attach",
+            serde_json::json!({ "session_id": sid }),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("re-attach to the same session {sid} failed: {e}"));
+
+        // Continuity: the replay must carry a counter value strictly BEYOND the
+        // pre-drop one — the loop neither reset to 0 (restart) nor stalled (pause)
+        // across the outage.
+        let after_gap = read_counter_until(
+            &mut channel2,
+            |m| m > before,
+            Instant::now() + RECOVERY_CEILING,
+        )
+        .await
+        .expect("no counter output after reconnect — the live session did not survive");
+        assert!(
+            after_gap > before,
+            "counter did not advance across the outage: before={before}, after={after_gap} \
+             — the process paused or restarted (not the same live session)"
+        );
+
+        // Live continuation: after draining the replay to the current head, a further
+        // strictly-greater value can come only from the still-running loop.
+        let base = read_counter_until(
+            &mut channel2,
+            |_| false,
+            Instant::now() + Duration::from_millis(800),
+        )
+        .await
+        .unwrap_or(after_gap);
+        let after_live = read_counter_until(
+            &mut channel2,
+            |m| m > base,
+            Instant::now() + RECOVERY_CEILING,
+        )
+        .await
+        .expect("counter stopped advancing after reconnect");
+        assert!(
+            after_live > base,
+            "counter stopped after reconnect: base={base}, after_live={after_live} \
+             — the recovered session is not live"
+        );
+
+        // Clean up the (setsid'd) daemon explicitly — teardown's sshd kill can't
+        // reach it — then tear the transport down.
+        let _ = channel_rpc(
+            &mut channel2,
+            &mut request_id,
+            "connection.close",
+            serde_json::json!({ "session_id": sid }),
+        )
+        .await;
         drop(channel2);
         drop(session2);
         sshd.stop();
