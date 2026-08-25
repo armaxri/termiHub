@@ -25,7 +25,6 @@ import {
   ensureSessionSubscribed,
   mirrorSessionIntent,
   onSessionView,
-  projectedReconnectMirrors,
   projectedToAutoReconnect,
   runSessionIntent,
   SESSION_LIFECYCLE_REGION,
@@ -310,81 +309,38 @@ describe("sessionRenderFromProjectionEnabled flag (#2204)", () => {
   });
 });
 
-describe("projectedReconnectMirrors — the faithful-mirror gate (#2204)", () => {
-  const record: TerminalAutoReconnectState = {
-    phase: "waiting",
-    attempt: 2,
-    maxAttempts: 10,
-    delayMs: 4_000,
-    nextAttemptAt: 1_004_000,
-  };
-  const projected = (
-    life: Partial<ProjectedSessionLifecycle["reconnect"]>
-  ): ProjectedSessionLifecycle => ({
-    status: "reconnecting",
-    reconnect: { phase: "waiting", attempt: 2, delayMs: 4_000, ...life },
-  });
-
-  it("matches when phase, attempt and delay all agree", () => {
-    expect(projectedReconnectMirrors(projected({}), record)).toBe(true);
-  });
-
-  it("does not match on a phase / attempt / delay divergence", () => {
-    expect(projectedReconnectMirrors(projected({ phase: "connecting" }), record)).toBe(false);
-    expect(projectedReconnectMirrors(projected({ attempt: 3 }), record)).toBe(false);
-    expect(projectedReconnectMirrors(projected({ delayMs: 8_000 }), record)).toBe(false);
-  });
-
-  it("never matches when either side is absent", () => {
-    expect(projectedReconnectMirrors(undefined, record)).toBe(false);
-    expect(projectedReconnectMirrors(projected({}), undefined)).toBe(false);
-    expect(projectedReconnectMirrors(undefined, undefined)).toBe(false);
-  });
-});
-
-describe("effectiveAutoReconnect — render-cut source selection (#2204)", () => {
-  const record: TerminalAutoReconnectState = {
-    phase: "waiting",
-    attempt: 2,
-    maxAttempts: DEFAULT_BACKOFF.maxAttempts,
-    delayMs: 4_000,
-    nextAttemptAt: 1_004_000,
-    onReconnectCommand: "tmux attach",
-  };
-  const mirror: ProjectedSessionLifecycle = {
+describe("effectiveAutoReconnect — purely region-sourced (#2205 PR-B)", () => {
+  const waiting: ProjectedSessionLifecycle = {
     status: "reconnecting",
     reconnect: { phase: "waiting", attempt: 2, delayMs: 4_000 },
   };
 
-  it("returns undefined when there is no local loop, whatever the projection says", () => {
-    expect(effectiveAutoReconnect(undefined, mirror)).toBeUndefined();
-    expect(effectiveAutoReconnect(undefined, undefined)).toBeUndefined();
+  it("returns undefined when the region has no active loop", () => {
+    expect(effectiveAutoReconnect(undefined, 1_000_000)).toBeUndefined();
+    // connected / idle / gaveup all map to no loop record.
+    expect(
+      effectiveAutoReconnect({ status: "connected", reconnect: initialReconnectState }, 1_000_000)
+    ).toBeUndefined();
   });
 
-  it("sources from the projection when it mirrors, byte-identical to the local record", () => {
-    // The gate holds → the record is recomposed from the projected snapshot, and
-    // the re-attached wall-clock anchor + command keep it identical to the local.
-    expect(effectiveAutoReconnect(record, mirror)).toEqual(record);
+  it("builds the record from the region, anchoring the countdown at the given now", () => {
+    const record = effectiveAutoReconnect(waiting, 1_000_000, "tmux attach");
+    expect(record).toEqual({
+      phase: "waiting",
+      attempt: 2,
+      maxAttempts: DEFAULT_BACKOFF.maxAttempts,
+      delayMs: 4_000,
+      nextAttemptAt: 1_004_000,
+      onReconnectCommand: "tmux attach",
+    });
   });
 
-  it("falls back to the local record when the projection does not mirror", () => {
-    const stale: ProjectedSessionLifecycle = {
-      status: "reconnecting",
-      reconnect: { phase: "waiting", attempt: 5, delayMs: 30_000 },
-    };
-    // Must be the local record verbatim — never the stale projected numbers.
-    expect(effectiveAutoReconnect(record, stale)).toBe(record);
-    expect(effectiveAutoReconnect(record, undefined)).toBe(record);
-  });
-
-  it("falls back to the local record when the render cut is off", () => {
-    setSessionRenderFromProjectionEnabled(false);
-    expect(effectiveAutoReconnect(record, mirror)).toBe(record);
-  });
-
-  it("preserves the fixed countdown deadline (never re-anchors nextAttemptAt)", () => {
-    const composed = effectiveAutoReconnect(record, mirror);
-    expect(composed?.nextAttemptAt).toBe(record.nextAttemptAt);
+  it("uses the caller-supplied anchor verbatim (the hook fixes it per attempt)", () => {
+    const a = effectiveAutoReconnect(waiting, 5_000_000);
+    const b = effectiveAutoReconnect(waiting, 9_999_999);
+    // Same projected loop, different anchors ⇒ different fixed deadlines.
+    expect(a?.nextAttemptAt).toBe(5_004_000);
+    expect(b?.nextAttemptAt).toBe(9_999_999 + 4_000);
   });
 });
 

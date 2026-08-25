@@ -27,9 +27,9 @@
  *   making the cut parity-safe and independent of the mutation flag.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useAppStore } from "@/store/appStore";
+import { onReconnectCommandForTabId, useAppStore } from "@/store/appStore";
 import {
   currentSessionView,
   effectiveAutoReconnect,
@@ -45,7 +45,6 @@ import {
   onSessionView,
   type ProjectedSessionLifecycle,
   type SessionLifecycleView,
-  sessionRenderFromProjectionEnabled,
 } from "@/store/sessionBridge";
 import type { TerminalAutoReconnectState } from "@/types/terminal";
 
@@ -57,26 +56,18 @@ import type { TerminalAutoReconnectState } from "@/types/terminal";
  * `undefined` when no auto-reconnect loop is active for the tab.
  */
 export function useSessionAutoReconnect(tabId: string): TerminalAutoReconnectState | undefined {
-  const record = useAppStore((s) => s.terminalAutoReconnect[tabId]);
-
-  // Read the flag once at mount: it flips only via dev tooling, and the
-  // subscription lifecycle is keyed off it below.
-  const [enabled] = useState(() => sessionRenderFromProjectionEnabled());
-
   const [projected, setProjected] = useState<ProjectedSessionLifecycle | undefined>(undefined);
 
-  // Subscribe to the shared session-lifecycle region while enabled; a transport
-  // that cannot subscribe (non-Tauri without a socket) just leaves the overlay on
-  // the appStore fallback.
+  // Subscribe to the shared session-lifecycle region — the sole source of the
+  // reconnect loop (#2205 PR-B). A transport that cannot subscribe (non-Tauri
+  // without a socket) simply leaves the overlay with no active loop.
   useEffect(() => {
-    if (!enabled) return;
     let cancelled = false;
     const unsubscribe = onSessionView((next) => {
       if (!cancelled) setProjected(next[tabId]);
     });
     // `ensureSessionSubscribed` builds the transport eagerly, so a non-Tauri env
-    // without a socket throws synchronously (not just a rejection) — guard both so
-    // the overlay silently stays on the appStore fallback.
+    // without a socket throws synchronously (not just a rejection) — guard both.
     try {
       ensureSessionSubscribed()
         .then((client) => {
@@ -92,9 +83,25 @@ export function useSessionAutoReconnect(tabId: string): TerminalAutoReconnectSta
       cancelled = true;
       unsubscribe();
     };
-  }, [enabled, tabId]);
+  }, [tabId]);
 
-  return effectiveAutoReconnect(record, enabled ? projected : undefined);
+  // The wall-clock anchor for the countdown: `nextAttemptAt = now0 + delayMs`.
+  // Fixed once per backoff window (keyed by attempt + delay) so the live
+  // countdown keeps a stable deadline instead of re-anchoring on every render —
+  // the per-client presentation the region does not carry. Re-anchors when the
+  // loop advances to a new attempt; cleared when no `waiting` window is active.
+  const anchorRef = useRef<{ key: string; now0: number } | null>(null);
+  const onReconnectCommand = onReconnectCommandForTabId(tabId);
+
+  if (projected?.reconnect.phase === "waiting") {
+    const key = `${projected.reconnect.attempt}:${projected.reconnect.delayMs}`;
+    if (anchorRef.current?.key !== key) {
+      anchorRef.current = { key, now0: Date.now() };
+    }
+    return effectiveAutoReconnect(projected, anchorRef.current.now0, onReconnectCommand);
+  }
+  anchorRef.current = null;
+  return effectiveAutoReconnect(projected, Date.now(), onReconnectCommand);
 }
 
 /**
@@ -136,26 +143,20 @@ export interface ProjectedSessionLifecycleSlice {
  * PR-A) — this hook only changes where components *read*.
  */
 export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLifecycleSlice {
-  const connectingLocal = useAppStore((s) => s.terminalConnecting[tabId] ?? false);
-  const reconnectingLocal = useAppStore((s) => s.terminalReconnectingTabs[tabId] ?? false);
+  // The disconnect error keeps its per-client `appStore` slice (it is not part of
+  // the reconnect engine removed in #2205 PR-B); the connect / reconnect / trigger
+  // status are now sourced purely from the region.
   const disconnectErrorLocal = useAppStore((s) => s.terminalDisconnectErrors[tabId]);
-  const reconnectTriggerErrorLocal = useAppStore((s) => s.terminalReconnectTriggerErrors[tabId]);
-
-  // Read the flag once at mount: it flips only via dev tooling, and the
-  // subscription lifecycle is keyed off it below.
-  const [enabled] = useState(() => sessionRenderFromProjectionEnabled());
 
   const [projected, setProjected] = useState<ProjectedSessionLifecycle | undefined>(undefined);
 
   useEffect(() => {
-    if (!enabled) return;
     let cancelled = false;
     const unsubscribe = onSessionView((next) => {
       if (!cancelled) setProjected(next[tabId]);
     });
     // `ensureSessionSubscribed` builds the transport eagerly, so a non-Tauri env
-    // without a socket throws synchronously (not just a rejection) — guard both so
-    // the reader silently stays on the appStore fallback.
+    // without a socket throws synchronously (not just a rejection) — guard both.
     try {
       ensureSessionSubscribed()
         .then((client) => {
@@ -171,19 +172,15 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
       cancelled = true;
       unsubscribe();
     };
-  }, [enabled, tabId]);
+  }, [tabId]);
 
-  const p = enabled ? projected : undefined;
-  // `sessionLost` has no `appStore` twin to gate against (it is emitted only
-  // server-side, behind `sessionBackendReattach`), so it is read straight from the
-  // region: present ⇒ terminal session-lost, absent ⇒ false. When the render cut
-  // is off `p` is `undefined`, so it stays `false` — inert on the pre-cut path.
+  const p = projected;
   const lost = p?.status === "sessionLost";
   return {
-    connecting: effectiveConnecting(connectingLocal, p),
-    reconnecting: effectiveReconnecting(reconnectingLocal, p),
+    connecting: effectiveConnecting(p),
+    reconnecting: effectiveReconnecting(p),
     disconnectError: effectiveDisconnectError(disconnectErrorLocal, p),
-    reconnectTriggerError: effectiveReconnectTriggerError(reconnectTriggerErrorLocal, p),
+    reconnectTriggerError: effectiveReconnectTriggerError(p),
     sessionLost: lost,
     sessionLostError: lost ? p?.error : undefined,
   };
@@ -227,18 +224,15 @@ function sessionLostMap(view: Record<string, ProjectedSessionLifecycle>): Record
  * status maps.
  */
 export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMaps {
-  const connectingLocal = useAppStore((s) => s.terminalConnecting);
-  const reconnectingLocal = useAppStore((s) => s.terminalReconnectingTabs);
+  // Disconnect errors keep their per-client `appStore` slice; connect / reconnect
+  // are sourced purely from the region (#2205 PR-B).
   const disconnectErrorsLocal = useAppStore((s) => s.terminalDisconnectErrors);
-
-  const [enabled] = useState(() => sessionRenderFromProjectionEnabled());
 
   const [view, setView] = useState<Record<string, ProjectedSessionLifecycle>>(() =>
     currentSessionView()
   );
 
   useEffect(() => {
-    if (!enabled) return;
     let cancelled = false;
     const unsubscribe = onSessionView((next) => {
       if (!cancelled) setView(next);
@@ -258,23 +252,15 @@ export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMap
       cancelled = true;
       unsubscribe();
     };
-  }, [enabled]);
+  }, []);
 
-  return useMemo(() => {
-    if (!enabled) {
-      return {
-        terminalConnecting: connectingLocal,
-        terminalReconnectingTabs: reconnectingLocal,
-        terminalDisconnectErrors: disconnectErrorsLocal,
-        // Session-lost is region-only; with the cut off there is nothing to read.
-        terminalSessionLost: {},
-      };
-    }
-    return {
-      terminalConnecting: effectiveConnectingMap(connectingLocal, view),
-      terminalReconnectingTabs: effectiveReconnectingMap(reconnectingLocal, view),
+  return useMemo(
+    () => ({
+      terminalConnecting: effectiveConnectingMap(view),
+      terminalReconnectingTabs: effectiveReconnectingMap(view),
       terminalDisconnectErrors: effectiveDisconnectErrorMap(disconnectErrorsLocal, view),
       terminalSessionLost: sessionLostMap(view),
-    };
-  }, [enabled, connectingLocal, reconnectingLocal, disconnectErrorsLocal, view]);
+    }),
+    [disconnectErrorsLocal, view]
+  );
 }

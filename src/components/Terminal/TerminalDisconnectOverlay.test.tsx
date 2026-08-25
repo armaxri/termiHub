@@ -4,6 +4,11 @@ import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
+import {
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+  reconnecting,
+} from "@/test/sessionLifecycleRegionTestHarness";
 
 // Stub lucide-react icons used in the overlay
 vi.mock("lucide-react", () => ({
@@ -205,6 +210,12 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
 });
 
 describe("TerminalDisconnectOverlay — reconnecting state", () => {
+  // The reconnecting flag + trigger error are now sourced purely from the
+  // projected `session-lifecycle` region (#2205), so seed the region rather than
+  // the removed `appStore` slices. A `connecting`-phase reconnect drives the
+  // reconnecting-spinner variant (a `waiting` phase would show the countdown).
+  const harness = installSessionLifecycleHarness();
+
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
 
@@ -229,10 +240,15 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
     container.remove();
   });
 
-  it("shows reconnecting heading and a stop button", () => {
+  it("shows reconnecting heading and a stop button", async () => {
+    harness.transport.setSession(
+      "tab-1",
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 })
+    );
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
+    await flushSessionRegion();
 
     expect(container.textContent).toContain("Reconnecting");
     expect(container.querySelector("[data-testid='terminal-disconnect-stop-btn']")).not.toBeNull();
@@ -240,10 +256,15 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
     expect(container.querySelector("[data-testid='terminal-disconnect-view-btn']")).toBeNull();
   });
 
-  it("stop button transitions tab from reconnecting to exited", () => {
+  it("stop button transitions tab from reconnecting to exited", async () => {
+    harness.transport.setSession(
+      "tab-1",
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 })
+    );
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
+    await flushSessionRegion();
 
     const btn = container.querySelector(
       "[data-testid='terminal-disconnect-stop-btn']"
@@ -257,15 +278,15 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
     expect(state.terminalExitedTabs["tab-1"]).toBe(true);
   });
 
-  it("shows trigger error when terminalReconnectTriggerErrors has an entry for the tab", () => {
-    useAppStore.setState({
-      terminalReconnectingTabs: { "tab-1": true },
-      terminalReconnectTriggerErrors: { "tab-1": "Connection lost: broken pipe" },
-    });
-
+  it("shows trigger error when the region carries a reconnect-trigger cause for the tab", async () => {
+    harness.transport.setSession(
+      "tab-1",
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }, "Connection lost: broken pipe")
+    );
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
+    await flushSessionRegion();
 
     expect(
       container.querySelector("[data-testid='terminal-disconnect-trigger-error-box']")
@@ -273,10 +294,15 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
     expect(container.textContent).toContain("Connection lost: broken pipe");
   });
 
-  it("does not show trigger error box when no error is set", () => {
+  it("does not show trigger error box when no error is set", async () => {
+    harness.transport.setSession(
+      "tab-1",
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 })
+    );
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
     });
+    await flushSessionRegion();
 
     expect(
       container.querySelector("[data-testid='terminal-disconnect-trigger-error-box']")

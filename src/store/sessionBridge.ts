@@ -624,56 +624,25 @@ export function projectedToAutoReconnect(
 // ── Render cut: faithful-mirror gate + effective display record (#2204) ─────────
 
 /**
- * Whether a projected lifecycle's `reconnect` detail faithfully mirrors the
- * local auto-reconnect display `record` — the gate that decides if the overlay
- * may render the countdown from the projection (true) or must fall back to
- * `appStore` (false). Compares the loop's coarse status the region carries
- * (phase / attempt / backoff delay); the per-client presentation the region does
- * not carry (the wall-clock anchor, the on-reconnect command) is out of scope
- * for the gate and re-attached from the local record when composing.
+ * The auto-reconnect display record the disconnect overlay renders, sourced
+ * **purely** from the projected `session-lifecycle` region — the single source of
+ * truth for the reconnect loop since the `appStore` engine was removed (#2205
+ * PR-B). Delegates to {@link projectedToAutoReconnect}: the loop numbers (phase /
+ * attempt / backoff delay / max attempts) come from the region, and the two
+ * per-client presentation values the region does not carry are injected by the
+ * caller — the wall-clock `nextAttemptAt` anchor (`now`, fixed once per attempt so
+ * the countdown does not re-anchor per render) and the on-reconnect command
+ * (read from the tab's connection config).
  *
- * The twin of the layout render cut's {@link import("./layoutBridge").viewMatchesTree}.
- */
-export function projectedReconnectMirrors(
-  projected: ProjectedSessionLifecycle | undefined,
-  record: TerminalAutoReconnectState | undefined
-): boolean {
-  if (!projected || !record) return false;
-  const r = projected.reconnect;
-  return r.phase === record.phase && r.attempt === record.attempt && r.delayMs === record.delayMs;
-}
-
-/**
- * The auto-reconnect display record the disconnect overlay renders, sourced from
- * the projected `session-lifecycle` region when it faithfully mirrors `appStore`
- * ({@link projectedReconnectMirrors}), and otherwise the local `record` verbatim
- * — so the countdown is byte-identical to the pre-cut path.
- *
- * When the region mirrors, the loop numbers (phase / attempt / backoff delay /
- * max attempts) come from the projection via {@link projectedToAutoReconnect},
- * and the per-client presentation the region does not carry — the wall-clock
- * `nextAttemptAt` anchor and the on-reconnect command — is re-attached from the
- * local record (the partial-projection seam, exactly as the layout render cut
- * re-attaches per-tab content onto the projected structure, #2151). Because the
- * gate guarantees the loop numbers already agree, the composed record equals the
- * local one; the projection merely becomes the source of record.
- *
- * `undefined` in ⇒ `undefined` out: no active loop, nothing to render.
+ * `undefined` when no loop is active for the tab (idle / connected / gaveup).
  */
 export function effectiveAutoReconnect(
-  record: TerminalAutoReconnectState | undefined,
-  projected: ProjectedSessionLifecycle | undefined
+  projected: ProjectedSessionLifecycle | undefined,
+  now: number,
+  onReconnectCommand?: string
 ): TerminalAutoReconnectState | undefined {
-  if (!record) return undefined;
-  if (!sessionRenderFromProjectionEnabled()) return record;
-  if (!projectedReconnectMirrors(projected, record)) return record;
-  // `now0` reproduces the local anchor exactly: with `nextAttemptAt = now0 +
-  // delayMs` and the gate guaranteeing `projected.reconnect.delayMs ===
-  // record.delayMs`, the composed `nextAttemptAt` equals the local record's, so
-  // the live countdown keeps its fixed wall-clock deadline (never re-anchored per
-  // render).
-  const now0 = record.nextAttemptAt - projected!.reconnect.delayMs;
-  return projectedToAutoReconnect(projected!, now0, record.onReconnectCommand) ?? record;
+  if (!projected) return undefined;
+  return projectedToAutoReconnect(projected, now, onReconnectCommand) ?? undefined;
 }
 
 // ── Render cut: status / disconnect-error fields (#2205 PR-A) ───────────────────
@@ -896,14 +865,8 @@ export function waitForBackendAgentReconnectOutcome(
  * status is `connecting` and it mirrors the local `terminalConnecting` bool,
  * otherwise the local bool verbatim (flag off, or the region does not mirror).
  */
-export function effectiveConnecting(
-  local: boolean,
-  projected: ProjectedSessionLifecycle | undefined
-): boolean {
-  if (!sessionRenderFromProjectionEnabled()) return local;
-  const projectedConnecting = projected?.status === "connecting";
-  if (projectedConnecting !== local) return local;
-  return projectedConnecting;
+export function effectiveConnecting(projected: ProjectedSessionLifecycle | undefined): boolean {
+  return projected?.status === "connecting";
 }
 
 /**
@@ -911,14 +874,8 @@ export function effectiveConnecting(
  * projected status is `reconnecting` and it mirrors the local bool, otherwise the
  * local bool verbatim.
  */
-export function effectiveReconnecting(
-  local: boolean,
-  projected: ProjectedSessionLifecycle | undefined
-): boolean {
-  if (!sessionRenderFromProjectionEnabled()) return local;
-  const projectedReconnecting = projected?.status === "reconnecting";
-  if (projectedReconnecting !== local) return local;
-  return projectedReconnecting;
+export function effectiveReconnecting(projected: ProjectedSessionLifecycle | undefined): boolean {
+  return projected?.status === "reconnecting";
 }
 
 /**
@@ -949,13 +906,9 @@ export function effectiveDisconnectError(
  * variant, so the value is byte-identical to the pre-cut `appStore` read.
  */
 export function effectiveReconnectTriggerError(
-  local: string | undefined,
   projected: ProjectedSessionLifecycle | undefined
 ): string | undefined {
-  if (!sessionRenderFromProjectionEnabled()) return local;
-  const projectedError = projected?.reconnectError;
-  if (projectedError !== local) return local;
-  return projectedError;
+  return projected?.reconnectError;
 }
 
 /**
@@ -965,26 +918,22 @@ export function effectiveReconnectTriggerError(
  * `local` — the gate only ever sources a key the local map already carries.
  */
 export function effectiveConnectingMap(
-  local: Record<string, boolean>,
   view: Record<string, ProjectedSessionLifecycle>
 ): Record<string, boolean> {
-  if (!sessionRenderFromProjectionEnabled()) return local;
   const out: Record<string, boolean> = {};
-  for (const id of Object.keys(local)) {
-    if (effectiveConnecting(local[id] ?? false, view[id])) out[id] = true;
+  for (const [id, life] of Object.entries(view)) {
+    if (effectiveConnecting(life)) out[id] = true;
   }
   return out;
 }
 
 /** Effective `terminalReconnectingTabs` map, sourced through {@link effectiveReconnecting}. */
 export function effectiveReconnectingMap(
-  local: Record<string, boolean>,
   view: Record<string, ProjectedSessionLifecycle>
 ): Record<string, boolean> {
-  if (!sessionRenderFromProjectionEnabled()) return local;
   const out: Record<string, boolean> = {};
-  for (const id of Object.keys(local)) {
-    if (effectiveReconnecting(local[id] ?? false, view[id])) out[id] = true;
+  for (const [id, life] of Object.entries(view)) {
+    if (effectiveReconnecting(life)) out[id] = true;
   }
   return out;
 }

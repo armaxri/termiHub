@@ -3,6 +3,11 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { TerminalConnectionOverlay } from "./TerminalConnectionOverlay";
 import { useAppStore } from "@/store/appStore";
+import {
+  connecting,
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 
 vi.mock("lucide-react", () => ({
   ServerCrash: () => null,
@@ -15,6 +20,18 @@ vi.mock("lucide-react", () => ({
 
 const TAB_ID = "tab-test";
 const PANEL_ID = "panel-test";
+
+// The connect flag is sourced purely from the projected `session-lifecycle`
+// region (#2205), so seed a `connecting` session there rather than the removed
+// `appStore.terminalConnecting` slice. Installed file-wide (the other lifecycle
+// states — spawn error, waiting-for-agent, auto-retry, reattaching — keep their
+// own `appStore` slices and simply leave the region empty).
+const harness = installSessionLifecycleHarness();
+
+/** Seed a `connecting` projected session for the tab under test (flush after render). */
+function seedConnecting(tabId: string = TAB_ID): void {
+  harness.transport.setSession(tabId, connecting());
+}
 
 function resetStore() {
   useAppStore.setState({
@@ -43,8 +60,8 @@ describe("TerminalConnectionOverlay — connecting state", () => {
     container.remove();
   });
 
-  it("renders spinner and Connecting heading when terminalConnecting is true", () => {
-    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+  it("renders spinner and Connecting heading when the region reports connecting", async () => {
+    seedConnecting();
     act(() => {
       root.render(
         <TerminalConnectionOverlay
@@ -55,6 +72,7 @@ describe("TerminalConnectionOverlay — connecting state", () => {
         />
       );
     });
+    await flushSessionRegion();
     expect(container.textContent).toContain("Connecting");
     expect(
       container.querySelector("[data-testid='terminal-connection-cancel-btn']")
@@ -62,8 +80,8 @@ describe("TerminalConnectionOverlay — connecting state", () => {
     expect(container.querySelector("[data-testid='terminal-connection-retry-btn']")).toBeNull();
   });
 
-  it("is hidden when isVisible is false", () => {
-    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+  it("is hidden when isVisible is false", async () => {
+    seedConnecting();
     act(() => {
       root.render(
         <TerminalConnectionOverlay
@@ -74,6 +92,7 @@ describe("TerminalConnectionOverlay — connecting state", () => {
         />
       );
     });
+    await flushSessionRegion();
     const el = container.querySelector("[data-testid='terminal-connection-overlay']");
     expect(el?.className).toContain("--hidden");
   });
@@ -95,8 +114,8 @@ describe("TerminalConnectionOverlay — abort action (keeps the tab)", () => {
     container.remove();
   });
 
-  it("shows an Abort button (distinct from Cancel) while connecting", () => {
-    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+  it("shows an Abort button (distinct from Cancel) while connecting", async () => {
+    seedConnecting();
     act(() => {
       root.render(
         <TerminalConnectionOverlay
@@ -107,6 +126,7 @@ describe("TerminalConnectionOverlay — abort action (keeps the tab)", () => {
         />
       );
     });
+    await flushSessionRegion();
     expect(container.querySelector("[data-testid='terminal-connection-abort-btn']")).not.toBeNull();
     // Cancel (closes the tab) is still offered alongside Abort.
     expect(
@@ -114,14 +134,14 @@ describe("TerminalConnectionOverlay — abort action (keeps the tab)", () => {
     ).not.toBeNull();
   });
 
-  it("Abort calls abortTerminalConnect (not closeTab) while connecting", () => {
+  it("Abort calls abortTerminalConnect (not closeTab) while connecting", async () => {
     const abortFn = vi.fn();
     const closeFn = vi.fn();
     useAppStore.setState({
-      terminalConnecting: { [TAB_ID]: true },
       abortTerminalConnect: abortFn,
       closeTab: closeFn,
     } as never);
+    seedConnecting();
     act(() => {
       root.render(
         <TerminalConnectionOverlay
@@ -132,6 +152,7 @@ describe("TerminalConnectionOverlay — abort action (keeps the tab)", () => {
         />
       );
     });
+    await flushSessionRegion();
     act(() => {
       (
         container.querySelector("[data-testid='terminal-connection-abort-btn']") as HTMLElement
@@ -643,12 +664,12 @@ describe("TerminalConnectionOverlay — failed state", () => {
     expect(retryFn).toHaveBeenCalledWith(TAB_ID);
   });
 
-  it("Cancel button calls closeTab with tabId and panelId", () => {
+  it("Cancel button calls closeTab with tabId and panelId", async () => {
     const closeFn = vi.fn();
     useAppStore.setState({
-      terminalConnecting: { [TAB_ID]: true },
       closeTab: closeFn,
     } as never);
+    seedConnecting();
     act(() => {
       root.render(
         <TerminalConnectionOverlay
@@ -659,6 +680,7 @@ describe("TerminalConnectionOverlay — failed state", () => {
         />
       );
     });
+    await flushSessionRegion();
     act(() => {
       (
         container.querySelector("[data-testid='terminal-connection-cancel-btn']") as HTMLElement
@@ -686,8 +708,8 @@ describe("TerminalConnectionOverlay — elapsed time", () => {
     vi.useRealTimers();
   });
 
-  it("shows an elapsed-time readout while connecting", () => {
-    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+  it("shows an elapsed-time readout while connecting", async () => {
+    seedConnecting();
     act(() => {
       root.render(
         <TerminalConnectionOverlay
@@ -698,6 +720,7 @@ describe("TerminalConnectionOverlay — elapsed time", () => {
         />
       );
     });
+    await flushSessionRegion();
     // Starts at 0s.
     expect(container.textContent).toContain("0s");
     // Advances one second at a time.
@@ -707,8 +730,8 @@ describe("TerminalConnectionOverlay — elapsed time", () => {
     expect(container.textContent).toContain("3s");
   });
 
-  it("surfaces a slow-connection hint once the connect drags on", () => {
-    useAppStore.setState({ terminalConnecting: { [TAB_ID]: true } });
+  it("surfaces a slow-connection hint once the connect drags on", async () => {
+    seedConnecting();
     act(() => {
       root.render(
         <TerminalConnectionOverlay
@@ -719,6 +742,7 @@ describe("TerminalConnectionOverlay — elapsed time", () => {
         />
       );
     });
+    await flushSessionRegion();
     // No hint early on.
     expect(container.textContent).not.toContain("Taking longer than usual");
     act(() => {

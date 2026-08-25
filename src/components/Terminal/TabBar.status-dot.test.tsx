@@ -6,6 +6,11 @@ import { TabBar } from "./TabBar";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
+import {
+  connecting,
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 
 // Render the *real* Tab so we exercise the actual state-dot markup, but stub out
 // the dnd-kit sortable wrapper and the terminal registry so the component mounts
@@ -36,6 +41,12 @@ vi.mock("./ColorPickerDialog", () => ({ ColorPickerDialog: () => null }));
 vi.mock("./RenameDialog", () => ({ RenameDialog: () => null }));
 
 const PANEL_ID = "panel-1";
+
+// The connecting/reconnecting status the dot reads is sourced purely from the
+// projected `session-lifecycle` region (#2205), so seed the region for those
+// states. The failed/disconnected dots still read their `appStore` slices
+// (`terminalSpawnErrors` / `terminalExitedTabs`) and leave the region empty.
+const harness = installSessionLifecycleHarness();
 
 function makeTerminalTab(id: string, isActive: boolean): TerminalTab {
   return {
@@ -100,11 +111,10 @@ describe("TabBar — per-tab connection status dot", () => {
     expect(dot?.className).toContain("tab__state-dot--connected");
   });
 
-  it("renders a 'connecting' dot while the terminal is connecting", () => {
+  it("renders a 'connecting' dot while the terminal is connecting", async () => {
+    harness.transport.setSession("t1", connecting());
     render([makeTerminalTab("t1", true)]);
-    act(() => {
-      useAppStore.setState({ terminalConnecting: { t1: true } });
-    });
+    await flushSessionRegion();
     expect(dotFor("t1")?.className).toContain("tab__state-dot--connecting");
   });
 
