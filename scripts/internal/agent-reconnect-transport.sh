@@ -43,7 +43,6 @@ set -euo pipefail
 # repo — without `git rev-parse` failing on the CWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-cd "$REPO_ROOT"
 
 STATE_DIR=".dev-agent"
 STATE_FILE="$STATE_DIR/agent-reconnect-transport.state"
@@ -61,8 +60,6 @@ resolve_port() {
     fi
     printf '%s' "$port"
 }
-
-PORT="$(resolve_port)"
 
 find_sshd_binary() {
     local candidate
@@ -91,23 +88,38 @@ descendants() {
     done
 }
 
-# The basename of a PID's executable command (empty if the process is gone).
-# `ps -o comm=` returns the exec path on macOS (`/usr/sbin/sshd`) and the process
-# name on Linux (`sshd`); the basename normalises both.
+# The normalised command name of a PID (empty if the process is gone), reduced to
+# what the `sshd | sshd-*` match below keys on. Handles three shapes of
+# `ps -o comm=`:
+#   • Linux:                 `sshd`                     (bare name)
+#   • macOS non-title proc:  `/usr/sbin/sshd`           (exec path → basename)
+#   • macOS 26 / OpenSSH 10:  a rewritten sshd process TITLE, whose first token
+#     carries a trailing colon — `sshd:` for the master listener,
+#     `sshd-session:` for a per-connection handler.
+# The trailing colon is why the listener (`sshd:`) used to escape the
+# `sshd`/`sshd-*` match and survive `drop` (#2550), leaving the transport up and
+# the outage unobservable. Strip it so `sshd:` → `sshd` and `sshd-session:` →
+# `sshd-session`, both of which the match then catches.
 comm_of() {
     local comm
     comm=$(ps -o comm= -p "$1" 2>/dev/null | awk 'NR==1{print $1}')
-    printf '%s' "${comm##*/}"
+    comm="${comm##*/}" # exec-path basename (Linux `/usr/sbin/sshd` → `sshd`)
+    comm="${comm%:}"   # macOS process-title trailing colon (`sshd:` → `sshd`)
+    printf '%s' "$comm"
 }
 
 # The SSH-transport kill list: every sshd-family process holding a socket on our
-# loopback dev-agent port — matched by comm `sshd` OR `sshd-*` (OpenSSH 9.8+ /
-# macOS 26 split the per-connection handler into a separate `sshd-session` /
-# `sshd-sess` process). Found via the PORT socket (`lsof -iTCP:PORT`), NOT by
-# walking a master's descendants, so it still finds an ESTABLISHED session that
-# outlived its master listener (the #2510 case: the master had already exited but
-# a live `sshd-session` kept the agent connection up, so the descendant-walk found
-# nothing and `drop` wrongly reported "already down").
+# loopback dev-agent port — matched by (colon-normalised, see comm_of) comm `sshd`
+# OR `sshd-*`. This catches BOTH the master listener (`sshd`, or the macOS 26
+# process-title `sshd:`) AND the per-connection handler, which OpenSSH 9.8+ /
+# macOS 26 split into a separate `sshd-session` / `sshd-sess` process. Missing the
+# listener is the #2550 regression: with the listener spared, backend reconnects
+# succeed instantly and the outage is never observable. Found via the PORT socket
+# (`lsof -iTCP:PORT`), NOT by walking a master's descendants, so it still finds an
+# ESTABLISHED session that outlived its master listener (the #2510 case: the
+# master had already exited but a live `sshd-session` kept the agent connection
+# up, so the descendant-walk found nothing and `drop` wrongly reported "already
+# down").
 #
 # Crucially this still EXCLUDES the `termihub-agent --stdio` process the SSH
 # session runs and the `setsid`'d session daemon that agent spawned: their comm is
@@ -117,18 +129,42 @@ comm_of() {
 # reproduce the #2508 false failure. Matching only sshd-family comm on the port
 # socket severs only the transport; the agent then EOFs and exits on its own, and
 # the detached daemon survives for the recovery grade.
+# Whether a normalised comm (from comm_of) names an sshd-family transport process
+# — the master listener (`sshd`) or a per-connection handler (`sshd-session`,
+# `sshd-sess`, `sshd-auth`, …). Pure (no process lookup) so it is unit-testable in
+# isolation; #2550 was a miss in exactly this predicate for the listener.
+is_sshd_family() {
+    case "$1" in
+    sshd | sshd-*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
 sshd_transport_pids() {
     local pid
     for pid in $(lsof -nP -iTCP:"$PORT" -t 2>/dev/null | sort -u); do
-        case "$(comm_of "$pid")" in
-        sshd | sshd-*) printf '%s\n' "$pid" ;;
-        esac
+        is_sshd_family "$(comm_of "$pid")" && printf '%s\n' "$pid"
     done
 }
 
 # True while any sshd-family transport process (master listener OR an established
 # session that outlived it) still holds a socket on the dev-agent port.
 transport_up() { [ -n "$(sshd_transport_pids)" ]; }
+
+# Every PID `drop` must reap for a FULL transport sever: the comm-matched
+# sshd-family processes UNION the socket-identified LISTENER pid. The listener is
+# added by SOCKET STATE (`listener_pid`, `lsof -sTCP:LISTEN`, comm-independent) as
+# a belt-and-suspenders against a future `comm` quirk silently sparing it again
+# (the #2550 class) — the whole prolonged outage hinges on the listener being
+# gone, so it must never be missed even if the comm match regresses.
+drop_victim_pids() {
+    { sshd_transport_pids; listener_pid; } | grep -E '^[0-9]+$' | sort -un
+}
+
+# True while EITHER an sshd-family process (comm) OR a LISTEN socket (state)
+# remains on the port. `drop` gates success on this, not on `transport_up` alone,
+# so a listener the comm match failed to classify can never read as "severed".
+transport_or_listener_up() { transport_up || is_listening; }
 
 # The sshd config path of a running master: prefer its own argv (`-f <path>`),
 # else fall back to the newest dev.sh-created sshd config dir.
@@ -153,7 +189,7 @@ do_drop() {
     # listener AND/OR any ESTABLISHED session that outlived it (#2510). Empty
     # means the transport really is severed already.
     local victims
-    victims="$(sshd_transport_pids | tr '\n' ' ')"
+    victims="$(drop_victim_pids | tr '\n' ' ')"
     if [ -z "${victims// /}" ]; then
         echo "[transport] already down — no sshd transport on 127.0.0.1:$PORT."
         return 0
@@ -177,22 +213,24 @@ do_drop() {
     # shellcheck disable=SC2086 # word-splitting the PID list is intended.
     kill -TERM $victims 2>/dev/null || true
     for _ in 1 2 3 4 5 6 7 8 9 10; do
-        transport_up || break
+        transport_or_listener_up || break
         sleep 0.2
     done
-    if transport_up; then
+    if transport_or_listener_up; then
         # Re-collect: established children may have been re-forked with new pids.
-        victims="$(sshd_transport_pids | tr '\n' ' ')"
+        victims="$(drop_victim_pids | tr '\n' ' ')"
         # shellcheck disable=SC2086
         kill -KILL $victims 2>/dev/null || true
         for _ in 1 2 3 4 5; do
-            transport_up || break
+            transport_or_listener_up || break
             sleep 0.2
         done
     fi
 
-    if transport_up; then
-        echo "[transport] WARNING: sshd transport still up on :$PORT after kill." >&2
+    if transport_or_listener_up; then
+        echo "[transport] WARNING: sshd transport still up on :$PORT after kill" \
+            "(transport_up=$(transport_up && echo yes || echo no)," \
+            "listening=$(is_listening && echo yes || echo no))." >&2
         return 1
     fi
     echo "[transport] DROPPED — dev-agent SSH transport on 127.0.0.1:$PORT is severed."
@@ -249,7 +287,15 @@ do_status() {
     fi
 }
 
-case "${1:-}" in
+# Only dispatch an action when RUN as a script. When SOURCED (the unit test in
+# agent-reconnect-transport.test.sh does this to exercise the pure classifiers
+# without a live agent), stop here: define the functions but resolve no port and
+# run no action, so the test can fake `ps` and assert comm_of / is_sshd_family in
+# isolation — including the #2550 listener-title regression.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    cd "$REPO_ROOT"
+    PORT="$(resolve_port)"
+    case "${1:-}" in
     drop) do_drop ;;
     restore) do_restore ;;
     status) do_status ;;
@@ -257,4 +303,5 @@ case "${1:-}" in
         echo "usage: $0 {drop|restore|status}" >&2
         exit 2
         ;;
-esac
+    esac
+fi
