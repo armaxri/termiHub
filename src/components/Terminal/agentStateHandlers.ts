@@ -35,21 +35,17 @@ export function applyAgentReconnecting(
   let waitingCount = 0;
   for (const tab of agentTerminalTabs) {
     if (tab.sessionId) {
-      // Live session — show the reconnecting spinner overlay.
-      store.setTerminalReconnecting(tab.id, true);
-      if (error) {
-        store.setTerminalReconnectTriggerError(tab.id, error);
-      }
-      // Fold the shared `session-lifecycle` region to `reconnecting` for this tab
-      // (#2555). The overlay + tab-strip dot source `reconnecting` purely from the
-      // region after #2554, but a transient agent-transport break — recovered in
-      // place by the agent I/O task's in-task reconnect loop — never folds the
-      // region (no per-session `terminal-exit`), so those readers were stranded
-      // (the #2554 regression). This status-only fold keeps the reconnect loop
-      // idle, so the backend timer never arms a redrive that would double-drive
-      // the transport the agent is already re-establishing. Optimistically folded,
-      // so the overlay is gap-free; resolved back by the `connected` (survived) /
-      // `disconnected` (gone) handlers in TerminalView.
+      // Live session — fold the shared `session-lifecycle` region to `reconnecting`
+      // for this tab (#2555/#2205 PR-B). The overlay + tab-strip dot source
+      // `reconnecting` purely from the region (the client slice is gone), but a
+      // transient agent-transport break — recovered in place by the agent I/O
+      // task's in-task reconnect loop — never folds the region via a
+      // `terminal-exit`, so this status-only fold is what surfaces the reconnecting
+      // state. It keeps the reconnect loop idle, so the backend timer never arms a
+      // redrive that would double-drive the transport the agent is already
+      // re-establishing. `error` records the trigger cause the overlay shows.
+      // Optimistically folded, so the overlay is gap-free; resolved back by the
+      // `connected` (survived) / `disconnected` (gone) handlers in TerminalView.
       if (sessionIntentsEnabled()) {
         mirrorSessionIntent("session.agentTransportReconnecting", tab.id, error);
       }

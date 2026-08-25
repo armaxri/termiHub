@@ -42,7 +42,12 @@ vi.mock("@/themes", () => ({
 
 import { useAppStore } from "./appStore";
 import { currentBroadcastView, ensureBroadcastSubscribed } from "./broadcastBridge";
+import { ensureSessionSubscribed } from "./sessionBridge";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
+import {
+  connecting,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 import type { LeafPanel, TerminalTab, TabContentType } from "@/types/terminal";
 
 interface SeedTab {
@@ -148,12 +153,15 @@ describe("appStore — broadcast input actions (#1955, region-authoritative #220
   });
 
   describe("getBroadcastTargetTabIds — connected-only filtering", () => {
+    // Connecting/reconnecting status is region-sourced (#2205 PR-B).
+    const sessionHarness = installSessionLifecycleHarness();
+
     it("returns [] when broadcast is inactive", () => {
       seedTabs([makeTab({ id: "src" })]);
       expect(useAppStore.getState().getBroadcastTargetTabIds()).toEqual([]);
     });
 
-    it("keeps only connected terminal targets, dropping the rest silently", () => {
+    it("keeps only connected terminal targets, dropping the rest silently", async () => {
       seedTabs([
         makeTab({ id: "src" }), // connected terminal
         makeTab({ id: "t2" }), // connected terminal
@@ -164,8 +172,11 @@ describe("appStore — broadcast input actions (#1955, region-authoritative #220
       ]);
       useAppStore.setState({
         terminalExitedTabs: { t3: true },
-        terminalConnecting: { t4: true },
       });
+      // Connecting status is sourced from the session-lifecycle region now
+      // (#2205 PR-B): seed t4 as connecting there so it is excluded.
+      await ensureSessionSubscribed();
+      sessionHarness.transport.setSession("t4", connecting());
       useAppStore.getState().startBroadcast("all", "src", ["t2", "t3", "t4", "t5", "t6"]);
 
       const result = useAppStore.getState().getBroadcastTargetTabIds().sort();

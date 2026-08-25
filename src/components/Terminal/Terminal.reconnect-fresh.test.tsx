@@ -286,11 +286,14 @@ describe("Terminal — fresh session on reconnect", () => {
       await wait(50);
     });
 
-    // reconnectTerminal sets terminalConnecting=true to show the overlay at once.
+    // reconnectTerminal arms the "connecting" wall-clock deadline to show the
+    // overlay at once (#2205 PR-B removed the synchronous local `terminalConnecting`
+    // write; the connecting overlay is now driven by the projected status + the
+    // connect deadline).
     act(() => {
       useAppStore.getState().reconnectTerminal("tab-3");
     });
-    expect(useAppStore.getState().terminalConnecting["tab-3"]).toBe(true);
+    expect(useAppStore.getState().terminalConnectDeadline["tab-3"]?.kind).toBe("connecting");
 
     await act(async () => {
       await wait(80);
@@ -299,6 +302,6 @@ describe("Terminal — fresh session on reconnect", () => {
     // Once the persistent session is restarted and reattached, the connecting
     // overlay must be cleared — otherwise SplitView keeps the overlay up, parks
     // the xterm element, and the tab is stuck on a "reconnecting" spinner.
-    expect(useAppStore.getState().terminalConnecting["tab-3"]).toBeFalsy();
+    expect(useAppStore.getState().terminalConnectDeadline["tab-3"]).toBeFalsy();
   });
 });

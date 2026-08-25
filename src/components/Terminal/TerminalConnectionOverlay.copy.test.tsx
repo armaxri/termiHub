@@ -46,7 +46,6 @@ let root: Root;
 
 function resetStore() {
   useAppStore.setState({
-    terminalConnecting: {},
     terminalSpawnErrors: {},
     terminalAutoRetryCount: {},
     terminalWaitingForAgent: {},

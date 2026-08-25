@@ -71,7 +71,7 @@ describe("failTerminalConnectTimeout — connecting", () => {
     useAppStore.getState().setTerminalConnecting("tab-1", true);
     useAppStore.getState().failTerminalConnectTimeout("tab-1", "connecting");
 
-    expect(useAppStore.getState().terminalConnecting["tab-1"]).toBeUndefined();
+    expect(useAppStore.getState().terminalConnectDeadline["tab-1"]).toBeUndefined();
     expect(useAppStore.getState().terminalSpawnErrors["tab-1"]).toBe(
       connectTimeoutMessage("connecting")
     );

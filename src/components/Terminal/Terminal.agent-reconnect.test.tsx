@@ -23,6 +23,7 @@ import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import {
+  ensureSessionSubscribed,
   setSessionBackendReattachEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
@@ -30,6 +31,7 @@ import {
 import {
   FakeSessionTransport,
   connected as connectedLifecycle,
+  reconnecting,
 } from "@/test/sessionLifecycleRegionTestHarness";
 
 // --- Mocks (mirror Terminal.backend-reattach.test.tsx) ---
@@ -197,8 +199,6 @@ describe("Terminal — backend-driven agent reconnect (#2476)", () => {
   it("flag ON: re-attaches to the backend-published id, never calling the client engine", async () => {
     setSessionBackendReattachEnabled(true);
     const tabId = addAgentTab("initial-session");
-    // The redrive re-established the transport and published the fresh backend id.
-    transport.setSession(tabId, { ...connectedLifecycle(), sessionId: "agent-new" });
 
     mount(tabId, "initial-session");
     await act(async () => {
@@ -206,6 +206,20 @@ describe("Terminal — backend-driven agent reconnect (#2476)", () => {
     });
     expect(mockCreateTerminal).not.toHaveBeenCalled(); // initial mount reattaches
 
+    // Subscribe the region client (in the real app the drop's `session.reconnect`
+    // dispatch does this; here we seed the region directly).
+    await ensureSessionSubscribed();
+    // A genuine drop folded the region to `reconnecting` (the sole reconnect
+    // authority, #2205 PR-B); the backend redrive re-established the transport and
+    // published the fresh backend session id. The reconnect must await that
+    // outcome and re-attach — never run the client agent engine.
+    act(() => {
+      transport.setSession(tabId, {
+        status: "reconnecting",
+        reconnect: { phase: "connecting", attempt: 1, delayMs: 0 },
+        sessionId: "agent-new",
+      });
+    });
     act(() => {
       useAppStore.getState().reconnectTerminal(tabId);
     });
@@ -228,6 +242,12 @@ describe("Terminal — backend-driven agent reconnect (#2476)", () => {
       await wait(50);
     });
 
+    await ensureSessionSubscribed();
+    // The drop folded the region to `reconnecting`; the reconnect awaits the
+    // backend outcome (never the client engine).
+    act(() => {
+      transport.setSession(tabId, reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
+    });
     act(() => {
       useAppStore.getState().reconnectTerminal(tabId);
     });
@@ -246,7 +266,6 @@ describe("Terminal — backend-driven agent reconnect (#2476)", () => {
     const state = useAppStore.getState();
     expect(state.terminalDisconnectErrors[tabId]).toBe("agent unreachable after 3 attempts");
     expect(state.terminalExitedTabs[tabId]).toBe(true);
-    expect(state.terminalAutoReconnect[tabId]).toBeUndefined();
   });
 
   it("flag OFF: reconnect drives the client engine (createTerminal) — develop parity", async () => {

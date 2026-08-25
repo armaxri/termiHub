@@ -25,6 +25,7 @@ import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import {
+  ensureSessionSubscribed,
   setSessionBackendReattachEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
@@ -175,8 +176,6 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 describe("Terminal — backend-driven direct reconnect re-attach (#2457)", () => {
   it("flag ON: re-attaches to the backend-published session id without create_connection", async () => {
     setSessionBackendReattachEnabled(true);
-    // The server-side redrive published the new backend session id to the region.
-    transport.setSession("tab-1", { ...connectedLifecycle(), sessionId: "backend-new" });
 
     // Mount as if already connected to a (now to-be-dead) direct session.
     act(() => {
@@ -197,6 +196,18 @@ describe("Terminal — backend-driven direct reconnect re-attach (#2457)", () =>
     // Initial mount reattaches to the existing id — no create_connection.
     expect(mockCreateTerminal).not.toHaveBeenCalled();
 
+    // Subscribe the region client (in the real app the drop's `session.reconnect`
+    // dispatch does this) and fold the region to `reconnecting` — the sole
+    // reconnect authority (#2205 PR-B). The server-side redrive re-established the
+    // transport and published the new backend session id.
+    await ensureSessionSubscribed();
+    act(() => {
+      transport.setSession("tab-1", {
+        status: "reconnecting",
+        reconnect: { phase: "connecting", attempt: 1, delayMs: 0 },
+        sessionId: "backend-new",
+      });
+    });
     // Reconnect: bump the retry counter so the effect re-runs as a reconnect.
     act(() => {
       useAppStore.getState().reconnectTerminal("tab-1");

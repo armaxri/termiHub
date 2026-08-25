@@ -34,7 +34,6 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
       terminalRetryCounters: {},
       terminalDisconnectErrors: {},
       terminalViewMode: {},
-      terminalReconnectingTabs: {},
       terminalReconnectPrompt: {},
     });
   });
@@ -144,9 +143,7 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
       terminalRetryCounters: {},
       terminalDisconnectErrors: {},
       terminalViewMode: {},
-      terminalReconnectingTabs: {},
       terminalReconnectPrompt: {},
-      terminalReconnectTriggerErrors: {},
     });
   });
 
@@ -229,9 +226,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
       terminalRetryCounters: {},
       terminalDisconnectErrors: {},
       terminalViewMode: {},
-      terminalReconnectingTabs: { "tab-1": true },
       terminalReconnectPrompt: {},
-      terminalReconnectTriggerErrors: {},
     });
   });
 
@@ -273,8 +268,9 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
       btn.click();
     });
 
+    // The reconnecting state moved off `appStore` into the region (#2205 PR-B);
+    // the surviving observable of the Stop action is the tab landing exited.
     const state = useAppStore.getState();
-    expect(state.terminalReconnectingTabs["tab-1"]).toBeUndefined();
     expect(state.terminalExitedTabs["tab-1"]).toBe(true);
   });
 
@@ -324,7 +320,6 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
       terminalRetryCounters: {},
       terminalDisconnectErrors: { "tab-1": "Failed to reconnect after 10 attempts" },
       terminalViewMode: {},
-      terminalReconnectingTabs: {},
       terminalReconnectPrompt: {},
     });
   });
@@ -372,9 +367,7 @@ describe("appStore disconnect actions", () => {
       terminalRetryCounters: {},
       terminalDisconnectErrors: {},
       terminalViewMode: {},
-      terminalReconnectingTabs: {},
       terminalReconnectPrompt: {},
-      terminalReconnectTriggerErrors: {},
     });
   });
 
@@ -428,18 +421,6 @@ describe("appStore disconnect actions", () => {
     expect(useAppStore.getState().consumeSessionKilled("never-marked")).toBe(false);
   });
 
-  it("setTerminalExited clears any stale reconnecting flag", () => {
-    useAppStore.setState({ terminalReconnectingTabs: { "tab-42": true } });
-    useAppStore.getState().setTerminalExited("tab-42");
-    expect(useAppStore.getState().terminalReconnectingTabs["tab-42"]).toBeUndefined();
-  });
-
-  it("setTerminalExited clears the reconnect trigger error", () => {
-    useAppStore.setState({ terminalReconnectTriggerErrors: { "tab-42": "broken pipe" } });
-    useAppStore.getState().setTerminalExited("tab-42");
-    expect(useAppStore.getState().terminalReconnectTriggerErrors["tab-42"]).toBeUndefined();
-  });
-
   it("setTerminalExited does not affect other tabs", () => {
     useAppStore.setState({ terminalExitedTabs: { "tab-1": true } });
     useAppStore.getState().setTerminalExited("tab-2");
@@ -452,40 +433,6 @@ describe("appStore disconnect actions", () => {
     const state = useAppStore.getState();
     expect(state.terminalExitedTabs["tab-42"]).toBe(true);
     expect(state.terminalDisconnectErrors["tab-42"]).toBe("Connection refused");
-  });
-
-  it("setTerminalDisconnectWithError clears reconnecting flag", () => {
-    useAppStore.setState({ terminalReconnectingTabs: { "tab-42": true } });
-    useAppStore.getState().setTerminalDisconnectWithError("tab-42", "Timeout");
-    expect(useAppStore.getState().terminalReconnectingTabs["tab-42"]).toBeUndefined();
-  });
-
-  it("setTerminalReconnecting sets and clears the reconnecting flag", () => {
-    useAppStore.getState().setTerminalReconnecting("tab-42", true);
-    expect(useAppStore.getState().terminalReconnectingTabs["tab-42"]).toBe(true);
-
-    useAppStore.getState().setTerminalReconnecting("tab-42", false);
-    expect(useAppStore.getState().terminalReconnectingTabs["tab-42"]).toBeUndefined();
-  });
-
-  it("setTerminalReconnecting clears trigger error when stopping", () => {
-    useAppStore.setState({
-      terminalReconnectingTabs: { "tab-42": true },
-      terminalReconnectTriggerErrors: { "tab-42": "broken pipe" },
-    });
-    useAppStore.getState().setTerminalReconnecting("tab-42", false);
-    expect(useAppStore.getState().terminalReconnectTriggerErrors["tab-42"]).toBeUndefined();
-  });
-
-  it("setTerminalReconnectTriggerError sets the trigger error for a tab", () => {
-    useAppStore.getState().setTerminalReconnectTriggerError("tab-42", "broken pipe");
-    expect(useAppStore.getState().terminalReconnectTriggerErrors["tab-42"]).toBe("broken pipe");
-  });
-
-  it("setTerminalReconnectTriggerError clears the error when passed null", () => {
-    useAppStore.setState({ terminalReconnectTriggerErrors: { "tab-42": "some error" } });
-    useAppStore.getState().setTerminalReconnectTriggerError("tab-42", null);
-    expect(useAppStore.getState().terminalReconnectTriggerErrors["tab-42"]).toBeUndefined();
   });
 
   it("dismissTerminalDisconnect enters view mode without clearing exited flag", () => {
@@ -508,8 +455,6 @@ describe("appStore disconnect actions", () => {
       terminalDisconnectErrors: { "tab-42": "some error" },
       terminalViewMode: { "tab-42": true },
       terminalReconnectPrompt: { "tab-42": true },
-      terminalReconnectingTabs: { "tab-42": true },
-      terminalReconnectTriggerErrors: { "tab-42": "trigger error" },
     });
     useAppStore.getState().reconnectTerminal("tab-42");
 
@@ -518,8 +463,6 @@ describe("appStore disconnect actions", () => {
     expect(state.terminalDisconnectErrors["tab-42"]).toBeUndefined();
     expect(state.terminalViewMode["tab-42"]).toBeUndefined();
     expect(state.terminalReconnectPrompt["tab-42"]).toBeUndefined();
-    expect(state.terminalReconnectingTabs["tab-42"]).toBeUndefined();
-    expect(state.terminalReconnectTriggerErrors["tab-42"]).toBeUndefined();
     expect(state.terminalRetryCounters["tab-42"]).toBe(1);
   });
 

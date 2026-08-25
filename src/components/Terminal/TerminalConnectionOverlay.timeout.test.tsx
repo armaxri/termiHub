@@ -22,7 +22,6 @@ const PANEL_ID = "panel-test";
 
 function resetStore() {
   useAppStore.setState({
-    terminalConnecting: {},
     terminalConnectDeadline: {},
     terminalSpawnErrors: {},
     terminalAutoRetryCount: {},
@@ -141,7 +140,10 @@ describe("TerminalConnectionOverlay — timeouts", () => {
       vi.advanceTimersByTime(5_000 + 100);
     });
 
-    expect(useAppStore.getState().terminalConnecting[TAB_ID]).toBeUndefined();
+    // The connecting overlay is driven by the wall-clock connect deadline now
+    // (#2205 PR-B removed the local `terminalConnecting` field); the timeout
+    // clears the deadline as it transitions the tab to Failed.
+    expect(useAppStore.getState().terminalConnectDeadline[TAB_ID]).toBeUndefined();
     expect(useAppStore.getState().terminalSpawnErrors[TAB_ID]).toBe(
       connectTimeoutMessage("connecting")
     );

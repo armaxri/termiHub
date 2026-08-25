@@ -63,10 +63,12 @@ describe("terminal spawn error state", () => {
 
   // ── reconnectTerminal ────────────────────────────────────────────────────────
 
-  it("reconnectTerminal immediately sets terminalConnecting so the overlay appears without a gap", () => {
+  it("reconnectTerminal arms a fresh connect deadline for the retry", () => {
+    // The connecting overlay is sourced from the region now (#2205 PR-B); the
+    // surviving synchronous signal is the fresh wall-clock connect deadline.
     useAppStore.getState().setTerminalExited("tab-1");
     useAppStore.getState().reconnectTerminal("tab-1");
-    expect(useAppStore.getState().terminalConnecting["tab-1"]).toBe(true);
+    expect(useAppStore.getState().terminalConnectDeadline["tab-1"]?.kind).toBe("connecting");
   });
 
   it("reconnectTerminal clears terminalExitedTabs", () => {

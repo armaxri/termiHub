@@ -64,6 +64,7 @@ import type {
 
 import { useAppStore } from "./appStore";
 import {
+  currentSessionView,
   SESSION_LIFECYCLE_REGION,
   setSessionIntentsEnabled,
   setSessionTransportForTest,
@@ -91,7 +92,11 @@ class FakeTransport implements Transport {
       this.version += 1;
       this.fan();
     }
-    return { intentId: intent.intentId, status: "accepted", produced: [] };
+    const produced =
+      intent.kind === "session.reconnect"
+        ? [{ region: SESSION_LIFECYCLE_REGION, version: this.version }]
+        : [];
+    return { intentId: intent.intentId, status: "accepted", produced };
   }
 
   async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
@@ -133,8 +138,6 @@ class FakeTransport implements Transport {
   }
 }
 
-const auto = (tabId: string) => useAppStore.getState().terminalAutoReconnect[tabId];
-
 function makeSshTab(): string {
   return useAppStore.getState().addTab(
     "web01",
@@ -163,37 +166,34 @@ describe("appStore — session-intents cut (#2203), flag on", () => {
     setSessionIntentsEnabled(null);
   });
 
-  it("mirrors a dropped resilient tab as session.reconnect and arms no local timer", async () => {
-    vi.useFakeTimers();
+  it("mirrors a dropped resilient tab as session.reconnect and folds the region to waiting", async () => {
     const tabId = makeSshTab();
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
 
-    // The local render state still enters waiting (unchanged this step)…
-    expect(auto(tabId).phase).toBe("waiting");
-    // …but no local setTimeout was armed: advancing well past the backoff window
-    // does NOT advance the loop — the backend timer owns that edge now.
-    vi.advanceTimersByTime(60_000);
-    expect(auto(tabId).phase).toBe("waiting");
-    vi.useRealTimers();
-
     await flush();
+    // The drop is folded into the region as `session.reconnect` — the backend
+    // redrive is the sole reconnect authority (#2205 PR-B); there is no local timer.
     expect(
       fake.dispatched.some(
         (i) =>
           i.kind === "session.reconnect" && (i.payload as { sessionId: string }).sessionId === tabId
       )
     ).toBe(true);
+    expect(currentSessionView()[tabId]?.status).toBe("reconnecting");
+    expect(currentSessionView()[tabId]?.reconnect.phase).toBe("waiting");
   });
 
-  it("drives the local attempt when the backend timer projects Waiting→Connecting", async () => {
+  it("re-drives the tab when the backend timer projects Waiting→Connecting", async () => {
     const tabId = makeSshTab();
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
     await flush(); // subscription established; projected state = waiting
+    const retryBefore = useAppStore.getState().terminalRetryCounters[tabId] ?? 0;
 
     fake.fireAttempt(tabId, 1);
     await flush();
 
-    expect(auto(tabId).phase).toBe("connecting");
-    expect(auto(tabId).attempt).toBe(1);
+    // The region observer re-drives the tab so its Terminal effect re-runs and
+    // re-attaches to the fresh backend session id (retry counter bumped).
+    expect(useAppStore.getState().terminalRetryCounters[tabId] ?? 0).toBe(retryBefore + 1);
   });
 });

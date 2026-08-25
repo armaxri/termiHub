@@ -111,7 +111,11 @@ class RecordingTransport implements Transport {
       this.version += 1;
       this.fan();
     }
-    return { intentId: intent.intentId, status: "accepted", produced: [] };
+    const produced =
+      intent.kind === "session.reconnect"
+        ? [{ region: SESSION_LIFECYCLE_REGION, version: this.version }]
+        : [];
+    return { intentId: intent.intentId, status: "accepted", produced };
   }
 
   async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
@@ -157,8 +161,6 @@ class RecordingTransport implements Transport {
   }
 }
 
-const auto = (tabId: string) => useAppStore.getState().terminalAutoReconnect[tabId];
-
 function makeSshTab(): string {
   return useAppStore.getState().addTab(
     "web01",
@@ -171,28 +173,14 @@ function makeSshTab(): string {
   );
 }
 
-/** Drive a resilient tab into a connecting reconnect attempt, then fail it. */
-async function dropAttemptThenFail(fake: RecordingTransport): Promise<string> {
-  const tabId = makeSshTab();
-  useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
-  await flush(); // subscription established; projected = waiting
-  fake.fireAttempt(tabId, 1);
-  await flush(); // ensureSessionReconcileWired → local attempt (connecting)
-  expect(auto(tabId)?.phase).toBe("connecting");
-  // A failed connect attempt while the loop is connecting drives "failure".
-  useAppStore.getState().setTerminalSpawnError(tabId, "connection refused");
-  await flush();
-  return tabId;
-}
-
-describe("appStore — backend-reattach outcome-mirror suppression (#2454)", () => {
+describe("appStore — the backend owns the reconnect outcome (#2454 / #2205 PR-B)", () => {
   let fake: RecordingTransport;
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     fake = new RecordingTransport();
     setSessionTransportForTest(fake);
-    setSessionIntentsEnabled(true); // the underlying cut stays on (its default)
+    setSessionIntentsEnabled(true);
   });
 
   afterEach(() => {
@@ -202,25 +190,24 @@ describe("appStore — backend-reattach outcome-mirror suppression (#2454)", () 
     setSessionBackendReattachEnabled(null);
   });
 
-  it("flag ON: a failed attempt does NOT dispatch session.reconnectFailed (backend owns it)", async () => {
+  it("never dispatches session.reconnectFailed — the client engine is gone", async () => {
     setSessionBackendReattachEnabled(true);
-    const tabId = await dropAttemptThenFail(fake);
+    const tabId = makeSshTab();
+    useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
+    await flush();
+    // The backend timer projects the Waiting→Connecting edge; the observer re-drives.
+    fake.fireAttempt(tabId, 1);
+    await flush();
+    // A failed connect attempt while the region is reconnecting is a plain error
+    // write — the client never mirrors a reconnect failure (the backend folds the
+    // give-up itself).
+    useAppStore.getState().setTerminalSpawnError(tabId, "connection refused");
+    await flush();
 
     expect(fake.kinds()).not.toContain("session.reconnectFailed");
-    // The local loop still settles for the overlay — the record moved off
-    // "connecting" (backed off to waiting or gave up), proving suppression is
-    // scoped to the intent mirror, not the local state machine.
-    expect(auto(tabId)?.phase).not.toBe("connecting");
   });
 
-  it("flag OFF: a failed attempt DOES dispatch session.reconnectFailed (develop parity)", async () => {
-    setSessionBackendReattachEnabled(false);
-    await dropAttemptThenFail(fake);
-
-    expect(fake.kinds()).toContain("session.reconnectFailed");
-  });
-
-  it("flag ON: drop still mirrors session.reconnect and user cancel still mirrors session.cancelReconnect", async () => {
+  it("drop mirrors session.reconnect and user cancel mirrors session.cancelReconnect", async () => {
     setSessionBackendReattachEnabled(true);
     const tabId = makeSshTab();
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });

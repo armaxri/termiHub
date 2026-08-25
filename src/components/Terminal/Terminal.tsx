@@ -54,8 +54,8 @@ import { createTerminalScrollbar, type TerminalScrollbarController } from "./ter
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import {
+  currentSessionView,
   sessionBackendReattachEnabled,
-  waitForBackendReattachSessionId,
   waitForBackendAgentReconnectOutcome,
 } from "@/store/sessionBridge";
 
@@ -469,18 +469,22 @@ export function Terminal({
             // Persistent/agent tab: restart the background session and reattach
             // to its (possibly new) live id — never to the dead mount-time id.
             reattachSessionId = await useAppStore.getState().restartPersistentSessionForTab(tabId);
-          } else if (isBackendDrivenAgentReconnectTabId(tabId)) {
-            // Backend-driven AGENT reconnect (#2476): the redrive re-establishes
-            // the agent transport and mints a new backend session, parking/
-            // retrying for however long the drop lasts. The client must NOT drive
-            // the transport in parallel — its agent engine (connectRemoteAgent +
-            // park + bounded spawn retries) is non-idempotent and would
-            // double-drive the very transport the backend is re-establishing. So
-            // this waits for the backend loop's terminal outcome and never falls
-            // through to the client create loop below:
-            //   • reattach → attach I/O to the fresh backend session id;
-            //   • giveup   → settle the tab disconnected (backend exhausted retries);
-            //   • canceled → the effect was torn down.
+          } else if (currentSessionView()[tabId]?.status === "reconnecting") {
+            // Backend-driven automatic reconnect (#2205 PR-B): a genuine drop folded
+            // the `session-lifecycle` region to `reconnecting` and the backend
+            // redrive is the SOLE reconnect authority — it re-establishes the
+            // transport (agent or direct SSH), mints a fresh backend session id and
+            // publishes it to the region, parking/retrying for however long the drop
+            // lasts. The client must NOT drive the transport in parallel — its create
+            // loop / agent engine are non-idempotent and would double-drive the very
+            // transport the backend is re-establishing. So wait for the backend
+            // loop's terminal outcome and never fall through to the client create
+            // below:
+            //   • reattach    → attach I/O to the fresh backend session id;
+            //   • giveup      → settle the tab disconnected (backend exhausted);
+            //   • sessionLost → the transport came back but the live agent session
+            //                   was unrecoverable (#2512);
+            //   • canceled    → the effect was torn down.
             const outcome = await waitForBackendAgentReconnectOutcome(
               tabId,
               sessionIdRef.current,
@@ -490,7 +494,7 @@ export function Terminal({
             if (outcome.kind === "giveup") {
               useAppStore
                 .getState()
-                .settleBackendReconnectGaveUp(tabId, outcome.error ?? "Agent reconnect failed.");
+                .settleBackendReconnectGaveUp(tabId, outcome.error ?? "Reconnect failed.");
               return;
             }
             if (outcome.kind === "sessionLost") {
@@ -502,25 +506,12 @@ export function Terminal({
               return;
             }
             reattachSessionId = outcome.sessionId;
-          } else if (sessionBackendReattachEnabled()) {
-            // Backend-driven direct reconnect (#2457): with the flag on, the
-            // reconnect redrive is server-side (#2454). The backend re-creates
-            // the connection itself — minting a NEW backend session id — and
-            // publishes it to the `session-lifecycle` region. Attach to that id
-            // instead of calling create_connection: the client redrive is
-            // suppressed here because the reconnect engine is non-idempotent, so
-            // it must be a real authority cut. The prior (now-dead) session id is
-            // excluded so a stale region value never reattaches to a corpse; a
-            // null result (backend not driving / timed out) falls through to the
-            // client redrive below, so a tab is never stranded.
-            reattachSessionId = await waitForBackendReattachSessionId(
-              tabId,
-              sessionIdRef.current,
-              isCanceled
-            );
           } else {
-            // Direct tab, flag off: the dead session id is gone; fall through to
-            // a fresh create_connection (the client redrive) — develop behavior.
+            // User-initiated reconnect (the region is not reconnecting — the user
+            // clicked Reconnect / Try Again after a disconnect or give-up): start
+            // fresh via the client `create_connection` below, exactly as an initial
+            // connect does. `setTerminalConnecting(true)` there dispatches
+            // `session.connect`, resetting the region to `connecting`.
             reattachSessionId = null;
           }
           if (isCanceled()) return;
@@ -684,19 +675,13 @@ export function Terminal({
               useAppStore.getState().setTerminalConnecting(tabId, false);
 
               if (isAgentSession && agentId) {
-                // Backend-driven agent reconnect (#2476): under the flag, a
-                // reconnect (retryCount>0) is owned entirely by the backend
-                // redrive. The client must NOT run its agent engine
-                // (connectRemoteAgent + park + bounded MAX_AGENT_SPAWN_ATTEMPTS)
-                // here — it would double-drive the transport the redrive is
-                // re-establishing. The backend-driven reconnect path above already
-                // reattaches or settles without reaching this create loop, so this
-                // is defense-in-depth: never engage the client engine on such a
-                // reconnect. Flag off / initial connect (retryCount 0) fall
-                // through to the engine unchanged.
-                if (isReconnect && isBackendDrivenAgentReconnectTabId(tabId)) {
-                  return;
-                }
+                // The client create loop is only reached for an initial connect or a
+                // user-initiated reconnect (the region-`reconnecting` branch above
+                // awaits the backend redrive and never falls through here), so the
+                // backend is not driving this tab in parallel — the client agent
+                // engine (connectRemoteAgent + park + bounded MAX_AGENT_SPAWN_ATTEMPTS)
+                // is the correct driver, with no double-drive risk (#2205 PR-B).
+                //
                 // Check whether the agent transport itself is still connecting.
                 const agentState = currentAgentsView().remoteAgents.find(
                   (a) => a.id === agentId

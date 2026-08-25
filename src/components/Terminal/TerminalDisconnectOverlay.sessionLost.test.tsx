@@ -56,9 +56,6 @@ describe("TerminalDisconnectOverlay — session-lost variant (#2512)", () => {
       terminalExitedTabs: { [TAB]: true },
       terminalDisconnectErrors: {},
       terminalViewMode: {},
-      terminalReconnectingTabs: {},
-      terminalReconnectTriggerErrors: {},
-      terminalAutoReconnect: {},
     });
   });
 

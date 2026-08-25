@@ -82,8 +82,6 @@ function dotFor(tabId: string): HTMLElement | null {
 
 function resetStore() {
   useAppStore.setState({
-    terminalConnecting: {},
-    terminalReconnectingTabs: {},
     terminalSpawnErrors: {},
     terminalDisconnectErrors: {},
     terminalExitedTabs: {},

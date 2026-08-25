@@ -144,9 +144,9 @@ describe("reconnectTerminal connect-deadline reconciliation (#2476)", () => {
     const tabId = makeAgentTab();
     useAppStore.getState().reconnectTerminal(tabId);
     expect(useAppStore.getState().terminalConnectDeadline[tabId]).toBeUndefined();
-    // The reconnect still fired (retry counter bumped, connecting overlay set).
+    // The reconnect still fired (retry counter bumped; the connecting overlay is
+    // now sourced from the region, #2205 PR-B).
     expect(useAppStore.getState().terminalRetryCounters[tabId]).toBe(1);
-    expect(useAppStore.getState().terminalConnecting[tabId]).toBe(true);
   });
 
   it("flag OFF: an agent reconnect keeps the safety-net connecting deadline", () => {
@@ -170,20 +170,12 @@ describe("settleBackendReconnectGaveUp (#2476)", () => {
   it("clears the loop + connect flags and shows the disconnect overlay with the error", () => {
     setSessionBackendReattachEnabled(true);
     const tabId = makeAgentTab();
-    // Simulate a live backend-driven reconnect: connecting overlay up, loop record present.
+    // Simulate a live backend-driven reconnect: a fresh connect deadline armed.
     useAppStore.getState().reconnectTerminal(tabId);
-    useAppStore.setState((s) => ({
-      terminalAutoReconnect: {
-        ...s.terminalAutoReconnect,
-        [tabId]: { phase: "connecting", attempt: 2, maxAttempts: 5, delayMs: 0, nextAttemptAt: 0 },
-      },
-    }));
 
     useAppStore.getState().settleBackendReconnectGaveUp(tabId, "agent unreachable");
 
     const state = useAppStore.getState();
-    expect(state.terminalAutoReconnect[tabId]).toBeUndefined();
-    expect(state.terminalConnecting[tabId]).toBeUndefined();
     expect(state.terminalConnectDeadline[tabId]).toBeUndefined();
     expect(state.terminalExitedTabs[tabId]).toBe(true);
     expect(state.terminalDisconnectErrors[tabId]).toBe("agent unreachable");

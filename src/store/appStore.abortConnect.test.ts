@@ -42,8 +42,9 @@ describe("abortTerminalConnect", () => {
 
     useAppStore.getState().abortTerminalConnect("tab-1");
 
-    // No longer connecting.
-    expect(useAppStore.getState().terminalConnecting["tab-1"]).toBeUndefined();
+    // No longer counting down the connect deadline (the connecting overlay is now
+    // sourced from the region; the deadline is the surviving per-client timer).
+    expect(useAppStore.getState().terminalConnectDeadline["tab-1"]).toBeUndefined();
     // Landed on a retryable Failed state (spawn error set = overlay shows Retry).
     expect(useAppStore.getState().terminalSpawnErrors["tab-1"]).toBe(ABORTED_CONNECT_MESSAGE);
   });
@@ -72,8 +73,9 @@ describe("abortTerminalConnect", () => {
 
     useAppStore.getState().abortTerminalConnect("tab-1");
 
-    expect(useAppStore.getState().terminalConnecting["tab-1"]).toBeUndefined();
-    expect(useAppStore.getState().terminalConnecting["tab-2"]).toBe(true);
+    // tab-1's connect deadline is cleared; tab-2's is untouched.
+    expect(useAppStore.getState().terminalConnectDeadline["tab-1"]).toBeUndefined();
+    expect(useAppStore.getState().terminalConnectDeadline["tab-2"]?.kind).toBe("connecting");
     expect(useAppStore.getState().terminalSpawnErrors["tab-2"]).toBeUndefined();
   });
 });

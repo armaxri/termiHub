@@ -14,7 +14,11 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { mirrorSessionIntent, sessionIntentsEnabled } from "@/store/sessionBridge";
+import {
+  currentSessionView,
+  mirrorSessionIntent,
+  sessionIntentsEnabled,
+} from "@/store/sessionBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
@@ -156,21 +160,26 @@ export function TerminalView() {
           // Transition each reconnecting tab based on whether its session survived.
           let markedResumed = 0;
           let markedExited = 0;
+          const reconnectingView = currentSessionView();
           for (const tab of agentTerminalTabs) {
-            if (!store.terminalReconnectingTabs[tab.id]) continue;
+            // The shared `session-lifecycle` region is authoritative for the
+            // transient-break reconnecting state (#2555) — the same source the
+            // overlay + tab dot read — so gate the resume-vs-exit decision on it
+            // rather than the local `terminalReconnectingTabs` slice (#2205 PR-B).
+            if (reconnectingView[tab.id]?.status !== "reconnecting") continue;
             if (tab.sessionId && recoveredSessionIds.has(tab.sessionId)) {
-              // Session survived — clear the spinner; output will resume automatically.
+              // Session survived — output resumes automatically once the region
+              // leaves reconnecting.
               frontendLog(
                 "disconnect",
                 `agent connected: session recovered for tab=${tab.id} session=${tab.sessionId}, resuming`
               );
-              store.setTerminalReconnecting(tab.id, false);
               // The survived-recovery resolver for the region fold (#2555): the
               // live session came back in place, so fold the `session-lifecycle`
               // region entry `reconnecting → connected` (the twin `disconnect`
               // resolution for a *gone* session runs in the else branch below via
-              // `setTerminalExited`). Without this the region — the sole
-              // reconnecting source after #2554 — would stay stuck reconnecting.
+              // `setTerminalExited`). The region is the sole reconnecting source
+              // (#2205 PR-B), so without this it would stay stuck reconnecting.
               if (sessionIntentsEnabled()) {
                 mirrorSessionIntent("session.connected", tab.id);
               }
@@ -219,7 +228,7 @@ export function TerminalView() {
             const hasSpawnError = !!store.terminalSpawnErrors[tab.id];
             const isAutoRetrying = (store.terminalAutoRetryCount[tab.id] ?? 0) > 0;
             const wasWaiting = !!store.terminalWaitingForAgent[tab.id];
-            const isConnecting = store.terminalConnecting[tab.id] ?? false;
+            const isConnecting = currentSessionView()[tab.id]?.status === "connecting";
             if ((hasSpawnError || isAutoRetrying) && !wasWaiting && !isConnecting) {
               frontendLog("disconnect", `agent connected: restarting retry tab=${tab.id}`);
               store.reconnectTerminal(tab.id);
