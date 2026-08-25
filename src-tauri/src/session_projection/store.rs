@@ -328,6 +328,47 @@ impl SessionLifecycleStore {
         entry.backend_session_id = None;
     }
 
+    /// `session.agentTransportReconnecting` (#2555) — an **agent-hosted** tab's
+    /// transport hit a **transient** break that the agent I/O task's own in-task
+    /// reconnect loop (`agent_io_task::reconnect_agent`) is re-establishing in
+    /// place, recovering the hosted session without tearing it down.
+    ///
+    /// Surfaces `Reconnecting` (so the disconnect overlay + tab-strip dot show
+    /// honest feedback — the regression #2554 left, where the region-only readers
+    /// had no reconnecting source for this case) while deliberately keeping the
+    /// reconnect engine **`Idle`**: the transient break is owned by the agent I/O
+    /// task, so the client-driven backoff loop must NOT run. Because the backend
+    /// timer driver arms only on a `Waiting` phase, an idle loop means the redrive
+    /// never starts and never double-drives the transport the agent is already
+    /// re-establishing.
+    ///
+    /// Distinct from [`reconnect`](Self::reconnect), which feeds the engine a
+    /// `Drop` (→ `Waiting`, arming the loop): this is a status-only fold. The live
+    /// session survives the break in place, so the re-attach id
+    /// ([`backend_session_id`](SessionLifecycle::backend_session_id)) is **kept**
+    /// (unlike every drop/reconnect path, which clears it). `error` records the
+    /// trigger cause the overlay shows while reconnecting. Resolved by the existing
+    /// routes: [`connected`](Self::connected) on in-place recovery, or
+    /// [`dropped`](Self::dropped) / [`session_lost`](Self::session_lost) / the
+    /// backoff loop when the live session did not survive — the region is never
+    /// left stuck reconnecting. Creates the entry lazily (mirrors the other folds).
+    pub fn agent_transport_reconnecting(&self, session_id: &str, error: Option<String>) {
+        let mut inner = self.lock();
+        let entry = inner
+            .sessions
+            .entry(session_id.to_string())
+            .or_insert_with(SessionLifecycle::connecting);
+        entry.status = SessionStatus::Reconnecting;
+        // Idle loop — the agent I/O task owns the transient reconnect; the backend
+        // timer (which arms only on `Waiting`) must never start a redrive here.
+        entry.reconnect = INITIAL_RECONNECT_STATE;
+        entry.end_reason = None;
+        entry.reconnect_error = error;
+        // The live agent session survives the transient break in place, so its
+        // re-attach id stays valid — deliberately NOT cleared (contrast the
+        // drop/reconnect paths, whose session is gone).
+    }
+
     /// `session.reconnectAttempt` — the backoff timer fired; start an attempt.
     /// Feeds the engine an `Attempt` (Waiting → Connecting, attempt++). A no-op
     /// outside the `Waiting` phase.

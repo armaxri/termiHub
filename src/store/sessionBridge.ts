@@ -124,6 +124,7 @@ export type SessionIntentKind =
   | "session.reconnectFailed"
   | "session.cancelReconnect"
   | "session.reconnectTrigger"
+  | "session.agentTransportReconnecting"
   | "session.remove";
 
 // ── Feature flag (runtime-flippable, off by default) ───────────────────────────
@@ -400,6 +401,26 @@ const OPTIMISTIC_SESSION_FOLDS: Partial<Record<SessionIntentKind, SessionOptimis
     ...view,
     sessions: { ...view.sessions, [sessionId]: projectedConnecting() },
   }),
+  // A transient agent-transport break (#2555): surface `reconnecting` for the
+  // overlay/tab dot synchronously (gap-free), the twin of the Rust
+  // `SessionLifecycleStore::agent_transport_reconnecting` fold — status-only, the
+  // loop stays `idle` (no backoff/redrive), and the live session's re-attach id
+  // (`sessionId` field) is preserved because it survives the break in place.
+  "session.agentTransportReconnecting": (view, sessionId, error) => {
+    const prev = view.sessions[sessionId];
+    return {
+      ...view,
+      sessions: {
+        ...view.sessions,
+        [sessionId]: {
+          status: "reconnecting",
+          reconnect: { ...initialReconnectState },
+          ...(prev?.sessionId !== undefined ? { sessionId: prev.sessionId } : {}),
+          ...(error !== undefined ? { reconnectError: error } : {}),
+        },
+      },
+    };
+  },
 };
 
 /** Dispatch a folded `session.*` intent through the region client so its overlay

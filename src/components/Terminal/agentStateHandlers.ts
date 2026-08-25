@@ -6,6 +6,7 @@
  * handler and the tests exercise the exact same code).
  */
 import { useAppStore } from "@/store/appStore";
+import { mirrorSessionIntent, sessionIntentsEnabled } from "@/store/sessionBridge";
 import { TerminalTab } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -38,6 +39,19 @@ export function applyAgentReconnecting(
       store.setTerminalReconnecting(tab.id, true);
       if (error) {
         store.setTerminalReconnectTriggerError(tab.id, error);
+      }
+      // Fold the shared `session-lifecycle` region to `reconnecting` for this tab
+      // (#2555). The overlay + tab-strip dot source `reconnecting` purely from the
+      // region after #2554, but a transient agent-transport break — recovered in
+      // place by the agent I/O task's in-task reconnect loop — never folds the
+      // region (no per-session `terminal-exit`), so those readers were stranded
+      // (the #2554 regression). This status-only fold keeps the reconnect loop
+      // idle, so the backend timer never arms a redrive that would double-drive
+      // the transport the agent is already re-establishing. Optimistically folded,
+      // so the overlay is gap-free; resolved back by the `connected` (survived) /
+      // `disconnected` (gone) handlers in TerminalView.
+      if (sessionIntentsEnabled()) {
+        mirrorSessionIntent("session.agentTransportReconnecting", tab.id, error);
       }
       reconnectingCount++;
     } else {

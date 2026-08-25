@@ -12,9 +12,16 @@
  * feedback during a drop. Tabs that already have a session keep the existing
  * behaviour (reconnecting spinner overlay).
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useAppStore } from "@/store/appStore";
+import {
+  currentSessionView,
+  setSessionIntentsEnabled,
+  setSessionTransportForTest,
+  stopSessionSubscription,
+} from "@/store/sessionBridge";
+import { FakeSessionTransport } from "@/test/sessionLifecycleRegionTestHarness";
 import { applyAgentReconnecting } from "./agentStateHandlers";
 
 vi.mock("@/services/storage", () => ({
@@ -116,6 +123,56 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
     const state = useAppStore.getState();
     expect(state.terminalReconnectingTabs[tab.id]).toBe(true);
     expect(state.terminalReconnectTriggerErrors[tab.id]).toBe("connection reset");
+  });
+
+  describe("session-lifecycle region fold (#2555, closes the #2554 overlay gap)", () => {
+    let transport: FakeSessionTransport;
+
+    beforeEach(() => {
+      transport = new FakeSessionTransport();
+      setSessionTransportForTest(transport);
+      setSessionIntentsEnabled(true);
+    });
+
+    afterEach(() => {
+      stopSessionSubscription();
+      setSessionTransportForTest(null);
+      setSessionIntentsEnabled(null);
+    });
+
+    it("folds a live-session agent tab to reconnecting in the region (overlay/tab-dot source)", () => {
+      const store = useAppStore.getState();
+      store.addTab("Shell", "remote-session", {
+        type: "remote-session",
+        config: { agentId: "agent-1", sessionType: "shell" },
+      });
+      const tab = getAllTerminalTabs()[0];
+      useAppStore.getState().setTabSessionId(tab.id, "session-123");
+
+      applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), "connection reset");
+
+      // Gap-free: the region — the sole reconnecting source the overlay/tab dot
+      // read after #2554 — now shows reconnecting for the transient break, with
+      // the loop idle (no redrive) and the trigger cause recorded.
+      const life = currentSessionView()[tab.id];
+      expect(life?.status).toBe("reconnecting");
+      expect(life?.reconnect.phase).toBe("idle");
+      expect(life?.reconnectError).toBe("connection reset");
+    });
+
+    it("does not fold a spawning (sessionId-less) tab — it parks waiting instead", () => {
+      const store = useAppStore.getState();
+      store.addTab("Spawning", "remote-session", {
+        type: "remote-session",
+        config: { agentId: "agent-1", sessionType: "shell" },
+      });
+      const tab = getAllTerminalTabs()[0];
+
+      applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
+
+      expect(currentSessionView()[tab.id]).toBeUndefined();
+      expect(useAppStore.getState().terminalWaitingForAgent[tab.id]).toBe("agent-1");
+    });
   });
 
   it("handles a mix: live tab reconnecting, spawning tab waiting", () => {
