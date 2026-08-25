@@ -9,6 +9,11 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab } from "@/types/terminal";
+import {
+  connecting,
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 
 const cancelConnecting = vi.fn((_id: string) => Promise.resolve(true));
 vi.mock("@/services/api", () => ({
@@ -41,6 +46,11 @@ function connectingTab(id: string, title: string, panelId: string): TerminalTab 
 }
 
 describe("OpenConnectionsModal — Connecting section", () => {
+  // The Connecting section is derived from the projected `session-lifecycle`
+  // region (#2205), so seed a `connecting` session there rather than the removed
+  // `appStore.terminalConnecting` slice.
+  const harness = installSessionLifecycleHarness();
+
   let container: HTMLDivElement;
   let root: Root;
 
@@ -57,14 +67,14 @@ describe("OpenConnectionsModal — Connecting section", () => {
     container.remove();
   });
 
-  function renderWithConnectingTab() {
+  async function renderWithConnectingTab() {
     const leafId = useAppStore.getState().rootPanel.id;
     const tab = connectingTab("tab-1", "app-server", leafId);
     useAppStore.setState({
       rootPanel: { type: "leaf", id: leafId, tabs: [tab], activeTabId: tab.id },
       activePanelId: leafId,
-      terminalConnecting: { "tab-1": true },
     });
+    harness.transport.setSession("tab-1", connecting());
     act(() => {
       root.render(
         <TooltipProvider delayDuration={0}>
@@ -72,10 +82,11 @@ describe("OpenConnectionsModal — Connecting section", () => {
         </TooltipProvider>
       );
     });
+    await flushSessionRegion();
   }
 
-  it("lists a connecting session and cancels it via cancel_connecting", () => {
-    renderWithConnectingTab();
+  it("lists a connecting session and cancels it via cancel_connecting", async () => {
+    await renderWithConnectingTab();
 
     // Section + row render (the modal portals to document.body).
     const rows = Array.from(document.querySelectorAll(".oc-row")).filter((r) =>
@@ -92,8 +103,8 @@ describe("OpenConnectionsModal — Connecting section", () => {
     expect(cancelConnecting).toHaveBeenCalledWith("tab-1");
   });
 
-  it("renders through the shared Modal primitive", () => {
-    renderWithConnectingTab();
+  it("renders through the shared Modal primitive", async () => {
+    await renderWithConnectingTab();
     const modal = document.querySelector(".ui-modal");
     expect(modal).not.toBeNull();
     expect(modal?.querySelector(".ui-modal__title")?.textContent).toContain("Open Connections");

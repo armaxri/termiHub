@@ -96,10 +96,10 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     expect(countdown?.textContent).toContain("Attempt 2 of 10");
   });
 
-  it("keeps the countdown identical to appStore when the projection diverges (mirror-fallback parity)", async () => {
-    // Local record is attempt 1 ("Attempt 2"); the projected snapshot is stale at
-    // a wildly different attempt. The faithful-mirror gate must reject it and the
-    // overlay must stay byte-identical to the local record.
+  it("sources the countdown numbers purely from the region, ignoring any stale appStore record", async () => {
+    // The region is the sole source of the reconnect loop (#2205 PR-B): a local
+    // `appStore` record at a different attempt does NOT override it — the overlay
+    // renders the region's attempt (7 ⇒ "Attempt 8 of 10"), not the local one.
     useAppStore.setState({ terminalAutoReconnect: { [TAB]: record({ attempt: 1 }) } });
     transport.setSession(TAB, reconnecting({ phase: "waiting", attempt: 7, delayMs: 99_000 }));
 
@@ -107,23 +107,25 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     await flush();
 
     const countdown = container.querySelector("[data-testid='terminal-auto-reconnect-countdown']");
-    expect(countdown?.textContent).toContain("Attempt 2 of 10");
-    expect(countdown?.textContent).not.toContain("Attempt 8");
+    expect(countdown?.textContent).toContain("Attempt 8 of 10");
+    expect(countdown?.textContent).not.toContain("Attempt 2 of 10");
   });
 
-  it("falls back to appStore verbatim when the render cut is off", async () => {
+  it("keeps sourcing the countdown from the region regardless of the render flag", async () => {
+    // The reconnect loop moved off `appStore` entirely (#2205 PR-B), so the
+    // render-cut flag no longer gates it — the region drives the countdown even
+    // with the flag off, and the hook still subscribes to source it.
     setSessionRenderFromProjectionEnabled(false);
-    useAppStore.setState({ terminalAutoReconnect: { [TAB]: record({ attempt: 3 }) } });
-    // A divergent snapshot exists but must be ignored with the flag off.
-    transport.setSession(TAB, reconnecting({ phase: "waiting", attempt: 0, delayMs: 1_000 }));
+    useAppStore.setState({ terminalAutoReconnect: { [TAB]: record({ attempt: 9 }) } });
+    transport.setSession(TAB, reconnecting({ phase: "waiting", attempt: 3, delayMs: 1_000 }));
 
     act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
     await flush();
 
     const countdown = container.querySelector("[data-testid='terminal-auto-reconnect-countdown']");
     expect(countdown?.textContent).toContain("Attempt 4 of 10");
-    // With the cut off the hook never subscribes to the region.
-    expect(transport.subscribeCount).toBe(0);
+    // The region is the sole source, so the hook subscribes regardless of the flag.
+    expect(transport.subscribeCount).toBeGreaterThan(0);
   });
 
   it("renders the reconnecting spinner sourced from a mirroring projected snapshot", async () => {
@@ -159,15 +161,17 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     expect(errorBox?.textContent).toContain("connection reset");
   });
 
-  it("keeps the trigger error identical to appStore when the region diverges (fallback parity, #2442)", async () => {
+  it("sources the trigger error purely from the region, ignoring any stale appStore value (#2442)", async () => {
+    // The reconnect-trigger cause is region-owned since #2205 PR-B: a divergent
+    // local `appStore` value does not override it — the overlay shows the region's
+    // cause, not the local one.
     useAppStore.setState({
       terminalReconnectingTabs: { [TAB]: true },
       terminalReconnectTriggerErrors: { [TAB]: "local cause" },
     });
-    // The region carries a stale/divergent trigger error; the gate must reject it.
     transport.setSession(
       TAB,
-      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }, "stale cause")
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }, "region cause")
     );
 
     act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
@@ -176,8 +180,8 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     const errorBox = container.querySelector(
       "[data-testid='terminal-disconnect-trigger-error-box']"
     );
-    expect(errorBox?.textContent).toContain("local cause");
-    expect(errorBox?.textContent).not.toContain("stale cause");
+    expect(errorBox?.textContent).toContain("region cause");
+    expect(errorBox?.textContent).not.toContain("local cause");
   });
 
   it("renders the disconnect error sourced from a mirroring failed snapshot", async () => {
@@ -191,16 +195,17 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     expect(overlay?.textContent).toContain("auth failed");
   });
 
-  it("shows no auto-reconnect overlay when there is no local loop, whatever the region says", async () => {
-    // The region reports a reconnecting session, but appStore has no loop record:
-    // the overlay is seeded from appStore, so nothing spurious renders.
+  it("renders the auto-reconnect countdown from the region even with no local appStore loop record", async () => {
+    // The region is the sole source of the reconnect loop (#2205 PR-B): a waiting
+    // reconnect drives the countdown variant on its own, without any
+    // `appStore.terminalAutoReconnect` record seeding it.
     transport.setSession(TAB, reconnecting({ phase: "waiting", attempt: 2, delayMs: 5_000 }));
 
     act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
     await flush();
 
-    // The exited (non-view-mode) disconnect overlay shows, but not the reconnect
-    // countdown variant.
-    expect(container.querySelector("[data-testid='terminal-auto-reconnect-countdown']")).toBeNull();
+    const countdown = container.querySelector("[data-testid='terminal-auto-reconnect-countdown']");
+    expect(countdown).not.toBeNull();
+    expect(countdown?.textContent).toContain("Attempt 3 of 10");
   });
 });

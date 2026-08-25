@@ -1,10 +1,10 @@
 /**
- * `useProjectedSessionLifecycle` / `useProjectedSessionLifecycleMaps` — the #2205
- * PR-A render cut for the terminal lifecycle status readers. Drives the hooks
- * against the in-memory `session-lifecycle` region harness and asserts they source
- * the connect / reconnect / disconnect-error status from a mirroring projected
- * snapshot, fall back to `appStore` when the region does not mirror, and never
- * subscribe when the render cut is off.
+ * `useProjectedSessionLifecycle` / `useProjectedSessionLifecycleMaps` — the
+ * terminal lifecycle status readers. Since #2205 PR-B removed the `appStore`
+ * reconnect engine, connect / reconnect status is sourced **purely** from the
+ * projected `session-lifecycle` region (the disconnect error keeps its per-client
+ * slice). Drives the hooks against the in-memory region harness and asserts they
+ * reflect the region as the single source of truth.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -95,18 +95,20 @@ describe("useProjectedSessionLifecycle (per tab)", () => {
     expect(latest?.disconnectError).toBe("auth failed");
   });
 
-  it("falls back to appStore when the region diverges", async () => {
-    // appStore says connecting; region reports connected — the gate rejects it.
-    useAppStore.setState({ terminalConnecting: { [TAB]: true } });
+  it("reflects the region as the sole source (no appStore fallback)", async () => {
+    // The region is authoritative since the engine was removed: a connected
+    // snapshot means not-connecting, regardless of any stale local field.
     harness.transport.setSession(TAB, connected());
     let latest: ProjectedSessionLifecycleSlice | undefined;
     mount(<Probe onValue={(v) => (latest = v)} />);
     await flushSessionRegion();
-    expect(latest?.connecting).toBe(true);
+    expect(latest?.connecting).toBe(false);
   });
 });
 
-describe("useProjectedSessionLifecycle — render cut off", () => {
+describe("useProjectedSessionLifecycle — always region-sourced", () => {
+  // The legacy render flag no longer gates these readers; the hook always
+  // subscribes and reads the region.
   const harness = installSessionLifecycleHarness(false);
 
   function Probe({ onValue }: { onValue: (v: ProjectedSessionLifecycleSlice) => void }) {
@@ -114,15 +116,13 @@ describe("useProjectedSessionLifecycle — render cut off", () => {
     return null;
   }
 
-  it("returns appStore verbatim and never subscribes", async () => {
-    useAppStore.setState({ terminalConnecting: { [TAB]: true } });
-    // A divergent snapshot exists but must be ignored with the flag off.
+  it("subscribes and reads the region even with the legacy render flag off", async () => {
     harness.transport.setSession(TAB, connected());
     let latest: ProjectedSessionLifecycleSlice | undefined;
     mount(<Probe onValue={(v) => (latest = v)} />);
     await flushSessionRegion();
-    expect(latest?.connecting).toBe(true);
-    expect(harness.transport.subscribeCount).toBe(0);
+    expect(latest?.connecting).toBe(false);
+    expect(harness.transport.subscribeCount).toBeGreaterThan(0);
   });
 });
 

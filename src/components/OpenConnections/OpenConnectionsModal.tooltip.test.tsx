@@ -15,6 +15,11 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab } from "@/types/terminal";
+import {
+  connecting,
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 
 vi.mock("@/services/api", () => ({
   listSessionOwners: vi.fn(() => Promise.resolve({})),
@@ -48,14 +53,19 @@ function connectingTab(id: string, title: string, panelId: string): TerminalTab 
 let container: HTMLDivElement;
 let root: Root;
 
-function renderWithSection() {
+// The Connecting section (which carries the Kill All control under test) is
+// derived from the projected `session-lifecycle` region (#2205), so seed a
+// `connecting` session there rather than the removed `appStore.terminalConnecting`.
+const harness = installSessionLifecycleHarness();
+
+async function renderWithSection() {
   const leafId = useAppStore.getState().rootPanel.id;
   const tab = connectingTab("tab-1", "app-server", leafId);
   useAppStore.setState({
     rootPanel: { type: "leaf", id: leafId, tabs: [tab], activeTabId: tab.id },
     activePanelId: leafId,
-    terminalConnecting: { "tab-1": true },
   });
+  harness.transport.setSession("tab-1", connecting());
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
@@ -63,6 +73,7 @@ function renderWithSection() {
       </TooltipProvider>
     );
   });
+  await flushSessionRegion();
 }
 
 describe("OpenConnectionsModal — tooltip adoption (#1114)", () => {
@@ -79,15 +90,15 @@ describe("OpenConnectionsModal — tooltip adoption (#1114)", () => {
     vi.clearAllMocks();
   });
 
-  it("does not leave a bare title on the section Kill All control", () => {
-    renderWithSection();
+  it("does not leave a bare title on the section Kill All control", async () => {
+    await renderWithSection();
     const killAll = document.querySelector<HTMLButtonElement>(".oc-section__kill-all");
     expect(killAll).not.toBeNull();
     expect(killAll?.getAttribute("title")).toBeNull();
   });
 
-  it("wires the section Kill All control to its tooltip via aria-describedby on focus", () => {
-    renderWithSection();
+  it("wires the section Kill All control to its tooltip via aria-describedby on focus", async () => {
+    await renderWithSection();
     const killAll = document.querySelector<HTMLButtonElement>(".oc-section__kill-all")!;
     act(() => {
       killAll.focus();
