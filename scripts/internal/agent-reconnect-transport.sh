@@ -43,7 +43,6 @@ set -euo pipefail
 # repo — without `git rev-parse` failing on the CWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-cd "$REPO_ROOT"
 
 STATE_DIR=".dev-agent"
 STATE_FILE="$STATE_DIR/agent-reconnect-transport.state"
@@ -61,8 +60,6 @@ resolve_port() {
     fi
     printf '%s' "$port"
 }
-
-PORT="$(resolve_port)"
 
 find_sshd_binary() {
     local candidate
@@ -91,9 +88,10 @@ descendants() {
     done
 }
 
-# The basename of a PID's executable command (empty if the process is gone).
-# `ps -o comm=` returns the exec path on macOS (`/usr/sbin/sshd`) and the process
-# name on Linux (`sshd`); the basename normalises both.
+# The normalised command name of a PID (empty if the process is gone), reduced to
+# what the `sshd | sshd-*` match below keys on. `ps -o comm=` returns the exec
+# path on macOS (`/usr/sbin/sshd`) and the process name on Linux (`sshd`); the
+# basename normalises both.
 comm_of() {
     local comm
     comm=$(ps -o comm= -p "$1" 2>/dev/null | awk 'NR==1{print $1}')
@@ -103,11 +101,12 @@ comm_of() {
 # The SSH-transport kill list: every sshd-family process holding a socket on our
 # loopback dev-agent port — matched by comm `sshd` OR `sshd-*` (OpenSSH 9.8+ /
 # macOS 26 split the per-connection handler into a separate `sshd-session` /
-# `sshd-sess` process). Found via the PORT socket (`lsof -iTCP:PORT`), NOT by
-# walking a master's descendants, so it still finds an ESTABLISHED session that
-# outlived its master listener (the #2510 case: the master had already exited but
-# a live `sshd-session` kept the agent connection up, so the descendant-walk found
-# nothing and `drop` wrongly reported "already down").
+# `sshd-sess` process). Found via the PORT socket
+# (`lsof -iTCP:PORT`), NOT by walking a master's descendants, so it still finds an
+# ESTABLISHED session that outlived its master listener (the #2510 case: the
+# master had already exited but a live `sshd-session` kept the agent connection
+# up, so the descendant-walk found nothing and `drop` wrongly reported "already
+# down").
 #
 # Crucially this still EXCLUDES the `termihub-agent --stdio` process the SSH
 # session runs and the `setsid`'d session daemon that agent spawned: their comm is
@@ -117,12 +116,21 @@ comm_of() {
 # reproduce the #2508 false failure. Matching only sshd-family comm on the port
 # socket severs only the transport; the agent then EOFs and exits on its own, and
 # the detached daemon survives for the recovery grade.
+# Whether a normalised comm (from comm_of) names an sshd-family transport process
+# — the master listener (`sshd`) or a per-connection handler (`sshd-session`,
+# `sshd-sess`, `sshd-auth`, …). Pure (no process lookup) so it is unit-testable in
+# isolation; #2550 was a miss in exactly this predicate for the listener.
+is_sshd_family() {
+    case "$1" in
+    sshd | sshd-*) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
 sshd_transport_pids() {
     local pid
     for pid in $(lsof -nP -iTCP:"$PORT" -t 2>/dev/null | sort -u); do
-        case "$(comm_of "$pid")" in
-        sshd | sshd-*) printf '%s\n' "$pid" ;;
-        esac
+        is_sshd_family "$(comm_of "$pid")" && printf '%s\n' "$pid"
     done
 }
 
@@ -249,7 +257,15 @@ do_status() {
     fi
 }
 
-case "${1:-}" in
+# Only dispatch an action when RUN as a script. When SOURCED (the unit test in
+# agent-reconnect-transport.test.sh does this to exercise the pure classifiers
+# without a live agent), stop here: define the functions but resolve no port and
+# run no action, so the test can fake `ps` and assert comm_of / is_sshd_family in
+# isolation — including the #2550 listener-title regression.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    cd "$REPO_ROOT"
+    PORT="$(resolve_port)"
+    case "${1:-}" in
     drop) do_drop ;;
     restore) do_restore ;;
     status) do_status ;;
@@ -257,4 +273,5 @@ case "${1:-}" in
         echo "usage: $0 {drop|restore|status}" >&2
         exit 2
         ;;
-esac
+    esac
+fi
