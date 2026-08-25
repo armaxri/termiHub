@@ -89,19 +89,32 @@ descendants() {
 }
 
 # The normalised command name of a PID (empty if the process is gone), reduced to
-# what the `sshd | sshd-*` match below keys on. `ps -o comm=` returns the exec
-# path on macOS (`/usr/sbin/sshd`) and the process name on Linux (`sshd`); the
-# basename normalises both.
+# what the `sshd | sshd-*` match below keys on. Handles three shapes of
+# `ps -o comm=`:
+#   • Linux:                 `sshd`                     (bare name)
+#   • macOS non-title proc:  `/usr/sbin/sshd`           (exec path → basename)
+#   • macOS 26 / OpenSSH 10:  a rewritten sshd process TITLE, whose first token
+#     carries a trailing colon — `sshd:` for the master listener,
+#     `sshd-session:` for a per-connection handler.
+# The trailing colon is why the listener (`sshd:`) used to escape the
+# `sshd`/`sshd-*` match and survive `drop` (#2550), leaving the transport up and
+# the outage unobservable. Strip it so `sshd:` → `sshd` and `sshd-session:` →
+# `sshd-session`, both of which the match then catches.
 comm_of() {
     local comm
     comm=$(ps -o comm= -p "$1" 2>/dev/null | awk 'NR==1{print $1}')
-    printf '%s' "${comm##*/}"
+    comm="${comm##*/}" # exec-path basename (Linux `/usr/sbin/sshd` → `sshd`)
+    comm="${comm%:}"   # macOS process-title trailing colon (`sshd:` → `sshd`)
+    printf '%s' "$comm"
 }
 
 # The SSH-transport kill list: every sshd-family process holding a socket on our
-# loopback dev-agent port — matched by comm `sshd` OR `sshd-*` (OpenSSH 9.8+ /
-# macOS 26 split the per-connection handler into a separate `sshd-session` /
-# `sshd-sess` process). Found via the PORT socket
+# loopback dev-agent port — matched by (colon-normalised, see comm_of) comm `sshd`
+# OR `sshd-*`. This catches BOTH the master listener (`sshd`, or the macOS 26
+# process-title `sshd:`) AND the per-connection handler, which OpenSSH 9.8+ /
+# macOS 26 split into a separate `sshd-session` / `sshd-sess` process. Missing the
+# listener is the #2550 regression: with the listener spared, backend reconnects
+# succeed instantly and the outage is never observable. Found via the PORT socket
 # (`lsof -iTCP:PORT`), NOT by walking a master's descendants, so it still finds an
 # ESTABLISHED session that outlived its master listener (the #2510 case: the
 # master had already exited but a live `sshd-session` kept the agent connection
