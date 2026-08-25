@@ -14,6 +14,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { mirrorSessionIntent, sessionIntentsEnabled } from "@/store/sessionBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
@@ -164,6 +165,15 @@ export function TerminalView() {
                 `agent connected: session recovered for tab=${tab.id} session=${tab.sessionId}, resuming`
               );
               store.setTerminalReconnecting(tab.id, false);
+              // The survived-recovery resolver for the region fold (#2555): the
+              // live session came back in place, so fold the `session-lifecycle`
+              // region entry `reconnecting → connected` (the twin `disconnect`
+              // resolution for a *gone* session runs in the else branch below via
+              // `setTerminalExited`). Without this the region — the sole
+              // reconnecting source after #2554 — would stay stuck reconnecting.
+              if (sessionIntentsEnabled()) {
+                mirrorSessionIntent("session.connected", tab.id);
+              }
               markedResumed++;
             } else {
               // Session is gone — show the "Session disconnected" overlay.

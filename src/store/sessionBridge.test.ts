@@ -22,6 +22,7 @@ import {
   currentSessionView,
   dispatchSessionIntent,
   effectiveAutoReconnect,
+  effectiveReconnectingMap,
   ensureSessionSubscribed,
   mirrorSessionIntent,
   onSessionView,
@@ -418,6 +419,18 @@ describe("optimistic client-side folding (#2533)", () => {
     mirrorSessionIntent("session.disconnect", "tab-x");
     expect(currentSessionView()["tab-x"]).toBeUndefined();
     expect(transport.dispatched[transport.dispatched.length - 1]?.kind).toBe("session.disconnect");
+  });
+
+  it("effectiveReconnectingMap picks up a transient-break shape so the tab-strip dot shows connecting (#2555)", () => {
+    // The tab-strip status dot derives `reconnecting` from `effectiveReconnectingMap`
+    // (status-only, phase-agnostic). A transient agent-break folds `reconnecting`
+    // with an idle loop — assert the map recognises it so the dot leaves green
+    // during the break (the #2554 dot regression, twin of the overlay one).
+    const map = effectiveReconnectingMap({
+      "tab-1": { status: "reconnecting", reconnect: initialReconnectState },
+      "tab-2": { status: "connected", reconnect: initialReconnectState },
+    });
+    expect(map).toEqual({ "tab-1": true });
   });
 
   it("applies session.agentTransportReconnecting optimistically — reconnecting, loop idle, id kept (#2555)", () => {

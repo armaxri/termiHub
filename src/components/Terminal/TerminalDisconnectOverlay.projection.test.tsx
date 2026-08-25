@@ -13,6 +13,7 @@ import {
 import {
   failed,
   FakeSessionTransport,
+  idleReconnect,
   reconnecting,
 } from "@/test/sessionLifecycleRegionTestHarness";
 import type { TerminalAutoReconnectState } from "@/types/terminal";
@@ -139,6 +140,25 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     // The reconnecting variant shows its Stop affordance (no countdown variant).
     const overlay = container.querySelector("[data-testid='terminal-disconnect-overlay']");
     expect(overlay?.textContent).toContain("Reconnecting");
+  });
+
+  it("renders the reconnecting overlay for a transient agent-break shape: status reconnecting, loop idle (#2555)", async () => {
+    // Regression for the #2554 gap: a transient agent-transport break folds the
+    // region to `reconnecting` with the loop **idle** (no backoff — the agent I/O
+    // task recovers in place). The overlay reads reconnecting purely from the
+    // region, so it must render for this exact shape; before #2555 the region was
+    // never folded for a transient break and the overlay stayed hidden.
+    transport.setSession(TAB, reconnecting(idleReconnect(), "connection reset"));
+
+    act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
+    await flush();
+
+    expect(transport.subscribeCount).toBeGreaterThan(0);
+    const overlay = container.querySelector("[data-testid='terminal-disconnect-overlay']");
+    expect(overlay?.textContent).toContain("Reconnecting");
+    // The trigger cause is surfaced, and no countdown variant is shown (idle loop).
+    expect(overlay?.textContent).toContain("connection reset");
+    expect(container.querySelector("[data-testid='terminal-auto-reconnect-countdown']")).toBeNull();
   });
 
   it("renders the reconnect-trigger error sourced from a mirroring region snapshot (#2442)", async () => {
