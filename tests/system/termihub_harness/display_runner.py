@@ -6,10 +6,11 @@ an X11 ``$DISPLAY`` for SSH X11-forwarding). Here we are after the macOS
 ``requestAnimationFrame`` whenever the window is not part of an *actively
 composited, foreground* display session. The full-app live-E2E lane
 (``tests/system``, the Python bridge driving the real bundle) hits this on the
-frontend-dependent flows — most sharply the agent-reconnect lane
-(``test_agent_reconnect_live.py``), where the JS reconnect engine never advances
-so the reconnect never fires and the test times out, even though the Rust
-backend reconnects fine.
+frontend-dependent flows. (The agent-reconnect lane was the sharpest such case
+under the old *client*-driven reconnect engine; that engine was deleted (#2558),
+reconnect is now backend-driven (#2560), and the grade was automated headlessly
+in ``test_agent_reconnect_ui.py`` (#2574), so it no longer needs this gate. The
+levers below remain for any future frontend-dependent live flow.)
 
 Everything tried so far lives *inside the app process* — the always-on-top pin
 (#957), App-Nap defeat + ``NSWindowOcclusionDetectionEnabled=false`` + the
@@ -27,7 +28,7 @@ This module supplies the two harness-side levers nobody had automated:
    whether the current process is running under such a session, so a
    frontend-dependent live suite can **skip cleanly** with a precise reason on a
    headless / SSH / locked / login-window host instead of timing out. This is
-   the *runner-detection guard* that gates ``test_agent_reconnect_live.py``.
+   the *runner-detection guard* for frontend-dependent live suites.
 2. :func:`keep_display_awake` + :func:`bring_app_foreground` — once a runner is
    present, hold the display awake and make the app the **foreground/key**
    application by pid, so WebKit keeps the page foreground-active and its timers
