@@ -125,63 +125,6 @@ export type SessionIntentKind =
   | "session.reconnectTrigger"
   | "session.remove";
 
-// ── Backend-reattach feature flag (#2457 / #2454, off by default) ───────────────
-
-let backendReattachFlagOverride: boolean | null = null;
-
-interface SessionBackendReattachFlagWindow {
-  __TERMIHUB_SESSION_BACKEND_REATTACH__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the backend-reattach flag (tests, and a runtime
- * toggle). `null` clears the override and falls back to the window/localStorage
- * signal, then to the default (off).
- */
-export function setSessionBackendReattachEnabled(value: boolean | null): void {
-  backendReattachFlagOverride = value;
-}
-
-/**
- * Whether the reconnect redrive is server-side (#2454) and the frontend
- * re-attaches terminal I/O to a backend-chosen session id instead of driving the
- * reconnect itself via `create_connection` (#2457).
- *
- * **On by default (#2205 PR-B).** When on, a direct-connection reconnect no
- * longer calls `create_connection`; instead {@link waitForBackendReattachSessionId}
- * reads the new backend session id the server-side redrive publishes to the
- * `session-lifecycle` region and the terminal re-attaches to it. The backend is
- * the sole reconnect authority for both agent and direct-SSH tabs: the
- * source-side drop fold arms the backend reconnect timer (#2476) and the redrive
- * (#2454/#2512) re-establishes the transport itself, so no client
- * `create_connection` redrive runs.
- *
- * Both halves — the backend redrive (#2454/#2512) and the frontend re-attach
- * (#2457) — are present, so the default flipped on once the extended-testing gate
- * (#2283) opened. It remains overridable at runtime for an instant revert /
- * rollout via `window.__TERMIHUB_SESSION_BACKEND_REATTACH__` or
- * `localStorage["termihub.sessionBackendReattach"]` (`"false"` to force off,
- * `"true"` to force on).
- */
-export function sessionBackendReattachEnabled(): boolean {
-  if (backendReattachFlagOverride !== null) return backendReattachFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as SessionBackendReattachFlagWindow;
-      if (typeof w.__TERMIHUB_SESSION_BACKEND_REATTACH__ === "boolean") {
-        return w.__TERMIHUB_SESSION_BACKEND_REATTACH__;
-      }
-      const ls = w.localStorage?.getItem("termihub.sessionBackendReattach");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
-
 // ── Transport + region client (lazy, mirrors the tunnel slice) ─────────────────
 
 let transportInstance: Transport | null = null;
