@@ -71,12 +71,11 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
  *
  * `resilientReconnect` carries the tab's `isResilientReconnectTab` determination
  * (#2439) so the backend can fold a genuine drop server-side as `session.reconnect`
- * (resilient) vs `session.dropped` (non-resilient), converging with the client.
- *
- * `backendReattach` is sent unconditionally `true` (#2560): the backend redrive is
- * the sole reconnect authority (the client reconnect engine was deleted, #2558), so
- * the backend always records the tab's retained request as redrive-eligible. The
- * backend still only retains-for-redrive when `resilientReconnect` is true.
+ * (resilient) vs `session.dropped` (non-resilient), converging with the client. It
+ * is also the gate on the backend reconnect redrive: the backend retains the tab's
+ * connection request as redrive-eligible only when `resilientReconnect` is true
+ * (#2454), and the backend redrive is the sole reconnect authority (the client
+ * reconnect engine was deleted, #2558).
  */
 export async function createConnection(
   typeId: string,
@@ -93,7 +92,6 @@ export async function createConnection(
     connectId: connectId ?? null,
     spawned: spawned ?? false,
     resilientReconnect: resilientReconnect ?? false,
-    backendReattach: true,
   });
 }
 

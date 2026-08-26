@@ -56,9 +56,8 @@ type FireTask = Box<dyn FnOnce() + Send>;
 /// `Waiting → Attempt` edge after the store has advanced to `Connecting`.
 ///
 /// Where [`ReconnectTimerDriver`] owns only the loop's *timing*, this owns the
-/// *transport*: for a tab that opted into backend reattach (the retained
-/// request's `backend_reattach` gate, threaded from the client's
-/// `sessionBackendReattach` flag), the production implementation re-establishes
+/// *transport*: for a resilient tab (the retained request's `resilient` gate),
+/// the production implementation re-establishes
 /// the connection itself from the retained request, mints a new backend session,
 /// folds the attempt's outcome (`connected` + the new `sessionId`, or
 /// `reconnectFailed`) at the source, re-syncs this timer, and zeroizes the

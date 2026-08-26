@@ -32,15 +32,13 @@
 //! reconnecting session. Zeroizing uses the same [`zeroize`] crate the credential
 //! store uses for its in-memory secrets ([`crate::credential`]).
 //!
-//! # Foundation only (this change)
+//! # The redrive reads it back
 //!
-//! This module and its wiring **retain and zeroize** the request; nothing reads
-//! it back to redrive a connection yet. The redrive itself — wiring the #2203
-//! timer to re-establish the transport from the retained request behind a
-//! default-off flag, and the frontend re-attach of the new backend session — is
-//! the follow-up that completes #2454. Retaining is inert until then: the request
-//! is only ever populated for a resilient *direct* session and only ever read by
-//! the (not-yet-present) redrive, so this changes no user-facing behavior.
+//! This module and its wiring **retain and zeroize** the request; the backend
+//! reconnect redrive ([`crate::session_projection::redrive`]) reads it back on the
+//! #2203 timer's `Waiting → Attempt` edge to re-establish the transport itself and
+//! re-attach the new backend session (#2457). The request is only ever populated
+//! for a resilient session, and the redrive gates on its `resilient` flag.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -75,18 +73,11 @@ pub(crate) struct RetainedConnectionRequest {
     /// explicit session-lost state rather than a silent new shell. Not a secret,
     /// but zeroized on drop alongside the other fields for uniformity.
     pub(crate) agent_session_id: Option<String>,
-    /// The tab's resilient-reconnect determination at connect time.
+    /// The tab's resilient-reconnect determination at connect time. A request is
+    /// only ever retained for a resilient tab, so this is the gate the backend
+    /// reconnect redrive (#2454) reads to decide it owns the transport
+    /// re-establishment for this tab.
     pub(crate) resilient: bool,
-    /// Whether the owning tab opted into the **backend-driven** reconnect redrive
-    /// (#2454) — the client's `sessionBackendReattach` flag at connect time,
-    /// threaded through `create_connection`. The backend reconnect timer only
-    /// re-establishes the transport itself for a tab whose retained request
-    /// carries `true`; when `false` (the default-off flag) the timer fires the
-    /// `Waiting → Attempt` edge and the **client** drives the redrive exactly as
-    /// on `develop`. This is the sole gate that keeps the flag-off path
-    /// byte-identical while the two halves (backend redrive here, frontend
-    /// re-attach #2457) share one flag.
-    pub(crate) backend_reattach: bool,
 }
 
 impl Drop for RetainedConnectionRequest {
@@ -226,7 +217,6 @@ mod tests {
                 agent_id: None,
                 agent_session_id: None,
                 resilient: true,
-                backend_reattach: false,
             },
         );
         assert!(store.contains("tab-1"));
@@ -262,7 +252,6 @@ mod tests {
                 agent_id: Some("agent-1".to_string()),
                 agent_session_id: None,
                 resilient: true,
-                backend_reattach: true,
             },
         );
 
@@ -273,7 +262,6 @@ mod tests {
             "the store round-trips the agent_id the redrive re-connects through"
         );
         assert_eq!(got.settings["password"], json!("p"));
-        assert!(got.backend_reattach);
 
         store.clear("tab-agent");
         assert!(
@@ -303,7 +291,6 @@ mod tests {
                 agent_id: None,
                 agent_session_id: None,
                 resilient: true,
-                backend_reattach: false,
             },
         );
         store.retain(
@@ -314,7 +301,6 @@ mod tests {
                 agent_id: None,
                 agent_session_id: None,
                 resilient: true,
-                backend_reattach: false,
             },
         );
         assert_eq!(
@@ -336,7 +322,6 @@ mod tests {
                 agent_id: None,
                 agent_session_id: None,
                 resilient: true,
-                backend_reattach: true,
             },
         );
         store.retain(
@@ -347,7 +332,6 @@ mod tests {
                 agent_id: Some("agent-1".to_string()),
                 agent_session_id: None,
                 resilient: true,
-                backend_reattach: true,
             },
         );
 
@@ -368,7 +352,6 @@ mod tests {
             agent_id: Some(agent.to_string()),
             agent_session_id: None,
             resilient: true,
-            backend_reattach: true,
         };
         store.retain("tab-a", agent_req("agent-1"));
         store.retain("tab-b", agent_req("agent-1"));

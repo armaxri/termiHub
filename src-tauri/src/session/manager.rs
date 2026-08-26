@@ -700,19 +700,14 @@ impl SessionManager {
     /// (#1446, #1466) so the Open Connections panel groups it under "Spawned
     /// Containers" from this backend marker rather than the frontend tab flag.
     ///
-    /// `backend_reattach` carries the client's `sessionBackendReattach` flag
-    /// (#2454). It is recorded on a resilient direct session's retained request as
-    /// the sole gate on whether the backend reconnect timer re-establishes the
-    /// transport itself (the redrive) vs. leaving that to the client. Defaults to
-    /// `false` (client-driven, `develop` behavior); the backend redrive itself
-    /// passes `true` when it re-connects an opted-in tab so the refresh keeps the
-    /// gate on.
+    /// A resilient direct session records its retained connection request so the
+    /// backend reconnect timer can re-establish the transport itself on a drop
+    /// (the redrive, #2454); the redrive gates on that request's `resilient` flag.
     ///
     /// Returns the session ID on success.
     // The parameters mirror the `create_connection` IPC surface (type + settings +
     // routing flags + the connect-time signals: spawn origin #1466, resilient
-    // reconnect #2439, backend reattach #2454); grouping them into a struct would
-    // only obscure the call.
+    // reconnect #2439); grouping them into a struct would only obscure the call.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_connection<E: EventEmitter>(
         &self,
@@ -722,7 +717,6 @@ impl SessionManager {
         connect_id: Option<&str>,
         spawned: bool,
         resilient_reconnect: bool,
-        backend_reattach: bool,
         emitter: E,
     ) -> Result<String, TerminalError> {
         // Enforce session limit.
@@ -895,10 +889,6 @@ impl SessionManager {
                         // lists it.
                         agent_session_id: retained_agent_session_id.clone(),
                         resilient: true,
-                        // The client's `sessionBackendReattach` determination
-                        // (#2454): the sole gate on whether the backend reconnect
-                        // timer re-establishes the transport itself for this tab.
-                        backend_reattach,
                     },
                 );
             }
@@ -1185,9 +1175,9 @@ impl SessionManager {
 
     /// A clone of the retained connection request for a tab, for the backend
     /// reconnect redrive (#2454). The redrive reads `type_id` / `settings` /
-    /// `agent_id` to re-establish the transport itself and `backend_reattach` to
-    /// decide whether it is authorised to (the flag gate). Cloning copies the
-    /// secret-bearing settings; the returned value zeroizes on drop, so the
+    /// `agent_id` to re-establish the transport itself and gates on `resilient`.
+    /// Cloning copies the secret-bearing settings; the returned value zeroizes on
+    /// drop, so the
     /// caller must clone out only the fields it forwards and let it fall out of
     /// scope promptly. `None` when nothing is retained for the tab.
     pub(crate) fn retained_request(&self, tab_id: &str) -> Option<RetainedConnectionRequest> {
@@ -2933,7 +2923,6 @@ mod tests {
                 Some("tab-42:0"),
                 false,
                 false,
-                false,
                 MockEventEmitter::new(),
             )
             .await
@@ -2952,7 +2941,6 @@ mod tests {
                 serde_json::json!({}),
                 None,
                 None,
-                false,
                 false,
                 false,
                 MockEventEmitter::new(),
@@ -2975,7 +2963,6 @@ mod tests {
                 serde_json::json!({}),
                 None,
                 Some("tab-7:0"),
-                false,
                 false,
                 false,
                 MockEventEmitter::new(),
@@ -3006,7 +2993,6 @@ mod tests {
                 Some("tab-r:0"),
                 false,
                 true, // resilient
-                false,
                 MockEventEmitter::new(),
             )
             .await
@@ -3201,7 +3187,6 @@ mod tests {
                 Some("tab-a:0"),
                 false,
                 true, // resilient
-                true, // backend_reattach opted in
                 MockEventEmitter::new(),
             )
             .await
@@ -3214,7 +3199,7 @@ mod tests {
             Some("agent-1"),
             "the retained request carries the agent_id the redrive re-connects through"
         );
-        assert!(req.backend_reattach, "the redrive gate is recorded");
+        assert!(req.resilient, "the retained request is redrive-eligible");
     }
 
     #[tokio::test]
@@ -3234,7 +3219,6 @@ mod tests {
                 Some("tab-a:0"),
                 false,
                 true, // resilient
-                true, // backend_reattach opted in
                 MockEventEmitter::new(),
             )
             .await
@@ -3254,7 +3238,6 @@ mod tests {
                 None, // resilient DIRECT session
                 Some("tab-d:0"),
                 false,
-                true,
                 true,
                 MockEventEmitter::new(),
             )
@@ -3284,7 +3267,6 @@ mod tests {
                     Some("agent-1"),
                     Some(tab),
                     false,
-                    true,
                     true,
                     MockEventEmitter::new(),
                 )
@@ -3327,7 +3309,6 @@ mod tests {
                 Some("tab-d:0"),
                 false,
                 true,
-                true,
                 MockEventEmitter::new(),
             )
             .await
@@ -3346,10 +3327,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn create_connection_records_backend_reattach_on_the_retained_request() {
-        // The `backend_reattach` param (the client's `sessionBackendReattach`
-        // flag) is the sole gate on the backend reconnect redrive (#2454): it must
-        // land on the retained request so the redrive can read it back.
+    async fn create_connection_records_resilient_request_for_the_redrive() {
+        // A resilient direct session records its connection request with
+        // `resilient: true` — the sole gate the backend reconnect redrive (#2454)
+        // reads to decide it owns the transport re-establishment for this tab.
         let manager = make_test_manager();
         manager
             .create_connection(
@@ -3359,7 +3340,6 @@ mod tests {
                 Some("tab-on:0"),
                 false,
                 true, // resilient
-                true, // backend_reattach opted in
                 MockEventEmitter::new(),
             )
             .await
@@ -3368,31 +3348,8 @@ mod tests {
             .retained_request("tab-on")
             .expect("a resilient direct session retains its request");
         assert!(
-            req.backend_reattach,
-            "the client's backend-reattach opt-in is recorded as the redrive gate"
-        );
-
-        // The default (flag off) records `false`, so the redrive stays off and the
-        // client drives the reconnect exactly as on develop.
-        manager
-            .create_connection(
-                "mock",
-                serde_json::json!({}),
-                None,
-                Some("tab-off:0"),
-                false,
-                true,  // resilient
-                false, // backend_reattach opted out (default)
-                MockEventEmitter::new(),
-            )
-            .await
-            .expect("session should open");
-        let off = manager
-            .retained_request("tab-off")
-            .expect("a resilient direct session retains its request");
-        assert!(
-            !off.backend_reattach,
-            "flag-off keeps the redrive gate closed (client-driven, develop parity)"
+            req.resilient,
+            "the retained request is redrive-eligible (the redrive gate)"
         );
     }
 
@@ -3407,7 +3364,6 @@ mod tests {
                 Some("tab-nr:0"),
                 false,
                 false, // not resilient
-                false,
                 MockEventEmitter::new(),
             )
             .await
@@ -3429,7 +3385,6 @@ mod tests {
                 None, // no connect_id → no tab id to key by
                 false,
                 true,
-                false,
                 MockEventEmitter::new(),
             )
             .await
@@ -3448,7 +3403,6 @@ mod tests {
                 Some("tab-c:0"),
                 false,
                 true,
-                false,
                 MockEventEmitter::new(),
             )
             .await
@@ -3514,7 +3468,6 @@ mod tests {
                 Some("tab-r:0"),
                 false,
                 true, // resilient-reconnect tab
-                false,
                 MockEventEmitter::new(),
             )
             .await
@@ -3653,7 +3606,6 @@ mod tests {
                 Some("tab-f:0"), // initial attempt
                 false,
                 false,
-                false,
                 emitter.clone(),
             )
             .await;
@@ -3684,7 +3636,6 @@ mod tests {
                 serde_json::json!({}),
                 None,
                 Some("tab-f:2"), // a reconnect attempt
-                false,
                 false,
                 false,
                 emitter.clone(),
@@ -3719,7 +3670,6 @@ mod tests {
                     serde_json::json!({}),
                     None,
                     Some("tab-c:0"), // initial attempt, but cancelled
-                    false,
                     false,
                     false,
                     spawned_emitter,
@@ -3841,7 +3791,6 @@ mod tests {
                     Some("c1"),
                     false,
                     false,
-                    false,
                     MockEventEmitter::new(),
                 )
                 .await
@@ -3885,7 +3834,6 @@ mod tests {
                 None,
                 true,
                 false,
-                false,
                 MockEventEmitter::new(),
             )
             .await
@@ -3897,7 +3845,6 @@ mod tests {
                 serde_json::json!({}),
                 None,
                 None,
-                false,
                 false,
                 false,
                 MockEventEmitter::new(),

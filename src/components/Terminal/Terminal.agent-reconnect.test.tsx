@@ -1,6 +1,6 @@
 /**
  * Component tests for the backend-driven AGENT reconnect activation (#2476), now
- * unconditional after the `sessionBackendReattach` flag was removed (#2560).
+ * unconditional (the backend redrive is the sole reconnect authority) (#2560).
  *
  * A reconnect of an agent-hosted tab is driven **entirely by the backend redrive** — the
  * client agent engine (`createTerminal` → `connectRemoteAgent` + park + bounded

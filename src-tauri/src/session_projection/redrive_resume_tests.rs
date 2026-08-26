@@ -383,7 +383,6 @@ fn agent_reconnect_resumes_after_transport_restore() {
         Some("tab-1:0"),
         false,
         true, // resilient
-        true, // backend_reattach
         handle.clone(),
     ))
     .expect("initial connect succeeds");
@@ -502,7 +501,6 @@ fn agent_reconnect_folds_session_lost_when_live_session_unrecoverable() {
         Some("tab-1:0"),
         false,
         true, // resilient
-        true, // backend_reattach
         handle.clone(),
     ))
     .expect("initial connect succeeds");
@@ -667,7 +665,6 @@ fn transient_agent_break_folds_region_server_side_without_arming_the_timer() {
             Some(connect),
             false,
             true, // resilient
-            true, // backend_reattach
             handle.clone(),
         ))
         .expect("initial connect succeeds");

@@ -3,7 +3,7 @@
  * part of the server-side reconnect redrive #2454 / umbrella #2446).
  *
  * When the region has folded a tab to `reconnecting` (the backend redrive owns
- * the loop, now unconditional after the `sessionBackendReattach` flag was removed,
+ * the loop, now unconditional (the backend redrive is the sole reconnect authority),
  * #2560), a direct-connection reconnect must NOT call `create_connection`. Instead
  * the server-side redrive (#2454) creates the connection itself, mints a new
  * backend session id, and publishes it to the `session-lifecycle` region; the

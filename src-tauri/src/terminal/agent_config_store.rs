@@ -30,13 +30,13 @@
 //! point, in the redrive). Zeroizing uses the same [`zeroize`] crate the
 //! credential store uses.
 //!
-//! # Byte-identical when the flag is off
+//! # Currently inert (byte-identical to `develop`)
 //!
-//! Nothing populates this store unless the agent connect opted into
-//! backend-reattach (the client's default-off `sessionBackendReattach` flag,
-//! threaded through the `connect_agent` command). With the flag off the store is
-//! never written, so no agent config survives a reap — byte-identical to
-//! `develop`, and no new secret lifetime is introduced.
+//! Nothing populates this store today: the frontend agent-tab backend-redrive
+//! wiring (#2473) is not yet present, so `connect_agent` does not retain an agent
+//! config. The store is never written, so no agent config survives a reap —
+//! byte-identical to `develop`, and no new secret lifetime is introduced. #2473
+//! re-wires the retention.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};

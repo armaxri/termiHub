@@ -1,6 +1,6 @@
 /**
  * appStore parity tests for the agent reconnect activation (#2476), now
- * unconditional after the `sessionBackendReattach` flag was removed (#2560):
+ * unconditional (the backend redrive is the sole reconnect authority) (#2560):
  *
  *  - {@link isResilientReconnectTabId} — an agent-hosted tab always counts as
  *    resilient. Direct-SSH classification is unchanged (opt-in).
