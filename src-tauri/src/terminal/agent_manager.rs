@@ -13,7 +13,7 @@ use base64::Engine;
 use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -25,6 +25,10 @@ use termihub_core::monitoring::{MonitoringSender, SystemStats};
 use crate::agents_projection::projection::fold_agent_transition;
 use crate::agents_projection::store::AgentConnectionState;
 use crate::connection::config::AgentSettings;
+use crate::session::manager::{AgentHostedSession, SessionManager};
+use crate::session_projection::projection::{
+    fold_agent_session_recovered, fold_agent_transport_reconnecting,
+};
 use crate::terminal::agent_config_store::{decide_reattach, AgentConfigStore, ReattachDecision};
 use crate::terminal::agent_deploy::ConnectedHost;
 use crate::terminal::agent_forward::DesktopAgentForward;
@@ -2115,7 +2119,13 @@ async fn agent_io_task(
             break;
         }
 
-        // Connection lost — try to reconnect
+        // Connection lost — try to reconnect. Fold every hosted session's
+        // `session-lifecycle` region entry to `Reconnecting` at the source (#2556):
+        // the in-task loop owns this transient break, so it folds the region itself
+        // (status-only, redrive never armed) rather than relying on the frontend
+        // `applyAgentReconnecting` client mirror. Folded before the agent-state
+        // event so the overlay/tab-dot readers see the reconnecting region.
+        fold_agent_hosted_reconnecting(&app_handle, &agent_id, connection_error.as_deref()).await;
         emit_agent_state_with_error(
             &app_handle,
             &agent_id,
@@ -2153,9 +2163,16 @@ async fn agent_io_task(
                 // G7 (#1239): reconcile the output/monitoring senders against the
                 // sessions the agent actually recovered. Senders keyed by ids that
                 // did not come back are stale — drop them so the maps don't leak.
-                // Skip the extra round-trip entirely when there is nothing to
-                // reconcile (no registered senders).
-                if !session_outputs.is_empty() || !monitoring_outputs.is_empty() {
+                // #2556: the same recovered-id set resolves each hosted session's
+                // `session-lifecycle` region entry `Reconnecting → Connected` for a
+                // session that survived in place. Fetch it once when there is either
+                // a sender to reconcile or a hosted tab to resolve; skip the extra
+                // round-trip when neither applies.
+                let hosted = fold_agent_hosted_sessions(&app_handle, &agent_id).await;
+                if !session_outputs.is_empty()
+                    || !monitoring_outputs.is_empty()
+                    || !hosted.is_empty()
+                {
                     if let Some(live_ids) =
                         list_recovered_session_ids(&mut channel, &agent_id, &mut request_id).await
                     {
@@ -2164,6 +2181,7 @@ async fn agent_io_task(
                             &mut monitoring_outputs,
                             &live_ids,
                         );
+                        resolve_agent_hosted_recovered(&app_handle, &hosted, &live_ids);
                     }
                 }
 
@@ -2188,6 +2206,66 @@ async fn agent_io_task(
                 }
                 return;
             }
+        }
+    }
+}
+
+/// Fold every hosted session's `session-lifecycle` region entry to `Reconnecting`
+/// at the backend source on a transient agent-transport break (#2556).
+///
+/// The server-authoritative move of the enter fold #2555 introduced via a client
+/// mirror: `agent_io_task` owns the transient break, so it folds the region itself
+/// rather than the frontend `applyAgentReconnecting`. Status-only + loop-idle, so
+/// the backend redrive is never armed for a transient break (the in-task loop is
+/// the single owner). Off-path no-op when the `SessionManager` is not managed
+/// (a headless projection unit-test app).
+pub(crate) async fn fold_agent_hosted_reconnecting<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    error: Option<&str>,
+) {
+    let Some(manager) = app_handle.try_state::<SessionManager>() else {
+        return;
+    };
+    for hosted in manager.agent_hosted_sessions(agent_id).await {
+        fold_agent_transport_reconnecting(app_handle, &hosted.tab_id, error);
+    }
+}
+
+/// The agent's hosted-session identity tuples, or an empty vec when the
+/// `SessionManager` is not managed (a headless projection unit-test app). Fetched
+/// once per reconnect so the caller can both gate the `connection.list` round-trip
+/// on there being a hosted tab to resolve and reuse the set for the region resolve
+/// (#2556).
+async fn fold_agent_hosted_sessions<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+) -> Vec<AgentHostedSession> {
+    match app_handle.try_state::<SessionManager>() {
+        Some(manager) => manager.agent_hosted_sessions(agent_id).await,
+        None => Vec::new(),
+    }
+}
+
+/// Resolve each hosted session's region entry after a successful in-task reconnect:
+/// fold `Connected` for every session the agent recovered **in place** (its
+/// `remote_session_id` is in `live_ids`) — the survived-recovery half of #2556,
+/// folded at the backend source rather than the frontend `TerminalView` resolver.
+///
+/// The gone-session (not recovered) and fully-failed (`agent → disconnected`)
+/// resolves remain frontend-owned for now: they set local terminal view-state
+/// (`terminalExitedTabs` / view-mode) that has no server-side home until the
+/// stateless-UI view-state migration (#2139). The frontend's gone-case resolver
+/// gates on the region still reading `reconnecting`, which this deliberately does
+/// not touch, so leaving those tabs reconnecting keeps that gate intact.
+pub(crate) fn resolve_agent_hosted_recovered<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    hosted: &[AgentHostedSession],
+    live_ids: &std::collections::HashSet<String>,
+) {
+    for h in hosted {
+        if live_ids.contains(&h.remote_session_id) {
+            fold_agent_session_recovered(app_handle, &h.tab_id);
         }
     }
 }

@@ -602,3 +602,145 @@ fn source_side_resilient_drop_fold_arms_the_reconnect_timer() {
         "a terminal (dropped) source fold cancels the reconnect timer"
     );
 }
+
+/// #2556: the **transient agent-transport-break** reconnecting lifecycle folded at
+/// the backend source (`agent_io_task`), not via the frontend client mirror.
+///
+/// Drives the production `SessionManager` identity accessor + the two `agent_io_task`
+/// fold helpers against the controllable `FakeAgent`, with the real
+/// `ReconnectTimerDriver`, to prove:
+///  1. the agent → desktop → tab identity resolution (`agent_hosted_sessions`);
+///  2. the **enter** fold surfaces `Reconnecting` for every hosted session while the
+///     reconnect loop stays `Idle` and **no redrive timer is armed** (the in-task
+///     loop is the single owner of a transient break);
+///  3. the **resolve** folds each recovered-in-place session back to `Connected`,
+///     while a session the agent did NOT recover is left `Reconnecting` (its
+///     gone-case resolve stays frontend-owned, #2139) — still no timer armed.
+#[test]
+fn transient_agent_break_folds_region_server_side_without_arming_the_timer() {
+    use crate::terminal::agent_manager::{
+        fold_agent_hosted_reconnecting, resolve_agent_hosted_recovered,
+    };
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let agent = Arc::new(FakeAgent::new());
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        agent.clone() as Arc<dyn AgentRpcClient>,
+    );
+    handle.manage(manager);
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    handle.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector = projection.projector.clone();
+    let projector_seed = projection.projector.clone();
+    let store_for_publish = store.clone();
+    handle.manage(projection);
+
+    let scheduler = Arc::new(ManualScheduler::default());
+    let driver = Arc::new(ReconnectTimerDriver::new(
+        store.clone(),
+        scheduler.clone(),
+        Arc::new(move || {
+            publish_sessions(&projector, &store_for_publish);
+        }),
+    ));
+    handle.manage(driver);
+
+    // Two live agent-hosted sessions on `agent-1` (remote-0 → tab-1, remote-1 →
+    // tab-2), each settled Connected as it would be after the initial connect.
+    let manager_ref = handle.state::<SessionManager>();
+    let settings = serde_json::json!({ "config": {} });
+    for (tab, connect) in [("tab-1", "tab-1:0"), ("tab-2", "tab-2:0")] {
+        tauri::async_runtime::block_on(manager_ref.create_connection(
+            "shell",
+            settings.clone(),
+            Some("agent-1"),
+            Some(connect),
+            false,
+            true, // resilient
+            true, // backend_reattach
+            handle.clone(),
+        ))
+        .expect("initial connect succeeds");
+        store.connect(tab);
+        store.connected(tab);
+    }
+    publish_sessions(&projector_seed, &store);
+
+    // (1) The identity accessor resolves both hosted sessions' (remote, tab) pairs.
+    let hosted = tauri::async_runtime::block_on(manager_ref.agent_hosted_sessions("agent-1"));
+    let mut pairs: Vec<(String, String)> = hosted
+        .iter()
+        .map(|h| (h.remote_session_id.clone(), h.tab_id.clone()))
+        .collect();
+    pairs.sort();
+    assert_eq!(
+        pairs,
+        vec![
+            ("remote-0".to_string(), "tab-1".to_string()),
+            ("remote-1".to_string(), "tab-2".to_string()),
+        ],
+        "the accessor maps each hosted agent session to its frontend tab id"
+    );
+
+    // (2) Enter: fold every hosted session Reconnecting at the source. Status-only,
+    // loop Idle, and — crucially — the redrive timer is NOT armed for either tab.
+    tauri::async_runtime::block_on(fold_agent_hosted_reconnecting(
+        &handle,
+        "agent-1",
+        Some("connection reset"),
+    ));
+    for tab in ["tab-1", "tab-2"] {
+        let life = store.get(tab).unwrap();
+        assert_eq!(
+            life.status,
+            SessionStatus::Reconnecting,
+            "{tab} folds Reconnecting on the transient break"
+        );
+        assert_eq!(
+            life.reconnect.phase,
+            ReconnectPhase::Idle,
+            "{tab} keeps the reconnect loop Idle — the in-task loop owns the break"
+        );
+        assert_eq!(
+            life.reconnect_error.as_deref(),
+            Some("connection reset"),
+            "{tab} records the trigger cause the overlay shows"
+        );
+        assert!(
+            !scheduler.armed(tab),
+            "{tab} must NOT arm the backend redrive for a transient break"
+        );
+    }
+
+    // (3) Resolve: the agent recovered remote-0 (tab-1) in place but NOT remote-1
+    // (tab-2). tab-1 folds back to Connected; tab-2 is left Reconnecting (its
+    // gone-case resolve is frontend-owned pending #2139). No timer armed either way.
+    let live_ids: std::collections::HashSet<String> =
+        ["remote-0".to_string()].into_iter().collect();
+    resolve_agent_hosted_recovered(&handle, &hosted, &live_ids);
+
+    assert_eq!(
+        store.get("tab-1").map(|s| s.status),
+        Some(SessionStatus::Connected),
+        "the recovered-in-place session folds back to Connected"
+    );
+    assert_eq!(
+        store.get("tab-2").map(|s| s.status),
+        Some(SessionStatus::Reconnecting),
+        "a session the agent did not recover is left Reconnecting for the frontend resolver"
+    );
+    assert!(
+        !scheduler.armed("tab-1") && !scheduler.armed("tab-2"),
+        "no redrive timer is armed across the whole transient-break lifecycle"
+    );
+}

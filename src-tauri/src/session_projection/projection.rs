@@ -112,6 +112,52 @@ pub fn fold_session_transition<R: tauri::Runtime>(
     }
 }
 
+/// Reconcile the backend reconnect timer after a server-side fold, generic over
+/// the runtime so the `agent_io_task` source (production `Wry`) and the headless
+/// tests (`MockRuntime`) share it. Off-path no-op when the driver is not managed,
+/// matching the intent routes' [`sync_timer`].
+fn sync_timer_generic<R: tauri::Runtime>(app_handle: &AppHandle<R>, session_id: &str) {
+    if let Some(driver) = app_handle.try_state::<Arc<ReconnectTimerDriver>>() {
+        (*driver).sync(session_id);
+    }
+}
+
+/// Fold a hosted agent session's `session-lifecycle` region entry to `Reconnecting`
+/// at the **backend source** on a transient agent-transport break (#2556) — the
+/// server-authoritative move of the enter fold #2555 introduced via a client
+/// mirror.
+///
+/// Status-only and loop-**idle**: [`SessionLifecycleStore::agent_transport_reconnecting`]
+/// leaves the reconnect engine `Idle`, so the subsequent timer reconcile *cancels*
+/// any pending redrive and never arms one. That is the invariant: the in-task
+/// `agent_io_task::reconnect_agent` loop is the single owner of a transient break,
+/// so the backend redrive must never double-drive the transport it is already
+/// re-establishing. The live session survives in place, so its re-attach id is kept
+/// (see the store method). Resolved by [`fold_agent_session_recovered`] on in-place
+/// recovery, or the frontend's gone/fully-failed resolver otherwise (pending the
+/// view-state migration, #2139).
+pub fn fold_agent_transport_reconnecting<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    tab_id: &str,
+    error: Option<&str>,
+) {
+    fold_session_transition(app_handle, |store| {
+        store.agent_transport_reconnecting(tab_id, error.map(str::to_string));
+    });
+    sync_timer_generic(app_handle, tab_id);
+}
+
+/// Fold a hosted agent session's region entry back to `Connected` at the backend
+/// source when the agent recovered its live session **in place** after a transient
+/// transport break (#2556). The twin resolve of [`fold_agent_transport_reconnecting`]:
+/// with the region the sole reconnecting source (#2205 PR-B), folding `Connected`
+/// is what lets the tab's output resume. Loop-idle, so the timer reconcile stays a
+/// cancel — no redrive is armed.
+pub fn fold_agent_session_recovered<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab_id: &str) {
+    fold_session_transition(app_handle, |store| store.connected(tab_id));
+    sync_timer_generic(app_handle, tab_id);
+}
+
 /// Register the `session.*` intents on a handler registry.
 ///
 /// Each route resolves the managed [`SessionLifecycleStore`] lazily (so it

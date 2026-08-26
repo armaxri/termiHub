@@ -243,6 +243,21 @@ pub struct SessionInfo {
     pub spawned: bool,
 }
 
+/// One agent-hosted session's identity, for server-side `session-lifecycle`
+/// region folds on a transient agent-transport break (#2556). Returned by
+/// [`SessionManager::agent_hosted_sessions`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentHostedSession {
+    /// The agent's session id (its `remote_session_id`); matched against
+    /// `list_recovered_session_ids` to decide whether the session survived the
+    /// transient break in place.
+    pub remote_session_id: String,
+    /// The desktop backend session id (uuid) that hosts this agent session.
+    pub session_id: String,
+    /// The frontend tab id the shared `session-lifecycle` region is keyed by.
+    pub tab_id: String,
+}
+
 /// Internal session entry held by the manager.
 ///
 /// `pub(super)` so the file-operations facade ([`super::file_ops`]) can resolve
@@ -1044,6 +1059,46 @@ impl SessionManager {
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
         tokio::task::block_in_place(|| entry.connection.resize(cols, rows))
             .map_err(|e| TerminalError::ResizeFailed(e.to_string()))
+    }
+
+    /// The identity tuples of every **agent-hosted** session an agent owns that
+    /// carries a frontend tab id, for server-side `session-lifecycle` region folds
+    /// on a transient agent-transport break (#2556).
+    ///
+    /// A transient break is recovered *in place* by `agent_io_task`'s in-task
+    /// reconnect loop — no per-session `terminal-exit` fires — so the backend
+    /// source that folds those tabs' region entries (`Reconnecting` on the break,
+    /// `Connected` on in-place recovery) needs the agent → desktop → tab mapping the
+    /// `terminal-exit` path gets for free. This resolves it: for `agent_id`, every
+    /// live session whose [`SessionInfo::agent_id`] matches, paired with its agent
+    /// `remote_session_id` (matched against `list_recovered_session_ids` to decide
+    /// survived-vs-gone), its desktop `session_id` (uuid), and the frontend
+    /// `tab_id` the region is keyed by.
+    ///
+    /// Sessions with no [`TabBinding`] (e.g. the internal agent-setup session, which
+    /// carries no `connect_id`) or no `remote_session_id` are skipped — they have no
+    /// tab-keyed region entry to fold.
+    pub async fn agent_hosted_sessions(&self, agent_id: &str) -> Vec<AgentHostedSession> {
+        let sessions = self.sessions.lock().await;
+        let tab_ids = self
+            .session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        sessions
+            .iter()
+            .filter_map(|(session_id, entry)| {
+                if entry.info.agent_id.as_deref() != Some(agent_id) {
+                    return None;
+                }
+                let remote_session_id = entry.remote_session_id.clone()?;
+                let tab_id = tab_ids.get(session_id)?.tab_id.clone();
+                Some(AgentHostedSession {
+                    remote_session_id,
+                    session_id: session_id.clone(),
+                    tab_id,
+                })
+            })
+            .collect()
     }
 
     /// Close a session.
