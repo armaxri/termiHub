@@ -402,64 +402,29 @@ describe("optimistic client-side folding (#2533)", () => {
     expect(map).toEqual({ "tab-1": true });
   });
 
-  it("applies session.agentTransportReconnecting optimistically — reconnecting, loop idle, id kept (#2555)", () => {
-    // A live agent session that hits a transient transport break: the backend
-    // folds the same status-only reconnecting (loop idle), so assert synchronously
-    // — the overlay alone makes the region reconnecting, closing the #2554 gap
-    // where the region-only overlay/tab-dot readers had no reconnecting source.
+  it("session.connected folds a reconnecting session back to connected (survived resolver, #2556)", async () => {
+    // The transient-break reconnecting fold is now backend-owned (`agent_io_task`,
+    // #2556) — no client `session.agentTransportReconnecting` intent — so this
+    // seeds the reconnecting state via the authoritative diff and asserts the
+    // `session.connected` resolver (the survived-recovery edge the backend folds)
+    // clears it. The region is never left stuck reconnecting.
     transport.onDispatch = (intent, sessions) => {
       const id = (intent.payload as { sessionId: string }).sessionId;
-      const err = (intent.payload as { error?: string }).error;
-      const prev = sessions[id];
-      sessions[id] = {
-        status: "reconnecting",
-        reconnect: initialReconnectState,
-        ...(prev?.sessionId !== undefined ? { sessionId: prev.sessionId } : {}),
-        ...(err !== undefined ? { reconnectError: err } : {}),
-      };
-    };
-
-    // Seed a live agent session with a backend re-attach id already known.
-    transport.setSession("tab-1", {
-      status: "connected",
-      reconnect: initialReconnectState,
-      sessionId: "backend-sess-1",
-    });
-
-    mirrorSessionIntent("session.agentTransportReconnecting", "tab-1", "connection reset");
-
-    // Gap-free: reconnecting immediately, the loop stays idle (so the backend
-    // timer never arms → no double-drive), and the live session's re-attach id is
-    // preserved because it survives the transient break in place.
-    expect(currentSessionView()["tab-1"]).toEqual({
-      status: "reconnecting",
-      reconnect: initialReconnectState,
-      sessionId: "backend-sess-1",
-      reconnectError: "connection reset",
-    });
-    expect(transport.dispatched[transport.dispatched.length - 1]?.kind).toBe(
-      "session.agentTransportReconnecting"
-    );
-  });
-
-  it("session.connected folds the reconnecting session back to connected (survived resolver, #2555)", async () => {
-    transport.onDispatch = (intent, sessions) => {
-      const id = (intent.payload as { sessionId: string }).sessionId;
-      if (intent.kind === "session.agentTransportReconnecting") {
-        sessions[id] = { status: "reconnecting", reconnect: initialReconnectState };
-      } else if (intent.kind === "session.connected") {
+      if (intent.kind === "session.connected") {
         sessions[id] = { status: "connected", reconnect: initialReconnectState };
       }
     };
 
-    mirrorSessionIntent("session.agentTransportReconnecting", "tab-1");
-    expect(currentSessionView()["tab-1"]?.status).toBe("reconnecting");
-    // Let the reconnecting overlay reconcile against its own authoritative diff
-    // (in production the recovery arrives much later, after the break ends).
-    await flush();
+    // The region subscription is lazy; establish it before seeding a snapshot.
+    const { ensureSessionSubscribed } = await import("./sessionBridge");
+    await ensureSessionSubscribed();
 
-    // The survived-recovery resolver: the same session folds back to connected —
-    // the region is never left stuck reconnecting.
+    // Seed the reconnecting state as the backend would publish it.
+    transport.setSession("tab-1", { status: "reconnecting", reconnect: initialReconnectState });
+    await flush();
+    expect(currentSessionView()["tab-1"]?.status).toBe("reconnecting");
+
+    // The survived-recovery resolver folds the same session back to connected.
     mirrorSessionIntent("session.connected", "tab-1");
     await flush();
     expect(currentSessionView()["tab-1"]).toEqual({
