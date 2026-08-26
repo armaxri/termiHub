@@ -1454,6 +1454,7 @@ pub fn run() {
             commands::agent::connect_agent,
             commands::agent::cancel_connect_agent,
             commands::agent::disconnect_agent,
+            commands::agent::test_sever_agent_transport,
             commands::agent::prune_dead_agents,
             commands::agent::shutdown_agent,
             commands::agent::get_agent_capabilities,
