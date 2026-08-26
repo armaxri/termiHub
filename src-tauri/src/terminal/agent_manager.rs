@@ -13,7 +13,7 @@ use base64::Engine;
 use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
@@ -556,7 +556,14 @@ fn prune_dead_agents_from_map(agents: &Mutex<HashMap<String, AgentConnection>>) 
 ///
 /// Each agent is identified by its `agent_id` string. Multiple sessions
 /// can be multiplexed over a single SSH connection.
-pub struct AgentConnectionManager {
+///
+/// Generic over the Tauri [`Runtime`] (defaulting to [`Wry`] so production wiring,
+/// `commands/*`, `lib.rs`, and the `Arc<dyn AgentRpcClient>` state are unchanged):
+/// tests instantiate it against a `tauri::test::MockRuntime` via `mock_app()` so
+/// the full shipped command → I/O-task → reconnect path can be driven headlessly
+/// (#2576). The production behavior for `Wry` is identical — only the runtime type
+/// parameter is threaded through.
+pub struct AgentConnectionManager<R: Runtime = Wry> {
     agents: AgentMap,
     /// Cancellation tokens for in-flight connects, keyed by agent id (G1, #1235).
     connecting: ConnectingRegistry,
@@ -567,11 +574,11 @@ pub struct AgentConnectionManager {
     /// never written on the `develop`/flag-off path. See
     /// [`crate::terminal::agent_config_store`].
     agent_configs: AgentConfigStore,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
 }
 
-impl AgentConnectionManager {
-    pub fn new(app_handle: AppHandle) -> Self {
+impl<R: Runtime> AgentConnectionManager<R> {
+    pub fn new(app_handle: AppHandle<R>) -> Self {
         Self {
             agents: Arc::new(Mutex::new(HashMap::new())),
             connecting: Arc::new(Mutex::new(HashMap::new())),
@@ -1513,7 +1520,7 @@ impl AgentConnectionManager {
 
 // ── AgentRpcClient impl ────────────────────────────────────────────
 
-impl AgentRpcClient for AgentConnectionManager {
+impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
     fn connect_agent(
         &self,
         agent_id: &str,
@@ -1846,8 +1853,8 @@ fn parse_agent_connection_state(state: &str) -> Option<AgentConnectionState> {
 }
 
 /// Emit an agent state change event with an optional error description.
-fn emit_agent_state_with_error(
-    app_handle: &AppHandle,
+fn emit_agent_state_with_error<R: Runtime>(
+    app_handle: &AppHandle<R>,
     agent_id: &str,
     state: &str,
     error: Option<&str>,
@@ -1877,14 +1884,18 @@ fn emit_agent_state_with_error(
 }
 
 /// Emit an agent state change event.
-fn emit_agent_state(app_handle: &AppHandle, agent_id: &str, state: &str) {
+fn emit_agent_state<R: Runtime>(app_handle: &AppHandle<R>, agent_id: &str, state: &str) {
     emit_agent_state_with_error(app_handle, agent_id, state, None);
 }
 
 /// Forward an agent's `agent.update_available` notification to the frontend as
 /// the `agent-update-available` Tauri event (#1352). Tags it with the desktop's
 /// `agent_id` so the per-agent deferred-update banner can key off it.
-fn emit_agent_update_available(app_handle: &AppHandle, agent_id: &str, params: &Value) {
+fn emit_agent_update_available<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    params: &Value,
+) {
     let _ = app_handle.emit(
         "agent-update-available",
         serde_json::json!({
@@ -1903,7 +1914,11 @@ fn emit_agent_update_available(app_handle: &AppHandle, agent_id: &str, params: &
 /// updated by another host" notice, suspends the affected session and queues an
 /// auto-reconnect. Tagged with the `agent_id` so the notice keys off it exactly
 /// like the deferred-update banner.
-fn emit_remote_agent_update_pending(app_handle: &AppHandle, agent_id: &str, params: &Value) {
+fn emit_remote_agent_update_pending<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    params: &Value,
+) {
     let _ = app_handle.emit(
         "remote-agent-update-pending",
         serde_json::json!({
@@ -1949,13 +1964,13 @@ fn test_sever_desktop_transport(
 /// JSON-RPC responses to waiting callers and notifications to registered
 /// session output channels.
 #[allow(clippy::too_many_arguments)]
-async fn agent_io_task(
+async fn agent_io_task<R: Runtime>(
     session: SshSession,
     mut channel: russh::Channel<russh::client::Msg>,
     mut command_rx: UnboundedReceiver<AgentIoCommand>,
     command_tx: UnboundedSender<AgentIoCommand>,
     alive: Arc<AtomicBool>,
-    app_handle: AppHandle,
+    app_handle: AppHandle<R>,
     agent_id: String,
     config: RemoteAgentConfig,
     agent_settings: AgentSettings,
@@ -2441,8 +2456,8 @@ async fn list_recovered_session_ids(
 /// notification that arrived during the `initialize` handshake is buffered and
 /// replayed through this same function once init completes, so on-attach
 /// notifications are no longer silently dropped.
-fn dispatch_agent_notification(
-    app_handle: &AppHandle,
+fn dispatch_agent_notification<R: Runtime>(
+    app_handle: &AppHandle<R>,
     agent_id: &str,
     method: &str,
     params: &Value,
@@ -4719,5 +4734,545 @@ mod russh_reconnect_tests {
             ),
             Ok(_) => panic!("a user-cancel must not report a spurious reconnect success"),
         }
+    }
+
+    // ── #2576: the FULL shipped path — command → I/O task → reconnect — driven
+    // through the runtime-generic `AgentConnectionManager` against a headless
+    // `tauri::test::mock_app()` (`MockRuntime`), over a real loopback sshd + real
+    // `termihub-agent`. The tests above drive `reconnect_agent` in isolation; these
+    // drive the actual manager + `agent_io_task`, so the `TestSeverTransport` arm
+    // (flag → eager drop → reconnect) and the region folds it emits on `MockRuntime`
+    // get end-to-end coverage that `Wry`-only wiring could never exercise headlessly.
+
+    use crate::agents_projection::store::AgentsStore;
+    use crate::commands::projection::ProjectionState;
+    use crate::session_projection::projection::{publish_sessions, SESSION_LIFECYCLE_REGION};
+    use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
+    use crate::session_projection::timer::{ReconnectScheduler, ReconnectTimerDriver};
+    use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError};
+    use termihub_core::connection::ConnectionTypeRegistry;
+
+    /// A [`ReconnectScheduler`] that records the tabs it was asked to arm, so a test
+    /// can assert the transient-break fold does NOT arm the backend redrive (#2556).
+    #[derive(Default)]
+    struct RecordingScheduler {
+        armed: std::sync::Mutex<std::collections::HashMap<String, Box<dyn FnOnce() + Send>>>,
+    }
+    impl RecordingScheduler {
+        fn is_armed(&self, key: &str) -> bool {
+            self.armed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(key)
+        }
+    }
+    impl ReconnectScheduler for RecordingScheduler {
+        fn schedule(&self, key: String, _delay_ms: u64, task: Box<dyn FnOnce() + Send>) {
+            self.armed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(key, task);
+        }
+        fn cancel(&self, key: &str) {
+            self.armed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(key);
+        }
+    }
+
+    /// Poll `probe` every 25ms on the current (blocking) thread until it yields
+    /// `Some`, or `deadline` elapses.
+    fn poll_blocking<T>(deadline: Instant, mut probe: impl FnMut() -> Option<T>) -> Option<T> {
+        loop {
+            if let Some(v) = probe() {
+                return Some(v);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    /// Track the highest `TICK=<n>` counter value seen on a session's decoded output
+    /// stream (the raw bytes the I/O task pushes to an [`OutputSender`]) until `want`
+    /// is satisfied or `deadline` elapses. Mirrors `read_counter_until`'s parser, but
+    /// reads the manager's `std::sync::mpsc` output channel instead of a raw channel.
+    fn read_counter_rx(
+        rx: &Receiver<Vec<u8>>,
+        want: impl Fn(u64) -> bool,
+        deadline: Instant,
+    ) -> Option<u64> {
+        let mut max: Option<u64> = None;
+        while Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(chunk) => {
+                    let text = String::from_utf8_lossy(&chunk);
+                    for tail in text.split("TICK=").skip(1) {
+                        let digits: String =
+                            tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+                        if let Ok(v) = digits.parse::<u64>() {
+                            max = Some(max.map_or(v, |m| m.max(v)));
+                        }
+                    }
+                    if let Some(m) = max {
+                        if want(m) {
+                            return Some(m);
+                        }
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        max.filter(|m| want(*m))
+    }
+
+    /// Everything the headless driver thread observed while driving the real
+    /// command → task → reconnect flow, asserted on the async test body.
+    struct SeverObservations {
+        sever_accepted: bool,
+        before: u64,
+        after: u64,
+        saw_agents_reconnecting: bool,
+        saw_tab_reconnecting: bool,
+        armed_during_reconnect: bool,
+        agents_reconnected: bool,
+        tab_resolved_connected: bool,
+        sshd_listening_after_sever: bool,
+    }
+
+    /// #2576: the real `AgentConnectionManager::test_sever_transport` →
+    /// `AgentIoCommand::TestSeverTransport` → `agent_io_task` reconnect path, driven
+    /// end-to-end against a `MockRuntime` app + a real sshd/agent, headlessly.
+    ///
+    /// Unlike the `in_process_sever_*` tests above (which call
+    /// [`test_sever_desktop_transport`] + `reconnect_agent` directly), this exercises
+    /// the SHIPPED path: a live manager spawns the real I/O task, a
+    /// `test_sever_transport` command flows through it, and the task drives its own
+    /// reconnect while folding the projection regions on `MockRuntime`. It asserts:
+    ///  * process continuity — a daemon-backed session's counter advances strictly
+    ///    across the outage (same live process, re-attached through the manager);
+    ///  * the `agents` region folds `Connected → Reconnecting → Connected` at the
+    ///    task's own emission points (proving the runtime-generic emit path works);
+    ///  * a resilient agent-hosted session's `session-lifecycle` region folds
+    ///    `Reconnecting` on the transient break WITHOUT arming the redrive timer
+    ///    (#2556), then resolves back to `Connected` when the agent recovers it;
+    ///  * the sshd is never touched (deterministic in-process sever).
+    ///
+    /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
+        let Some(sshd) = find_sshd() else {
+            eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
+            return;
+        };
+        let Some(agent_bin) = find_agent_binary() else {
+            eprintln!(
+                "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
+                 (or set TERMIHUB_TEST_AGENT_BIN)"
+            );
+            return;
+        };
+
+        trust_all_host_keys();
+
+        let mut sshd = LocalAgentSshd::new(sshd, agent_bin).expect("stand up local agent sshd");
+        sshd.start();
+        let port = sshd.port;
+
+        // ── Headless app + the managed state `lib.rs::setup()` wires for the folds.
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+        let agent_id = "agent-1".to_string();
+
+        let agents_store = Arc::new(AgentsStore::new());
+        // The entry is created client-side in production (it carries UI config the
+        // backend never receives); the server folds live status into it.
+        agents_store.add(
+            &agent_id,
+            "Test Agent",
+            serde_json::json!({}),
+            serde_json::json!({}),
+        );
+        handle.manage(agents_store.clone());
+
+        let lifecycle_store = Arc::new(SessionLifecycleStore::new());
+        lifecycle_store.set_rand_for_test(Box::new(|| 0.5));
+        handle.manage(lifecycle_store.clone());
+
+        let projection = ProjectionState::new();
+        projection
+            .projector
+            .register_region(SESSION_LIFECYCLE_REGION, lifecycle_store.snapshot());
+        let projector = projection.projector.clone();
+        let store_for_publish = lifecycle_store.clone();
+        handle.manage(projection);
+
+        let scheduler = Arc::new(RecordingScheduler::default());
+        let driver = Arc::new(ReconnectTimerDriver::new(
+            lifecycle_store.clone(),
+            scheduler.clone() as Arc<dyn ReconnectScheduler>,
+            Arc::new(move || {
+                publish_sessions(&projector, &store_for_publish);
+            }),
+        ));
+        handle.manage(driver);
+
+        // The runtime-generic manager, instantiated against `MockRuntime` — the whole
+        // point of #2576. Its `AgentRpcClient` impl backs the `SessionManager` so an
+        // agent-hosted session routes real RPC through this same manager.
+        let manager = Arc::new(AgentConnectionManager::new(handle.clone()));
+        let session_manager = SessionManager::new(
+            ConnectionTypeRegistry::new(),
+            manager.clone() as Arc<dyn AgentRpcClient>,
+        );
+        handle.manage(session_manager);
+
+        let config = sshd.agent_config();
+        let settings = AgentSettings::default();
+
+        // ── Connect the real agent through the manager (spawns the real I/O task).
+        // `connect_agent` blocks on the current runtime + spawns the task, so it must
+        // run off the async worker.
+        {
+            let m = manager.clone();
+            let cfg = config.clone();
+            let st = settings.clone();
+            let aid = agent_id.clone();
+            tokio::task::spawn_blocking(move || m.connect_agent(&aid, &cfg, Some(&st)))
+                .await
+                .expect("connect_agent join")
+                .expect("connect_agent over local sshd failed");
+        }
+        assert_eq!(
+            agents_store.get(&agent_id).map(|a| a.connection_state),
+            Some(AgentConnectionState::Connected),
+            "the manager's connect must fold the agents region to Connected on MockRuntime"
+        );
+
+        // ── A resilient agent-hosted session, created through the real SessionManager
+        // → RemoteProxy → this manager, so `fold_agent_hosted_reconnecting` has a real
+        // hosted tab to fold on the sever. Settle its lifecycle entry Connected as the
+        // frontend would after the initial connect.
+        {
+            let sm = handle.state::<SessionManager>();
+            sm.create_connection(
+                "local",
+                serde_json::json!({}),
+                Some(agent_id.as_str()),
+                Some("tab-1:0"),
+                false,
+                true, // resilient
+                handle.clone(),
+            )
+            .await
+            .expect("create the agent-hosted session through the SessionManager");
+        }
+        lifecycle_store.connect("tab-1");
+        lifecycle_store.connected("tab-1");
+        assert_eq!(
+            lifecycle_store.get("tab-1").map(|s| s.status),
+            Some(SessionStatus::Connected),
+            "the hosted tab starts settled Connected"
+        );
+
+        // ── Drive the sever + reconnect + continuity check on a blocking thread (the
+        // manager's session RPC helpers block on a response internally).
+        let obs = {
+            let manager = manager.clone();
+            let agents_store = agents_store.clone();
+            let lifecycle_store = lifecycle_store.clone();
+            let scheduler = scheduler.clone();
+            let agent_id = agent_id.clone();
+            tokio::task::spawn_blocking(move || {
+                let deadline = Instant::now() + RECOVERY_CEILING;
+
+                // A daemon-backed continuity session, observed DIRECTLY through the
+                // manager's output channel (the hosted one's output goes to the event
+                // emitter, which is not observable headlessly).
+                let cont = manager
+                    .create_session(
+                        &agent_id,
+                        "local",
+                        serde_json::json!({}),
+                        Some("cont"),
+                        None,
+                    )
+                    .expect("create continuity session");
+                let cont_sid = cont.session_id;
+                let (out_tx, out_rx) = sync_channel::<Vec<u8>>(4096);
+                manager
+                    .register_session_output(&agent_id, &cont_sid, out_tx)
+                    .expect("register continuity output");
+                manager
+                    .attach_session(&agent_id, &cont_sid)
+                    .expect("attach continuity session");
+                let counter = "i=0; while true; do echo TICK=$i; i=$((i+1)); sleep 0.2; done\n";
+                manager
+                    .send_session_input(&agent_id, &cont_sid, counter.as_bytes())
+                    .expect("write counter command");
+                let before =
+                    read_counter_rx(&out_rx, |m| m >= 3, Instant::now() + RECOVERY_CEILING)
+                        .expect("counter never produced values before the sever");
+
+                let sshd_up_before = is_listening(port);
+
+                // ── THE SHIPPED PATH UNDER TEST: command → task → reconnect.
+                let sever_accepted = manager.test_sever_transport(&agent_id);
+
+                // The real task folds both regions Reconnecting BEFORE it re-establishes
+                // (which takes seconds over a real sshd), so a poll reliably catches the
+                // transient state — and the redrive timer must never be armed for it.
+                let mut saw_tab_reconnecting = false;
+                let mut saw_agents_reconnecting = false;
+                let mut armed_during_reconnect = false;
+                poll_blocking(deadline, || {
+                    if lifecycle_store.get("tab-1").map(|s| s.status)
+                        == Some(SessionStatus::Reconnecting)
+                    {
+                        saw_tab_reconnecting = true;
+                        armed_during_reconnect =
+                            armed_during_reconnect || scheduler.is_armed("tab-1");
+                    }
+                    if agents_store.get(&agent_id).map(|a| a.connection_state)
+                        == Some(AgentConnectionState::Reconnecting)
+                    {
+                        saw_agents_reconnecting = true;
+                    }
+                    (saw_tab_reconnecting && saw_agents_reconnecting).then_some(())
+                });
+
+                let sshd_listening_after_sever = sshd_up_before && is_listening(port);
+
+                // Wait for the real task to finish the reconnect (agents region back
+                // to Connected).
+                let agents_reconnected = poll_blocking(deadline, || {
+                    (agents_store.get(&agent_id).map(|a| a.connection_state)
+                        == Some(AgentConnectionState::Connected))
+                    .then_some(())
+                })
+                .is_some();
+
+                // Re-attach the continuity session and prove the process CONTINUED —
+                // a counter value strictly beyond the pre-drop one (neither reset to 0
+                // nor stalled).
+                manager
+                    .attach_session(&agent_id, &cont_sid)
+                    .expect("re-attach continuity session after reconnect");
+                let after = read_counter_rx(&out_rx, |m| m > before, deadline).unwrap_or(0);
+
+                // The task's post-reconnect resolve folds the recovered hosted tab back
+                // to Connected.
+                let tab_resolved_connected = poll_blocking(deadline, || {
+                    (lifecycle_store.get("tab-1").map(|s| s.status)
+                        == Some(SessionStatus::Connected))
+                    .then_some(())
+                })
+                .is_some();
+
+                let _ = manager.close_session(&agent_id, &cont_sid);
+
+                SeverObservations {
+                    sever_accepted,
+                    before,
+                    after,
+                    saw_agents_reconnecting,
+                    saw_tab_reconnecting,
+                    armed_during_reconnect,
+                    agents_reconnected,
+                    tab_resolved_connected,
+                    sshd_listening_after_sever,
+                }
+            })
+            .await
+            .expect("headless sever/reconnect driver thread panicked")
+        };
+
+        assert!(
+            obs.sever_accepted,
+            "test_sever_transport must accept the sever for a live agent"
+        );
+        assert!(
+            obs.sshd_listening_after_sever,
+            "the in-process sever must not touch the sshd — it must stay listening"
+        );
+        assert!(
+            obs.saw_agents_reconnecting,
+            "the real I/O task must fold the agents region to Reconnecting on the sever"
+        );
+        assert!(
+            obs.saw_tab_reconnecting,
+            "the real I/O task must fold the hosted tab's session-lifecycle region to Reconnecting"
+        );
+        assert!(
+            !obs.armed_during_reconnect,
+            "a transient in-task break must NOT arm the backend redrive timer (#2556)"
+        );
+        assert!(
+            obs.agents_reconnected,
+            "the real I/O task must drive the agents region back to Connected after reconnect"
+        );
+        assert!(
+            obs.tab_resolved_connected,
+            "the recovered hosted session must resolve back to Connected through the real task"
+        );
+        assert!(
+            obs.after > obs.before,
+            "counter did not advance across the sever: before={}, after={} — the daemon \
+             session did not survive with process continuity through the shipped path",
+            obs.before,
+            obs.after
+        );
+
+        sshd.stop();
+        drop(app);
+    }
+
+    /// #2576: through the real manager + task, a PERMANENT transport loss PARKS
+    /// (keeps retrying, agent stays alive, region held Reconnecting) — distinct from
+    /// a user-cancel, which tears the agent down and settles the region Disconnected.
+    ///
+    /// This pins the two terminal outcomes the reconnect grade must tell apart, on the
+    /// shipped command → task path rather than `reconnect_agent` in isolation.
+    ///
+    /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
+        let Some(sshd) = find_sshd() else {
+            eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
+            return;
+        };
+        let Some(agent_bin) = find_agent_binary() else {
+            eprintln!(
+                "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
+                 (or set TERMIHUB_TEST_AGENT_BIN)"
+            );
+            return;
+        };
+
+        trust_all_host_keys();
+
+        let mut sshd = LocalAgentSshd::new(sshd, agent_bin).expect("stand up local agent sshd");
+        sshd.start();
+
+        let app = tauri::test::mock_app();
+        let handle = app.handle().clone();
+        let agent_id = "agent-1".to_string();
+
+        let agents_store = Arc::new(AgentsStore::new());
+        agents_store.add(
+            &agent_id,
+            "Test Agent",
+            serde_json::json!({}),
+            serde_json::json!({}),
+        );
+        handle.manage(agents_store.clone());
+
+        let manager = Arc::new(AgentConnectionManager::new(handle.clone()));
+        let config = sshd.agent_config();
+        let settings = AgentSettings::default();
+
+        {
+            let m = manager.clone();
+            let cfg = config.clone();
+            let st = settings.clone();
+            let aid = agent_id.clone();
+            tokio::task::spawn_blocking(move || m.connect_agent(&aid, &cfg, Some(&st)))
+                .await
+                .expect("connect_agent join")
+                .expect("connect_agent over local sshd failed");
+        }
+        assert_eq!(
+            agents_store.get(&agent_id).map(|a| a.connection_state),
+            Some(AgentConnectionState::Connected),
+            "the manager's connect must fold the agents region to Connected"
+        );
+
+        let (
+            reached_reconnecting,
+            stayed_parked,
+            still_alive_parked,
+            settled_disconnected,
+            torn_down,
+        ) = {
+            let manager = manager.clone();
+            let agents_store = agents_store.clone();
+            let agent_id = agent_id.clone();
+            tokio::task::spawn_blocking(move || {
+                // Sever, then take the endpoint permanently down.
+                let severed = manager.test_sever_transport(&agent_id);
+                assert!(severed, "sever must be accepted for a live agent");
+                sshd.stop();
+
+                // PARK: the task folds Reconnecting and keeps retrying the dead
+                // endpoint. Over the window it must reach Reconnecting and never settle
+                // to Disconnected, and the agent must stay alive (the task is parked in
+                // its reconnect loop, not torn down).
+                let park_deadline = Instant::now() + Duration::from_secs(5);
+                let mut reached_reconnecting = false;
+                let mut settled_disconnected_early = false;
+                while Instant::now() < park_deadline {
+                    match agents_store.get(&agent_id).map(|a| a.connection_state) {
+                        Some(AgentConnectionState::Reconnecting) => reached_reconnecting = true,
+                        Some(AgentConnectionState::Disconnected) => {
+                            settled_disconnected_early = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                let still_alive_parked = manager.is_connected(&agent_id);
+
+                // User-cancel is the DISTINCT settle: it tears the agent down and folds
+                // the region Disconnected at once.
+                manager
+                    .disconnect_agent(&agent_id)
+                    .expect("user disconnect of a live-but-parked agent");
+                let settled_disconnected =
+                    poll_blocking(Instant::now() + Duration::from_secs(5), || {
+                        (agents_store.get(&agent_id).map(|a| a.connection_state)
+                            == Some(AgentConnectionState::Disconnected))
+                        .then_some(())
+                    })
+                    .is_some();
+                let torn_down = !manager.is_connected(&agent_id);
+
+                (
+                    reached_reconnecting,
+                    !settled_disconnected_early,
+                    still_alive_parked,
+                    settled_disconnected,
+                    torn_down,
+                )
+            })
+            .await
+            .expect("permanent-drop driver thread panicked")
+        };
+
+        assert!(
+            reached_reconnecting,
+            "the real task must fold the agents region to Reconnecting on a transport loss"
+        );
+        assert!(
+            stayed_parked,
+            "a permanent drop must PARK (keep retrying), never settle Disconnected on its own"
+        );
+        assert!(
+            still_alive_parked,
+            "a parked agent must stay alive/connected while it retries — distinct from a cancel"
+        );
+        assert!(
+            settled_disconnected,
+            "a user-cancel must settle the agents region Disconnected"
+        );
+        assert!(
+            torn_down,
+            "a user-cancel must tear the agent down (is_connected == false) — the distinct settle"
+        );
+
+        drop(app);
     }
 }
