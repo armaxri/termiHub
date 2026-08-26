@@ -32,8 +32,11 @@
 //! | `session.reconnectFailed`   | `{ sessionId, error? }`     | the attempt failed (back off or give up)       |
 //! | `session.cancelReconnect`   | `{ sessionId }`             | user stopped the retry loop                    |
 //! | `session.reconnectTrigger`  | `{ sessionId, error? }`     | record/clear the reconnect-trigger cause       |
-//! | `session.agentTransportReconnecting` | `{ sessionId, error? }` | transient agent-transport break (→ reconnecting, loop idle) |
 //! | `session.remove`            | `{ sessionId }`             | session/tab gone; drop it from the region      |
+//!
+//! The transient agent-transport-break reconnecting fold is **not** a client
+//! intent: `agent_io_task` folds it at the backend source via
+//! [`fold_agent_transport_reconnecting`] / [`fold_agent_session_recovered`] (#2556).
 //!
 //! # Shadow mode
 //!
@@ -287,23 +290,6 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         store.set_reconnect_trigger(&id, optional_str(intent, "error"));
         Ok(publish_sessions(projector, &store))
     });
-
-    let handle = app_handle.clone();
-    registry.route(
-        "session.agentTransportReconnecting",
-        move |intent, projector| {
-            let store = store_of(&handle)?;
-            let id = required_str(intent, "sessionId")?;
-            store.agent_transport_reconnecting(&id, optional_str(intent, "error"));
-            let produced = publish_sessions(projector, &store);
-            // Status-only fold: the loop stays `Idle`, so `sync` cancels any pending
-            // timer and never arms a redrive — the agent I/O task owns the transient
-            // reconnect (no double-drive). Reconciling the timer keeps the invariant
-            // "every transition calls sync" (#2555).
-            sync_timer(&handle, &id);
-            Ok(produced)
-        },
-    );
 
     let handle = app_handle;
     registry.route("session.remove", move |intent, projector| {

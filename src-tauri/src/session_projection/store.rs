@@ -328,10 +328,14 @@ impl SessionLifecycleStore {
         entry.backend_session_id = None;
     }
 
-    /// `session.agentTransportReconnecting` (#2555) — an **agent-hosted** tab's
-    /// transport hit a **transient** break that the agent I/O task's own in-task
-    /// reconnect loop (`agent_io_task::reconnect_agent`) is re-establishing in
-    /// place, recovering the hosted session without tearing it down.
+    /// Transient agent-transport-break reconnecting fold (#2555, moved to the
+    /// backend source in #2556) — an **agent-hosted** tab's transport hit a
+    /// **transient** break that the agent I/O task's own in-task reconnect loop
+    /// (`agent_io_task::reconnect_agent`) is re-establishing in place, recovering
+    /// the hosted session without tearing it down. Folded at the source via
+    /// [`crate::session_projection::projection::fold_agent_transport_reconnecting`]
+    /// (no client intent — #2556 retired the `session.agentTransportReconnecting`
+    /// mirror).
     ///
     /// Surfaces `Reconnecting` (so the disconnect overlay + tab-strip dot show
     /// honest feedback — the regression #2554 left, where the region-only readers

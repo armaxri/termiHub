@@ -6,7 +6,6 @@
  * handler and the tests exercise the exact same code).
  */
 import { useAppStore } from "@/store/appStore";
-import { mirrorSessionIntent } from "@/store/sessionBridge";
 import { TerminalTab } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -15,8 +14,11 @@ import { frontendLog } from "@/utils/frontendLog";
  * agent (G8, #1242).
  *
  * Two cases, so every agent tab gets honest feedback during a drop:
- * - **Live-session tabs** (`sessionId` set): show the reconnecting spinner
- *   overlay, recording the trigger error when one is supplied.
+ * - **Live-session tabs** (`sessionId` set): the shared `session-lifecycle`
+ *   region — the sole reconnecting source for the overlay + tab-strip dot — is
+ *   folded to `reconnecting` **server-side** by `agent_io_task` at the source of
+ *   the transient break (#2556), so no client fold happens here; the frontend
+ *   only tracks the count for the log.
  * - **Spawning tabs** (still mid `connection.create`, no `sessionId` yet): park
  *   them on the waiting-for-agent path so they retry once the agent is back,
  *   instead of being skipped and landing on an ambiguous spawn error.
@@ -28,25 +30,18 @@ import { frontendLog } from "@/utils/frontendLog";
 export function applyAgentReconnecting(
   agentId: string,
   agentTerminalTabs: TerminalTab[],
-  error: string | undefined
+  _error: string | undefined
 ): void {
   const store = useAppStore.getState();
   let reconnectingCount = 0;
   let waitingCount = 0;
   for (const tab of agentTerminalTabs) {
     if (tab.sessionId) {
-      // Live session — fold the shared `session-lifecycle` region to `reconnecting`
-      // for this tab (#2555/#2205 PR-B). The overlay + tab-strip dot source
-      // `reconnecting` purely from the region (the client slice is gone), but a
-      // transient agent-transport break — recovered in place by the agent I/O
-      // task's in-task reconnect loop — never folds the region via a
-      // `terminal-exit`, so this status-only fold is what surfaces the reconnecting
-      // state. It keeps the reconnect loop idle, so the backend timer never arms a
-      // redrive that would double-drive the transport the agent is already
-      // re-establishing. `error` records the trigger cause the overlay shows.
-      // Optimistically folded, so the overlay is gap-free; resolved back by the
-      // `connected` (survived) / `disconnected` (gone) handlers in TerminalView.
-      mirrorSessionIntent("session.agentTransportReconnecting", tab.id, error);
+      // Live session — the backend `agent_io_task` folds this tab's region entry
+      // to `reconnecting` at the source of the transient break (#2556), so the
+      // client no longer mirrors it. The overlay + tab-strip dot already source
+      // `reconnecting` purely from the region (#2554/#2205 PR-B), so the server
+      // fold is all that is needed; the trigger error is folded there too.
       reconnectingCount++;
     } else {
       // Still spawning (no sessionId yet): park on the waiting path so the tab

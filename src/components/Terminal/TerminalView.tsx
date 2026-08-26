@@ -14,7 +14,7 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { currentSessionView, mirrorSessionIntent } from "@/store/sessionBridge";
+import { currentSessionView } from "@/store/sessionBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
@@ -159,24 +159,23 @@ export function TerminalView() {
           const reconnectingView = currentSessionView();
           for (const tab of agentTerminalTabs) {
             // The shared `session-lifecycle` region is authoritative for the
-            // transient-break reconnecting state (#2555) — the same source the
-            // overlay + tab dot read — so gate the resume-vs-exit decision on it
-            // rather than the local `terminalReconnectingTabs` slice (#2205 PR-B).
+            // transient-break reconnecting state (#2555/#2556) — the same source
+            // the overlay + tab dot read — so gate the resume-vs-exit decision on
+            // it rather than the local `terminalReconnectingTabs` slice (#2205
+            // PR-B). The backend folds the survived-recovery edge itself, so a
+            // recovered tab may already read non-reconnecting here; the gone-case
+            // resolve below still relies on the region reading `reconnecting`,
+            // which the backend deliberately leaves untouched for a gone session.
             if (reconnectingView[tab.id]?.status !== "reconnecting") continue;
             if (tab.sessionId && recoveredSessionIds.has(tab.sessionId)) {
-              // Session survived — output resumes automatically once the region
-              // leaves reconnecting.
+              // Session survived — the backend `agent_io_task` folds the region
+              // entry `reconnecting → connected` at the source (#2556), and output
+              // resumes automatically once the region leaves reconnecting. No
+              // client fold here (the survived-recovery mirror is retired).
               frontendLog(
                 "disconnect",
                 `agent connected: session recovered for tab=${tab.id} session=${tab.sessionId}, resuming`
               );
-              // The survived-recovery resolver for the region fold (#2555): the
-              // live session came back in place, so fold the `session-lifecycle`
-              // region entry `reconnecting → connected` (the twin `disconnect`
-              // resolution for a *gone* session runs in the else branch below via
-              // `setTerminalExited`). The region is the sole reconnecting source
-              // (#2205 PR-B), so without this it would stay stuck reconnecting.
-              mirrorSessionIntent("session.connected", tab.id);
               markedResumed++;
             } else {
               // Session is gone — show the "Session disconnected" overlay.

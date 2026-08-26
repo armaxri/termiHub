@@ -103,13 +103,14 @@ setupAgentsRegion();
 
 describe("agent-state-change tab discovery — regression for empty agentSessions", () => {
   // Reconnecting state moved off `appStore` into the projected `session-lifecycle`
-  // region (#2205 PR-B / #2555): the real handler folds a live-session tab to
-  // `reconnecting` via `applyAgentReconnecting` and gates the `connected`
-  // transition on the region status. Wire the region harness so the fold lands,
-  // and pin `sessionBackendReattach` OFF so these remote-session tabs take the
-  // develop-parity (non-resilient) path — `setTerminalExited` then never re-folds
-  // the region back to reconnecting via `session.reconnect`.
-  installSessionLifecycleHarness();
+  // region (#2205 PR-B / #2555). Post-#2556 the transient-break reconnecting fold
+  // is **backend-owned** (`agent_io_task`), so `applyAgentReconnecting` no longer
+  // mirrors it on the client; a test seeds the reconnecting region via the harness
+  // to represent that server fold, then the `connected` transition gates on the
+  // region status. `sessionBackendReattach` is pinned OFF so these remote-session
+  // tabs take the develop-parity (non-resilient) path — `setTerminalExited` folds
+  // `session.dropped` (terminal), never re-folding the region back to reconnecting.
+  const harness = installSessionLifecycleHarness();
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
@@ -188,7 +189,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
 
   // ── State machine: reconnecting ────────────────────────────────────────────
 
-  it("'reconnecting' marks active-session tabs as reconnecting", () => {
+  it("'reconnecting' no longer folds a live-session tab on the client — the backend owns it (#2556)", () => {
     const store = useAppStore.getState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
@@ -198,10 +199,13 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     // Simulate that the session was established.
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
 
-    // The real "reconnecting" handler folds live-session tabs to reconnecting.
+    // The transient-break reconnecting fold moved fully server-side (#2556): the
+    // client handler leaves a live-session tab's region entry untouched (the
+    // backend `agent_io_task` folds it), and does not park it waiting.
     applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
-    expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
+    expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
+    expect(useAppStore.getState().terminalWaitingForAgent[tab.id]).toBeUndefined();
   });
 
   it("'reconnecting' skips tabs without an established session", () => {
@@ -223,7 +227,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
 
   // ── State machine: connected (after auto-reconnect) ────────────────────────
 
-  it("'connected' after auto-reconnect transitions reconnecting tabs to exited", () => {
+  it("'connected' after auto-reconnect transitions reconnecting tabs to exited", async () => {
     const store = useAppStore.getState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
@@ -231,11 +235,17 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     });
     const tab = getAllTerminalTabs()[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
-    // Simulate prior "reconnecting" state (folded into the region).
-    applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
+    // Prior "reconnecting" state now comes from the backend fold (#2556); seed the
+    // region to represent it rather than the removed client mirror.
+    await ensureSessionSubscribed();
+    harness.transport.setSession(
+      tab.id,
+      reconnecting({ phase: "waiting", attempt: 0, delayMs: 1000 })
+    );
 
-    // Simulate fixed "connected" handler — transitions reconnecting → exited. The
-    // handler now gates on the region status (the sole reconnecting source).
+    // Simulate the "connected" handler — a gone session (not recovered) marks the
+    // tab exited. The handler gates on the region status (the sole reconnecting
+    // source), which the backend leaves reading `reconnecting` for a gone session.
     for (const t of findAgentTerminalTabs("agent-1")) {
       if (currentSessionView()[t.id]?.status === "reconnecting") {
         useAppStore.getState().setTerminalExited(t.id);

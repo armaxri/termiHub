@@ -2168,7 +2168,7 @@ async fn agent_io_task(
                 // session that survived in place. Fetch it once when there is either
                 // a sender to reconcile or a hosted tab to resolve; skip the extra
                 // round-trip when neither applies.
-                let hosted = fold_agent_hosted_sessions(&app_handle, &agent_id).await;
+                let hosted = hosted_sessions_for_agent(&app_handle, &agent_id).await;
                 if !session_outputs.is_empty()
                     || !monitoring_outputs.is_empty()
                     || !hosted.is_empty()
@@ -2237,7 +2237,7 @@ pub(crate) async fn fold_agent_hosted_reconnecting<R: tauri::Runtime>(
 /// once per reconnect so the caller can both gate the `connection.list` round-trip
 /// on there being a hosted tab to resolve and reuse the set for the region resolve
 /// (#2556).
-async fn fold_agent_hosted_sessions<R: tauri::Runtime>(
+async fn hosted_sessions_for_agent<R: tauri::Runtime>(
     app_handle: &AppHandle<R>,
     agent_id: &str,
 ) -> Vec<AgentHostedSession> {

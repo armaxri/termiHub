@@ -63,13 +63,12 @@ function findAgentTerminalTabs(agentId: string) {
 }
 
 describe("applyAgentReconnecting (G8, #1242)", () => {
-  // The reconnecting state moved off `appStore` into the projected
-  // `session-lifecycle` region (#2205 PR-B / #2555): a live-session tab is folded
-  // to `reconnecting` there via `session.agentTransportReconnecting`, so the
-  // harness wires the region transport + intents and the assertions read the
-  // region (the sole reconnecting source) rather than the removed local slices.
-  // `applyAgentReconnecting` folds the region synchronously via the optimistic
-  // `session.agentTransportReconnecting` intent, so no transport handle is needed.
+  // The transient-break reconnecting fold moved fully **server-side** (#2556):
+  // `agent_io_task` folds a live-session tab's `session-lifecycle` region entry to
+  // `reconnecting` at the source, so `applyAgentReconnecting` no longer mirrors it
+  // on the client. The handler's only remaining job is routing a *spawning*
+  // (sessionId-less) tab onto the waiting-for-agent path. The harness wires the
+  // region so the assertions can confirm a live-session tab is left untouched here.
   installSessionLifecycleHarness();
 
   beforeEach(() => {
@@ -95,24 +94,7 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
     expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
   });
 
-  it("marks an active-session agent tab as reconnecting (unchanged)", () => {
-    const store = useAppStore.getState();
-    store.addTab("Shell", "remote-session", {
-      type: "remote-session",
-      config: { agentId: "agent-1", sessionType: "shell" },
-    });
-    const tab = getAllTerminalTabs()[0];
-    useAppStore.getState().setTabSessionId(tab.id, "session-123");
-
-    applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
-
-    // The region — the sole reconnecting source — is folded to reconnecting.
-    expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
-    // A live-session tab is not parked as waiting.
-    expect(useAppStore.getState().terminalWaitingForAgent[tab.id]).toBeUndefined();
-  });
-
-  it("records the trigger error on reconnecting active-session tabs", () => {
+  it("leaves a live-session tab's region untouched — the backend folds it (#2556)", () => {
     const store = useAppStore.getState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
@@ -123,49 +105,28 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
 
     applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), "connection reset");
 
-    // The region folds to reconnecting and records the trigger cause the overlay shows.
-    const life = currentSessionView()[tab.id];
-    expect(life?.status).toBe("reconnecting");
-    expect(life?.reconnectError).toBe("connection reset");
+    // No client mirror: the region is folded to reconnecting server-side by
+    // `agent_io_task`, so the handler leaves it untouched here.
+    expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
+    // A live-session tab is not parked as waiting.
+    expect(useAppStore.getState().terminalWaitingForAgent[tab.id]).toBeUndefined();
   });
 
-  describe("session-lifecycle region fold (#2555, closes the #2554 overlay gap)", () => {
-    it("folds a live-session agent tab to reconnecting in the region (overlay/tab-dot source)", () => {
-      const store = useAppStore.getState();
-      store.addTab("Shell", "remote-session", {
-        type: "remote-session",
-        config: { agentId: "agent-1", sessionType: "shell" },
-      });
-      const tab = getAllTerminalTabs()[0];
-      useAppStore.getState().setTabSessionId(tab.id, "session-123");
-
-      applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), "connection reset");
-
-      // Gap-free: the region — the sole reconnecting source the overlay/tab dot
-      // read after #2554 — now shows reconnecting for the transient break, with
-      // the loop idle (no redrive) and the trigger cause recorded.
-      const life = currentSessionView()[tab.id];
-      expect(life?.status).toBe("reconnecting");
-      expect(life?.reconnect.phase).toBe("idle");
-      expect(life?.reconnectError).toBe("connection reset");
+  it("does not fold a spawning (sessionId-less) tab — it parks waiting instead", () => {
+    const store = useAppStore.getState();
+    store.addTab("Spawning", "remote-session", {
+      type: "remote-session",
+      config: { agentId: "agent-1", sessionType: "shell" },
     });
+    const tab = getAllTerminalTabs()[0];
 
-    it("does not fold a spawning (sessionId-less) tab — it parks waiting instead", () => {
-      const store = useAppStore.getState();
-      store.addTab("Spawning", "remote-session", {
-        type: "remote-session",
-        config: { agentId: "agent-1", sessionType: "shell" },
-      });
-      const tab = getAllTerminalTabs()[0];
+    applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
-      applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
-
-      expect(currentSessionView()[tab.id]).toBeUndefined();
-      expect(useAppStore.getState().terminalWaitingForAgent[tab.id]).toBe("agent-1");
-    });
+    expect(currentSessionView()[tab.id]).toBeUndefined();
+    expect(useAppStore.getState().terminalWaitingForAgent[tab.id]).toBe("agent-1");
   });
 
-  it("handles a mix: live tab reconnecting, spawning tab waiting", () => {
+  it("handles a mix: live tab left for the backend, spawning tab waiting", () => {
     const store = useAppStore.getState();
     store.addTab("Live", "remote-session", {
       type: "remote-session",
@@ -182,7 +143,9 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
     applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
     const state = useAppStore.getState();
-    expect(currentSessionView()[live.id]?.status).toBe("reconnecting");
+    // The live tab's region fold is the backend's job (#2556); only the spawning
+    // tab is acted on here — parked on the waiting-for-agent path.
+    expect(currentSessionView()[live.id]?.status).not.toBe("reconnecting");
     expect(state.terminalWaitingForAgent[live.id]).toBeUndefined();
     expect(state.terminalWaitingForAgent[spawning.id]).toBe("agent-1");
     expect(currentSessionView()[spawning.id]?.status).not.toBe("reconnecting");
