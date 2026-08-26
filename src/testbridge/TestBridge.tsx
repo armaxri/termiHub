@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
@@ -94,6 +95,16 @@ export function TestBridge() {
       emitEvent: async (event, payload) => {
         if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
         await emit(event, payload);
+      },
+      // Abruptly sever an agent's transport in-process (#2573) so the automated
+      // agent-reconnect grade (#2574) can drive a genuine transport break without
+      // an operator or a fragile shell drop. Like emitEvent this reaches past the
+      // DOM into the backend, so re-check test mode at the call site — the Tauri
+      // command itself also refuses unless the test bridge is enabled, so a
+      // production launch can never reach the sever.
+      severAgentTransport: async (agentId) => {
+        if (!isTestBridgeEnabled()) throw new Error("test bridge is not enabled");
+        return await invoke<boolean>("test_sever_agent_transport", { agentId });
       },
       // Drive the projection substrate for the assertion harness (#2164) over the
       // real transport + ProjectionClient cache. Lazily created and page-scoped

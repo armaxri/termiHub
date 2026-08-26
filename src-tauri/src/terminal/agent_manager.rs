@@ -3660,7 +3660,8 @@ mod russh_reconnect_tests {
     }
 
     /// The normalised command name of a pid, reduced to what the sshd-family match
-    /// keys on. Mirrors `agent-reconnect-transport.sh`'s `comm_of` (#2550): on
+    /// keys on. Mirrors the retired `agent-reconnect-transport.sh`'s `comm_of`
+    /// (#2550; the shell harness was removed once the grade was automated, #2574): on
     /// macOS 26 / OpenSSH 10 `ps -o comm=` is the rewritten process TITLE whose
     /// first token carries a trailing colon (`sshd:`, `sshd-session:`), so take the
     /// first token, basename it, and strip a trailing colon.
@@ -3690,8 +3691,8 @@ mod russh_reconnect_tests {
     /// `termihub-agent --stdio` the handler exec'd and — crucially — the setsid'd
     /// session **daemon** that agent spawned.
     ///
-    /// This is the automated analog of the *fixed* `agent-reconnect-transport.sh
-    /// drop` (#2550): killing the sshd handler closes the SSH channel, so the
+    /// This is the automated analog of the *fixed* (now retired)
+    /// `agent-reconnect-transport.sh drop` (#2550): killing the sshd handler closes the SSH channel, so the
     /// `--stdio` agent hits EOF and exits on its own, while the reparented daemon
     /// (a different session/pgroup) keeps its shell + running process alive for the
     /// recovery. `kill_subtree` above kills the daemon too (it is still a ppid-child
@@ -4246,8 +4247,10 @@ mod russh_reconnect_tests {
     /// daemon-backed session's running process survives a genuine transport drop and
     /// is CONTINUED — same session id, same live process — after the backend
     /// re-establishes the transport. It must not restart (counter back to 0) or pause
-    /// (counter unchanged). This is the automated form of the manual
-    /// `verify-agent-reconnect.sh` grade's headline check.
+    /// (counter unchanged). This is the automated form of the reconnect grade's
+    /// headline check — now also driven end-to-end through the UI by the
+    /// `test_agent_reconnect_ui.py` bridge system-test (#2574), which retired the
+    /// manual `verify-agent-reconnect.sh` operator harness.
     ///
     /// Distinct from `..._drives_fresh_create` above: that kills the whole sshd tree,
     /// taking the setsid'd daemon with it (#2508/#995), so it can only prove

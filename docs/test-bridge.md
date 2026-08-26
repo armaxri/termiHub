@@ -156,6 +156,7 @@ unmount.
 | `getState`            | Read app store state, optionally by dot-path                   |
 | `screenshot`          | Capture a PNG of the rendered app as a data URL (see below)    |
 | `emitEvent`           | Inject a Tauri event to drive event-only UI (see below)        |
+| `severAgentTransport` | Test-only: sever a connected agent's transport (see below)     |
 
 Every command returns a structured `BridgeResponse` (`{ ok, action, value?,
 error? }`). Nothing throws across the bridge — failures are `ok: false` with an
@@ -334,6 +335,38 @@ whole is installed only under the opt-in signals above, and the live `TestBridge
 **re-checks `isTestBridgeEnabled()` at the call site** before touching the bus.
 The guarantee "inert outside the harness" then holds locally, independent of how
 the deps object was obtained. Unit tests inject a stub via the `emitEvent` dep.
+
+### Severing an agent transport (`severAgentTransport`)
+
+The bridge has no generic "invoke a Tauri command" verb by design. The one
+test-only command the automated **agent-reconnect UI grade** (#2574) needs — a
+deterministic, in-process transport sever (#2573) — is therefore exposed as its
+own named verb, mirroring `emitEvent` as the only other verb whose blast radius
+reaches the backend.
+
+`severAgentTransport` drives the automated reconnect grade
+([`tests/system/tests/test_agent_reconnect_ui.py`](../tests/system/tests/test_agent_reconnect_ui.py)):
+it drops a connected agent's russh transport in-process so the peer sees an
+abrupt EOF/RST — a faithful analog of a real transport loss — while the agent's
+I/O task stays alive and takes the reconnect path (unlike a clean
+`disconnect_agent`, which is a user-cancel). This replaces the retired
+`lsof`/process-title shell drop, which false-passed.
+
+- `{ action: "severAgentTransport", agentId }` → `ok: true`, `value: true` when a
+  live agent received the sever, `value: false` for an unknown/dead agent. An
+  empty `agentId` fails fast (`ok: false`).
+
+```ts
+const severed = await driver.severAgentTransport(agentId); // boolean
+```
+
+The Python harness exposes it as `driver.sever_agent_transport(agent_id)`.
+
+**Test-mode gating (doubly).** Like `emitEvent`, the live `TestBridge` re-checks
+`isTestBridgeEnabled()` at the call site before invoking. The underlying
+`test_sever_agent_transport` Tauri command **also** refuses unless the test bridge
+is enabled (`TERMIHUB_TEST_BRIDGE_PORT` set), so a production launch can never
+reach the sever. Unit tests inject a stub via the `severAgentTransport` dep.
 
 ### Element-to-element drag (`dragTo`) and @dnd-kit
 

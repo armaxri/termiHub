@@ -66,9 +66,11 @@ for the gating and payload rules.
 
 #### Display-backed runner (frontend-dependent live E2E, macOS)
 
-A handful of live suites drive a **frontend** flow that only advances while the
-app's JS event loop runs — most sharply the agent-reconnect lane
-(`tests/system/tests/test_agent_reconnect_live.py`). On macOS, WKWebView
+Some live suites drive a **frontend** flow that only advances while the app's JS
+event loop runs. (The agent-reconnect grade used to be the sharpest such case,
+but it is now backend-driven and runs headlessly — see
+[the automated reconnect grade](#backend-driven-agent-reconnect-across-a-prolonged-transport-drop-24762512).)
+On macOS, WKWebView
 **occlusion/foreground-throttles** the page's timers / `requestAnimationFrame`
 whenever the window is not part of an _actively composited, foreground_ display
 session, so these flows never fire headlessly. The in-app anti-throttle
@@ -1323,44 +1325,37 @@ a Unix agent host (the exec-replace is Unix-only). See PR #1352.
 5. **Dismiss.** Press **Dismiss** on the banner. Expect: the banner hides for the
    session and no update is requested.
 
-### Backend-driven agent reconnect across a prolonged transport drop (#2476)
+### Backend-driven agent reconnect across a prolonged transport drop (#2476/#2512)
 
-Verifies the backend-driven agent reconnect redrive (now unconditional, #2560):
-an agent-hosted session whose transport is
-severed for a prolonged outage reconnects **backend-driven** (the terminal
-re-attaches to a new backend session, the client engine suppressed, no
-double-connect, never stranded), and a permanent drop settles Disconnected. This
-grade cannot run headlessly — macOS occlusion-throttles the WKWebView with no
-foreground display (#957, #2460) — so it is a turnkey manual test with a real
-display. Unix/macOS only (the dev agent is a loopback sshd). See PR for #2476;
-harness residual tracked in #2480.
+**Now automated — no operator, no display (#2574).** The full-app agent-reconnect
+UI grade is an automated bridge system-test:
+[`tests/system/tests/test_agent_reconnect_ui.py`](../tests/system/tests/test_agent_reconnect_ui.py).
+It drives the real app through the complete cycle — connect a key-auth agent at a
+harness-controlled loopback sshd, open a shell, start a 1 Hz counter, **sever the
+transport in-process** (the deterministic `test_sever_agent_transport` bridge
+command from #2573), assert the **same** tab shows **Reconnecting** (never
+vanishes or spawns a duplicate), let it re-attach the **same** live session with
+the counter caught up **past** its pre-drop value (never restart-from-0), confirm
+the re-attached shell is interactive, then hold the endpoint down for a
+**permanent** sever that parks in Reconnecting and settles a clean **Disconnected**.
 
-Run once (from a dev checkout — builds if stale, starts the dev agent + app,
-prints the checklist):
+It runs on the nightly `-m integration` lane:
 
 ```bash
-scripts/internal/verify-agent-reconnect.sh
+./scripts/test-system-py.sh -m integration -k test_agent_reconnect_ui
 ```
 
-Then, in a **second terminal**, `scripts/internal/agent-reconnect-transport.sh
-{drop|restore}` severs / restores this checkout's dev-agent transport with one
-keystroke (kills the dev-agent sshd master + connection children by port, then
-relaunches it reusing the same host key so the reconnect is not blocked on a
-trust prompt).
+Unlike the retired manual grade it does **not** need a foreground display: the
+client reconnect engine was deleted (#2558) and reconnect is backend-driven
+(#2560), so the outcome cannot be webview-stalled, and the test-bridge
+anti-throttle (`macos_unthrottle`) keeps the projection-mirror overlay ticking
+headless. The retired operator harness (`scripts/internal/verify-agent-reconnect.sh`
 
-1. **Connect + open a session.** In the Connections sidebar, connect the
-   pre-registered dev agent (accept the host-key prompt if shown), then **New
-   Shell Session**; run `echo hello`. Expect: a live shell.
-2. **Drop.** Run `agent-reconnect-transport.sh drop`. Expect: within a few
-   seconds the agent tab shows **Reconnecting** — the terminal must not close,
-   exit, or vanish.
-3. **Prolonged outage + restore.** Wait ~30s (the backend parks + retries), then
-   run `agent-reconnect-transport.sh restore`. Expect: the agent reconnects
-   backend-driven and the **same** shell tab re-attaches to a fresh backend
-   session; `echo hello2` prints. No duplicate tab, no second connection.
-4. **Permanent drop.** Run `drop` again and do **not** restore. Expect: after the
-   backend gives up retrying, the agent/tab settles **Disconnected** — it must
-   not spin forever and must not be left stranded.
+- `agent-reconnect-transport.sh`) and the log-based `test_agent_reconnect_live.py`
+  are removed. Correctness at the process level is additionally proven headlessly by
+  the Rust real-sshd continuity tests (#2553/#2573) and the frontend component tests
+  (`TerminalDisconnectOverlay.projection.test.tsx`, `Terminal.agent-reconnect.test.tsx`,
+  `Terminal.agent-reattach-scrollback.test.tsx`).
 
 ### Coordinated desktop-push Update deploy (#1616)
 

@@ -366,6 +366,28 @@ class Driver:
         """
         return self._call({"action": "screenshot"}, timeout=timeout)
 
+    def sever_agent_transport(
+        self, agent_id: str, *, timeout: Optional[float] = None
+    ) -> bool:
+        """Abruptly sever a connected agent's transport in-process (#2573).
+
+        Drives the deterministic, cross-platform test-only sever the automated
+        agent-reconnect grade (#2574) needs: the agent's I/O task drops its russh
+        transport and takes the reconnect path — a faithful analog of a real
+        transport loss, with no sshd kill, ``lsof``, process-title matching, or
+        operator. Routes to the test-bridge-gated ``test_sever_agent_transport``
+        Tauri command, which refuses unless the app was launched with the test
+        bridge enabled, so a production launch can never reach it.
+
+        Returns ``True`` when a live agent received the sever, ``False`` for an
+        unknown or already-dead agent.
+        """
+        return bool(
+            self._call(
+                {"action": "severAgentTransport", "agentId": agent_id}, timeout=timeout
+            )
+        )
+
     # ── Projection substrate (#2149 / harness #2164) ─────────────────────────
     def projection_subscribe(self, region: str) -> dict[str, Any]:
         """Attach to a projection ``region`` and start recording its frames.

@@ -320,6 +320,69 @@ describe("dispatchCommand", () => {
     });
   });
 
+  describe("severAgentTransport", () => {
+    it("forwards the agent id to the injected dep and returns its result", async () => {
+      const severAgentTransport = vi.fn(async () => true);
+      const { deps } = setup(`<div></div>`, { severAgentTransport });
+
+      const res = await dispatchCommand(
+        { action: "severAgentTransport", agentId: "agent-7" },
+        deps
+      );
+
+      expect(res).toEqual({ ok: true, action: "severAgentTransport", value: true });
+      expect(severAgentTransport).toHaveBeenCalledWith("agent-7");
+    });
+
+    it("passes through a false result for an unknown/dead agent", async () => {
+      const severAgentTransport = vi.fn(async () => false);
+      const { deps } = setup(`<div></div>`, { severAgentTransport });
+
+      const res = await dispatchCommand({ action: "severAgentTransport", agentId: "gone" }, deps);
+
+      expect(res).toEqual({ ok: true, action: "severAgentTransport", value: false });
+    });
+
+    it("fails when the agent id is empty", async () => {
+      const severAgentTransport = vi.fn(async () => true);
+      const { deps } = setup(`<div></div>`, { severAgentTransport });
+
+      const res = await dispatchCommand({ action: "severAgentTransport", agentId: "" }, deps);
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("agentId");
+      expect(severAgentTransport).not.toHaveBeenCalled();
+    });
+
+    it("fails cleanly when the dep is not wired (outside the harness)", async () => {
+      const { deps } = setup(`<div></div>`);
+      // The base deps in setup() do not include severAgentTransport.
+
+      const res = await dispatchCommand(
+        { action: "severAgentTransport", agentId: "agent-7" },
+        deps
+      );
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("not available");
+    });
+
+    it("fails with the dep's error when the sever throws", async () => {
+      const severAgentTransport = vi.fn(async () => {
+        throw new Error("test bridge is not enabled");
+      });
+      const { deps } = setup(`<div></div>`, { severAgentTransport });
+
+      const res = await dispatchCommand(
+        { action: "severAgentTransport", agentId: "agent-7" },
+        deps
+      );
+
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("test bridge is not enabled");
+    });
+  });
+
   describe("drag", () => {
     it("fires mousedown on the handle then mousemove/mouseup with the delta applied", async () => {
       const { deps, container } = setup(`<div data-testid="handle"></div>`);

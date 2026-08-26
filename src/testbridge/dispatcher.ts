@@ -76,6 +76,16 @@ export interface BridgeDeps {
    */
   emitEvent: (event: string, payload: unknown) => Promise<void>;
   /**
+   * Abruptly sever a connected agent's transport in-process (#2573) to drive the
+   * automated agent-reconnect UI grade (#2574), resolving to `true` when a live
+   * agent received the sever and `false` for an unknown/dead one. The live
+   * {@link import("./TestBridge").TestBridge} wires this to the test-bridge-gated
+   * `test_sever_agent_transport` Tauri command behind a test-mode re-check; unit
+   * tests supply a stub. Optional — absent outside the harness, so the
+   * `severAgentTransport` verb then fails with a clear "not available" error.
+   */
+  severAgentTransport?: (agentId: string) => Promise<boolean>;
+  /**
    * Drive the projection substrate (#2149) for the assertion harness (#2164):
    * subscribe to a region and record its pushed frames, dispatch intents, force
    * a gap, resync. The live {@link import("./TestBridge").TestBridge} wires a
@@ -638,6 +648,18 @@ export async function dispatchCommand(
         return ok("emitEvent");
       } catch (error) {
         return fail("emitEvent", error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    case "severAgentTransport": {
+      if (!command.agentId) return fail("severAgentTransport", "agentId is required");
+      if (!deps.severAgentTransport) {
+        return fail("severAgentTransport", "agent transport sever is not available");
+      }
+      try {
+        return ok("severAgentTransport", await deps.severAgentTransport(command.agentId));
+      } catch (error) {
+        return fail("severAgentTransport", error instanceof Error ? error.message : String(error));
       }
     }
 

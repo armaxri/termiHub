@@ -160,6 +160,13 @@ export interface Driver {
    * hooks run, so the event path itself stays covered.
    */
   emitEvent(event: string, payload?: unknown): Promise<void>;
+  /**
+   * Abruptly sever a connected agent's transport in-process (test mode only,
+   * #2573) to drive the agent-reconnect UI grade (#2574). Unlike a clean
+   * disconnect the agent's I/O task stays alive and reconnects. Resolves to
+   * `true` when a live agent received the sever, `false` for an unknown/dead one.
+   */
+  severAgentTransport(agentId: string): Promise<boolean>;
 }
 
 /**
@@ -299,5 +306,9 @@ export class InAppBridgeDriver implements Driver {
 
   async emitEvent(event: string, payload?: unknown): Promise<void> {
     await this.send({ action: "emitEvent", event, payload });
+  }
+
+  async severAgentTransport(agentId: string): Promise<boolean> {
+    return await this.send<boolean>({ action: "severAgentTransport", agentId });
   }
 }
