@@ -199,6 +199,15 @@ pub(crate) enum AgentIoCommand {
     AgentForwardClose { stream_id: String },
     /// Disconnect the agent.
     Disconnect,
+    /// TEST-ONLY (#2573): abruptly sever this agent's russh transport in-process,
+    /// then enter the reconnect path — a deterministic, cross-platform analog of a
+    /// server-side transport drop that needs no sshd kill, `lsof`, or process-title
+    /// matching. The I/O task drops the desktop russh session + channel so the
+    /// peer's sshd handler sees an abrupt EOF/RST (no clean SSH disconnect), which
+    /// is exactly what a real transport loss produces. Only ever constructed by
+    /// [`AgentConnectionManager::test_sever_transport`], which is reachable solely
+    /// through the test-bridge-gated `test_sever_agent_transport` command.
+    TestSeverTransport,
 }
 
 /// State for a single connected agent.
@@ -271,6 +280,13 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// Drop and zeroize the retained reattach config for an agent (#2472).
     /// Default no-op; the production manager scrubs it.
     fn clear_retained_agent_config(&self, _agent_id: &str) {}
+
+    /// TEST-ONLY (#2573): abruptly sever the agent's transport in-process to drive
+    /// the reconnect path deterministically. Default no-op returning `false` (mock
+    /// clients); the production [`AgentConnectionManager`] performs the sever.
+    fn test_sever_transport(&self, _agent_id: &str) -> bool {
+        false
+    }
 
     /// Cold-re-establish a reaped agent transport from its retained config for
     /// the reconnect redrive (#2472). Default errors so mocks that do not model
@@ -938,6 +954,34 @@ impl AgentConnectionManager {
             .unwrap_or(false)
     }
 
+    /// TEST-ONLY (#2573): abruptly sever a connected agent's russh transport
+    /// in-process, driving it through the same park/retry reconnect path a real
+    /// server-side transport drop takes — no sshd kill, `lsof`, or process-title
+    /// matching, deterministic and cross-platform.
+    ///
+    /// Unlike [`disconnect_agent`](Self::disconnect_agent) (user-cancel: tears the
+    /// agent down for good), this keeps the I/O task alive so it re-establishes the
+    /// transport and re-attaches surviving daemon sessions. It is the primitive the
+    /// automated agent-reconnect grade drives; the only caller is the
+    /// test-bridge-gated `test_sever_agent_transport` command, so a production
+    /// launch (test bridge off) can never reach it.
+    ///
+    /// Returns `true` when a live agent received the sever, `false` for an unknown
+    /// or already-dead agent (nothing to sever).
+    pub fn test_sever_transport(&self, agent_id: &str) -> bool {
+        let agents = match self.agents.lock() {
+            Ok(guard) => guard,
+            Err(_) => return false,
+        };
+        match agents.get(agent_id) {
+            Some(conn) if conn.alive.load(Ordering::SeqCst) => conn
+                .command_tx
+                .send(AgentIoCommand::TestSeverTransport)
+                .is_ok(),
+            _ => false,
+        }
+    }
+
     /// Get the capabilities of a connected agent.
     pub fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
         let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
@@ -1512,6 +1556,10 @@ impl AgentRpcClient for AgentConnectionManager {
         AgentConnectionManager::clear_retained_agent_config(self, agent_id)
     }
 
+    fn test_sever_transport(&self, agent_id: &str) -> bool {
+        AgentConnectionManager::test_sever_transport(self, agent_id)
+    }
+
     fn reconnect_retained_agent(&self, agent_id: &str) -> Result<(), TerminalError> {
         AgentConnectionManager::reconnect_retained_agent(self, agent_id)
     }
@@ -1876,6 +1924,26 @@ fn emit_remote_agent_update_pending(app_handle: &AppHandle, agent_id: &str, para
 
 /// Main async I/O task for an agent connection.
 ///
+/// TEST-ONLY (#2573): abruptly sever a desktop russh agent transport in-process
+/// by dropping its channel and session handle.
+///
+/// Dropping both ends the russh session background task, which closes the
+/// underlying TCP socket **without** a clean SSH disconnect — so the peer's sshd
+/// handler sees an abrupt EOF/RST, exactly what a real transport loss produces.
+/// This is the deterministic, cross-platform sever primitive the agent-reconnect
+/// harness drives: no sshd kill, no `lsof`, no process-title matching, no root.
+///
+/// Shared by [`agent_io_task`]'s `TestSeverTransport` handling (the shipped path,
+/// reached via [`AgentConnectionManager::test_sever_transport`]) and the real-sshd
+/// reconnect integration tests, so both exercise the identical sever operation.
+fn test_sever_desktop_transport(
+    channel: russh::Channel<russh::client::Msg>,
+    session: Option<SshSession>,
+) {
+    drop(channel);
+    drop(session);
+}
+
 /// Owns the russh `SshSession` and `Channel` exclusively. Concurrently polls
 /// incoming SSH data and outgoing commands using `tokio::select!`. Routes
 /// JSON-RPC responses to waiting callers and notifications to registered
@@ -1926,6 +1994,11 @@ async fn agent_io_task(
     // Keep the current session handle alive. On reconnect this is replaced so
     // the old session is dropped and the new one is held for the next loop iteration.
     let mut _current_session: Option<SshSession> = Some(session);
+
+    // TEST-ONLY (#2573): set when a `TestSeverTransport` command broke the inner
+    // loop, so the reconnect path knows to drop the transport eagerly (a real
+    // break has already closed the socket). Never set on the production path.
+    let mut test_severed = false;
 
     'outer: loop {
         // connection_broken is true when we need to reconnect.
@@ -2028,6 +2101,18 @@ async fn agent_io_task(
                             alive.store(false, Ordering::SeqCst);
                             return;
                         }
+                        AgentIoCommand::TestSeverTransport => {
+                            // TEST-ONLY (#2573): model an abrupt transport loss.
+                            // Flag it, record the cause, and break into the same
+                            // reconnect path a real EOF takes; the transport is
+                            // dropped eagerly just below so the peer sees the break
+                            // at once.
+                            info!("Agent {}: test-only in-process transport sever", agent_id);
+                            test_severed = true;
+                            connection_error =
+                                Some("test-only in-process transport sever (#2573)".to_string());
+                            break true;
+                        }
                     }
                 }
 
@@ -2117,6 +2202,18 @@ async fn agent_io_task(
 
         if !connection_broken {
             break;
+        }
+
+        // TEST-ONLY (#2573): a synthetic in-process sever breaks the inner loop
+        // without the socket having died, so release the desktop russh transport
+        // eagerly — the peer's sshd handler then sees the abrupt EOF at once,
+        // faithfully modelling a real drop, before we re-establish below. `channel`
+        // is moved out here and reassigned on a successful reconnect; on the Err
+        // path the task returns without touching it again. A real transport break
+        // leaves `test_severed` false, so this path is inert in production.
+        if test_severed {
+            test_severed = false;
+            test_sever_desktop_transport(channel, _current_session.take());
         }
 
         // Connection lost — try to reconnect. Fold every hosted session's
@@ -4346,5 +4443,281 @@ mod russh_reconnect_tests {
         drop(channel2);
         drop(session2);
         sshd.stop();
+    }
+
+    /// #2573: the SAME continuity invariant as above, but the transport is severed
+    /// with the **deterministic in-process primitive** ([`test_sever_desktop_transport`])
+    /// instead of `stop_sparing_daemon`'s process-title-matched sshd kill.
+    ///
+    /// This is the exact sever the shipped path runs: `agent_io_task`'s
+    /// `TestSeverTransport` command (reached via
+    /// [`AgentConnectionManager::test_sever_transport`] and the test-bridge-gated
+    /// `test_sever_agent_transport`) drops the desktop russh transport through this
+    /// same helper. Dropping the channel + session closes the client socket, so the
+    /// sshd handler + `--stdio` agent see an abrupt EOF and exit while the setsid'd
+    /// session daemon survives — no `lsof`, no comm-matching, no root, no sshd
+    /// restart (the master keeps listening). The surviving daemon session must then
+    /// re-attach with its process CONTINUED (counter strictly beyond the pre-drop
+    /// value — neither reset to 0 nor stalled).
+    ///
+    /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn in_process_sever_reattaches_same_daemon_session_and_process_keeps_running() {
+        let Some(sshd) = find_sshd() else {
+            eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
+            return;
+        };
+        let Some(agent_bin) = find_agent_binary() else {
+            eprintln!(
+                "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
+                 (or set TERMIHUB_TEST_AGENT_BIN)"
+            );
+            return;
+        };
+
+        trust_all_host_keys();
+
+        let mut sshd = LocalAgentSshd::new(sshd, agent_bin).expect("stand up local agent sshd");
+        sshd.start();
+
+        let config = sshd.agent_config();
+        let settings = AgentSettings::default();
+        let alive = Arc::new(AtomicBool::new(true));
+        let mut request_id = 0u64;
+
+        // Establish + a daemon-backed persistent session running a counter.
+        let (session, mut channel, _buffered) =
+            reconnect_agent(&config, &settings, &mut request_id, &alive)
+                .await
+                .expect("initial agent establishment over local sshd failed");
+
+        let created = channel_rpc(
+            &mut channel,
+            &mut request_id,
+            "connection.create",
+            serde_json::json!({ "type": "local", "title": "continuity", "config": {} }),
+        )
+        .await
+        .expect("connection.create (persistent local shell) failed");
+        let sid = created["session_id"]
+            .as_str()
+            .unwrap_or_else(|| panic!("create response missing session_id: {created}"))
+            .to_string();
+
+        channel_rpc(
+            &mut channel,
+            &mut request_id,
+            "connection.attach",
+            serde_json::json!({ "session_id": sid }),
+        )
+        .await
+        .expect("initial attach failed");
+
+        request_id += 1;
+        let counter_cmd = "i=0; while true; do echo TICK=$i; i=$((i+1)); sleep 0.2; done\n";
+        let write_line = serialize_request(
+            request_id,
+            "connection.write",
+            serde_json::json!({ "session_id": sid, "data": B64.encode(counter_cmd.as_bytes()) }),
+        )
+        .expect("serialize write");
+        channel
+            .data(write_line.as_bytes())
+            .await
+            .expect("write counter command");
+
+        let before =
+            read_counter_until(&mut channel, |m| m >= 3, Instant::now() + RECOVERY_CEILING)
+                .await
+                .expect("counter never produced TICK values before the sever");
+        assert!(
+            before >= 3,
+            "counter not clearly running before the sever: {before}"
+        );
+
+        // ── THE SEVER UNDER TEST: deterministic, in-process, sshd untouched.
+        // Dropping the desktop transport closes the client socket abruptly; the
+        // established russh channel is gone (we consumed it), and the peer's sshd
+        // handler sees the EOF. The setsid'd daemon keeps the counter running.
+        assert!(
+            is_listening(sshd.port),
+            "sshd must stay up across an in-process sever — no kill, no restart"
+        );
+        test_sever_desktop_transport(channel, Some(session));
+        // The daemon keeps ticking with nobody attached.
+        std::thread::sleep(Duration::from_millis(1500));
+        assert!(
+            is_listening(sshd.port),
+            "the in-process sever must not touch the sshd — it is still listening"
+        );
+
+        // ── Reconnect over the still-listening sshd; the fresh `--stdio` agent's
+        // startup recovery re-adopts the surviving daemon session.
+        let (session2, mut channel2, _buffered2) =
+            reconnect_agent(&config, &settings, &mut request_id, &alive)
+                .await
+                .expect("reconnect_agent failed to re-establish after the in-process sever");
+
+        // Same-session recovery: the SAME id must reappear (never a fresh create).
+        let list = channel_rpc(
+            &mut channel2,
+            &mut request_id,
+            "connection.list",
+            serde_json::json!({}),
+        )
+        .await
+        .expect("connection.list after reconnect failed");
+        let recovered = list["sessions"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .any(|s| s["session_id"].as_str() == Some(sid.as_str()))
+            })
+            .unwrap_or(false);
+        assert!(
+            recovered,
+            "daemon session {sid} was not recovered after the in-process sever \
+             (a fresh shell, not the continued one) — list: {list}"
+        );
+
+        channel_rpc(
+            &mut channel2,
+            &mut request_id,
+            "connection.attach",
+            serde_json::json!({ "session_id": sid }),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("re-attach to the same session {sid} failed: {e}"));
+
+        // Continuity: a counter value strictly BEYOND the pre-drop one — neither a
+        // restart (back to 0) nor a stall (unchanged) across the outage.
+        let after_gap = read_counter_until(
+            &mut channel2,
+            |m| m > before,
+            Instant::now() + RECOVERY_CEILING,
+        )
+        .await
+        .expect("no counter output after the in-process sever — the live session did not survive");
+        assert!(
+            after_gap > before,
+            "counter did not advance across the in-process sever: before={before}, \
+             after={after_gap} — the process paused or restarted (not the same live session)"
+        );
+
+        // Live continuation past the drained replay head can only come from the
+        // still-running loop.
+        let base = read_counter_until(
+            &mut channel2,
+            |_| false,
+            Instant::now() + Duration::from_millis(800),
+        )
+        .await
+        .unwrap_or(after_gap);
+        let after_live = read_counter_until(
+            &mut channel2,
+            |m| m > base,
+            Instant::now() + RECOVERY_CEILING,
+        )
+        .await
+        .expect("counter stopped advancing after the in-process sever");
+        assert!(
+            after_live > base,
+            "counter stopped after reconnect: base={base}, after_live={after_live} \
+             — the recovered session is not live"
+        );
+
+        let _ = channel_rpc(
+            &mut channel2,
+            &mut request_id,
+            "connection.close",
+            serde_json::json!({ "session_id": sid }),
+        )
+        .await;
+        drop(channel2);
+        drop(session2);
+        sshd.stop();
+    }
+
+    /// #2573: a PERMANENT transport loss (endpoint gone) after an in-process sever
+    /// settles distinctly from a user-cancel.
+    ///
+    /// After severing in-process and taking the sshd fully down, `reconnect_agent`
+    /// must **park** — keep retrying with backoff — never reporting a spurious
+    /// success against the dead endpoint (bounded so the test cannot hang). A
+    /// user-cancel (`alive = false`) is the DISTINCT settle: the next attempt
+    /// returns promptly with the stop signal, not an `Ok`. Together these pin the
+    /// two terminal outcomes the reconnect grade must tell apart.
+    ///
+    /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn permanent_transport_loss_parks_distinct_from_user_cancel() {
+        let Some(sshd) = find_sshd() else {
+            eprintln!("SKIP: no sshd binary found — cannot stand up a local agent endpoint");
+            return;
+        };
+        let Some(agent_bin) = find_agent_binary() else {
+            eprintln!(
+                "SKIP: termihub-agent binary not found — run `cargo build -p termihub-agent` \
+                 (or set TERMIHUB_TEST_AGENT_BIN)"
+            );
+            return;
+        };
+
+        trust_all_host_keys();
+
+        let mut sshd = LocalAgentSshd::new(sshd, agent_bin).expect("stand up local agent sshd");
+        sshd.start();
+
+        let config = sshd.agent_config();
+        let settings = AgentSettings::default();
+        let alive = Arc::new(AtomicBool::new(true));
+        let mut request_id = 0u64;
+
+        let (session, channel, _buffered) =
+            reconnect_agent(&config, &settings, &mut request_id, &alive)
+                .await
+                .expect("initial agent establishment over local sshd failed");
+
+        // In-process sever, then take the endpoint permanently down.
+        test_sever_desktop_transport(channel, Some(session));
+        sshd.stop();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while is_listening(sshd.port) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(
+            !is_listening(sshd.port),
+            "the endpoint must be fully down for the permanent-loss path"
+        );
+
+        // Permanent loss → PARK: reconnect keeps retrying, never settling early.
+        // Bounded by a timeout so a regression to a false Ok/early-Err trips here.
+        // (The `Ok` transport holds a russh handle that is not `Debug`, so match
+        // rather than assert-format.)
+        match tokio::time::timeout(
+            Duration::from_secs(6),
+            reconnect_agent(&config, &settings, &mut request_id, &alive),
+        )
+        .await
+        {
+            Err(_elapsed) => {} // still retrying when the window elapsed → parked
+            Ok(Ok(_)) => {
+                panic!("reconnect to a permanently-dead endpoint falsely reported success")
+            }
+            Ok(Err(e)) => {
+                panic!("reconnect settled early on a permanent loss instead of parking: {e}")
+            }
+        }
+
+        // User-cancel is the DISTINCT settle: with alive=false the next attempt
+        // returns promptly with the stop signal — never a spurious Ok.
+        alive.store(false, Ordering::SeqCst);
+        match reconnect_agent(&config, &settings, &mut request_id, &alive).await {
+            Err(e) => assert!(
+                e.contains("stopped by user"),
+                "a user-cancel must settle with the stop signal, got: {e}"
+            ),
+            Ok(_) => panic!("a user-cancel must not report a spurious reconnect success"),
+        }
     }
 }

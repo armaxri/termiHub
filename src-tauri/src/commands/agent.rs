@@ -110,6 +110,48 @@ pub fn disconnect_agent(
         .map_err(|e| e.to_string())
 }
 
+/// TEST-ONLY (#2573): abruptly sever a connected agent's transport in-process to
+/// drive the reconnect path, for the automated agent-reconnect grade (#2574).
+///
+/// This is a **test-bridge-only** hook: it refuses unless the app was launched
+/// with `TERMIHUB_TEST_BRIDGE_PORT` set
+/// ([`is_test_bridge_enabled`](crate::utils::test_bridge::is_test_bridge_enabled)),
+/// so a production launch can never invoke the sever — the gate mirrors the
+/// projection-diagnostics and CSP-relaxation test hooks. Unlike `disconnect_agent`
+/// (user-cancel), the agent's I/O task stays alive and reconnects, re-attaching any
+/// surviving daemon sessions.
+///
+/// Returns `true` when a live agent received the sever, `false` for an unknown or
+/// already-dead agent.
+#[tauri::command]
+pub fn test_sever_agent_transport(
+    agent_id: String,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<bool, String> {
+    let bridge_enabled = crate::utils::test_bridge::is_test_bridge_enabled();
+    sever_transport_gated(bridge_enabled, &agent_id, || {
+        agent_manager.test_sever_transport(&agent_id)
+    })
+}
+
+/// The gate for [`test_sever_agent_transport`], split out so the test-bridge gate
+/// is unit-testable without a Tauri `State` or a live agent.
+///
+/// Refuses — **never invoking `do_sever`** — unless `bridge_enabled`. That
+/// short-circuit is the single seam keeping the sever unreachable in a production
+/// launch (test bridge off): the manager is not even consulted.
+fn sever_transport_gated<F: FnOnce() -> bool>(
+    bridge_enabled: bool,
+    agent_id: &str,
+    do_sever: F,
+) -> Result<bool, String> {
+    if !bridge_enabled {
+        return Err("test_sever_agent_transport is a test-bridge-only hook".to_string());
+    }
+    warn!(agent_id, "TEST-ONLY: severing agent transport in-process");
+    Ok(do_sever())
+}
+
 /// Sweep every agent whose I/O task has already died (`alive == false`).
 ///
 /// Manual resource-hygiene escape hatch surfaced in the Open Connections panel
@@ -1160,5 +1202,38 @@ mod tests {
                 "{msg:?} is a real error and must surface"
             );
         }
+    }
+
+    /// The in-process transport sever (#2573) is unreachable unless the test
+    /// bridge is enabled — the gate that keeps it out of a production launch.
+    ///
+    /// With the gate closed the sever short-circuits to `Err` and `do_sever` (the
+    /// closure that would reach the manager's live I/O task) is **never invoked** —
+    /// proven by a closure that panics if called. With it open the closure runs and
+    /// its result is passed through verbatim. Together these prove the gate governs
+    /// reachability, not merely the return value.
+    #[test]
+    fn sever_transport_is_gated_on_the_test_bridge() {
+        // Gate closed → refuses without ever running the sever closure.
+        let closed = sever_transport_gated(false, "agent-x", || {
+            panic!("the sever closure must not run when the test bridge is off");
+        });
+        assert_eq!(
+            closed,
+            Err("test_sever_agent_transport is a test-bridge-only hook".to_string()),
+            "with the test bridge off the sever must be refused"
+        );
+
+        // Gate open → the closure runs and its result passes through unchanged.
+        assert_eq!(
+            sever_transport_gated(true, "agent-x", || true),
+            Ok(true),
+            "gate open + a live agent severed reports true"
+        );
+        assert_eq!(
+            sever_transport_gated(true, "agent-x", || false),
+            Ok(false),
+            "gate open + no such agent reports false"
+        );
     }
 }
