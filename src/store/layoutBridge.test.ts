@@ -341,21 +341,46 @@ describe("layoutBridge — composeLayoutState (region→appStore mirror, #2283 s
     expect((composed!.rootPanel as { lastActiveLeafId?: string }).lastActiveLeafId).toBe("a");
   });
 
-  it("re-attaches tab content from the current tree when tabContent lacks the id", () => {
+  it("sources content solely from tabContent, never the current tree (#2566)", () => {
     const g1Root = wtree();
-    const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: g1Root, activePanelId: "a" }];
-    const view = viewFrom(groups, "g1", g1Root, "a");
-    // Empty tabContent → every tab resolves via the current-tree fallback.
-    const composed = composeLayoutState(view, g1Root, groups, {});
+    const view = viewFrom(
+      [{ id: "g1", name: "Main", rootPanel: g1Root, activePanelId: "a" }],
+      "g1",
+      g1Root,
+      "a"
+    );
+    // A current tree whose in-tree tab content is deliberately wrong: with the
+    // fallback dropped (#2566) these stale titles must NOT leak into the result;
+    // every tab's content is re-attached from `tabContent` alone.
+    const staleLeafA = {
+      type: "leaf" as const,
+      id: "a",
+      tabs: [wtab("t1", "a", true, { title: "STALE" }), wtab("t2", "a", false, { title: "STALE" })],
+      activeTabId: "t1",
+    };
+    const staleLeafB = {
+      type: "leaf" as const,
+      id: "b",
+      tabs: [wtab("t3", "b", true, { title: "STALE" })],
+      activeTabId: "t3",
+    };
+    const staleTree = { ...g1Root, children: [staleLeafA, staleLeafB] } as PanelNode;
+    const staleGroups: TabGroup[] = [
+      { id: "g1", name: "Main", rootPanel: staleTree, activePanelId: "a" },
+    ];
+    const composed = composeLayoutState(view, staleTree, staleGroups, contentMap("t1", "t2", "t3"));
+    // Composed from tabContent (title "Tab tN"), byte-identical to the real tree.
     expect(composed!.rootPanel).toEqual(g1Root);
   });
 
-  it("prefers tabContent over the in-tree copy for a tab's content", () => {
+  it("re-attaches each tab's content from tabContent (#2566)", () => {
     const g1Root = wtree();
     const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: g1Root, activePanelId: "a" }];
     const view = viewFrom(groups, "g1", g1Root, "a");
     const composed = composeLayoutState(view, g1Root, groups, {
       t1: content("t1", { title: "Overridden" }),
+      t2: content("t2"),
+      t3: content("t3"),
     });
     const leafA = (composed!.rootPanel as { children: PanelNode[] }).children[0] as {
       tabs: TerminalTab[];
@@ -391,7 +416,7 @@ describe("layoutBridge — composeLayoutState (region→appStore mirror, #2283 s
     expect(composeLayoutState({ groups: [], activeGroupId: "g1" }, root, groups, {})).toBeNull();
   });
 
-  it("returns null when the view references a tab absent from both sources", () => {
+  it("returns null when the view references a tab absent from tabContent (transient guard)", () => {
     const root = wtree();
     const groups: TabGroup[] = [{ id: "g1", name: "Main", rootPanel: root, activePanelId: "a" }];
     const ghost: LayoutView = {
@@ -410,6 +435,92 @@ describe("layoutBridge — composeLayoutState (region→appStore mirror, #2283 s
       ],
       activeGroupId: "g1",
     };
-    expect(composeLayoutState(ghost, root, groups, {})).toBeNull();
+    // Even with the tab present in the current tree, an id absent from tabContent
+    // now yields null — the content fallback is gone (#2566); the null guard stays.
+    const treeWithGhost: PanelNode = {
+      type: "leaf",
+      id: "a",
+      tabs: [tab("ghost")],
+      activeTabId: "ghost",
+    };
+    expect(composeLayoutState(ghost, treeWithGhost, groups, {})).toBeNull();
+  });
+
+  it("reconstructs byte-identical rich tabs of every content type from tabContent alone (#2566)", () => {
+    // One tab per `TabContentType`, each carrying its representative meta. The
+    // content map is the sole content source; the current tree passed to
+    // composeLayoutState is intentionally EMPTY, so a byte-identical result proves
+    // composition never consults the in-tree rich tabs for content.
+    const rich: TerminalTab[] = [
+      wtab("terminal", "leaf1", true, { contentType: "terminal" }),
+      wtab("agentError", "leaf1", false, {
+        contentType: "agent-error",
+        agentErrorMeta: {
+          agentId: "ag1",
+          agentName: "Agent One",
+          definitionId: "def1",
+          definitionName: "Def One",
+          error: "boom",
+          initialCommand: "tmux attach",
+        },
+      }),
+      wtab("settings", "leaf1", false, { contentType: "settings" }),
+      wtab("editor", "leaf1", false, {
+        contentType: "editor",
+        editorMeta: { filePath: "/tmp/f.txt", isRemote: false },
+      }),
+      wtab("connEditor", "leaf1", false, {
+        contentType: "connection-editor",
+        connectionEditorMeta: { connectionId: "c1", folderId: null },
+      }),
+      wtab("logViewer", "leaf1", false, { contentType: "log-viewer" }),
+      wtab("tunnelEditor", "leaf1", false, {
+        contentType: "tunnel-editor",
+        tunnelEditorMeta: { tunnelId: "tun1" },
+      }),
+      wtab("workspaceEditor", "leaf1", false, {
+        contentType: "workspace-editor",
+        workspaceEditorMeta: { workspaceId: "ws1" },
+      }),
+      wtab("netDiag", "leaf1", false, {
+        contentType: "network-diagnostic",
+        networkDiagnosticMeta: { tool: "ping", prefillHost: "example.com" },
+      }),
+      wtab("pluginDetail", "leaf1", false, {
+        contentType: "plugin-detail",
+        pluginDetailMeta: { pluginId: "plug1" },
+      }),
+      wtab("fileBrowser", "leaf1", false, { contentType: "file-browser" }),
+      wtab("remoteDesktop", "leaf1", false, { contentType: "remote-desktop" }),
+    ];
+    const richRoot: PanelNode = {
+      type: "leaf",
+      id: "leaf1",
+      tabs: rich,
+      activeTabId: "terminal",
+    };
+    const groups: TabGroup[] = [
+      { id: "g1", name: "Main", rootPanel: richRoot, activePanelId: "leaf1" },
+    ];
+    const view = viewFrom(groups, "g1", richRoot, "leaf1");
+
+    // Full content map (from the rich tabs) is the ONLY content source. The
+    // current tree handed to composeLayoutState is an empty leaf: if the dropped
+    // fallback were still consulted for content, reconcile would throw → null.
+    const tabContent: Record<string, TabContent> = Object.fromEntries(
+      rich.map((t) => {
+        const { panelId: _p, isActive: _a, ...c } = t;
+        return [t.id, c];
+      })
+    );
+    const emptyTree: PanelNode = { type: "leaf", id: "leaf1", tabs: [], activeTabId: "" };
+    const emptyGroups: TabGroup[] = [
+      { id: "g1", name: "Main", rootPanel: emptyTree, activePanelId: "leaf1" },
+    ];
+
+    const composed = composeLayoutState(view, emptyTree, emptyGroups, tabContent);
+    expect(composed).not.toBeNull();
+    // Byte-identical to the original rich tree, reconstructed from tabContent only.
+    expect(composed!.rootPanel).toEqual(richRoot);
   });
 });

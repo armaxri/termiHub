@@ -601,9 +601,13 @@ export interface ComposedLayoutState {
  * Compose `appStore`'s layout fields from a projected {@link LayoutView} — the
  * inverse of {@link buildLayoutSnapshot}, and the core of the region→appStore
  * mirror (#2283 slice E1). Structure comes from the view; each tab's rich content
- * is re-attached by id via {@link reconcileNode} — preferring the flat
- * `tabContent` map, falling back to the current tree's rich tabs for any id the
- * map does not hold. Returns:
+ * is re-attached by id via {@link reconcileNode} from the flat `tabContent` map
+ * **alone** (#2566) — `appStore` keeps that map complete and current for every
+ * `TabContentType`, so composition never falls back to the current
+ * `curRootPanel`/`curTabGroups` rich trees for content. Those trees are still
+ * consulted, but only for **structure** the region view does not carry: the
+ * directional `lastActiveLeafId` marks and the active group's verbatim entry.
+ * Returns:
  *
  * - top-level `rootPanel`/`activePanelId` composed from the **active** group's
  *   live tree,
@@ -616,11 +620,15 @@ export interface ComposedLayoutState {
  *   makes the composed state byte-identical to the local reducers' result.
  *
  * Returns `null` (mirror skips, leaving `appStore` untouched) when the view is
- * empty/absent, or when it references a tab absent from both the map and the
- * current tree (a transient desync — e.g. the initial backend-default snapshot
- * before the region is seeded from `appStore`). Callers gate with
- * {@link viewMatchesTree} first, so on the happy path this composes cleanly.
+ * empty/absent, or when it references a tab absent from `tabContent` (a transient
+ * desync — e.g. the initial backend-default snapshot before the region is seeded
+ * from `appStore`). Callers gate with {@link viewMatchesTree} first, so on the
+ * happy path this composes cleanly.
  */
+/** Shared empty content-fallback for {@link composeLayoutState}: content now comes
+ * solely from `tabContent`, so `reconcileNode` is handed no tree fallback (#2566).
+ * Shared/reused — `reconcileNode` only reads (never mutates) its `tabsById` arg. */
+const EMPTY_TREE_FALLBACK: Map<string, TerminalTab> = new Map();
 /** Index a tree's directional `lastActiveLeafId` marks by split-container id. */
 function collectSplitMarks(node: PanelNode, into: Map<string, string>): void {
   if (node.type === "split") {
@@ -654,15 +662,16 @@ export function composeLayoutState(
 ): ComposedLayoutState | null {
   if (!view || !Array.isArray(view.groups) || view.groups.length === 0) return null;
 
-  // Content fallback: every current tab by id, across all groups. `tabContent`
-  // is preferred in `reconcileNode`; this covers ids the map does not track
-  // (e.g. editor/settings tabs). The active group's live tree (`curRootPanel`)
-  // is merged last so its up-to-date tabs win over any stale `tabGroups` copy.
-  const fallback = new Map<string, TerminalTab>();
-  for (const g of curTabGroups) {
-    for (const [id, tab] of collectTabs(g.rootPanel)) fallback.set(id, tab);
-  }
-  for (const [id, tab] of collectTabs(curRootPanel)) fallback.set(id, tab);
+  // Content is sourced **solely** from `tabContent` (#2566): every tab-creation
+  // and content-mutation reducer in `appStore` keeps this by-id map complete and
+  // current for every `TabContentType`, so composition never consults the current
+  // `curRootPanel`/`curTabGroups` rich trees for content. Those trees are still
+  // read below, but only for **structure** the region view does not carry —
+  // directional `lastActiveLeafId` marks and the active group's verbatim entry.
+  // An empty content-fallback map is passed to `reconcileNode` so a view id absent
+  // from `tabContent` throws (caught below → `null`) rather than silently resolving
+  // from a possibly-stale tree; that is the retained transient-desync guard.
+  const noTreeFallback: Map<string, TerminalTab> = EMPTY_TREE_FALLBACK;
 
   // Directional marks by group id, from the prior `appStore` trees (active group's
   // live tree overriding its stale `tabGroups` entry) — re-applied onto each
@@ -697,7 +706,7 @@ export function composeLayoutState(
         id: vg.id,
         name: vg.name,
         rootPanel: preserveSplitMarks(
-          reconcileNode(vg.root, fallback, tabContent),
+          reconcileNode(vg.root, noTreeFallback, tabContent),
           marksByGroup.get(vg.id) ?? new Map()
         ),
         activePanelId: vg.activePanelId,
@@ -708,7 +717,7 @@ export function composeLayoutState(
 
     return {
       rootPanel: preserveSplitMarks(
-        reconcileNode(activeView.root, fallback, tabContent),
+        reconcileNode(activeView.root, noTreeFallback, tabContent),
         marksByGroup.get(activeGroupId) ?? new Map()
       ),
       activePanelId: activeView.activePanelId,
