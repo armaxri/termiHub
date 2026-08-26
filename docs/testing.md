@@ -1325,8 +1325,8 @@ a Unix agent host (the exec-replace is Unix-only). See PR #1352.
 
 ### Backend-driven agent reconnect across a prolonged transport drop (#2476)
 
-Verifies the backend-driven agent reconnect redrive under the
-`sessionBackendReattach` flag: an agent-hosted session whose transport is
+Verifies the backend-driven agent reconnect redrive (now unconditional, #2560):
+an agent-hosted session whose transport is
 severed for a prolonged outage reconnects **backend-driven** (the terminal
 re-attaches to a new backend session, the client engine suppressed, no
 double-connect, never stranded), and a permanent drop settles Disconnected. This
@@ -1335,8 +1335,8 @@ foreground display (#957, #2460) — so it is a turnkey manual test with a real
 display. Unix/macOS only (the dev agent is a loopback sshd). See PR for #2476;
 harness residual tracked in #2480.
 
-Run once (from a dev checkout — builds if stale, starts the dev agent + app with
-the flag on, prints the checklist):
+Run once (from a dev checkout — builds if stale, starts the dev agent + app,
+prints the checklist):
 
 ```bash
 scripts/internal/verify-agent-reconnect.sh

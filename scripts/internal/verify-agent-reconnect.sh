@@ -3,17 +3,15 @@
 # extended (#2529) to grade #2512's headline: a RUNNING process survives the
 # transport drop and is CONTINUED (same live shell) on reattach — not recreated.
 #
-# ONE command, zero setup. It:
+# ONE command, zero setup. Backend-driven agent reconnect is now unconditional
+# (#2560) — no flag to flip. It:
 #   1. Enables experimental features in the app's settings.json (so the dev
 #      agent's "Remote Agents" sidebar group renders), preserving other settings.
-#   2. Turns the `sessionBackendReattach` flag ON without you editing anything,
-#      via the #2481 test-bridge env->window injection
-#      (TERMIHUB_TEST_FLAG_SESSION_BACKEND_REATTACH -> window.__TERMIHUB_SESSION_BACKEND_REATTACH__).
 #      This is an operator-watched grade on a real display, so the window is left
 #      as a NORMAL, backgroundable window (TERMIHUB_TEST_NO_ALWAYS_ON_TOP=1, #2504)
 #      — you keep it visible yourself, so occlusion-throttling isn't a concern and
 #      you can freely background it to read this checklist / use a second terminal.
-#   3. Launches this checkout's dev agent + the app via `scripts/dev.sh` (builds if
+#   2. Launches this checkout's dev agent + the app via `scripts/dev.sh` (builds if
 #      stale; the dev agent sshd + connection are set up for you). The window stays
 #      in the foreground so you can watch the reconnect.
 #
@@ -121,7 +119,7 @@ rm -f "$STATE_FILE" 2>/dev/null || true
 cat <<CHECKLIST
 
 ============================================================================
-  AGENT RECONNECT — TURNKEY MANUAL TEST (#2476/#2512)   flag: sessionBackendReattach ON
+  AGENT RECONNECT — TURNKEY MANUAL TEST (#2476/#2512)   backend-reattach unconditional
 ============================================================================
 
 The app is about to launch (first run BUILDS — this can take a few minutes).
@@ -190,11 +188,11 @@ automatically).
 
 CHECKLIST
 
-# The flag injection requires the test-bridge plugin, which the backend registers
-# only when TERMIHUB_TEST_BRIDGE_PORT parses. Nothing listens on BRIDGE_PORT — the
-# app's bridge client just logs a failed connect (harmless).
+# The page-visibility anti-throttle override (keeps the reconnect wait awake when
+# the window is backgrounded) is injected by the test-bridge plugin, which the
+# backend registers only when TERMIHUB_TEST_BRIDGE_PORT parses. Nothing listens on
+# BRIDGE_PORT — the app's bridge client just logs a failed connect (harmless).
 export TERMIHUB_TEST_BRIDGE_PORT="$BRIDGE_PORT"
-export TERMIHUB_TEST_FLAG_SESSION_BACKEND_REATTACH=1
 # Opt out of the test-bridge always-on-top pin (#2504): this is an operator-watched
 # grade on a real display, so the operator keeps the window visible themselves —
 # leaving it a normal, backgroundable window instead of forcing it above everything.

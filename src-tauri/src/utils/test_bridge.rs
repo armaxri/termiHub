@@ -31,9 +31,8 @@ pub const TEST_NO_ALWAYS_ON_TOP_ENV: &str = "TERMIHUB_TEST_NO_ALWAYS_ON_TOP";
 /// Env-var prefix for injecting a runtime feature-flag global into the webview
 /// under the test bridge (#2476). `TERMIHUB_TEST_FLAG_<NAME>=<bool>` injects
 /// `window.__TERMIHUB_<NAME>__ = <bool>` before boot, so the harness can flip a
-/// `window.__TERMIHUB_*__`-gated flag for a live run (e.g. the agent reconnect
-/// activation reads `__TERMIHUB_SESSION_BACKEND_REATTACH__`) without a bridge
-/// protocol round-trip. Only active in test-bridge mode; production injects none.
+/// `window.__TERMIHUB_*__`-gated flag for a live run without a bridge protocol
+/// round-trip. Only active in test-bridge mode; production injects none.
 pub const TEST_FLAG_ENV_PREFIX: &str = "TERMIHUB_TEST_FLAG_";
 
 /// Whether a `TERMIHUB_TEST_FLAG_*` value reads as truthy (`1`/`true`, any case).
