@@ -102,9 +102,26 @@ async function flush(): Promise<void> {
 let transport: FakeLayoutTransport;
 let teardown: () => void;
 
+/** Seed `tabContent` from a tree so it holds every live tab — the production
+ * invariant that lets the region→appStore mirror source content solely from the
+ * map (#2566). A direct `setState({ rootPanel })` bypasses the reducers that keep
+ * these in sync, so tests that seed the tree must seed the map too. */
+function tabContentFromTree(
+  root: PanelNode
+): Record<string, import("@/types/terminal").TabContent> {
+  const map: Record<string, import("@/types/terminal").TabContent> = {};
+  for (const leaf of getAllLeaves(root)) {
+    for (const t of leaf.tabs) {
+      const { panelId: _p, isActive: _a, ...content } = t;
+      map[t.id] = content;
+    }
+  }
+  return map;
+}
+
 async function resetStore(root: PanelNode = seedTree(), activePanelId = "a"): Promise<void> {
   useAppStore.setState(useAppStore.getInitialState());
-  useAppStore.setState({ rootPanel: root, activePanelId });
+  useAppStore.setState({ rootPanel: root, activePanelId, tabContent: tabContentFromTree(root) });
   // Under E2 `appStore`'s layout is derived solely from the region, so seed the
   // region to this tree (the mirror composes it back) rather than leaving the
   // backend twin on its default view, which the mirror would otherwise compose

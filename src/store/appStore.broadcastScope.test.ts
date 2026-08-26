@@ -38,6 +38,7 @@ vi.mock("@/themes", () => ({
 }));
 
 import { useAppStore, resolveBroadcastTargetTabIds } from "./appStore";
+import { getAllLeaves } from "@/utils/panelTree";
 import { currentBroadcastView, ensureBroadcastSubscribed } from "./broadcastBridge";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import type {
@@ -80,9 +81,19 @@ function leaf(id: string, tabs: TerminalTab[]): LeafPanel {
   return { type: "leaf", id, tabs, activeTabId: tabs[0]?.id ?? null };
 }
 
-/** Seed the active tab group with a given panel tree. */
+/** Seed the active tab group with a given panel tree, keeping `tabContent`
+ * complete for every seeded tab — the production invariant the layout mirror
+ * relies on to source content solely from the map (#2566). A bare
+ * `setState({ rootPanel })` bypasses the reducers that keep them in sync. */
 function seed(root: PanelNode) {
-  useAppStore.setState({ rootPanel: root, activePanelId: "leaf-1" });
+  const tabContent: Record<string, import("@/types/terminal").TabContent> = {};
+  for (const l of getAllLeaves(root)) {
+    for (const t of l.tabs) {
+      const { panelId: _p, isActive: _a, ...content } = t;
+      tabContent[t.id] = content;
+    }
+  }
+  useAppStore.setState({ rootPanel: root, activePanelId: "leaf-1", tabContent });
 }
 
 describe("resolveBroadcastTargetTabIds (#1956)", () => {
