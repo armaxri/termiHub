@@ -253,7 +253,6 @@ import {
   logSessionBridgeFallback,
   mirrorSessionIntent,
   onSessionView,
-  sessionBackendReattachEnabled,
 } from "@/store/sessionBridge";
 import {
   currentMonitorsView,
@@ -1101,8 +1100,8 @@ export interface AppState
   setTerminalDisconnectWithError: (tabId: string, error: string) => void;
   /**
    * Settle a backend-driven agent reconnect (#2476) that the **backend** gave up
-   * on. The backend redrive owns the reconnect outcome under the
-   * `sessionBackendReattach` flag, so when its park/retry loop exhausts (folds
+   * on. The backend redrive owns the reconnect outcome, so when its park/retry
+   * loop exhausts (folds
    * `reconnectFailed` → `Failed`/`gaveup` in the region), the frontend must
    * reflect that terminal state directly rather than routing through the client
    * reconnect reducer (whose local attempt counter is not the authority here).
@@ -2067,11 +2066,10 @@ export function collectLiveTabs(state: {
  *
  * - **Agentless direct SSH (#1962):** a plain SSH terminal whose saved connection
  *   opted in via the "Resilient Reconnect" setting. Client-driven backoff loop.
- * - **Agent-hosted (#2476):** a shell session on a remote agent, resilient **only
- *   when the `sessionBackendReattach` flag is on**. The agent reconnect is
- *   backend-driven (park + retry + new-sessionId re-attach); the flag is its
- *   master switch. With the flag OFF this returns `false` for every agent tab —
- *   byte-identical to the pre-#2476 `if (cfg.agentId) return false` behavior.
+ * - **Agent-hosted (#2476):** a shell session on a remote agent — always
+ *   resilient. The agent reconnect is backend-driven (park + retry + new-sessionId
+ *   re-attach), and backend-reattach is now unconditional (#2560), so every
+ *   agent-hosted tab is eligible.
  *
  * Reads the opt-in / agent marker from the tab's connection config.
  */
@@ -2082,9 +2080,9 @@ function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
   const cfg = tab.config?.config as { resilientReconnect?: unknown; agentId?: unknown } | undefined;
   if (!cfg) return false;
   if (cfg.agentId) {
-    // Agent-hosted tab (#2476): resilient iff the backend-reattach flag is on.
-    // Flag off ⇒ false ⇒ byte-identical to develop (agents were always excluded).
-    return sessionBackendReattachEnabled();
+    // Agent-hosted tab (#2476): always resilient — the backend redrive is the sole
+    // reconnect authority and backend-reattach is unconditional (#2560).
+    return true;
   }
   if (tab.connectionType !== "ssh") return false;
   return cfg.resilientReconnect === true;
@@ -2105,23 +2103,19 @@ export function isResilientReconnectTabId(tabId: string): boolean {
 
 /**
  * Whether `tabId` is an **agent-hosted** tab whose reconnect is driven entirely
- * by the backend redrive under the `sessionBackendReattach` flag (#2476), as
- * opposed to an agentless direct-SSH resilient tab (#1962/#2457) whose reconnect
- * the client still drives (with the backend-reattach id as a fast path).
+ * by the backend redrive (#2476), as opposed to an agentless direct-SSH resilient
+ * tab (#1962/#2457) whose reconnect the client still drives (with the
+ * backend-reattach id as a fast path).
  *
- * This is the discriminator for the two agent-specific cuts of the activation:
+ * This is the discriminator for the two agent-specific cuts of the reconnect path:
  *  - `Terminal.tsx` routes only these tabs through the give-up-aware wait that
  *    stays deferred to the backend loop across a prolonged drop (never falling
  *    through to the non-idempotent client agent engine — the double-drive fix);
  *  - `reconnectTerminal` skips arming the fixed 90 s "connecting" deadline for
  *    these tabs, since the backend park/retry legitimately outlasts it and the
  *    give-up fold — not a client wall-clock timeout — is what settles the tab.
- *
- * Flag off ⇒ always `false` (no agent tab is resilient), so both cuts are inert
- * and every path is byte-identical to develop.
  */
 export function isBackendDrivenAgentReconnectTabId(tabId: string): boolean {
-  if (!sessionBackendReattachEnabled()) return false;
   const tab = collectLiveTabs(useAppStore.getState()).find((t) => t.id === tabId);
   if (!tab) return false;
   if (tab.persistentConnectionId) return false;
@@ -5878,7 +5872,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // this reconnect leaves the deadline cleared — the backend give-up fold,
         // not a client timer, is what settles the tab (the give-up-aware wait in
         // Terminal.tsx resolves it). Every other tab keeps the safety-net deadline.
-        // Flag off ⇒ this is always false ⇒ byte-identical to develop.
         const deferToBackendLoop = isBackendDrivenAgentReconnectTabId(tabId);
         return {
           terminalExitedTabs: omitKey(state.terminalExitedTabs, tabId),

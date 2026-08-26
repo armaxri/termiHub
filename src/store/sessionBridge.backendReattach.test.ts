@@ -2,14 +2,9 @@
  * Unit tests for the backend-driven re-attach bridge surface (#2457, part of the
  * server-side reconnect redrive #2454 / umbrella #2446).
  *
- * Covers the two new pieces this issue adds to `sessionBridge`:
- *  - {@link sessionBackendReattachEnabled} — the flag that switches a
- *    direct-connection reconnect from the client redrive to the attach-to-given-
- *    session path. Default **on** (#2205 PR-B); the `"false"` override forces the
- *    client-redrive fallback for an instant revert.
- *  - {@link waitForBackendReattachSessionId} — resolves the backend session id the
- *    server-side redrive publishes to the `session-lifecycle` region (keyed by tab
- *    id), so the terminal can re-attach I/O without calling `create_connection`.
+ * Covers {@link waitForBackendReattachSessionId} — resolves the backend session id
+ * the server-side redrive publishes to the `session-lifecycle` region (keyed by tab
+ * id), so the terminal can re-attach I/O without calling `create_connection`.
  *
  * The region is driven by an in-memory transport double so the round-trip is
  * exercised without a backend.
@@ -28,8 +23,6 @@ import type {
 } from "@/services/transport";
 import {
   SESSION_LIFECYCLE_REGION,
-  sessionBackendReattachEnabled,
-  setSessionBackendReattachEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
   waitForBackendReattachSessionId,
@@ -91,28 +84,11 @@ let transport: FakeTransport;
 beforeEach(() => {
   transport = new FakeTransport();
   setSessionTransportForTest(transport);
-  setSessionBackendReattachEnabled(null);
 });
 
 afterEach(() => {
   stopSessionSubscription();
   setSessionTransportForTest(null);
-  setSessionBackendReattachEnabled(null);
-});
-
-describe("sessionBackendReattachEnabled flag", () => {
-  it("defaults ON and honours the programmatic override", () => {
-    // Default on (#2205 PR-B) ⇒ the backend is the sole reconnect authority.
-    // The `"false"` override still forces the client-redrive fallback for an
-    // instant revert.
-    expect(sessionBackendReattachEnabled()).toBe(true);
-    setSessionBackendReattachEnabled(false);
-    expect(sessionBackendReattachEnabled()).toBe(false);
-    setSessionBackendReattachEnabled(true);
-    expect(sessionBackendReattachEnabled()).toBe(true);
-    setSessionBackendReattachEnabled(null);
-    expect(sessionBackendReattachEnabled()).toBe(true);
-  });
 });
 
 describe("waitForBackendReattachSessionId", () => {

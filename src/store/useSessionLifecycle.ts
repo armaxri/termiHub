@@ -120,7 +120,7 @@ export interface ProjectedSessionLifecycleSlice {
   /** True when the projected status is the terminal `sessionLost` state (#2512):
    * a resilient agent tab reconnected its transport but its live agent session
    * could not be recovered. Sourced directly from the region (no `appStore` twin —
-   * the state is only ever emitted server-side, behind `sessionBackendReattach`). */
+   * the state is only ever emitted server-side by the backend redrive). */
   sessionLost: boolean;
   /** The backend-supplied "why the session could not be recovered" message shown
    * in the session-lost notice, if any (#2512). `undefined` unless `sessionLost`. */

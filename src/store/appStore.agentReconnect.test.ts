@@ -1,15 +1,13 @@
 /**
- * appStore parity tests for the agent reconnect activation (#2476).
+ * appStore parity tests for the agent reconnect activation (#2476), now
+ * unconditional after the `sessionBackendReattach` flag was removed (#2560):
  *
- * The activation flag-gates the agent hot path behind `sessionBackendReattach`:
- *
- *  - {@link isResilientReconnectTabId} — an agent-hosted tab counts as resilient
- *    ONLY when the flag is on (flag off ⇒ agents excluded, byte-identical to
- *    develop). Direct-SSH classification is unchanged either way.
+ *  - {@link isResilientReconnectTabId} — an agent-hosted tab always counts as
+ *    resilient. Direct-SSH classification is unchanged (opt-in).
  *  - {@link isBackendDrivenAgentReconnectTabId} — the discriminator that routes
  *    an agent reconnect entirely to the backend (never the client agent engine)
- *    and suppresses the client connect deadline. True only for a non-persistent
- *    agent tab with the flag on.
+ *    and suppresses the client connect deadline. True for any non-persistent
+ *    agent tab.
  *  - `reconnectTerminal` — skips the fixed 90 s "connecting" deadline for a
  *    backend-driven agent reconnect (the backend park/retry legitimately
  *    outlasts it), while every other tab keeps the safety-net deadline.
@@ -17,7 +15,7 @@
  *    disconnect overlay without re-mirroring any intent.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
@@ -73,7 +71,6 @@ import {
   isResilientReconnectTabId,
   isBackendDrivenAgentReconnectTabId,
 } from "./appStore";
-import { setSessionBackendReattachEnabled } from "./sessionBridge";
 
 /** A non-persistent agent (remote-session) shell tab. */
 function makeAgentTab(): string {
@@ -105,40 +102,22 @@ beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
 });
 
-afterEach(() => {
-  setSessionBackendReattachEnabled(null);
-});
-
 describe("agent tab resilient classification (#2476)", () => {
-  it("flag OFF: an agent tab is NOT resilient (byte-identical to develop)", () => {
-    setSessionBackendReattachEnabled(false);
-    const tabId = makeAgentTab();
-    expect(isResilientReconnectTabId(tabId)).toBe(false);
-    expect(isBackendDrivenAgentReconnectTabId(tabId)).toBe(false);
-  });
-
-  it("flag ON: an agent tab IS resilient and backend-driven", () => {
-    setSessionBackendReattachEnabled(true);
+  it("an agent tab IS resilient and backend-driven (unconditional, #2560)", () => {
     const tabId = makeAgentTab();
     expect(isResilientReconnectTabId(tabId)).toBe(true);
     expect(isBackendDrivenAgentReconnectTabId(tabId)).toBe(true);
   });
 
   it("a direct SSH tab is never backend-driven-agent, and its resilience is unchanged", () => {
-    setSessionBackendReattachEnabled(true);
     const tabId = makeSshTab();
     expect(isResilientReconnectTabId(tabId)).toBe(true); // opt-in, agentless #1962
-    expect(isBackendDrivenAgentReconnectTabId(tabId)).toBe(false);
-
-    setSessionBackendReattachEnabled(false);
-    expect(isResilientReconnectTabId(tabId)).toBe(true); // still opt-in, flag-independent
     expect(isBackendDrivenAgentReconnectTabId(tabId)).toBe(false);
   });
 });
 
 describe("reconnectTerminal connect-deadline reconciliation (#2476)", () => {
-  it("flag ON: a backend-driven agent reconnect arms NO connecting deadline", () => {
-    setSessionBackendReattachEnabled(true);
+  it("a backend-driven agent reconnect arms NO connecting deadline", () => {
     const tabId = makeAgentTab();
     useAppStore.getState().reconnectTerminal(tabId);
     expect(useAppStore.getState().terminalConnectDeadline[tabId]).toBeUndefined();
@@ -147,17 +126,7 @@ describe("reconnectTerminal connect-deadline reconciliation (#2476)", () => {
     expect(useAppStore.getState().terminalRetryCounters[tabId]).toBe(1);
   });
 
-  it("flag OFF: an agent reconnect keeps the safety-net connecting deadline", () => {
-    setSessionBackendReattachEnabled(false);
-    const tabId = makeAgentTab();
-    useAppStore.getState().reconnectTerminal(tabId);
-    const deadline = useAppStore.getState().terminalConnectDeadline[tabId];
-    expect(deadline?.kind).toBe("connecting");
-    expect(deadline?.at).toBeGreaterThan(Date.now());
-  });
-
-  it("a direct SSH tab keeps the connecting deadline even with the flag on", () => {
-    setSessionBackendReattachEnabled(true);
+  it("a direct SSH tab keeps the connecting deadline", () => {
     const tabId = makeSshTab();
     useAppStore.getState().reconnectTerminal(tabId);
     expect(useAppStore.getState().terminalConnectDeadline[tabId]?.kind).toBe("connecting");
@@ -166,7 +135,6 @@ describe("reconnectTerminal connect-deadline reconciliation (#2476)", () => {
 
 describe("settleBackendReconnectGaveUp (#2476)", () => {
   it("clears the loop + connect flags and shows the disconnect overlay with the error", () => {
-    setSessionBackendReattachEnabled(true);
     const tabId = makeAgentTab();
     // Simulate a live backend-driven reconnect: a fresh connect deadline armed.
     useAppStore.getState().reconnectTerminal(tabId);

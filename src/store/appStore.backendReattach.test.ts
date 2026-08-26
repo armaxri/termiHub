@@ -1,21 +1,16 @@
 /**
- * appStore parity tests for the backend-reattach authority cut (#2454).
+ * appStore parity tests for the backend-reattach authority cut (#2454), now
+ * unconditional after the `sessionBackendReattach` flag was removed (#2560).
  *
- * When the default-off `sessionBackendReattach` flag is ON, the **backend**
- * reconnect redrive owns the attempt OUTCOME — it folds `connected` /
- * `reconnectFailed` at the source. The client must therefore NOT also mirror
- * those (the reconnect engine is non-idempotent: a double `failure` would
- * double-count the attempt and give up early). This suite pins that surgical cut:
+ * The **backend** reconnect redrive owns the attempt OUTCOME — it folds
+ * `connected` / `reconnectFailed` at the source. The client must therefore NOT
+ * also mirror those (the reconnect engine is non-idempotent: a double `failure`
+ * would double-count the attempt and give up early). This suite pins that cut:
  *
- *  - flag ON  → a failed attempt does NOT dispatch `session.reconnectFailed`,
- *    but the local loop record still settles (the overlay is unaffected), and
- *    `drop` (`session.reconnect`) + user `cancel` (`session.cancelReconnect`)
- *    stay client-driven (the backend cannot observe those otherwise).
- *  - flag OFF → develop parity: a failed attempt DOES dispatch
- *    `session.reconnectFailed` exactly as before.
- *
- * The `sessionIntents` cut stays on throughout (its default), so only the new
- * `sessionBackendReattach` flag differs between the two cases.
+ *  - a failed attempt does NOT dispatch `session.reconnectFailed`, but the local
+ *    loop record still settles (the overlay is unaffected), and `drop`
+ *    (`session.reconnect`) + user `cancel` (`session.cancelReconnect`) stay
+ *    client-driven (the backend cannot observe those otherwise).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,7 +80,6 @@ import type {
 import { useAppStore } from "./appStore";
 import {
   SESSION_LIFECYCLE_REGION,
-  setSessionBackendReattachEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
   type ProjectedSessionLifecycle,
@@ -184,11 +178,9 @@ describe("appStore — the backend owns the reconnect outcome (#2454 / #2205 PR-
   afterEach(() => {
     stopSessionSubscription();
     setSessionTransportForTest(null);
-    setSessionBackendReattachEnabled(null);
   });
 
   it("never dispatches session.reconnectFailed — the client engine is gone", async () => {
-    setSessionBackendReattachEnabled(true);
     const tabId = makeSshTab();
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
     await flush();
@@ -205,7 +197,6 @@ describe("appStore — the backend owns the reconnect outcome (#2454 / #2205 PR-
   });
 
   it("drop mirrors session.reconnect and user cancel mirrors session.cancelReconnect", async () => {
-    setSessionBackendReattachEnabled(true);
     const tabId = makeSshTab();
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
     await flush();

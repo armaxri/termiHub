@@ -53,11 +53,7 @@ import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
-import {
-  currentSessionView,
-  sessionBackendReattachEnabled,
-  waitForBackendAgentReconnectOutcome,
-} from "@/store/sessionBridge";
+import { currentSessionView, waitForBackendAgentReconnectOutcome } from "@/store/sessionBridge";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -640,19 +636,11 @@ export function Terminal({
                 // `session.dropped`, converging with `setTerminalExited`. Computed
                 // from the live store the same way the client's drop path does.
                 const resilientReconnect = isResilientReconnectTabId(tabId);
-                // The backend-reattach determination (#2454): recorded on the
-                // retained request so the backend reconnect timer knows it may
-                // redrive this tab itself. Passed on the initial connect (this is
-                // the client redrive path, reached only when the flag is off or as
-                // the #2457 fallback); the redrive's own re-connect keeps the gate
-                // on server-side.
-                const backendReattach = sessionBackendReattachEnabled();
                 resolved = await createTerminal(
                   sessionConfig,
                   connectId,
                   spawned,
-                  resilientReconnect,
-                  backendReattach
+                  resilientReconnect
                 );
               } finally {
                 connectInFlightRef.current.delete(connectId);

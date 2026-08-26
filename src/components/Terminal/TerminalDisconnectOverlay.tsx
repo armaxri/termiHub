@@ -162,7 +162,7 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   const reconnectTriggerError = lifecycle.reconnectTriggerError;
   // Terminal session-lost state (#2512): a resilient agent tab reconnected its
   // transport but its live agent session could not be recovered. Sourced from the
-  // projected region (no appStore twin) and gated behind `sessionBackendReattach`.
+  // projected region (no appStore twin); the backend redrive emits it server-side.
   const isSessionLost = lifecycle.sessionLost;
   const sessionLostError = lifecycle.sessionLostError;
   // The auto-reconnect gate reads the same projected-with-fallback loop detail as

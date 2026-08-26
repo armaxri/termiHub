@@ -2,15 +2,14 @@
  * Component tests for the backend-driven direct-reconnect re-attach path (#2457,
  * part of the server-side reconnect redrive #2454 / umbrella #2446).
  *
- * When the NEW default-off `sessionBackendReattach` flag is ON, a direct-
- * connection reconnect must NOT call `create_connection`. Instead the server-side
- * redrive (#2454) creates the connection itself, mints a new backend session id,
- * and publishes it to the `session-lifecycle` region; the Terminal re-attaches
- * terminal I/O (subscribe output/exit + `setTabSessionId`) to that id.
- *
- * With the flag OFF, the reconnect drives the client redrive exactly as on
- * `develop` — a fresh `create_connection` — so the two tests here also pin the
- * flag-off parity: same setup, only the flag differs.
+ * When the region has folded a tab to `reconnecting` (the backend redrive owns
+ * the loop, now unconditional after the `sessionBackendReattach` flag was removed,
+ * #2560), a direct-connection reconnect must NOT call `create_connection`. Instead
+ * the server-side redrive (#2454) creates the connection itself, mints a new
+ * backend session id, and publishes it to the `session-lifecycle` region; the
+ * Terminal re-attaches terminal I/O (subscribe output/exit + `setTabSessionId`) to
+ * that id. A user-initiated reconnect while the region is NOT reconnecting still
+ * starts a fresh client `create_connection`.
  *
  * Full end-to-end drop verification (Reconnecting→Attempt→Connected fully
  * server-side) is deferred to #2454's backend-redrive PR — nothing drives a
@@ -26,7 +25,6 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import {
   ensureSessionSubscribed,
-  setSessionBackendReattachEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
 } from "@/store/sessionBridge";
@@ -162,7 +160,6 @@ afterEach(() => {
   container.remove();
   stopSessionSubscription();
   setSessionTransportForTest(null);
-  setSessionBackendReattachEnabled(null);
 });
 
 // A direct (non-persistent, non-agent) connection.
@@ -174,9 +171,7 @@ const DIRECT_CONFIG = {
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("Terminal — backend-driven direct reconnect re-attach (#2457)", () => {
-  it("flag ON: re-attaches to the backend-published session id without create_connection", async () => {
-    setSessionBackendReattachEnabled(true);
-
+  it("re-attaches to the backend-published session id (region reconnecting) without create_connection", async () => {
     // Mount as if already connected to a (now to-be-dead) direct session.
     act(() => {
       root.render(
@@ -223,9 +218,9 @@ describe("Terminal — backend-driven direct reconnect re-attach (#2457)", () =>
     expect(mockSubscribeExit).toHaveBeenCalledWith("backend-new", expect.any(Function));
   });
 
-  it("flag OFF: reconnect drives the client redrive (create_connection) — develop parity", async () => {
-    setSessionBackendReattachEnabled(false);
-    // Even with a backend id available in the region, the flag-off path ignores it.
+  it("a user-initiated reconnect (region not reconnecting) drives a fresh create_connection", async () => {
+    // Region is `connected`, not `reconnecting`: a user Reconnect click starts a
+    // fresh client connect rather than re-attaching to a backend-published id.
     transport.setSession("tab-2", { ...connectedLifecycle(), sessionId: "backend-new" });
 
     act(() => {

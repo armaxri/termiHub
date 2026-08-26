@@ -27,11 +27,7 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
-import {
-  setSessionBackendReattachEnabled,
-  setSessionTransportForTest,
-  stopSessionSubscription,
-} from "@/store/sessionBridge";
+import { setSessionTransportForTest, stopSessionSubscription } from "@/store/sessionBridge";
 import {
   FakeSessionTransport,
   connected as connectedLifecycle,
@@ -182,7 +178,6 @@ beforeEach(() => {
   xtermInstances.length = 0;
   transport = new FakeSessionTransport();
   setSessionTransportForTest(transport);
-  setSessionBackendReattachEnabled(true);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -192,7 +187,6 @@ afterEach(() => {
   container.remove();
   stopSessionSubscription();
   setSessionTransportForTest(null);
-  setSessionBackendReattachEnabled(null);
 });
 
 const AGENT_CONFIG = {
@@ -328,31 +322,5 @@ describe("Terminal — backend-driven agent re-attach must not duplicate scrollb
     expect(s2Subscribes).toHaveLength(1);
     // No fresh session was minted — the same live agent session was re-attached.
     expect(mockCreateTerminal).not.toHaveBeenCalled();
-  });
-
-  it("flag OFF: still replays the local snapshot on reconnect (develop parity)", async () => {
-    setSessionBackendReattachEnabled(false);
-    const tabId = addAgentTab("S1");
-    mount(tabId, "S1");
-    await act(async () => {
-      await wait(50);
-    });
-
-    // Flag off ⇒ no backend-driven re-attach: the client redrive owns the
-    // reconnect and mints a fresh session, so the local snapshot is the ONLY source
-    // of the pre-drop scrollback and must still be replayed (unchanged from develop).
-    act(() => {
-      useAppStore.getState().reconnectTerminal(tabId);
-    });
-    await act(async () => {
-      await wait(60);
-    });
-
-    expect(xtermInstances.length).toBeGreaterThan(1);
-    const fresh = xtermInstances[xtermInstances.length - 1];
-    const replayedLocalSnapshot = fresh.write.mock.calls.some(
-      (call) => call[0] === SERIALIZED_SCROLLBACK
-    );
-    expect(replayedLocalSnapshot).toBe(true);
   });
 });

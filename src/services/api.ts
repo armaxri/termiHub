@@ -73,11 +73,10 @@ export async function getConnectionTypes(): Promise<ConnectionTypeInfo[]> {
  * (#2439) so the backend can fold a genuine drop server-side as `session.reconnect`
  * (resilient) vs `session.dropped` (non-resilient), converging with the client.
  *
- * `backendReattach` carries the client's `sessionBackendReattach` flag (#2454,
- * default-off) so the backend records it on the tab's retained request — the sole
- * gate on whether the backend reconnect timer re-establishes the transport itself
- * (the redrive), the counterpart to the frontend re-attach (#2457) the same flag
- * switches on. Omitted / `false` ⇒ the client drives the redrive, as on `develop`.
+ * `backendReattach` is sent unconditionally `true` (#2560): the backend redrive is
+ * the sole reconnect authority (the client reconnect engine was deleted, #2558), so
+ * the backend always records the tab's retained request as redrive-eligible. The
+ * backend still only retains-for-redrive when `resilientReconnect` is true.
  */
 export async function createConnection(
   typeId: string,
@@ -85,8 +84,7 @@ export async function createConnection(
   agentId?: string,
   connectId?: string,
   spawned?: boolean,
-  resilientReconnect?: boolean,
-  backendReattach?: boolean
+  resilientReconnect?: boolean
 ): Promise<SessionId> {
   return await invoke<string>("create_connection", {
     typeId,
@@ -95,7 +93,7 @@ export async function createConnection(
     connectId: connectId ?? null,
     spawned: spawned ?? false,
     resilientReconnect: resilientReconnect ?? false,
-    backendReattach: backendReattach ?? false,
+    backendReattach: true,
   });
 }
 
@@ -189,24 +187,16 @@ export async function importInventoryHosts(path: string): Promise<InventoryHost[
  * reconnect redrive is activated (#2476), and the backend only retains a tab's
  * request for the redrive when it is `resilient` (see `session/manager.rs`).
  *
- * `backendReattach` is the client's `sessionBackendReattach` flag (#2454),
- * forwarded on both paths so the backend records it on the retained request as
- * the redrive gate — for a direct connection (#2457) and, once the agent reconnect
- * frontend lands (#2476), for an agent session too. Agent sessions are never
- * spawn-origin, so `spawned` is not forwarded on the `remote-session` path.
- *
- * NOTE: flag-off, both values resolve to `false` for agent tabs
- * (`isResilientReconnectTabId` returns `false` and `sessionBackendReattach` is
- * default-off), and the backend only retains-for-redrive when `resilient` is true,
- * so forwarding them here is byte-identical to `develop` until the agent reconnect
- * frontend (#2476) classifies agent tabs resilient under the flag.
+ * Backend-reattach is always requested (see {@link createConnection}); the backend
+ * only retains a tab's request for the redrive when `resilientReconnect` is true.
+ * Agent sessions are never spawn-origin, so `spawned` is not forwarded on the
+ * `remote-session` path.
  */
 export async function createTerminal(
   config: ConnectionConfig,
   connectId?: string,
   spawned?: boolean,
-  resilientReconnect?: boolean,
-  backendReattach?: boolean
+  resilientReconnect?: boolean
 ): Promise<SessionId> {
   if (config.type === "remote-session") {
     const { agentId, sessionType, ...rest } = config.config as {
@@ -220,8 +210,7 @@ export async function createTerminal(
       agentId,
       connectId,
       undefined,
-      resilientReconnect,
-      backendReattach
+      resilientReconnect
     );
   }
   return await createConnection(
@@ -230,8 +219,7 @@ export async function createTerminal(
     undefined,
     connectId,
     spawned,
-    resilientReconnect,
-    backendReattach
+    resilientReconnect
   );
 }
 

@@ -17,7 +17,6 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
-import { setSessionBackendReattachEnabled } from "@/store/sessionBridge";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 
 // --- Mocks ---
@@ -126,11 +125,9 @@ let root: Root;
 
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
-  // This suite exercises the client-redrive fallback (a reconnect calling
-  // `create_connection` to mint a fresh session). Since #2205 PR-B flipped
-  // `sessionBackendReattach` on by default, pin it OFF so the retained
-  // instant-revert fallback path is what is under test here.
-  setSessionBackendReattachEnabled(false);
+  // This suite exercises a user-initiated reconnect (region not `reconnecting`),
+  // which mints a fresh session via `create_connection` rather than re-attaching
+  // to the dead mount-time id.
   mockCreateTerminal.mockClear();
   mockCreateTerminal.mockResolvedValue("fresh-session");
   mockGetAgentSessionBuffer.mockClear();
@@ -142,7 +139,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  setSessionBackendReattachEnabled(null);
 });
 
 const AGENT_CONFIG = {

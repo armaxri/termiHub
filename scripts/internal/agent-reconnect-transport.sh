@@ -21,8 +21,8 @@
 # the #2476 grade. `setsid` protects the daemon from sshd's SIGHUP-on-teardown, not
 # from an explicit PPID-tree kill, so the kill list is restricted to sshd processes.
 # With the listener gone, backend reconnect attempts fail, which is exactly the
-# prolonged outage that forces the backend park/retry loop under the
-# `sessionBackendReattach` flag.
+# prolonged outage that forces the backend park/retry loop (backend reconnect is
+# unconditional since #2560).
 #
 # "Restoring" relaunches sshd from the SAME config file (hence the SAME host key),
 # so the app's trust store still trusts it and the backend-driven reconnect is not
