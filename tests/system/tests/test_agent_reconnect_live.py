@@ -64,22 +64,19 @@ The log markers this asserts on (grounded in the running binaries):
   ``Recovered session <sid>`` / ``Reattached to session <sid>`` when the **live**
   session is re-attached; ``Failed to recover session <sid>`` when it is lost.
 
-Two lanes, differing only by the ``sessionBackendReattach`` flag:
-
-* :class:`TestAgentReconnectClientDriven` — flag **off** (develop behavior): the
-  drop surfaces in the log and, once the server is back and the connection is
-  re-initiated, the handshake completes again. Proves the scenario is valid
-  before any product change relies on it.
-* :class:`TestAgentReconnectBackendDriven` — flag **on** (the activation): the
-  backend redrive re-establishes the transport after the drop and
-  **re-attaches the live daemon session** — the log shows ``Recovered``/
-  ``Reattached`` for the same ``<sid>`` and **no** fresh ``Daemon spawned`` /
-  ``Failed to recover`` for it. This is the unique end-to-end assertion: the
-  desktop↔agent reconnect + live re-attach happened, process continuity intact.
-  (Terminal *content* continuity — the var-survives / loop-continues output — is
-  covered headlessly by the agent-integration tests, e.g.
-  ``fresh_agent_recovers_daemon_session_from_dead_prior_agent`` and the #2519
-  tests, and is deliberately NOT read back through the throttled bridge here.)
+A single lane (:class:`TestAgentReconnect`) exercises the now-**unconditional**
+backend-driven reconnect (the client-driven reconnect engine was deleted in
+#2558; the experimental flag that once gated the two behaviors was removed in
+#2560, and the backend redrive is unconditional): after the drop the backend
+redrive re-establishes the transport and **re-attaches the live daemon session**
+— the log shows ``Recovered``/``Reattached`` for the same ``<sid>`` and
+**no** fresh ``Daemon spawned`` / ``Failed to recover`` for it. This is the unique
+end-to-end assertion: the desktop↔agent reconnect + live re-attach happened,
+process continuity intact.
+(Terminal *content* continuity — the var-survives / loop-continues output — is
+covered headlessly by the agent-integration tests, e.g.
+``fresh_agent_recovers_daemon_session_from_dead_prior_agent`` and the #2519
+tests, and is deliberately NOT read back through the throttled bridge here.)
 
 Agent + settings state is region-authoritative (#2227/#2409); this suite seeds
 experimental features via ``settings.json`` and drives the agent row by its known
@@ -94,7 +91,6 @@ binary is not built, or no ``sshd`` is present.
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
 from pathlib import Path
@@ -209,17 +205,9 @@ def _agent_doc(sshd: LocalAgentSshd) -> str:
 
 
 class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, SystemTest):
-    """Shared setup: a controllable sshd + a seeded key-auth agent connection.
-
-    Subclasses set :attr:`flag_on` to choose the ``sessionBackendReattach`` lane;
-    the fixture injects the matching ``window.__TERMIHUB_*__`` global via the test
-    bridge (``TERMIHUB_TEST_FLAG_*``) before the app relaunches.
-    """
+    """Shared setup: a controllable sshd + a seeded key-auth agent connection."""
 
     request_timeout = LIVE_CONNECT_REQUEST_TIMEOUT
-    flag_on: bool = False
-
-    _FLAG_ENV = "TERMIHUB_TEST_FLAG_SESSION_BACKEND_REATTACH"
 
     @pytest.fixture(autouse=True)
     def _local_agent(self):
@@ -245,17 +233,11 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
         # keeps compositing (a backstop to the runner, not a substitute for it).
         self._awake = keep_display_awake()
 
-        prev_flag = os.environ.get(self._FLAG_ENV)
-        if self.flag_on:
-            os.environ[self._FLAG_ENV] = "1"
-        else:
-            os.environ.pop(self._FLAG_ENV, None)
-
         def _seed() -> None:
             self.write_config(CONNECTIONS, _agent_doc(sshd))
             self.write_config(SETTINGS, SETTINGS_DOC)
 
-        # Relaunch so the app loads the seeded agent + experimental flag + flag env.
+        # Relaunch so the app loads the seeded agent + experimental flag.
         self.restart_app(between=_seed)
         # Make the app the FOREGROUND/key application on the runner's display so
         # WebKit keeps the page foreground-active and its timers tick un-throttled
@@ -285,10 +267,6 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
                 self.close_all_tabs()
             except Exception:
                 pass
-            if prev_flag is None:
-                os.environ.pop(self._FLAG_ENV, None)
-            else:
-                os.environ[self._FLAG_ENV] = prev_flag
 
     # ── backend-log reads (throttle-immune — this is the whole point) ─────────────
     def _log(self) -> str:
@@ -458,41 +436,13 @@ class _AgentReconnectBase(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, Syste
         assert not self.sshd.is_listening()
 
 
-class TestAgentReconnectClientDriven(_AgentReconnectBase):
-    """Flag OFF — proves the drop/reconnect scenario against develop behavior."""
+class TestAgentReconnect(_AgentReconnectBase):
+    """The unconditional backend-driven reconnect + live session re-attach.
 
-    flag_on = False
-
-    def test_drop_surfaces_and_recovers(self):
-        self._connect_and_open_shell()
-        self._assert_shell_live()
-
-        # Cursor: everything asserted below must be POST-drop log content.
-        offset = self._log_len()
-
-        # Drop the agent transport at the server; the drop must surface in the
-        # backend log. The agent_manager then retries with exponential backoff.
-        self._drop_transport()
-        self._wait_log(LOG_DROP, since=offset, timeout=60.0, what="the drop to surface in the log")
-
-        # Restore the sshd EARLY — right after the drop surfaced — so an early,
-        # short-backoff retry reconnects fast (a late restore falls into a long
-        # backoff window and reads flaky). The reconnect engine only advances
-        # while the webview is driven, so poll with a bridge heartbeat; the
-        # handshake completing again is asserted on the log, not the bridge.
-        self.sshd.start()
-        self._wait_log_with_heartbeat(
-            LOG_CONNECTED,
-            since=offset,
-            timeout=RECONNECT_LOG_TIMEOUT,
-            what="the agent handshake to complete again (marking connected) after the server returns",
-        )
-
-
-class TestAgentReconnectBackendDriven(_AgentReconnectBase):
-    """Flag ON — the activation: backend-driven reconnect + live session re-attach."""
-
-    flag_on = True
+    The experimental flag that once gated this behavior was removed (#2560) and
+    the client-driven reconnect engine was deleted (#2558), so the backend
+    redrive now always runs — this single lane exercises it.
+    """
 
     def test_backend_driven_reconnect_reattaches(self):
         self._connect_and_open_shell()
