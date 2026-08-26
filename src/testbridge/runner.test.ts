@@ -154,6 +154,10 @@ class FakeDriver implements Driver {
   async emitEvent(event: string, payload?: unknown): Promise<void> {
     this.events.push({ event, payload });
   }
+
+  async severAgentTransport(_agentId: string): Promise<boolean> {
+    return true;
+  }
 }
 
 /** Run options with an instant sleep so timing-based steps don't wait in tests. */

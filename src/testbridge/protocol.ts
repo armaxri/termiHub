@@ -358,6 +358,31 @@ export interface ProjectionDispatchCommand {
   clientId?: string;
 }
 
+/**
+ * Abruptly sever a connected agent's transport in-process (test-bridge only,
+ * #2573) to drive the agent-reconnect UI grade (#2574).
+ *
+ * The bridge has no generic "invoke a Tauri command" verb by design, so the one
+ * test-only sever primitive needed by the automated reconnect grade is exposed
+ * as its own named verb — mirroring {@link EmitEventCommand}, the only other verb
+ * whose blast radius reaches the backend. It calls the `test_sever_agent_transport`
+ * Tauri command, which itself refuses unless the app was launched with the test
+ * bridge enabled (`TERMIHUB_TEST_BRIDGE_PORT`), so a production launch can never
+ * reach the sever. Unlike a clean `disconnect_agent` (user-cancel), the agent's
+ * I/O task stays alive and takes the reconnect path, re-attaching any surviving
+ * daemon sessions — exactly what a real transport drop produces.
+ *
+ * Returns `true` when a live agent received the sever, `false` for an unknown or
+ * already-dead agent. Resolves against an injected `severAgentTransport` dep, so
+ * unit tests supply a stub and the verb fails with a clear "not available" error
+ * outside the harness.
+ */
+export interface SeverAgentTransportCommand {
+  action: "severAgentTransport";
+  /** Id of the connected agent whose transport to sever. */
+  agentId: string;
+}
+
 /** Read a subscription's current recorded frames + cache state by id. */
 export interface ProjectionStateCommand {
   action: "projectionState";
@@ -418,6 +443,7 @@ export type BridgeCommand =
   | GetStateCommand
   | ScreenshotCommand
   | EmitEventCommand
+  | SeverAgentTransportCommand
   | ProjectionSubscribeCommand
   | ProjectionDispatchCommand
   | ProjectionStateCommand
