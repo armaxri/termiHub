@@ -1049,11 +1049,11 @@ pub fn run() {
                     let store_for_publish = store.clone();
                     // Backend-driven reconnect redrive (#2454): on the fired
                     // attempt the backend re-establishes the transport itself for
-                    // a tab that opted into `sessionBackendReattach`, mints a new
-                    // session and publishes its id for the frontend to re-attach
-                    // to (#2457). Resolves managed state lazily, so it can be fed
-                    // back into the very driver that invokes it without a cycle.
-                    // No-op for a client-driven (flag-off) tab.
+                    // a resilient tab, mints a new session and publishes its id for
+                    // the frontend to re-attach to (#2457). Resolves managed state
+                    // lazily, so it can be fed back into the very driver that
+                    // invokes it without a cycle. No-op for a tab with no retained
+                    // request.
                     let redrive: Arc<dyn session_projection::ReconnectRedrive> = Arc::new(
                         session_projection::AppReconnectRedrive::new(app.handle().clone()),
                     );

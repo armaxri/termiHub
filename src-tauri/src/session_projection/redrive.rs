@@ -13,17 +13,15 @@
 //! so the frontend re-attaches terminal I/O to it (#2457) without a client
 //! `create_connection`.
 //!
-//! # The flag gate — byte-identical when off
+//! # The gate
 //!
-//! The whole redrive is gated by the retained request's `backend_reattach`
-//! field, threaded from the client's default-off `sessionBackendReattach` flag
-//! through `create_connection`. [`AppReconnectRedrive::redrive`] no-ops for any
-//! tab that did not opt in, so the fired attempt's `Connecting` diff simply fans
-//! out and the **client** drives the redrive exactly as on `develop`. Turning the
-//! flag on is a real authority cut, not an additive double-write: the reconnect
-//! engine is non-idempotent, so under the flag the client suppresses its own
-//! redrive + outcome mirrors and the backend is the sole driver of the attempt
-//! and its `connected` / `reconnectFailed` outcome.
+//! The whole redrive is gated by the retained request's `resilient` field: a
+//! request is only ever recorded for a resilient tab (#2454), so
+//! [`AppReconnectRedrive::redrive`] no-ops for any tab with no retained request.
+//! The backend redrive is the sole reconnect authority for resilient tabs — the
+//! client reconnect engine was deleted (#2558) — so it is the sole driver of the
+//! attempt and its `connected` / `reconnectFailed` outcome; nothing else mirrors
+//! them.
 //!
 //! # Secret lifetime
 //!
@@ -70,11 +68,11 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
             return;
         };
 
-        // The opt-in gate: only a tab whose retained request carries
-        // `backend_reattach` (the client's `sessionBackendReattach` flag) is
-        // backend-driven. Absent request or an opted-out tab → the client drives.
+        // The gate: only a tab whose retained request is `resilient` is
+        // backend-driven — a request is only ever recorded for a resilient tab, so
+        // an absent request means there is nothing to redrive.
         let request = match manager.retained_request(tab_id) {
-            Some(req) if req.backend_reattach => req,
+            Some(req) if req.resilient => req,
             _ => return,
         };
 
@@ -171,7 +169,6 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
                     Some(&connect_id),
                     false, // not a spawn-origin session
                     true,  // resilient (this loop only runs for resilient tabs)
-                    true,  // backend_reattach: keep the gate on across the refresh
                     app.clone(),
                 )
                 .await;

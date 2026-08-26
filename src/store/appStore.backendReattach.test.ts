@@ -1,6 +1,6 @@
 /**
  * appStore parity tests for the backend-reattach authority cut (#2454), now
- * unconditional after the `sessionBackendReattach` flag was removed (#2560).
+ * unconditional (the backend redrive is the sole reconnect authority) (#2560).
  *
  * The **backend** reconnect redrive owns the attempt OUTCOME — it folds
  * `connected` / `reconnectFailed` at the source. The client must therefore NOT

@@ -946,12 +946,12 @@ impl AgentConnectionManager {
 
     /// Retain an agent's SSH transport config for backend-driven reconnect
     /// reattach (#2472), so the redrive can cold-re-establish the transport after
-    /// a reap. Called by the `connect_agent` command **only** when the connect
-    /// opted into backend reattach (the client's default-off `sessionBackendReattach`
-    /// flag); with the flag off this is never called, so no agent config survives
-    /// a reap and the path stays byte-identical to `develop`. The retained
-    /// secret is zeroized on drop and scrubbed at every terminal point (user
-    /// disconnect / shutdown / prune here, reconnect give-up in the redrive).
+    /// a reap. Not currently invoked in production: the frontend agent-tab
+    /// backend-redrive wiring (#2473) is not yet present, so no agent config is
+    /// retained and the reattach path stays inert — byte-identical to `develop`.
+    /// Exercised by tests and re-wired by #2473. The retained secret is zeroized on
+    /// drop and scrubbed at every terminal point (user disconnect / shutdown /
+    /// prune here, reconnect give-up in the redrive).
     pub fn retain_agent_config(
         &self,
         agent_id: &str,

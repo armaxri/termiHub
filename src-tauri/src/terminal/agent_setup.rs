@@ -180,7 +180,6 @@ where
         None,
         false,
         false,
-        false,
         app_handle.clone(),
     ))?;
 

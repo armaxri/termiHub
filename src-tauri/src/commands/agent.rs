@@ -75,32 +75,25 @@ fn to_store_session(info: &AgentSessionInfo) -> StoreAgentSession {
 /// network operations that must not run on the main thread (which would
 /// freeze the WebView).
 ///
-/// `backend_reattach` carries the client's default-off `sessionBackendReattach`
-/// flag (#2472). When `Some(true)`, the manager retains this agent's SSH
-/// transport config so the server-side reconnect redrive can cold-re-establish
-/// the transport after a reap; when absent/`false` (the develop path) nothing is
-/// retained and no agent secret survives a reap — byte-identical. The frontend
-/// does not thread this yet; it is wired with the agent-tab routing (#2473).
+/// The agent-tab backend-driven reconnect redrive (#2472) is not yet wired to
+/// the frontend (that arrives with the agent-tab routing, #2473), so this connect
+/// does not retain the agent's SSH transport config — no agent secret survives a
+/// reap, matching `develop`. When #2473 lands it re-introduces a
+/// [`AgentConnectionManager::retain_agent_config`] call, gated on the tab being
+/// resilient.
 #[tauri::command]
 pub async fn connect_agent(
     agent_id: String,
     config: RemoteAgentConfig,
     agent_settings: Option<AgentSettings>,
-    backend_reattach: Option<bool>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentConnectResult, String> {
     info!(agent_id, host = %config.host, "Connecting to remote agent");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let result = manager
+        manager
             .connect_agent(&agent_id, &config, agent_settings.as_ref())
-            .map_err(|e| e.to_string())?;
-        // Only an opted-in connect retains the reattach config (#2472); the
-        // default-off path leaves the store untouched.
-        if backend_reattach == Some(true) {
-            manager.retain_agent_config(&agent_id, &config, agent_settings.as_ref());
-        }
-        Ok(result)
+            .map_err(|e| e.to_string())
     })
     .await
     .unwrap_or_else(|e| Err(e.to_string()))
