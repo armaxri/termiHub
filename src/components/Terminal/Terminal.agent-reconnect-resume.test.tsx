@@ -17,11 +17,7 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
-import {
-  setSessionBackendReattachEnabled,
-  setSessionTransportForTest,
-  stopSessionSubscription,
-} from "@/store/sessionBridge";
+import { setSessionTransportForTest, stopSessionSubscription } from "@/store/sessionBridge";
 import {
   FakeSessionTransport,
   connected as connectedLifecycle,
@@ -132,7 +128,6 @@ beforeEach(() => {
   mockSubscribeExit.mockClear();
   transport = new FakeSessionTransport();
   setSessionTransportForTest(transport);
-  setSessionBackendReattachEnabled(true);
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -142,7 +137,6 @@ afterEach(() => {
   container.remove();
   stopSessionSubscription();
   setSessionTransportForTest(null);
-  setSessionBackendReattachEnabled(null);
 });
 
 const AGENT_CONFIG = {

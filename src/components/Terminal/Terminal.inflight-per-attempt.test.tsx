@@ -28,7 +28,6 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
-import { setSessionBackendReattachEnabled } from "@/store/sessionBridge";
 
 // --- Mocks ---
 
@@ -153,11 +152,8 @@ let root: Root;
 
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
-  // This suite exercises the client-redrive fallback (per-attempt
-  // `create_connection` in-flight tracking). Since #2205 PR-B flipped
-  // `sessionBackendReattach` on by default, pin it OFF so the retained
-  // instant-revert fallback path is what is under test here.
-  setSessionBackendReattachEnabled(false);
+  // This suite exercises the client create loop's per-attempt `create_connection`
+  // in-flight tracking (initial connect / user-initiated reconnect).
   pendingConnects.length = 0;
   mockCreateTerminal.mockClear();
   mockCancelConnecting.mockClear();
@@ -169,7 +165,6 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
-  setSessionBackendReattachEnabled(null);
 });
 
 // Direct (non-agent) local shell connection so setupTerminal takes the

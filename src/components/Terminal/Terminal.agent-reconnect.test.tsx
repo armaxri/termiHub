@@ -1,17 +1,14 @@
 /**
- * Component tests for the backend-driven AGENT reconnect activation (#2476).
+ * Component tests for the backend-driven AGENT reconnect activation (#2476), now
+ * unconditional after the `sessionBackendReattach` flag was removed (#2560).
  *
- * When the default-off `sessionBackendReattach` flag is ON, a reconnect of an
- * agent-hosted tab must be driven **entirely by the backend redrive** — the
+ * A reconnect of an agent-hosted tab is driven **entirely by the backend redrive** — the
  * client agent engine (`createTerminal` → `connectRemoteAgent` + park + bounded
  * spawn retries) must NOT run, or it double-drives the very agent transport the
  * redrive is re-establishing. Instead the Terminal:
  *   • re-attaches terminal I/O to the backend-published session id on success, or
  *   • settles the tab disconnected when the backend give-up folds into the region,
  * never calling `createTerminal` on either path.
- *
- * With the flag OFF the reconnect drives the client engine exactly as on develop
- * (a fresh `createTerminal`), pinning byte-identical flag-off parity.
  *
  * Mirrors Terminal.backend-reattach.test.tsx (the direct-SSH #2457 analog).
  */
@@ -24,15 +21,10 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import {
   ensureSessionSubscribed,
-  setSessionBackendReattachEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
 } from "@/store/sessionBridge";
-import {
-  FakeSessionTransport,
-  connected as connectedLifecycle,
-  reconnecting,
-} from "@/test/sessionLifecycleRegionTestHarness";
+import { FakeSessionTransport, reconnecting } from "@/test/sessionLifecycleRegionTestHarness";
 
 // --- Mocks (mirror Terminal.backend-reattach.test.tsx) ---
 
@@ -162,7 +154,6 @@ afterEach(() => {
   container.remove();
   stopSessionSubscription();
   setSessionTransportForTest(null);
-  setSessionBackendReattachEnabled(null);
 });
 
 const AGENT_CONFIG = {
@@ -196,8 +187,7 @@ const mount = (tabId: string, existingSessionId: string) => {
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("Terminal — backend-driven agent reconnect (#2476)", () => {
-  it("flag ON: re-attaches to the backend-published id, never calling the client engine", async () => {
-    setSessionBackendReattachEnabled(true);
+  it("re-attaches to the backend-published id, never calling the client engine", async () => {
     const tabId = addAgentTab("initial-session");
 
     mount(tabId, "initial-session");
@@ -234,8 +224,7 @@ describe("Terminal — backend-driven agent reconnect (#2476)", () => {
     expect(mockSubscribeExit).toHaveBeenCalledWith("agent-new", expect.any(Function));
   });
 
-  it("flag ON: settles disconnected on backend give-up, never calling the client engine", async () => {
-    setSessionBackendReattachEnabled(true);
+  it("settles disconnected on backend give-up, never calling the client engine", async () => {
     const tabId = addAgentTab("initial-session");
     mount(tabId, "initial-session");
     await act(async () => {
@@ -266,29 +255,5 @@ describe("Terminal — backend-driven agent reconnect (#2476)", () => {
     const state = useAppStore.getState();
     expect(state.terminalDisconnectErrors[tabId]).toBe("agent unreachable after 3 attempts");
     expect(state.terminalExitedTabs[tabId]).toBe(true);
-  });
-
-  it("flag OFF: reconnect drives the client engine (createTerminal) — develop parity", async () => {
-    setSessionBackendReattachEnabled(false);
-    const tabId = addAgentTab("initial-session");
-    // Even with a backend id available, the flag-off path ignores it.
-    transport.setSession(tabId, { ...connectedLifecycle(), sessionId: "agent-new" });
-
-    mount(tabId, "initial-session");
-    await act(async () => {
-      await wait(50);
-    });
-    expect(mockCreateTerminal).not.toHaveBeenCalled();
-
-    act(() => {
-      useAppStore.getState().reconnectTerminal(tabId);
-    });
-    await act(async () => {
-      await wait(80);
-    });
-
-    // develop behavior: an agent reconnect re-creates the session via the client.
-    expect(mockCreateTerminal).toHaveBeenCalledTimes(1);
-    expect(mockSubscribeOutput).not.toHaveBeenCalledWith("agent-new", expect.any(Function));
   });
 });

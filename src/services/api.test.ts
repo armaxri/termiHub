@@ -101,7 +101,7 @@ describe("api service", () => {
         connectId: null,
         spawned: false,
         resilientReconnect: false,
-        backendReattach: false,
+        backendReattach: true,
       });
       expect(result).toBe("session-456");
     });
@@ -118,7 +118,7 @@ describe("api service", () => {
         connectId: null,
         spawned: false,
         resilientReconnect: false,
-        backendReattach: false,
+        backendReattach: true,
       });
       expect(result).toBe("session-789");
     });
@@ -135,7 +135,7 @@ describe("api service", () => {
         connectId: "tab-7",
         spawned: false,
         resilientReconnect: false,
-        backendReattach: false,
+        backendReattach: true,
       });
     });
 
@@ -152,7 +152,7 @@ describe("api service", () => {
         connectId: "tab-9",
         spawned: false,
         resilientReconnect: false,
-        backendReattach: false,
+        backendReattach: true,
       });
     });
 
@@ -169,7 +169,7 @@ describe("api service", () => {
         connectId: "tab-s",
         spawned: true,
         resilientReconnect: false,
-        backendReattach: false,
+        backendReattach: true,
       });
     });
 
@@ -186,15 +186,15 @@ describe("api service", () => {
         connectId: "tab-r",
         spawned: false,
         resilientReconnect: true,
-        backendReattach: false,
+        backendReattach: true,
       });
     });
 
-    it("createTerminal forwards backendReattach to create_connection (#2454)", async () => {
+    it("createTerminal always sends backendReattach: true (unconditional, #2560)", async () => {
       mockedInvoke.mockResolvedValue("session-br");
       const config = { type: "ssh", config: { host: "h" } };
 
-      await createTerminal(config, "tab-br", false, true, true);
+      await createTerminal(config, "tab-br", false, true);
 
       expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
         typeId: "ssh",
@@ -241,7 +241,7 @@ describe("api service", () => {
         connectId: null,
         spawned: false,
         resilientReconnect: false,
-        backendReattach: false,
+        backendReattach: true,
       });
       expect(result).toBe("session-123");
     });
@@ -267,16 +267,17 @@ describe("api service", () => {
         connectId: null,
         spawned: false,
         resilientReconnect: false,
-        backendReattach: false,
+        backendReattach: true,
       });
       expect(result).toBe("session-remote");
     });
 
-    it("createTerminal forwards resilientReconnect + backendReattach on the remote-session (agent) path (#2476)", async () => {
-      // The agent path used to DROP both flags (create_connection was called with
-      // only agentId + connectId), so the backend never saw them for an agent
-      // session and could not retain the request for the reconnect redrive. They
-      // are now threaded through — never spawn-origin, so `spawned` stays false.
+    it("createTerminal forwards resilientReconnect and always sends backendReattach on the remote-session (agent) path (#2476/#2560)", async () => {
+      // The agent path used to DROP resilientReconnect (create_connection was called
+      // with only agentId + connectId), so the backend never saw it for an agent
+      // session and could not retain the request for the reconnect redrive. It is
+      // now threaded through — never spawn-origin, so `spawned` stays false —
+      // alongside the unconditional backendReattach: true (#2560).
       mockedInvoke.mockResolvedValue("session-agent-resilient");
       const config = {
         type: "remote-session",
@@ -288,7 +289,7 @@ describe("api service", () => {
         },
       };
 
-      await createTerminal(config, "tab-agent", false, true, true);
+      await createTerminal(config, "tab-agent", false, true);
 
       expect(mockedInvoke).toHaveBeenCalledWith("create_connection", {
         typeId: "shell",

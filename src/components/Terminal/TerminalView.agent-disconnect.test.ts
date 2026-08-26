@@ -16,11 +16,7 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { useAppStore } from "@/store/appStore";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
-import {
-  currentSessionView,
-  ensureSessionSubscribed,
-  setSessionBackendReattachEnabled,
-} from "@/store/sessionBridge";
+import { currentSessionView, ensureSessionSubscribed } from "@/store/sessionBridge";
 import {
   connected,
   installSessionLifecycleHarness,
@@ -107,20 +103,18 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   // is **backend-owned** (`agent_io_task`), so `applyAgentReconnecting` no longer
   // mirrors it on the client; a test seeds the reconnecting region via the harness
   // to represent that server fold, then the `connected` transition gates on the
-  // region status. `sessionBackendReattach` is pinned OFF so these remote-session
-  // tabs take the develop-parity (non-resilient) path — `setTerminalExited` folds
-  // `session.dropped` (terminal), never re-folding the region back to reconnecting.
+  // region status. These tests drive the handlers directly and call
+  // `setTerminalExited` without a `dropped` reason, so the exit path triggers no
+  // region reconnect fold.
   const harness = installSessionLifecycleHarness();
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
-    setSessionBackendReattachEnabled(false);
     vi.useFakeTimers();
   });
 
   afterEach(() => {
-    setSessionBackendReattachEnabled(null);
     vi.useRealTimers();
   });
 
@@ -361,19 +355,13 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
   // Reconnecting state is region-sourced now (#2205 PR-B): the handler gates the
   // resume-vs-exit decision on the projected `session-lifecycle` status, so seed
   // the region via the harness transport rather than the removed
-  // `terminalReconnectingTabs` slice. `sessionBackendReattach` OFF ⇒ the exit
-  // path's `setTerminalExited` folds `session.dropped` (terminal), never
-  // re-folding the region back to reconnecting.
+  // `terminalReconnectingTabs` slice. The exit assertions call `setTerminalExited`
+  // without a `dropped` reason, so no region reconnect fold is triggered.
   const harness = installSessionLifecycleHarness();
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
-    setSessionBackendReattachEnabled(false);
-  });
-
-  afterEach(() => {
-    setSessionBackendReattachEnabled(null);
   });
 
   /** Seed a tab into the region as reconnecting (the prior-disconnect state). */
@@ -526,19 +514,14 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
   // The "actively connecting" gate is region-sourced now (#2205 PR-B): the handler
   // reads the projected `connecting` status, not the removed `terminalConnecting`
   // slice. Wire the region harness so `setTerminalConnecting` folds the region
-  // (`session.connect`), and pin `sessionBackendReattach` OFF so `reconnectTerminal`
-  // arms the fixed "connecting" wall-clock deadline (the surviving connect signal)
-  // instead of deferring to the backend loop.
+  // (`session.connect`). Backend-reattach is unconditional (#2560), so these agent
+  // tabs are backend-driven: `reconnectTerminal` fires (retry counter bumped) but
+  // defers timing to the backend loop and arms no client connecting deadline.
   installSessionLifecycleHarness();
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
-    setSessionBackendReattachEnabled(false);
-  });
-
-  afterEach(() => {
-    setSessionBackendReattachEnabled(null);
   });
 
   /** Simulate the new loop added for auto-retry tab restart. */
@@ -578,10 +561,12 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
     simulateRetryRestartLoop("agent-1");
 
     const state = useAppStore.getState();
-    // reconnectTerminal should have cleared the retry state and armed the
-    // "connecting" deadline (the surviving connect signal after #2205 PR-B).
+    // reconnectTerminal should have cleared the retry state and fired (retry counter
+    // bumped). Agent tabs are backend-driven (#2560): no client connecting deadline
+    // is armed — the backend loop owns the timing.
     expect(state.terminalAutoRetryCount[tab.id]).toBeUndefined();
-    expect(state.terminalConnectDeadline[tab.id]?.kind).toBe("connecting");
+    expect(state.terminalRetryCounters[tab.id]).toBe(1);
+    expect(state.terminalConnectDeadline[tab.id]).toBeUndefined();
   });
 
   it("restarts a tab in 'Connection failed' state when agent reconnects", () => {
@@ -597,9 +582,12 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
     simulateRetryRestartLoop("agent-1");
 
     const state = useAppStore.getState();
-    // reconnectTerminal should have cleared the error and armed the connect deadline.
+    // reconnectTerminal should have cleared the error and fired (retry counter
+    // bumped). Agent tabs are backend-driven (#2560): no client connecting deadline
+    // is armed — the backend loop owns the timing.
     expect(state.terminalSpawnErrors[tab.id]).toBeUndefined();
-    expect(state.terminalConnectDeadline[tab.id]?.kind).toBe("connecting");
+    expect(state.terminalRetryCounters[tab.id]).toBe(1);
+    expect(state.terminalConnectDeadline[tab.id]).toBeUndefined();
   });
 
   it("does not restart a tab that is actively connecting (createTerminal in-flight)", () => {
