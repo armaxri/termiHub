@@ -4,12 +4,7 @@ import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
-import {
-  setSessionIntentsEnabled,
-  setSessionRenderFromProjectionEnabled,
-  setSessionTransportForTest,
-  stopSessionSubscription,
-} from "@/store/sessionBridge";
+import { setSessionTransportForTest, stopSessionSubscription } from "@/store/sessionBridge";
 import {
   connected,
   FakeSessionTransport,
@@ -50,8 +45,6 @@ describe("TerminalDisconnectOverlay — session-lost variant (#2512)", () => {
     root = createRoot(container);
     transport = new FakeSessionTransport();
     setSessionTransportForTest(transport);
-    setSessionRenderFromProjectionEnabled(true);
-    setSessionIntentsEnabled(true);
     useAppStore.setState({
       terminalExitedTabs: { [TAB]: true },
       terminalDisconnectErrors: {},
@@ -64,8 +57,6 @@ describe("TerminalDisconnectOverlay — session-lost variant (#2512)", () => {
     container.remove();
     stopSessionSubscription();
     setSessionTransportForTest(null);
-    setSessionRenderFromProjectionEnabled(null);
-    setSessionIntentsEnabled(null);
   });
 
   it("renders the session-lost notice with the backend error from the region", async () => {

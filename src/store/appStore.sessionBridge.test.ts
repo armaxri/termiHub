@@ -66,7 +66,6 @@ import { useAppStore } from "./appStore";
 import {
   currentSessionView,
   SESSION_LIFECYCLE_REGION,
-  setSessionIntentsEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
   type ProjectedSessionLifecycle,
@@ -150,20 +149,18 @@ function makeSshTab(): string {
   );
 }
 
-describe("appStore — session-intents cut (#2203), flag on", () => {
+describe("appStore — session-intents cut (#2203)", () => {
   let fake: FakeTransport;
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     fake = new FakeTransport();
     setSessionTransportForTest(fake);
-    setSessionIntentsEnabled(true);
   });
 
   afterEach(() => {
     stopSessionSubscription();
     setSessionTransportForTest(null);
-    setSessionIntentsEnabled(null);
   });
 
   it("mirrors a dropped resilient tab as session.reconnect and folds the region to waiting", async () => {

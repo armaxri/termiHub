@@ -20,8 +20,6 @@ import { useAppStore } from "@/store/appStore";
 import {
   setSessionBackendReattachEnabled,
   setSessionTransportForTest,
-  setSessionIntentsEnabled,
-  setSessionRenderFromProjectionEnabled,
   stopSessionSubscription,
 } from "@/store/sessionBridge";
 import {
@@ -134,8 +132,6 @@ beforeEach(() => {
   mockSubscribeExit.mockClear();
   transport = new FakeSessionTransport();
   setSessionTransportForTest(transport);
-  setSessionIntentsEnabled(true);
-  setSessionRenderFromProjectionEnabled(true);
   setSessionBackendReattachEnabled(true);
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -147,8 +143,6 @@ afterEach(() => {
   stopSessionSubscription();
   setSessionTransportForTest(null);
   setSessionBackendReattachEnabled(null);
-  setSessionIntentsEnabled(null);
-  setSessionRenderFromProjectionEnabled(null);
 });
 
 const AGENT_CONFIG = {

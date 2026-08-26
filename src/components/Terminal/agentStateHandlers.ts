@@ -6,7 +6,7 @@
  * handler and the tests exercise the exact same code).
  */
 import { useAppStore } from "@/store/appStore";
-import { mirrorSessionIntent, sessionIntentsEnabled } from "@/store/sessionBridge";
+import { mirrorSessionIntent } from "@/store/sessionBridge";
 import { TerminalTab } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -46,9 +46,7 @@ export function applyAgentReconnecting(
       // re-establishing. `error` records the trigger cause the overlay shows.
       // Optimistically folded, so the overlay is gap-free; resolved back by the
       // `connected` (survived) / `disconnected` (gone) handlers in TerminalView.
-      if (sessionIntentsEnabled()) {
-        mirrorSessionIntent("session.agentTransportReconnecting", tab.id, error);
-      }
+      mirrorSessionIntent("session.agentTransportReconnecting", tab.id, error);
       reconnectingCount++;
     } else {
       // Still spawning (no sessionId yet): park on the waiting path so the tab

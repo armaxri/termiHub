@@ -4,10 +4,10 @@
  * reconnect-trigger status is sourced **purely** from the projected
  * `session-lifecycle` region — no local slice, no faithful-mirror gate. The
  * disconnect **error** keeps its per-client `appStore` slice, so
- * `effectiveDisconnectError` still blends the two under the render flag.
+ * `effectiveDisconnectError` still blends the region value with that local slice.
  */
 
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   effectiveConnecting,
@@ -17,7 +17,6 @@ import {
   effectiveReconnecting,
   effectiveReconnectingMap,
   effectiveReconnectTriggerError,
-  setSessionRenderFromProjectionEnabled,
   type ProjectedSessionLifecycle,
 } from "@/store/sessionBridge";
 
@@ -37,10 +36,6 @@ function withTrigger(
 ): ProjectedSessionLifecycle {
   return { status, reconnect: idle, ...(reconnectError !== undefined ? { reconnectError } : {}) };
 }
-
-afterEach(() => {
-  setSessionRenderFromProjectionEnabled(null);
-});
 
 describe("effectiveConnecting", () => {
   it("is true only for a projected connecting status", () => {
@@ -107,7 +102,7 @@ describe("effective*Map helpers", () => {
     expect(effectiveConnectingMap({})).toEqual({});
   });
 
-  it("keep the disconnect-error map on its per-client slice (region blend under the flag)", () => {
+  it("keep the disconnect-error map on its per-client slice (region blend)", () => {
     const view: Record<string, ProjectedSessionLifecycle> = { c: life("failed", "stale") };
     // Local diverges from the region → local wins (the disconnect error is not
     // part of the removed engine, so it keeps its appStore fallback).

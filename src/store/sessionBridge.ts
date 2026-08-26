@@ -21,19 +21,17 @@
  * `terminalAutoReconnect`) is keyed by tab id. So the bridge uses the tab id as
  * the region's opaque session key; the store treats it as an opaque string.
  *
- * # Strangler safety — flag-gated, on by default, local fallback retained
+ * # Backend-authoritative (migration flags removed, #2283)
  *
- * The cut is gated by {@link sessionIntentsEnabled} — **on by default** (#2152
- * Phase 4). When on, the transitions dispatch `session.*` intents and the backend
- * timer drives the reconnect schedule; the local path stays in place as the render
- * source and as a resilience fallback — any dispatch/subscription failure is
- * logged and the local behaviour continues, so a backend hiccup can never break
- * connect or reconnect. When off, `appStore` drives the lifecycle purely locally
- * (the local `setTimeout` reconnect loop included) — the rollback / resilience
- * path. The flip mirrors the layout mutation cut (#2184). Overridable at runtime
- * for rollback / tests via `window.__TERMIHUB_SESSION_INTENTS__` or
- * `localStorage["termihub.sessionIntents"]` (set `"false"` to restore the pre-cut
- * local-mutation path).
+ * The cut is now unconditional: the lifecycle transitions always dispatch
+ * `session.*` intents and the backend `SessionLifecycleStore` is the sole authority
+ * for session status; the backend timer drives the reconnect backoff loop (#2205
+ * PR-B). The migration flags (`sessionIntentsEnabled` /
+ * `sessionRenderFromProjectionEnabled`) and their local-fallback branches were
+ * retained through the extended-testing period, then deleted once it proved the cut
+ * — the local authoritative reducers they fell back to are gone, so the off-paths
+ * were dead. A `session.*` dispatch remains fire-and-forget: any failure is logged
+ * (see {@link logSessionBridgeFallback}) and never throws.
  */
 
 import {
@@ -127,110 +125,6 @@ export type SessionIntentKind =
   | "session.reconnectTrigger"
   | "session.agentTransportReconnecting"
   | "session.remove";
-
-// ── Feature flag (runtime-flippable, off by default) ───────────────────────────
-
-interface SessionFlagWindow {
-  __TERMIHUB_SESSION_INTENTS__?: boolean;
-  localStorage?: Storage;
-}
-
-let flagOverride: boolean | null = null;
-
-/**
- * Programmatic override for the session-intents flag (tests, and a runtime
- * toggle). `null` clears the override and falls back to the window/localStorage
- * signal, then to the default (off).
- */
-export function setSessionIntentsEnabled(value: boolean | null): void {
-  flagOverride = value;
-}
-
-/**
- * Whether session-lifecycle transitions route through `session.*` intents
- * (step 2) — making the backend store authoritative for status and letting the
- * backend timer driver drive the reconnect loop — instead of `appStore` driving
- * the lifecycle purely locally.
- *
- * **On by default** (#2152 Phase 4). The backend `SessionLifecycleStore` is
- * authoritative for status and the backend timer drives the reconnect schedule;
- * the local path stays in place as the render source and as a resilience fallback
- * (any dispatch/subscription failure falls back to the local lifecycle). The flip
- * was taken on the automated tests — cut-vs-local parity plus deterministic
- * backend-timer coverage plus the instant local fallback — mirroring the layout
- * mutation cut (#2184). Overridable at runtime via
- * `window.__TERMIHUB_SESSION_INTENTS__` or
- * `localStorage["termihub.sessionIntents"]` (set `"false"` to restore the pre-cut
- * local-mutation path; `"true"` to force on).
- */
-export function sessionIntentsEnabled(): boolean {
-  if (flagOverride !== null) return flagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as SessionFlagWindow;
-      if (typeof w.__TERMIHUB_SESSION_INTENTS__ === "boolean") {
-        return w.__TERMIHUB_SESSION_INTENTS__;
-      }
-      const ls = w.localStorage?.getItem("termihub.sessionIntents");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
-
-// ── Render-cut feature flag (step 3 #2204, on by default) ──────────────────────
-
-let renderFlagOverride: boolean | null = null;
-
-interface SessionRenderFlagWindow {
-  __TERMIHUB_SESSION_RENDER_FROM_PROJECTION__?: boolean;
-  localStorage?: Storage;
-}
-
-/**
- * Programmatic override for the render-cut flag (tests, and a runtime toggle).
- * `null` clears the override and falls back to the window/localStorage signal,
- * then to the default (on).
- */
-export function setSessionRenderFromProjectionEnabled(value: boolean | null): void {
-  renderFlagOverride = value;
-}
-
-/**
- * Whether the terminal overlays render their session status from the projected
- * `session-lifecycle` region (step 3, #2204) instead of reading `appStore`'s
- * status fields directly.
- *
- * **On by default** — the render cut is parity-safe: the overlays render from the
- * region only when it faithfully mirrors `appStore`'s status
- * ({@link projectedReconnectMirrors}), and otherwise fall back to `appStore`
- * verbatim, so the output is byte-identical to the pre-cut path regardless of
- * {@link sessionIntentsEnabled}. Independent of the mutation flag: the local
- * reconnect record seeds the effective view, so it is always populated even when
- * nothing has written the backend region. Overridable at runtime for rollback /
- * tests via `window.__TERMIHUB_SESSION_RENDER_FROM_PROJECTION__` or
- * `localStorage["termihub.sessionRenderFromProjection"]`.
- */
-export function sessionRenderFromProjectionEnabled(): boolean {
-  if (renderFlagOverride !== null) return renderFlagOverride;
-  try {
-    if (typeof window !== "undefined") {
-      const w = window as unknown as SessionRenderFlagWindow;
-      if (typeof w.__TERMIHUB_SESSION_RENDER_FROM_PROJECTION__ === "boolean") {
-        return w.__TERMIHUB_SESSION_RENDER_FROM_PROJECTION__;
-      }
-      const ls = w.localStorage?.getItem("termihub.sessionRenderFromProjection");
-      if (ls === "true") return true;
-      if (ls === "false") return false;
-    }
-  } catch {
-    // A missing/blocked window or storage just means "use the default".
-  }
-  return true;
-}
 
 // ── Backend-reattach feature flag (#2457 / #2454, off by default) ───────────────
 
@@ -706,9 +600,9 @@ export function effectiveAutoReconnect(
 // the region sources the render only when its status agrees with `appStore`'s
 // slice; otherwise the reader falls back to `appStore` verbatim. Because the gate
 // guarantees agreement, the rendered value is byte-identical to the pre-cut path,
-// independent of {@link sessionIntentsEnabled} and of the deferred server-side
-// folds (#2439) — a region that has not (yet) observed a drop / disconnect /
-// connect-failure simply falls back to `appStore`.
+// independent of the deferred server-side folds (#2439) — a region that has not
+// (yet) observed a drop / disconnect / connect-failure simply falls back to
+// `appStore`.
 
 /** The last-known reconciled `session-lifecycle` view (the `sessions` map), for a
  * consumer seeding before its first diff arrives. */
@@ -909,8 +803,7 @@ export function waitForBackendAgentReconnectOutcome(
 
 /**
  * Effective `terminalConnecting[tabId]` for rendering: `true` when the projected
- * status is `connecting` and it mirrors the local `terminalConnecting` bool,
- * otherwise the local bool verbatim (flag off, or the region does not mirror).
+ * status is `connecting` (the region is the sole authority, #2205 PR-B).
  */
 export function effectiveConnecting(projected: ProjectedSessionLifecycle | undefined): boolean {
   return projected?.status === "connecting";
@@ -934,7 +827,6 @@ export function effectiveDisconnectError(
   local: string | undefined,
   projected: ProjectedSessionLifecycle | undefined
 ): string | undefined {
-  if (!sessionRenderFromProjectionEnabled()) return local;
   const projectedError = projected?.status === "failed" ? projected.error : undefined;
   if (projectedError !== local) return local;
   return projectedError;
@@ -990,7 +882,6 @@ export function effectiveDisconnectErrorMap(
   local: Record<string, string>,
   view: Record<string, ProjectedSessionLifecycle>
 ): Record<string, string> {
-  if (!sessionRenderFromProjectionEnabled()) return local;
   const out: Record<string, string> = {};
   for (const id of Object.keys(local)) {
     const eff = effectiveDisconnectError(local[id], view[id]);

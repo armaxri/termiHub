@@ -69,7 +69,6 @@ import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import {
   currentSessionView,
   SESSION_LIFECYCLE_REGION,
-  setSessionIntentsEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
   type ProjectedSessionLifecycle,
@@ -186,13 +185,11 @@ describe("appStore — resilient reconnect is region-authoritative (#1962 / #220
     useAppStore.setState(useAppStore.getInitialState());
     fake = new FakeTransport();
     setSessionTransportForTest(fake);
-    setSessionIntentsEnabled(true);
   });
 
   afterEach(() => {
     stopSessionSubscription();
     setSessionTransportForTest(null);
-    setSessionIntentsEnabled(null);
   });
 
   it("folds session.reconnect + region reconnecting when an opted-in SSH tab drops", async () => {
@@ -284,9 +281,10 @@ describe("appStore — on-reconnect command (#1978 / #2205 PR-B)", () => {
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
-    // The on-reconnect command trigger is independent of the region mutation cut;
-    // keep intents off so setTabSessionId's `session.connected` mirror is inert.
-    setSessionIntentsEnabled(false);
+    // The on-reconnect command trigger is independent of the region mutation cut.
+    // A fake transport keeps setTabSessionId's `session.connected` mirror inert
+    // (accepted no-op) so this suite exercises only the on-reconnect command path.
+    setSessionTransportForTest(new FakeTransport());
     injected = [];
     registerTerminalInputInjector((tabId, data) => {
       injected.push({ tabId, data });
@@ -295,7 +293,8 @@ describe("appStore — on-reconnect command (#1978 / #2205 PR-B)", () => {
   });
 
   afterEach(() => {
-    setSessionIntentsEnabled(null);
+    stopSessionSubscription();
+    setSessionTransportForTest(null);
     registerTerminalInputInjector(null);
   });
 

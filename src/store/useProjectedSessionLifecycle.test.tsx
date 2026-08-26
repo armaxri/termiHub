@@ -99,16 +99,16 @@ describe("useProjectedSessionLifecycle (per tab)", () => {
 });
 
 describe("useProjectedSessionLifecycle — always region-sourced", () => {
-  // The legacy render flag no longer gates these readers; the hook always
-  // subscribes and reads the region.
-  const harness = installSessionLifecycleHarness(false);
+  // The readers always subscribe and read the region (the migration flags that
+  // once gated them are gone, #2283).
+  const harness = installSessionLifecycleHarness();
 
   function Probe({ onValue }: { onValue: (v: ProjectedSessionLifecycleSlice) => void }) {
     onValue(useProjectedSessionLifecycle(TAB));
     return null;
   }
 
-  it("subscribes and reads the region even with the legacy render flag off", async () => {
+  it("subscribes and reads the region", async () => {
     harness.transport.setSession(TAB, connected());
     let latest: ProjectedSessionLifecycleSlice | undefined;
     mount(<Probe onValue={(v) => (latest = v)} />);

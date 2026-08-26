@@ -29,10 +29,6 @@ import {
   projectedToAutoReconnect,
   runSessionIntent,
   SESSION_LIFECYCLE_REGION,
-  sessionIntentsEnabled,
-  sessionRenderFromProjectionEnabled,
-  setSessionIntentsEnabled,
-  setSessionRenderFromProjectionEnabled,
   setSessionTransportForTest,
   stopSessionSubscription,
   type ProjectedSessionLifecycle,
@@ -108,26 +104,11 @@ let transport: FakeTransport;
 beforeEach(() => {
   transport = new FakeTransport();
   setSessionTransportForTest(transport);
-  setSessionIntentsEnabled(null);
 });
 
 afterEach(() => {
   stopSessionSubscription();
   setSessionTransportForTest(null);
-  setSessionIntentsEnabled(null);
-  setSessionRenderFromProjectionEnabled(null);
-});
-
-describe("sessionIntentsEnabled flag", () => {
-  it("defaults on and honours the programmatic override", () => {
-    expect(sessionIntentsEnabled()).toBe(true);
-    setSessionIntentsEnabled(false);
-    expect(sessionIntentsEnabled()).toBe(false);
-    setSessionIntentsEnabled(true);
-    expect(sessionIntentsEnabled()).toBe(true);
-    setSessionIntentsEnabled(null);
-    expect(sessionIntentsEnabled()).toBe(true);
-  });
 });
 
 describe("dispatchSessionIntent", () => {
@@ -295,18 +276,6 @@ describe("runSessionIntent", () => {
       resync: async () => null,
     });
     await expect(runSessionIntent("session.connect", "tab-z")).rejects.toThrow(/nope/);
-  });
-});
-
-describe("sessionRenderFromProjectionEnabled flag (#2204)", () => {
-  it("defaults on and honours the programmatic override", () => {
-    expect(sessionRenderFromProjectionEnabled()).toBe(true);
-    setSessionRenderFromProjectionEnabled(false);
-    expect(sessionRenderFromProjectionEnabled()).toBe(false);
-    setSessionRenderFromProjectionEnabled(true);
-    expect(sessionRenderFromProjectionEnabled()).toBe(true);
-    setSessionRenderFromProjectionEnabled(null);
-    expect(sessionRenderFromProjectionEnabled()).toBe(true);
   });
 });
 
