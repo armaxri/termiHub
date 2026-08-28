@@ -589,8 +589,14 @@ export function TerminalView() {
  * are adopted by TerminalSlot components in panels — this prevents
  * unmount/remount when tabs move between panels or groups, preserving PTY
  * sessions and terminal content.
+ *
+ * Exported for the layout-scrollback regression suite
+ * (`TerminalView.layout-scrollback.test.tsx`), which asserts this keyed list
+ * never remounts a surviving terminal across a structural layout op — the
+ * render-path guarantee that a tab's live xterm (and its scrollback) survives
+ * split / move / merge / group ops.
  */
-function TerminalHost() {
+export function TerminalHost() {
   const rootPanel = useAppStore((s) => s.rootPanel);
   const tabGroups = useAppStore((s) => s.tabGroups);
   const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
