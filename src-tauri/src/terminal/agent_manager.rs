@@ -3686,6 +3686,90 @@ mod russh_reconnect_tests {
         comm == "sshd" || comm.starts_with("sshd-")
     }
 
+    /// Whether `pid` is a session leader (its session id equals its pid) — the
+    /// property `setsid` establishes and the one that distinguishes the detached
+    /// session **daemon** from the `--stdio` agent that spawned it (the agent
+    /// shares the daemon's binary but is not a session leader). Mirrors the
+    /// `getsid` check in `agent::daemon::spawn`'s own detachment test.
+    fn is_session_leader(pid: u32) -> bool {
+        // Safety: `getsid` merely reads the session id of an existing pid.
+        let sid = unsafe { libc::getsid(pid as libc::pid_t) };
+        sid != -1 && sid == pid as libc::pid_t
+    }
+
+    /// The setsid'd session-daemon PIDs the agent spawned under our sshd `root`,
+    /// identified while they are still live descendants (before a sever reparents
+    /// them to init). A session daemon is the descendant that is its own session
+    /// leader (`setsid`) AND whose command is the agent binary — the `--stdio`
+    /// agent shares the binary but is not a session leader, and sshd-family
+    /// processes never match the agent comm. Scoped strictly to our own sshd
+    /// subtree and identity-matched, never a global name pattern (#2580).
+    fn session_daemon_pids(root: u32, agent_comm: &str) -> Vec<u32> {
+        let out = match Command::new("ps")
+            .args(["-ax", "-o", "pid=,ppid="])
+            .output()
+        {
+            Ok(o) => o,
+            Err(_) => return Vec::new(),
+        };
+        let mut children: std::collections::HashMap<u32, Vec<u32>> =
+            std::collections::HashMap::new();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let mut it = line.split_whitespace();
+            if let (Some(pid), Some(ppid)) = (it.next(), it.next()) {
+                if let (Ok(pid), Ok(ppid)) = (pid.parse::<u32>(), ppid.parse::<u32>()) {
+                    children.entry(ppid).or_default().push(pid);
+                }
+            }
+        }
+        let mut found = Vec::new();
+        let mut stack = vec![root];
+        while let Some(pid) = stack.pop() {
+            if pid != root && is_session_leader(pid) && comm_of(pid) == agent_comm {
+                found.push(pid);
+            }
+            if let Some(kids) = children.get(&pid) {
+                stack.extend(kids.iter().copied());
+            }
+        }
+        found
+    }
+
+    /// Union the session daemons currently under `root` into `sink` (dedup), so a
+    /// later `Drop` can reap them by exact PID.
+    fn record_daemons_into(sink: &std::sync::Mutex<Vec<u32>>, root: u32, agent_comm: &str) {
+        let found = session_daemon_pids(root, agent_comm);
+        if found.is_empty() {
+            return;
+        }
+        if let Ok(mut guard) = sink.lock() {
+            for pid in found {
+                if !guard.contains(&pid) {
+                    guard.push(pid);
+                }
+            }
+        }
+    }
+
+    /// Best-effort SIGKILL of the recorded session daemons by exact PID —
+    /// re-verifying identity (still the agent binary, still a session leader) at
+    /// kill time so a recycled PID is never touched. An already-exited daemon
+    /// (the recovery path, an explicit `connection.close`, or the daemon's own
+    /// idle-exit may have reaped it) yields an empty comm and is skipped, so no
+    /// ESRCH is raised (#2580).
+    fn reap_session_daemons(pids: &[u32], agent_comm: &str) {
+        for &pid in pids {
+            if is_session_leader(pid) && comm_of(pid) == agent_comm {
+                // Safety: `kill` signals an existing pid; the identity re-check
+                // above guards against PID reuse and the result is ignored
+                // (best-effort teardown).
+                unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                }
+            }
+        }
+    }
+
     /// SIGKILL only the **sshd-family** processes in the subtree rooted at `root`
     /// (the master listener + its per-connection handlers), sparing the
     /// `termihub-agent --stdio` the handler exec'd and — crucially — the setsid'd
@@ -3755,6 +3839,16 @@ mod russh_reconnect_tests {
         username: String,
         agent_bin: PathBuf,
         child: Option<Child>,
+        /// Basename of `agent_bin`, matched against `ps -o comm=` to pick the
+        /// setsid'd session daemon out of our sshd's descendants.
+        agent_comm: String,
+        /// PIDs of setsid'd session daemons this instance's agent spawned,
+        /// captured while they were still live descendants. A continuity sever
+        /// spares the daemon and reparents it to init, so `stop()`'s subtree kill
+        /// can no longer reach it — only an exact-PID reap in `Drop` cleans it up
+        /// (#2580). Shared via `Arc` so a driver thread that spawns/severs a
+        /// daemon-backed session off this instance can record into the same sink.
+        daemon_pids: Arc<std::sync::Mutex<Vec<u32>>>,
     }
 
     impl LocalAgentSshd {
@@ -3814,6 +3908,11 @@ mod russh_reconnect_tests {
             let config_body = config_body.replacen("Port 0", &format!("Port {port}"), 1);
             std::fs::write(&config, config_body)?;
 
+            let agent_comm = agent_bin
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+
             Ok(Self {
                 sshd,
                 dir,
@@ -3823,6 +3922,8 @@ mod russh_reconnect_tests {
                 username,
                 agent_bin,
                 child: None,
+                agent_comm,
+                daemon_pids: Arc::new(std::sync::Mutex::new(Vec::new())),
             })
         }
 
@@ -3876,6 +3977,10 @@ mod russh_reconnect_tests {
         /// Reaps our master `Child` handle (it is now dead) so no zombie lingers,
         /// and waits for the port to close so `start()` can rebind it.
         fn stop_sparing_daemon(&mut self) {
+            // Record the spared daemon(s) NOW, while they are still descendants —
+            // after the sshd kill the reparented daemon is no longer reachable via
+            // the subtree, so only an exact-PID reap in `Drop` can clean it (#2580).
+            self.record_session_daemons();
             if let Some(mut child) = self.child.take() {
                 kill_sshd_only(child.id());
                 let _ = child.wait();
@@ -3886,6 +3991,34 @@ mod russh_reconnect_tests {
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
+        /// The live PID of our sshd `-D` master, if running.
+        fn master_pid(&self) -> Option<u32> {
+            self.child.as_ref().map(|c| c.id())
+        }
+
+        /// The agent binary basename used to identify our session daemon(s).
+        fn agent_comm(&self) -> &str {
+            &self.agent_comm
+        }
+
+        /// A cheap clone of the daemon-PID sink so a driver thread that spawns +
+        /// severs a daemon-backed session off this instance can record the spared
+        /// daemon for teardown (used by the manager-driven test, whose sever runs
+        /// on a blocking worker that does not hold the `sshd` handle).
+        fn daemon_sink(&self) -> Arc<std::sync::Mutex<Vec<u32>>> {
+            Arc::clone(&self.daemon_pids)
+        }
+
+        /// Record the setsid'd session daemon(s) currently living under our sshd
+        /// master so `Drop` can reap them by exact PID. Call this while the daemon
+        /// is still a descendant — i.e. BEFORE a continuity sever detaches it
+        /// (#2580). No-op if the master is gone or no daemon is present.
+        fn record_session_daemons(&self) {
+            if let Some(root) = self.master_pid() {
+                record_daemons_into(&self.daemon_pids, root, &self.agent_comm);
             }
         }
 
@@ -3908,6 +4041,12 @@ mod russh_reconnect_tests {
     impl Drop for LocalAgentSshd {
         fn drop(&mut self) {
             self.stop();
+            // Reap any setsid'd session daemon a continuity sever spared — by the
+            // exact PID captured while it was a live descendant, never a name
+            // pattern (which could hit a parallel checkout's daemon) (#2580).
+            if let Ok(pids) = self.daemon_pids.lock() {
+                reap_session_daemons(&pids, &self.agent_comm);
+            }
             let _ = std::fs::remove_dir_all(&self.dir);
         }
     }
@@ -4176,6 +4315,12 @@ mod russh_reconnect_tests {
             recover_deadline,
         )
         .await;
+
+        // Record the fresh-create daemon while it is still a live descendant:
+        // dropping the transport below makes the `--stdio` agent exit, which
+        // reparents the setsid'd daemon to init and out of the sshd subtree
+        // `stop()` kills — so only an exact-PID reap in `Drop` reaches it (#2580).
+        sshd.record_session_daemons();
 
         // Explicit teardown so the sshd tree (and the agent it spawned) are gone
         // before the temp dir is removed.
@@ -4561,6 +4706,10 @@ mod russh_reconnect_tests {
             is_listening(sshd.port),
             "sshd must stay up across an in-process sever — no kill, no restart"
         );
+        // Record the spared daemon NOW, while it is still a live descendant — the
+        // in-process sever below reparents it beyond `stop()`'s subtree reach, so
+        // teardown must reap it by exact PID (#2580).
+        sshd.record_session_daemons();
         test_sever_desktop_transport(channel, Some(session));
         // The daemon keeps ticking with nobody attached.
         std::thread::sleep(Duration::from_millis(1500));
@@ -4989,6 +5138,12 @@ mod russh_reconnect_tests {
             let lifecycle_store = lifecycle_store.clone();
             let scheduler = scheduler.clone();
             let agent_id = agent_id.clone();
+            // The sever runs on this blocking worker, which does not hold the
+            // `sshd` handle — snapshot what it needs to record the spared daemons
+            // for teardown (#2580).
+            let daemon_sink = sshd.daemon_sink();
+            let master_pid = sshd.master_pid();
+            let agent_comm = sshd.agent_comm().to_string();
             tokio::task::spawn_blocking(move || {
                 let deadline = Instant::now() + RECOVERY_CEILING;
 
@@ -5021,6 +5176,14 @@ mod russh_reconnect_tests {
                         .expect("counter never produced values before the sever");
 
                 let sshd_up_before = is_listening(port);
+
+                // Record the setsid'd session daemon(s) now, while the hosted +
+                // continuity sessions' daemons are still live descendants of our
+                // sshd — the in-process sever below reparents them beyond `stop()`'s
+                // subtree reach, so teardown must reap them by exact PID (#2580).
+                if let Some(root) = master_pid {
+                    record_daemons_into(&daemon_sink, root, &agent_comm);
+                }
 
                 // ── THE SHIPPED PATH UNDER TEST: command → task → reconnect.
                 let sever_accepted = manager.test_sever_transport(&agent_id);
