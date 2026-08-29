@@ -52,7 +52,11 @@ function EdgeZone({
   }, [isOver, edge, setActiveZone]);
 
   return (
-    <div ref={setNodeRef} className={`panel-drop-zone__edge panel-drop-zone__edge--${edge}`} />
+    <div
+      ref={setNodeRef}
+      data-testid={`panel-drop-edge-${panelId}-${edge}`}
+      className={`panel-drop-zone__edge panel-drop-zone__edge--${edge}`}
+    />
   );
 }
 
@@ -76,7 +80,13 @@ function CenterZone({
     }
   }, [isOver, setActiveZone]);
 
-  return <div ref={setNodeRef} className="panel-drop-zone__center" />;
+  return (
+    <div
+      ref={setNodeRef}
+      data-testid={`panel-drop-center-${panelId}`}
+      className="panel-drop-zone__center"
+    />
+  );
 }
 
 /** Full-area preview overlay showing where the dropped tab will land. */
