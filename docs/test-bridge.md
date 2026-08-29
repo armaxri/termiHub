@@ -397,6 +397,17 @@ result from state (e.g. `rootPanel` tab order) rather than scraping the DOM. It
 still injects **synthetic** events — it exercises dnd-kit's app logic, not the
 native OS drag pipeline (see [Not covered](#not-covered)).
 
+- **Drag-only drop targets** — some droppables mount _only while a drag is
+  active_, so they cannot be resolved before `pointerdown`. The `PanelDropZone`
+  edge/center overlays (`panel-drop-edge-<panelId>-<edge>`,
+  `panel-drop-center-<panelId>`, #2583) are the case: they render only when a tab
+  drag is in progress. When `toTestId` is absent up front, `dragTo` presses on the
+  source and fires the wake move first — which activates the drag and mounts the
+  zones — then resolves the target and steps to it. So dragging a `tab-<id>` onto a
+  `panel-drop-edge-<panelId>-<edge>` zone splits that panel, and onto a
+  `panel-drop-center-<panelId>` zone moves the tab into it — exactly as a real
+  edge/center drop would.
+
 ### Reading form values (`getValue` vs `getAttribute`)
 
 A React-**controlled** `<input>`/`<select>` updates the DOM _property_ `.value`,

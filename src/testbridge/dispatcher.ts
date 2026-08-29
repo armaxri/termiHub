@@ -443,13 +443,8 @@ export async function dispatchCommand(
     case "dragTo": {
       const from = findByTestId(deps.root, command.fromTestId);
       if (!from) return fail("dragTo", `no element with data-testid="${command.fromTestId}"`);
-      const to = findByTestId(deps.root, command.toTestId);
-      if (!to) return fail("dragTo", `no element with data-testid="${command.toTestId}"`);
       const start = centerOf(from);
-      const end = centerOf(to);
       const doc = ownerDocument(deps.root);
-      const dx = end.x - start.x;
-      const dy = end.y - start.y;
       // A nudge that comfortably clears the tab PointerSensor's activation
       // distance (`distance: 5` in SplitView.tsx) without reaching the target.
       const WAKE_DISTANCE = 12;
@@ -468,9 +463,40 @@ export async function dispatchCommand(
         await nextFrame();
       };
 
-      // Press, wake the sensor past its activation distance, step to the target,
-      // then release once the final position over the target has settled.
+      // Some drop targets — the `PanelDropZone` edge/center overlays (#2583) —
+      // mount only *while a drag is active*, so they cannot be resolved before
+      // `pointerdown`. Resolve the target up-front when it already exists (tab
+      // reorder, sidebar drops); otherwise press first, wake the sensor so the
+      // drag-only zones mount, then resolve the now-present target.
+      let to = findByTestId(deps.root, command.toTestId);
       dispatchPointer(from, "pointerdown", start.x, start.y);
+
+      if (!to) {
+        // Nudge past the activation distance in a fixed direction — the only
+        // requirement is to cross it so the drop zones render; the real target
+        // coordinates are read afterwards.
+        await moveTo(start.x + WAKE_DISTANCE, start.y);
+        to = findByTestId(deps.root, command.toTestId);
+        if (!to) {
+          // Release so no drag is left dangling, then report the miss.
+          dispatchPointer(doc, "pointerup", start.x + WAKE_DISTANCE, start.y);
+          return fail("dragTo", `no element with data-testid="${command.toTestId}"`);
+        }
+        const end = centerOf(to);
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        for (let i = 1; i <= STEPS; i++) {
+          await moveTo(start.x + (dx * i) / STEPS, start.y + (dy * i) / STEPS);
+        }
+        dispatchPointer(doc, "pointerup", end.x, end.y);
+        return ok("dragTo");
+      }
+
+      // Target already present: wake toward it, step to it, then release once the
+      // final position over the target has settled.
+      const end = centerOf(to);
+      const dx = end.x - start.x;
+      const dy = end.y - start.y;
       const dist = Math.hypot(dx, dy) || 1;
       await moveTo(start.x + (dx / dist) * WAKE_DISTANCE, start.y + (dy / dist) * WAKE_DISTANCE);
       for (let i = 1; i <= STEPS; i++) {
