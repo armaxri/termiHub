@@ -18,11 +18,17 @@ per-PR CI as ``src/components/Terminal/TerminalView.layout-scrollback.test.tsx``
 this suite is the nightly real-app confirmation over the bridge and stays on the
 ``-m integration`` lane because it needs the built app.
 
-Ops covered here via proven UI verbs: **split**, **merge** (close panel), and
-**group-switch** (create group + switch back). Drag-to-edge / drag-to-center /
-cross-panel move / tab-move-across-groups funnel through the identical tab-id
-keyed render path and are proven per-op by the headless component suite above
-(their drop-zone drag gestures have no stable testid to drive here).
+All seven layout ops are now driven here as **real drag gestures over the
+bridge**: **split** and **merge** (toolbar buttons), **group-switch** (create
+group + switch back), and the four drag ops — **drag-to-edge**, **drag-to-center**,
+**cross-panel move**, and **tab-move-across-groups** — via ``drag_to`` onto the
+``PanelDropZone`` overlays (``panel-drop-edge-<panelId>-<edge>`` /
+``panel-drop-center-<panelId>``, #2583), a sibling panel's tab, and a tab-group
+chip respectively. The zones mount only while a drag is active, so ``drag_to``
+presses and wakes the sensor first, then resolves the now-mounted target (see
+``docs/test-bridge.md``). Each op asserts the moved terminal's live scrollback
+survives, so the render-path guarantee is confirmed end-to-end, not just per-op in
+the headless component suite above.
 """
 
 from __future__ import annotations
@@ -57,6 +63,22 @@ class TestLayoutScrollbackUi(TerminalUi, TabsUi, LayoutUi, SystemTest):
         assert term_id in self.tab_ids(), f"{op} must not replace the terminal tab (no remount)"
         buf = self.driver.read_terminal(term_id)
         assert marker in buf, f"{op} must preserve the live scrollback ({marker!r} lost)"
+
+    def _panel_of_tab(self, tab_id: str, node=None):
+        """The id of the leaf panel holding ``tab_id`` in the active group, or None."""
+        if node is None:
+            node = self.driver.get_state("rootPanel")
+        if not isinstance(node, dict):
+            return None
+        if node.get("type") == "leaf":
+            if any(t.get("id") == tab_id for t in node.get("tabs") or []):
+                return node.get("id")
+            return None
+        for child in node.get("children") or []:
+            found = self._panel_of_tab(tab_id, child)
+            if found is not None:
+                return found
+        return None
 
     def test_split_preserves_scrollback(self):
         marker = "SCROLLBACK_SPLIT_2561"
@@ -103,4 +125,114 @@ class TestLayoutScrollbackUi(TerminalUi, TabsUi, LayoutUi, SystemTest):
         )
 
         self._assert_scrollback_survived(term_id, marker, "group-switch")
+        self.close_all_tabs()
+
+    def test_drag_to_edge_preserves_scrollback(self):
+        marker = "SCROLLBACK_EDGE_2583"
+        term_id = self._fresh_terminal_with_marker(marker)
+
+        # A lone tab hides its own panel's edge zones (dragging it out would leave
+        # the panel empty), so open a second tab in the panel first — now the
+        # edge overlays render and the marked tab can be split off to its own panel.
+        self.open_new_terminal()
+        self.wait(lambda: self.tab_count() == 2, what="a second tab in the panel")
+        panel_id = self._panel_of_tab(term_id)
+        assert panel_id, "the marked terminal must be in a leaf panel"
+
+        # Drag the marked tab onto the panel's right edge → a new horizontal split
+        # with the tab in its own panel.
+        self.driver.drag_to(f"tab-{term_id}", f"panel-drop-edge-{panel_id}-right")
+        self.wait(lambda: self.leaf_count() == 2, what="the tab split into its own panel")
+
+        self._assert_scrollback_survived(term_id, marker, "drag-to-edge")
+        self.close_all_tabs()
+
+    def test_drag_to_center_preserves_scrollback(self):
+        marker = "SCROLLBACK_CENTER_2583"
+        term_id = self._fresh_terminal_with_marker(marker)
+        source_panel = self._panel_of_tab(term_id)
+        assert source_panel, "the marked terminal must be in a leaf panel"
+
+        # Split to stand up a second (empty, focused) panel to drop the tab into.
+        self.driver.click(SPLIT_H)
+        self.wait(lambda: self.leaf_count() == 2, what="a second panel")
+        target_panel = self.driver.get_state("activePanelId")
+        assert target_panel and target_panel != source_panel
+
+        # Drag the marked tab onto the empty panel's center → it joins that panel's
+        # stack; the now-empty source panel collapses.
+        self.driver.drag_to(f"tab-{term_id}", f"panel-drop-center-{target_panel}")
+        self.wait(
+            lambda: self._panel_of_tab(term_id) not in (None, source_panel),
+            what="the terminal to move into the target panel",
+        )
+
+        self._assert_scrollback_survived(term_id, marker, "drag-to-center")
+        self.close_all_tabs()
+
+    def test_cross_panel_move_preserves_scrollback(self):
+        marker = "SCROLLBACK_CROSS_2583"
+        term_id = self._fresh_terminal_with_marker(marker)
+
+        # Two tabs in one panel, then split the *other* tab off to its own panel so
+        # the two terminals live in separate panels.
+        self.open_new_terminal()
+        self.wait(lambda: self.tab_count() == 2, what="two tabs in one panel")
+        other_id = next(t for t in self.tab_ids() if t != term_id)
+        source_panel = self._panel_of_tab(term_id)
+        assert source_panel
+
+        self.driver.drag_to(f"tab-{other_id}", f"panel-drop-edge-{source_panel}-right")
+        self.wait(lambda: self.leaf_count() == 2, what="two panels")
+        self.wait(
+            lambda: self._panel_of_tab(other_id) not in (None, source_panel),
+            what="the other tab in its own panel",
+        )
+
+        # Cross-panel move: drop the marked tab onto the other panel's tab.
+        self.driver.drag_to(f"tab-{term_id}", f"tab-{other_id}")
+        self.wait(
+            lambda: self._panel_of_tab(term_id) is not None
+            and self._panel_of_tab(term_id) == self._panel_of_tab(other_id),
+            what="the marked terminal to join the other panel",
+        )
+
+        self._assert_scrollback_survived(term_id, marker, "cross-panel move")
+        self.close_all_tabs()
+
+    def test_tab_move_across_groups_preserves_scrollback(self):
+        marker = "SCROLLBACK_XGROUP_2583"
+        term_id = self._fresh_terminal_with_marker(marker)
+        origin_group = self.driver.get_state("activeTabGroupId")
+
+        # Create a second group (becomes active), capture its id, then switch back
+        # so the origin group (holding the terminal) is active again.
+        self.driver.click(GROUP_ADD)
+        self.wait(
+            lambda: self.driver.get_state("activeTabGroupId") != origin_group,
+            what="the new tab group to become active",
+        )
+        target_group = self.driver.get_state("activeTabGroupId")
+        self.driver.click(f"tab-group-chip-{origin_group}")
+        self.wait(
+            lambda: self.driver.get_state("activeTabGroupId") == origin_group,
+            what="the origin tab group to be active again",
+        )
+
+        # Drag the terminal's tab onto the other group's chip → it moves into that
+        # group (a drop outside any panel droppable, resolved via the chip).
+        self.driver.drag_to(f"tab-{term_id}", f"tab-group-chip-{target_group}")
+        self.wait(
+            lambda: term_id not in self.tab_ids(),
+            what="the tab to leave the origin group",
+        )
+
+        # Switch to the target group; the same live terminal must be there.
+        self.driver.click(f"tab-group-chip-{target_group}")
+        self.wait(
+            lambda: self.driver.get_state("activeTabGroupId") == target_group,
+            what="the target tab group to be active",
+        )
+
+        self._assert_scrollback_survived(term_id, marker, "tab-move-across-groups")
         self.close_all_tabs()
