@@ -1357,6 +1357,46 @@ headless. The retired operator harness (`scripts/internal/verify-agent-reconnect
   (`TerminalDisconnectOverlay.projection.test.tsx`, `Terminal.agent-reconnect.test.tsx`,
   `Terminal.agent-reattach-scrollback.test.tsx`).
 
+### Layout GUI-smoke — live terminal scrollback survives a structural op (#2561)
+
+**Now automated — no operator, no display (#2561).** The "layout GUI-smoke
+matrix" grade (split / drag-to-edge / drag-to-center / cross-panel move / merge /
+tab-move-across-groups / group-switch, each asserting the **live terminal
+scrollback survives** the op) no longer needs a foreground display. After the
+stateless-UI inversion the scrollback lives only in the tab-id-keyed xterm;
+`TerminalHost` mounts one `<Terminal key={tab.id}>` spanning **every** tab group,
+and `SplitView`'s `TerminalSlot` merely reparents that DOM element into the
+visible panel. So "scrollback survives an op" reduces to a keying invariant: as
+long as the op preserves `tab.id`, the terminal must not be **remounted** (a
+remount is what disposes the live xterm and loses its scrollback).
+
+Two automated layers replace the manual grade:
+
+- **Per-PR CI, deterministic, headless** —
+  [`src/components/Terminal/TerminalView.layout-scrollback.test.tsx`](../src/components/Terminal/TerminalView.layout-scrollback.test.tsx)
+  renders the real `TerminalHost` with a `<Terminal>` stub that models the
+  xterm/scrollback lifecycle (mount acquires a scrollback token + sentinel;
+  unmount loses them), applies each of the **seven** ops as the tab-id-preserving
+  structural transition it produces, and asserts every surviving terminal keeps
+  the same token + sentinel — i.e. no remount, scrollback intact. A control case
+  (closing a tab) proves the probe detects a genuine teardown. The store-level
+  companion `src/store/appStore.layoutBridge.test.ts` ("E2 — tab id preservation
+  (no live-terminal remount)") pins the tab-id stability the invariant rests on.
+
+- **Nightly `-m integration`, real app over the bridge** —
+  [`tests/system/tests/test_layout_scrollback_ui.py`](../tests/system/tests/test_layout_scrollback_ui.py)
+  drives real **split**, **merge** (close panel), and **group-switch** ops in the
+  running app and reads the live buffer back through the registry
+  (`read_terminal` → `getTerminalContent`, the reconstructed xterm scrollback,
+  never pixels), asserting a printed sentinel survives each op. Drag-to-edge /
+  drag-to-center / cross-panel move / tab-move-across-groups share the identical
+  keyed render path and are proven per-op by the headless component suite above
+  (their drop-zone drag gestures have no stable testid to drive over the bridge).
+
+  ```bash
+  ./scripts/test-system-py.sh -m integration -k test_layout_scrollback_ui
+  ```
+
 ### Coordinated desktop-push Update deploy (#1616)
 
 Verifies that triggering an **Update** (the desktop-push deploy, not just the
