@@ -22,8 +22,11 @@ use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use futures_util::io::{AsyncReadExt, Cursor};
-use suppaftp::{AsyncRustlsFtpStream, FtpError, Mode};
+use std::io::Cursor;
+
+use suppaftp::tokio::AsyncRustlsFtpStream;
+use suppaftp::{FtpError, Mode};
+use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
 use crate::config::FtpConfig;
@@ -70,19 +73,17 @@ impl FtpFileBrowser {
         self.client.clone()
     }
 
-    /// Test-only: forcibly shut the live control socket down to simulate a
-    /// mid-session control-connection drop. Returns `true` if a connection was
-    /// open and closed.
+    /// Test-only: forcibly tear the live control connection down to simulate a
+    /// mid-session control-connection drop. Dropping the stream closes its
+    /// underlying socket, so the next operation re-establishes it via the
+    /// reconnect path. Returns `true` if a connection was open and closed.
     #[doc(hidden)]
     pub(crate) async fn debug_drop_connection(&self) -> bool {
-        let guard = self.client.lock().await;
-        match guard.as_ref() {
-            Some(stream) => {
-                let _ = stream.get_ref().shutdown(std::net::Shutdown::Both);
-                true
-            }
-            None => false,
-        }
+        let mut guard = self.client.lock().await;
+        // Dropping the `AsyncRustlsFtpStream` closes the OS socket (its `Drop`
+        // shuts the fd down); the next file op then sees an absent stream and
+        // reconnects, exactly as it would after a real idle-timeout / fault.
+        guard.take().is_some()
     }
 
     /// The data-channel mode currently in effect (the reconnect fallback point).
