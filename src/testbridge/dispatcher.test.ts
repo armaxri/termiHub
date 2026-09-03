@@ -455,6 +455,49 @@ describe("dispatchCommand", () => {
       expect(res.ok).toBe(false);
       expect(res.error).toContain("z");
     });
+
+    it("resolves a target that mounts only after the drag starts (#2583)", async () => {
+      // The PanelDropZone edge/center overlays render *only while a drag is
+      // active*, so they are absent at `pointerdown`. dragTo must press first,
+      // wake the sensor, then resolve the now-mounted target. Model that: append
+      // the drop zone on the source's first pointerdown.
+      const { deps, container } = setup(`<div data-testid="tab"></div>`);
+      const src = container.querySelector<HTMLElement>('[data-testid="tab"]')!;
+      src.addEventListener("pointerdown", () => {
+        if (!container.querySelector('[data-testid="zone"]')) {
+          const zone = document.createElement("div");
+          zone.setAttribute("data-testid", "zone");
+          container.appendChild(zone);
+        }
+      });
+      const seq: string[] = [];
+      src.addEventListener("pointerdown", () => seq.push("down"));
+      document.addEventListener("pointerup", () => seq.push("up"));
+
+      const res = await dispatchCommand(
+        { action: "dragTo", fromTestId: "tab", toTestId: "zone" },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "dragTo" });
+      expect(seq[0]).toBe("down");
+      expect(seq[seq.length - 1]).toBe("up");
+    });
+
+    it("releases and fails when a deferred target never mounts (#2583)", async () => {
+      // Even when the target is absent both before and after the wake move, the
+      // gesture must not leave a drag dangling — it releases, then reports.
+      const { deps } = setup(`<div data-testid="tab"></div>`);
+      const seq: string[] = [];
+      document.addEventListener("pointerup", () => seq.push("up"));
+
+      const res = await dispatchCommand(
+        { action: "dragTo", fromTestId: "tab", toTestId: "never" },
+        deps
+      );
+      expect(res.ok).toBe(false);
+      expect(res.error).toContain("never");
+      expect(seq).toContain("up");
+    });
   });
 
   describe("type", () => {

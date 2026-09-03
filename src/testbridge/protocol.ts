@@ -73,6 +73,11 @@ export interface SelectCommand {
  * moves so @dnd-kit can measure droppable rects and recompute the drop target
  * (`over`) — without those yields the drop reorders nothing. Unlike
  * {@link DragCommand} (a blind pixel delta), this targets a destination element.
+ *
+ * `toTestId` may be a **drag-only** target — e.g. the `PanelDropZone` edge/center
+ * overlays (#2583), which mount only while a drag is active. When it is absent at
+ * `pointerdown`, the gesture presses and wakes the sensor first, then resolves the
+ * now-mounted target before stepping to it.
  */
 export interface DragToCommand {
   action: "dragTo";
