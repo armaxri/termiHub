@@ -18,7 +18,7 @@
 //! decode (UTF-8 with a Latin-1 fallback) and the skipping of malformed /
 //! `.` / `..` / `total …` lines.
 
-use suppaftp::list::{File as FtpFile, PosixPexQuery};
+use suppaftp::list::{File as FtpFile, ListParser, PosixPexQuery};
 
 use crate::files::utils::{chrono_from_epoch, format_permissions, writable_from_permissions};
 use crate::files::FileEntry;
@@ -44,7 +44,7 @@ pub(crate) fn decode_bytes(raw: &[u8]) -> String {
 /// `..` (including the `type=cdir` / `type=pdir` self/parent entries), empty
 /// names, and any entry without a `type` of `dir` / `file` / `link`.
 ///
-/// This is parsed directly (not via [`suppaftp::list::File::from_mlsx_line`])
+/// This is parsed directly (not via [`suppaftp::list::ListParser::parse_mlsd`])
 /// because that parser rejects real-world server output: it errors on
 /// four-digit `UNIX.mode` values (e.g. ProFTPD's `UNIX.mode=0755`) and on the
 /// `type=cdir` / `type=pdir` markers, which would silently drop every entry.
@@ -140,13 +140,13 @@ pub(crate) fn parse_list_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
     let line = decoded.trim_end_matches(['\r', '\n']);
     // Unix `ls -l` first (the common case), then Windows/DOS. POSIX lines carry
     // real permissions; DOS lines do not.
-    if let Ok(file) = FtpFile::from_posix_line(line) {
+    if let Ok(file) = ListParser::parse_posix(line) {
         if is_ignored_name(file.name()) {
             return None;
         }
         return Some(entry_from_file(&file, dir, true));
     }
-    if let Ok(file) = FtpFile::from_dos_line(line) {
+    if let Ok(file) = ListParser::parse_dos(line) {
         if is_ignored_name(file.name()) {
             return None;
         }
