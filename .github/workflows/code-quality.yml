@@ -291,8 +291,14 @@ jobs:
       # advisory that ships to users must fail CI. Scoped to `--prod` so it does
       # not fire on the dev/build toolchain (see the advisory step below) — that
       # split is what makes this safe to make blocking (#2074).
+      # Blocks on a real high/critical prod advisory, but tolerates a transient
+      # npm-registry outage (ERR_SOCKET_TIMEOUT etc.). `pnpm audit` exits
+      # non-zero for BOTH cases, so a bare `pnpm audit --prod` reds every PR on a
+      # registry blip even with a clean tree (#2589). The gate parses the --json
+      # payload: it fails only when high+critical > 0, and retries-then-soft-
+      # passes a network error. The gate stays genuinely blocking for advisories.
       - name: pnpm audit (production deps, blocking)
-        run: pnpm audit --prod --audit-level=high
+        run: ./scripts/internal/pnpm-audit-prod-gate.sh
 
       # Advisory-only visibility for the FULL tree (incl. devDependencies). These
       # are dev/build-time highs — eslint/typescript-eslint -> minimatch ->
