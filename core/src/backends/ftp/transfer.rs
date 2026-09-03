@@ -14,12 +14,8 @@
 //! pause, and cancel possible; `suppaftp`'s `retr_as_stream` / `put_with_stream`
 //! expose the data connection as an async reader/writer for exactly this.
 
-use futures_util::io::AsyncReadExt as FuturesReadExt;
-use futures_util::io::AsyncWriteExt as FuturesWriteExt;
 use std::io::SeekFrom;
-use tokio::io::AsyncReadExt as TokioReadExt;
-use tokio::io::AsyncSeekExt;
-use tokio::io::AsyncWriteExt as TokioWriteExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::config::FtpConfig;
 use crate::errors::SessionError;
@@ -174,18 +170,19 @@ where
                 reason,
             });
         }
-        let n = FuturesReadExt::read(&mut data, &mut buf)
+        let n = data
+            .read(&mut buf)
             .await
             .map_err(|e| SessionError::SpawnFailed(format!("FTP data read: {e}")))?;
         if n == 0 {
             break;
         }
-        TokioWriteExt::write_all(&mut local, &buf[..n]).await?;
+        local.write_all(&buf[..n]).await?;
         transferred += n as u64;
         on_progress(transferred);
     }
 
-    TokioWriteExt::flush(&mut local).await?;
+    local.flush().await?;
     stream
         .finalize_retr_stream(data)
         .await
@@ -226,18 +223,18 @@ where
                 reason,
             });
         }
-        let n = TokioReadExt::read(&mut local, &mut buf).await?;
+        let n = local.read(&mut buf).await?;
         if n == 0 {
             break;
         }
-        FuturesWriteExt::write_all(&mut data, &buf[..n])
+        data.write_all(&buf[..n])
             .await
             .map_err(|e| SessionError::SpawnFailed(format!("FTP data write: {e}")))?;
         transferred += n as u64;
         on_progress(transferred);
     }
 
-    FuturesWriteExt::flush(&mut data)
+    data.flush()
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("FTP data flush: {e}")))?;
     stream

@@ -1,7 +1,8 @@
 //! FTP / FTPS backend implementing [`ConnectionType`](crate::connection::ConnectionType).
 //!
-//! Wraps the [`suppaftp`](https://crates.io/crates/suppaftp) async client
-//! (rustls TLS via `futures-rustls`, aligning with termiHub's rustls stack).
+//! Wraps the [`suppaftp`](https://crates.io/crates/suppaftp) async client on the
+//! tokio runtime (rustls TLS via `tokio-rustls`, aligning with termiHub's
+//! rustls stack).
 //! This is the connect-only skeleton: it establishes the control connection,
 //! negotiates TLS (explicit / implicit), authenticates (user/pass or
 //! anonymous), selects the data-channel mode and transfer type, and changes to
@@ -23,13 +24,14 @@ use std::time::Duration;
 
 use file_browser::FtpFileBrowser;
 
-use futures_rustls::rustls::crypto::aws_lc_rs;
-use futures_rustls::rustls::{ClientConfig, RootCertStore};
-use futures_rustls::TlsConnector;
+use suppaftp::tokio::{AsyncRustlsConnector, AsyncRustlsFtpStream};
 use suppaftp::types::{FileType, FormatControl};
-use suppaftp::{AsyncRustlsConnector, AsyncRustlsFtpStream, FtpError, Mode};
+use suppaftp::{FtpError, Mode};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio_rustls::rustls::crypto::aws_lc_rs;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use tokio_rustls::TlsConnector;
 use tracing::{debug, info};
 
 use crate::config::{FtpConfig, FtpDataMode, FtpTlsMode, FtpTransferType};
