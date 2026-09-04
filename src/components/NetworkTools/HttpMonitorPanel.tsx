@@ -12,6 +12,10 @@ import {
   onHttpMonitorCheck,
 } from "@/services/networkApi";
 import type { HttpMonitorState, HttpCheckResult } from "@/types/network";
+import { RunLocationSelect } from "@/components/RunLocationSelect";
+import { useProjectedAgents } from "@/store/useProjectedAgents";
+import { useRunLocationStore } from "@/store/runLocationStore";
+import { THIS_COMPUTER, isAgentHost, type RunLocation } from "@/utils/runLocation";
 import { LatencyChart } from "./LatencyChart";
 import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
@@ -46,6 +50,14 @@ export function HttpMonitorPanel() {
   const [history, setHistory] = useState<HttpCheckResult[]>([]);
   const [activeMonitorId, setActiveMonitorId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Where the next monitor should run — This computer (default) or an agent,
+  // which probes the target from its own vantage and streams the checks back
+  // (#2592). Session-only form state; the chosen value is recorded per monitor
+  // id in the run-location store once the monitor is created.
+  const [runLocation, setRunLocation] = useState<RunLocation>(THIS_COMPUTER);
+  const { remoteAgents: agents } = useProjectedAgents();
+  const monitorLocations = useRunLocationStore((s) => s.monitorLocations);
+  const setMonitorLocation = useRunLocationStore((s) => s.setMonitorLocation);
 
   const urlRef = useAutofocusSelect<HTMLInputElement>();
 
@@ -130,8 +142,11 @@ export function HttpMonitorPanel() {
         Number(intervalSecs) * 1000,
         method,
         expectedStatus !== "" ? expectedStatus : undefined,
-        Number(timeoutSecs) * 1000
+        Number(timeoutSecs) * 1000,
+        runLocation
       );
+      // Remember where this monitor runs so its row can show the vantage.
+      setMonitorLocation(monitorId, runLocation);
       activeMonitorIdRef.current = monitorId;
       setActiveMonitorId(monitorId);
       await loadMonitors();
@@ -149,6 +164,8 @@ export function HttpMonitorPanel() {
     method,
     expectedStatus,
     timeoutSecs,
+    runLocation,
+    setMonitorLocation,
     loadMonitors,
     stopListening,
   ]);
@@ -357,6 +374,19 @@ export function HttpMonitorPanel() {
             data-testid="http-monitor-timeout"
           />
         </Field>
+        <Field
+          className="network-panel__field network-panel__field--small"
+          label="Run on"
+          htmlFor="http-monitor-run-location"
+        >
+          <RunLocationSelect
+            value={runLocation}
+            agents={agents}
+            onChange={setRunLocation}
+            aria-label="Run HTTP monitor on"
+            data-testid="http-monitor-run-location"
+          />
+        </Field>
       </div>
 
       {error && <div className="network-panel__error">{error}</div>}
@@ -436,6 +466,9 @@ export function HttpMonitorPanel() {
               </span>
               <span className="http-monitor-row__meta">
                 {m.config.method} · every {m.config.intervalMs / 1000}s
+                {isAgentHost(monitorLocations[m.config.id] ?? THIS_COMPUTER)
+                  ? ` · on ${(monitorLocations[m.config.id] as { agentId: string }).agentId}`
+                  : ""}
                 {!m.running ? " · stopped" : m.paused ? " · paused" : ""}
               </span>
               {m.running && !m.paused && (

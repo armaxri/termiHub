@@ -1563,6 +1563,7 @@ pub fn run() {
             commands::network::network_http_monitor_resume,
             commands::network::network_http_monitor_stop_all,
             commands::network::network_http_monitor_list,
+            commands::network::set_http_monitor_run_location,
             commands::network::network_services_list,
             commands::network::set_network_tool_run_location,
             // Embedded servers

@@ -207,13 +207,20 @@ export async function networkWolDeviceDelete(deviceId: string): Promise<void> {
 
 // ── HTTP Monitor ─────────────────────────────────────────────────────────────
 
-/** Start a new HTTP monitor. Returns the monitor ID. */
+/**
+ * Start a new HTTP monitor. Returns the monitor ID.
+ *
+ * `runLocation` chooses where the monitor runs — "This computer" (default) or a
+ * named agent, which probes the target from its own vantage and streams the
+ * checks back (#2592).
+ */
 export async function networkHttpMonitorStart(
   url: string,
   intervalMs?: number,
   method?: string,
   expectedStatus?: number,
-  timeoutMs?: number
+  timeoutMs?: number,
+  runLocation?: RunLocation
 ): Promise<string> {
   return await invoke<string>("network_http_monitor_start", {
     url,
@@ -221,7 +228,20 @@ export async function networkHttpMonitorStart(
     method: method ?? null,
     expectedStatus: expectedStatus ?? null,
     timeoutMs: timeoutMs ?? null,
+    runLocation: runLocation ?? null,
   });
+}
+
+/**
+ * Set (or clear) which machine a monitor runs on — "This computer" or a named
+ * agent (#2592). `RunLocation.ThisComputer` clears the preference (back to the
+ * desktop default). Mirrors {@link setEmbeddedServerRunLocation}.
+ */
+export async function setHttpMonitorRunLocation(
+  monitorId: string,
+  runLocation: RunLocation
+): Promise<void> {
+  await invoke("set_http_monitor_run_location", { monitorId, runLocation });
 }
 
 /** Stop a running HTTP monitor, keeping it listed so it can be resumed. */

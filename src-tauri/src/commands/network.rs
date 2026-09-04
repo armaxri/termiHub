@@ -633,6 +633,11 @@ pub fn network_wol_device_delete(
 // ── HTTP Monitor ─────────────────────────────────────────────────────────────
 
 /// Start a new HTTP monitor. Returns the monitor ID.
+///
+/// `run_location` chooses where the monitor runs (default:
+/// [`RunLocation::ThisComputer`]); an agent choice hosts the poll loop on that
+/// agent, which probes the target from its own vantage and streams the checks
+/// back (#2592).
 #[tauri::command]
 pub fn network_http_monitor_start(
     url: String,
@@ -640,6 +645,7 @@ pub fn network_http_monitor_start(
     method: Option<String>,
     expected_status: Option<u16>,
     timeout_ms: Option<u64>,
+    run_location: Option<RunLocation>,
     manager: State<'_, NetworkManager>,
 ) -> Result<String, TerminalError> {
     let config = HttpMonitorConfig::new(
@@ -649,7 +655,21 @@ pub fn network_http_monitor_start(
         expected_status.unwrap_or(200),
         timeout_ms.unwrap_or(5_000),
     );
-    manager.start_http_monitor(config)
+    manager.start_http_monitor(config, run_location.unwrap_or_default())
+}
+
+/// Set (or clear) a monitor's run-location preference (#2592).
+///
+/// [`RunLocation::ThisComputer`] clears the preference (back to the desktop
+/// default); a [`RunLocation::Agent`] records which agent hosts the monitor on
+/// its next start. Mirrors `set_embedded_server_run_location`.
+#[tauri::command]
+pub fn set_http_monitor_run_location(
+    monitor_id: String,
+    run_location: RunLocation,
+    manager: State<'_, NetworkManager>,
+) -> Result<(), TerminalError> {
+    manager.set_http_monitor_run_location(&monitor_id, run_location)
 }
 
 /// Stop a running HTTP monitor, keeping it listed (as not running) so it can be

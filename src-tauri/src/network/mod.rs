@@ -12,20 +12,28 @@ pub mod wol_storage;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use tauri::{AppHandle, Emitter};
+use serde_json::json;
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use uuid::Uuid;
 
-use http_monitor::{HttpMonitorConfig, HttpMonitorService, HttpMonitorState};
+use http_monitor::{
+    register_http_monitor, HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState,
+};
 use termihub_core::network::WolDevice;
 use termihub_core::service::{Service, ServiceInfo, ServiceRegistry};
 
-use crate::run_location::{ResolvedLocation, RunLocation, RunLocationResolver};
+use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
+
+/// How often the agent `service.status` poller samples each agent-hosted HTTP
+/// monitor (#2592). Matches the embedded-server poller cadence (#2214).
+const AGENT_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Tauri event forwarded to the frontend for each HTTP monitor check.
 ///
@@ -34,6 +42,38 @@ use crate::utils::errors::TerminalError;
 /// bridges that channel to this Tauri event so the frontend contract is
 /// unchanged (see [`NetworkManager::spawn_http_monitor`]).
 const HTTP_MONITOR_CHECK_EVENT: &str = "network-http-monitor-check";
+
+/// An HTTP monitor hosted on a remote agent (#2592).
+///
+/// The poll loop and the outbound HTTP checks all run on the agent; the desktop
+/// holds only *control* — which agent runs it, the config, and the latest check
+/// the `service.status` poller sampled — so [`NetworkManager::list_http_monitors`]
+/// can project an agent-hosted monitor exactly like a desktop-hosted one, and the
+/// frontend cannot tell where it runs.
+struct AgentMonitorHandle {
+    /// The agent hosting this monitor.
+    agent_id: String,
+    /// The monitor's config (its `id` is the agent-side instance id).
+    config: HttpMonitorConfig,
+    /// The most recent check sampled from the agent, if any.
+    last_result: Option<HttpCheckResult>,
+    /// Whether the monitor's poll loop is currently hosted on the agent.
+    running: bool,
+    /// Whether the monitor is paused (torn down on the agent, kept listed).
+    paused: bool,
+}
+
+impl AgentMonitorHandle {
+    /// Project this handle as an [`HttpMonitorState`] for listing.
+    fn state(&self) -> HttpMonitorState {
+        HttpMonitorState {
+            config: self.config.clone(),
+            running: self.running,
+            paused: self.running && self.paused,
+            last_result: self.last_result.clone(),
+        }
+    }
+}
 
 /// Central manager for all active network diagnostic tasks.
 ///
@@ -44,6 +84,22 @@ pub struct NetworkManager {
     /// Running HTTP monitors, each an [`HttpMonitorService`] behind the core
     /// [`Service`](termihub_core::service::Service) trait (#2157).
     http_monitors: Mutex<HashMap<String, HttpMonitorService>>,
+    /// HTTP monitors hosted on a remote agent, keyed by monitor id (#2592).
+    /// Disjoint from `http_monitors` (desktop-hosted): an agent-hosted monitor's
+    /// poll loop runs on the agent, so the desktop tracks only the control handle
+    /// here. `Arc`-shared so the periodic `service.status` poller task can refresh
+    /// each handle without a `&self` reference.
+    agent_monitors: Arc<Mutex<HashMap<String, AgentMonitorHandle>>>,
+    /// Per-monitor run-location preference — which machine hosts each monitor
+    /// (#2592). Keyed by monitor id. In-memory today (like the embedded-server
+    /// preference, #2214); an absent entry means [`RunLocation::ThisComputer`],
+    /// the desktop default and today's behaviour. Persisted configs auto-start
+    /// on this computer after a relaunch, exactly as before.
+    monitor_run_locations: Mutex<HashMap<String, RunLocation>>,
+    /// Handle to the single periodic agent `service.status` poller task (#2592).
+    /// `Some` while at least one agent-hosted monitor exists; the task self-reaps
+    /// once none remain, and shutdown aborts it.
+    agent_status_poller: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
     /// Desktop-side registry of run-location-routable services. The HTTP monitor
     /// is registered here (discovery, schema, capabilities) as the S2 pilot.
     service_registry: ServiceRegistry,
@@ -71,6 +127,9 @@ impl NetworkManager {
         Self {
             active_tasks: Mutex::new(HashMap::new()),
             http_monitors: Mutex::new(HashMap::new()),
+            agent_monitors: Arc::new(Mutex::new(HashMap::new())),
+            monitor_run_locations: Mutex::new(HashMap::new()),
+            agent_status_poller: Arc::new(Mutex::new(None)),
             service_registry: build_service_registry(),
             run_location: RunLocationResolver::new(),
             run_locations: Mutex::new(HashMap::new()),
@@ -224,12 +283,64 @@ impl NetworkManager {
 
     // ── HTTP Monitors ───────────────────────────────────────────────────────
 
+    // ── Per-monitor run-location (#2592) ─────────────────────────────────────
+
+    /// Set (or clear) a monitor's run-location preference (#2592).
+    ///
+    /// [`RunLocation::ThisComputer`] clears the entry (back to the desktop
+    /// default); a [`RunLocation::Agent`] records which agent should host the
+    /// monitor on its next start. Mirrors the embedded-server preference (#2214).
+    /// The HTTP monitor is [`Locality::LocalOrAgent`] (a network probe from a
+    /// remote vantage), so an agent choice is accepted.
+    pub fn set_http_monitor_run_location(
+        &self,
+        monitor_id: &str,
+        location: RunLocation,
+    ) -> Result<(), TerminalError> {
+        // A network probe may run on an agent — validate through the resolver so
+        // the boundary is enforced in one place.
+        self.run_location
+            .resolve(monitor_id, Locality::LocalOrAgent, &location)
+            .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
+
+        let mut map = self.monitor_run_locations.lock().map_err(|_| {
+            TerminalError::InternalError("monitor run-location lock poisoned".into())
+        })?;
+        match location {
+            RunLocation::ThisComputer => {
+                map.remove(monitor_id);
+            }
+            agent @ RunLocation::Agent(_) => {
+                map.insert(monitor_id.to_string(), agent);
+            }
+        }
+        Ok(())
+    }
+
+    /// Read a monitor's recorded run-location, defaulting to
+    /// [`RunLocation::ThisComputer`] when none is set (#2592).
+    fn requested_monitor_location(&self, monitor_id: &str) -> RunLocation {
+        self.monitor_run_locations
+            .lock()
+            .ok()
+            .and_then(|map| map.get(monitor_id).cloned())
+            .unwrap_or_default()
+    }
+
     /// Start a new HTTP monitor and persist its config. Returns its ID.
     ///
-    /// The config is written to disk (see [`http_monitor_storage`]) so the
-    /// monitor is auto-restarted on the next launch. Runtime state (last
-    /// result, running flag) is never persisted.
-    pub fn start_http_monitor(&self, config: HttpMonitorConfig) -> Result<String, TerminalError> {
+    /// `run_location` records where the monitor should run (default:
+    /// [`RunLocation::ThisComputer`]); an agent choice hosts the monitor on that
+    /// agent (#2592). The config is written to disk (see [`http_monitor_storage`])
+    /// so the monitor is auto-restarted on the next launch. Runtime state (last
+    /// result, running flag) and the run-location choice are never persisted.
+    pub fn start_http_monitor(
+        &self,
+        config: HttpMonitorConfig,
+        run_location: RunLocation,
+    ) -> Result<String, TerminalError> {
+        // Record the run-location before spawning so the resolver routes it.
+        self.set_http_monitor_run_location(&config.id, run_location)?;
         // Persist first so a monitor the user just created survives a restart
         // even if it is stopped before the next save.
         self.persist_monitor_config(config.clone())?;
@@ -242,20 +353,27 @@ impl NetworkManager {
     /// persisted monitors on launch.
     ///
     /// The monitor's run-location is resolved through the [`RunLocationResolver`]
-    /// (S1 default: always local). The service emits check results on its core
+    /// from its recorded preference (default: local). A monitor resolving to an
+    /// agent is hosted on that agent over the agent RPC (#2592); the desktop path
+    /// below is unchanged. The desktop service emits check results on its core
     /// [`EventChannel`](termihub_core::service::EventChannel); a bridge task
     /// forwards them to the [`HTTP_MONITOR_CHECK_EVENT`] Tauri event so the
     /// frontend contract is unchanged.
     fn spawn_http_monitor(&self, config: HttpMonitorConfig) -> Result<String, TerminalError> {
-        // The HTTP monitor is desktop-only (Open Design Decision #4): the agent
-        // has no HTTP-monitor method, so the resolver refuses an agent location
-        // for it and it always runs locally (#2190).
-        match self.resolve_tool_location(agent_tools::tool::HTTP_MONITOR)? {
+        // Route by run-location (#2592). No preference → local (unchanged); an
+        // agent preference hosts the monitor on that agent over the agent RPC.
+        match self
+            .run_location
+            .resolve(
+                &config.id,
+                Locality::LocalOrAgent,
+                &self.requested_monitor_location(&config.id),
+            )
+            .map_err(|e| TerminalError::NetworkError(e.to_string()))?
+        {
             ResolvedLocation::Local => {}
-            ResolvedLocation::Agent(agent) => {
-                return Err(TerminalError::InternalError(format!(
-                    "HTTP monitors are desktop-only and cannot run on an agent (requested '{agent}')"
-                )));
+            ResolvedLocation::Agent(agent_id) => {
+                return self.start_agent_monitor(config, &agent_id);
             }
         }
 
@@ -276,6 +394,173 @@ impl NetworkManager {
         Ok(id)
     }
 
+    // ── Agent-hosted monitors (#2592) ────────────────────────────────────────
+
+    /// Host a monitor on a remote agent over the agent RPC (#2592).
+    ///
+    /// Sends `service.start` with the monitor id as the instance id, the
+    /// `http_monitor` service id, and the full [`HttpMonitorConfig`] — mirroring
+    /// [`EmbeddedServerManager::start_agent_service`](crate::embedded_servers::EmbeddedServerManager).
+    /// On success the control handle is tracked and the `service.status` poller is
+    /// (re)started so streamed checks reach the frontend.
+    fn start_agent_monitor(
+        &self,
+        config: HttpMonitorConfig,
+        agent_id: &str,
+    ) -> Result<String, TerminalError> {
+        let id = config.id.clone();
+        if self.lock_agent_monitors()?.contains_key(&id) {
+            return Err(TerminalError::NetworkError(format!(
+                "Monitor {id} is already running on an agent"
+            )));
+        }
+
+        let client = self.agent_rpc_client().ok_or_else(|| {
+            TerminalError::NetworkError("Agent manager is not available".to_string())
+        })?;
+        let params = json!({
+            "instanceId": id,
+            "serviceId": http_monitor::SERVICE_ID,
+            "config": serde_json::to_value(&config)
+                .map_err(|e| TerminalError::NetworkError(format!("serialize monitor config: {e}")))?,
+        });
+
+        client
+            .send_request(agent_id, "service.start", params)
+            .map_err(|e| {
+                TerminalError::NetworkError(format!("agent-hosted HTTP monitor start failed: {e}"))
+            })?;
+
+        self.lock_agent_monitors()?.insert(
+            id.clone(),
+            AgentMonitorHandle {
+                agent_id: agent_id.to_string(),
+                config,
+                last_result: None,
+                running: true,
+                paused: false,
+            },
+        );
+        self.ensure_agent_status_poller();
+        tracing::info!("HTTP monitor {id} started on agent {agent_id}");
+        Ok(id)
+    }
+
+    /// Ensure the single periodic agent `service.status` poller task is running
+    /// (#2592).
+    ///
+    /// Idempotent, mirroring the embedded-server poller (#2214): every
+    /// [`AGENT_STATUS_POLL_INTERVAL`] it snapshots the live agent-monitor set,
+    /// polls each running one's `service.status` over the agent RPC (blocking, on
+    /// a `spawn_blocking` thread), and re-emits [`HTTP_MONITOR_CHECK_EVENT`] with
+    /// the streamed [`HttpCheckResult`] when a fresh check arrives — so a
+    /// monitor's checks reach the frontend from the agent's vantage exactly as a
+    /// desktop-hosted monitor's do. The task self-reaps once no agent monitor
+    /// remains.
+    fn ensure_agent_status_poller(&self) {
+        let mut slot = match self.agent_status_poller.lock() {
+            Ok(slot) => slot,
+            Err(_) => return,
+        };
+        if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
+            return;
+        }
+
+        let agent_monitors = Arc::clone(&self.agent_monitors);
+        let poller_slot = Arc::clone(&self.agent_status_poller);
+        let app = self.app_handle();
+
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(AGENT_STATUS_POLL_INTERVAL).await;
+
+                // Snapshot the running (monitor id, agent id) targets under the
+                // lock, then release it before any RPC so a slow agent never
+                // blocks a start/stop that also touches this map.
+                let targets: Vec<(String, String)> = match agent_monitors.lock() {
+                    Ok(map) => map
+                        .iter()
+                        .filter(|(_, h)| h.running && !h.paused)
+                        .map(|(id, h)| (id.clone(), h.agent_id.clone()))
+                        .collect(),
+                    Err(_) => break,
+                };
+                // No agent monitor left at all: stop polling and clear the slot.
+                let any_left = agent_monitors
+                    .lock()
+                    .map(|m| !m.is_empty())
+                    .unwrap_or(false);
+                if !any_left {
+                    break;
+                }
+                if targets.is_empty() {
+                    continue;
+                }
+
+                let (Some(app), Some(client)) = (app.clone(), resolve_agent_client(app.as_ref()))
+                else {
+                    continue;
+                };
+
+                let samples = tokio::task::spawn_blocking(move || {
+                    poll_agent_monitor_checks(client, &targets)
+                })
+                .await
+                .unwrap_or_default();
+
+                // Write fresh checks back into the handles and emit each new one.
+                let mut fresh = Vec::new();
+                if let Ok(mut map) = agent_monitors.lock() {
+                    for (id, result) in samples {
+                        if let Some(handle) = map.get_mut(&id) {
+                            let is_new = handle
+                                .last_result
+                                .as_ref()
+                                .map(|prev| prev.timestamp_ms != result.timestamp_ms)
+                                .unwrap_or(true);
+                            handle.last_result = Some(result.clone());
+                            if is_new {
+                                fresh.push(result);
+                            }
+                        }
+                    }
+                }
+                for result in fresh {
+                    let _ = app.emit(HTTP_MONITOR_CHECK_EVENT, result);
+                }
+            }
+            if let Ok(mut slot) = poller_slot.lock() {
+                *slot = None;
+            }
+        });
+        *slot = Some(handle);
+    }
+
+    /// Send `service.stop` for an agent-hosted monitor (best-effort). Returns the
+    /// handle's agent id if the monitor was agent-hosted.
+    fn stop_agent_monitor_rpc(&self, monitor_id: &str) -> Option<String> {
+        let agent_id = self
+            .agent_monitors
+            .lock()
+            .ok()
+            .and_then(|map| map.get(monitor_id).map(|h| h.agent_id.clone()))?;
+        if let Some(client) = self.agent_rpc_client() {
+            let params = json!({ "instanceId": monitor_id });
+            if let Err(e) = client.send_request(&agent_id, "service.stop", params) {
+                tracing::warn!("Failed to stop agent-hosted HTTP monitor {monitor_id}: {e}");
+            }
+        }
+        Some(agent_id)
+    }
+
+    fn lock_agent_monitors(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, HashMap<String, AgentMonitorHandle>>, TerminalError> {
+        self.agent_monitors
+            .lock()
+            .map_err(|_| TerminalError::InternalError("agent monitor lock poisoned".into()))
+    }
+
     /// Stop a running HTTP monitor, keeping it **listed** (as `running: false`).
     ///
     /// Audit Gap #6: Stop must suspend polling without destroying the monitor —
@@ -284,6 +569,18 @@ impl NetworkManager {
     /// (or the next launch) can bring it back. Use [`remove_http_monitor`] to
     /// truly delete it.
     pub fn stop_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        // Agent-hosted monitors live in their own track: tell the agent to tear
+        // the poll loop down, but keep the control handle listed as `running:
+        // false` so a later Resume can re-host it (#2592).
+        if let Some(_agent_id) = self.stop_agent_monitor_rpc(monitor_id) {
+            if let Ok(mut map) = self.agent_monitors.lock() {
+                if let Some(handle) = map.get_mut(monitor_id) {
+                    handle.running = false;
+                    handle.paused = false;
+                }
+            }
+            return Ok(());
+        }
         let mut monitors = self
             .http_monitors
             .lock()
@@ -305,6 +602,19 @@ impl NetworkManager {
     ///
     /// Audit Gap #6: this is the destructive counterpart to [`stop_http_monitor`].
     pub fn remove_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        // Agent-hosted monitor: `service.stop` on the agent, drop the control
+        // handle and its run-location preference, and delete the persisted config
+        // (#2592).
+        if self.stop_agent_monitor_rpc(monitor_id).is_some() {
+            self.lock_agent_monitors()?.remove(monitor_id);
+            if let Ok(mut map) = self.monitor_run_locations.lock() {
+                map.remove(monitor_id);
+            }
+            if let Err(e) = self.remove_persisted_monitor_config(monitor_id) {
+                error!(monitor_id, "Failed to remove persisted HTTP monitor: {e}");
+            }
+            return Ok(());
+        }
         let mut monitors = self
             .http_monitors
             .lock()
@@ -329,6 +639,19 @@ impl NetworkManager {
     /// Pause a running HTTP monitor: the poll loop stays alive but its poll body
     /// is suspended (audit Gap #5). Lists as `running: true, paused: true`.
     pub fn pause_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        // The generic `service.*` RPC has no pause; for an agent-hosted monitor,
+        // pausing tears the poll loop down on the agent and marks the handle
+        // paused (kept listed), so Resume re-hosts it — the same user-visible
+        // effect as a desktop pause (#2592).
+        if self.stop_agent_monitor_rpc(monitor_id).is_some() {
+            if let Ok(mut map) = self.agent_monitors.lock() {
+                if let Some(handle) = map.get_mut(monitor_id) {
+                    handle.paused = true;
+                }
+            }
+            debug!(monitor_id, "Paused agent-hosted HTTP monitor");
+            return Ok(());
+        }
         let monitors = self
             .http_monitors
             .lock()
@@ -349,6 +672,40 @@ impl NetworkManager {
     /// - A **stopped** monitor (loop cancelled, but still listed) is re-spawned
     ///   with a fresh cancellation token, reusing the same config/id.
     pub fn resume_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        // Agent-hosted monitor: re-host it by sending a fresh `service.start` with
+        // the same config/id, then mark the handle running again (#2592).
+        let agent_target = self.agent_monitors.lock().ok().and_then(|map| {
+            map.get(monitor_id)
+                .map(|h| (h.agent_id.clone(), h.config.clone()))
+        });
+        if let Some((agent_id, config)) = agent_target {
+            let client = self.agent_rpc_client().ok_or_else(|| {
+                TerminalError::NetworkError("Agent manager is not available".to_string())
+            })?;
+            let params = json!({
+                "instanceId": monitor_id,
+                "serviceId": http_monitor::SERVICE_ID,
+                "config": serde_json::to_value(&config).map_err(|e| {
+                    TerminalError::NetworkError(format!("serialize monitor config: {e}"))
+                })?,
+            });
+            client
+                .send_request(&agent_id, "service.start", params)
+                .map_err(|e| {
+                    TerminalError::NetworkError(format!(
+                        "agent-hosted HTTP monitor resume failed: {e}"
+                    ))
+                })?;
+            if let Ok(mut map) = self.agent_monitors.lock() {
+                if let Some(handle) = map.get_mut(monitor_id) {
+                    handle.running = true;
+                    handle.paused = false;
+                }
+            }
+            self.ensure_agent_status_poller();
+            debug!(monitor_id, "Resumed agent-hosted HTTP monitor");
+            return Ok(());
+        }
         let mut monitors = self
             .http_monitors
             .lock()
@@ -415,22 +772,48 @@ impl NetworkManager {
     /// in-flight requests — inconsistent with every sibling subsystem's clean
     /// teardown.
     pub fn stop_all_http_monitors(&self) {
-        let Ok(mut monitors) = self.http_monitors.lock() else {
+        if let Ok(mut monitors) = self.http_monitors.lock() {
+            for (id, mut service) in monitors.drain() {
+                service.shutdown();
+                debug!(monitor_id = %id, "Stopped HTTP monitor during teardown");
+            }
+        } else {
             error!("http monitor lock poisoned during stop_all");
-            return;
-        };
-        for (id, mut service) in monitors.drain() {
-            service.shutdown();
-            debug!(monitor_id = %id, "Stopped HTTP monitor during teardown");
+        }
+
+        // Tear down agent-hosted monitors too (#2592): `service.stop` each and
+        // drop its handle, then abort the poller.
+        let ids: Vec<String> = self
+            .agent_monitors
+            .lock()
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default();
+        for id in ids {
+            self.stop_agent_monitor_rpc(&id);
+        }
+        if let Ok(mut map) = self.agent_monitors.lock() {
+            map.clear();
+        }
+        if let Ok(mut slot) = self.agent_status_poller.lock() {
+            if let Some(handle) = slot.take() {
+                handle.abort();
+            }
         }
     }
 
-    /// List all HTTP monitors (running and stopped).
+    /// List all HTTP monitors (running and stopped), desktop- and agent-hosted.
     pub fn list_http_monitors(&self) -> Vec<HttpMonitorState> {
-        let Ok(monitors) = self.http_monitors.lock() else {
-            return Vec::new();
-        };
-        monitors.values().filter_map(|s| s.state()).collect()
+        let mut states: Vec<HttpMonitorState> = self
+            .http_monitors
+            .lock()
+            .map(|monitors| monitors.values().filter_map(|s| s.state()).collect())
+            .unwrap_or_default();
+        // An agent-hosted monitor (#2592) projects from its control handle, just
+        // like a desktop-hosted one, so the frontend cannot tell where it runs.
+        if let Ok(agent) = self.agent_monitors.lock() {
+            states.extend(agent.values().map(|h| h.state()));
+        }
+        states
     }
 
     // ── WoL Devices ─────────────────────────────────────────────────────────
@@ -480,16 +863,12 @@ impl Default for NetworkManager {
 
 /// Build the desktop [`ServiceRegistry`] with the run-location-routable services.
 ///
-/// The HTTP monitor is the S2 pilot (#2157) — the first existing service lifted
-/// onto the core [`Service`](termihub_core::service::Service) trait.
+/// Delegates to the shared [`register_http_monitor`] so the desktop host and the
+/// agent register an identical HTTP-monitor factory from one source of truth
+/// (#2592) — the same pattern the embedded servers use.
 fn build_service_registry() -> ServiceRegistry {
     let mut registry = ServiceRegistry::new();
-    registry.register(
-        http_monitor::SERVICE_ID,
-        http_monitor::DISPLAY_NAME,
-        "activity",
-        Box::new(|| Box::new(HttpMonitorService::new())),
-    );
+    register_http_monitor(&mut registry);
     registry
 }
 
@@ -515,6 +894,60 @@ fn spawn_event_bridge(app: AppHandle, mut events: termihub_core::service::Servic
             }
         }
     });
+}
+
+/// Resolve the agent RPC client from Tauri managed state (#2592).
+///
+/// A free function (no `&self`) so the periodic poller task can resolve the
+/// client fresh each tick without holding a [`NetworkManager`] reference — an
+/// agent may connect after the poller started.
+fn resolve_agent_client(app: Option<&AppHandle>) -> Option<Arc<dyn AgentRpcClient>> {
+    app?.try_state::<Arc<dyn AgentRpcClient>>()
+        .map(|state| (*state).clone())
+}
+
+/// Poll `service.status` for a batch of agent-hosted monitors and collect the
+/// latest streamed [`HttpCheckResult`] for each (#2592).
+///
+/// `AgentRpcClient::send_request` is blocking, so this runs on a blocking thread.
+/// A monitor with no streamed check yet, or one no longer running on the agent,
+/// simply contributes nothing this tick.
+fn poll_agent_monitor_checks(
+    client: Arc<dyn AgentRpcClient>,
+    targets: &[(String, String)],
+) -> Vec<(String, HttpCheckResult)> {
+    let mut out = Vec::new();
+    for (monitor_id, agent_id) in targets {
+        let params = json!({ "instanceId": monitor_id });
+        match client.send_request(agent_id, "service.status", params) {
+            Ok(reply) => {
+                if let Some(result) = parse_agent_check(monitor_id, &reply) {
+                    out.push((monitor_id.clone(), result));
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "service.status poll for monitor {monitor_id} on agent {agent_id} failed: {e}"
+                );
+            }
+        }
+    }
+    out
+}
+
+/// Parse an agent `service.status` reply into the latest [`HttpCheckResult`], or
+/// `None` when the monitor is not running or has streamed no check yet (#2592).
+///
+/// Pure, so the parse is unit-testable without an agent mock.
+fn parse_agent_check(monitor_id: &str, reply: &serde_json::Value) -> Option<HttpCheckResult> {
+    if reply["running"].as_bool() != Some(true) {
+        return None;
+    }
+    let mut result: HttpCheckResult = serde_json::from_value(reply["state"].clone()).ok()?;
+    // Defend against a config-id/instance-id mismatch: the desktop keys checks by
+    // the monitor id it started, so normalise to it.
+    result.monitor_id = monitor_id.to_string();
+    Some(result)
 }
 
 #[cfg(test)]
@@ -576,6 +1009,95 @@ mod tests {
         assert!(monitor.capabilities.emits_events);
         // A network probe may run on an agent — not desktop-only.
         assert!(!monitor.capabilities.desktop_only);
+    }
+
+    // ── Per-monitor run-location + agent hosting (#2592) ─────────────────────
+
+    #[test]
+    fn monitors_default_to_this_computer() {
+        let mgr = NetworkManager::new();
+        assert_eq!(
+            mgr.requested_monitor_location("mon-1"),
+            RunLocation::ThisComputer
+        );
+    }
+
+    #[test]
+    fn set_http_monitor_run_location_accepts_an_agent_and_clears() {
+        // Unlike a desktop-only capability, a monitor may be hosted on an agent
+        // (a probe from a remote vantage), so recording an agent is accepted.
+        let mgr = NetworkManager::new();
+        mgr.set_http_monitor_run_location("mon-1", RunLocation::Agent("edge".into()))
+            .expect("agent location accepted for a monitor");
+        assert_eq!(
+            mgr.requested_monitor_location("mon-1"),
+            RunLocation::Agent("edge".into())
+        );
+        // This computer clears it back to the default.
+        mgr.set_http_monitor_run_location("mon-1", RunLocation::ThisComputer)
+            .expect("clear");
+        assert_eq!(
+            mgr.requested_monitor_location("mon-1"),
+            RunLocation::ThisComputer
+        );
+    }
+
+    #[test]
+    fn list_http_monitors_includes_agent_hosted() {
+        // An agent-hosted monitor projects from its control handle, so it lists
+        // alongside desktop-hosted monitors and the frontend can't tell them apart.
+        let mgr = NetworkManager::new();
+        let cfg = HttpMonitorConfig::new(
+            "https://edge.example/health".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let id = cfg.id.clone();
+        mgr.agent_monitors.lock().unwrap().insert(
+            id.clone(),
+            AgentMonitorHandle {
+                agent_id: "edge".into(),
+                config: cfg,
+                last_result: None,
+                running: true,
+                paused: false,
+            },
+        );
+        let listed = mgr.list_http_monitors();
+        let found = listed.iter().find(|m| m.config.id == id).expect("listed");
+        assert!(found.running);
+        assert_eq!(found.config.url, "https://edge.example/health");
+    }
+
+    #[test]
+    fn parse_agent_check_reads_running_state_and_normalizes_id() {
+        // A `service.status` reply for a running agent monitor yields the streamed
+        // check, keyed to the desktop's monitor id.
+        let reply = json!({
+            "running": true,
+            "state": {
+                "monitorId": "instance-side-id",
+                "statusCode": 200,
+                "latencyMs": 12,
+                "ok": true,
+                "error": null,
+                "timestampMs": 1_700_000_000_000_u64
+            }
+        });
+        let result = parse_agent_check("mon-1", &reply).expect("a running monitor yields a check");
+        assert_eq!(result.monitor_id, "mon-1");
+        assert_eq!(result.status_code, Some(200));
+        assert!(result.ok);
+    }
+
+    #[test]
+    fn parse_agent_check_none_when_not_running_or_no_check() {
+        // Not running → no check.
+        assert!(parse_agent_check("mon-1", &json!({ "running": false })).is_none());
+        // Running but no streamed state yet → no check.
+        assert!(parse_agent_check("mon-1", &json!({ "running": true, "state": null })).is_none());
     }
 
     // ── Run-location routing (#2190) ─────────────────────────────────────────

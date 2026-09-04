@@ -46,8 +46,12 @@ pub mod tool {
     pub const DNS: &str = "dns";
     /// Wake-on-LAN — agent-routable (`network.wol`).
     pub const WOL: &str = "wol";
-    /// HTTP monitor — **desktop-only**: the agent deliberately excludes HTTP
-    /// monitoring, so it is never offered an agent (Open Design Decision #4).
+    /// HTTP monitor — **not** a `network.*` tool: it has no batched
+    /// collect-and-return agent method. As of #2592 a monitor *can* run on an
+    /// agent, but through the per-monitor `service.*` hosting path
+    /// ([`NetworkManager::start_agent_monitor`](super::NetworkManager)), not this
+    /// per-tool-type network-tool preference. This key stays desktop-only here so
+    /// the network-tool selector never offers it an agent over the wrong path.
     pub const HTTP_MONITOR: &str = "http_monitor";
 }
 

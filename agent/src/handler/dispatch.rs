@@ -158,14 +158,15 @@ impl AgentHandler {
         let registry_client: Arc<OnceLock<Arc<RegistryClient>>> = Arc::new(OnceLock::new());
 
         // Built-in tool set, shared and stateless; the service registry is
-        // populated with the embedded HTTP/FTP/TFTP server factories (#2192).
-        // Both are constructed here so `AgentHandler::new`'s public signature is
-        // unchanged — the registries are self-contained infrastructure, exactly
-        // like the shutdown flag.
+        // populated with the embedded HTTP/FTP/TFTP server factories (#2192) plus
+        // the HTTP-monitor factory (#2592), so an agent can host either from the
+        // same `service.*` dispatch. Both are constructed here so
+        // `AgentHandler::new`'s public signature is unchanged — the registries are
+        // self-contained infrastructure, exactly like the shutdown flag.
         let tool_registry = Arc::new(ToolRegistry::with_builtin_network_tools());
-        let service_registry = Arc::new(AgentServiceRegistry::new(
-            termihub_core::embedded_servers::build_service_registry(),
-        ));
+        let mut service_factories = termihub_core::embedded_servers::build_service_registry();
+        termihub_core::monitoring::http_monitor::register_http_monitor(&mut service_factories);
+        let service_registry = Arc::new(AgentServiceRegistry::new(service_factories));
         let tunnel_registry = Arc::new(AgentTunnelRegistry::new());
 
         let state = Mutex::new(HandlerState {
@@ -3923,6 +3924,111 @@ mod tests {
             "service.status",
             json!({ "instanceId": "srv-1" }),
             5,
+        )
+        .await;
+        assert_eq!(after["result"]["running"], false, "{after}");
+    }
+
+    /// The agent also lists the HTTP monitor as a hostable service (#2592).
+    #[tokio::test]
+    async fn service_list_includes_the_http_monitor() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(&handler, "service.list", json!({}), 2).await;
+        let ids: Vec<&str> = result["result"]["services"]
+            .as_array()
+            .expect("services array")
+            .iter()
+            .filter_map(|s| s["serviceId"].as_str())
+            .collect();
+        assert!(ids.contains(&"http_monitor"), "{result}");
+    }
+
+    /// End-to-end: the desktop starts an HTTP monitor on the agent over
+    /// `service.start`, the monitor polls a target from the agent's vantage, and
+    /// `service.status` streams the check result back before `service.stop` tears
+    /// it down (#2592). This is the agent-RPC path the desktop routing exercises.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn service_start_hosts_an_http_monitor_and_streams_a_check() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        // A tiny loopback HTTP sink so a real check completes fast without network.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind sink");
+        let addr = listener.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            for mut s in listener.incoming().flatten() {
+                use std::io::{Read, Write};
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+
+        let start = dispatch(
+            &handler,
+            "service.start",
+            json!({
+                "instanceId": "mon-1",
+                "serviceId": "http_monitor",
+                "config": {
+                    "id": "mon-1",
+                    "url": format!("http://{addr}/"),
+                    "intervalMs": 1_000,
+                    "method": "GET",
+                    "expectedStatus": 200,
+                    "timeoutMs": 5_000
+                }
+            }),
+            2,
+        )
+        .await;
+        assert_eq!(
+            start["result"]["status"]["state"], "running",
+            "service.start must report running: {start}"
+        );
+
+        // Poll status until a streamed check result arrives from the agent's
+        // vantage (the registry's event bridge captures it into `state`).
+        let mut streamed = None;
+        for i in 0..50 {
+            let status = dispatch(
+                &handler,
+                "service.status",
+                json!({ "instanceId": "mon-1" }),
+                10 + i,
+            )
+            .await;
+            assert_eq!(status["result"]["running"], true, "{status}");
+            if let Some(state) = status["result"]["state"].as_object() {
+                if state.get("statusCode").and_then(|v| v.as_u64()) == Some(200) {
+                    streamed = Some(status["result"]["state"].clone());
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let state = streamed.expect("a check result must stream back within ~5s");
+        assert_eq!(state["monitorId"], "mon-1");
+        assert_eq!(state["ok"], true);
+
+        let stop = dispatch(
+            &handler,
+            "service.stop",
+            json!({ "instanceId": "mon-1" }),
+            80,
+        )
+        .await;
+        assert_eq!(stop["result"]["stopped"], true, "{stop}");
+
+        let after = dispatch(
+            &handler,
+            "service.status",
+            json!({ "instanceId": "mon-1" }),
+            81,
         )
         .await;
         assert_eq!(after["result"]["running"], false, "{after}");

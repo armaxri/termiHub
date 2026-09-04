@@ -27,6 +27,7 @@ import {
   networkWolDeviceSave,
   networkWolDeviceDelete,
   networkHttpMonitorStart,
+  setHttpMonitorRunLocation,
   networkHttpMonitorStop,
   networkHttpMonitorStopAll,
   networkHttpMonitorList,
@@ -256,6 +257,7 @@ describe("networkApi", () => {
         method: null,
         expectedStatus: null,
         timeoutMs: null,
+        runLocation: null,
       });
       expect(result).toBe("monitor-1");
     });
@@ -263,7 +265,10 @@ describe("networkApi", () => {
     it("networkHttpMonitorStart passes all optional params", async () => {
       mockedInvoke.mockResolvedValue("monitor-2");
 
-      await networkHttpMonitorStart("https://api.example.com/health", 30000, "GET", 200, 10000);
+      await networkHttpMonitorStart("https://api.example.com/health", 30000, "GET", 200, 10000, {
+        kind: "agent",
+        agentId: "edge",
+      });
 
       expect(mockedInvoke).toHaveBeenCalledWith("network_http_monitor_start", {
         url: "https://api.example.com/health",
@@ -271,6 +276,18 @@ describe("networkApi", () => {
         method: "GET",
         expectedStatus: 200,
         timeoutMs: 10000,
+        runLocation: { kind: "agent", agentId: "edge" },
+      });
+    });
+
+    it("setHttpMonitorRunLocation records a monitor's chosen machine", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await setHttpMonitorRunLocation("mon-1", { kind: "agent", agentId: "edge" });
+
+      expect(mockedInvoke).toHaveBeenCalledWith("set_http_monitor_run_location", {
+        monitorId: "mon-1",
+        runLocation: { kind: "agent", agentId: "edge" },
       });
     });
 
