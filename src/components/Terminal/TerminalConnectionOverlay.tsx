@@ -228,7 +228,7 @@ export function TerminalConnectionOverlay({
         <div className="terminal-connection-overlay__body">
           <Loader2
             size={32}
-            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin"
+            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
           />
           <p className="terminal-connection-overlay__heading">Restoring session…</p>
           <p className="terminal-connection-overlay__subheading">
@@ -245,7 +245,7 @@ export function TerminalConnectionOverlay({
         <div className="terminal-connection-overlay__body">
           <Loader2
             size={32}
-            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin"
+            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
           />
           <p className="terminal-connection-overlay__heading">Waiting for agent…</p>
           <p className="terminal-connection-overlay__subheading">
@@ -296,7 +296,7 @@ export function TerminalConnectionOverlay({
         <div className="terminal-connection-overlay__body">
           <Loader2
             size={32}
-            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin"
+            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
           />
           <p className="terminal-connection-overlay__heading">
             Connecting… (attempt {autoRetryCount + 1})
@@ -352,7 +352,7 @@ export function TerminalConnectionOverlay({
         <div className="terminal-connection-overlay__body">
           <Loader2
             size={32}
-            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin"
+            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
           />
           <p className="terminal-connection-overlay__heading">Connecting…</p>
           <p className="terminal-connection-overlay__subheading">{tabTitle}</p>
