@@ -536,6 +536,15 @@ impl NetworkManager {
         *slot = Some(handle);
     }
 
+    /// The agent hosting `monitor_id`, if it is an agent-hosted monitor (#2607).
+    /// A cheap map read used to branch agent-vs-desktop hosting before an RPC.
+    fn agent_monitor_agent_id(&self, monitor_id: &str) -> Option<String> {
+        self.agent_monitors
+            .lock()
+            .ok()
+            .and_then(|map| map.get(monitor_id).map(|h| h.agent_id.clone()))
+    }
+
     /// Send `service.stop` for an agent-hosted monitor (best-effort). Returns the
     /// handle's agent id if the monitor was agent-hosted.
     fn stop_agent_monitor_rpc(&self, monitor_id: &str) -> Option<String> {
@@ -639,17 +648,24 @@ impl NetworkManager {
     /// Pause a running HTTP monitor: the poll loop stays alive but its poll body
     /// is suspended (audit Gap #5). Lists as `running: true, paused: true`.
     pub fn pause_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
-        // The generic `service.*` RPC has no pause; for an agent-hosted monitor,
-        // pausing tears the poll loop down on the agent and marks the handle
-        // paused (kept listed), so Resume re-hosts it — the same user-visible
-        // effect as a desktop pause (#2592).
-        if self.stop_agent_monitor_rpc(monitor_id).is_some() {
+        // Agent-hosted monitor: pause it IN PLACE over `service.pause` (#2607).
+        // The instance stays hosted on the agent with its poll body suspended —
+        // no stop-and-relist — for the same user-visible effect as a desktop
+        // pause (lists `running: true, paused: true`). Best-effort, mirroring the
+        // desktop-hosted pause, which cannot fail.
+        if let Some(agent_id) = self.agent_monitor_agent_id(monitor_id) {
+            if let Some(client) = self.agent_rpc_client() {
+                let params = json!({ "instanceId": monitor_id });
+                if let Err(e) = client.send_request(&agent_id, "service.pause", params) {
+                    tracing::warn!("Failed to pause agent-hosted HTTP monitor {monitor_id}: {e}");
+                }
+            }
             if let Ok(mut map) = self.agent_monitors.lock() {
                 if let Some(handle) = map.get_mut(monitor_id) {
                     handle.paused = true;
                 }
             }
-            debug!(monitor_id, "Paused agent-hosted HTTP monitor");
+            debug!(monitor_id, "Paused agent-hosted HTTP monitor in place");
             return Ok(());
         }
         let monitors = self
@@ -672,30 +688,47 @@ impl NetworkManager {
     /// - A **stopped** monitor (loop cancelled, but still listed) is re-spawned
     ///   with a fresh cancellation token, reusing the same config/id.
     pub fn resume_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
-        // Agent-hosted monitor: re-host it by sending a fresh `service.start` with
-        // the same config/id, then mark the handle running again (#2592).
+        // Agent-hosted monitor. Two cases, mirroring the desktop-hosted service
+        // (#2607):
+        // - A **paused** monitor (`running: true`) is still hosted on the agent,
+        //   so resume it IN PLACE over `service.resume` — just clears the pause
+        //   flag, no re-hosting.
+        // - A **stopped** monitor (`running: false`) was torn down on the agent
+        //   (`service.stop` removed the instance), so re-host it with a fresh
+        //   `service.start` carrying the same config/id, exactly as before.
         let agent_target = self.agent_monitors.lock().ok().and_then(|map| {
             map.get(monitor_id)
-                .map(|h| (h.agent_id.clone(), h.config.clone()))
+                .map(|h| (h.agent_id.clone(), h.config.clone(), h.running))
         });
-        if let Some((agent_id, config)) = agent_target {
+        if let Some((agent_id, config, running)) = agent_target {
             let client = self.agent_rpc_client().ok_or_else(|| {
                 TerminalError::NetworkError("Agent manager is not available".to_string())
             })?;
-            let params = json!({
-                "instanceId": monitor_id,
-                "serviceId": http_monitor::SERVICE_ID,
-                "config": serde_json::to_value(&config).map_err(|e| {
-                    TerminalError::NetworkError(format!("serialize monitor config: {e}"))
-                })?,
-            });
-            client
-                .send_request(&agent_id, "service.start", params)
-                .map_err(|e| {
-                    TerminalError::NetworkError(format!(
-                        "agent-hosted HTTP monitor resume failed: {e}"
-                    ))
-                })?;
+            if running {
+                let params = json!({ "instanceId": monitor_id });
+                client
+                    .send_request(&agent_id, "service.resume", params)
+                    .map_err(|e| {
+                        TerminalError::NetworkError(format!(
+                            "agent-hosted HTTP monitor resume failed: {e}"
+                        ))
+                    })?;
+            } else {
+                let params = json!({
+                    "instanceId": monitor_id,
+                    "serviceId": http_monitor::SERVICE_ID,
+                    "config": serde_json::to_value(&config).map_err(|e| {
+                        TerminalError::NetworkError(format!("serialize monitor config: {e}"))
+                    })?,
+                });
+                client
+                    .send_request(&agent_id, "service.start", params)
+                    .map_err(|e| {
+                        TerminalError::NetworkError(format!(
+                            "agent-hosted HTTP monitor resume failed: {e}"
+                        ))
+                    })?;
+            }
             if let Ok(mut map) = self.agent_monitors.lock() {
                 if let Some(handle) = map.get_mut(monitor_id) {
                     handle.running = true;
@@ -1069,6 +1102,38 @@ mod tests {
         let found = listed.iter().find(|m| m.config.id == id).expect("listed");
         assert!(found.running);
         assert_eq!(found.config.url, "https://edge.example/health");
+    }
+
+    #[test]
+    fn agent_hosted_paused_in_place_lists_as_running_and_paused() {
+        // With in-place pause (#2607) an agent-hosted monitor keeps `running:
+        // true` while `paused: true`, so its listing is identical to a
+        // desktop-hosted paused monitor — the user cannot tell it pauses without a
+        // stop-and-relist. (Before #2607 the desktop marked it paused too, but had
+        // torn the agent instance down; now the instance stays hosted.)
+        let mgr = NetworkManager::new();
+        let cfg = HttpMonitorConfig::new(
+            "https://edge.example/health".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let id = cfg.id.clone();
+        mgr.agent_monitors.lock().unwrap().insert(
+            id.clone(),
+            AgentMonitorHandle {
+                agent_id: "edge".into(),
+                config: cfg,
+                last_result: None,
+                running: true,
+                paused: true,
+            },
+        );
+        let listed = mgr.list_http_monitors();
+        let found = listed.iter().find(|m| m.config.id == id).expect("listed");
+        assert!(found.running, "a paused-in-place monitor stays running");
+        assert!(found.paused, "and reports paused");
     }
 
     #[test]

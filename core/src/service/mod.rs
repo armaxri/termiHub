@@ -176,6 +176,24 @@ pub trait Service: Send {
     /// Stop the service and release its resources.
     async fn stop(&mut self) -> Result<(), ServiceError>;
 
+    /// Pause the service **in place**, suspending its work while keeping the
+    /// instance alive so [`resume`](Self::resume) is instant and no re-listing
+    /// is needed.
+    ///
+    /// The default is a no-op success, for services that have no pause concept
+    /// (e.g. the embedded HTTP/FTP/TFTP servers, which are only ever
+    /// started/stopped). A service like the HTTP monitor overrides it to suspend
+    /// its poll loop's body without tearing the loop down.
+    async fn pause(&mut self) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
+    /// Resume a service paused with [`pause`](Self::pause), in place. The default
+    /// is a no-op success (see [`pause`](Self::pause)).
+    async fn resume(&mut self) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
     /// Current lifecycle state.
     fn status(&self) -> ServiceStatus;
 

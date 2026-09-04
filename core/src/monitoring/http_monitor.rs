@@ -413,6 +413,23 @@ impl Service for HttpMonitorService {
         Ok(())
     }
 
+    async fn pause(&mut self) -> Result<(), ServiceError> {
+        // In-place pause: the poll loop stays alive, its body is suspended, so an
+        // agent-hosted monitor pauses without a stop-and-relist (#2607). Delegate
+        // to the inherent `pause`; the explicit path disambiguates it from this
+        // trait method, which shares its name.
+        HttpMonitorService::pause(self);
+        Ok(())
+    }
+
+    async fn resume(&mut self) -> Result<(), ServiceError> {
+        // In-place resume: a paused (still-alive) loop simply clears its flag; a
+        // stopped-but-listed loop is re-spawned with the same config. Delegates to
+        // the inherent `resume` (explicit path disambiguates the shared name).
+        HttpMonitorService::resume(self);
+        Ok(())
+    }
+
     fn status(&self) -> ServiceStatus {
         self.status.clone()
     }
@@ -877,6 +894,28 @@ mod tests {
         assert!(svc.state().unwrap().paused);
 
         svc.resume();
+        assert!(!svc.is_paused());
+        assert!(svc.is_running());
+    }
+
+    #[tokio::test]
+    async fn service_trait_pause_resume_toggle_the_flag_in_place() {
+        // The trait-level `Service::pause`/`resume` (used by the agent host over
+        // `service.pause`/`service.resume`, #2607) delegate to the inherent
+        // in-place pause: the loop stays alive, only the flag flips.
+        let mut svc = HttpMonitorService::new();
+        let mut cfg = sample_config();
+        cfg.url = "http://127.0.0.1:1/".into();
+        Service::start(&mut svc, serde_json::to_value(&cfg).unwrap())
+            .await
+            .expect("start");
+
+        assert!(!svc.is_paused());
+        Service::pause(&mut svc).await.expect("pause");
+        assert!(svc.is_paused());
+        assert!(svc.is_running(), "trait pause keeps the loop alive");
+
+        Service::resume(&mut svc).await.expect("resume");
         assert!(!svc.is_paused());
         assert!(svc.is_running());
     }
