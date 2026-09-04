@@ -192,19 +192,29 @@ export function SplitView() {
           const finalX = ae.clientX + event.delta.x;
           const finalY = ae.clientY + event.delta.y;
           const elements = document.elementsFromPoint(finalX, finalY);
+          // Prefer a group chip over the adjacent new-group button: the two drop
+          // targets sit side by side in the chip bar, so scan the whole stack for
+          // a chip first and only fall back to the new-group button when no chip
+          // is under the drop point. This keeps a drop that grazes the chip/button
+          // boundary landing on the intended group rather than creating a new one.
+          let chipEl: Element | null = null;
+          let newGroupEl: Element | null = null;
           for (const el of elements) {
-            // Cross-group chip drop
-            const chipEl = el.closest("[data-tab-group-id]");
-            if (chipEl) {
-              const targetGroupId = chipEl.getAttribute("data-tab-group-id");
-              if (targetGroupId) moveTabToGroup(tabId, fromPanelId, targetGroupId);
+            const chip = el.closest("[data-tab-group-id]");
+            if (chip) {
+              chipEl = chip;
               break;
             }
+            if (!newGroupEl && el.closest("[data-new-group-btn]")) {
+              newGroupEl = el;
+            }
+          }
+          if (chipEl) {
+            const targetGroupId = chipEl.getAttribute("data-tab-group-id");
+            if (targetGroupId) moveTabToGroup(tabId, fromPanelId, targetGroupId);
+          } else if (newGroupEl) {
             // New-group button drop: create a new tab group and move the tab into it
-            if (el.closest("[data-new-group-btn]")) {
-              addTabGroupWithTab(tabId, fromPanelId);
-              break;
-            }
+            addTabGroupWithTab(tabId, fromPanelId);
           }
         }
         return;
