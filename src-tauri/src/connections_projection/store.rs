@@ -109,6 +109,21 @@ impl ConnectionsStore {
         }
     }
 
+    /// `connection.reorder` — move the connection at `old_index` to `new_index`
+    /// (`reorderConnections`), matching the agents store's `reorder`. Ordering is
+    /// array position (the on-disk `children` order), so an intra-folder drag maps
+    /// to a pure array move of the two siblings within the flat list. Out-of-range
+    /// indices are a no-op.
+    pub fn reorder(&self, old_index: usize, new_index: usize) {
+        let mut inner = self.lock();
+        let len = inner.connections.len();
+        if old_index >= len || new_index >= len {
+            return;
+        }
+        let moved = inner.connections.remove(old_index);
+        inner.connections.insert(new_index, moved);
+    }
+
     // ── Folder transitions ─────────────────────────────────────────────────
 
     /// `connection.addFolder` — append one folder (mirrors `addFolder`).

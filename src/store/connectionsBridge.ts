@@ -206,6 +206,7 @@ export type ConnectionIntentKind =
   | "connection.update"
   | "connection.remove"
   | "connection.move"
+  | "connection.reorder"
   | "connection.addFolder"
   | "connection.removeFolder"
   | "connection.toggleFolder";

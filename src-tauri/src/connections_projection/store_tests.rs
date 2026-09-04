@@ -279,3 +279,63 @@ fn snapshot_serialises_the_full_view_model() {
     assert_eq!(snap["connections"][0]["folderId"], json!("Work"));
     assert_eq!(snap["connections"][0]["config"]["type"], json!("ssh"));
 }
+
+#[test]
+fn reorder_moves_a_connection_to_a_new_index() {
+    let store = ConnectionsStore::new();
+    store.add_connection(connection("Work/A", "A", Some("Work")));
+    store.add_connection(connection("Work/B", "B", Some("Work")));
+    store.add_connection(connection("Work/C", "C", Some("Work")));
+
+    // Move the last (index 2) to the front (index 0): C, A, B.
+    store.reorder(2, 0);
+
+    let snap = store.snapshot();
+    assert_eq!(snap["connections"][0]["id"], json!("Work/C"));
+    assert_eq!(snap["connections"][1]["id"], json!("Work/A"));
+    assert_eq!(snap["connections"][2]["id"], json!("Work/B"));
+}
+
+#[test]
+fn reorder_within_a_folder_reorders_only_the_siblings_as_rendered() {
+    // Two folders' connections interleaved in the flat list. Reordering two siblings
+    // must not disturb the other folder's relative order (the render filters by
+    // folderId preserving array position).
+    let store = ConnectionsStore::new();
+    store.add_connection(connection("Work/A", "A", Some("Work")));
+    store.add_connection(connection("Home/X", "X", Some("Home")));
+    store.add_connection(connection("Work/B", "B", Some("Work")));
+
+    // Drag Work/B (index 2) above Work/A (index 0).
+    store.reorder(2, 0);
+
+    let snap = store.snapshot();
+    let ids: Vec<&str> = snap["connections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["Work/B", "Work/A", "Home/X"]);
+    // Filtered to the Work folder, B now precedes A.
+    let work: Vec<&str> = ids
+        .iter()
+        .copied()
+        .filter(|id| id.starts_with("Work/"))
+        .collect();
+    assert_eq!(work, vec!["Work/B", "Work/A"]);
+}
+
+#[test]
+fn reorder_with_out_of_range_indices_is_a_no_op() {
+    let store = ConnectionsStore::new();
+    store.add_connection(connection("Work/A", "A", Some("Work")));
+    store.add_connection(connection("Work/B", "B", Some("Work")));
+
+    store.reorder(5, 0);
+    store.reorder(0, 9);
+
+    let snap = store.snapshot();
+    assert_eq!(snap["connections"][0]["id"], json!("Work/A"));
+    assert_eq!(snap["connections"][1]["id"], json!("Work/B"));
+}
