@@ -131,13 +131,7 @@
 
 /* ── Spinner (loading icon) ─────────────────────────────────────────── */
 .th-toast__icon-svg--spin {
-  animation: th-toast-spin 0.7s linear infinite;
-}
-
-@keyframes th-toast-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 0.7s linear infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

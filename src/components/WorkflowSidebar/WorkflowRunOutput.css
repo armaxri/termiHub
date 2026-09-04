@@ -54,13 +54,7 @@
 }
 
 .workflow-run-output__status-icon--spin {
-  animation: workflow-run-output-spin 0.8s linear infinite;
-}
-
-@keyframes workflow-run-output-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 0.8s linear infinite;
 }
 
 /* The running-status icon is an essential progress cue — it carries

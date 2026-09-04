@@ -143,14 +143,8 @@
   word-break: break-word;
 }
 
-@keyframes rd-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .rd-overlay__spin {
-  animation: rd-spin 1.1s linear infinite;
+  animation: th-spin 1.1s linear infinite;
   transform-origin: 50% 50%;
 }
 

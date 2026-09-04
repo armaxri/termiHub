@@ -251,16 +251,7 @@
 }
 
 .monitoring-status__spinner {
-  animation: monitoring-spin 1s linear infinite;
-}
-
-@keyframes monitoring-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 1s linear infinite;
 }
 
 .monitoring-status__error {

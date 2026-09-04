@@ -65,13 +65,7 @@
   border: 2px solid var(--border-primary);
   border-top-color: var(--accent-color);
   border-radius: 50%;
-  animation: agent-setup-spin 0.7s linear infinite;
-}
-
-@keyframes agent-setup-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 0.7s linear infinite;
 }
 
 .agent-setup-dialog__detecting-label {

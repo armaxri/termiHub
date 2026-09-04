@@ -140,13 +140,7 @@
   border-radius: 50%;
   border: 2px solid currentColor;
   border-right-color: transparent;
-  animation: ui-btn-spin 0.7s linear infinite;
-}
-
-@keyframes ui-btn-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 0.7s linear infinite;
 }
 
 /* ── Input ──────────────────────────────────────────────────────────── */
