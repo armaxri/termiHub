@@ -61,6 +61,7 @@ import {
   type FakeMonitorTransport,
 } from "@/test/systemMonitorHarness";
 import { DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
+import { THIS_COMPUTER } from "@/types/tunnel";
 import { flushMacrotask } from "@/test/flushAsync";
 import type { SystemMonitorsView } from "./systemMonitorBridge";
 import type { TerminalTab } from "@/types/terminal";
@@ -98,7 +99,8 @@ describe("connectMonitoring", () => {
     expect(mockSessionMonitoringOpen).toHaveBeenCalledWith(
       SESSION_A,
       HOST_A,
-      DEFAULT_MONITORING_INTERVAL_MS
+      DEFAULT_MONITORING_INTERVAL_MS,
+      THIS_COMPUTER
     );
   });
 
@@ -108,7 +110,7 @@ describe("connectMonitoring", () => {
 
     await useAppStore.getState().connectMonitoring(SESSION_A, HOST_A);
 
-    expect(mockSessionMonitoringOpen).toHaveBeenCalledWith(SESSION_A, HOST_A, 5000);
+    expect(mockSessionMonitoringOpen).toHaveBeenCalledWith(SESSION_A, HOST_A, 5000, THIS_COMPUTER);
   });
 
   it("propagates a failed connect (the backend already folded openFailed)", async () => {
