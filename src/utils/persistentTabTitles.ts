@@ -4,15 +4,12 @@ import { getAllLeaves } from "./panelTree";
 
 /**
  * The slice of app-store state needed to resolve the titles of the tabs
- * currently attached to a persistent session. Mirrors the "whole window" tab
- * enumeration used elsewhere (the active tab group is represented by the live
- * `rootPanel`, the others by their stored trees), so a session attached from a
- * background tab group is still resolved.
+ * currently attached to a persistent session. Enumerates every tab group's
+ * composed tree (post-#2562 the active group's entry already holds the live
+ * tree), so a session attached from a background tab group is still resolved.
  */
 export interface PersistentTabTitlesState {
-  rootPanel: PanelNode;
   tabGroups: { id: string; rootPanel: PanelNode }[];
-  activeTabGroupId: string;
   persistentSessions: Record<string, PersistentSessionEntry>;
 }
 
@@ -30,9 +27,7 @@ export function persistentAttachedTabTitles(
   if (!entry || entry.attachedTabIds.length === 0) return [];
 
   const wanted = new Set(entry.attachedTabIds);
-  const trees = state.tabGroups.map((g) =>
-    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
-  );
+  const trees = state.tabGroups.map((g) => g.rootPanel);
   const titleById = new Map<string, string>();
   for (const tree of trees) {
     for (const leaf of getAllLeaves(tree)) {

@@ -239,12 +239,17 @@ import {
 } from "@/utils/panelTree";
 import {
   buildLayoutSnapshot,
-  composeLayoutState,
+  type ComposedLayoutState,
+  composeLayoutFromView,
   type LayoutSnapshot,
+  type LayoutSplitMarks,
+  type LayoutView,
   mirrorLayoutIntent,
   moveTabPayload,
   reseedLayoutRegion,
+  splitMarksOfTree,
   subscribeLayoutRegion,
+  viewFromSnapshot,
 } from "@/store/layoutBridge";
 import {
   currentSessionView,
@@ -485,9 +490,12 @@ export interface AppState
   // requestPassword / submitPassword / dismissPasswordPrompt is provided by
   // PasswordPromptSlice (extracted under #2077 via #2300).
 
-  // Tab Groups (workspace-level named panel trees)
-  tabGroups: TabGroup[];
-  activeTabGroupId: string;
+  // Tab Groups (workspace-level named panel trees).
+  // NOTE (#2562): the layout structure (`tabGroups` / `activeTabGroupId` /
+  // `rootPanel` / `activePanelId`) is no longer stored — it is composed on demand
+  // from the raw region `layoutView` + `layoutSplitMarks` (see `getComposedLayout`
+  // / `useComposedLayout`). Reads go through `layoutSelectors` (components) or
+  // `getComposedLayout(state)` (reducers); the region is the sole authority.
   /** Create a new tab group and switch to it. Returns the new group ID. */
   addTabGroup: (name?: string) => string;
   closeTabGroup: (groupId: string) => void;
@@ -505,8 +513,20 @@ export interface AppState
   setDraggingTabId: (id: string | null) => void;
 
   // Panels & Tabs
-  rootPanel: PanelNode;
-  activePanelId: string | null;
+  /**
+   * The raw `layout@<clientId>` region view — the sole stored representation of
+   * the panel-tree structure (#2562). The rich `rootPanel` / `activePanelId` /
+   * `tabGroups` / `activeTabGroupId` are composed from this + {@link tabContent} +
+   * {@link layoutSplitMarks} on demand via `getComposedLayout`, never stored.
+   */
+  layoutView: LayoutView;
+  /**
+   * Directional split-nav marks (#448), relocated out of the layout trees (#2562).
+   * `groupId → splitId → lastActiveLeafId`. Written by the `#448` subscription on
+   * active-panel change; read by the layout compose. Kept out of the region view
+   * because the backend does not carry these frontend-only marks.
+   */
+  layoutSplitMarks: LayoutSplitMarks;
   /**
    * Flat by-id map of non-structural tab content (part of #2283 — the layout
    * data-flow inversion). As the layout projection region takes over the panel
@@ -1854,15 +1874,9 @@ async function probeRestorePromptReachability(
  * Used wherever a "whole window" operation must span groups — session teardown
  * on restore/launch and the close-with-live-tabs decision (#1903).
  */
-function collectWindowTabs(state: {
-  tabGroups: TabGroup[];
-  activeTabGroupId: string;
-  rootPanel: PanelNode;
-}): TerminalTab[] {
-  const trees = state.tabGroups.map((g) =>
-    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
-  );
-  return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+function collectWindowTabs(state: LayoutViewState): TerminalTab[] {
+  const { tabGroups } = getComposedLayout(state);
+  return tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs));
 }
 
 /**
@@ -1881,11 +1895,7 @@ function bestEffortOwnership(op: () => Promise<unknown>): void {
   }
 }
 
-function teardownAllSessions(state: {
-  tabGroups: TabGroup[];
-  activeTabGroupId: string;
-  rootPanel: PanelNode;
-}): void {
+function teardownAllSessions(state: LayoutViewState): void {
   const tabs = collectWindowTabs(state);
   let closed = 0;
   for (const tab of tabs) {
@@ -2021,11 +2031,11 @@ function resolveEditorSessionKey(
  * pre-convergence graceful-degradation behaviour.
  */
 export function deriveEditorHostLabel(
-  state: { rootPanel: PanelNode },
+  state: LayoutViewState,
   meta: Pick<EditorTabMeta, "isRemote" | "sessionBrowser" | "sessionKey">
 ): string | null {
   if (!meta.isRemote || !meta.sessionBrowser) return null;
-  const tabs = getAllLeaves(state.rootPanel).flatMap((l) => l.tabs);
+  const tabs = getAllLeaves(getComposedLayout(state).rootPanel).flatMap((l) => l.tabs);
   const owningTabId = meta.sessionKey?.startsWith("session:")
     ? meta.sessionKey.slice("session:".length)
     : undefined;
@@ -2049,15 +2059,9 @@ export function deriveEditorHostLabel(
  * by the bulk-reconnect control to filter captured failed ids down to tabs that
  * still exist and can actually be re-driven (#1227).
  */
-export function collectLiveTabs(state: {
-  tabGroups: TabGroup[];
-  activeTabGroupId: string;
-  rootPanel: PanelNode;
-}): TerminalTab[] {
-  const trees = state.tabGroups.map((g) =>
-    g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel
-  );
-  return trees.flatMap((tree) => getAllLeaves(tree).flatMap((leaf) => leaf.tabs));
+export function collectLiveTabs(state: LayoutViewState): TerminalTab[] {
+  const { tabGroups } = getComposedLayout(state);
+  return tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((leaf) => leaf.tabs));
 }
 
 // ── Resilient reconnect eligibility + on-reconnect command (#1962 / #2205) ──
@@ -2164,7 +2168,7 @@ export function onReconnectCommandForTabId(tabId: string): string | undefined {
  * the auto-reconnect loop to read a tab's live connection config when settling.
  */
 function findTabById(tabId: string): TerminalTab | undefined {
-  return getAllLeaves(useAppStore.getState().rootPanel)
+  return getAllLeaves(getComposedLayout(useAppStore.getState()).rootPanel)
     .flatMap((l) => l.tabs)
     .find((t) => t.id === tabId);
 }
@@ -2390,45 +2394,105 @@ function patchTabContentEntry(
   return { ...map, [tabId]: { ...current, ...patch } };
 }
 
-/**
- * The rich multi-group {@link LayoutSnapshot} of `appStore`'s current layout —
- * the seed / overlay payload passed to {@link mirrorLayoutIntent} (#2283 slice
- * D'). The active group's live tree is the top-level `rootPanel`/`activePanelId`;
- * every other group comes from its `tabGroups` entry.
- */
-function currentLayoutSnapshot(state: {
-  tabGroups: TabGroup[];
-  activeTabGroupId: string;
-  rootPanel: PanelNode;
-  activePanelId: string | null;
-}): LayoutSnapshot {
-  return buildLayoutSnapshot(
-    state.tabGroups,
-    state.activeTabGroupId,
-    state.rootPanel,
-    state.activePanelId
-  );
+// ── Region-derived layout composition (#2562) ────────────────────────────────
+//
+// The rich layout (`rootPanel`/`activePanelId`/`tabGroups`/`activeTabGroupId`) is
+// no longer stored on `appStore`; it is composed on demand from the raw
+// `layoutView` + `tabContent` + `layoutSplitMarks` via
+// {@link composeLayoutFromView}. `getComposedLayout` memoizes that composition per
+// `layoutView` identity (keyed also on `tabContent`/`layoutSplitMarks` identity),
+// so repeated reads across a render and across unrelated store changes return the
+// **same** object reference — this is the render-storm guard the reducer-removal
+// design calls for.
+
+/** The minimal state slice the layout composition reads. */
+type LayoutViewState = {
+  layoutView: LayoutView;
+  tabContent: Record<string, TabContent>;
+  layoutSplitMarks: LayoutSplitMarks;
+};
+
+/** State augmented with its composed layout — what layout reducers see so their
+ * `state.rootPanel` / `state.tabGroups` / … reads keep working unchanged (#2562). */
+type LayoutAwareState = AppState & ComposedLayoutState;
+
+/** A layout reducer's result: ordinary `appStore` fields plus the (virtual) layout
+ * keys it computes so {@link postLayoutSnapshot} can derive the dispatched view. */
+type LayoutReducerResult = Partial<AppState> & Partial<ComposedLayoutState>;
+
+const EMPTY_COMPOSED: ComposedLayoutState = {
+  rootPanel: createLeafPanel(),
+  activePanelId: null,
+  tabGroups: [],
+  activeTabGroupId: "",
+};
+
+const composedLayoutCache = new WeakMap<
+  LayoutView,
+  { tabContent: Record<string, TabContent>; marks: LayoutSplitMarks; result: ComposedLayoutState }
+>();
+/** Last successful composition — reused when a transient view/`tabContent` desync
+ * makes {@link composeLayoutFromView} return `null` (keep the last-good tree,
+ * matching the removed mirror's "leave `appStore` on its current tree" guard). */
+let lastComposedLayout: ComposedLayoutState = EMPTY_COMPOSED;
+
+/** The composed rich layout for `state`, memoized on the identities of
+ * `layoutView` / `tabContent` / `layoutSplitMarks` (#2562). Stable ref across
+ * unrelated store changes — the render-storm guard the reducer-removal design
+ * requires. Every layout read (reducers, selectors, snapshots) flows through here. */
+export function getComposedLayout(state: LayoutViewState): ComposedLayoutState {
+  const { layoutView, tabContent, layoutSplitMarks } = state;
+  const cached = composedLayoutCache.get(layoutView);
+  if (cached && cached.tabContent === tabContent && cached.marks === layoutSplitMarks) {
+    return cached.result;
+  }
+  const composed = composeLayoutFromView(layoutView, tabContent, layoutSplitMarks);
+  const result = composed ?? lastComposedLayout;
+  if (composed) lastComposedLayout = composed;
+  composedLayoutCache.set(layoutView, {
+    tabContent,
+    marks: layoutSplitMarks,
+    result,
+  });
+  return result;
+}
+
+/** Augment `state` with its composed layout so layout reducers read `state.rootPanel`
+ * etc. unchanged (#2562). Shallow — the composed fields override the (absent) raw ones. */
+function withComposedLayout(state: AppState): LayoutAwareState {
+  return { ...state, ...getComposedLayout(state) };
 }
 
 /**
- * The four layout fields the region→appStore mirror owns (#2283 slice E2). A
- * structural op's reducer no longer writes these to `appStore`; it computes them
- * so the `post` snapshot can be dispatched, and the mirror composes them back.
+ * The rich multi-group {@link LayoutSnapshot} of `appStore`'s current layout —
+ * the seed / overlay payload passed to {@link mirrorLayoutIntent} (#2283 slice
+ * D'). Composed from the raw region view (#2562).
  */
-const MIRROR_LAYOUT_KEYS = new Set<keyof AppState>([
+function currentLayoutSnapshot(state: AppState): LayoutSnapshot {
+  const c = getComposedLayout(state);
+  return buildLayoutSnapshot(c.tabGroups, c.activeTabGroupId, c.rootPanel, c.activePanelId);
+}
+
+/**
+ * The (virtual) layout keys a structural op's reducer computes so the `post`
+ * snapshot can be dispatched. They are no longer real `appStore` fields (#2562) —
+ * {@link nonLayoutPartial} strips them from the reducer result before `set`.
+ */
+const MIRROR_LAYOUT_KEYS = new Set<keyof ComposedLayoutState>([
   "rootPanel",
   "activePanelId",
   "tabGroups",
   "activeTabGroupId",
 ]);
 
-/** The **non-layout** portion of a reducer result — everything the mirror does
- * NOT own (e.g. `zoomedTabId`, `tabContent`, the per-tab maps). Set locally; the
- * mirror sets the layout fields from the dispatched region view. */
-function nonLayoutPartial(next: Partial<AppState>): Partial<AppState> {
+/** The **non-layout** portion of a reducer result — everything that is a real
+ * `appStore` field (e.g. `zoomedTabId`, `tabContent`, the per-tab maps). The
+ * virtual layout keys are dropped; the layout is dispatched to the region and
+ * composed back on read. */
+function nonLayoutPartial(next: LayoutReducerResult): Partial<AppState> {
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(next)) {
-    if (!MIRROR_LAYOUT_KEYS.has(key as keyof AppState)) {
+    if (!MIRROR_LAYOUT_KEYS.has(key as keyof ComposedLayoutState)) {
       out[key] = (next as Record<string, unknown>)[key];
     }
   }
@@ -2436,14 +2500,15 @@ function nonLayoutPartial(next: Partial<AppState>): Partial<AppState> {
 }
 
 /** The `post` layout snapshot a reducer result implies, merged over the prior
- * state — the overlay the region mirror composes back (#2283 slice E2). */
-function postLayoutSnapshot(prev: AppState, next: Partial<AppState>): LayoutSnapshot {
-  return currentLayoutSnapshot({
-    tabGroups: next.tabGroups ?? prev.tabGroups,
-    activeTabGroupId: next.activeTabGroupId ?? prev.activeTabGroupId,
-    rootPanel: next.rootPanel ?? prev.rootPanel,
-    activePanelId: "activePanelId" in next ? (next.activePanelId ?? null) : prev.activePanelId,
-  });
+ * (composed) state — the overlay the region composes back (#2283 slice E2). */
+function postLayoutSnapshot(prev: AppState, next: LayoutReducerResult): LayoutSnapshot {
+  const pc = getComposedLayout(prev);
+  return buildLayoutSnapshot(
+    next.tabGroups ?? pc.tabGroups,
+    next.activeTabGroupId ?? pc.activeTabGroupId,
+    next.rootPanel ?? pc.rootPanel,
+    "activePanelId" in next ? (next.activePanelId ?? null) : pc.activePanelId
+  );
 }
 
 /**
@@ -2532,10 +2597,7 @@ function removeTransferSessionsFromWindow(
 }
 
 /** State slice needed to decide whether this window renders/owns a session. */
-type OwnershipView = {
-  tabGroups: TabGroup[];
-  activeTabGroupId: string;
-  rootPanel: PanelNode;
+type OwnershipView = LayoutViewState & {
   sessionOwners: Record<string, string>;
   windowLabel: string;
 };
@@ -2546,14 +2608,7 @@ type OwnershipView = {
  * window regardless of how fresh {@link AppState.sessionOwners} is, so the owning
  * window never suppresses (nor prunes) a row for a session it is actually showing.
  */
-function windowRendersSession(
-  state: {
-    tabGroups: TabGroup[];
-    activeTabGroupId: string;
-    rootPanel: PanelNode;
-  },
-  sessionId: string
-): boolean {
+function windowRendersSession(state: LayoutViewState, sessionId: string): boolean {
   return collectLiveTabs(state).some((t) => t.sessionId === sessionId);
 }
 
@@ -2672,6 +2727,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
     rootPanel: initialPanel,
     activePanelId: initialPanel.id,
   };
+  // The raw region view for the initial single-group layout (#2562): the sole
+  // stored layout representation; the rich tree is composed from it on read.
+  const initialLayoutView: LayoutView = viewFromSnapshot(
+    buildLayoutSnapshot([initialGroup], initialGroupId, initialPanel, initialPanel.id)
+  );
 
   /**
    * Run a layout reducer as a region-authoritative op (#2283 slice E2). The
@@ -2682,8 +2742,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
    * callers can read the computed layout / ids. A no-op reducer (`return state`)
    * writes nothing.
    */
-  const setLayoutLocal = (reducer: (state: AppState) => Partial<AppState>): Partial<AppState> => {
-    const s0 = get();
+  const setLayoutLocal = (
+    reducer: (state: LayoutAwareState) => LayoutReducerResult
+  ): LayoutReducerResult => {
+    const s0 = withComposedLayout(get());
     const next = reducer(s0);
     if (next !== s0) {
       const rest = nonLayoutPartial(next);
@@ -2692,23 +2754,29 @@ export const useAppStore = create<AppState>((set, get, store) => {
     return next;
   };
 
-  /** Reseed the region to `appStore`'s current layout — the retained safety for
-   * the non-intent structural writers (openers, handoff, restore, conversion). */
-  const reseedLayout = (): void => reseedLayoutRegion(currentLayoutSnapshot(get()));
+  /** The current composed layout — the choke point for the `get()`-time guards
+   * (`curLayout().tabGroups`, `.activePanelId`, …) that read the live structure
+   * outside a reducer body (#2562). Memoized, so repeated reads are cheap. */
+  const curLayout = (): ComposedLayoutState => getComposedLayout(get());
 
   /**
-   * `set` for a **non-intent** structural writer (#2283 slice E2): it writes the
-   * layout locally (there is no granular `layout.*` intent for it — the singleton
-   * tab openers, cross-window handoff, restore, the agent-error→terminal
-   * conversion) and then reseeds the region so it never lags. Without the reseed
-   * the unconditional mirror would recompose an older region view over the
-   * just-written tab on the next convergence diff and strand it.
+   * `set` for a **non-intent** structural writer (#2283 slice E2 / #2562): it
+   * computes the target layout (there is no granular `layout.*` intent for it —
+   * the singleton tab openers, cross-window handoff, restore, the
+   * agent-error→terminal conversion) and reseeds the region to it (the region's
+   * optimistic overlay installs the new view, which the mirror composes back into
+   * `layoutView`). Its non-layout fields are `set` locally first so the reseed's
+   * composition sees them (e.g. a newly-tracked `tabContent` entry).
    */
   const setAndReseed = (
-    partial: Partial<AppState> | ((state: AppState) => Partial<AppState>)
+    partial: LayoutReducerResult | ((state: LayoutAwareState) => LayoutReducerResult)
   ): void => {
-    set(partial as Parameters<typeof set>[0]);
-    reseedLayout();
+    const augmented = withComposedLayout(get());
+    const next = typeof partial === "function" ? partial(augmented) : partial;
+    if (next === augmented) return;
+    const rest = nonLayoutPartial(next);
+    if (Object.keys(rest).length > 0) set(rest);
+    reseedLayoutRegion(postLayoutSnapshot(get(), next));
   };
 
   return {
@@ -2758,9 +2826,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // Password prompt — the promise-based interactive host/SSH password prompt
     // is provided by createPasswordPromptSlice (extracted under #2077 via #2300).
 
-    // Tab Groups
-    tabGroups: [initialGroup],
-    activeTabGroupId: initialGroupId,
+    // Layout structure (#2562): only the raw region view + directional marks are
+    // stored; `tabGroups` / `activeTabGroupId` / `rootPanel` / `activePanelId` are
+    // composed from these on demand (`getComposedLayout` / `layoutSelectors`).
+    layoutView: initialLayoutView,
+    layoutSplitMarks: {},
 
     addTabGroup: (name) => {
       const newGroupId = generateGroupId();
@@ -2803,7 +2873,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     closeTabGroup: (groupId) => {
-      if (get().tabGroups.length <= 1) return; // sole group: no-op (backend rejects too)
+      if (curLayout().tabGroups.length <= 1) return; // sole group: no-op (backend rejects too)
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
       const next = setLayoutLocal((state) => {
@@ -2862,8 +2932,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     setActiveTabGroup: (groupId) => {
-      if (groupId === get().activeTabGroupId) return; // no-op
-      if (!get().tabGroups.some((g) => g.id === groupId)) return; // unknown group
+      if (groupId === curLayout().activeTabGroupId) return; // no-op
+      if (!curLayout().tabGroups.some((g) => g.id === groupId)) return; // unknown group
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
       const next = setLayoutLocal((state) => {
@@ -3058,7 +3128,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
     windowLabel: currentWindowLabel(),
     sessionOwners: {},
     setSessionOwners: (owners) =>
-      set((state) => ({ sessionOwners: owners, ...pruneForeignTransfers(state, owners) })),
+      set((state) => ({
+        sessionOwners: owners,
+        ...pruneForeignTransfers(withComposedLayout(state), owners),
+      })),
     refreshSessionOwners: async () => {
       try {
         const owners = await listSessionOwners();
@@ -3080,7 +3153,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     moveTabToWindow: async (tabId, fromPanelId, target) => {
       // Locate the tab in the active group's live rootPanel.
-      const sourceLeaf = getAllLeaves(get().rootPanel).find((l) => l.id === fromPanelId);
+      const sourceLeaf = getAllLeaves(curLayout().rootPanel).find((l) => l.id === fromPanelId);
       const tab = sourceLeaf?.tabs.find((t) => t.id === tabId);
       if (!tab) return;
 
@@ -3119,8 +3192,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
       // Remove the tab from the source window's tree. The Terminal unmount sees
       // the moving flag and skips closeTerminal, keeping the backend session
-      // alive for the destination to re-attach and replay.
-      set((state) => {
+      // alive for the destination to re-attach and replay. Non-intent structural
+      // writer (#2283 slice E2 / #2562): compute the tree and reseed the region.
+      setAndReseed((state) => {
         let newRootPanel = updateLeaf(state.rootPanel, fromPanelId, (leaf) =>
           removeTabFromLeaf(leaf, tabId)
         );
@@ -3151,9 +3225,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
           ...transferMoved,
         };
       });
-      // Non-intent structural writer (#2283 slice E2): reseed the region after the
-      // local tree removal so it does not lag.
-      reseedLayout();
     },
 
     hydrateHandoffTab: (record) =>
@@ -3286,16 +3357,16 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     reportOwnWindowLayout: async () => {
-      const state = get();
+      const layout = curLayout();
       const tabGroups = captureAllTabGroups(
-        state.tabGroups,
-        state.activeTabGroupId,
-        state.rootPanel,
+        layout.tabGroups,
+        layout.activeTabGroupId,
+        layout.rootPanel,
         currentConnectionsView().connections
       );
       const activeGroupIndex = Math.max(
         0,
-        state.tabGroups.findIndex((g) => g.id === state.activeTabGroupId)
+        layout.tabGroups.findIndex((g) => g.id === layout.activeTabGroupId)
       );
       try {
         await reportWindowLayout(tabGroups, activeGroupIndex);
@@ -3595,7 +3666,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }
       );
       // Resolve the actual panel the tab landed in so we can close it on failure.
-      const actualPanelId = findLeafByTab(get().rootPanel, tabId)?.id;
+      const actualPanelId = findLeafByTab(curLayout().rootPanel, tabId)?.id;
       try {
         await apiAttachPersistentTab(connectionId, tabId);
         set((state) => {
@@ -3688,10 +3759,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     restartPersistentSessionForTab: async (tabId) => {
       const state = get();
-      const tab = [
-        ...getAllLeaves(state.rootPanel).flatMap((l) => l.tabs),
-        ...state.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-      ].find((t) => t.id === tabId);
+      const tab = collectLiveTabs(state).find((t) => t.id === tabId);
       const connectionId = tab?.persistentConnectionId;
       if (!tab || !connectionId) return null;
 
@@ -3764,35 +3832,21 @@ export const useAppStore = create<AppState>((set, get, store) => {
       return sessionId;
     },
 
-    // Panels & Tabs
-    rootPanel: initialPanel,
-    activePanelId: initialPanel.id,
+    // Panels & Tabs — see `layoutView` / `layoutSplitMarks` above (#2562).
     // Flat by-id tab-content map (part of #2283). The initial panel is empty, so
     // it starts empty and is populated as tabs open.
     tabContent: {},
 
-    getAllPanels: () => getAllLeaves(get().rootPanel),
+    getAllPanels: () => getAllLeaves(curLayout().rootPanel),
 
     clearPendingScrollbackReplay: (tabId) =>
-      set((state) => {
-        const leaf = findLeafByTab(state.rootPanel, tabId);
-        if (!leaf) return state;
-        const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
-          ...l,
-          tabs: l.tabs.map((t) =>
-            t.id === tabId && t.pendingScrollbackReplay
-              ? { ...t, pendingScrollbackReplay: false }
-              : t
-          ),
-        }));
-        const tabGroups = state.tabGroups.map((g) =>
-          g.id === state.activeTabGroupId ? { ...g, rootPanel } : g
-        );
+      set((raw) => {
+        // Content-only mutation (#2562): the flag is sourced from `tabContent`, so
+        // patch it there — the region-derived tree recomposes with the new value.
+        const leaf = findLeafByTab(getComposedLayout(raw).rootPanel, tabId);
+        if (!leaf) return raw;
         return {
-          rootPanel,
-          tabGroups,
-          // Mirror the cleared replay flag into the content map (part of #2283).
-          tabContent: patchTabContentEntry(state.tabContent, tabId, {
+          tabContent: patchTabContentEntry(raw.tabContent, tabId, {
             pendingScrollbackReplay: false,
           }),
         };
@@ -3802,7 +3856,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // The tab as it stands *before* this update — used both to skip work for an
       // unknown tab and to capture the session id this tab is superseding, so a
       // replaced/cleared session releases its ownership as the new one is claimed.
-      const existingTab = getAllLeaves(get().rootPanel)
+      const existingTab = getAllLeaves(curLayout().rootPanel)
         .flatMap((l) => l.tabs)
         .find((t) => t.id === tabId);
       const prevSessionId = existingTab?.sessionId ?? null;
@@ -3814,16 +3868,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
           .then((caps) => get().setSessionCapabilities(sessionId, caps))
           .catch(() => {});
       }
-      set((state) => {
-        const leaf = findLeafByTab(state.rootPanel, tabId);
-        if (!leaf) return state;
+      set((raw) => {
+        // Content-only mutation (#2562): the session id is sourced from
+        // `tabContent`, so patch it there — the composed tree reflects it on read.
+        const leaf = findLeafByTab(getComposedLayout(raw).rootPanel, tabId);
+        if (!leaf) return raw;
         return {
-          rootPanel: updateLeaf(state.rootPanel, leaf.id, (l) => ({
-            ...l,
-            tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, sessionId } : t)),
-          })),
-          // Mirror the session id into the content map (part of #2283).
-          tabContent: patchTabContentEntry(state.tabContent, tabId, { sessionId }),
+          tabContent: patchTabContentEntry(raw.tabContent, tabId, { sessionId }),
         };
       });
 
@@ -3871,7 +3922,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // once per session open (interactive shells only — file-browser and
         // remote-desktop tabs are excluded here). Matching/guarding lives in the
         // workflowTriggers service; the store only supplies state and the run.
-        const connectedTab = getAllLeaves(get().rootPanel)
+        const connectedTab = getAllLeaves(curLayout().rootPanel)
           .flatMap((l) => l.tabs)
           .find((t) => t.id === tabId);
         if (connectedTab?.contentType === "terminal" && connectedTab.connectionId) {
@@ -4392,7 +4443,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // owning-window badge (#1926). Skipped for a session mid-move — that tab is
       // removed via the move path, not closed, and the destination window now
       // owns it. Best-effort (see `bestEffortOwnership`).
-      const closingSessionId = getAllLeaves(useAppStore.getState().rootPanel)
+      const closingSessionId = getAllLeaves(curLayout().rootPanel)
         .flatMap((l) => l.tabs)
         .find((t) => t.id === tabId)?.sessionId;
       if (closingSessionId && !get().isSessionMoving(closingSessionId)) {
@@ -4561,8 +4612,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     moveTab: (tabId, fromPanelId, toPanelId, newIndex) => {
       // A non-intent structural writer (no `layout.moveTab*` dispatch of its own):
-      // keep the local write and reseed the region after so it does not lag (E2).
-      set((state) => {
+      // compute the tree and reseed the region to it (#2283 slice E2 / #2562).
+      setAndReseed((state) => {
         if (fromPanelId === toPanelId) return state;
 
         // Find and remove tab from source
@@ -4596,7 +4647,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
         return { rootPanel, activePanelId: toPanelId };
       });
-      reseedLayout();
     },
 
     reorderTabs: (panelId, oldIndex, newIndex) => {
@@ -4626,7 +4676,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // never drifts from the region's `layout.split`; the mirror composes it back.
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
-      const { activePanelId } = prev;
+      const { activePanelId } = getComposedLayout(prev);
       const next = setLayoutLocal((state) => {
         const dir = direction ?? "horizontal";
         const targetId = state.activePanelId;
@@ -4655,7 +4705,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // leaf panel and simplifies; repoints focus onto the first survivor when
       // the removed panel held it.
       // The sole-leaf case is a no-op both here and in the store, so skip it.
-      if (getAllLeaves(get().rootPanel).length <= 1) return;
+      if (getAllLeaves(curLayout().rootPanel).length <= 1) return;
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
       const next = setLayoutLocal((state) => {
@@ -4811,7 +4861,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
     zoomedTabId: null,
     setZoomedTabId: (tabId) => set({ zoomedTabId: tabId }),
     toggleZoomActiveTab: () => {
-      const { activePanelId, rootPanel, zoomedTabId } = get();
+      const { zoomedTabId } = get();
+      const { activePanelId, rootPanel } = curLayout();
       if (zoomedTabId !== null) {
         set({ zoomedTabId: null });
         return;
@@ -5509,7 +5560,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // Scope the fold to the owning window even without a move (#1964): a
         // `transfer-progress` event is broadcast to every window, but only the
         // window that owns the session should show it.
-        if (!windowOwnsTransferSession(state, progress.sessionId)) return {};
+        if (!windowOwnsTransferSession(withComposedLayout(state), progress.sessionId)) return {};
         // A terminal phase clears the row (D1 already removed any partial local
         // file on cancel/error). done/error toasts are the D2 follow-up.
         if (progress.phase !== "transferring") {
@@ -5572,16 +5623,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     // Rename tab
     renameTab: (tabId, newTitle) =>
-      set((state) => {
-        const leaf = findLeafByTab(state.rootPanel, tabId);
-        if (!leaf) return state;
+      set((raw) => {
+        // Content-only mutation (#2562): the title is sourced from `tabContent`, so
+        // patch it there — the composed tree reflects the rename on read.
+        const leaf = findLeafByTab(getComposedLayout(raw).rootPanel, tabId);
+        if (!leaf) return raw;
         return {
-          rootPanel: updateLeaf(state.rootPanel, leaf.id, (l) => ({
-            ...l,
-            tabs: l.tabs.map((t) => (t.id === tabId ? { ...t, title: newTitle } : t)),
-          })),
-          // Mirror the new title into the content map (part of #2283).
-          tabContent: patchTabContentEntry(state.tabContent, tabId, { title: newTitle }),
+          tabContent: patchTabContentEntry(raw.tabContent, tabId, { title: newTitle }),
         };
       }),
 
@@ -6798,7 +6846,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // createPluginsSlice (#2115). `selectPlugin` stays here (tab factory).
 
     selectPlugin: (pluginId) =>
-      set((state) => {
+      setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
         const plugin = state.plugins.find((p) => p.manifest.id === pluginId);
         const title = plugin ? plugin.manifest.name : "Plugin";
@@ -6891,7 +6939,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // degrades to "all terminals" (#1958).
       const lastScope = currentBroadcastView().lastScope;
       const scope: BroadcastScope = lastScope === "custom" ? "all" : lastScope;
-      const targets = resolveBroadcastTargetTabIds(state, scope, source.id);
+      const targets = resolveBroadcastTargetTabIds(withComposedLayout(state), scope, source.id);
       get().startBroadcast(scope, source.id, targets);
     },
 
@@ -6945,7 +6993,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Custom selection is frozen at pick time — never auto-add. Removal of
       // closed targets is handled at the tab-close seam.
       if (view.scope === "custom") return;
-      const state = get();
+      const state = withComposedLayout(get());
       const resolved = resolveBroadcastTargetTabIds(state, view.scope, source);
       const next = new Set<string>([source, ...resolved]);
       const prev = new Set(view.targetTabIds);
@@ -7592,7 +7640,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     saveCurrentAsWorkspace: async (name, scope, description) => {
       try {
-        const state = get();
+        const state = curLayout();
         const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
         // "active" scope saves only this window's active group — inherently a
         // single-window layout, so stamp it directly (legacy shape when it is the
@@ -7647,10 +7695,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
     restoreInProgress: false,
 
     saveLastSession: async () => {
-      const state = get();
       // Respect the setting at save time so toggling it takes effect immediately.
       // "never" means the user does not want a session kept, so skip the write.
       if ((await resolveRestoreMode(currentSettingsView())) === "never") return;
+      const state = curLayout();
       const ownGroups = captureAllTabGroups(
         state.tabGroups,
         state.activeTabGroupId,
@@ -7987,49 +8035,49 @@ export const useAppStore = create<AppState>((set, get, store) => {
 });
 
 // Track last-focused leaf in split containers for directional navigation (#448).
-// When activePanelId changes, mark all ancestor SplitContainers so that
-// navigating back into a subtree restores the last-focused panel.
+// When the (composed) active panel changes, mark all ancestor SplitContainers so
+// that navigating back into a subtree restores the last-focused panel. The marks
+// live in the dedicated `layoutSplitMarks` field (#2562) — relocated out of the
+// layout tree so the compose stays region-derived and the mark is never one-op
+// stale: it is written here synchronously and read back by `getComposedLayout`.
 useAppStore.subscribe((state, prev) => {
-  if (state.activePanelId && state.activePanelId !== prev.activePanelId) {
-    const updated = markActiveLeaf(state.rootPanel, state.activePanelId);
-    if (updated !== state.rootPanel) {
-      useAppStore.setState({ rootPanel: updated });
+  const composed = getComposedLayout(state);
+  const prevComposed = getComposedLayout(prev);
+  if (composed.activePanelId && composed.activePanelId !== prevComposed.activePanelId) {
+    const marked = markActiveLeaf(composed.rootPanel, composed.activePanelId);
+    if (marked !== composed.rootPanel) {
+      const groupId = composed.activeTabGroupId;
+      const groupMarks = splitMarksOfTree(marked);
+      useAppStore.setState({
+        layoutSplitMarks: { ...state.layoutSplitMarks, [groupId]: groupMarks },
+      });
     }
   }
 });
 
-// Region→appStore layout mirror (#2283 slice E2). `appStore`'s layout fields
-// (`rootPanel`/`activePanelId`/`tabGroups`/`activeTabGroupId`) are now derived
-// **solely** from the `layout@<clientId>` projection: every structural op
-// dispatches only its region intent (an optimistic overlay that emits
-// synchronously), the non-intent writers reseed the region, and this mirror
-// composes that view back into `appStore` — the region is the sole authority for
-// the layout the UI renders (the local reducers were removed in this slice).
+// Region→appStore layout mirror (#2283 slice E2 / #2562). `appStore` no longer
+// stores the rich layout fields; it stores only the raw `layout@<clientId>` view
+// in `layoutView`, and composes the rich tree on demand (`getComposedLayout`).
+// Every structural op dispatches its region intent (an optimistic overlay that
+// emits synchronously) and the non-intent writers reseed the region; this handler
+// copies the resulting view into `layoutView`, from which every read composes.
 //
-// Unconditional (E1's `viewMatchesTree` gate is gone): the mirror composes on
-// every change. `composeLayoutState` guards against the transient cases — it
-// returns `null` for an empty/absent view (the initial backend-default snapshot
-// before the seed below lands) or a view that references a tab absent from both
-// the content map and the current tree — leaving `appStore` on its last-good
-// tree. Directional `lastActiveLeafId` marks are applied on top by the `#448`
-// subscription above and reseeded into the region so they survive convergence.
+// A transient/empty view (the initial backend-default snapshot before the seed
+// below lands, or a view referencing a tab absent from `tabContent`) is one that
+// `composeLayoutFromView` cannot resolve — it is ignored here, leaving `appStore`
+// on its last-good `layoutView`, exactly as the old `null`-return guard did.
 subscribeLayoutRegion((view) => {
+  if (!view) return;
   const state = useAppStore.getState();
-  const composed = composeLayoutState(view, state.rootPanel, state.tabGroups, state.tabContent);
-  if (composed) useAppStore.setState(composed);
+  if (view === state.layoutView) return;
+  const composed = composeLayoutFromView(view, state.tabContent, state.layoutSplitMarks);
+  if (composed) useAppStore.setState({ layoutView: view });
 });
 
-// Seed the region from `appStore`'s initial layout at startup so the mirror's
-// first composition reproduces the initial tree (rather than composing a
-// backend-default snapshot over it). Optimistic, so it lands synchronously.
-reseedLayoutRegion(
-  buildLayoutSnapshot(
-    useAppStore.getState().tabGroups,
-    useAppStore.getState().activeTabGroupId,
-    useAppStore.getState().rootPanel,
-    useAppStore.getState().activePanelId
-  )
-);
+// Seed the region from `appStore`'s initial layout at startup so the region's
+// view matches `layoutView` before the first authoritative diff (rather than a
+// backend-default snapshot clobbering it). Optimistic, so it lands synchronously.
+reseedLayoutRegion(currentLayoutSnapshot(useAppStore.getState()));
 
 /**
  * Render a settled restore/launch cohort's aggregate summary toast from the
@@ -8070,7 +8118,7 @@ wireSessionReconnectObserver();
  * Get the active tab from the current store state.
  */
 export function getActiveTab(state: AppState): TerminalTab | null {
-  const { activePanelId, rootPanel } = state;
+  const { activePanelId, rootPanel } = getComposedLayout(state);
   if (!activePanelId) return null;
   const leaf = findLeaf(rootPanel, activePanelId);
   if (!leaf || !leaf.activeTabId) return null;

@@ -598,6 +598,101 @@ export interface ComposedLayoutState {
 }
 
 /**
+ * Directional split-nav marks (#448), relocated out of the layout trees into a
+ * dedicated field on `appStore` (#2562). `groupId → splitId → lastActiveLeafId`.
+ * The backend region does not carry these (they are a frontend-only derivation of
+ * `set_active_panel`), so with the mirror-fields gone the marks must live
+ * somewhere the compose can re-apply them from — this map. `appStore`'s `#448`
+ * subscription is its sole writer; {@link composeLayoutFromView} its sole reader.
+ */
+export type LayoutSplitMarks = Record<string, Record<string, string>>;
+
+/** The `layout@<clientId>` view for a rich {@link LayoutSnapshot} (seed / reseed). */
+export function viewFromSnapshot(snapshot: LayoutSnapshot): LayoutView {
+  return {
+    groups: snapshot.groups.map(toMinimalGroup),
+    activeGroupId: snapshot.activeGroupId,
+  };
+}
+
+/** A single tree's directional split marks by split-container id (#448 / #2562). */
+export function splitMarksOfTree(root: PanelNode): Record<string, string> {
+  const m = new Map<string, string>();
+  collectSplitMarks(root, m);
+  return Object.fromEntries(m);
+}
+
+/** Index every group's directional split marks by group id, then split id. */
+export function extractSplitMarks(snapshot: LayoutSnapshot): LayoutSplitMarks {
+  const out: LayoutSplitMarks = {};
+  for (const g of snapshot.groups) {
+    const m = new Map<string, string>();
+    collectSplitMarks(g.root, m);
+    if (m.size > 0) out[g.id] = Object.fromEntries(m);
+  }
+  return out;
+}
+
+/** Apply a group's directional-mark record onto a freshly composed tree by split id. */
+function applyMarksRecord(node: PanelNode, marks: Record<string, string> | undefined): PanelNode {
+  if (!marks || node.type !== "split") return node;
+  const map = new Map(Object.entries(marks));
+  return preserveSplitMarks(node, map);
+}
+
+/**
+ * Compose the full `appStore` layout ({@link ComposedLayoutState}) from a raw
+ * region {@link LayoutView}, the by-id `tabContent` map, and the relocated
+ * directional {@link LayoutSplitMarks} (#2562). This is the sole layout-derivation
+ * seam once the four mirror fields are gone: `appStore` stores only the raw
+ * `layoutView` + `layoutSplitMarks`, and every structural read (reducers,
+ * selectors, snapshots) composes through here.
+ *
+ * Unlike {@link composeLayoutState} (which it replaces), it derives **every**
+ * group — including the active one — uniformly from the view, and sources
+ * directional marks from `marks` rather than the prior in-tree marks. Content is
+ * sourced **solely** from `tabContent` (#2566); a view tab absent from it throws
+ * (caught → `null`, a transient desync the caller treats as "keep last good").
+ * The active group's `rootPanel`/`activePanelId` are the same objects as its
+ * `tabGroups` entry, so structural reads and per-group reads never diverge.
+ */
+export function composeLayoutFromView(
+  view: LayoutView | null | undefined,
+  tabContent: Record<string, TabContent>,
+  marks: LayoutSplitMarks
+): ComposedLayoutState | null {
+  if (!view || !Array.isArray(view.groups) || view.groups.length === 0) return null;
+  try {
+    const activeGroupId = view.activeGroupId;
+    const activeView = activeGroupOf(view);
+    if (!activeView) return null;
+    const tabGroups: TabGroup[] = view.groups.map((vg) => {
+      const entry: TabGroup = {
+        id: vg.id,
+        name: vg.name,
+        rootPanel: applyMarksRecord(
+          reconcileNode(vg.root, EMPTY_TREE_FALLBACK, tabContent),
+          marks[vg.id]
+        ),
+        activePanelId: vg.activePanelId,
+      };
+      if (vg.color != null) entry.color = vg.color;
+      return entry;
+    });
+    const activeEntry = tabGroups.find((g) => g.id === activeGroupId) ?? tabGroups[0];
+    return {
+      rootPanel: activeEntry.rootPanel,
+      activePanelId: activeEntry.activePanelId,
+      tabGroups,
+      activeTabGroupId: activeGroupId,
+    };
+  } catch (err) {
+    logRenderFallback(err);
+    return null;
+  }
+}
+
+/**
  * Compose `appStore`'s layout fields from a projected {@link LayoutView} — the
  * inverse of {@link buildLayoutSnapshot}, and the core of the region→appStore
  * mirror (#2283 slice E1). Structure comes from the view; each tab's rich content

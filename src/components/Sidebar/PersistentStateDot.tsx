@@ -1,4 +1,4 @@
-import { useAppStore } from "@/store/appStore";
+import { getComposedLayout, useAppStore } from "@/store/appStore";
 import type { PersistentRunState } from "@/types/connection";
 import {
   persistentAttachedTabTitles,
@@ -41,7 +41,12 @@ export function PersistentStateDot({
   // does not re-render on unrelated store changes.
   const tooltip = useAppStore((s) =>
     showBadge
-      ? formatAttachedTabsTooltip(persistentAttachedTabTitles(s, connectionId))
+      ? formatAttachedTabsTooltip(
+          persistentAttachedTabTitles(
+            { tabGroups: getComposedLayout(s).tabGroups, persistentSessions: s.persistentSessions },
+            connectionId
+          )
+        )
       : (runState ?? "stopped")
   );
 
