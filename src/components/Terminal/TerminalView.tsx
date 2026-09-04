@@ -159,15 +159,18 @@ export function TerminalView() {
           let markedExited = 0;
           const reconnectingView = currentSessionView();
           for (const tab of agentTerminalTabs) {
-            // The shared `session-lifecycle` region is authoritative for the
-            // transient-break reconnecting state (#2555/#2556) — the same source
-            // the overlay + tab dot read — so gate the resume-vs-exit decision on
-            // it rather than the local `terminalReconnectingTabs` slice (#2205
-            // PR-B). The backend folds the survived-recovery edge itself, so a
-            // recovered tab may already read non-reconnecting here; the gone-case
-            // resolve below still relies on the region reading `reconnecting`,
-            // which the backend deliberately leaves untouched for a gone session.
-            if (reconnectingView[tab.id]?.status !== "reconnecting") continue;
+            // The shared `session-lifecycle` region is authoritative for the whole
+            // transient-break lifecycle (#2555/#2556/#2564) — the same source the
+            // overlay + tab dot read — so gate the resume-vs-lost decision on it
+            // rather than the local `terminalReconnectingTabs` slice (#2205 PR-B).
+            // The backend folds both resolve edges at the source: a recovered
+            // session `reconnecting → connected`, a gone session
+            // `reconnecting → sessionLost` (#2564). Accept either the mid-break
+            // `reconnecting` status or the already-folded `sessionLost` — the
+            // backend fold and this handler race, so a gone tab may read either by
+            // the time we get here; both mean "this tab was in the break".
+            const status = reconnectingView[tab.id]?.status;
+            if (status !== "reconnecting" && status !== "sessionLost") continue;
             if (tab.sessionId && recoveredSessionIds.has(tab.sessionId)) {
               // Session survived — the backend `agent_io_task` folds the region
               // entry `reconnecting → connected` at the source (#2556), and output
@@ -179,13 +182,17 @@ export function TerminalView() {
               );
               markedResumed++;
             } else {
-              // Session is gone — show the "Session disconnected" overlay.
+              // Session is gone — the backend `agent_io_task` folds the region entry
+              // `reconnecting → sessionLost` at the source (#2564), the same
+              // authority the "Session lost" overlay renders from (#2512). Reflect
+              // only the local presentation view-state here (`terminalExitedTabs`,
+              // which mounts the overlay) via `settleSessionLost` — do NOT re-drive
+              // the region, which would double-fold against the server authority.
               frontendLog(
                 "disconnect",
-                `agent connected after reconnect: marking tab=${tab.id} as exited (session not recovered)`
+                `agent connected after reconnect: reflecting server-folded session-lost for tab=${tab.id} (session not recovered)`
               );
-              // Agent lost the session across the reconnect — a dropped session (#1121).
-              store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
+              store.settleSessionLost(tab.id);
               markedExited++;
             }
           }

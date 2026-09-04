@@ -161,6 +161,32 @@ pub fn fold_agent_session_recovered<R: tauri::Runtime>(app_handle: &AppHandle<R>
     sync_timer_generic(app_handle, tab_id);
 }
 
+/// The gone-session resolve of [`fold_agent_transport_reconnecting`], folded at the
+/// **backend source** (`agent_io_task`) when the agent recovered its transport on a
+/// transient break but a hosted session did **not** come back — its
+/// `remote_session_id` is absent from the agent's post-reconnect `connection.list`
+/// (#2564). The twin of [`fold_agent_session_recovered`] for the not-recovered
+/// branch: instead of leaving the region stuck `Reconnecting` for the frontend to
+/// resolve, the backend folds the terminal [`SessionStatus::SessionLost`](crate::session_projection::store::SessionStatus::SessionLost)
+/// state directly — the same authority the "Session lost" overlay reads from the
+/// region (#2512), with no `appStore` twin.
+///
+/// Loop-idle ([`SessionLifecycleStore::session_lost`](crate::session_projection::store::SessionLifecycleStore::session_lost)
+/// resets the reconnect engine to idle), so the subsequent timer reconcile is a
+/// *cancel* — no redrive is armed for a definitively-lost session. The re-attach id
+/// is cleared by the store method (the live agent session is gone). The message
+/// matches the backend-redrive session-lost fold ([`crate::session_projection::redrive`])
+/// so both gone-session paths surface identical wording.
+pub fn fold_agent_session_lost<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab_id: &str) {
+    fold_session_transition(app_handle, |store| {
+        store.session_lost(
+            tab_id,
+            Some("the live agent session could not be recovered".to_string()),
+        );
+    });
+    sync_timer_generic(app_handle, tab_id);
+}
+
 /// Register the `session.*` intents on a handler registry.
 ///
 /// Each route resolves the managed [`SessionLifecycleStore`] lazily (so it
