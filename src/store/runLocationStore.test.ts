@@ -4,7 +4,11 @@ import { useRunLocationStore } from "./runLocationStore";
 
 describe("runLocationStore", () => {
   beforeEach(() => {
-    useRunLocationStore.setState({ networkToolLocations: {}, serverLocations: {} });
+    useRunLocationStore.setState({
+      networkToolLocations: {},
+      serverLocations: {},
+      systemMonitorLocations: {},
+    });
   });
 
   it("records and updates a network tool's run-location", () => {
@@ -33,6 +37,25 @@ describe("runLocationStore", () => {
     expect(useRunLocationStore.getState().networkToolLocations.dns).toEqual({
       kind: "agent",
       agentId: "a1",
+    });
+  });
+
+  it("records a system monitor's run-location keyed by monitor key (#2593)", () => {
+    const { setSystemMonitorLocation } = useRunLocationStore.getState();
+    expect(useRunLocationStore.getState().systemMonitorLocations["sess-1"]).toBeUndefined();
+
+    setSystemMonitorLocation("sess-1", { kind: "agent", agentId: "build" });
+    expect(useRunLocationStore.getState().systemMonitorLocations["sess-1"]).toEqual({
+      kind: "agent",
+      agentId: "build",
+    });
+
+    // A second monitor's vantage is independent of the first.
+    setSystemMonitorLocation("sess-2", THIS_COMPUTER);
+    expect(useRunLocationStore.getState().systemMonitorLocations["sess-2"]).toEqual(THIS_COMPUTER);
+    expect(useRunLocationStore.getState().systemMonitorLocations["sess-1"]).toEqual({
+      kind: "agent",
+      agentId: "build",
     });
   });
 });
