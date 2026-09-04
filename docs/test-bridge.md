@@ -408,6 +408,15 @@ native OS drag pipeline (see [Not covered](#not-covered)).
   `panel-drop-center-<panelId>` zone moves the tab into it — exactly as a real
   edge/center drop would.
 
+- **Post-drag settle** — on `pointerup` dnd-kit's `PointerSensor.detach()` removes
+  its document listeners on a `setTimeout(…, 50)`, and one of them is a
+  capture-phase `click` listener (installed on activation) that `stopPropagation`s
+  every click. So a `click` verb fired within ~50 ms of a drop is **swallowed** —
+  the drop itself lands, but the immediate follow-up click does nothing (the #2609
+  flake: clicking the tab-group chip a tab was just dropped onto never activated
+  it). `dragTo` therefore waits past that teardown window before resolving, so a
+  click (or any verb) issued right after a drag sees a settled DOM.
+
 ### Reading form values (`getValue` vs `getAttribute`)
 
 A React-**controlled** `<input>`/`<select>` updates the DOM _property_ `.value`,

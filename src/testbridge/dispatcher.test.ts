@@ -498,6 +498,34 @@ describe("dispatchCommand", () => {
       expect(res.error).toContain("never");
       expect(seq).toContain("up");
     });
+
+    it("settles past the drag-end teardown before resolving so a following click is not swallowed (#2609)", async () => {
+      // @dnd-kit's PointerSensor.detach() removes its document listeners on a
+      // setTimeout(…, 50) — including a capture-phase click listener that
+      // stopPropagation's every click. A click verb fired within that window is
+      // eaten (the #2609 flake: the tab-group chip a tab was dropped onto never
+      // activated on the immediate follow-up click). So dragTo must not resolve
+      // until it has waited past that teardown: assert a measurable gap between
+      // the final pointerup and dragTo returning.
+      const { deps, container } = setup(`<div data-testid="a"></div><div data-testid="b"></div>`);
+      const a = container.querySelectorAll("div")[0];
+      let upAt = 0;
+      a.addEventListener("pointerup", () => {
+        upAt = Date.now();
+      });
+      // (pointerup is dispatched on the document, not the source — listen there.)
+      document.addEventListener("pointerup", () => {
+        upAt = Date.now();
+      });
+
+      await dispatchCommand({ action: "dragTo", fromTestId: "a", toTestId: "b" }, deps);
+      const resolvedAt = Date.now();
+
+      expect(upAt).toBeGreaterThan(0);
+      // The settle is 80ms; allow scheduling jitter but prove it clears the 50ms
+      // dnd-kit teardown window (without the settle this gap is ~0ms).
+      expect(resolvedAt - upAt).toBeGreaterThanOrEqual(60);
+    });
   });
 
   describe("type", () => {
