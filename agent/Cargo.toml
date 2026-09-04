@@ -29,6 +29,8 @@ termihub-core = { path = "../core", features = [
     "wsl",
     # Host the embedded HTTP/FTP/TFTP servers on the agent (#2192).
     "embedded-servers",
+    # Host the periodic HTTP monitor on the agent (#2592).
+    "http-monitor",
 ] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
