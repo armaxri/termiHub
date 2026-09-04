@@ -12,6 +12,7 @@ import { FileBrowser, FileMenuItems, MultiSelectMenuItems } from "./FileBrowser"
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import { DEFAULT_AGENT_SETTINGS, type FileEntry } from "@/types/connection";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
@@ -65,7 +66,7 @@ function setActiveTab(tab: TerminalTab) {
     tabs: [tab],
     activeTabId: tab.id,
   };
-  useAppStore.setState({
+  seedLayoutState({
     activePanelId: tab.panelId,
     rootPanel: panel,
   });
@@ -2023,7 +2024,7 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
     });
     await flushAsync();
 
-    const editorTab = (useAppStore.getState().rootPanel as LeafPanel).tabs.find(
+    const editorTab = (layoutState().rootPanel as LeafPanel).tabs.find(
       (t) => t.contentType === "editor"
     );
     expect(editorTab).toBeDefined();

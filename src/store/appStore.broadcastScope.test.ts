@@ -41,6 +41,7 @@ import { useAppStore, resolveBroadcastTargetTabIds } from "./appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { currentBroadcastView, ensureBroadcastSubscribed } from "./broadcastBridge";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
+import { seedLayoutState } from "@/test/layoutState";
 import type {
   LeafPanel,
   PanelNode,
@@ -93,7 +94,7 @@ function seed(root: PanelNode) {
       tabContent[t.id] = content;
     }
   }
-  useAppStore.setState({ rootPanel: root, activePanelId: "leaf-1", tabContent });
+  seedLayoutState({ rootPanel: root, activePanelId: "leaf-1", tabContent });
 }
 
 describe("resolveBroadcastTargetTabIds (#1956)", () => {
@@ -166,7 +167,7 @@ describe("resolveBroadcastTargetTabIds (#1956)", () => {
       makeTab({ id: "a2", panelId: "leaf-A" }),
     ]);
     const groupB = leaf("leaf-B", [makeTab({ id: "b1", panelId: "leaf-B" })]);
-    useAppStore.setState({
+    seedLayoutState({
       // Active group is B; its live tree is `rootPanel`. Group A is inactive and
       // keeps its tree in `group.rootPanel`.
       activeTabGroupId: "gB",

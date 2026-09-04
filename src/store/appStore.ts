@@ -2362,7 +2362,7 @@ function setTabContentEntry(
  * copy. Tabs not present in any group are dropped, matching the map's invariant
  * that it holds exactly the live tabs.
  */
-function tabContentFromGroups(
+export function tabContentFromGroups(
   tabGroups: TabGroup[],
   activeGroupId?: string,
   activeRoot?: PanelNode

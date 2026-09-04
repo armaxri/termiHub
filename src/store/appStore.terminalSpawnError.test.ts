@@ -31,6 +31,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 
 describe("terminal spawn error state", () => {
   beforeEach(() => {
@@ -104,7 +105,7 @@ describe("terminal spawn error state", () => {
     // Add a terminal tab via addTab so we have a valid panelId
     const panelId = store.activePanelId!;
     store.addTab("Test", "local");
-    const rootPanel = useAppStore.getState().rootPanel;
+    const rootPanel = layoutState().rootPanel;
     const leafTabs = rootPanel.type === "leaf" ? rootPanel.tabs : [];
     const tab = leafTabs.length > 0 ? leafTabs[leafTabs.length - 1] : null;
     expect(tab).not.toBeNull();

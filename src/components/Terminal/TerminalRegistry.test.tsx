@@ -6,6 +6,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { TerminalPortalProvider, useTerminalRegistry, PASTE_DEBOUNCE_MS } from "./TerminalRegistry";
 import { sendInput } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
+import { seedLayoutState } from "@/test/layoutState";
 import { ensureBroadcastSubscribed } from "@/store/broadcastBridge";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import type { TerminalTab } from "@/types/terminal";
@@ -398,7 +399,7 @@ describe("pasteToTerminal", () => {
     // Two connected terminals, broadcast active from the source. getBroadcast-
     // TargetTabIds treats a tab with a sessionId and no error/exit flag as
     // connected (deriveTabStatus default).
-    useAppStore.setState({
+    seedLayoutState({
       ...useAppStore.getInitialState(),
       rootPanel: {
         type: "leaf",

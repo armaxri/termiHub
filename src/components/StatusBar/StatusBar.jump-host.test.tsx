@@ -10,6 +10,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
 import type { ConnectionConfig, TerminalTab } from "@/types/terminal";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 // Stub the unrelated status-bar children so the test isolates the hop chain.
 vi.mock("@/components/CredentialStoreIndicator", () => ({ CredentialStoreIndicator: () => null }));
@@ -17,7 +18,7 @@ vi.mock("./PortableBadge", () => ({ PortableBadge: () => null }));
 vi.mock("./UpdateIndicator", () => ({ UpdateIndicator: () => null }));
 
 function setActiveTab(config: ConnectionConfig) {
-  const leafId = useAppStore.getState().rootPanel.id;
+  const leafId = layoutState().rootPanel.id;
   const tab: TerminalTab = {
     id: "tab-1",
     sessionId: "s1",
@@ -28,7 +29,7 @@ function setActiveTab(config: ConnectionConfig) {
     panelId: leafId,
     isActive: true,
   };
-  useAppStore.setState({
+  seedLayoutState({
     rootPanel: { type: "leaf", id: leafId, tabs: [tab], activeTabId: tab.id },
     activePanelId: leafId,
   });

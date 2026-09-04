@@ -18,9 +18,10 @@ import { TooltipProvider } from "@/components/ui";
 import { StatusBar } from "./StatusBar";
 import type { ConnectionConfig, TerminalOptions, TerminalTab } from "@/types/terminal";
 import type { SyntaxHighlightingConfig } from "@/types/syntaxHighlighting";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 function setActiveTab(tab: Partial<TerminalTab> & { config: ConnectionConfig }) {
-  const leafId = useAppStore.getState().rootPanel.id;
+  const leafId = layoutState().rootPanel.id;
   const fullTab: TerminalTab = {
     id: "tab-1",
     sessionId: "s1",
@@ -31,7 +32,7 @@ function setActiveTab(tab: Partial<TerminalTab> & { config: ConnectionConfig }) 
     isActive: true,
     ...tab,
   };
-  useAppStore.setState({
+  seedLayoutState({
     rootPanel: { type: "leaf", id: leafId, tabs: [fullTab], activeTabId: fullTab.id },
     activePanelId: leafId,
   });

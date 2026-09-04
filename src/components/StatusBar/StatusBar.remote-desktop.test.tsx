@@ -12,9 +12,10 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { StatusBar } from "./StatusBar";
 import type { ConnectionConfig, TerminalTab } from "@/types/terminal";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 function setActiveTab(tab: Partial<TerminalTab> & { config: ConnectionConfig }) {
-  const leafId = useAppStore.getState().rootPanel.id;
+  const leafId = layoutState().rootPanel.id;
   const fullTab: TerminalTab = {
     id: "tab-1",
     sessionId: "s1",
@@ -25,7 +26,7 @@ function setActiveTab(tab: Partial<TerminalTab> & { config: ConnectionConfig }) 
     isActive: true,
     ...tab,
   };
-  useAppStore.setState({
+  seedLayoutState({
     rootPanel: { type: "leaf", id: leafId, tabs: [fullTab], activeTabId: fullTab.id },
     activePanelId: leafId,
   });

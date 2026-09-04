@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { ConfirmSessionCloseDialog } from "./ConfirmSessionCloseDialog";
+import { layoutState } from "@/test/layoutState";
 
 const toastSuccess = vi.fn();
 vi.mock("@/components/ui", async (importOriginal) => {
@@ -48,7 +49,7 @@ describe("ConfirmSessionCloseDialog", () => {
 
   it("tab kind: confirm closes the tab and fires an Undo/Reopen toast", () => {
     useAppStore.getState().addTab("my-server", "ssh", { type: "ssh", config: { host: "h" } });
-    const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
     const tabId = panel.tabs[0].id;
     render();
 
@@ -66,7 +67,7 @@ describe("ConfirmSessionCloseDialog", () => {
 
     act(() => q("confirm-dialog-confirm").click());
 
-    expect(getAllLeaves(useAppStore.getState().rootPanel)[0].tabs).toHaveLength(0);
+    expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(0);
     expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
     expect(toastSuccess).toHaveBeenCalled();
     // The toast carries a Reopen action.
@@ -75,7 +76,7 @@ describe("ConfirmSessionCloseDialog", () => {
 
   it("tab kind: cancel leaves the tab open and shows no toast", () => {
     useAppStore.getState().addTab("keep", "local");
-    const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
     render();
 
     act(() =>
@@ -90,7 +91,7 @@ describe("ConfirmSessionCloseDialog", () => {
 
     act(() => q("confirm-dialog-cancel").click());
 
-    expect(getAllLeaves(useAppStore.getState().rootPanel)[0].tabs).toHaveLength(1);
+    expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(1);
     expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
     expect(toastSuccess).not.toHaveBeenCalled();
   });
@@ -98,9 +99,9 @@ describe("ConfirmSessionCloseDialog", () => {
   it("panel kind: shows a count-aware message and removes the panel on confirm", () => {
     useAppStore.getState().addTab("A", "local");
     act(() => useAppStore.getState().splitPanel("horizontal"));
-    const leavesBefore = getAllLeaves(useAppStore.getState().rootPanel);
+    const leavesBefore = getAllLeaves(layoutState().rootPanel);
     expect(leavesBefore.length).toBe(2);
-    const target = useAppStore.getState().activePanelId!;
+    const target = layoutState().activePanelId!;
     render();
 
     act(() =>
@@ -118,7 +119,7 @@ describe("ConfirmSessionCloseDialog", () => {
 
     act(() => q("confirm-dialog-confirm").click());
 
-    expect(getAllLeaves(useAppStore.getState().rootPanel).length).toBe(1);
+    expect(getAllLeaves(layoutState().rootPanel).length).toBe(1);
     expect(useAppStore.getState().pendingSessionCloseConfirm).toBeNull();
   });
 
@@ -126,7 +127,7 @@ describe("ConfirmSessionCloseDialog", () => {
     const updateSettings = vi.fn(() => Promise.resolve());
     useAppStore.setState({ updateSettings });
     useAppStore.getState().addTab("x", "local");
-    const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
     render();
 
     act(() =>
@@ -154,7 +155,7 @@ describe("ConfirmSessionCloseDialog", () => {
     const updateSettings = vi.fn(() => Promise.resolve());
     useAppStore.setState({ updateSettings });
     useAppStore.getState().addTab("y", "local");
-    const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
     render();
 
     act(() =>
@@ -177,7 +178,7 @@ describe("ConfirmSessionCloseDialog", () => {
     const updateSettings = vi.fn(() => Promise.resolve());
     useAppStore.setState({ updateSettings });
     useAppStore.getState().addTab("z", "local");
-    const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
     render();
 
     act(() =>

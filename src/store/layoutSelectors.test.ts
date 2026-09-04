@@ -23,6 +23,7 @@ vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn(() => vi.
 import type { PanelNode, TabGroup, TerminalTab } from "@/types/terminal";
 
 import { useAppStore } from "./appStore";
+import { seedLayoutState } from "@/test/layoutState";
 import {
   activeTreeTabs,
   getActivePanelId,
@@ -65,7 +66,7 @@ describe("layoutSelectors", () => {
     it("return the current mirror-field values", () => {
       const activeRoot = leaf("A", [tab("t1")]);
       const groups = [group("g1", activeRoot), group("g2", leaf("B", [tab("t2")]))];
-      useAppStore.setState({
+      seedLayoutState({
         rootPanel: activeRoot,
         tabGroups: groups,
         activeTabGroupId: "g1",
@@ -130,7 +131,7 @@ describe("layoutSelectors", () => {
       const activeRoot = leaf("A", [tab("t1")]);
       const g1 = group("g1", leaf("A-stale", [tab("t1")])); // active group's stale entry
       const g2 = group("g2", leaf("B", [tab("t2")]));
-      useAppStore.setState({
+      seedLayoutState({
         rootPanel: activeRoot,
         tabGroups: [g1, g2],
         activeTabGroupId: "g1",

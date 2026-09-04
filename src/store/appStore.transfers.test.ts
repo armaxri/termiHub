@@ -38,11 +38,12 @@ vi.mock("@/services/api", () => ({
 import { useAppStore } from "./appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { sftpCancelTransfer, listSessionOwners, type TransferProgress } from "@/services/api";
+import { layoutState } from "@/test/layoutState";
 
 /** Seed one live terminal tab bound to `sessionId` so this window renders it locally. */
 function seedLiveTab(sessionId: string): void {
   useAppStore.getState().addTab("bash", "local");
-  const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+  const leaf = getAllLeaves(layoutState().rootPanel)[0];
   useAppStore.getState().setTabSessionId(leaf.tabs[0].id, sessionId);
 }
 

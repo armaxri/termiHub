@@ -9,6 +9,7 @@ import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
 import type { FileEntry } from "@/types/connection";
+import { seedLayoutState } from "@/test/layoutState";
 
 // Capture the OS drag/drop registration so we can assert the container-level
 // drop handler still attaches while the row list is virtualized.
@@ -61,7 +62,7 @@ function setActiveTab(tab: TerminalTab) {
     tabs: [tab],
     activeTabId: tab.id,
   };
-  useAppStore.setState({ activePanelId: tab.panelId, rootPanel: panel });
+  seedLayoutState({ activePanelId: tab.panelId, rootPanel: panel });
 }
 
 /** Build `count` deterministic, sort-stable file entries (`item-0000`, ...). */

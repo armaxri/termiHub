@@ -35,6 +35,7 @@ import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal"
 import { getAllLeaves } from "@/utils/panelTree";
 import { composeRenderTree, toMinimalNode, type LayoutView } from "./layoutBridge";
 import { extractTabContent, useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 import { __emitAgentsViewForTest, EMPTY_AGENTS_VIEW } from "./agentsBridge";
 
 function agentErrorTab(id: string): TerminalTab {
@@ -74,7 +75,7 @@ function seedAgentErrorLayout(): void {
 }
 
 function currentView(): LayoutView {
-  const { rootPanel, activePanelId } = useAppStore.getState();
+  const { rootPanel, activePanelId } = layoutState();
   return {
     groups: [{ id: "g1", name: "Main", root: toMinimalNode(rootPanel), activePanelId }],
     activeGroupId: "g1",

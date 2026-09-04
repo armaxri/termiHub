@@ -75,6 +75,7 @@ import { setupRestoreCohortRegion } from "@/test/restoreCohortHarness";
 import { loadLastSession } from "@/services/lastSessionApi";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { LastSession } from "@/types/lastSession";
+import { layoutState } from "@/test/layoutState";
 
 const mockLoad = vi.mocked(loadLastSession);
 
@@ -99,7 +100,7 @@ function threeLocalTabsSession(): LastSession {
 }
 
 function restoredTabIds(): string[] {
-  return getAllLeaves(useAppStore.getState().rootPanel)
+  return getAllLeaves(layoutState().rootPanel)
     .flatMap((l) => l.tabs)
     .map((t) => t.id);
 }

@@ -43,6 +43,7 @@ vi.mock("@/components/ui", async () => {
 });
 
 import { useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 import {
   buildLayoutSnapshot,
   currentLayoutView,
@@ -149,7 +150,7 @@ describe("E2 — region is the sole writer of appStore's layout", () => {
     useAppStore.getState().splitPanel("vertical");
     // No flush: the mirror composes the optimistic overlay synchronously, so
     // `appStore.rootPanel` reflects the split at once (no local reducer any more).
-    expect(getAllLeaves(useAppStore.getState().rootPanel)).toHaveLength(3);
+    expect(getAllLeaves(layoutState().rootPanel)).toHaveLength(3);
   });
 
   it("the region overlay reflects the split synchronously, before any ack", () => {
@@ -175,9 +176,9 @@ describe("E2 — region is the sole writer of appStore's layout", () => {
     await flush();
     // appStore's tree equals the backend's folded view — the mirror is deriving it.
     const backendRoot = regionActiveRoot(transport.regionView())!;
-    expect(tabIds(backendRoot)).toEqual(tabIds(useAppStore.getState().rootPanel));
+    expect(tabIds(backendRoot)).toEqual(tabIds(layoutState().rootPanel));
     expect(tabIds(regionActiveRoot(currentLayoutView())!)).toEqual(
-      tabIds(useAppStore.getState().rootPanel)
+      tabIds(layoutState().rootPanel)
     );
   });
 
@@ -187,7 +188,7 @@ describe("E2 — region is the sole writer of appStore's layout", () => {
     await flush();
     // No local reducer fallback any more: with the region rejecting the split, the
     // authoritative view never adopted it, so appStore follows the region back.
-    expect(getAllLeaves(useAppStore.getState().rootPanel).length).toBeLessThan(3);
+    expect(getAllLeaves(layoutState().rootPanel).length).toBeLessThan(3);
     const root = regionActiveRoot(currentLayoutView());
     expect(root && getAllLeaves(root).length).toBeLessThan(3);
   });
@@ -238,7 +239,7 @@ describe("E2 — every listed op routes its granular intent", () => {
     {
       name: "renameTabGroup",
       run: () => {
-        const gid = useAppStore.getState().activeTabGroupId;
+        const gid = layoutState().activeTabGroupId;
         useAppStore.getState().renameTabGroup(gid, "Renamed");
       },
       kind: "layout.renameGroup",
@@ -246,7 +247,7 @@ describe("E2 — every listed op routes its granular intent", () => {
     {
       name: "setTabGroupColor",
       run: () => {
-        const gid = useAppStore.getState().activeTabGroupId;
+        const gid = layoutState().activeTabGroupId;
         useAppStore.getState().setTabGroupColor(gid, "#abcdef");
       },
       kind: "layout.setGroupColor",
@@ -278,7 +279,7 @@ describe("E2 — every listed op routes its granular intent", () => {
   it("setActiveTab activates the tab in both appStore and the region", async () => {
     useAppStore.getState().setActiveTab("t2", "a");
     await flush();
-    expect(findLeaf(useAppStore.getState().rootPanel, "a")!.activeTabId).toBe("t2");
+    expect(findLeaf(layoutState().rootPanel, "a")!.activeTabId).toBe("t2");
     const regionA = findLeaf(regionActiveRoot(transport.regionView())!, "a");
     expect(regionA!.activeTabId).toBe("t2");
   });
@@ -286,14 +287,14 @@ describe("E2 — every listed op routes its granular intent", () => {
 
 describe("E2 — tab id preservation (no live-terminal remount)", () => {
   it("split preserves every existing tab id", () => {
-    const before = tabIds(useAppStore.getState().rootPanel);
+    const before = tabIds(layoutState().rootPanel);
     useAppStore.getState().splitPanel("vertical");
-    expect(tabIds(useAppStore.getState().rootPanel)).toEqual(before);
+    expect(tabIds(layoutState().rootPanel)).toEqual(before);
   });
 
   it("drag-move (center) preserves the moved tab id and its stack neighbours", () => {
     useAppStore.getState().splitPanelWithTab("t1", "a", "b", "center");
-    const ids = tabIds(useAppStore.getState().rootPanel).sort();
+    const ids = tabIds(layoutState().rootPanel).sort();
     expect(ids).toEqual(["t1", "t2", "t3"]);
   });
 
@@ -302,16 +303,16 @@ describe("E2 — tab id preservation (no live-terminal remount)", () => {
     // becomes active — then switch back to the first and assert its tabs survived.
     useAppStore.getState().addTabGroup("G2");
     await flush();
-    const firstGroup = useAppStore.getState().tabGroups[0].id;
+    const firstGroup = layoutState().tabGroups[0].id;
     useAppStore.getState().setActiveTabGroup(firstGroup);
     await flush();
-    expect(tabIds(useAppStore.getState().rootPanel).sort()).toEqual(["t1", "t2", "t3"]);
+    expect(tabIds(layoutState().rootPanel).sort()).toEqual(["t1", "t2", "t3"]);
   });
 
   it("tab activation never changes tab ids, only the active flag", () => {
-    const before = tabIds(useAppStore.getState().rootPanel);
+    const before = tabIds(layoutState().rootPanel);
     useAppStore.getState().setActiveTab("t2", "a");
-    expect(tabIds(useAppStore.getState().rootPanel)).toEqual(before);
-    expect(findLeaf(useAppStore.getState().rootPanel, "a")!.activeTabId).toBe("t2");
+    expect(tabIds(layoutState().rootPanel)).toEqual(before);
+    expect(findLeaf(layoutState().rootPanel, "a")!.activeTabId).toBe("t2");
   });
 });

@@ -49,6 +49,7 @@ import {
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
 import type { LeafPanel, TerminalTab, TabContentType } from "@/types/terminal";
+import { seedLayoutState } from "@/test/layoutState";
 
 interface SeedTab {
   id: string;
@@ -73,7 +74,7 @@ function makeTab({ id, contentType = "terminal", sessionId = `sess-${id}` }: See
 /** Seed a single leaf panel holding the given tabs as the active tab group. */
 function seedTabs(tabs: TerminalTab[], activeTabId = tabs[0]?.id ?? null) {
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs, activeTabId };
-  useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
+  seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
 }
 
 describe("appStore — broadcast input actions (#1955, region-authoritative #2206)", () => {

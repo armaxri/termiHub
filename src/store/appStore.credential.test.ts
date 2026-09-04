@@ -23,6 +23,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "./appStore";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
+import { layoutState } from "@/test/layoutState";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -274,7 +275,7 @@ describe("launchWorkspace — credential store pre-unlock", () => {
 
     await useAppStore.getState().launchWorkspace("ws-1");
 
-    const rootPanel = useAppStore.getState().rootPanel;
+    const rootPanel = layoutState().rootPanel;
     expect(rootPanel.type).toBe("leaf");
     if (rootPanel.type === "leaf") {
       const cfg = rootPanel.tabs[0].config.config as Record<string, unknown>;

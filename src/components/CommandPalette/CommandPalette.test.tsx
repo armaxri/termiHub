@@ -14,6 +14,7 @@ import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connection
 import { getAllLeaves } from "@/utils/panelTree";
 import { CommandPalette } from "./CommandPalette";
 import type { SavedConnection } from "@/types/connection";
+import { layoutState } from "@/test/layoutState";
 
 const { connectSpy } = vi.hoisted(() => ({
   connectSpy: vi.fn((_connection: unknown) => Promise.resolve()),
@@ -191,7 +192,7 @@ describe("CommandPalette", () => {
       const id = useAppStore
         .getState()
         .addTab("Shell", "local", undefined, { contentType: "terminal" });
-      const panel = getAllLeaves(useAppStore.getState().rootPanel).find((p) =>
+      const panel = getAllLeaves(layoutState().rootPanel).find((p) =>
         p.tabs.some((t) => t.id === id)
       )!;
       useAppStore.getState().setActivePanel(panel.id);

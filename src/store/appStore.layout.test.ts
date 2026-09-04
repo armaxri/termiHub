@@ -67,6 +67,7 @@ vi.mock("@/services/tunnelApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 
 describe("appStore — layout state", () => {
   beforeEach(() => {
@@ -349,9 +350,9 @@ describe("appStore — setTabSessionId", () => {
   });
 
   it("is a no-op for an unknown tabId", () => {
-    const before = useAppStore.getState().rootPanel;
+    const before = layoutState().rootPanel;
     useAppStore.getState().setTabSessionId("nonexistent-tab", "session-xyz");
-    expect(useAppStore.getState().rootPanel).toBe(before);
+    expect(layoutState().rootPanel).toBe(before);
   });
 });
 

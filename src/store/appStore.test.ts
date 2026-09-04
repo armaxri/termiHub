@@ -40,6 +40,7 @@ import type { LeafPanel } from "@/types/terminal";
 import { findLeaf, getAllLeaves } from "@/utils/panelTree";
 import * as api from "@/services/api";
 import type { AgentDefinitionInfo } from "@/services/api";
+import { layoutState } from "@/test/layoutState";
 
 setupConnectionsRegion();
 
@@ -372,7 +373,7 @@ describe("appStore", () => {
       const state0 = useAppStore.getState();
       const panel1Id = state0.activePanelId!;
       useAppStore.getState().splitPanel("horizontal");
-      const panel2Id = useAppStore.getState().activePanelId!;
+      const panel2Id = layoutState().activePanelId!;
 
       useAppStore.getState().setActivePanel(panel1Id);
       useAppStore.getState().toggleZoomActiveTab();
@@ -486,7 +487,7 @@ describe("appStore", () => {
       useAppStore
         .getState()
         .addTab("FTP", "remote-session", { type: "ftp", config: {} }, { sessionId: "ftp-sess-1" });
-      const ftpTabId = getAllLeaves(useAppStore.getState().rootPanel)
+      const ftpTabId = getAllLeaves(layoutState().rootPanel)
         .flatMap((l) => l.tabs)
         .find((t) => t.sessionId === "ftp-sess-1")!.id;
 
@@ -564,13 +565,13 @@ describe("appStore", () => {
         new Error("Session no longer alive")
       );
 
-      const tabsBefore = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
+      const tabsBefore = getAllLeaves(layoutState().rootPanel).flatMap(
         (l) => l.tabs
       ).length;
 
       await useAppStore.getState().attachAgentPersistentSession("agent1", def);
 
-      const tabsAfter = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
+      const tabsAfter = getAllLeaves(layoutState().rootPanel).flatMap(
         (l) => l.tabs
       ).length;
       // The broken tab must have been removed — net tab count unchanged.
@@ -580,13 +581,13 @@ describe("appStore", () => {
     it("keeps the tab when attach_persistent_tab succeeds", async () => {
       vi.mocked(api.attachPersistentTab).mockResolvedValueOnce(1);
 
-      const tabsBefore = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
+      const tabsBefore = getAllLeaves(layoutState().rootPanel).flatMap(
         (l) => l.tabs
       ).length;
 
       await useAppStore.getState().attachAgentPersistentSession("agent1", def);
 
-      const tabsAfter = getAllLeaves(useAppStore.getState().rootPanel).flatMap(
+      const tabsAfter = getAllLeaves(layoutState().rootPanel).flatMap(
         (l) => l.tabs
       ).length;
       expect(tabsAfter).toBe(tabsBefore + 1);

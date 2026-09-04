@@ -62,6 +62,7 @@ import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { layoutState } from "@/test/layoutState";
 
 setupSettingsRegion();
 
@@ -287,9 +288,9 @@ describe("useKeyboardShortcuts", () => {
       });
       mockProcessKeyEvent.mockReturnValue("new-terminal");
 
-      const before = getAllLeaves(useAppStore.getState().rootPanel)[0].tabs.length;
+      const before = getAllLeaves(layoutState().rootPanel)[0].tabs.length;
       fireKey("t");
-      const after = getAllLeaves(useAppStore.getState().rootPanel)[0].tabs.length;
+      const after = getAllLeaves(layoutState().rootPanel)[0].tabs.length;
 
       expect(after).toBe(before + 1);
     });
@@ -298,7 +299,7 @@ describe("useKeyboardShortcuts", () => {
   describe("close-tab", () => {
     it("opens the confirmation dialog instead of closing immediately when the setting is enabled (default)", () => {
       useAppStore.getState().addTab("Tab A", "local");
-      const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const panel = getAllLeaves(layoutState().rootPanel)[0];
       useAppStore.getState().setActivePanel(panel.id);
 
       act(() => {
@@ -309,7 +310,7 @@ describe("useKeyboardShortcuts", () => {
       fireKey("w");
 
       // The tab must NOT be closed yet — the dialog should be open instead.
-      expect(getAllLeaves(useAppStore.getState().rootPanel)[0].tabs).toHaveLength(1);
+      expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(1);
       const confirm = useAppStore.getState().pendingShortcutCloseConfirm;
       expect(confirm).not.toBeNull();
       expect(confirm?.kind).toBe("tab");
@@ -322,7 +323,7 @@ describe("useKeyboardShortcuts", () => {
 
     it("closes the active tab immediately when the confirm setting is disabled", () => {
       useAppStore.getState().addTab("Tab A", "local");
-      const panelId = getAllLeaves(useAppStore.getState().rootPanel)[0].id;
+      const panelId = getAllLeaves(layoutState().rootPanel)[0].id;
       useAppStore.getState().setActivePanel(panelId);
       seedSettings({ confirmCloseTabOnShortcut: false });
 
@@ -333,7 +334,7 @@ describe("useKeyboardShortcuts", () => {
 
       fireKey("w");
 
-      expect(getAllLeaves(useAppStore.getState().rootPanel)[0].tabs).toHaveLength(0);
+      expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(0);
       expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
     });
   });
@@ -341,8 +342,8 @@ describe("useKeyboardShortcuts", () => {
   describe("close-tab-group", () => {
     it("opens the confirmation dialog instead of closing immediately when the setting is enabled (default)", () => {
       useAppStore.getState().addTabGroup();
-      const groups = useAppStore.getState().tabGroups;
-      const activeId = useAppStore.getState().activeTabGroupId;
+      const groups = layoutState().tabGroups;
+      const activeId = layoutState().activeTabGroupId;
       const activeGroup = groups.find((g) => g.id === activeId)!;
 
       act(() => {
@@ -350,10 +351,10 @@ describe("useKeyboardShortcuts", () => {
       });
       mockProcessKeyEvent.mockReturnValue("close-tab-group");
 
-      const groupsBefore = useAppStore.getState().tabGroups.length;
+      const groupsBefore = layoutState().tabGroups.length;
       fireKey("F4");
 
-      expect(useAppStore.getState().tabGroups).toHaveLength(groupsBefore);
+      expect(layoutState().tabGroups).toHaveLength(groupsBefore);
       const confirm = useAppStore.getState().pendingShortcutCloseConfirm;
       expect(confirm).not.toBeNull();
       expect(confirm?.kind).toBe("tab-group");
@@ -364,7 +365,7 @@ describe("useKeyboardShortcuts", () => {
 
     it("closes the tab group immediately when the confirm setting is disabled", () => {
       useAppStore.getState().addTabGroup();
-      const groupsBefore = useAppStore.getState().tabGroups.length;
+      const groupsBefore = layoutState().tabGroups.length;
       seedSettings({ confirmCloseTabOnShortcut: false });
 
       act(() => {
@@ -374,7 +375,7 @@ describe("useKeyboardShortcuts", () => {
 
       fireKey("F4");
 
-      expect(useAppStore.getState().tabGroups).toHaveLength(groupsBefore - 1);
+      expect(layoutState().tabGroups).toHaveLength(groupsBefore - 1);
       expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
     });
   });
@@ -383,7 +384,7 @@ describe("useKeyboardShortcuts", () => {
     it("cycles to the next tab", () => {
       useAppStore.getState().addTab("Tab A", "local");
       useAppStore.getState().addTab("Tab B", "local");
-      const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const panel = getAllLeaves(layoutState().rootPanel)[0];
       const tabA = panel.tabs[0];
       const tabB = panel.tabs[1];
       useAppStore.getState().setActiveTab(tabA.id, panel.id);
@@ -395,14 +396,14 @@ describe("useKeyboardShortcuts", () => {
 
       fireKey("ArrowRight");
 
-      const activeId = getAllLeaves(useAppStore.getState().rootPanel)[0].activeTabId;
+      const activeId = getAllLeaves(layoutState().rootPanel)[0].activeTabId;
       expect(activeId).toBe(tabB.id);
     });
 
     it("cycles to the previous tab", () => {
       useAppStore.getState().addTab("Tab A", "local");
       useAppStore.getState().addTab("Tab B", "local");
-      const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const panel = getAllLeaves(layoutState().rootPanel)[0];
       const tabA = panel.tabs[0];
       const tabB = panel.tabs[1];
       useAppStore.getState().setActiveTab(tabB.id, panel.id);
@@ -414,14 +415,14 @@ describe("useKeyboardShortcuts", () => {
 
       fireKey("ArrowLeft");
 
-      const activeId = getAllLeaves(useAppStore.getState().rootPanel)[0].activeTabId;
+      const activeId = getAllLeaves(layoutState().rootPanel)[0].activeTabId;
       expect(activeId).toBe(tabA.id);
     });
 
     it("wraps around from last tab to first on next-tab", () => {
       useAppStore.getState().addTab("Tab A", "local");
       useAppStore.getState().addTab("Tab B", "local");
-      const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const panel = getAllLeaves(layoutState().rootPanel)[0];
       const tabA = panel.tabs[0];
       const tabB = panel.tabs[1];
       useAppStore.getState().setActiveTab(tabB.id, panel.id);
@@ -433,7 +434,7 @@ describe("useKeyboardShortcuts", () => {
 
       fireKey("ArrowRight");
 
-      const activeId = getAllLeaves(useAppStore.getState().rootPanel)[0].activeTabId;
+      const activeId = getAllLeaves(layoutState().rootPanel)[0].activeTabId;
       expect(activeId).toBe(tabA.id);
     });
   });
@@ -460,7 +461,7 @@ describe("useKeyboardShortcuts", () => {
 
       fireKey(",");
 
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
+      const leaves = getAllLeaves(layoutState().rootPanel);
       const settingsTab = leaves.flatMap((p) => p.tabs).find((t) => t.contentType === "settings");
       expect(settingsTab).toBeDefined();
     });
@@ -473,9 +474,9 @@ describe("useKeyboardShortcuts", () => {
       });
       mockProcessKeyEvent.mockReturnValue("split-right");
 
-      const before = getAllLeaves(useAppStore.getState().rootPanel).length;
+      const before = getAllLeaves(layoutState().rootPanel).length;
       fireKey("\\");
-      const after = getAllLeaves(useAppStore.getState().rootPanel).length;
+      const after = getAllLeaves(layoutState().rootPanel).length;
 
       expect(after).toBe(before + 1);
     });
@@ -484,7 +485,7 @@ describe("useKeyboardShortcuts", () => {
   describe("clear-terminal", () => {
     it("dispatches termihub:clear-terminal custom event for the active tab", () => {
       useAppStore.getState().addTab("Shell", "local");
-      const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+      const panel = getAllLeaves(layoutState().rootPanel)[0];
       useAppStore.getState().setActivePanel(panel.id);
 
       act(() => {
@@ -506,7 +507,7 @@ describe("useKeyboardShortcuts", () => {
     /** Add a tab of the given content type and make it the active tab/panel. */
     function addActiveTab(contentType: "terminal" | "editor"): void {
       const id = useAppStore.getState().addTab("Tab", "local", undefined, { contentType });
-      const panel = getAllLeaves(useAppStore.getState().rootPanel).find((p) =>
+      const panel = getAllLeaves(layoutState().rootPanel).find((p) =>
         p.tabs.some((t) => t.id === id)
       )!;
       useAppStore.getState().setActivePanel(panel.id);
@@ -552,9 +553,9 @@ describe("useKeyboardShortcuts", () => {
       });
       mockProcessKeyEvent.mockReturnValue("split-right");
 
-      const before = getAllLeaves(useAppStore.getState().rootPanel).length;
+      const before = getAllLeaves(layoutState().rootPanel).length;
       const prevented = fireKey("\\", { metaKey: true });
-      const after = getAllLeaves(useAppStore.getState().rootPanel).length;
+      const after = getAllLeaves(layoutState().rootPanel).length;
 
       expect(prevented).toBe(true);
       expect(after).toBe(before + 1);
@@ -584,16 +585,16 @@ describe("useKeyboardShortcuts", () => {
       });
       mockProcessKeyEvent.mockReturnValue("new-tab-group");
 
-      const before = useAppStore.getState().tabGroups.length;
+      const before = layoutState().tabGroups.length;
       fireKey("n");
-      const after = useAppStore.getState().tabGroups.length;
+      const after = layoutState().tabGroups.length;
 
       expect(after).toBe(before + 1);
     });
 
     it("cycles to next tab group on next-tab-group", () => {
       useAppStore.getState().addTabGroup();
-      const groups = useAppStore.getState().tabGroups;
+      const groups = layoutState().tabGroups;
       const firstId = groups[0].id;
       useAppStore.getState().setActiveTabGroup(firstId);
 
@@ -604,7 +605,7 @@ describe("useKeyboardShortcuts", () => {
 
       fireKey("Tab");
 
-      expect(useAppStore.getState().activeTabGroupId).not.toBe(firstId);
+      expect(layoutState().activeTabGroupId).not.toBe(firstId);
     });
   });
 });

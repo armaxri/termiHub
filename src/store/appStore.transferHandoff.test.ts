@@ -46,6 +46,7 @@ import { useAppStore } from "./appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { TabHandoffRecord } from "@/types/window";
 import type { TransferState } from "@/types/connection";
+import { layoutState } from "@/test/layoutState";
 
 /**
  * Transfer-Queue ownership across a window move (#2229, region-authoritative).
@@ -61,7 +62,7 @@ import type { TransferState } from "@/types/connection";
 /** Seed one live terminal tab (with a backend session id) and return its ids. */
 function seedLiveTab(sessionId: string): { tabId: string; panelId: string } {
   useAppStore.getState().addTab("bash", "local");
-  const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+  const leaf = getAllLeaves(layoutState().rootPanel)[0];
   const tabId = leaf.tabs[0].id;
   useAppStore.getState().setTabSessionId(tabId, sessionId);
   return { tabId, panelId: leaf.id };
@@ -180,7 +181,7 @@ describe("appStore — transient transfer ownership follows a moved tab (#1951 /
       const { tabId } = seedLiveTab("sess-1");
       // Add a second live tab in a fresh panel/leaf.
       useAppStore.getState().addTab("bash", "local");
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
+      const leaves = getAllLeaves(layoutState().rootPanel);
       const secondTab = leaves.flatMap((l) => l.tabs).find((t) => t.id !== tabId)!;
       useAppStore.getState().setTabSessionId(secondTab.id, "sess-2");
 

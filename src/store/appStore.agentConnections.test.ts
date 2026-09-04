@@ -70,6 +70,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 import { currentAgentsView } from "./agentsBridge";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import type { AgentDefinitionInfo, AgentFolderInfo } from "@/services/api";
@@ -307,7 +308,7 @@ describe("appStore — agent connection management", () => {
     it("creates a connection-editor tab with agent definition meta", () => {
       useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "new", "folder-1");
 
-      const { rootPanel } = useAppStore.getState();
+      const { rootPanel } = layoutState();
       const leaf = rootPanel.type === "leaf" ? rootPanel : null;
       expect(leaf).toBeTruthy();
       const editorTab = leaf!.tabs.find((t) => t.contentType === "connection-editor");
@@ -324,7 +325,7 @@ describe("appStore — agent connection management", () => {
       useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "def-1");
       useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "def-1");
 
-      const { rootPanel } = useAppStore.getState();
+      const { rootPanel } = layoutState();
       const leaf = rootPanel.type === "leaf" ? rootPanel : null;
       const editorTabs = leaf!.tabs.filter(
         (t) =>
@@ -342,7 +343,7 @@ describe("appStore — agent connection management", () => {
 
       useAppStore.getState().openAgentDefinitionEditorTab(AGENT_ID, "def-title");
 
-      const { rootPanel } = useAppStore.getState();
+      const { rootPanel } = layoutState();
       const leaf = rootPanel.type === "leaf" ? rootPanel : null;
       const editorTab = leaf!.tabs.find(
         (t) => t.connectionEditorMeta?.agentDefinitionId === "def-title"

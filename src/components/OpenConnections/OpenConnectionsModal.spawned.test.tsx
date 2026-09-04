@@ -44,6 +44,7 @@ vi.mock("@/services/networkApi", () => ({
 }));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 /** The spawned container session as reported by the backend registry. */
 const SPAWNED_SESSION: LocalSessionInfo = {
@@ -126,9 +127,9 @@ describe("OpenConnectionsModal — Spawned Containers section", () => {
   }
 
   async function renderWithSpawnedTab() {
-    const leafId = useAppStore.getState().rootPanel.id;
+    const leafId = layoutState().rootPanel.id;
     const tab = spawnedTab("tab-1", "Container: alpine:3 (Spawned)", "sess-spawn", leafId);
-    useAppStore.setState({
+    seedLayoutState({
       rootPanel: { type: "leaf", id: leafId, tabs: [tab], activeTabId: tab.id },
       activePanelId: leafId,
     });

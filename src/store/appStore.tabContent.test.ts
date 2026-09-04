@@ -92,18 +92,19 @@ import {
   type LayoutView,
 } from "./layoutBridge";
 import { extractTabContent, useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 
 const LOCAL_CONFIG: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
 
 /** Every tab currently in the active panel tree, flattened. */
 function allTabs(): TerminalTab[] {
-  return getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
+  return getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs);
 }
 
 /** The projected (multi-group) view of the current tree — a single active group
  * holding the current panel tree (#2283 slice C). */
 function currentView(): LayoutView {
-  const { rootPanel, activePanelId } = useAppStore.getState();
+  const { rootPanel, activePanelId } = layoutState();
   return {
     groups: [{ id: "g", name: "Main", root: toMinimalNode(rootPanel), activePanelId }],
     activeGroupId: "g",
@@ -366,7 +367,7 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
 
     const idsAfter = allTabs().map((t) => t.id);
     expect(idsAfter).toContain(settingsId);
-    expect(getAllLeaves(useAppStore.getState().rootPanel).length).toBe(2);
+    expect(getAllLeaves(layoutState().rootPanel).length).toBe(2);
   });
 
   it("a stale region view (missing a locally-added tab) fails the mirror gate", () => {
@@ -389,9 +390,9 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
     const s = useAppStore.getState();
     s.addTab("Shell", "local", LOCAL_CONFIG);
     s.splitPanel("horizontal");
-    const root0 = useAppStore.getState().rootPanel as PanelNode & { id: string };
+    const root0 = layoutState().rootPanel as PanelNode & { id: string };
     expect(root0.type).toBe("split");
-    const leaves = getAllLeaves(useAppStore.getState().rootPanel).map((l) => l.id);
+    const leaves = getAllLeaves(layoutState().rootPanel).map((l) => l.id);
     expect(leaves).toHaveLength(2);
     const [p1] = leaves;
 
@@ -399,14 +400,14 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
     // child. The mark lives only in appStore (the backend does not mark), so the
     // mirror must re-apply it on every recompose.
     s.setActivePanel(p1);
-    const markedRoot = useAppStore.getState().rootPanel as PanelNode & {
+    const markedRoot = layoutState().rootPanel as PanelNode & {
       lastActiveLeafId?: string;
     };
     expect(markedRoot.lastActiveLeafId).toBe(p1);
 
     // A subsequent mirror-firing op (a resize — no focus change) must not drop it.
     s.setPanelSizes(root0.id, [70, 30]);
-    const afterRoot = useAppStore.getState().rootPanel as PanelNode & {
+    const afterRoot = layoutState().rootPanel as PanelNode & {
       lastActiveLeafId?: string;
       sizes?: number[];
     };
