@@ -295,6 +295,36 @@ impl ConnectionManager {
             .context("Failed to persist agent reorder")
     }
 
+    /// Reorder saved connections, persisting the new array order to disk.
+    ///
+    /// Mirrors [`Self::reorder_agents`]: it rebuilds the main-store connection list
+    /// in the order given by `connection_ids`, then appends any connection not
+    /// mentioned (e.g. external-file connections, which are loaded separately and
+    /// never live in the main store — their ids are simply skipped). Ordering is
+    /// array position, so this is what makes an intra-folder drag-reorder persist
+    /// across a reload (#2594).
+    pub fn reorder_connections(&self, connection_ids: &[String]) -> Result<()> {
+        let mut store = self.store.lock().unwrap();
+        self.sync_from_disk(&mut store);
+
+        let mut reordered: Vec<SavedConnection> = Vec::with_capacity(store.connections.len());
+        for id in connection_ids {
+            if let Some(conn) = store.connections.iter().find(|c| c.id == *id) {
+                reordered.push(conn.clone());
+            }
+        }
+        for conn in &store.connections {
+            if !connection_ids.contains(&conn.id) {
+                reordered.push(conn.clone());
+            }
+        }
+
+        store.connections = reordered;
+        self.storage
+            .save_flat(&store)
+            .context("Failed to persist connection reorder")
+    }
+
     /// Update only the agent runtime settings for an existing agent.
     pub fn update_agent_settings(&self, agent_id: &str, settings: AgentSettings) -> Result<()> {
         let mut store = self.store.lock().unwrap();

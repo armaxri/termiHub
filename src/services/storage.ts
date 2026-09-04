@@ -20,6 +20,7 @@ import {
   saveRemoteAgent,
   deleteRemoteAgentFromBackend,
   reorderRemoteAgents as apiReorderRemoteAgents,
+  reorderConnections as apiReorderConnections,
   previewImport,
   exportConnectionsEncrypted,
   importConnectionsWithCredentials,
@@ -79,6 +80,11 @@ export async function removeAgent(id: string): Promise<void> {
 /** Reorder remote agents */
 export async function reorderAgents(agentIds: string[]): Promise<void> {
   await apiReorderRemoteAgents(agentIds);
+}
+
+/** Reorder saved connections */
+export async function reorderConnections(connectionIds: string[]): Promise<void> {
+  await apiReorderConnections(connectionIds);
 }
 
 /** Export all connections as JSON */
