@@ -27,6 +27,7 @@ vi.mock("@/services/storage", () => ({
   persistAgent: vi.fn(() => Promise.resolve()),
   removeAgent: vi.fn(() => Promise.resolve()),
   reorderAgents: vi.fn(() => Promise.resolve()),
+  reorderConnections: vi.fn(() => Promise.resolve()),
   getSettings: vi.fn(() =>
     Promise.resolve({
       version: "1",
@@ -51,7 +52,10 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
-import { moveConnectionToFile as apiMoveConnectionToFile } from "@/services/storage";
+import {
+  moveConnectionToFile as apiMoveConnectionToFile,
+  reorderConnections as apiReorderConnections,
+} from "@/services/storage";
 import {
   currentConnectionsView,
   ensureConnectionsSubscribed,
@@ -142,6 +146,20 @@ class ConnectionsStoreTransport implements Transport {
         const folderId = typeof p.folderId === "string" ? p.folderId : null;
         const c = this.connections.find((c) => c.id === id);
         if (c) c.folderId = folderId;
+        break;
+      }
+      case "connection.reorder": {
+        const oldIndex = p.oldIndex as number;
+        const newIndex = p.newIndex as number;
+        if (
+          oldIndex >= 0 &&
+          newIndex >= 0 &&
+          oldIndex < this.connections.length &&
+          newIndex < this.connections.length
+        ) {
+          const [moved] = this.connections.splice(oldIndex, 1);
+          this.connections.splice(newIndex, 0, moved);
+        }
         break;
       }
       case "connection.addFolder": {
@@ -342,6 +360,37 @@ describe("connections lifecycle — region reflects every action", () => {
     expectParity();
     expect(transport.regionView().connections.every((c) => c.folderId === "work")).toBe(true);
     expect(transport.kinds().filter((k) => k === "connection.move")).toHaveLength(2);
+  });
+
+  it("reorderConnections reorders siblings in the region and persists the new order (#2594)", () => {
+    useAppStore.getState().addFolder(makeFolder("work"));
+    useAppStore
+      .getState()
+      .bulkAddConnections([
+        makeConnection("a", "work"),
+        makeConnection("b", "work"),
+        makeConnection("c", "work"),
+      ]);
+
+    // Drag the last connection (index 2) above the first (index 0): c, a, b.
+    useAppStore.getState().reorderConnections(2, 0);
+
+    expectParity();
+    expect(transport.regionView().connections.map((c) => c.id)).toEqual(["c", "a", "b"]);
+    expect(transport.kinds()).toContain("connection.reorder");
+    // The full new id order is persisted to disk so it survives a reload.
+    expect(vi.mocked(apiReorderConnections)).toHaveBeenCalledWith(["c", "a", "b"]);
+  });
+
+  it("reorderConnections is a no-op for an out-of-range or identity move", () => {
+    useAppStore.getState().bulkAddConnections([makeConnection("a"), makeConnection("b")]);
+    vi.mocked(apiReorderConnections).mockClear();
+
+    useAppStore.getState().reorderConnections(0, 0);
+    useAppStore.getState().reorderConnections(0, 5);
+
+    expect(transport.kinds()).not.toContain("connection.reorder");
+    expect(vi.mocked(apiReorderConnections)).not.toHaveBeenCalled();
   });
 
   it("moveConnectionToFile replaces the connection by id (external-file move)", async () => {

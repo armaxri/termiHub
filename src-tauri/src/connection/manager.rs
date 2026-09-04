@@ -1920,6 +1920,103 @@ mod tests {
         );
     }
 
+    // Regression (#2594): a connection reorder must persist across a reload — the new
+    // array order is what an intra-folder drag-reorder relies on.
+    #[test]
+    fn reorder_connections_persists_new_order_across_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+
+        let make_conn = |name: &str| SavedConnection {
+            icon: None,
+            id: name.to_string(),
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: "local".to_string(),
+                settings: serde_json::json!({ "shell": "bash" }),
+            },
+            folder_id: Some("Work".to_string()),
+            terminal_options: None,
+            source_file: None,
+        };
+
+        let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        setup
+            .save_folder(ConnectionFolder {
+                id: "Work".to_string(),
+                name: "Work".to_string(),
+                parent_id: None,
+                is_expanded: true,
+            })
+            .unwrap();
+        let a = setup.save_connection(make_conn("A")).unwrap();
+        let b = setup.save_connection(make_conn("B")).unwrap();
+        let c = setup.save_connection(make_conn("C")).unwrap();
+
+        // Drag C to the front: desired order C, A, B.
+        setup
+            .reorder_connections(&[c.clone(), a.clone(), b.clone()])
+            .unwrap();
+        drop(setup);
+
+        // A fresh instance reads the reordered array from disk.
+        let reloaded = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        let ids: Vec<String> = reloaded
+            .get_all()
+            .unwrap()
+            .connections
+            .into_iter()
+            .map(|conn| conn.id)
+            .collect();
+        assert_eq!(
+            ids,
+            vec![c, a, b],
+            "reorder_connections must persist the new order across a reload"
+        );
+    }
+
+    // Regression: reorder_connections must sync from disk before saving so it cannot
+    // resurrect a connection another instance deleted (same hazard as reorder_agents).
+    #[test]
+    fn reorder_connections_does_not_resurrect_connections_deleted_by_another_instance() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+
+        let make_conn = |name: &str| SavedConnection {
+            icon: None,
+            id: name.to_string(),
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: "local".to_string(),
+                settings: serde_json::json!({ "shell": "bash" }),
+            },
+            folder_id: None,
+            terminal_options: None,
+            source_file: None,
+        };
+
+        let setup = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        let keep = setup.save_connection(make_conn("Keep")).unwrap();
+        let old = setup.save_connection(make_conn("Old Connection")).unwrap();
+        drop(setup);
+
+        let instance_b = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+
+        let instance_a = ConnectionManager::new_for_test(dir.path(), cred_store.clone()).unwrap();
+        instance_a.delete_connection(&old).unwrap();
+        drop(instance_a);
+
+        // Instance B reorders its (now stale) list.
+        instance_b.reorder_connections(&[keep.clone()]).unwrap();
+
+        let all = instance_b.get_all().unwrap();
+        let names: Vec<&str> = all.connections.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            !names.contains(&"Old Connection"),
+            "reorder_connections must not resurrect a connection deleted by another instance; got: {names:?}"
+        );
+    }
+
     // Regression: import_json did not call sync_from_disk before merging and saving.
     // A stale instance could resurrect connections that were deleted by the active
     // instance simply by running an import (e.g., the user imports a backup file).
