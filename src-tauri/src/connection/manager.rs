@@ -2037,7 +2037,9 @@ mod tests {
         drop(instance_a);
 
         // Instance B reorders its (now stale) list.
-        instance_b.reorder_connections(&[keep.clone()]).unwrap();
+        instance_b
+            .reorder_connections(std::slice::from_ref(&keep))
+            .unwrap();
 
         let all = instance_b.get_all().unwrap();
         let names: Vec<&str> = all.connections.iter().map(|c| c.name.as_str()).collect();
