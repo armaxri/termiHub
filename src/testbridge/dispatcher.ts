@@ -303,6 +303,23 @@ function nextFrame(): Promise<void> {
   return Promise.race([viaFrames, viaTimer]);
 }
 
+/**
+ * @dnd-kit's `PointerSensor.detach()` removes its document-level listeners on a
+ * `setTimeout(removeAll, 50)` (see `AbstractPointerSensor.detach` in
+ * `@dnd-kit/core`). One of those is a **capture-phase `click` listener installed
+ * on drag activation that `stopPropagation`s every click** — so a `click` verb
+ * fired within ~50 ms of a drag's `pointerup` is swallowed and its handler never
+ * runs (the drop's own effect has landed, but the *following* click is eaten).
+ * `dragTo` therefore waits past that teardown window before resolving, so any
+ * verb issued after a drag (e.g. clicking the tab-group chip a just-moved tab was
+ * dropped onto, #2609) sees a settled DOM. 80 ms clears the 50 ms timer plus
+ * scheduling jitter.
+ */
+const DRAG_END_SETTLE_MS = 80;
+function settleAfterDrag(): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, DRAG_END_SETTLE_MS));
+}
+
 /** Walk a dot-path into a plain object, returning a sentinel when unresolvable. */
 const MISSING = Symbol("missing");
 function resolvePath(state: Record<string, unknown>, path: string): unknown {
@@ -489,6 +506,7 @@ export async function dispatchCommand(
           await moveTo(start.x + (dx * i) / STEPS, start.y + (dy * i) / STEPS);
         }
         dispatchPointer(doc, "pointerup", end.x, end.y);
+        await settleAfterDrag();
         return ok("dragTo");
       }
 
@@ -503,6 +521,7 @@ export async function dispatchCommand(
         await moveTo(start.x + (dx * i) / STEPS, start.y + (dy * i) / STEPS);
       }
       dispatchPointer(doc, "pointerup", end.x, end.y);
+      await settleAfterDrag();
       return ok("dragTo");
     }
 
