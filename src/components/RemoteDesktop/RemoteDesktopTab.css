@@ -155,9 +155,9 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .rd-overlay__spin {
-    animation: none;
-  }
+  /* `.rd-overlay__spin` is the connecting/reconnecting overlay's essential
+     progress cue — it carries `.motion-essential-spinner` (animations.css,
+     #2603), so it degrades to an opacity pulse instead of freezing. */
   .rd-toolbar {
     transition: none;
   }

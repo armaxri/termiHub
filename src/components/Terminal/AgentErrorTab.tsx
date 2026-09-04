@@ -94,7 +94,12 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
           <Button
             variant="primary"
             size="sm"
-            icon={<RefreshCw size={14} className={isReconnecting ? "agent-error-tab__spin" : ""} />}
+            icon={
+              <RefreshCw
+                size={14}
+                className={isReconnecting ? "agent-error-tab__spin motion-essential-spinner" : ""}
+              />
+            }
             onClick={() => void handleReconnect()}
             disabled={isReconnecting}
             data-testid="agent-error-reconnect-btn"

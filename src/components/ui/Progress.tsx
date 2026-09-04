@@ -57,7 +57,9 @@ export function Progress({
       aria-valuenow={isIndeterminate ? undefined : clamped}
     >
       <div
-        className="ui-progress__fill"
+        className={
+          isIndeterminate ? "ui-progress__fill motion-essential-spinner" : "ui-progress__fill"
+        }
         style={isIndeterminate ? undefined : { width: `${pct}%` }}
       />
     </div>

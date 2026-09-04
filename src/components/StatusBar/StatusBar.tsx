@@ -711,7 +711,7 @@ function MonitoringStatus() {
               className="status-bar__item monitoring-status__loading"
               data-testid="monitoring-loading"
             >
-              <Loader2 size={12} className="monitoring-status__spinner" />
+              <Loader2 size={12} className="monitoring-status__spinner motion-essential-spinner" />
               Connecting...
             </span>
             {/*
@@ -927,7 +927,7 @@ function MonitoringDetailDropdown({
           data-testid="monitoring-host"
         >
           {loading ? (
-            <Loader2 size={12} className="monitoring-status__spinner" />
+            <Loader2 size={12} className="monitoring-status__spinner motion-essential-spinner" />
           ) : (
             <Activity size={12} />
           )}

@@ -72,11 +72,9 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .agent-version-badge__state--updating .agent-version-badge__icon {
-    animation: none;
-  }
-}
+/* While updating, the badge icon is an essential progress cue — it carries
+   `.motion-essential-spinner` (animations.css, #2603), so under reduced motion
+   it degrades to an opacity pulse rather than freezing. */
 
 .agent-version-badge__label {
   white-space: nowrap;

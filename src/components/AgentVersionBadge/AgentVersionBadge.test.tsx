@@ -40,6 +40,22 @@ describe("AgentVersionBadge", () => {
     expect(container.querySelector(`.${expectedClass}`)).toBeTruthy();
   });
 
+  // #2603: while updating, the badge icon is the sole "work in progress" cue.
+  // The `motion-essential-spinner` marker keeps it pulsing under reduced motion
+  // instead of freezing. It must be present only in the updating state so idle
+  // states are not made to pulse.
+  it("marks the icon as essential motion only while updating", () => {
+    render(<AgentVersionBadge version="0.1.0" state="updating" />);
+    const updatingIcon = container.querySelector(".agent-version-badge__icon") as HTMLElement;
+    expect(updatingIcon.getAttribute("class")).toContain("motion-essential-spinner");
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(<AgentVersionBadge version="0.1.0" state="up-to-date" />);
+    const idleIcon = container.querySelector(".agent-version-badge__icon") as HTMLElement;
+    expect(idleIcon.getAttribute("class")).not.toContain("motion-essential-spinner");
+  });
+
   it("exposes an accessible label describing the update state", () => {
     render(<AgentVersionBadge version="0.1.0" state="update-available" />);
     const badge = container.querySelector(".agent-version-badge__state");

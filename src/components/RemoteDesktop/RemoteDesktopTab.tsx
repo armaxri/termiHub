@@ -152,7 +152,10 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
 
       {session.awaitingFirstFrame && (
         <div className="rd-overlay" data-testid="remote-desktop-reconnecting-view">
-          <Loader2 size={30} className="rd-overlay__icon rd-overlay__spin" />
+          <Loader2
+            size={30}
+            className="rd-overlay__icon rd-overlay__spin motion-essential-spinner"
+          />
           <div className="rd-overlay__title">Reconnecting view…</div>
           <div className="rd-overlay__sub">
             The remote desktop is still connected — repainting the framebuffer in this window.

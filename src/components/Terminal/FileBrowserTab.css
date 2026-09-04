@@ -67,8 +67,6 @@
   animation: file-browser-tab-spin 1s linear infinite;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .file-browser-tab__spin {
-    animation: none;
-  }
-}
+/* The loading spinner is an essential progress cue — it carries
+   `.motion-essential-spinner` (animations.css, #2603), so under reduced motion
+   it degrades to an opacity pulse rather than freezing. */

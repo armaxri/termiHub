@@ -147,7 +147,7 @@
   .th-toast [data-close-button] {
     transition: none;
   }
-  .th-toast__icon-svg--spin {
-    animation: none;
-  }
+  /* The loading toast's spinner is an essential progress cue — it carries
+     `.motion-essential-spinner`, degrading to an opacity pulse rather than
+     freezing here (see animations.css, #2603). */
 }

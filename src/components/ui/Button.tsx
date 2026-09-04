@@ -253,7 +253,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       {...rest}
     >
       {pending ? (
-        <span className="ui-btn__spinner" aria-hidden />
+        <span className="ui-btn__spinner motion-essential-spinner" aria-hidden />
       ) : icon ? (
         <span className="ui-btn__icon">{icon}</span>
       ) : null}

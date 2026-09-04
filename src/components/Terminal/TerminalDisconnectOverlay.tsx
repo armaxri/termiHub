@@ -270,7 +270,7 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
         <div className="terminal-disconnect-overlay__body">
           <Loader2
             size={32}
-            className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--spin"
+            className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--spin motion-essential-spinner"
           />
           <p className="terminal-disconnect-overlay__heading">Reconnecting…</p>
           <p className="terminal-disconnect-overlay__subheading">

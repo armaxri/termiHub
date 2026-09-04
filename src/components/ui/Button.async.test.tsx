@@ -69,7 +69,12 @@ describe("Button async lifecycle", () => {
     act(() => btn.click());
     expect(btn.disabled).toBe(true);
     expect(btn.classList.contains("ui-btn--pending")).toBe(true);
-    expect(btn.querySelector(".ui-btn__spinner")).toBeTruthy();
+    const spinner = btn.querySelector(".ui-btn__spinner");
+    expect(spinner).toBeTruthy();
+    // #2603: the pending spinner is an essential progress cue — the
+    // `motion-essential-spinner` marker keeps it pulsing under reduced motion
+    // instead of freezing into a static ring.
+    expect(spinner?.className).toContain("motion-essential-spinner");
 
     await act(async () => {
       resolve();

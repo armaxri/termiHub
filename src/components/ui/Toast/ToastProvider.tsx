@@ -30,7 +30,12 @@ export function ToastProvider() {
         success: <CheckCircle2 className="th-toast__icon-svg" aria-hidden />,
         error: <XCircle className="th-toast__icon-svg" aria-hidden />,
         info: <Info className="th-toast__icon-svg" aria-hidden />,
-        loading: <Loader2 className="th-toast__icon-svg th-toast__icon-svg--spin" aria-hidden />,
+        loading: (
+          <Loader2
+            className="th-toast__icon-svg th-toast__icon-svg--spin motion-essential-spinner"
+            aria-hidden
+          />
+        ),
         close: <X className="th-toast__close-icon" aria-hidden />,
       }}
     />

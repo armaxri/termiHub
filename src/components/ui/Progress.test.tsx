@@ -57,6 +57,23 @@ describe("Progress", () => {
     expect(fill.style.width).toBe("");
   });
 
+  // #2603: the indeterminate sweep is an essential progress cue. Under
+  // `prefers-reduced-motion: reduce` the global backstop would freeze it into a
+  // static bar that reads as hung. The `motion-essential-spinner` marker opts
+  // the fill out into a gentle opacity pulse. jsdom cannot compute the frame, so
+  // assert the wiring: the marker is present only in indeterminate mode.
+  it("marks the indeterminate fill as essential motion (but not the determinate fill)", () => {
+    render(<Progress indeterminate label="Transferring" />);
+    const indeterminateFill = container.querySelector(".ui-progress__fill") as HTMLElement;
+    expect(indeterminateFill.className).toContain("motion-essential-spinner");
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    render(<Progress value={40} max={100} label="Downloading" />);
+    const determinateFill = container.querySelector(".ui-progress__fill") as HTMLElement;
+    expect(determinateFill.className).not.toContain("motion-essential-spinner");
+  });
+
   it("treats max <= 0 as indeterminate", () => {
     render(<Progress value={0} max={0} />);
     const bar = container.querySelector('[role="progressbar"]') as HTMLElement;
