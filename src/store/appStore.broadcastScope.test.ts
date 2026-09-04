@@ -135,10 +135,7 @@ describe("resolveBroadcastTargetTabIds (#1956)", () => {
       "t2",
     ]);
     // Source in leaf-2 → only leaf-2 terminals.
-    expect(resolveBroadcastTargetTabIds(layoutState(), "panel", "t3").sort()).toEqual([
-      "t3",
-      "t4",
-    ]);
+    expect(resolveBroadcastTargetTabIds(layoutState(), "panel", "t3").sort()).toEqual(["t3", "t4"]);
   });
 
   it("'panel' excludes non-terminal tabs in the same panel", () => {

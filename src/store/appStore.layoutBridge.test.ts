@@ -177,9 +177,7 @@ describe("E2 — region is the sole writer of appStore's layout", () => {
     // appStore's tree equals the backend's folded view — the mirror is deriving it.
     const backendRoot = regionActiveRoot(transport.regionView())!;
     expect(tabIds(backendRoot)).toEqual(tabIds(layoutState().rootPanel));
-    expect(tabIds(regionActiveRoot(currentLayoutView())!)).toEqual(
-      tabIds(layoutState().rootPanel)
-    );
+    expect(tabIds(regionActiveRoot(currentLayoutView())!)).toEqual(tabIds(layoutState().rootPanel));
   });
 
   it("a rejected dispatch leaves appStore on the backend's (unchanged) view", async () => {

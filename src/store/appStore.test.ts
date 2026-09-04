@@ -565,15 +565,11 @@ describe("appStore", () => {
         new Error("Session no longer alive")
       );
 
-      const tabsBefore = getAllLeaves(layoutState().rootPanel).flatMap(
-        (l) => l.tabs
-      ).length;
+      const tabsBefore = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs).length;
 
       await useAppStore.getState().attachAgentPersistentSession("agent1", def);
 
-      const tabsAfter = getAllLeaves(layoutState().rootPanel).flatMap(
-        (l) => l.tabs
-      ).length;
+      const tabsAfter = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs).length;
       // The broken tab must have been removed — net tab count unchanged.
       expect(tabsAfter).toBe(tabsBefore);
     });
@@ -581,15 +577,11 @@ describe("appStore", () => {
     it("keeps the tab when attach_persistent_tab succeeds", async () => {
       vi.mocked(api.attachPersistentTab).mockResolvedValueOnce(1);
 
-      const tabsBefore = getAllLeaves(layoutState().rootPanel).flatMap(
-        (l) => l.tabs
-      ).length;
+      const tabsBefore = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs).length;
 
       await useAppStore.getState().attachAgentPersistentSession("agent1", def);
 
-      const tabsAfter = getAllLeaves(layoutState().rootPanel).flatMap(
-        (l) => l.tabs
-      ).length;
+      const tabsAfter = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs).length;
       expect(tabsAfter).toBe(tabsBefore + 1);
     });
   });

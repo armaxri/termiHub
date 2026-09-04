@@ -380,7 +380,9 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
    */
   function simulateConnectedHandler(agentId: string, recoveredSessionIds: string[]) {
     const store = layoutState();
-    const allTabs = store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs));
+    const allTabs = store.tabGroups.flatMap((g) =>
+      getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)
+    );
     const agentTerminalTabs = allTabs.filter((tab) => {
       if (tab.contentType !== "terminal") return false;
       const cfg = tab.config.config as { agentId?: string };
@@ -523,7 +525,9 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
   /** Simulate the new loop added for auto-retry tab restart. */
   function simulateRetryRestartLoop(agentId: string) {
     const store = layoutState();
-    const allTabs = store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs));
+    const allTabs = store.tabGroups.flatMap((g) =>
+      getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)
+    );
     const agentTerminalTabs = allTabs.filter((tab) => {
       if (tab.contentType !== "terminal") return false;
       const cfg = tab.config.config as { agentId?: string };

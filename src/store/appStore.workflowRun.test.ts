@@ -744,7 +744,7 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
     };
     const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
     seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
-  useAppStore.setState({ terminalExitedTabs: {} });
+    useAppStore.setState({ terminalExitedTabs: {} });
   }
 
   function onConnectWorkflow(id: string, connectionIds: string[]): Workflow {

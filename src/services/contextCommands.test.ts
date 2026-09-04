@@ -16,9 +16,7 @@ import { layoutState } from "@/test/layoutState";
 /** Add a tab of the given content type and make it the active tab/panel. */
 function addActiveTab(contentType: "terminal" | "editor" = "terminal"): string {
   const id = useAppStore.getState().addTab("Tab", "local", undefined, { contentType });
-  const panel = getAllLeaves(layoutState().rootPanel).find((p) =>
-    p.tabs.some((t) => t.id === id)
-  )!;
+  const panel = getAllLeaves(layoutState().rootPanel).find((p) => p.tabs.some((t) => t.id === id))!;
   useAppStore.getState().setActivePanel(panel.id);
   useAppStore.getState().setActiveTab(id, panel.id);
   return id;

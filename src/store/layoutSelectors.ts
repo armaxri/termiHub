@@ -1,21 +1,13 @@
 /**
  * `layoutSelectors` — the single region-derived read surface for the layout
- * structure that `appStore` currently mirrors into its `rootPanel` / `tabGroups`
- * / `activePanelId` / `activeTabGroupId` fields (composed from the
- * `layout@<clientId>` projection by the region→appStore mirror; see
- * {@link import("./layoutBridge").composeLayoutState}).
+ * structure (`rootPanel` / `tabGroups` / `activePanelId` / `activeTabGroupId`).
  *
- * Every component / hook / util that used to read those four fields directly now
- * goes through the accessors here (part of #2562). Today each accessor is a thin
- * read of the mirror field, so behaviour is byte-identical; funnelling the reads
- * into one module is what lets the fields themselves be deleted in a follow-up
- * (the accessors get re-implemented to compose straight from the region view +
- * `tabContent`, and the fields — plus the mirror subscription — go away) without
- * touching ~20 call sites again.
- *
- * The reducer working-tree reads inside `appStore` (which mutate a rich tree to
- * derive `layout.*` intents) are intentionally NOT funnelled here — those are the
- * separate, live-graded "reducer removal" half of #2562.
+ * Since #2562 the four fields no longer exist on `appStore`; the rich layout is
+ * composed on demand from the raw `layout@<clientId>` view + `tabContent` +
+ * `layoutSplitMarks` via {@link import("./appStore").getComposedLayout}, which
+ * memoizes on those inputs' identities so an unrelated store change never
+ * re-renders these consumers. Every component / hook / util reads through the
+ * accessors here (PR-A funnelled the ~19 call sites; PR-B deleted the fields).
  */
 
 import { getComposedLayout, useAppStore, type AppState } from "@/store/appStore";
@@ -28,10 +20,7 @@ import { getAllLeaves } from "@/utils/panelTree";
  * is composed from it via {@link getComposedLayout}. Kept explicit so the
  * state-in helpers can be called against `useAppStore.getState()` (effects /
  * handlers) and inside reactive `useAppStore((s) => …)` selectors alike. */
-export type LayoutStateSlice = Pick<
-  AppState,
-  "layoutView" | "tabContent" | "layoutSplitMarks"
->;
+export type LayoutStateSlice = Pick<AppState, "layoutView" | "tabContent" | "layoutSplitMarks">;
 
 // Re-export so callers have a single import surface for the layout render tree.
 export { useLayoutRenderTree };
