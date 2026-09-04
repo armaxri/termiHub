@@ -54,17 +54,8 @@
   word-break: break-word;
 }
 
-@keyframes file-browser-tab-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .file-browser-tab__spin {
-  animation: file-browser-tab-spin 1s linear infinite;
+  animation: th-spin 1s linear infinite;
 }
 
 /* The loading spinner is an essential progress cue — it carries

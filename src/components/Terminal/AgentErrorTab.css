@@ -84,15 +84,6 @@
   text-align: center;
 }
 
-@keyframes agent-error-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .agent-error-tab__spin {
-  animation: agent-error-spin 1s linear infinite;
+  animation: th-spin 1s linear infinite;
 }

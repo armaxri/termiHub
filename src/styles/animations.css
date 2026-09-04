@@ -40,6 +40,20 @@
   }
 }
 
+/* === Shared rotation spinner ===
+   The single 0deg→360deg rotation shared by every loading spinner in the app.
+   Consolidated from ~16 identical per-component `@keyframes *-spin` blocks
+   (#2605). Each spinner references this one keyframe from its own `animation`
+   shorthand, which still carries that site's own duration/timing. Pair with
+   `.motion-essential-spinner` where the spinner is the sole progress cue, so it
+   degrades to an opacity pulse instead of freezing under reduced motion (see
+   the reduced-motion backstop below). */
+@keyframes th-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 /* === Essential loading motion ===
    A loading spinner is often the *sole* "work in progress" cue (the connection
    overlay, agent setup, file loads). The reduced-motion backstop below collapses

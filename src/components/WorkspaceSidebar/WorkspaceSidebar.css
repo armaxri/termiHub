@@ -35,16 +35,7 @@
 
 /* Launch-in-flight indicator (GAP G6, issue 1146). */
 .workspace-item__spinner {
-  animation: workspace-item-spin 1s linear infinite;
-}
-
-@keyframes workspace-item-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 1s linear infinite;
 }
 
 /* The launch-in-flight spinner is an essential progress cue — it carries

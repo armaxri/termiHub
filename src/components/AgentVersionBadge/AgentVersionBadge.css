@@ -63,13 +63,7 @@
 }
 
 .agent-version-badge__state--updating .agent-version-badge__icon {
-  animation: agent-version-badge-spin 0.8s linear infinite;
-}
-
-@keyframes agent-version-badge-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 0.8s linear infinite;
 }
 
 /* While updating, the badge icon is an essential progress cue — it carries

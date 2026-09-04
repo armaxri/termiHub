@@ -33,16 +33,7 @@
 .terminal-connection-overlay__icon--spin {
   color: var(--accent-color, #4d9cf5);
   opacity: 1;
-  animation: terminal-connection-spin 1s linear infinite;
-}
-
-@keyframes terminal-connection-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 1s linear infinite;
 }
 
 .terminal-connection-overlay__heading {

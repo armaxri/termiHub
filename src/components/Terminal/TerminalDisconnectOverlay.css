@@ -60,16 +60,7 @@
 
 .terminal-disconnect-overlay__icon--spin {
   color: var(--accent-color, #4d9cf5);
-  animation: terminal-disconnect-spin 1s linear infinite;
-}
-
-@keyframes terminal-disconnect-spin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 1s linear infinite;
 }
 
 .terminal-disconnect-overlay__heading {

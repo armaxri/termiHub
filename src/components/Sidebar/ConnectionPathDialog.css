@@ -79,13 +79,7 @@
 }
 
 .connection-path-dialog__status--spin {
-  animation: connection-path-spin 1s linear infinite;
-}
-
-@keyframes connection-path-spin {
-  to {
-    transform: rotate(360deg);
-  }
+  animation: th-spin 1s linear infinite;
 }
 
 .connection-path-dialog__error {
