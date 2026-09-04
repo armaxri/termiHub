@@ -73,6 +73,7 @@ setupAgentsRegion();
 import { saveSettings } from "@/services/storage";
 import { summarizeLastSession } from "@/utils/restoreMode";
 import type { LastSession } from "@/types/lastSession";
+import { layoutState } from "@/test/layoutState";
 
 const mockSummarize = vi.mocked(summarizeLastSession);
 
@@ -181,7 +182,7 @@ describe("startup restore mode", () => {
       await useAppStore.getState().confirmRestorePrompt(false);
 
       expect(useAppStore.getState().restorePrompt).toBeNull();
-      expect(useAppStore.getState().tabGroups[0].name).toBe("Restored");
+      expect(layoutState().tabGroups[0].name).toBe("Restored");
     });
 
     it("persists mode=always when remember is set", async () => {

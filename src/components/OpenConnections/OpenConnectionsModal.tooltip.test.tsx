@@ -36,6 +36,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 function connectingTab(id: string, title: string, panelId: string): TerminalTab {
   return {
@@ -59,9 +60,9 @@ let root: Root;
 const harness = installSessionLifecycleHarness();
 
 async function renderWithSection() {
-  const leafId = useAppStore.getState().rootPanel.id;
+  const leafId = layoutState().rootPanel.id;
   const tab = connectingTab("tab-1", "app-server", leafId);
-  useAppStore.setState({
+  seedLayoutState({
     rootPanel: { type: "leaf", id: leafId, tabs: [tab], activeTabId: tab.id },
     activePanelId: leafId,
   });

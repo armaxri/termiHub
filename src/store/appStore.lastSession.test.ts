@@ -87,6 +87,7 @@ import { toast } from "@/components/ui";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { LastSession } from "@/types/lastSession";
 import { getAllLeaves } from "@/utils/panelTree";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 const mockSave = vi.mocked(saveLastSession);
 const mockLoad = vi.mocked(loadLastSession);
@@ -139,10 +140,10 @@ describe("last session persistence", () => {
 
     it("persists an empty payload when there are no real tabs", async () => {
       // Replace the live layout with an empty leaf (no tabs).
-      const state = useAppStore.getState();
+      const state = layoutState();
       const group = state.tabGroups[0];
       const emptyRoot = { type: "leaf" as const, id: "leaf-empty", tabs: [], activeTabId: null };
-      useAppStore.setState({
+      seedLayoutState({
         tabGroups: [{ ...group, rootPanel: emptyRoot, activePanelId: emptyRoot.id }],
         rootPanel: emptyRoot,
         activePanelId: emptyRoot.id,
@@ -199,7 +200,7 @@ describe("last session persistence", () => {
       expect(ok).toBe(true);
       // This (main) window holds only its own group; the secondary window is
       // spawned to hold group B rather than collapsed into main.
-      const groups = useAppStore.getState().tabGroups;
+      const groups = layoutState().tabGroups;
       expect(groups.map((g) => g.name)).toEqual(["A"]);
       // One secondary window is spawned, seeded with win-1's group B.
       expect(openWindow).toHaveBeenCalledTimes(1);
@@ -279,7 +280,7 @@ describe("last session persistence", () => {
 
       await useAppStore.getState().receivePendingWindowRestore();
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       expect(state.tabGroups.map((g) => g.name)).toEqual(["Seeded"]);
       const tabs = getAllLeaves(state.rootPanel).flatMap((l) => l.tabs);
       expect(tabs.map((t) => t.title)).toEqual(["S"]);
@@ -287,23 +288,23 @@ describe("last session persistence", () => {
 
     it("is a no-op when there is no seeded restore payload", async () => {
       takePendingWindowRestore.mockResolvedValue(null);
-      const before = useAppStore.getState().tabGroups;
+      const before = layoutState().tabGroups;
 
       await useAppStore.getState().receivePendingWindowRestore();
 
-      expect(useAppStore.getState().tabGroups).toBe(before);
+      expect(layoutState().tabGroups).toBe(before);
     });
   });
 
   describe("restoreLastSession", () => {
     it("returns false and changes nothing when no session is stored", async () => {
       mockLoad.mockResolvedValue(null);
-      const before = useAppStore.getState().tabGroups;
+      const before = layoutState().tabGroups;
 
       const restored = await useAppStore.getState().restoreLastSession();
 
       expect(restored).toBe(false);
-      expect(useAppStore.getState().tabGroups).toBe(before);
+      expect(layoutState().tabGroups).toBe(before);
       // A genuinely empty/absent session is not a failure — stay silent (G3, #1146).
       expect(mockToast.error).not.toHaveBeenCalled();
       expect(mockToast.info).not.toHaveBeenCalled();
@@ -360,7 +361,7 @@ describe("last session persistence", () => {
       const restored = await useAppStore.getState().restoreLastSession();
 
       expect(restored).toBe(true);
-      const state = useAppStore.getState();
+      const state = layoutState();
       expect(state.tabGroups).toHaveLength(1);
       expect(state.tabGroups[0].name).toBe("Restored");
       const tabs = getAllLeaves(state.rootPanel).flatMap((l) => l.tabs);

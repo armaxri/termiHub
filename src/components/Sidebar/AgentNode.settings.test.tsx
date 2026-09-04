@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { layoutState } from "@/test/layoutState";
 import { AgentNode } from "./AgentNode";
 import { TooltipProvider } from "@/components/ui";
 import { DEFAULT_AGENT_SETTINGS, type RemoteAgentDefinition } from "@/types/connection";
@@ -153,7 +154,7 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       defButton.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
 
-    const { rootPanel } = useAppStore.getState();
+    const { rootPanel } = layoutState();
     const leaf = rootPanel.type === "leaf" ? rootPanel : null;
     const tab = leaf?.tabs[0];
     expect(tab).toBeDefined();
@@ -193,7 +194,7 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       defButton.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
 
-    const { rootPanel, tabColors } = useAppStore.getState();
+    const { rootPanel, tabColors } = layoutState();
     const leaf = rootPanel.type === "leaf" ? rootPanel : null;
     const tabId = leaf?.tabs[0]?.id;
     expect(tabId).toBeDefined();
@@ -231,7 +232,7 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       defButton.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
 
-    const { rootPanel } = useAppStore.getState();
+    const { rootPanel } = layoutState();
     const leaf = rootPanel.type === "leaf" ? rootPanel : null;
     const cfg = leaf?.tabs[0]?.config.config as Record<string, unknown>;
 

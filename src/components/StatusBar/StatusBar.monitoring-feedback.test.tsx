@@ -17,6 +17,7 @@ import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { seedLayoutState } from "@/test/layoutState";
 import { StatusBar } from "./StatusBar";
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
@@ -64,12 +65,8 @@ function primeMonitoringTab() {
     activeTabId: "tab-1",
   };
 
-  useAppStore.setState((state) => ({
-    ...state,
-    connectionTypes: [SSH_TYPE],
-    rootPanel: leaf,
-    activePanelId: "leaf-1",
-  }));
+  useAppStore.setState({ connectionTypes: [SSH_TYPE] });
+  seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
   seedSettings({ powerMonitoringEnabled: true });
 }
 

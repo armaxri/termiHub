@@ -32,6 +32,7 @@ vi.mock("@/services/api", () => ({
 
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
+import { layoutState } from "@/test/layoutState";
 
 describe("useTerminal logic (via store)", () => {
   beforeEach(() => {
@@ -40,13 +41,13 @@ describe("useTerminal logic (via store)", () => {
 
   describe("openTerminal (addTab)", () => {
     it("adds a new tab to the active panel", () => {
-      const { addTab, rootPanel } = useAppStore.getState();
+      const { addTab, rootPanel } = layoutState();
       const leaves = getAllLeaves(rootPanel);
       expect(leaves[0].tabs).toHaveLength(0);
 
       addTab("SSH - pi.local", "ssh");
 
-      const updatedLeaves = getAllLeaves(useAppStore.getState().rootPanel);
+      const updatedLeaves = getAllLeaves(layoutState().rootPanel);
       expect(updatedLeaves[0].tabs).toHaveLength(1);
       expect(updatedLeaves[0].tabs[0].title).toBe("SSH - pi.local");
     });
@@ -54,7 +55,7 @@ describe("useTerminal logic (via store)", () => {
     it("tab has the correct connection type", () => {
       useAppStore.getState().addTab("Local Shell", "local");
 
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
+      const leaves = getAllLeaves(layoutState().rootPanel);
       const tab = leaves[0].tabs[0];
       expect(tab.connectionType).toBe("local");
     });
@@ -64,23 +65,23 @@ describe("useTerminal logic (via store)", () => {
       useAppStore.getState().addTab("Tab 2", "local");
       useAppStore.getState().addTab("Tab 3", "ssh");
 
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
+      const leaves = getAllLeaves(layoutState().rootPanel);
       expect(leaves[0].tabs).toHaveLength(3);
     });
   });
 
   describe("closeTerminal (closeTab)", () => {
     it("removes the specified tab from the panel", () => {
-      const { addTab } = useAppStore.getState();
+      const { addTab } = layoutState();
       addTab("To Close", "local");
 
-      const leaves1 = getAllLeaves(useAppStore.getState().rootPanel);
+      const leaves1 = getAllLeaves(layoutState().rootPanel);
       const tabId = leaves1[0].tabs[0].id;
       const panelId = leaves1[0].id;
 
       useAppStore.getState().closeTab(tabId, panelId);
 
-      const leaves2 = getAllLeaves(useAppStore.getState().rootPanel);
+      const leaves2 = getAllLeaves(layoutState().rootPanel);
       expect(leaves2[0].tabs).toHaveLength(0);
     });
 
@@ -88,12 +89,12 @@ describe("useTerminal logic (via store)", () => {
       useAppStore.getState().addTab("Keep", "local");
       useAppStore.getState().addTab("Close", "local");
 
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
+      const leaves = getAllLeaves(layoutState().rootPanel);
       const closeTab = leaves[0].tabs[1];
 
       useAppStore.getState().closeTab(closeTab.id, leaves[0].id);
 
-      const remaining = getAllLeaves(useAppStore.getState().rootPanel);
+      const remaining = getAllLeaves(layoutState().rootPanel);
       expect(remaining[0].tabs).toHaveLength(1);
       expect(remaining[0].tabs[0].title).toBe("Keep");
     });
@@ -104,7 +105,7 @@ describe("useTerminal logic (via store)", () => {
       useAppStore.getState().addTab("Tab A", "local");
       useAppStore.getState().addTab("Tab B", "local");
 
-      const leaves = getAllLeaves(useAppStore.getState().rootPanel);
+      const leaves = getAllLeaves(layoutState().rootPanel);
       const tabA = leaves[0].tabs[0];
       const tabB = leaves[0].tabs[1];
 
@@ -113,7 +114,7 @@ describe("useTerminal logic (via store)", () => {
 
       useAppStore.getState().setActiveTab(tabA.id, leaves[0].id);
 
-      const updatedLeaves = getAllLeaves(useAppStore.getState().rootPanel);
+      const updatedLeaves = getAllLeaves(layoutState().rootPanel);
       expect(updatedLeaves[0].activeTabId).toBe(tabA.id);
     });
   });

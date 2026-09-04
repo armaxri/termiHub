@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { TunnelEditor } from "./TunnelEditor";
 import { TooltipProvider } from "@/components/ui";
@@ -76,9 +77,9 @@ describe("TunnelEditor — keyboard interaction (#1341)", () => {
       saveTunnel: vi.fn(() => Promise.resolve()),
       startTunnel: vi.fn(() => Promise.resolve()),
       closeTab: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      rootPanel: ROOT_PANEL as any,
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    seedLayoutState({ rootPanel: ROOT_PANEL as any });
   });
 
   afterEach(() => {

@@ -62,6 +62,7 @@ import type { SpawnRequestPayload } from "@/services/events";
 import type { SpawnChoice } from "@/types/spawn";
 import type { ContainerSpawn, ShellSpawn } from "@/services/api";
 import type { TerminalTab } from "@/types/terminal";
+import { layoutState } from "@/test/layoutState";
 
 const SAMPLE_SPAWN: ContainerSpawn = {
   settings: {
@@ -92,7 +93,7 @@ const SAMPLE_SHELL_SPAWN: ShellSpawn = {
 
 /** Collect every terminal tab across the live root panel. */
 function allTabs(): TerminalTab[] {
-  return getAllLeaves(useAppStore.getState().rootPanel).flatMap((leaf) => leaf.tabs);
+  return getAllLeaves(layoutState().rootPanel).flatMap((leaf) => leaf.tabs);
 }
 
 describe("useSpawnRequests — container spawn wiring (#1446)", () => {

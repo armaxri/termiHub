@@ -80,6 +80,7 @@ vi.mock("@/components/ui", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { loadWorkspace as apiLoadWorkspace } from "@/services/workspaceApi";
@@ -154,6 +155,8 @@ function seedTwoLiveGroups(): void {
     defaultShell: "bash",
     restoreInProgress: false,
     launchingWorkspaceId: null,
+  });
+  seedLayoutState({
     tabGroups: groups,
     activeTabGroupId: "grp-active",
     rootPanel: activeLeaf,
@@ -194,7 +197,7 @@ describe("appStore — teardown live sessions before restore/launch (GAP G1, #11
     expect(closed).toEqual(["sess-active", "sess-inactive"]);
 
     // And the new layout actually replaced the old one afterwards.
-    const state = useAppStore.getState();
+    const state = layoutState();
     expect(state.activeWorkspaceName).toBe("Fresh");
     const remainingSessions = state.tabGroups.flatMap((g) =>
       collectSessionIds(g.id === state.activeTabGroupId ? state.rootPanel : g.rootPanel)
@@ -236,6 +239,8 @@ describe("appStore — teardown live sessions before restore/launch (GAP G1, #11
       defaultShell: "bash",
       restoreInProgress: false,
       launchingWorkspaceId: null,
+    });
+    seedLayoutState({
       tabGroups: [
         {
           id: "grp-only",

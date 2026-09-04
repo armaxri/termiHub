@@ -41,6 +41,7 @@ import { useAppStore, resolveBroadcastTargetTabIds } from "./appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { currentBroadcastView, ensureBroadcastSubscribed } from "./broadcastBridge";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 import type {
   LeafPanel,
   PanelNode,
@@ -93,7 +94,7 @@ function seed(root: PanelNode) {
       tabContent[t.id] = content;
     }
   }
-  useAppStore.setState({ rootPanel: root, activePanelId: "leaf-1", tabContent });
+  seedLayoutState({ rootPanel: root, activePanelId: "leaf-1", tabContent });
 }
 
 describe("resolveBroadcastTargetTabIds (#1956)", () => {
@@ -110,7 +111,7 @@ describe("resolveBroadcastTargetTabIds (#1956)", () => {
         makeTab({ id: "sftp", contentType: "file-browser" }),
       ])
     );
-    const result = resolveBroadcastTargetTabIds(useAppStore.getState(), "all", "src").sort();
+    const result = resolveBroadcastTargetTabIds(layoutState(), "all", "src").sort();
     expect(result).toEqual(["src", "t2"]);
   });
 
@@ -129,32 +130,29 @@ describe("resolveBroadcastTargetTabIds (#1956)", () => {
     };
     seed(split);
     // Source lives in leaf-1 → only leaf-1 terminals.
-    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "panel", "src").sort()).toEqual([
+    expect(resolveBroadcastTargetTabIds(layoutState(), "panel", "src").sort()).toEqual([
       "src",
       "t2",
     ]);
     // Source in leaf-2 → only leaf-2 terminals.
-    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "panel", "t3").sort()).toEqual([
-      "t3",
-      "t4",
-    ]);
+    expect(resolveBroadcastTargetTabIds(layoutState(), "panel", "t3").sort()).toEqual(["t3", "t4"]);
   });
 
   it("'panel' excludes non-terminal tabs in the same panel", () => {
     seed(
       leaf("leaf-1", [makeTab({ id: "src" }), makeTab({ id: "editor", contentType: "editor" })])
     );
-    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "panel", "src")).toEqual(["src"]);
+    expect(resolveBroadcastTargetTabIds(layoutState(), "panel", "src")).toEqual(["src"]);
   });
 
   it("'custom' resolves to [] — membership comes from the picker, not the scope", () => {
     seed(leaf("leaf-1", [makeTab({ id: "src" }), makeTab({ id: "t2" })]));
-    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "custom", "src")).toEqual([]);
+    expect(resolveBroadcastTargetTabIds(layoutState(), "custom", "src")).toEqual([]);
   });
 
   it("'panel' returns [] when the source tab is not found", () => {
     seed(leaf("leaf-1", [makeTab({ id: "src" })]));
-    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "panel", "ghost")).toEqual([]);
+    expect(resolveBroadcastTargetTabIds(layoutState(), "panel", "ghost")).toEqual([]);
   });
 
   it("resolves within the source's OWN group, not the active group (#1980)", () => {
@@ -166,7 +164,7 @@ describe("resolveBroadcastTargetTabIds (#1956)", () => {
       makeTab({ id: "a2", panelId: "leaf-A" }),
     ]);
     const groupB = leaf("leaf-B", [makeTab({ id: "b1", panelId: "leaf-B" })]);
-    useAppStore.setState({
+    seedLayoutState({
       // Active group is B; its live tree is `rootPanel`. Group A is inactive and
       // keeps its tree in `group.rootPanel`.
       activeTabGroupId: "gB",
@@ -178,14 +176,14 @@ describe("resolveBroadcastTargetTabIds (#1956)", () => {
       ],
     });
     // Source lives in the INACTIVE group A → targets are A's terminals only.
-    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "all", "srcA").sort()).toEqual([
+    expect(resolveBroadcastTargetTabIds(layoutState(), "all", "srcA").sort()).toEqual([
       "a2",
       "srcA",
     ]);
     // The active group B's terminal is never pulled in for a source in A.
-    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "all", "srcA")).not.toContain("b1");
+    expect(resolveBroadcastTargetTabIds(layoutState(), "all", "srcA")).not.toContain("b1");
     // And a source in the active group B resolves B's terminals only.
-    expect(resolveBroadcastTargetTabIds(useAppStore.getState(), "all", "b1")).toEqual(["b1"]);
+    expect(resolveBroadcastTargetTabIds(layoutState(), "all", "b1")).toEqual(["b1"]);
   });
 });
 

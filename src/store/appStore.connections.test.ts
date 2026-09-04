@@ -32,6 +32,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 import { currentConnectionsView } from "./connectionsBridge";
 import {
   persistConnection,
@@ -440,7 +441,7 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("creates a connection-editor tab for new connection", () => {
       useAppStore.getState().openConnectionEditorTab("new");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       expect(leaf.tabs[0].contentType).toBe("connection-editor");
@@ -452,7 +453,7 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("creates a connection-editor tab with folder ID", () => {
       useAppStore.getState().openConnectionEditorTab("new", "f-1");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs[0].connectionEditorMeta?.folderId).toBe("f-1");
     });
@@ -463,7 +464,7 @@ describe("appStore — connections, folders, and special tabs", () => {
 
       useAppStore.getState().openConnectionEditorTab("c-1");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs[0].title).toBe("Edit: My SSH");
       expect(leaf.tabs[0].connectionEditorMeta?.connectionId).toBe("c-1");
@@ -474,7 +475,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().addTab("Shell", "local");
       useAppStore.getState().openConnectionEditorTab("new");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const allLeaves = getAllLeaves(state.rootPanel);
       const editorTabs = allLeaves.flatMap((l) =>
         l.tabs.filter((t) => t.contentType === "connection-editor")
@@ -489,7 +490,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().openConnectionEditorTab("new");
       useAppStore.getState().openConnectionEditorTab("c-1");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(2);
     });
@@ -497,7 +498,7 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("creates a 'New Remote Agent' tab for the new-remote-agent sentinel", () => {
       useAppStore.getState().openConnectionEditorTab("new-remote-agent");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       expect(leaf.tabs[0].contentType).toBe("connection-editor");
@@ -510,7 +511,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().addTab("Shell", "local");
       useAppStore.getState().openConnectionEditorTab("new-remote-agent");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const allLeaves = getAllLeaves(state.rootPanel);
       const editorTabs = allLeaves.flatMap((l) =>
         l.tabs.filter((t) => t.contentType === "connection-editor")
@@ -523,7 +524,7 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("creates a settings tab in the active panel", () => {
       useAppStore.getState().openSettingsTab();
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       expect(leaf.tabs[0].contentType).toBe("settings");
@@ -534,7 +535,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().openSettingsTab();
       useAppStore.getState().openSettingsTab();
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const allLeaves = getAllLeaves(state.rootPanel);
       const settingsTabs = allLeaves.flatMap((l) =>
         l.tabs.filter((t) => t.contentType === "settings")
@@ -550,7 +551,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       // Open settings again
       useAppStore.getState().openSettingsTab();
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.activeTabId).toBe(leaf.tabs.find((t) => t.contentType === "settings")?.id);
     });
@@ -560,7 +561,7 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("creates an editor tab with file metadata", () => {
       useAppStore.getState().openEditorTab("/home/test.txt", false);
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       expect(leaf.tabs[0].contentType).toBe("editor");
@@ -575,7 +576,7 @@ describe("appStore — connections, folders, and special tabs", () => {
         connectionType: "ssh",
       });
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs[0].editorMeta?.isRemote).toBe(true);
       expect(leaf.tabs[0].editorMeta?.sessionBrowser?.sessionId).toBe("sftp-1");
@@ -585,7 +586,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().openEditorTab("/home/test.txt", false);
       useAppStore.getState().openEditorTab("/home/test.txt", false);
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const allLeaves = getAllLeaves(state.rootPanel);
       const editorTabs = allLeaves.flatMap((l) => l.tabs.filter((t) => t.contentType === "editor"));
       expect(editorTabs).toHaveLength(1);
@@ -595,7 +596,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().openEditorTab("/home/file1.txt", false);
       useAppStore.getState().openEditorTab("/home/file2.txt", false);
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(2);
     });
@@ -604,7 +605,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().openEditorTab("/home/test.txt", false);
       useAppStore.getState().openEditorTab("/home/test.txt", true, "sftp-1");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(2);
     });
@@ -616,7 +617,7 @@ describe("appStore — connections, folders, and special tabs", () => {
         .getState()
         .openScratchEditorTab("ssh: host (output)", "ssh-host-output.txt", "line1\nline2\n");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       const tab = leaf.tabs[0];
@@ -631,7 +632,7 @@ describe("appStore — connections, folders, and special tabs", () => {
     it("activates the new scratch tab", () => {
       useAppStore.getState().openScratchEditorTab("Output", "output.txt", "data");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.activeTabId).toBe(leaf.tabs[0].id);
       expect(leaf.tabs[0].isActive).toBe(true);
@@ -641,7 +642,7 @@ describe("appStore — connections, folders, and special tabs", () => {
       useAppStore.getState().openScratchEditorTab("Output", "output.txt", "first");
       useAppStore.getState().openScratchEditorTab("Output", "output.txt", "second");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const allLeaves = getAllLeaves(state.rootPanel);
       const editorTabs = allLeaves.flatMap((l) => l.tabs.filter((t) => t.contentType === "editor"));
       expect(editorTabs).toHaveLength(2);

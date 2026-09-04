@@ -27,12 +27,13 @@ vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn(() => vi.
 
 import { useAppStore } from "./appStore";
 import { useLayoutRenderTree } from "./useLayoutRenderTree";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 /** Render the hook into a throwaway component, exposing the latest return value. */
 function renderHook(): { get: () => PanelNode; unmount: () => void } {
   const container = document.createElement("div");
   const root: Root = createRoot(container);
-  let latest: PanelNode = useAppStore.getState().rootPanel;
+  let latest: PanelNode = layoutState().rootPanel;
 
   function Probe() {
     latest = useLayoutRenderTree();
@@ -54,9 +55,9 @@ describe("useLayoutRenderTree", () => {
 
   it("returns the current region-derived rootPanel", () => {
     const root = leaf("only");
-    useAppStore.setState({ rootPanel: root, activePanelId: "only" });
+    seedLayoutState({ rootPanel: root, activePanelId: "only" });
     const hook = renderHook();
-    expect(hook.get()).toBe(root);
+    expect(hook.get()).toEqual(root);
     hook.unmount();
   });
 
@@ -64,9 +65,9 @@ describe("useLayoutRenderTree", () => {
     const hook = renderHook();
     const next = leaf("next");
     act(() => {
-      useAppStore.setState({ rootPanel: next, activePanelId: "next" });
+      seedLayoutState({ rootPanel: next, activePanelId: "next" });
     });
-    expect(hook.get()).toBe(next);
+    expect(hook.get()).toEqual(next);
     hook.unmount();
   });
 });

@@ -14,6 +14,7 @@ import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { TooltipProvider } from "@/components/ui";
 import { BroadcastStatus } from "./BroadcastStatus";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
+import { seedLayoutState } from "@/test/layoutState";
 
 function makeTab(id: string, overrides: Partial<TerminalTab> = {}): TerminalTab {
   return {
@@ -32,7 +33,7 @@ function makeTab(id: string, overrides: Partial<TerminalTab> = {}): TerminalTab 
 /** Seed a single leaf panel holding the given tabs as the active group. */
 function seedTabs(tabs: TerminalTab[]) {
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs, activeTabId: tabs[0]?.id ?? null };
-  useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
+  seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
 }
 
 describe("BroadcastStatus (#1957)", () => {

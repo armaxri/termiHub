@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { ConfirmCloseTabDialog } from "./ConfirmCloseTabDialog";
+import { layoutState } from "@/test/layoutState";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -52,7 +53,7 @@ describe("ConfirmCloseTabDialog", () => {
 
   it("Cancel button clears the request and does not close the tab", () => {
     useAppStore.getState().addTab("Tab A", "local");
-    const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
     const tabId = panel.tabs[0].id;
 
     render(<ConfirmCloseTabDialog />);
@@ -71,12 +72,12 @@ describe("ConfirmCloseTabDialog", () => {
     });
 
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
-    expect(getAllLeaves(useAppStore.getState().rootPanel)[0].tabs).toHaveLength(1);
+    expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(1);
   });
 
   it("Confirm button closes the tab and clears the request", () => {
     useAppStore.getState().addTab("Tab A", "local");
-    const panel = getAllLeaves(useAppStore.getState().rootPanel)[0];
+    const panel = getAllLeaves(layoutState().rootPanel)[0];
     const tabId = panel.tabs[0].id;
 
     render(<ConfirmCloseTabDialog />);
@@ -95,13 +96,13 @@ describe("ConfirmCloseTabDialog", () => {
     });
 
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
-    expect(getAllLeaves(useAppStore.getState().rootPanel)[0].tabs).toHaveLength(0);
+    expect(getAllLeaves(layoutState().rootPanel)[0].tabs).toHaveLength(0);
   });
 
   it("for tab-group kind, confirm closes the tab group", () => {
     useAppStore.getState().addTabGroup("Group Beta");
-    const groupsBefore = useAppStore.getState().tabGroups.length;
-    const targetId = useAppStore.getState().activeTabGroupId;
+    const groupsBefore = layoutState().tabGroups.length;
+    const targetId = layoutState().activeTabGroupId;
 
     render(<ConfirmCloseTabDialog />);
 
@@ -122,7 +123,7 @@ describe("ConfirmCloseTabDialog", () => {
       ).click();
     });
 
-    expect(useAppStore.getState().tabGroups).toHaveLength(groupsBefore - 1);
+    expect(layoutState().tabGroups).toHaveLength(groupsBefore - 1);
     expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
   });
 });

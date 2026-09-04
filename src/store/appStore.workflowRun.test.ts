@@ -94,6 +94,7 @@ vi.mock("@/services/localProcessApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentSettingsView } from "./settingsBridge";
 import {
   currentWorkflowOutputContent,
@@ -306,7 +307,8 @@ function seedConnectedTerminal(tabId = "tab-active", sessionId: string | null = 
     isActive: true,
   };
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
-  useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1", terminalExitedTabs: {} });
+  seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
+  useAppStore.setState({ terminalExitedTabs: {} });
 }
 
 describe("appStore — workflow run slice (#1852)", () => {
@@ -401,7 +403,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     seedConnectedTerminal();
     useAppStore.setState({ workflows: [workflow("w1", [cmd("a"), cmd("b")])] });
 
-    const done = useAppStore.getState().runWorkflow("w1");
+    const done = layoutState().runWorkflow("w1");
     await started;
     // runStarted is dispatched + awaited before the first step, so the region
     // already reflects the in-flight run.
@@ -498,7 +500,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       enableLocalProcess([]);
       useAppStore.setState({ workflows: [workflow("w1", [lp("echo", ["hi"])])] });
 
-      const done = useAppStore.getState().runWorkflow("w1");
+      const done = layoutState().runWorkflow("w1");
       // Wait for the prompt to open.
       await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
       expect(useAppStore.getState().localProcessPrompt?.program).toBe("echo");
@@ -516,7 +518,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       enableLocalProcess([]);
       useAppStore.setState({ workflows: [workflow("w1", [lp("echo", ["hi"])])] });
 
-      const done = useAppStore.getState().runWorkflow("w1");
+      const done = layoutState().runWorkflow("w1");
       await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
       useAppStore.getState().resolveLocalProcessPrompt("always");
       await done;
@@ -530,7 +532,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       enableLocalProcess([]);
       useAppStore.setState({ workflows: [workflow("w1", [lp("echo", ["hi"])])] });
 
-      const done = useAppStore.getState().runWorkflow("w1");
+      const done = layoutState().runWorkflow("w1");
       await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
       useAppStore.getState().resolveLocalProcessPrompt("cancel");
       await done;
@@ -674,7 +676,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     // A clean file carries no run-local-process steps to flag.
     expect(result.localProcessSteps).toBe(0);
     expect(result.workflowsWithLocalProcess).toBe(0);
-    const imported = useAppStore.getState().workflows;
+    const imported = layoutState().workflows;
     expect(imported).toHaveLength(1);
     // A fresh id is assigned on import (never the file's original id).
     expect(imported[0].id).not.toBe("original");
@@ -700,7 +702,7 @@ describe("appStore — workflow run slice (#1852)", () => {
     expect(result.workflowsWithLocalProcess).toBe(1);
     expect(result.localProcessSteps).toBe(1);
     // ...and the step is preserved (not stripped), so #1857's run-time guard applies.
-    const imported = useAppStore.getState().workflows;
+    const imported = layoutState().workflows;
     expect(imported[0].steps).toContainEqual({
       kind: "run-local-process",
       program: "echo",
@@ -741,7 +743,8 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
       ...(connectionId ? { connectionId } : {}),
     };
     const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
-    useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1", terminalExitedTabs: {} });
+    seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
+    useAppStore.setState({ terminalExitedTabs: {} });
   }
 
   function onConnectWorkflow(id: string, connectionIds: string[]): Workflow {

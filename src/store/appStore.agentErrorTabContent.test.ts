@@ -35,6 +35,7 @@ import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal"
 import { getAllLeaves } from "@/utils/panelTree";
 import { composeRenderTree, toMinimalNode, type LayoutView } from "./layoutBridge";
 import { extractTabContent, useAppStore } from "./appStore";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { __emitAgentsViewForTest, EMPTY_AGENTS_VIEW } from "./agentsBridge";
 
 function agentErrorTab(id: string): TerminalTab {
@@ -64,7 +65,7 @@ function seedAgentErrorLayout(): void {
   const tab = agentErrorTab("ae1");
   const root: PanelNode = { type: "leaf", id: "a", tabs: [tab], activeTabId: "ae1" };
   useAppStore.setState(useAppStore.getInitialState());
-  useAppStore.setState({
+  seedLayoutState({
     rootPanel: root,
     activePanelId: "a",
     tabGroups: [{ id: "g1", name: "Main", rootPanel: root, activePanelId: "a" }],
@@ -74,7 +75,7 @@ function seedAgentErrorLayout(): void {
 }
 
 function currentView(): LayoutView {
-  const { rootPanel, activePanelId } = useAppStore.getState();
+  const { rootPanel, activePanelId } = layoutState();
   return {
     groups: [{ id: "g1", name: "Main", root: toMinimalNode(rootPanel), activePanelId }],
     activeGroupId: "g1",
@@ -88,7 +89,7 @@ describe("appStore — agent-error tabs tracked in tabContent (#2539)", () => {
 
   it("an agent-error tab resolves its content from the map (comprehensive)", () => {
     seedAgentErrorLayout();
-    const { rootPanel, tabContent } = useAppStore.getState();
+    const { rootPanel, tabContent } = layoutState();
     const tab = getAllLeaves(rootPanel)[0].tabs[0];
     // The map holds a content-identical entry, carrying the agentErrorMeta.
     expect(tabContent["ae1"]).toEqual(extractTabContent(tab));
@@ -129,7 +130,7 @@ describe("appStore — agent-error tabs tracked in tabContent (#2539)", () => {
 
     useAppStore.getState().resolveAgentErrorTabs("ag1");
 
-    const { rootPanel, tabContent } = useAppStore.getState();
+    const { rootPanel, tabContent } = layoutState();
     const tab = getAllLeaves(rootPanel)[0].tabs[0];
     // Tree converted in place (same tab id — no remount).
     expect(tab.id).toBe("ae1");

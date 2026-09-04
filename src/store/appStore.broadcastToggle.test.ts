@@ -41,6 +41,7 @@ import { currentBroadcastView, ensureBroadcastSubscribed } from "./broadcastBrid
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import { toast } from "@/components/ui";
 import type { LeafPanel, TerminalTab, TabContentType } from "@/types/terminal";
+import { seedLayoutState } from "@/test/layoutState";
 
 // Spy on the real toast (avoids mocking the whole UI barrel, which the store's
 // import graph also pulls from) to assert the no-terminal hint fires.
@@ -68,7 +69,7 @@ function makeTab({ id, contentType = "terminal", sessionId = `sess-${id}` }: See
 /** Seed one leaf panel holding the given tabs; the first tab is active. */
 function seedTabs(tabs: TerminalTab[], activeTabId = tabs[0]?.id ?? null) {
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs, activeTabId };
-  useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
+  seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
 }
 
 describe("appStore — toggleBroadcast (#1958, region-authoritative #2206)", () => {

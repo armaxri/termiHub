@@ -45,6 +45,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentSettingsView } from "./settingsBridge";
 import { ensureMonitorsSubscribed } from "./systemMonitorBridge";
 import {
@@ -106,7 +107,7 @@ describe("appStore — settings toggles", () => {
       .getState()
       .updateSettings(settingsDoc({ powerMonitoringEnabled: true, fileBrowserEnabled: false }));
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     expect(currentSettingsView().fileBrowserEnabled).toBe(false);
     expect(state.sidebarView).toBe("connections");
   });
@@ -121,7 +122,7 @@ describe("appStore — settings toggles", () => {
       .getState()
       .updateSettings(settingsDoc({ powerMonitoringEnabled: false, fileBrowserEnabled: true }));
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     // Monitoring disconnected via the backend close command.
     expect(mockSessionMonitoringClose).toHaveBeenCalledWith("mon-1");
     // File browser untouched: the files sidebar stays open.
@@ -175,7 +176,7 @@ describe("appStore — settings toggles", () => {
 
   it("disabling global monitoring keeps session when active tab has explicit enableMonitoring=true", async () => {
     await seedMonitor("mon-1", "pi@pi.local:22");
-    useAppStore.setState({ ...sshTabPanel({ enableMonitoring: true }) });
+    seedLayoutState(sshTabPanel({ enableMonitoring: true }));
     seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
     await useAppStore
@@ -187,10 +188,8 @@ describe("appStore — settings toggles", () => {
   });
 
   it("disabling global file browser keeps the files sidebar when active tab has explicit enableFileBrowser=true", async () => {
-    useAppStore.setState({
-      sidebarView: "files",
-      ...sshTabPanel({ enableFileBrowser: true }),
-    });
+    useAppStore.setState({ sidebarView: "files" });
+    seedLayoutState(sshTabPanel({ enableFileBrowser: true }));
     seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
     await useAppStore
@@ -203,7 +202,7 @@ describe("appStore — settings toggles", () => {
 
   it("disabling global monitoring disconnects when active tab uses default (no override)", async () => {
     await seedMonitor("mon-1", "pi@pi.local:22");
-    useAppStore.setState({ ...sshTabPanel({}) }); // No per-connection override
+    seedLayoutState(sshTabPanel({})); // No per-connection override
     seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
     await useAppStore

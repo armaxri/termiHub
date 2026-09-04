@@ -18,6 +18,7 @@ import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
 import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
+import { seedLayoutState } from "@/test/layoutState";
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -90,7 +91,7 @@ function makeTab(overrides: Partial<TerminalTab>): TerminalTab {
 
 function setActiveTab(tab: TerminalTab) {
   const panel: LeafPanel = { type: "leaf", id: tab.panelId, tabs: [tab], activeTabId: tab.id };
-  useAppStore.setState({ activePanelId: tab.panelId, rootPanel: panel });
+  seedLayoutState({ activePanelId: tab.panelId, rootPanel: panel });
 }
 
 async function renderLocal() {

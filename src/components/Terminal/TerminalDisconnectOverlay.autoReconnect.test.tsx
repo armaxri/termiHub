@@ -11,6 +11,7 @@ import {
 } from "@/test/sessionLifecycleRegionTestHarness";
 import type { ProjectedReconnect } from "@/store/sessionBridge";
 import type { TerminalTab } from "@/types/terminal";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 
 // Stub lucide-react icons used in the overlay.
 vi.mock("lucide-react", () => ({
@@ -33,7 +34,7 @@ function waiting(over: Partial<ProjectedReconnect> = {}): ProjectedReconnect {
  * moved the loop off `appStore` (`onReconnectCommandForTabId`).
  */
 function seedTabConfig(onReconnectCommand?: string) {
-  const leafId = useAppStore.getState().rootPanel.id;
+  const leafId = layoutState().rootPanel.id;
   const tab: TerminalTab = {
     id: "tab-1",
     sessionId: "sess-tab-1",
@@ -44,7 +45,7 @@ function seedTabConfig(onReconnectCommand?: string) {
     panelId: leafId,
     isActive: true,
   };
-  useAppStore.setState({
+  seedLayoutState({
     rootPanel: { type: "leaf", id: leafId, tabs: [tab], activeTabId: tab.id },
     activePanelId: leafId,
   });
@@ -67,9 +68,9 @@ describe("TerminalDisconnectOverlay — agentless auto-reconnect variant (#1962)
     // Reset the panel tree so a tab's `onReconnectCommand` config seeded by one
     // test (via `seedTabConfig`) does not leak into the next (the command is now
     // read from the tab config, not the removed auto-reconnect record).
-    const leafId = useAppStore.getState().rootPanel.id;
+    const leafId = layoutState().rootPanel.id;
+    seedLayoutState({ rootPanel: { type: "leaf", id: leafId, tabs: [], activeTabId: null } });
     useAppStore.setState({
-      rootPanel: { type: "leaf", id: leafId, tabs: [], activeTabId: null },
       terminalExitedTabs: { "tab-1": true },
       terminalDisconnectErrors: {},
       terminalViewMode: {},

@@ -39,6 +39,7 @@ import { BroadcastScopeDialog } from "./BroadcastScopeDialog";
 import { useAppStore } from "@/store/appStore";
 import { currentBroadcastView, ensureBroadcastSubscribed } from "@/store/broadcastBridge";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
+import { seedLayoutState } from "@/test/layoutState";
 import type {
   LeafPanel,
   TerminalTab,
@@ -76,7 +77,7 @@ function makeTab(
 
 function seed(tabs: TerminalTab[], scope: BroadcastScope = "all") {
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs, activeTabId: "src" };
-  useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
+  seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
   // The remembered scope lives in the authoritative broadcast region (#2206).
   harness.transport.seed({ lastScope: scope });
 }

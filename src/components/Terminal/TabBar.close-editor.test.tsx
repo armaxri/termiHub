@@ -5,6 +5,7 @@ import { createRoot, Root } from "react-dom/client";
 import { TabBar } from "./TabBar";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
+import { layoutState } from "@/test/layoutState";
 
 vi.mock("./TerminalRegistry", () => ({
   useTerminalRegistry: () => ({
@@ -130,7 +131,7 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
     useAppStore.setState({ editorDirtyTabs: { [TAB_ID]: true } });
 
     // Record panels before close attempt
-    const panelsBefore = useAppStore.getState().rootPanel;
+    const panelsBefore = layoutState().rootPanel;
 
     const closeBtn = container.querySelector(
       `[data-testid="tab-close-${TAB_ID}"]`
@@ -141,7 +142,7 @@ describe("TabBar — close file editor tab with unsaved changes", () => {
     });
 
     // Tab should still be present (panel tree unchanged)
-    expect(useAppStore.getState().rootPanel).toEqual(panelsBefore);
+    expect(layoutState().rootPanel).toEqual(panelsBefore);
   });
 
   it("closes a clean editor tab directly without dialog", () => {

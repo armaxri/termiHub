@@ -69,6 +69,7 @@ vi.mock("@/themes", () => ({
 }));
 
 import { TerminalHost } from "./TerminalView";
+import { seedLayoutState } from "@/test/layoutState";
 
 // ── Tree/group builders ──────────────────────────────────────────────────────
 function termTab(id: string): TerminalTab {
@@ -117,7 +118,7 @@ type Layout = ReturnType<typeof seed>;
 
 function applyLayout(layout: Layout): void {
   act(() => {
-    useAppStore.setState({
+    seedLayoutState({
       rootPanel: layout.rootPanel,
       tabGroups: layout.tabGroups,
       activeTabGroupId: layout.activeTabGroupId,

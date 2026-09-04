@@ -7,6 +7,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
 import { FileEditor } from "./FileEditor";
 import type { EditorTabMeta, LeafPanel, TerminalTab } from "@/types/terminal";
+import { seedLayoutState } from "@/test/layoutState";
 
 // Render Monaco as a plain textarea so the editor mounts in jsdom and we can
 // drive content changes through its onChange.
@@ -626,7 +627,7 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
       isActive: true,
     } as unknown as TerminalTab;
     const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
-    useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1" });
+    seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
   }
 
   beforeEach(() => {

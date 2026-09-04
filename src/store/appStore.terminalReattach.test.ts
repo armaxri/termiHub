@@ -31,6 +31,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 
 describe("terminalReattaching state", () => {
   beforeEach(() => {
@@ -61,11 +62,11 @@ describe("terminalReattaching state", () => {
   });
 
   it("closeTab removes terminalReattaching flag for the closed tab", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     const panelId = store.activePanelId!;
     store.addTab("Test", "local");
 
-    const rootPanel = useAppStore.getState().rootPanel;
+    const rootPanel = layoutState().rootPanel;
     const leafTabs = rootPanel.type === "leaf" ? rootPanel.tabs : [];
     const tab = leafTabs[leafTabs.length - 1];
     expect(tab).toBeDefined();

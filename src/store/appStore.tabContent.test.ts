@@ -92,18 +92,19 @@ import {
   type LayoutView,
 } from "./layoutBridge";
 import { extractTabContent, useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 
 const LOCAL_CONFIG: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
 
 /** Every tab currently in the active panel tree, flattened. */
 function allTabs(): TerminalTab[] {
-  return getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
+  return getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs);
 }
 
 /** The projected (multi-group) view of the current tree — a single active group
  * holding the current panel tree (#2283 slice C). */
 function currentView(): LayoutView {
-  const { rootPanel, activePanelId } = useAppStore.getState();
+  const { rootPanel, activePanelId } = layoutState();
   return {
     groups: [{ id: "g", name: "Main", root: toMinimalNode(rootPanel), activePanelId }],
     activeGroupId: "g",
@@ -121,7 +122,7 @@ describe("appStore — tabContent by-id map (#2283)", () => {
   });
 
   it("addTab populates the map with the new tab's non-structural content", () => {
-    const id = useAppStore.getState().addTab("Shell", "local", LOCAL_CONFIG);
+    const id = layoutState().addTab("Shell", "local", LOCAL_CONFIG);
     const tab = allTabs().find((t) => t.id === id)!;
     // The map entry equals the in-tree tab projected to content (no panelId/isActive).
     expect(useAppStore.getState().tabContent[id]).toEqual(extractTabContent(tab));
@@ -130,7 +131,7 @@ describe("appStore — tabContent by-id map (#2283)", () => {
   });
 
   it("renameTab mirrors the new title into the map, in sync with the tree", () => {
-    const id = useAppStore.getState().addTab("Shell", "local", LOCAL_CONFIG);
+    const id = layoutState().addTab("Shell", "local", LOCAL_CONFIG);
     useAppStore.getState().renameTab(id, "Renamed");
     expect(useAppStore.getState().tabContent[id].title).toBe("Renamed");
     const tab = allTabs().find((t) => t.id === id)!;
@@ -138,7 +139,7 @@ describe("appStore — tabContent by-id map (#2283)", () => {
   });
 
   it("setTabSessionId mirrors the session id into the map, in sync with the tree", () => {
-    const id = useAppStore.getState().addTab("Shell", "local", LOCAL_CONFIG);
+    const id = layoutState().addTab("Shell", "local", LOCAL_CONFIG);
     useAppStore.getState().setTabSessionId(id, "sess-42");
     expect(useAppStore.getState().tabContent[id].sessionId).toBe("sess-42");
     const tab = allTabs().find((t) => t.id === id)!;
@@ -146,15 +147,10 @@ describe("appStore — tabContent by-id map (#2283)", () => {
   });
 
   it("clearPendingScrollbackReplay mirrors the cleared flag into the map", () => {
-    const id = useAppStore.getState().addTab("Shell", "local", LOCAL_CONFIG);
-    // Seed the flag on both the tree and the map, then clear it.
+    const id = layoutState().addTab("Shell", "local", LOCAL_CONFIG);
+    // Seed the flag in the map (the sole content authority since #2562/#2566), then
+    // clear it — the region-derived tree recomposes the flag from the map.
     useAppStore.setState((s) => ({
-      rootPanel: {
-        ...s.rootPanel,
-        tabs: (s.rootPanel as Extract<PanelNode, { type: "leaf" }>).tabs.map((t) =>
-          t.id === id ? { ...t, pendingScrollbackReplay: true } : t
-        ),
-      } as PanelNode,
       tabContent: {
         ...s.tabContent,
         [id]: { ...s.tabContent[id], pendingScrollbackReplay: true },
@@ -167,7 +163,7 @@ describe("appStore — tabContent by-id map (#2283)", () => {
   });
 
   it("closeTab prunes the tab's entry from the map", () => {
-    const id = useAppStore.getState().addTab("Shell", "local", LOCAL_CONFIG);
+    const id = layoutState().addTab("Shell", "local", LOCAL_CONFIG);
     const panelId = allTabs().find((t) => t.id === id)!.panelId;
     expect(useAppStore.getState().tabContent[id]).toBeDefined();
     useAppStore.getState().closeTab(id, panelId);
@@ -180,7 +176,7 @@ describe("appStore — tabContent by-id map (#2283)", () => {
     useAppStore.getState().openScratchEditorTab("Notes", "notes.md", "hello");
     useAppStore.getState().addTab("Shell 2", "local", LOCAL_CONFIG);
 
-    const { rootPanel, tabContent } = useAppStore.getState();
+    const { rootPanel, tabContent } = layoutState();
     const view = currentView();
 
     const fromTree = composeRenderTree(view, rootPanel);
@@ -192,11 +188,11 @@ describe("appStore — tabContent by-id map (#2283)", () => {
   });
 
   it("render parity holds after rename + session update", () => {
-    const id = useAppStore.getState().addTab("Shell", "local", LOCAL_CONFIG);
+    const id = layoutState().addTab("Shell", "local", LOCAL_CONFIG);
     useAppStore.getState().renameTab(id, "Renamed");
     useAppStore.getState().setTabSessionId(id, "sess-7");
 
-    const { rootPanel, tabContent } = useAppStore.getState();
+    const { rootPanel, tabContent } = layoutState();
     const view = currentView();
     expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(
       composeRenderTree(view, rootPanel)
@@ -213,7 +209,7 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
 
   /** Open a tab of each instrumented content type into the active panel. */
   function openOneOfEach(): void {
-    const s = useAppStore.getState();
+    const s = layoutState();
     s.addTab("Shell", "local", LOCAL_CONFIG);
     s.openSettingsTab();
     s.openLogViewerTab();
@@ -227,7 +223,7 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
 
   it("every rendered tab resolves its content from the map (no fallback needed)", () => {
     openOneOfEach();
-    const { rootPanel, tabContent } = useAppStore.getState();
+    const { rootPanel, tabContent } = layoutState();
 
     for (const leaf of getAllLeaves(rootPanel)) {
       for (const t of leaf.tabs) {
@@ -291,7 +287,7 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
         .editorMeta?.scratch
     ).toBe(true);
 
-    const { rootPanel, tabContent } = useAppStore.getState();
+    const { rootPanel, tabContent } = layoutState();
     const view = currentView();
     expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(rootPanel);
   });
@@ -304,7 +300,7 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
 
   /** The appStore layout fields the mirror owns. */
   function layoutOf() {
-    const s = useAppStore.getState();
+    const s = layoutState();
     return {
       rootPanel: s.rootPanel,
       activePanelId: s.activePanelId,
@@ -314,13 +310,13 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
   }
 
   it("drives appStore layout from the region view after a structural op", () => {
-    const s = useAppStore.getState();
+    const s = layoutState();
     s.addTab("Shell", "local", LOCAL_CONFIG);
     s.splitPanel("horizontal");
 
     // appStore's layout equals what the mirror composes from the live region view —
     // i.e. the region is the producer of the rendered layout, not just a shadow.
-    const state = useAppStore.getState();
+    const state = layoutState();
     const composed = composeLayoutState(
       currentLayoutView(),
       state.rootPanel,
@@ -332,13 +328,13 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
   });
 
   it("mirror composes a multi-group layout identically", () => {
-    const s = useAppStore.getState();
+    const s = layoutState();
     s.addTab("Shell", "local", LOCAL_CONFIG);
     s.addTabGroup("Second");
     s.addTab("Shell 2", "local", LOCAL_CONFIG);
     s.splitPanel("vertical");
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     const composed = composeLayoutState(
       currentLayoutView(),
       state.rootPanel,
@@ -350,7 +346,7 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
   });
 
   it("does not strand a tab opened without a layout intent (open mid-flight)", () => {
-    const s = useAppStore.getState();
+    const s = layoutState();
     // A real structural op syncs the region to appStore.
     s.addTab("Shell", "local", LOCAL_CONFIG);
     // A non-intent structural writer: the settings tab is added to appStore but
@@ -366,11 +362,11 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
 
     const idsAfter = allTabs().map((t) => t.id);
     expect(idsAfter).toContain(settingsId);
-    expect(getAllLeaves(useAppStore.getState().rootPanel).length).toBe(2);
+    expect(getAllLeaves(layoutState().rootPanel).length).toBe(2);
   });
 
   it("a stale region view (missing a locally-added tab) fails the mirror gate", () => {
-    const s = useAppStore.getState();
+    const s = layoutState();
     s.addTab("Shell", "local", LOCAL_CONFIG);
     s.openSettingsTab();
 
@@ -386,12 +382,12 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
   });
 
   it("preserves directional lastActiveLeafId marks across mirror recompositions (#448)", () => {
-    const s = useAppStore.getState();
+    const s = layoutState();
     s.addTab("Shell", "local", LOCAL_CONFIG);
     s.splitPanel("horizontal");
-    const root0 = useAppStore.getState().rootPanel as PanelNode & { id: string };
+    const root0 = layoutState().rootPanel as PanelNode & { id: string };
     expect(root0.type).toBe("split");
-    const leaves = getAllLeaves(useAppStore.getState().rootPanel).map((l) => l.id);
+    const leaves = getAllLeaves(layoutState().rootPanel).map((l) => l.id);
     expect(leaves).toHaveLength(2);
     const [p1] = leaves;
 
@@ -399,14 +395,14 @@ describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => 
     // child. The mark lives only in appStore (the backend does not mark), so the
     // mirror must re-apply it on every recompose.
     s.setActivePanel(p1);
-    const markedRoot = useAppStore.getState().rootPanel as PanelNode & {
+    const markedRoot = layoutState().rootPanel as PanelNode & {
       lastActiveLeafId?: string;
     };
     expect(markedRoot.lastActiveLeafId).toBe(p1);
 
     // A subsequent mirror-firing op (a resize — no focus change) must not drop it.
     s.setPanelSizes(root0.id, [70, 30]);
-    const afterRoot = useAppStore.getState().rootPanel as PanelNode & {
+    const afterRoot = layoutState().rootPanel as PanelNode & {
       lastActiveLeafId?: string;
       sizes?: number[];
     };

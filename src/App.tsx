@@ -89,12 +89,14 @@ function App() {
     let unsubscribe: (() => void) | null = null;
     let unlistenLayoutChanged: (() => void) | null = null;
 
+    // Post-#2562 the rich layout is composed from these raw inputs; the panel tree
+    // changes iff one of them changes ref (structure → `layoutView`, tab content
+    // like title/session → `tabContent`, directional nav → `layoutSplitMarks`).
     type StoreState = ReturnType<typeof useAppStore.getState>;
     const layoutChanged = (state: StoreState, prevState: StoreState): boolean =>
-      state.tabGroups !== prevState.tabGroups ||
-      state.rootPanel !== prevState.rootPanel ||
-      state.activePanelId !== prevState.activePanelId ||
-      state.activeTabGroupId !== prevState.activeTabGroupId;
+      state.layoutView !== prevState.layoutView ||
+      state.tabContent !== prevState.tabContent ||
+      state.layoutSplitMarks !== prevState.layoutSplitMarks;
 
     // Main window: auto-save the open tabs/layout whenever the panel tree
     // changes, so the session can be restored after a reload or restart.

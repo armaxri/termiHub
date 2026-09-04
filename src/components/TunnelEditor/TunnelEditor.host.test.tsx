@@ -8,6 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { TunnelEditor } from "./TunnelEditor";
@@ -94,9 +95,9 @@ describe("TunnelEditor — tunnel host (S3, #2155)", () => {
       saveTunnel,
       startTunnel: vi.fn(() => Promise.resolve()),
       closeTab: vi.fn(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      rootPanel: ROOT_PANEL as any,
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    seedLayoutState({ rootPanel: ROOT_PANEL as any });
   });
 
   afterEach(() => {

@@ -7,6 +7,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
+import { seedLayoutState } from "@/test/layoutState";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
@@ -108,12 +109,12 @@ describe("ConnectionEditor — keyboard interaction (#1341)", () => {
       ...useAppStore.getInitialState(),
       connectionTypes: [SSH_TYPE],
       credentialStoreStatus: { mode: "none", status: "unlocked" },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      rootPanel: ROOT_PANEL as any,
       updateConnection: vi.fn(),
       closeTab: vi.fn(),
       setPendingCloseRequest: vi.fn(),
     });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    seedLayoutState({ rootPanel: ROOT_PANEL as any });
     mockedInvoke.mockImplementation(() => Promise.resolve(false));
   });
 

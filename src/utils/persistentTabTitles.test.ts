@@ -34,8 +34,6 @@ function state(
   otherGroups: { id: string; rootPanel: PanelNode }[] = []
 ): PersistentTabTitlesState {
   return {
-    rootPanel,
-    activeTabGroupId: "active",
     tabGroups: [{ id: "active", rootPanel }, ...otherGroups],
     persistentSessions,
   };

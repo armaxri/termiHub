@@ -13,7 +13,9 @@
  */
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { getAllLeaves } from "@/utils/panelTree";
+import type { PanelNode } from "@/types/terminal";
 import { useAppStore } from "@/store/appStore";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { currentSessionView, ensureSessionSubscribed } from "@/store/sessionBridge";
@@ -79,11 +81,8 @@ vi.mock("@/themes", () => ({
 
 /** Helper: collect all terminal tabs from all panels in the current store state. */
 function getAllTerminalTabs() {
-  const store = useAppStore.getState();
-  return [
-    ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-    ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-  ];
+  const store = layoutState();
+  return store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs));
 }
 
 /** Helper: filter tabs that belong to a given agent (same filter as TerminalView). */
@@ -121,7 +120,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   it("finds a remote-session tab by config.agentId even when agentSessions is empty", () => {
     // Simulate the bug condition: sessions were opened after the initial
     // refreshAgentSessions call, so agentSessions is empty.
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -137,7 +136,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   });
 
   it("does not include tabs from a different agent", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell A", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -152,7 +151,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   });
 
   it("does not include non-terminal tabs (settings, log-viewer, etc.)", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     // Add a terminal remote-session tab.
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
@@ -160,10 +159,10 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     });
     // Directly inject a non-terminal tab that coincidentally has agentId in meta.
     // (In practice non-terminal tabs don't have agentId, but guard against it anyway.)
-    const allPanels = useAppStore.getState().getAllPanels();
+    const allPanels = layoutState().getAllPanels();
     const panel = allPanels[0];
-    useAppStore.setState((s) => ({
-      rootPanel: injectTabIntoPanel(s.rootPanel, panel.id, {
+    seedLayoutState({
+      rootPanel: injectTabIntoPanel(layoutState().rootPanel, panel.id, {
         id: "non-terminal-tab",
         title: "Settings",
         contentType: "settings",
@@ -173,7 +172,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
         isActive: false,
         config: { type: "settings", config: { agentId: "agent-1" } },
       }),
-    }));
+    });
 
     // Only the terminal tab should be found.
     const found = findAgentTerminalTabs("agent-1");
@@ -184,7 +183,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   // ── State machine: reconnecting ────────────────────────────────────────────
 
   it("'reconnecting' no longer folds a live-session tab on the client — the backend owns it (#2556)", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -203,7 +202,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   });
 
   it("'reconnecting' skips tabs without an established session", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -222,7 +221,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   // ── State machine: connected (after auto-reconnect) ────────────────────────
 
   it("'connected' after auto-reconnect transitions reconnecting tabs to exited", async () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -251,7 +250,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   });
 
   it("'connected' on initial connect does not mark tabs as exited", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -267,7 +266,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
       }
     }
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
     expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
   });
@@ -275,7 +274,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   // ── State machine: disconnected ─────────────────────────────────────────────
 
   it("'disconnected' marks active-session tabs as exited", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -293,7 +292,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   });
 
   it("'disconnected' with error surfaces the error in the overlay", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -309,13 +308,13 @@ describe("agent-state-change tab discovery — regression for empty agentSession
       useAppStore.getState().setTerminalDisconnectWithError(t.id, errorMsg);
     }
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     expect(state.terminalExitedTabs[tab.id]).toBe(true);
     expect(state.terminalDisconnectErrors[tab.id]).toBe(errorMsg);
   });
 
   it("'disconnected' while reconnecting clears the reconnecting spinner", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -332,7 +331,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
         .setTerminalDisconnectWithError(t.id, "Failed to reconnect after 10 attempts");
     }
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     // The tab lands exited so the "Reconnect failed" error overlay is shown.
     expect(state.terminalExitedTabs[tab.id]).toBe(true);
     expect(state.terminalDisconnectErrors[tab.id]).toBe("Failed to reconnect after 10 attempts");
@@ -380,11 +379,10 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
    * the tab exited (the "Session disconnected" overlay).
    */
   function simulateConnectedHandler(agentId: string, recoveredSessionIds: string[]) {
-    const store = useAppStore.getState();
-    const allTabs = [
-      ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-      ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-    ];
+    const store = layoutState();
+    const allTabs = store.tabGroups.flatMap((g) =>
+      getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)
+    );
     const agentTerminalTabs = allTabs.filter((tab) => {
       if (tab.contentType !== "terminal") return false;
       const cfg = tab.config.config as { agentId?: string };
@@ -404,7 +402,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
   }
 
   it("resumes a tab whose session was recovered by the agent", async () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -415,7 +413,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
 
     simulateConnectedHandler("agent-1", ["session-123"]);
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     // Reconnecting resolved — session resumes automatically (region → connected).
     expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
     // Must NOT be marked as exited.
@@ -423,7 +421,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
   });
 
   it("marks a tab as exited when its session was NOT recovered", async () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -438,7 +436,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
   });
 
   it("handles mixed recovery: resumes surviving sessions, exits dead ones", async () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell A", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -456,14 +454,14 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
     // Only session-aaa recovered.
     simulateConnectedHandler("agent-1", ["session-aaa"]);
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     expect(currentSessionView()[tabA.id]?.status).not.toBe("reconnecting");
     expect(state.terminalExitedTabs[tabA.id]).toBeUndefined(); // resumed
     expect(state.terminalExitedTabs[tabB.id]).toBe(true); // not recovered
   });
 
   it("marks all reconnecting tabs as exited when listAgentSessions fails (safe fallback)", async () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -479,7 +477,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
   });
 
   it("does not affect tabs that are not in reconnecting state", async () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -491,7 +489,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
 
     simulateConnectedHandler("agent-1", []);
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
     expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
   });
@@ -526,11 +524,10 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
 
   /** Simulate the new loop added for auto-retry tab restart. */
   function simulateRetryRestartLoop(agentId: string) {
-    const store = useAppStore.getState();
-    const allTabs = [
-      ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-      ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-    ];
+    const store = layoutState();
+    const allTabs = store.tabGroups.flatMap((g) =>
+      getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)
+    );
     const agentTerminalTabs = allTabs.filter((tab) => {
       if (tab.contentType !== "terminal") return false;
       const cfg = tab.config.config as { agentId?: string };
@@ -549,7 +546,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
   }
 
   it("restarts a tab in auto-retry delay when agent reconnects", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -560,7 +557,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
 
     simulateRetryRestartLoop("agent-1");
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     // reconnectTerminal should have cleared the retry state and fired (retry counter
     // bumped). Agent tabs are backend-driven (#2560): no client connecting deadline
     // is armed — the backend loop owns the timing.
@@ -570,7 +567,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
   });
 
   it("restarts a tab in 'Connection failed' state when agent reconnects", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -581,7 +578,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
 
     simulateRetryRestartLoop("agent-1");
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     // reconnectTerminal should have cleared the error and fired (retry counter
     // bumped). Agent tabs are backend-driven (#2560): no client connecting deadline
     // is armed — the backend loop owns the timing.
@@ -591,7 +588,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
   });
 
   it("does not restart a tab that is actively connecting (createTerminal in-flight)", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -603,14 +600,14 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
 
     simulateRetryRestartLoop("agent-1");
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     // Must NOT call reconnectTerminal — don't interrupt an in-flight attempt.
     expect(state.terminalAutoRetryCount[tab.id]).toBe(1);
     expect(currentSessionView()[tab.id]?.status).toBe("connecting");
   });
 
   it("does not restart a tab that is waiting for agent (already handled)", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -623,13 +620,13 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
 
     simulateRetryRestartLoop("agent-1");
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     // Must NOT double-wake — waiting path handles this tab.
     expect(state.terminalWaitingForAgent[tab.id]).toBe("agent-1");
   });
 
   it("does not affect a tab with no connection-overlay state", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -639,7 +636,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
 
     simulateRetryRestartLoop("agent-1");
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     // No reconnect was kicked off, so no connect deadline was armed.
     expect(state.terminalConnectDeadline[tab.id]).toBeUndefined();
     expect(state.terminalAutoRetryCount[tab.id]).toBeUndefined();
@@ -650,11 +647,11 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
 
 /** Inject a tab into a named leaf panel (used only in tests). */
 function injectTabIntoPanel(
-  node: ReturnType<typeof useAppStore.getState>["rootPanel"],
+  node: PanelNode,
   panelId: string,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   tab: any
-): ReturnType<typeof useAppStore.getState>["rootPanel"] {
+): PanelNode {
   if (node.type === "leaf") {
     if (node.id === panelId) {
       return { ...node, tabs: [...node.tabs, tab] };

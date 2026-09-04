@@ -15,6 +15,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getAllLeaves } from "@/utils/panelTree";
 import { useAppStore } from "@/store/appStore";
+import { layoutState } from "@/test/layoutState";
 import { currentSessionView } from "@/store/sessionBridge";
 import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
 import { applyAgentReconnecting } from "./agentStateHandlers";
@@ -46,7 +47,7 @@ vi.mock("@/services/storage", () => ({
 
 /** Collect all terminal tabs from all panels in the current store state. */
 function getAllTerminalTabs() {
-  const store = useAppStore.getState();
+  const store = layoutState();
   return [
     ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
     ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
@@ -77,7 +78,7 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
   });
 
   it("routes a sessionId-less agent tab to terminalWaitingForAgent", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -95,7 +96,7 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
   });
 
   it("leaves a live-session tab's region untouched — the backend folds it (#2556)", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -113,7 +114,7 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
   });
 
   it("does not fold a spawning (sessionId-less) tab — it parks waiting instead", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Spawning", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -127,7 +128,7 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
   });
 
   it("handles a mix: live tab left for the backend, spawning tab waiting", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Live", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -142,7 +143,7 @@ describe("applyAgentReconnecting (G8, #1242)", () => {
 
     applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     // The live tab's region fold is the backend's job (#2556); only the spawning
     // tab is acted on here — parked on the waiting-for-agent path.
     expect(currentSessionView()[live.id]?.status).not.toBe("reconnecting");

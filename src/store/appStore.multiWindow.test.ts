@@ -47,11 +47,12 @@ vi.mock("@/services/api", () => ({
 import { useAppStore } from "./appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { TabHandoffRecord } from "@/types/window";
+import { layoutState } from "@/test/layoutState";
 
 /** Seed one live terminal tab (with a backend session id) and return its ids. */
 function seedLiveTab(sessionId: string): { tabId: string; panelId: string } {
   useAppStore.getState().addTab("bash", "local");
-  const leaf = getAllLeaves(useAppStore.getState().rootPanel)[0];
+  const leaf = getAllLeaves(layoutState().rootPanel)[0];
   const tabId = leaf.tabs[0].id;
   useAppStore.getState().setTabSessionId(tabId, sessionId);
   return { tabId, panelId: leaf.id };
@@ -85,7 +86,7 @@ describe("appStore — multi-window re-parenting seam (#1900)", () => {
       expect(record.tab.contentType).toBe("terminal");
 
       // Removed from the source window's tree.
-      const tabs = getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
+      const tabs = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs);
       expect(tabs).toHaveLength(0);
     });
 
@@ -112,7 +113,7 @@ describe("appStore — multi-window re-parenting seam (#1900)", () => {
       expect(sendHandoffToWindow.mock.calls[0][0]).toBe("win-3");
       expect(openWindow).not.toHaveBeenCalled();
 
-      const tabs = getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
+      const tabs = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs);
       expect(tabs).toHaveLength(0);
     });
   });
@@ -131,7 +132,7 @@ describe("appStore — multi-window re-parenting seam (#1900)", () => {
 
       useAppStore.getState().hydrateHandoffTab(record);
 
-      const tabs = getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
+      const tabs = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs);
       expect(tabs).toHaveLength(1);
       expect(tabs[0].sessionId).toBe("sess-9");
       expect(tabs[0].title).toBe("moved");
@@ -171,7 +172,7 @@ describe("appStore — multi-window re-parenting seam (#1900)", () => {
       await useAppStore.getState().receivePendingHandoffs();
 
       expect(claimSession).toHaveBeenCalledWith("sess-drain");
-      const tabs = getAllLeaves(useAppStore.getState().rootPanel).flatMap((l) => l.tabs);
+      const tabs = getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs);
       expect(tabs.some((t) => t.sessionId === "sess-drain")).toBe(true);
     });
   });

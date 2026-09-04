@@ -12,6 +12,7 @@ import { useAppStore } from "@/store/appStore";
 import { FileBrowserTab } from "./FileBrowserTab";
 import { createTerminal, closeTerminal } from "@/services/api";
 import { getAllLeaves } from "@/utils/panelTree";
+import { layoutState } from "@/test/layoutState";
 
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("ftp-session-1")),
@@ -26,7 +27,7 @@ const mockedCloseTerminal = vi.mocked(closeTerminal);
 
 function tabSessionId(tabId: string): string | null {
   return (
-    getAllLeaves(useAppStore.getState().rootPanel)
+    getAllLeaves(layoutState().rootPanel)
       .flatMap((l) => l.tabs)
       .find((t) => t.id === tabId)?.sessionId ?? null
   );

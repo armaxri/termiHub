@@ -11,13 +11,12 @@ import { CONTEXT_COMMANDS } from "./contextCommands";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { getAllLeaves } from "@/utils/panelTree";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { layoutState } from "@/test/layoutState";
 
 /** Add a tab of the given content type and make it the active tab/panel. */
 function addActiveTab(contentType: "terminal" | "editor" = "terminal"): string {
   const id = useAppStore.getState().addTab("Tab", "local", undefined, { contentType });
-  const panel = getAllLeaves(useAppStore.getState().rootPanel).find((p) =>
-    p.tabs.some((t) => t.id === id)
-  )!;
+  const panel = getAllLeaves(layoutState().rootPanel).find((p) => p.tabs.some((t) => t.id === id))!;
   useAppStore.getState().setActivePanel(panel.id);
   useAppStore.getState().setActiveTab(id, panel.id);
   return id;
@@ -25,7 +24,7 @@ function addActiveTab(contentType: "terminal" | "editor" = "terminal"): string {
 
 /** The active leaf panel resolved from live store state. */
 function activeLeaf() {
-  const { rootPanel, activePanelId } = useAppStore.getState();
+  const { rootPanel, activePanelId } = layoutState();
   return getAllLeaves(rootPanel).find((p) => p.id === activePanelId) ?? null;
 }
 
@@ -158,13 +157,13 @@ describe("focus-panel", () => {
     // Split horizontally: the new (right) panel becomes active, so the original
     // panel sits to its left.
     useAppStore.getState().splitPanel("horizontal");
-    const rightPanelId = useAppStore.getState().activePanelId;
+    const rightPanelId = layoutState().activePanelId;
 
     expect(CONTEXT_COMMANDS["focus-left"].isAvailable()).toBe(true);
     expect(CONTEXT_COMMANDS["focus-right"].isAvailable()).toBe(false);
 
     CONTEXT_COMMANDS["focus-left"].run();
-    expect(useAppStore.getState().activePanelId).not.toBe(rightPanelId);
+    expect(layoutState().activePanelId).not.toBe(rightPanelId);
   });
 });
 
