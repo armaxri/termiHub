@@ -27,6 +27,19 @@ import { bufferToLogicalLines } from "@/utils/terminalBuffer";
 
 const LARGE_PASTE_THRESHOLD = 5000;
 
+/**
+ * Minimum spacing between two paste triggers for the *same* terminal tab. A
+ * duplicated/bounced OS mouse signal (seen on Windows right-click, #2595) fires
+ * the paste action more than once for a single gesture, inserting the clipboard
+ * content twice. Any second trigger for a tab within this window is dropped.
+ *
+ * 50 ms is short enough that no human deliberately pastes into the same terminal
+ * twice that fast (a bounced signal arrives within a few ms), yet long enough to
+ * swallow the duplicate. The guard is default-on and keyed per tab, so pasting
+ * into two different tabs in quick succession is unaffected.
+ */
+export const PASTE_DEBOUNCE_MS = 50;
+
 interface TerminalRegistryContextType {
   /** Register a terminal's xterm container element, xterm instance, and fit addon. */
   register: (tabId: string, element: HTMLDivElement, xterm: XTerm, fitAddon: FitAddon) => void;
@@ -126,6 +139,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const fitAddonRegistryRef = useRef(new Map<string, FitAddon>());
   const sessionRegistryRef = useRef(new Map<string, SessionId>());
   const searchAddonRegistryRef = useRef(new Map<string, SearchAddon>());
+  // Per-tab timestamp of the last accepted paste, used to drop a bounced/duplicated
+  // paste trigger for the same tab within PASTE_DEBOUNCE_MS (#2595).
+  const lastPasteAtRef = useRef(new Map<string, number>());
   const parkingRef = useRef<HTMLDivElement | null>(null);
 
   const register = useCallback(
@@ -143,6 +159,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     fitAddonRegistryRef.current.delete(tabId);
     sessionRegistryRef.current.delete(tabId);
     searchAddonRegistryRef.current.delete(tabId);
+    lastPasteAtRef.current.delete(tabId);
   }, []);
 
   const getElement = useCallback((tabId: string) => {
@@ -332,6 +349,18 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     async (tabId: string) => {
       const sessionId = sessionRegistryRef.current.get(tabId);
       if (!sessionId) return;
+
+      // Drop a bounced/duplicated paste trigger: on Windows a single right-click
+      // can deliver the paste signal twice a few ms apart, pasting the clipboard
+      // content twice. Ignore a second trigger for the same tab within the guard
+      // window; keyed per tab so quick pastes into different tabs both apply
+      // (#2595). All paste paths (right-click quick action, context-menu Paste,
+      // Cmd/Ctrl+V) funnel through here, so guarding here covers every trigger.
+      const now = Date.now();
+      const lastPasteAt = lastPasteAtRef.current.get(tabId);
+      if (lastPasteAt !== undefined && now - lastPasteAt < PASTE_DEBOUNCE_MS) return;
+      lastPasteAtRef.current.set(tabId, now);
+
       const text = await readClipboard();
       if (!text) return;
 
