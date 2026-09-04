@@ -21,6 +21,7 @@ import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { currentSessionView, ensureSessionSubscribed } from "@/store/sessionBridge";
 import {
   connected,
+  failed,
   installSessionLifecycleHarness,
   reconnecting,
   sessionLost,
@@ -292,7 +293,7 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
   });
 
-  it("'disconnected' with error surfaces the error in the overlay", () => {
+  it("'disconnected' with error surfaces the error from the region (#2612/#2564)", async () => {
     const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
@@ -303,18 +304,28 @@ describe("agent-state-change tab discovery — regression for empty agentSession
 
     const errorMsg = "Failed to reconnect after 10 attempts";
 
-    // Simulate fixed "disconnected" handler with error:
+    // Fully-failed reconnect: the backend `agent_io_task` folds the region entry
+    // `reconnecting → failed` at the source with the reconnect error (#2612/#2564);
+    // seed the region to represent that server fold, then the handler reflects only
+    // the local presentation view-state via `settleBackendReconnectGaveUp` — never
+    // re-driving the region.
+    await ensureSessionSubscribed();
+    harness.transport.setSession(tab.id, failed(errorMsg));
     for (const t of findAgentTerminalTabs("agent-1")) {
       if (!t.sessionId) continue;
-      useAppStore.getState().setTerminalDisconnectWithError(t.id, errorMsg);
+      useAppStore.getState().settleBackendReconnectGaveUp(t.id, errorMsg);
     }
 
     const state = layoutState();
+    // Local view-state mounts the overlay, and the region carries the backend-folded
+    // `failed` authority the "Reconnect failed" overlay surfaces the error from.
     expect(state.terminalExitedTabs[tab.id]).toBe(true);
     expect(state.terminalDisconnectErrors[tab.id]).toBe(errorMsg);
+    expect(currentSessionView()[tab.id]?.status).toBe("failed");
+    expect(currentSessionView()[tab.id]?.error).toBe(errorMsg);
   });
 
-  it("'disconnected' while reconnecting clears the reconnecting spinner", () => {
+  it("'disconnected' while reconnecting folds the region off reconnecting to failed", async () => {
     const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
@@ -322,20 +333,29 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     });
     const tab = getAllTerminalTabs()[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
-    applyAgentReconnecting("agent-1", findAgentTerminalTabs("agent-1"), undefined);
+    // Prior transient-break "reconnecting" state comes from the backend fold (#2556);
+    // seed the region to represent it (the client no longer mirrors it).
+    await ensureSessionSubscribed();
+    harness.transport.setSession(
+      tab.id,
+      reconnecting({ phase: "waiting", attempt: 0, delayMs: 1000 })
+    );
+    const errorMsg = "Failed to reconnect after 10 attempts";
 
-    // Simulate "disconnected" with error (all retries exhausted):
+    // Fully failed (all retries exhausted): the backend folds `reconnecting → failed`
+    // at the source; the handler reflects only the local view-state.
+    harness.transport.setSession(tab.id, failed(errorMsg));
     for (const t of findAgentTerminalTabs("agent-1")) {
       if (!t.sessionId) continue;
-      useAppStore
-        .getState()
-        .setTerminalDisconnectWithError(t.id, "Failed to reconnect after 10 attempts");
+      useAppStore.getState().settleBackendReconnectGaveUp(t.id, errorMsg);
     }
 
     const state = layoutState();
-    // The tab lands exited so the "Reconnect failed" error overlay is shown.
+    // The region left `reconnecting` (no stuck spinner) and the tab lands exited so
+    // the "Reconnect failed" error overlay is shown.
+    expect(currentSessionView()[tab.id]?.status).toBe("failed");
     expect(state.terminalExitedTabs[tab.id]).toBe(true);
-    expect(state.terminalDisconnectErrors[tab.id]).toBe("Failed to reconnect after 10 attempts");
+    expect(state.terminalDisconnectErrors[tab.id]).toBe(errorMsg);
   });
 });
 
