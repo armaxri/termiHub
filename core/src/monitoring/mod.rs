@@ -1,5 +1,10 @@
 //! Monitoring types and parsers shared between the desktop and agent crates.
 
+// Periodic HTTP monitor, hostable on the desktop or a remote agent (#2592).
+// Behind the optional `http-monitor` feature so non-hosting consumers do not
+// pull `reqwest`.
+#[cfg(feature = "http-monitor")]
+pub mod http_monitor;
 pub mod parser;
 pub mod provider;
 pub mod status;

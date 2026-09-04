@@ -139,6 +139,16 @@ ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
 # Base64 codec for the 32-byte public key and 64-byte signature carried in
 # `signature.json` (#2036). Behind `plugin`.
 base64 = { version = "0.22", optional = true }
+# HTTP client for the periodic HTTP monitor service (#2592), hostable on the
+# desktop or a remote agent. `rustls-tls` avoids an OpenSSL dependency for the
+# agent's musl cross-compilation; `blocking` backs the offline unit test that
+# obtains a real `reqwest::Error`. Already in the workspace tree (the desktop
+# and agent both depend on `reqwest`), so this adds no new crate. Behind the
+# optional `http-monitor` feature.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "blocking",
+], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Used to build a per-user DACL for a security-hardened local-IPC listener
@@ -230,6 +240,11 @@ plugin = [
     "dep:sha2",
     "dep:hex",
 ]
+# Periodic HTTP monitor service (#2592), hostable on the desktop or a remote
+# agent. Pulls `reqwest` for the checks, `uuid` for monitor ids, `tracing` for
+# lifecycle logs, and `tokio/rt` for the per-monitor poll runtime. Enabled by the
+# desktop (`src-tauri`) and the agent so both can host the monitor.
+http-monitor = ["dep:reqwest", "dep:uuid", "dep:tracing", "tokio/rt"]
 serial = ["dep:serial2", "dep:serial2-tokio", "dep:tracing"]
 local-shell = ["dep:portable-pty", "dep:tracing"]
 telnet = ["dep:tracing"]
