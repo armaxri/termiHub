@@ -1,0 +1,138 @@
+name: Agent Integration Windows Serial Grade (#2495)
+
+# NON-BLOCKING, deterministic-by-isolation grading lane for the chronically-flaky
+# Windows agent-integration tests (#2495).
+#
+# ── Why this lane exists ─────────────────────────────────────────────────────
+# The 16 live-agent-TCP tests (15 in `agent/tests/local_agent_integration.rs`,
+# 1 in `agent/tests/tcp_listener_readiness.rs`) flaked *only* on the Windows CI
+# leg with `Os { code: 10060, kind: TimedOut }` — a *random* test each run —
+# because the shared `build-windows` leg
+# (`cargo test -p termihub-agent -p termihub-core --all-features`,
+# `agent.yml`) cold-starts many `termihub-agent` processes at once AND runs them
+# alongside the `termihub-core` suite, oversubscribing the runner's few cores
+# until an agent answered past even a generous deadline. Transport band-aids
+# (#2492 connect-retry, #2494 read-deadline) and the per-process / aggregate
+# concurrency gates (#2501/#2528) reduced but never *eliminated* the flake, so
+# the 16 tests are quarantined on Windows via `#[cfg_attr(windows, ignore … #2495)]`
+# and the shared leg simply skips them — keeping unrelated PRs unblocked.
+#
+# ── What this lane does differently ──────────────────────────────────────────
+# It removes BOTH contention sources by construction rather than tuning a gate:
+#   * SERIAL — `--test-threads=1`, so exactly one agent cold-starts at a time.
+#   * ISOLATED — only `-p termihub-agent`, only these two test targets; the
+#     `termihub-core` suite never runs concurrently with the agent spawns.
+# On an otherwise-idle `windows-latest` runner that should make the subset
+# deterministically green. This lane is the evidence-collector for that claim.
+#
+# ── NON-BLOCKING (this is deliberate — do not "fix" it) ──────────────────────
+# The job is `continue-on-error: true`, so a red iteration CANNOT fail the
+# workflow run or block/red any PR. It runs the still-quarantined subset via
+# `-- --ignored` WITHOUT removing the `#[cfg_attr(windows, ignore …)]` source
+# attributes, so the shared `build-windows` leg is completely unchanged and keeps
+# skipping them. This lane only *observes*. Per the repo's chronic-flake bar
+# ("3 green proves nothing — require many consecutive green runs before trusting
+# an un-quarantine"), it accumulates a green/red signal across successive PR runs.
+#
+# ── Follow-up (#2495) — flipping this to the real fix ────────────────────────
+# Once this lane is green across many consecutive runs:
+#   1. remove `continue-on-error: true` (make it blocking), and
+#   2. delete the `#[cfg_attr(windows, ignore … #2495)]` attributes from the two
+#      test files so the tests run per-PR again — now inside THIS serial+isolated
+#      job rather than the shared parallel leg — then close #2495.
+# Until then it stays non-blocking and the quarantine stays in place.
+
+on:
+  # Runs on the same agent-touching PRs as agent.yml so it accumulates a
+  # green/red signal over successive real runs (it is non-blocking, see above).
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'agent/**'
+      - 'core/**'
+      - 'Cargo.toml'
+      - '.github/workflows/agent-integration-windows-serial-grade.yml'
+  # Also on-demand, e.g. to stress-loop the grade before deciding to un-quarantine.
+  workflow_dispatch:
+
+# One grade per ref; cancel a superseded run when a newer commit lands on the PR.
+concurrency:
+  group: agent-integration-windows-serial-grade-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  serial-grade:
+    name: Serial grade quarantined agent-integration tests (windows-latest)
+    runs-on: windows-latest
+    # NON-BLOCKING: a failed grade must never fail the workflow run or red a PR.
+    # This is the whole point of the lane — it gathers evidence, it does not gate.
+    # Remove this line (making the job blocking) only as part of the #2495
+    # un-quarantine, together with deleting the `#[cfg_attr(windows, ignore …)]`
+    # attributes from the two test files.
+    continue-on-error: true
+    # Serial live-agent spawns on a shared runner are slow by construction; a
+    # generous ceiling keeps a genuinely wedged agent from hanging forever.
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          # Reuse the warm Windows cache the Agent workflow's build-windows job
+          # writes, so a grade starts hot. This is a throwaway grading lane — it
+          # must never write its own cache against the budget, hence save-if:false.
+          key: x86_64-pc-windows-msvc
+          save-if: false
+
+      # Compile the two test binaries up front so build cost is excluded from the
+      # grade step's timing below.
+      - name: Build agent-integration test binaries
+        run: >-
+          cargo test -p termihub-agent
+          --test local_agent_integration
+          --test tcp_listener_readiness
+          --all-features --no-run
+
+      # Run ONLY the quarantined subset, SERIALLY and ISOLATED from termihub-core:
+      #   * `--ignored` selects exactly the `#[cfg_attr(windows, ignore …)]` tests
+      #     (on Windows that is precisely the 16 live-agent-TCP tests #2495 tracks;
+      #     the two target files carry no other `#[ignore]` attributes).
+      #   * `--test-threads=1` runs them one at a time → one agent cold-start at a
+      #     time, on an otherwise-idle runner.
+      #   * `--nocapture` surfaces the `[termihub-test-timing]` phase lines that
+      #     `TERMIHUB_TEST_TIMING=1` emits even on a passing run.
+      # The harness itself already sets `TERMIHUB_AGENT_WORKER_THREADS=2` and
+      # `TERMIHUB_AGENT_SKIP_DOCKER_PROBE=1` on each spawned agent; the two env
+      # vars below only make the serial intent explicit at the job level.
+      - name: Serial grade (--ignored subset, --test-threads=1, timing on)
+        shell: pwsh
+        env:
+          TERMIHUB_TEST_TIMING: "1"
+          # Redundant with --test-threads=1 (only one agent is ever alive), but
+          # documents that the cold-start gate is pinned to a single agent here.
+          TERMIHUB_AGENT_TEST_MAX_CONCURRENT: "1"
+        run: |
+          cargo test -p termihub-agent `
+            --test local_agent_integration `
+            --test tcp_listener_readiness `
+            --all-features `
+            -- --ignored --test-threads=1 --nocapture
+          $code = $LASTEXITCODE
+          if ($code -eq 0) {
+            $line = "grade PASS: all 16 quarantined live-agent-TCP tests green (serial, isolated)"
+          } else {
+            $line = "grade FAIL (cargo exit $code): still flaky serially — #2495 stays open; timing lines above localize the slow phase"
+          }
+          Write-Host $line
+          if ($env:GITHUB_STEP_SUMMARY) { Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- $line" }
+          # Exit with the test result so the (non-blocking) job's own conclusion
+          # reflects the grade. continue-on-error keeps this off the PR's gate.
+          exit $code
