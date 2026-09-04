@@ -56,6 +56,18 @@ pub struct TunnelConfig {
     /// Whether to reconnect automatically on disconnect.
     #[serde(default)]
     pub reconnect_on_disconnect: bool,
+    /// For a chained **companion** tunnel — the desktop-hosted hop created by
+    /// "Chain a hop to this computer" (#2597) — the id of its agent-hosted
+    /// **parent**. `None` for a normal, unchained tunnel and for the parent
+    /// itself.
+    ///
+    /// The link is stored on one side only: the companion points at its parent,
+    /// and the parent's side of the link (`companionId`) is *derived* from this
+    /// field, so the pairing has a single source of truth and cannot drift.
+    /// Defaulted on deserialize and skipped when absent, so tunnels saved before
+    /// chaining existed round-trip byte-for-byte unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub companion_of: Option<String>,
 }
 
 /// Current status of a tunnel.
@@ -156,6 +168,7 @@ mod tests {
             host: RunLocation::ThisComputer,
             auto_start: true,
             reconnect_on_disconnect: false,
+            companion_of: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: TunnelConfig = serde_json::from_str(&json).unwrap();
@@ -185,6 +198,7 @@ mod tests {
             host: RunLocation::ThisComputer,
             auto_start: false,
             reconnect_on_disconnect: true,
+            companion_of: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: TunnelConfig = serde_json::from_str(&json).unwrap();
@@ -211,6 +225,7 @@ mod tests {
             host: RunLocation::ThisComputer,
             auto_start: false,
             reconnect_on_disconnect: false,
+            companion_of: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: TunnelConfig = serde_json::from_str(&json).unwrap();
@@ -238,6 +253,7 @@ mod tests {
                 host: RunLocation::ThisComputer,
                 auto_start: false,
                 reconnect_on_disconnect: false,
+                companion_of: None,
             }],
         };
         let json = serde_json::to_string_pretty(&store).unwrap();
@@ -360,6 +376,7 @@ mod tests {
             host: RunLocation::Agent("build-box".to_string()),
             auto_start: false,
             reconnect_on_disconnect: false,
+            companion_of: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["host"]["kind"], "agent");
@@ -369,6 +386,47 @@ mod tests {
 
         // The serde default (no field in JSON) is desktop hosting.
         assert_eq!(RunLocation::default(), RunLocation::ThisComputer);
+    }
+
+    #[test]
+    fn companion_of_round_trips_and_defaults_to_none() {
+        // A companion carries its parent's id; it round-trips as camelCase
+        // `companionOf`.
+        let companion = TunnelConfig {
+            id: "tun-companion".to_string(),
+            name: "hop on this computer".to_string(),
+            ssh_connection_id: "conn-agent".to_string(),
+            tunnel_type: TunnelType::Local(LocalForwardConfig {
+                local_host: "127.0.0.1".to_string(),
+                local_port: 5432,
+                remote_host: "127.0.0.1".to_string(),
+                remote_port: 5432,
+            }),
+            host: RunLocation::ThisComputer,
+            auto_start: false,
+            reconnect_on_disconnect: false,
+            companion_of: Some("tun-parent".to_string()),
+        };
+        let json = serde_json::to_value(&companion).unwrap();
+        assert_eq!(json["companionOf"], "tun-parent");
+        let back: TunnelConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back.companion_of.as_deref(), Some("tun-parent"));
+
+        // Absent on an unchained tunnel: it defaults to `None` and stays off the
+        // wire, so pre-chaining `tunnels.json` files round-trip unchanged.
+        let plain = r#"{
+            "id": "tun-1",
+            "name": "Test",
+            "sshConnectionId": "conn-1",
+            "tunnelType": {
+                "type": "dynamic",
+                "config": { "localHost": "127.0.0.1", "localPort": 1080 }
+            }
+        }"#;
+        let config: TunnelConfig = serde_json::from_str(plain).unwrap();
+        assert_eq!(config.companion_of, None);
+        let reserialized = serde_json::to_string(&config).unwrap();
+        assert!(!reserialized.contains("companionOf"));
     }
 
     #[test]
@@ -386,6 +444,7 @@ mod tests {
             host: RunLocation::ThisComputer,
             auto_start: false,
             reconnect_on_disconnect: false,
+            companion_of: None,
         };
         let json: serde_json::Value = serde_json::to_value(&config).unwrap();
         // Check camelCase renaming
