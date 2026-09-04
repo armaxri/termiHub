@@ -59,6 +59,17 @@ export interface TunnelConfig {
   host?: RunLocation;
   autoStart: boolean;
   reconnectOnDisconnect: boolean;
+  /**
+   * For a chained **companion** tunnel — the desktop-hosted hop created by
+   * "Chain a hop to this computer" (#2597) — the id of its agent-hosted
+   * **parent**. Absent on a normal, unchained tunnel and on the parent itself.
+   *
+   * The link is stored on the companion only; the parent's side (`companionId`)
+   * is derived from this field (see {@link findCompanion} in
+   * `@/utils/tunnelChain`), so the pairing has one source of truth. Mirrors the
+   * Rust `TunnelConfig::companion_of`, which defaults/omits when absent.
+   */
+  companionOf?: string;
 }
 
 /** Current status of a tunnel. */

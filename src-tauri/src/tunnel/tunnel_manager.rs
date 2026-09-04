@@ -164,6 +164,72 @@ fn resolve_tunnel_host(
         .map_err(|e| e.to_string())
 }
 
+// ── Companion (chained desktop-hop) linkage — pure helpers (#2597) ───────────
+//
+// "Chain a hop to this computer" pairs an agent-hosted loopback forward (the
+// *parent*) with a desktop-hosted `-L` *companion* that restores plain
+// `localhost:PORT` on the desktop. The pairing lives on the companion's
+// [`TunnelConfig::companion_of`] field; the parent's side is derived. These
+// helpers are pure (no locking, no IO, no `AppHandle`) so the ordered
+// pair-lifecycle decisions are unit-testable without a live SSH stack.
+
+/// Whether a lock-guarded id→value map holds `id`. A poisoned lock reads as
+/// absent (the manager treats a poisoned map as "not present" everywhere).
+fn map_contains<V>(map: &Arc<Mutex<HashMap<String, V>>>, id: &str) -> bool {
+    map.lock().map(|g| g.contains_key(id)).unwrap_or(false)
+}
+
+/// The companion linked to `parent_id`, if any — the config whose
+/// `companion_of` points back at it.
+fn find_companion<'a>(tunnels: &'a [TunnelConfig], parent_id: &str) -> Option<&'a TunnelConfig> {
+    tunnels
+        .iter()
+        .find(|t| t.companion_of.as_deref() == Some(parent_id))
+}
+
+/// What a chained companion must do when its parent settles into `parent_status`.
+///
+/// The dependency is one-directional: the companion's forward target *is* the
+/// parent's listen socket, so it may only run while the parent is `Connected`,
+/// and must be held down otherwise (it can never outlive or outrun its parent).
+/// `companion_running` gates the action so a steady state emits no churn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CompanionAction {
+    /// Bring the companion up (parent reached `Connected`, companion is down).
+    Start,
+    /// Tear the companion down (parent left `Connected`, companion is up).
+    Stop,
+    /// Nothing to do — the companion already matches the parent.
+    None,
+}
+
+/// Decide the companion action for a parent status transition. Pure so the
+/// ordered start / hold-down rules are unit-tested directly.
+fn companion_action(parent_status: &TunnelStatus, companion_running: bool) -> CompanionAction {
+    match parent_status {
+        // Parent is carrying traffic → the companion's target is live; start it.
+        TunnelStatus::Connected => {
+            if companion_running {
+                CompanionAction::None
+            } else {
+                CompanionAction::Start
+            }
+        }
+        // Parent is not connected (connecting / reconnecting / disconnected /
+        // error) → hold the companion down so it never dangles at a dead port.
+        TunnelStatus::Connecting
+        | TunnelStatus::Reconnecting
+        | TunnelStatus::Disconnected
+        | TunnelStatus::Error => {
+            if companion_running {
+                CompanionAction::Stop
+            } else {
+                CompanionAction::None
+            }
+        }
+    }
+}
+
 /// How often the live stats emitter samples each active tunnel and pushes a
 /// `tunnel-stats-updated` event (GAP 6, #1248).
 const STATS_EMIT_INTERVAL: Duration = Duration::from_secs(1);
@@ -402,6 +468,32 @@ impl TunnelManager {
         Ok(store.tunnels.clone())
     }
 
+    /// The id of the companion tunnel linked to `parent_id`, if a chained
+    /// desktop hop exists for it (#2597). `None` when the tunnel is unchained or
+    /// is itself a companion.
+    fn companion_id_of(&self, parent_id: &str) -> Option<String> {
+        let store = self.tunnel_configs.lock().ok()?;
+        find_companion(&store.tunnels, parent_id).map(|c| c.id.clone())
+    }
+
+    /// Whether a tunnel currently has a live or in-flight presence — active
+    /// (desktop or agent), reconnecting, or mid-connect. Used to gate the
+    /// companion ordered-lifecycle so a steady pair emits no churn (#2597).
+    fn is_tunnel_active(&self, tunnel_id: &str) -> bool {
+        map_contains(&self.active_tunnels, tunnel_id)
+            || map_contains(&self.agent_tunnels, tunnel_id)
+            || map_contains(&self.reconnecting, tunnel_id)
+            || self.connecting.is_connecting(tunnel_id)
+    }
+
+    /// Whether a tunnel is fully `Connected` — present in the desktop or agent
+    /// active maps (as opposed to merely connecting / reconnecting). A chained
+    /// companion may only start once its parent is connected (#2597).
+    fn is_tunnel_connected(&self, tunnel_id: &str) -> bool {
+        map_contains(&self.active_tunnels, tunnel_id)
+            || map_contains(&self.agent_tunnels, tunnel_id)
+    }
+
     /// Save (add or update) a tunnel configuration.
     pub fn save_tunnel(&self, config: TunnelConfig) -> Result<(), TerminalError> {
         let mut store = self
@@ -423,8 +515,15 @@ impl TunnelManager {
     }
 
     /// Delete a tunnel configuration. Stops the tunnel first if active.
+    ///
+    /// Deleting a chained parent **cascades**: its companion desktop hop is
+    /// stopped (by `stop_tunnel` below) and its config is removed too, so no
+    /// orphan desktop tunnel is left pointing at a now-gone agent port (#2597).
+    /// Deleting a companion removes only itself, which clears the parent's
+    /// derived link.
     pub fn delete_tunnel(&self, tunnel_id: &str) -> Result<(), TerminalError> {
-        // Stop if active
+        // Stop if active. `stop_tunnel` already stops a linked companion first,
+        // so the whole pair is torn down before the configs are dropped.
         self.stop_tunnel(tunnel_id)?;
 
         let mut store = self
@@ -432,7 +531,11 @@ impl TunnelManager {
             .lock()
             .map_err(|e| TerminalError::TunnelError(format!("Lock error: {}", e)))?;
 
-        store.tunnels.retain(|t| t.id != tunnel_id);
+        // Remove the target plus its companion (if any) — a parent-delete cascade.
+        let companion_id = find_companion(&store.tunnels, tunnel_id).map(|c| c.id.clone());
+        store
+            .tunnels
+            .retain(|t| t.id != tunnel_id && Some(&t.id) != companion_id.as_ref());
 
         self.storage
             .save(&store)
@@ -530,6 +633,19 @@ impl TunnelManager {
                     TerminalError::TunnelError(format!("Tunnel not found: {}", tunnel_id))
                 })?
         };
+
+        // A chained companion cannot bind usefully until its parent's listen
+        // socket exists, so starting a companion first ensures the parent is up
+        // (#2597). If the parent is not yet connected, start it and return: the
+        // parent reaching `Connected` brings the companion up through the
+        // status-emit orchestration, in the correct order. If the parent is
+        // already connected (e.g. the user restarts a companion they stopped
+        // directly), fall through and start the companion now.
+        if let Some(parent_id) = config.companion_of.clone() {
+            if !self.is_tunnel_connected(&parent_id) {
+                return self.start_tunnel(&parent_id);
+            }
+        }
 
         // Route by run-location (S3, #2155/#2185). Desktop-hosted tunnels (the
         // default) take the existing local forwarder path below; agent-hosted
@@ -1217,6 +1333,14 @@ impl TunnelManager {
 
     /// Stop an active tunnel by ID.
     pub fn stop_tunnel(&self, tunnel_id: &str) -> Result<(), TerminalError> {
+        // Stop a chained companion before its parent (#2597): the companion's
+        // forward target is the parent's listen socket, so it must go down first
+        // or it would dangle at a dead port. A companion has no companion of its
+        // own, so this recurses at most one level.
+        if let Some(companion_id) = self.companion_id_of(tunnel_id) {
+            let _ = self.stop_tunnel(&companion_id);
+        }
+
         // An explicit stop dismisses any recorded failure, returning the tunnel
         // from the `Error` resting state to `Disconnected` (GAP 3, #1238).
         clear_last_error(&self.last_errors, tunnel_id);
@@ -1441,13 +1565,55 @@ fn emit_tunnel_status(
     // A status-change event carries no vantage/stats — the projection's
     // `get_statuses` path fills those for the resting state on the publish below
     // (#2199); the legacy event stays a bare status ping.
-    let state = TunnelState::desktop(tunnel_id.to_string(), status, error, TunnelStats::default());
+    let state = TunnelState::desktop(
+        tunnel_id.to_string(),
+        status.clone(),
+        error,
+        TunnelStats::default(),
+    );
     let _ = app_handle.emit("tunnel-status-changed", &state);
     // Project the change onto the stateless-UI `tunnels` region (#2150). Kept
     // beside the legacy event above (strangler): this is the single status-emit
     // choke point, and every caller emits outside the manager's locks, so the
     // re-lock inside `publish_tunnels` cannot deadlock.
     crate::tunnel::projection::publish_tunnels(app_handle);
+    // Drive the chained companion's ordered lifecycle off the same choke point:
+    // when a parent settles into `Connected` bring its desktop hop up, otherwise
+    // hold it down (#2597). A no-op for tunnels that are not a chained parent.
+    orchestrate_companion(app_handle, tunnel_id, &status);
+}
+
+/// React to a parent tunnel's status transition by bringing its chained
+/// companion up (parent `Connected`) or holding it down (any other state), so
+/// the desktop hop never dangles pointing at a dead listen port (#2597).
+///
+/// Cheap-gated: resolves the managed [`TunnelManager`] and returns immediately
+/// unless `parent_id` actually has a linked companion. The companion's own
+/// start/stop runs on a blocking task so it never executes inside the status-emit
+/// path or under any manager lock, preserving the choke point's deadlock
+/// discipline. The companion is not itself a parent, so its resulting emits do
+/// not recurse here.
+fn orchestrate_companion(app_handle: &AppHandle, parent_id: &str, parent_status: &TunnelStatus) {
+    let Some(manager) = resolve_managed_arc::<TunnelManager, _>(app_handle) else {
+        return;
+    };
+    let Some(companion_id) = manager.companion_id_of(parent_id) else {
+        return;
+    };
+    let action = companion_action(parent_status, manager.is_tunnel_active(&companion_id));
+    match action {
+        CompanionAction::None => {}
+        CompanionAction::Start => {
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = manager.start_tunnel(&companion_id);
+            });
+        }
+        CompanionAction::Stop => {
+            tauri::async_runtime::spawn_blocking(move || {
+                let _ = manager.stop_tunnel(&companion_id);
+            });
+        }
+    }
 }
 
 /// Per-tunnel supervisor loop (#1243, GAP 1 + GAP 2).
@@ -1694,13 +1860,13 @@ mod tests {
 
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::{
-        backoff_delay, clear_last_error, last_error_for, record_last_error, resolve_managed_arc,
-        resolve_tunnel_host, resting_status, run_reconnect_loop, snapshot_active_stats,
-        stats_from_status_reply, wait_forwarder_death, wait_session_death, ActiveTunnel,
-        ReconnectOutcome, TunnelStatsUpdate,
+        backoff_delay, clear_last_error, companion_action, find_companion, last_error_for,
+        record_last_error, resolve_managed_arc, resolve_tunnel_host, resting_status,
+        run_reconnect_loop, snapshot_active_stats, stats_from_status_reply, wait_forwarder_death,
+        wait_session_death, ActiveTunnel, CompanionAction, ReconnectOutcome, TunnelStatsUpdate,
     };
     use crate::run_location::{ResolvedLocation, RunLocation};
-    use crate::tunnel::config::TunnelStatus;
+    use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
     use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
     use termihub_core::tunnel::local_forward::ForwarderStats;
@@ -2408,5 +2574,81 @@ mod tests {
         // A running reply that somehow omits stats is likewise skipped.
         let no_stats = serde_json::json!({ "running": true });
         assert!(stats_from_status_reply(&no_stats).is_none());
+    }
+
+    // ── Companion chained-pair helpers (#2597) ──────────────────────────────
+
+    /// Build a minimal desktop `-L` config, optionally linked to a parent.
+    fn tunnel(id: &str, companion_of: Option<&str>) -> TunnelConfig {
+        TunnelConfig {
+            id: id.to_string(),
+            name: id.to_string(),
+            ssh_connection_id: "conn-1".to_string(),
+            tunnel_type: TunnelType::Local(LocalForwardConfig {
+                local_host: "127.0.0.1".to_string(),
+                local_port: 5432,
+                remote_host: "127.0.0.1".to_string(),
+                remote_port: 5432,
+            }),
+            host: RunLocation::ThisComputer,
+            auto_start: false,
+            reconnect_on_disconnect: false,
+            companion_of: companion_of.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn find_companion_matches_only_the_linked_child() {
+        let tunnels = vec![
+            tunnel("parent", None),
+            tunnel("companion", Some("parent")),
+            tunnel("unrelated", None),
+        ];
+        // The parent resolves to its companion...
+        assert_eq!(
+            find_companion(&tunnels, "parent").map(|c| c.id.as_str()),
+            Some("companion")
+        );
+        // ...but a tunnel with no linked child (or the companion itself) has none.
+        assert!(find_companion(&tunnels, "unrelated").is_none());
+        assert!(find_companion(&tunnels, "companion").is_none());
+    }
+
+    #[test]
+    fn companion_action_starts_only_once_parent_is_connected() {
+        // Parent connected + companion down → start it (ordered bring-up).
+        assert_eq!(
+            companion_action(&TunnelStatus::Connected, false),
+            CompanionAction::Start
+        );
+        // Parent connected + companion already up → nothing to do (steady state).
+        assert_eq!(
+            companion_action(&TunnelStatus::Connected, true),
+            CompanionAction::None
+        );
+    }
+
+    #[test]
+    fn companion_action_holds_companion_down_while_parent_is_not_connected() {
+        // Any non-connected parent state tears a running companion down so it
+        // never dangles at a dead listen port.
+        for status in [
+            TunnelStatus::Connecting,
+            TunnelStatus::Reconnecting,
+            TunnelStatus::Disconnected,
+            TunnelStatus::Error,
+        ] {
+            assert_eq!(
+                companion_action(&status, true),
+                CompanionAction::Stop,
+                "running companion held down for parent {status:?}"
+            );
+            // Already-down companion needs no action for the same states.
+            assert_eq!(
+                companion_action(&status, false),
+                CompanionAction::None,
+                "down companion left alone for parent {status:?}"
+            );
+        }
     }
 }

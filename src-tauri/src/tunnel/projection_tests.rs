@@ -44,6 +44,7 @@ fn local_tunnel(id: &str, name: &str) -> TunnelConfig {
         host: crate::run_location::RunLocation::ThisComputer,
         auto_start: false,
         reconnect_on_disconnect: false,
+        companion_of: None,
     }
 }
 
@@ -59,6 +60,7 @@ fn dynamic_tunnel(id: &str, name: &str) -> TunnelConfig {
         host: crate::run_location::RunLocation::ThisComputer,
         auto_start: false,
         reconnect_on_disconnect: false,
+        companion_of: None,
     }
 }
 
