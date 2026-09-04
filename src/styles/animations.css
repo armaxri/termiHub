@@ -40,6 +40,26 @@
   }
 }
 
+/* === Essential loading motion ===
+   A loading spinner is often the *sole* "work in progress" cue (the connection
+   overlay, agent setup, file loads). The reduced-motion backstop below collapses
+   every animation to a single frame, which would freeze such a spinner into a
+   static icon that reads as "hung" (#2601). Spinners tagged
+   `.motion-essential-spinner` opt out of that freeze: they spin normally, and
+   under reduced motion they degrade to a gentle, low-vestibular opacity pulse
+   instead of stopping — keeping the progress signal alive without the rotation
+   that reduce-motion users are asking to avoid. Add the class alongside a
+   component's own spin class; it only changes the reduced-motion behaviour. */
+@keyframes essential-spinner-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
 /* === Reduced-motion backstop ===
    Global safety net for users who ask the OS to minimize non-essential motion
    (`prefers-reduced-motion: reduce`). Per-component guards still take precedence
@@ -56,5 +76,14 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* Essential progress spinners must never freeze — swap the rotation for a
+     gentle opacity pulse. Higher specificity than the `*` rule above, so the
+     `!important` longhands here win the cascade and restore an infinite loop. */
+  .motion-essential-spinner {
+    animation: essential-spinner-pulse 1.6s ease-in-out infinite !important;
+    animation-iteration-count: infinite !important;
+    opacity: 1;
   }
 }
