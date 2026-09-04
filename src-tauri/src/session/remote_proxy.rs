@@ -648,6 +648,23 @@ pub struct RemoteMonitoringProxy {
 }
 
 impl RemoteMonitoringProxy {
+    /// Build a proxy that monitors a chosen agent's **own** host — the "self"
+    /// sentinel — independent of any session's transport (#2593).
+    ///
+    /// Used when a system monitor's run-location resolves to an agent: the
+    /// desktop routes `connection.monitoring.subscribe` for host `"self"`
+    /// through that agent, so the streamed samples come from the agent host
+    /// itself. The interval starts at the shared default and can be re-tuned via
+    /// [`MonitoringProvider::set_interval`].
+    pub fn for_agent_self(agent_id: String, agent_manager: Arc<dyn AgentRpcClient>) -> Self {
+        Self {
+            agent_id,
+            monitoring_host: "self".to_string(),
+            agent_manager,
+            interval_ms: AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS),
+        }
+    }
+
     /// Run a sync `send_request` on the blocking thread pool so its internal
     /// `oneshot::Receiver::blocking_recv` does not park a tokio worker thread.
     async fn rpc(&self, method: &'static str, params: Value) -> Result<Value, CoreError> {

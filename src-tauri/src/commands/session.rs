@@ -694,10 +694,12 @@ pub async fn session_monitoring_open(
     session_id: String,
     host: Option<String>,
     interval_ms: Option<u64>,
+    run_location: Option<crate::run_location::RunLocation>,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
-    info!(session_id, interval_ms = ?interval_ms, "Starting session monitoring");
+    let run_location = run_location.unwrap_or_default();
+    info!(session_id, interval_ms = ?interval_ms, ?run_location, "Starting session monitoring");
     // Server-authority (#2224): the server now owns monitor entry creation. Fold
     // `open` at the source with the UI-only `host` label the client threads
     // through, so the `connecting` entry appears in the shared `SystemMonitorStore`
@@ -709,7 +711,7 @@ pub async fn session_monitoring_open(
         store.open(&session_id, host.clone(), interval_ms);
     });
     match manager
-        .start_session_monitoring(&session_id, interval_ms, app_handle.clone())
+        .start_session_monitoring(&session_id, interval_ms, run_location, app_handle.clone())
         .await
     {
         Ok(()) => {

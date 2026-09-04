@@ -399,6 +399,15 @@ pub struct SessionManager {
     pub(super) agent_manager: Arc<dyn AgentRpcClient>,
     /// Abort handles for active session-monitoring push tasks, keyed by session ID.
     monitoring_tasks: Arc<Mutex<HashMap<String, tokio::task::AbortHandle>>>,
+    /// Standalone agent-self monitoring providers for session monitors whose
+    /// run-location resolved to an agent (#2593), keyed by session ID. These are
+    /// not owned by the session's connection, so the monitoring controls consult
+    /// this map before the session provider.
+    monitoring_overrides: Arc<
+        Mutex<
+            HashMap<String, Arc<dyn termihub_core::monitoring::MonitoringProvider + Send + Sync>>,
+        >,
+    >,
     /// Registry for persistent sessions, keyed by connection ID.
     pub(super) persistent_sessions: Arc<Mutex<HashMap<String, PersistentRecord>>>,
     /// Cancellation tokens for in-flight (still connecting) local sessions, keyed
@@ -506,6 +515,7 @@ impl SessionManager {
             registry,
             agent_manager,
             monitoring_tasks: Arc::new(Mutex::new(HashMap::new())),
+            monitoring_overrides: Arc::new(Mutex::new(HashMap::new())),
             persistent_sessions: Arc::new(Mutex::new(HashMap::new())),
             connecting: Arc::new(StdMutex::new(HashMap::new())),
             output_buffers: Arc::new(StdMutex::new(HashMap::new())),
@@ -1386,7 +1396,11 @@ impl SessionManager {
     /// cancellation lifecycle) out of the manager while leaving the public API
     /// and behavior unchanged.
     fn monitoring(&self) -> MonitoringController<'_> {
-        MonitoringController::new(&self.sessions, &self.monitoring_tasks)
+        MonitoringController::new(
+            &self.sessions,
+            &self.monitoring_tasks,
+            &self.monitoring_overrides,
+        )
     }
 
     /// Subscribe to a session's monitoring provider and forward stats and
@@ -1403,10 +1417,11 @@ impl SessionManager {
         &self,
         session_id: &str,
         interval_ms: Option<u64>,
+        run_location: crate::run_location::RunLocation,
         app_handle: tauri::AppHandle<R>,
     ) -> Result<(), TerminalError> {
         self.monitoring()
-            .start_session_monitoring(session_id, interval_ms, app_handle)
+            .start_session_monitoring(session_id, interval_ms, run_location, app_handle)
             .await
     }
 
