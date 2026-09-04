@@ -2105,6 +2105,11 @@ export async function reorderRemoteAgents(agentIds: string[]): Promise<void> {
   await invoke("reorder_remote_agents", { agentIds });
 }
 
+/** Reorder saved connections by providing connection IDs in the desired order. */
+export async function reorderConnections(connectionIds: string[]): Promise<void> {
+  await invoke("reorder_connections", { connectionIds });
+}
+
 // --- Session-based monitoring commands ---
 
 /** Return the capabilities of an active session. */

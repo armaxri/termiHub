@@ -324,16 +324,34 @@ function ConnectionItem({
     id: connection.id,
     data: { type: "connection", connection },
   });
+  // The connection is also a drop target so a connection dragged onto it reorders
+  // among its siblings (or moves into its folder across folders) — #2594. Sharing
+  // the connection id across the draggable/droppable registries is fine; dnd-kit
+  // keys them separately.
+  const { setNodeRef: setDropRef, isOver } = useDroppable({
+    id: connection.id,
+    data: { type: "connection", connection },
+  });
+  const { active } = useDndContext();
+  // A connection is the active drag over this row's drop zone (ignore agent drags,
+  // which have their own targets) — drives the reorder drop-indicator styling.
+  const isConnectionReorderOver =
+    isOver &&
+    !isDragging &&
+    active?.data.current?.type === "connection" &&
+    (active.data.current.connection as SavedConnection).folderId === connection.folderId;
   const rowIndex = getNodeIndex(connection.id);
   const rowRef = getRowRef(rowIndex);
-  // Merge the draggable ref with the roving-nav row ref so the connection
-  // button is both draggable and a focusable roving-tabindex row.
+  // Merge the draggable + droppable refs with the roving-nav row ref so the
+  // connection button is draggable, a drop target, and a focusable roving-tabindex
+  // row all at once.
   const setRowNode = useCallback(
     (el: HTMLButtonElement | null) => {
       setDragRef(el);
+      setDropRef(el);
       rowRef(el);
     },
-    [setDragRef, rowRef]
+    [setDragRef, setDropRef, rowRef]
   );
 
   // Desktop-local persistent-session wiring (#1881). A saved connection whose
@@ -373,6 +391,7 @@ function ConnectionItem({
   if (isDragging) className += " connection-tree__item--dragging";
   if (isSelected) className += " connection-tree__item--selected";
   if (persistentCapable) className += " connection-tree__item--persistent";
+  if (isConnectionReorderOver) className += " connection-tree__item--reorder-over";
 
   const jumpHosts = getJumpHosts(connection.config);
   const [showConnectionPath, setShowConnectionPath] = useState(false);
@@ -653,6 +672,7 @@ export function ConnectionList() {
   const duplicateConnection = useAppStore((s) => s.duplicateConnection);
   const moveConnectionToFolder = useAppStore((s) => s.moveConnectionToFolder);
   const bulkMoveConnectionsToFolder = useAppStore((s) => s.bulkMoveConnectionsToFolder);
+  const reorderConnections = useAppStore((s) => s.reorderConnections);
   const reorderRemoteAgents = useAppStore((s) => s.reorderRemoteAgents);
   const moveAgentDefToFolder = useAppStore((s) => s.moveAgentDefToFolder);
   const bulkMoveAgentDefsToFolder = useAppStore((s) => s.bulkMoveAgentDefsToFolder);
@@ -1109,6 +1129,31 @@ export function ConnectionList() {
         targetFolderId = null;
       } else if (over.data.current?.type === "folder") {
         targetFolderId = overId;
+      } else if (over.data.current?.type === "connection") {
+        // Dropped onto another connection (#2594). Within the same folder this is a
+        // sibling reorder; across folders it falls back to a move into the target's
+        // folder (so dropping onto a connection behaves like dropping onto its
+        // folder). A multi-select drag always uses the move path so the whole
+        // selection lands together — reorder is single-item.
+        const targetConn = over.data.current.connection as SavedConnection;
+        const isMultiDrag =
+          selectedConnectionIds.has(draggedConnection.id) && selectedConnectionIds.size > 1;
+        if (targetConn.id === draggedConnection.id) {
+          clearConnectionSelection();
+          return;
+        }
+        if (!isMultiDrag && draggedConnection.folderId === targetConn.folderId) {
+          // Indices are into the full, unfiltered region connection list — the same
+          // list the backend reorders — not the experimental-gated render list.
+          const oldIndex = allConnections.findIndex((c) => c.id === draggedConnection.id);
+          const newIndex = allConnections.findIndex((c) => c.id === targetConn.id);
+          if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
+            reorderConnections(oldIndex, newIndex);
+          }
+          clearConnectionSelection();
+          return;
+        }
+        targetFolderId = targetConn.folderId;
       }
 
       if (targetFolderId === undefined) return;
@@ -1136,6 +1181,7 @@ export function ConnectionList() {
     [
       moveConnectionToFolder,
       bulkMoveConnectionsToFolder,
+      reorderConnections,
       moveAgentDefToFolder,
       bulkMoveAgentDefsToFolder,
       agentDefinitions,
@@ -1143,6 +1189,7 @@ export function ConnectionList() {
       reorderRemoteAgents,
       selectedConnectionIds,
       connections,
+      allConnections,
       clearConnectionSelection,
     ]
   );

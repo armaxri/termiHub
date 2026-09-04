@@ -25,6 +25,7 @@
 //! | `connection.update`         | `{ connection }`                 | replace the entry with the same id (edit)    |
 //! | `connection.remove`         | `{ connectionId }`               | drop a connection                            |
 //! | `connection.move`           | `{ connectionId, folderId? }`    | move a connection (absent/null → root)       |
+//! | `connection.reorder`        | `{ oldIndex, newIndex }`         | move a connection within the flat list        |
 //! | `connection.addFolder`      | `{ folder }`                     | append a folder                              |
 //! | `connection.removeFolder`   | `{ folderId }`                   | remove a folder, re-homing its children      |
 //! | `connection.toggleFolder`   | `{ folderId }`                   | flip a folder's `isExpanded`                 |
@@ -36,9 +37,9 @@
 //! agents bridge's `agent.replace`. The per-transition intents above drive the
 //! store once the mutation cut lands (a later step).
 //!
-//! Ordering is array position, matching the on-disk `children` order; there is no
-//! standalone reorder transition in the `appStore` today, so none is shadowed. If
-//! one is added later it becomes a new `connection.*` intent.
+//! Ordering is array position, matching the on-disk `children` order. The
+//! `connection.reorder` intent is the standalone reorder transition (drag-reorder a
+//! connection among its siblings, #2594) — the twin of `agent.reorder`.
 //!
 //! # Shadow mode
 //!
@@ -179,6 +180,16 @@ pub fn register_connection_intents(registry: &mut HandlerRegistry, app_handle: A
     });
 
     let handle = app_handle.clone();
+    registry.route("connection.reorder", move |intent, projector| {
+        let store = store_of(&handle)?;
+        store.reorder(
+            required_usize(intent, "oldIndex")?,
+            required_usize(intent, "newIndex")?,
+        );
+        Ok(publish_connections(projector, &store))
+    });
+
+    let handle = app_handle.clone();
     registry.route("connection.addFolder", move |intent, projector| {
         let store = store_of(&handle)?;
         store.add_folder(required_folder(intent)?);
@@ -228,6 +239,16 @@ fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> 
         .get(key)
         .and_then(Value::as_str)
         .map(str::to_string)
+        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
+}
+
+/// Extract a required unsigned-integer field from an intent payload.
+fn required_usize(intent: &Intent, key: &str) -> Result<usize, (String, String)> {
+    intent
+        .payload
+        .get(key)
+        .and_then(Value::as_u64)
+        .map(|n| n as usize)
         .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
 }
 

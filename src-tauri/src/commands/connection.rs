@@ -279,6 +279,24 @@ pub fn reorder_remote_agents(
     Ok(())
 }
 
+/// Reorder saved connections by providing connection IDs in the desired order.
+///
+/// Backs the connection-tree drag-reorder (#2594): the frontend sends the full
+/// desired order of connection ids; the manager persists the new array order and
+/// the fold reflects it into the authoritative `connections` region.
+#[tauri::command]
+pub fn reorder_connections(
+    connection_ids: Vec<String>,
+    app: AppHandle,
+    manager: State<'_, ConnectionManager>,
+) -> Result<(), String> {
+    manager
+        .reorder_connections(&connection_ids)
+        .map_err(|e| e.to_string())?;
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(())
+}
+
 /// Export connections with optional encrypted credentials.
 ///
 /// If `export_password` is provided, credentials from the store are

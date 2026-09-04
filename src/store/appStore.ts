@@ -52,6 +52,7 @@ import {
   persistAgent,
   removeAgent,
   reorderAgents as persistAgentOrder,
+  reorderConnections as persistConnectionOrder,
   getSettings,
   saveSettings as persistSettings,
   reloadExternalConnections as apiReloadExternalConnections,
@@ -959,6 +960,13 @@ export interface AppState
   duplicateConnection: (connectionId: string) => void;
   moveConnectionToFolder: (connectionId: string, folderId: string | null) => void;
   bulkMoveConnectionsToFolder: (connectionIds: string[], folderId: string | null) => void;
+  /**
+   * Reorder a saved connection among its siblings by moving the connection at
+   * `oldIndex` to `newIndex` in the authoritative region connection list. Backs the
+   * connection-tree intra-folder drag-reorder (#2594); the new order is persisted to
+   * disk so it survives a reload.
+   */
+  reorderConnections: (oldIndex: number, newIndex: number) => void;
   moveConnectionToFile: (connectionId: string, targetSource: string | null) => Promise<void>;
 
   // File browser — SFTP transfers
@@ -5455,6 +5463,36 @@ export const useAppStore = create<AppState>((set, get, store) => {
         );
         toast.error(
           `Failed to move connections: ${err instanceof Error ? err.message : String(err)}`
+        );
+      });
+    },
+
+    reorderConnections: (oldIndex, newIndex) => {
+      // Compute the new id order from the authoritative region view, optimistically
+      // reorder it in the region for instant feedback, then persist the new array
+      // order to disk so an intra-folder reorder survives a reload (#2594). Twin of
+      // `reorderRemoteAgents`.
+      const conns = [...currentConnectionsView().connections];
+      if (
+        oldIndex < 0 ||
+        newIndex < 0 ||
+        oldIndex >= conns.length ||
+        newIndex >= conns.length ||
+        oldIndex === newIndex
+      ) {
+        return;
+      }
+      const [moved] = conns.splice(oldIndex, 1);
+      conns.splice(newIndex, 0, moved);
+      const connectionIds = conns.map((c) => c.id);
+      mirrorConnectionIntent("connection.reorder", { oldIndex, newIndex });
+      persistConnectionOrder(connectionIds).catch((err) => {
+        frontendLog(
+          "app_store",
+          `Failed to persist connection reorder: ${err instanceof Error ? err.message : String(err)}`
+        );
+        toast.error(
+          `Failed to save connection order: ${err instanceof Error ? err.message : String(err)}`
         );
       });
     },
