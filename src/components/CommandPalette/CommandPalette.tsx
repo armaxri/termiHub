@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { matchSorter } from "match-sorter";
 import { TerminalSquare, Play, Workflow as WorkflowIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { buildCommands } from "@/services/commands";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
@@ -73,8 +74,8 @@ export function CommandPalette(): React.ReactElement {
   // Context-bound command availability depends on live panel/terminal state;
   // subscribe so the entry list (and its disabled affordances) recompute when
   // the focused panel, its tabs, or the active panel change.
-  const rootPanel = useAppStore((s) => s.rootPanel);
-  const activePanelId = useAppStore((s) => s.activePanelId);
+  const rootPanel = useLayoutRenderTree();
+  const activePanelId = useActivePanelId();
   const { connect } = useConnectSavedConnection();
 
   const [query, setQuery] = useState("");

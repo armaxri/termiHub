@@ -48,7 +48,7 @@ import {
   discardSandboxSession,
 } from "@/plugins/sandbox/pluginSandboxHost";
 import { resolveLineEnding } from "@/utils/lineEndings";
-import { getAllLeaves } from "@/utils/panelTree";
+import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
@@ -80,11 +80,7 @@ const MAX_AGENT_SPAWN_ATTEMPTS = 5;
  * been removed by the time the connect resolves.
  */
 function resolveTabTitle(tabId: string): string {
-  const state = useAppStore.getState();
-  const tab = [
-    ...getAllLeaves(state.rootPanel).flatMap((l) => l.tabs),
-    ...state.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-  ].find((t) => t.id === tabId);
+  const tab = getAllTabsAcrossGroupTrees().find((t) => t.id === tabId);
   return tab?.title?.trim() || "Session";
 }
 

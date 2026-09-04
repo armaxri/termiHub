@@ -1,4 +1,5 @@
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { getActivePanelId, getLayoutRenderTree } from "@/store/layoutSelectors";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
@@ -31,7 +32,8 @@ export interface ContextCommand {
 
 /** Resolve the active leaf panel from live store state, or null when none. */
 function activeLeaf(): LeafPanel | null {
-  const { rootPanel, activePanelId } = useAppStore.getState();
+  const rootPanel = getLayoutRenderTree();
+  const activePanelId = getActivePanelId();
   if (!activePanelId) return null;
   return getAllLeaves(rootPanel).find((p) => p.id === activePanelId) ?? null;
 }
@@ -81,7 +83,7 @@ function cycleTab(delta: 1 | -1): void {
 function canFocusPanel(dir: FocusDirection): boolean {
   const panel = activeLeaf();
   if (!panel) return false;
-  return findAdjacentLeaf(useAppStore.getState().rootPanel, panel.id, dir) !== null;
+  return findAdjacentLeaf(getLayoutRenderTree(), panel.id, dir) !== null;
 }
 
 /** Move focus to the panel adjacent to the active one in `dir`. */
@@ -89,7 +91,7 @@ function focusPanel(dir: FocusDirection): void {
   const state = useAppStore.getState();
   const panel = activeLeaf();
   if (!panel) return;
-  const target = findAdjacentLeaf(state.rootPanel, panel.id, dir);
+  const target = findAdjacentLeaf(getLayoutRenderTree(), panel.id, dir);
   if (!target) return;
   state.setActivePanel(target.id);
   if (target.activeTabId) {

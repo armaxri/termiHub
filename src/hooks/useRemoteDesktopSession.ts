@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAppStore } from "@/store/appStore";
-import { getAllLeaves } from "@/utils/panelTree";
+import { activeTreeTabs } from "@/store/layoutSelectors";
 import {
   remoteDesktopConnect,
   remoteDesktopDisconnect,
@@ -112,10 +112,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
 
   // Config is read once per (re)connect; it is stable for the tab's lifetime.
   const readTab = useCallback(
-    () =>
-      getAllLeaves(useAppStore.getState().rootPanel)
-        .flatMap((l) => l.tabs)
-        .find((t) => t.id === tabId),
+    () => activeTreeTabs(useAppStore.getState()).find((t) => t.id === tabId),
     [tabId]
   );
 

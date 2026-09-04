@@ -5,6 +5,7 @@ import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dn
 import { CSS } from "@dnd-kit/utilities";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { useAppStore } from "@/store/appStore";
+import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors";
 import { TabGroup } from "@/types/terminal";
 import { RenameDialog } from "./RenameDialog";
 import { Tooltip } from "@/components/ui";
@@ -16,8 +17,8 @@ import "./TabGroupChips.css";
  * Chips are pill-shaped to distinguish them from file-tab-shaped terminal tabs.
  */
 export function TabGroupChips() {
-  const tabGroups = useAppStore((s) => s.tabGroups);
-  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
+  const tabGroups = useLayoutTabGroups();
+  const activeTabGroupId = useActiveTabGroupId();
   const setActiveTabGroup = useAppStore((s) => s.setActiveTabGroup);
   const addTabGroup = useAppStore((s) => s.addTabGroup);
   const closeTabGroup = useAppStore((s) => s.closeTabGroup);

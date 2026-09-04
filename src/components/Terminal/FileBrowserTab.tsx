@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FolderOpen, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useAppStore } from "@/store/appStore";
+import { activeTreeTabs } from "@/store/layoutSelectors";
 import { Button } from "@/components/ui";
-import { getAllLeaves } from "@/utils/panelTree";
 import { createTerminal, closeTerminal } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
 import "./FileBrowserTab.css";
@@ -40,12 +40,7 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
   const setTabSessionId = useAppStore((s) => s.setTabSessionId);
   // Title is reactive so a rename shows through; the config is read once in the
   // effect since it is stable for the tab's lifetime.
-  const title = useAppStore(
-    (s) =>
-      getAllLeaves(s.rootPanel)
-        .flatMap((l) => l.tabs)
-        .find((t) => t.id === tabId)?.title ?? ""
-  );
+  const title = useAppStore((s) => activeTreeTabs(s).find((t) => t.id === tabId)?.title ?? "");
 
   useEffect(() => {
     let canceled = false;
@@ -58,9 +53,7 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
     }
 
     const connect = async () => {
-      const tab = getAllLeaves(useAppStore.getState().rootPanel)
-        .flatMap((l) => l.tabs)
-        .find((t) => t.id === tabId);
+      const tab = activeTreeTabs(useAppStore.getState()).find((t) => t.id === tabId);
       if (!tab) return;
 
       // Adopt a session already attached to the tab (e.g. pre-minted while

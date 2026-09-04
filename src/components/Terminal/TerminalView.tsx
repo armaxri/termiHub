@@ -14,6 +14,13 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import { toast } from "sonner";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import {
+  getAllTabsAcrossGroupTrees,
+  useActivePanelId,
+  useActiveTabGroupId,
+  useLayoutRenderTree,
+  useLayoutTabGroups,
+} from "@/store/layoutSelectors";
 import { currentSessionView } from "@/store/sessionBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
@@ -72,10 +79,7 @@ export function TerminalView() {
       if (state === "disconnected") {
         // Find the tab that owns this session and show the disconnect overlay.
         const store = useAppStore.getState();
-        const allTabs = [
-          ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-          ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-        ];
+        const allTabs = getAllTabsAcrossGroupTrees();
         const tab = allTabs.find((t) => t.sessionId === session_id);
         if (tab) {
           frontendLog("disconnect", `remote-state-change: marking tab=${tab.id} as exited`);
@@ -109,10 +113,7 @@ export function TerminalView() {
         );
 
         // Build the full tab list once and reuse across all branches.
-        const allTabs = [
-          ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-          ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-        ];
+        const allTabs = getAllTabsAcrossGroupTrees();
 
         // Find all terminal tabs that belong to this agent via their connection
         // config. This is more reliable than cross-referencing through
@@ -270,8 +271,8 @@ export function TerminalView() {
 
   const addTab = useAppStore((s) => s.addTab);
   const splitPanel = useAppStore((s) => s.splitPanel);
-  const rootPanel = useAppStore((s) => s.rootPanel);
-  const activePanelId = useAppStore((s) => s.activePanelId);
+  const rootPanel = useLayoutRenderTree();
+  const activePanelId = useActivePanelId();
   const removePanel = useAppStore((s) => s.removePanel);
   const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
   const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
@@ -597,9 +598,9 @@ export function TerminalView() {
  * split / move / merge / group ops.
  */
 export function TerminalHost() {
-  const rootPanel = useAppStore((s) => s.rootPanel);
-  const tabGroups = useAppStore((s) => s.tabGroups);
-  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
+  const rootPanel = useLayoutRenderTree();
+  const tabGroups = useLayoutTabGroups();
+  const activeTabGroupId = useActiveTabGroupId();
 
   const allTabs: TerminalTab[] = useMemo(() => {
     // Active group: use live rootPanel (always up-to-date)

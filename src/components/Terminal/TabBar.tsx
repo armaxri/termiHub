@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { SortableContext, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
+import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
@@ -27,8 +28,8 @@ interface TabBarProps {
 }
 
 export function TabBar({ panelId, tabs }: TabBarProps) {
-  const isFocused = useAppStore((s) => s.activePanelId === panelId);
-  const rootPanel = useAppStore((s) => s.rootPanel);
+  const isFocused = useActivePanelId() === panelId;
+  const rootPanel = useLayoutRenderTree();
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const closeTab = useAppStore((s) => s.closeTab);
   const tabHorizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling);

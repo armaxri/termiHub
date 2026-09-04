@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { getActiveTabGroupId, getLayoutTabGroups } from "@/store/layoutSelectors";
 import { currentSettingsView } from "@/store/settingsBridge";
 import {
   processKeyEvent,
@@ -180,7 +181,8 @@ export function useKeyboardShortcuts() {
 
         case "close-tab-group": {
           e.preventDefault();
-          const { tabGroups, activeTabGroupId } = useAppStore.getState();
+          const tabGroups = getLayoutTabGroups();
+          const activeTabGroupId = getActiveTabGroupId();
           if (tabGroups.length <= 1) break;
           const confirmEnabled = currentSettingsView().confirmCloseTabOnShortcut ?? true;
           if (confirmEnabled) {
@@ -198,7 +200,8 @@ export function useKeyboardShortcuts() {
 
         case "next-tab-group": {
           e.preventDefault();
-          const { tabGroups: groups, activeTabGroupId: activeId } = useAppStore.getState();
+          const groups = getLayoutTabGroups();
+          const activeId = getActiveTabGroupId();
           if (groups.length <= 1) break;
           const idx = groups.findIndex((g) => g.id === activeId);
           const nextIdx = (idx + 1) % groups.length;
@@ -208,7 +211,8 @@ export function useKeyboardShortcuts() {
 
         case "prev-tab-group": {
           e.preventDefault();
-          const { tabGroups: groups, activeTabGroupId: activeId } = useAppStore.getState();
+          const groups = getLayoutTabGroups();
+          const activeId = getActiveTabGroupId();
           if (groups.length <= 1) break;
           const idx = groups.findIndex((g) => g.id === activeId);
           const prevIdx = (idx - 1 + groups.length) % groups.length;

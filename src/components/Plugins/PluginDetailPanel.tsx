@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { CircleAlert, Power, Shield, SlidersHorizontal, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { PluginDetailMeta } from "@/types/terminal";
 import type { InstalledPlugin } from "@/types/plugin";
@@ -31,7 +32,7 @@ export interface PluginDetailPanelProps {
  * uninstall. Non-backend plugins never own sessions, so this is always 0.
  */
 function useActiveSessionCount(plugin: InstalledPlugin | undefined): number {
-  const rootPanel = useAppStore((s) => s.rootPanel);
+  const rootPanel = useLayoutRenderTree();
   return useMemo(() => {
     const backendType = plugin?.manifest.extensions.terminalBackend?.connectionType;
     if (!backendType) return 0;

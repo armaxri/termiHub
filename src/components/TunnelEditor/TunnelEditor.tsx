@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { Monitor, Server, AlertTriangle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import {
@@ -81,7 +82,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const startTunnel = useAppStore((s) => s.startTunnel);
   const closeTab = useAppStore((s) => s.closeTab);
-  const rootPanel = useAppStore((s) => s.rootPanel);
+  const rootPanel = useLayoutRenderTree();
 
   // Find existing tunnel if editing
   const existingTunnel = meta.tunnelId ? tunnels.find((t) => t.id === meta.tunnelId) : undefined;
