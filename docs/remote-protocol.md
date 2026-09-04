@@ -2,9 +2,9 @@
 
 Protocol specification for communication between the termiHub desktop app and remote agents.
 
-**Version**: 0.7.0
+**Version**: 0.8.0
 **Status**: Draft
-**Issue**: #17, #360, #1349, #2185, #2192
+**Issue**: #17, #360, #1349, #2185, #2192, #2607
 
 ---
 
@@ -264,25 +264,30 @@ The desktop sends its supported protocol version in the `initialize` request. Th
 
 ### Compatibility Matrix
 
-| Desktop Version | Agent Version | Compatible?                                                                              |
-| --------------- | ------------- | ---------------------------------------------------------------------------------------- |
-| 0.7.0           | 0.7.0         | Yes                                                                                      |
-| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop) |
-| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                |
-| 0.6.0           | 0.6.0         | Yes                                                                                      |
-| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)     |
-| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                |
-| 0.5.0           | 0.5.0         | Yes                                                                                      |
-| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                        |
-| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                |
-| 0.4.0           | 0.4.0         | Yes                                                                                      |
-| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                          |
-| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                  |
-| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                      |
-| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                         |
-| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                               |
-| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                     |
-| 1.0.0           | 0.4.0         | No (major mismatch)                                                                      |
+| Desktop Version | Agent Version | Compatible?                                                                                    |
+| --------------- | ------------- | ---------------------------------------------------------------------------------------------- |
+| 0.8.0           | 0.8.0         | Yes                                                                                            |
+| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist) |
+| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                      |
+| 0.7.0           | 0.7.0         | Yes                                                                                            |
+| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)       |
+| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                      |
+| 0.6.0           | 0.6.0         | Yes                                                                                            |
+| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)           |
+| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                      |
+| 0.5.0           | 0.5.0         | Yes                                                                                            |
+| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                              |
+| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                      |
+| 0.4.0           | 0.4.0         | Yes                                                                                            |
+| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                |
+| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                        |
+| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                            |
+| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                               |
+| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                     |
+| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                           |
+| 1.0.0           | 0.4.0         | No (major mismatch)                                                                            |
+
+**0.8.0 (additive, minor)** — adds in-place pause for agent-hosted services: the [`service.pause`](#servicepause) / [`service.resume`](#serviceresume) methods (#2607). An agent-hosted HTTP monitor can now pause **in place** (instance kept hosted, poll body suspended) instead of the stop-and-relist the desktop had to do without a pause verb. Backwards compatible in both directions: a pre-0.8.0 agent lacks the methods, so a `service.pause` call returns [`-32601` Method not found](#standard-json-rpc-errors) and the desktop falls back to stop-and-relist; a pre-0.8.0 desktop never calls them.
 
 **0.7.0 (additive, minor)** — adds agent-hosted embedded servers: the [`service.start`](#servicestart) / [`service.stop`](#servicestop) / [`service.status`](#servicestatus) lifecycle methods (#2192), alongside the read-only [`service.list`](#servicelist) discovery method carried over from the Service/Tool substrate (#2148). The agent hosts the HTTP/FTP/TFTP listen socket; the desktop keeps only lifecycle control. Backwards compatible in both directions: a pre-0.7.0 agent simply lacks the methods, so a `service.start` call returns [`-32601` Method not found](#standard-json-rpc-errors) and the desktop surfaces the existing "not supported" path (hosting the embedded server locally on the desktop as before); a pre-0.7.0 desktop never calls them.
 
@@ -2010,6 +2015,68 @@ Stop an agent-hosted embedded server by its desktop `instanceId`. Idempotent —
 | Result Field | Type      | Description                                                   |
 | ------------ | --------- | ------------------------------------------------------------- |
 | `stopped`    | `boolean` | Whether a running instance with that id was found and stopped |
+
+---
+
+### `service.pause`
+
+Pause an agent-hosted service **in place** by its desktop `instanceId` (#2607). The instance stays hosted — its work is suspended but its identity, event bridge, and streamed state are preserved, so [`service.resume`](#serviceresume) is instant with no re-listing. This is what lets an agent-hosted HTTP monitor pause without the stop-and-relist the desktop had to do before this verb existed. A service with no pause concept (the embedded servers) treats it as a no-op success. Additive in protocol **0.8.0**: a pre-0.8.0 agent lacks it, so the desktop falls back to stop-and-relist. Pausing an unknown instance is not an error; `paused` is simply `false`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "service.pause",
+  "params": { "instanceId": "mon-1730000000000-a1b2" },
+  "id": 54
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": { "paused": true },
+  "id": 54
+}
+```
+
+| Result Field | Type      | Description                                                  |
+| ------------ | --------- | ------------------------------------------------------------ |
+| `paused`     | `boolean` | Whether a running instance with that id was found and paused |
+
+---
+
+### `service.resume`
+
+Resume an agent-hosted service paused with [`service.pause`](#servicepause), in place (#2607). Additive in protocol **0.8.0**. Resuming an unknown instance is not an error; `resumed` is simply `false`.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "service.resume",
+  "params": { "instanceId": "mon-1730000000000-a1b2" },
+  "id": 55
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": { "resumed": true },
+  "id": 55
+}
+```
+
+| Result Field | Type      | Description                                                   |
+| ------------ | --------- | ------------------------------------------------------------- |
+| `resumed`    | `boolean` | Whether a running instance with that id was found and resumed |
 
 ---
 

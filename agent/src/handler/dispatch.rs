@@ -38,6 +38,7 @@ use crate::protocol::methods::{
     FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
     MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
     NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
+    ServicePauseParams, ServicePauseResult, ServiceResumeParams, ServiceResumeResult,
     ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
     ServiceStopParams, ServiceStopResult, SessionAttachParams, SessionCloseParams,
     SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionGetBufferParams,
@@ -70,7 +71,9 @@ use termihub_core::files::{FileBrowser, LocalFileBrowser};
 /// (#2185).
 /// Bumped to 0.7.0 for the additive `service.start/stop/status` agent-hosted
 /// embedded-server methods (#2192).
-const AGENT_PROTOCOL_VERSION: &str = "0.7.0";
+/// Bumped to 0.8.0 for the additive `service.pause/resume` methods that let an
+/// agent-hosted monitor pause in place instead of stop-and-relist (#2607).
+const AGENT_PROTOCOL_VERSION: &str = "0.8.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -466,6 +469,8 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_service_list(module)?;
     register_service_start(module)?;
     register_service_stop(module)?;
+    register_service_pause(module)?;
+    register_service_resume(module)?;
     register_service_status(module)?;
     register_health_check(module)?;
     register_agent_shutdown(module)?;
@@ -1537,6 +1542,43 @@ fn register_service_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
     Ok(())
 }
 
+// ── service.pause/resume (in-place agent-hosted monitor pause, #2607) ─
+//
+// The generic `service.*` RPC gained a pause verb so an agent-hosted monitor can
+// pause **in place** — the instance stays hosted, its poll body is suspended —
+// instead of the stop-and-relist the desktop had to do without it. A service with
+// no pause concept (the embedded servers) treats it as a no-op.
+
+fn register_service_pause(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("service.pause", |params, ctx, _ext| async move {
+        let registry = get_service_registry(&ctx).await?;
+        let p: ServicePauseParams = params
+            .parse()
+            .map_err(|e| invalid_params("service.pause", e))?;
+        let paused = registry
+            .pause(&p.instance_id)
+            .await
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
+        Ok::<_, ErrorObjectOwned>(serde_json::to_value(ServicePauseResult { paused }).unwrap())
+    })?;
+    Ok(())
+}
+
+fn register_service_resume(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method("service.resume", |params, ctx, _ext| async move {
+        let registry = get_service_registry(&ctx).await?;
+        let p: ServiceResumeParams = params
+            .parse()
+            .map_err(|e| invalid_params("service.resume", e))?;
+        let resumed = registry
+            .resume(&p.instance_id)
+            .await
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
+        Ok::<_, ErrorObjectOwned>(serde_json::to_value(ServiceResumeResult { resumed }).unwrap())
+    })?;
+    Ok(())
+}
+
 fn register_service_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
     module.register_async_method("service.status", |params, ctx, _ext| async move {
         let registry = get_service_registry(&ctx).await?;
@@ -2506,10 +2548,11 @@ mod tests {
     /// The RPC must be advertised, and the bump is what tells an older desktop
     /// which additive capabilities (`agent.update_pending`, the `agent.forward.*`
     /// ssh-agent relay, the `tunnel.*` agent-hosted forwarding methods, the
-    /// `service.*` agent-hosted embedded servers) may now arrive.
+    /// `service.*` agent-hosted embedded servers, and the `service.pause/resume`
+    /// in-place monitor pause) may now arrive.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.7.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.8.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -4032,6 +4075,145 @@ mod tests {
         )
         .await;
         assert_eq!(after["result"]["running"], false, "{after}");
+    }
+
+    /// End-to-end in-place pause (#2607): after an agent-hosted monitor streams
+    /// checks, `service.pause` suspends it IN PLACE — the instance stays hosted
+    /// (`service.status` still reports `running: true`) and no new checks arrive —
+    /// and `service.resume` brings the samples back, all with no stop-and-relist.
+    /// This is the agent-RPC path the desktop routing exercises for pause/resume.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn service_pause_and_resume_an_http_monitor_in_place() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        // A loopback HTTP sink answering 200 for every check, so checks complete
+        // fast without real network.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind sink");
+        let addr = listener.local_addr().expect("addr");
+        std::thread::spawn(move || {
+            for mut s in listener.incoming().flatten() {
+                use std::io::{Read, Write};
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+
+        // A short interval so checks (and the pause window) resolve quickly.
+        let start = dispatch(
+            &handler,
+            "service.start",
+            json!({
+                "instanceId": "mon-1",
+                "serviceId": "http_monitor",
+                "config": {
+                    "id": "mon-1",
+                    "url": format!("http://{addr}/"),
+                    "intervalMs": 200,
+                    "method": "GET",
+                    "expectedStatus": 200,
+                    "timeoutMs": 2_000
+                }
+            }),
+            2,
+        )
+        .await;
+        assert_eq!(start["result"]["status"]["state"], "running", "{start}");
+
+        // The streamed check's timestamp; `None` until the first check lands.
+        async fn streamed_ts(handler: &AgentHandler, id: u64) -> Option<u64> {
+            let status = dispatch(
+                handler,
+                "service.status",
+                json!({ "instanceId": "mon-1" }),
+                id,
+            )
+            .await;
+            assert_eq!(status["result"]["running"], true, "{status}");
+            status["result"]["state"]
+                .as_object()
+                .and_then(|s| s.get("timestampMs"))
+                .and_then(|v| v.as_u64())
+        }
+
+        // Wait for the first streamed check (proves the monitor is polling).
+        let mut first = None;
+        for i in 0..50 {
+            if let Some(ts) = streamed_ts(&handler, 10 + i).await {
+                first = Some(ts);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(first.is_some(), "a check must stream back before pause");
+
+        // Pause IN PLACE.
+        let paused = dispatch(
+            &handler,
+            "service.pause",
+            json!({ "instanceId": "mon-1" }),
+            70,
+        )
+        .await;
+        assert_eq!(paused["result"]["paused"], true, "{paused}");
+
+        // The instance stays hosted — the in-place proof. A `service.stop` would
+        // instead make `service.status` report `running: false`.
+        let during = dispatch(
+            &handler,
+            "service.status",
+            json!({ "instanceId": "mon-1" }),
+            71,
+        )
+        .await;
+        assert_eq!(
+            during["result"]["running"], true,
+            "a paused instance is still hosted: {during}"
+        );
+
+        // Let any in-flight check settle, then capture the frozen timestamp.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        let frozen = streamed_ts(&handler, 72).await;
+        // Over a window several intervals long, no NEW check arrives.
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+        assert_eq!(
+            streamed_ts(&handler, 73).await,
+            frozen,
+            "no new samples while paused in place"
+        );
+
+        // Resume IN PLACE; a fresh check (timestamp past the frozen one) arrives.
+        let resumed = dispatch(
+            &handler,
+            "service.resume",
+            json!({ "instanceId": "mon-1" }),
+            74,
+        )
+        .await;
+        assert_eq!(resumed["result"]["resumed"], true, "{resumed}");
+
+        let mut advanced = false;
+        for i in 0..50 {
+            if let Some(ts) = streamed_ts(&handler, 100 + i).await {
+                if Some(ts) > frozen {
+                    advanced = true;
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(advanced, "samples must resume after service.resume");
+
+        dispatch(
+            &handler,
+            "service.stop",
+            json!({ "instanceId": "mon-1" }),
+            200,
+        )
+        .await;
     }
 
     /// An unknown `serviceId` surfaces `SERVICE_START_FAILED`, not a panic.

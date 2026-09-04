@@ -133,6 +133,37 @@ impl AgentServiceRegistry {
         }
     }
 
+    /// Pause instance `instance_id` **in place**, keeping it hosted (#2607).
+    ///
+    /// Unlike [`stop`](Self::stop), the instance stays in the running map — its
+    /// work is suspended but its identity, event bridge and streamed state are
+    /// preserved, so [`resume`](Self::resume) is instant with no re-listing. A
+    /// service with no pause concept (the embedded servers) treats this as a
+    /// no-op. Returns whether a running instance with that id was found.
+    pub async fn pause(&self, instance_id: &str) -> Result<bool, ServiceError> {
+        let mut running = self.running.lock().await;
+        match running.get_mut(instance_id) {
+            Some(rs) => {
+                rs.service.pause().await?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    /// Resume instance `instance_id` paused with [`pause`](Self::pause), in place
+    /// (#2607). Returns whether a running instance with that id was found.
+    pub async fn resume(&self, instance_id: &str) -> Result<bool, ServiceError> {
+        let mut running = self.running.lock().await;
+        match running.get_mut(instance_id) {
+            Some(rs) => {
+                rs.service.resume().await?;
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
     /// Current status of instance `instance_id`, or `None` if it is not running.
     pub async fn status(&self, instance_id: &str) -> Option<ServiceStatusSnapshot> {
         let running = self.running.lock().await;
@@ -259,6 +290,68 @@ mod tests {
     async fn stop_unknown_instance_returns_false() {
         let reg = registry();
         assert!(!reg.stop("ghost").await);
+    }
+
+    /// A registry that can also host the HTTP monitor, for the in-place
+    /// pause/resume path (#2607).
+    fn monitor_registry() -> AgentServiceRegistry {
+        let mut factories = build_service_registry();
+        termihub_core::monitoring::http_monitor::register_http_monitor(&mut factories);
+        AgentServiceRegistry::new(factories)
+    }
+
+    /// A monitor config pointing at an unreachable loopback port: it hosts fine
+    /// (the loop's checks just fail), which is all the lifecycle test needs.
+    fn monitor_config() -> Value {
+        serde_json::json!({
+            "id": "mon-1",
+            "url": "http://127.0.0.1:1/",
+            "intervalMs": 1_000,
+            "method": "GET",
+            "expectedStatus": 200,
+            "timeoutMs": 500,
+        })
+    }
+
+    #[tokio::test]
+    async fn pause_keeps_the_instance_hosted_then_resume() {
+        // In-place pause (#2607): unlike `stop`, the instance stays in the running
+        // map — it is not torn down and re-listed — so `status` still reports it
+        // hosted and `resume` brings it back without a fresh `start`.
+        let reg = monitor_registry();
+        reg.start("mon-1", "http_monitor", monitor_config())
+            .await
+            .expect("monitor hosts on the agent");
+        assert_eq!(reg.active_count().await, 1);
+
+        assert!(reg.pause("mon-1").await.expect("pause"));
+        assert_eq!(
+            reg.active_count().await,
+            1,
+            "pause must keep the instance hosted, not tear it down"
+        );
+        assert!(
+            reg.status("mon-1").await.is_some(),
+            "a paused instance is still hosted"
+        );
+
+        assert!(reg.resume("mon-1").await.expect("resume"));
+        assert_eq!(reg.active_count().await, 1);
+
+        reg.stop("mon-1").await;
+    }
+
+    #[tokio::test]
+    async fn pause_and_resume_unknown_instance_return_false() {
+        let reg = monitor_registry();
+        assert!(!reg
+            .pause("ghost")
+            .await
+            .expect("pause unknown is not an error"));
+        assert!(!reg
+            .resume("ghost")
+            .await
+            .expect("resume unknown is not an error"));
     }
 
     #[tokio::test]
