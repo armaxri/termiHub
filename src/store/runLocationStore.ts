@@ -18,17 +18,24 @@ interface RunLocationState {
   networkToolLocations: Record<string, RunLocation>;
   /** Per-embedded-server run-location, keyed by server id. */
   serverLocations: Record<string, RunLocation>;
+  /** Per-HTTP-monitor run-location, keyed by monitor id (#2592). */
+  monitorLocations: Record<string, RunLocation>;
   /** Record a network tool's chosen run-location. */
   setNetworkToolLocation: (tool: string, location: RunLocation) => void;
   /** Record an embedded server's chosen run-location. */
   setServerLocation: (serverId: string, location: RunLocation) => void;
+  /** Record an HTTP monitor's chosen run-location. */
+  setMonitorLocation: (monitorId: string, location: RunLocation) => void;
 }
 
 export const useRunLocationStore = create<RunLocationState>((set) => ({
   networkToolLocations: {},
   serverLocations: {},
+  monitorLocations: {},
   setNetworkToolLocation: (tool, location) =>
     set((s) => ({ networkToolLocations: { ...s.networkToolLocations, [tool]: location } })),
   setServerLocation: (serverId, location) =>
     set((s) => ({ serverLocations: { ...s.serverLocations, [serverId]: location } })),
+  setMonitorLocation: (monitorId, location) =>
+    set((s) => ({ monitorLocations: { ...s.monitorLocations, [monitorId]: location } })),
 }));
