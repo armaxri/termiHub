@@ -1163,7 +1163,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     return (
       <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
         <div className="file-editor__loading">
-          <Loader2 size={20} className="file-editor__spinner" />
+          <Loader2 size={20} className="file-editor__spinner motion-essential-spinner" />
           <span>Loading {fileName}...</span>
         </div>
       </div>

@@ -708,14 +708,16 @@
   .ui-modal__close {
     transition: none;
   }
-  .ui-btn__spinner {
-    animation: none;
-  }
   .ui-progress__fill {
     transition: none;
   }
+  /* `.ui-btn__spinner` and the indeterminate `.ui-progress__fill` are essential
+     progress cues — they carry `.motion-essential-spinner`, which degrades them
+     to an opacity pulse here rather than freezing (see animations.css, #2603).
+     The sweep positioned a 40%-wide bar via its animation; with that swapped for
+     an opacity pulse, restore the full track width so the pulse reads as an
+     active indeterminate bar rather than a misleading ~40%-complete one. */
   .ui-progress--indeterminate .ui-progress__fill {
-    animation: none;
     width: 100%;
   }
 }

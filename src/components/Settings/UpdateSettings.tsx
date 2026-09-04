@@ -137,7 +137,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
               size="sm"
               icon={
                 isChecking ? (
-                  <Loader2 size={12} className="settings-panel__spin" />
+                  <Loader2 size={12} className="settings-panel__spin motion-essential-spinner" />
                 ) : (
                   <RefreshCw size={12} />
                 )

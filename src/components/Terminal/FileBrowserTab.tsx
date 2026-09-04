@@ -115,7 +115,10 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
       <div className="file-browser-tab__body">
         {phase === "connecting" && (
           <>
-            <Loader2 size={32} className="file-browser-tab__icon file-browser-tab__spin" />
+            <Loader2
+              size={32}
+              className="file-browser-tab__icon file-browser-tab__spin motion-essential-spinner"
+            />
             <p className="file-browser-tab__heading">Connecting…</p>
             <p className="file-browser-tab__hint">Opening {title || "the connection"}.</p>
           </>

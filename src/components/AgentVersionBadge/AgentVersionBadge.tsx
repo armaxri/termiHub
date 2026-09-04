@@ -74,7 +74,14 @@ export function AgentVersionBadge({
         aria-label={description}
         title={description}
       >
-        <meta.Icon className="agent-version-badge__icon" aria-hidden="true" />
+        <meta.Icon
+          className={
+            state === "updating"
+              ? "agent-version-badge__icon motion-essential-spinner"
+              : "agent-version-badge__icon"
+          }
+          aria-hidden="true"
+        />
         {showLabel && <span className="agent-version-badge__label">{meta.label}</span>}
       </span>
     </span>

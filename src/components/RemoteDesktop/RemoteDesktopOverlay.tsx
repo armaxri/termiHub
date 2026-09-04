@@ -33,7 +33,7 @@ export function RemoteDesktopOverlay({
   if (state === "connecting" || state === "authenticating") {
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-connecting">
-        <Loader2 size={30} className="rd-overlay__icon rd-overlay__spin" />
+        <Loader2 size={30} className="rd-overlay__icon rd-overlay__spin motion-essential-spinner" />
         <div className="rd-overlay__title">Connecting to {host}…</div>
         <div className="rd-overlay__sub">
           {state === "authenticating" ? "Authenticating" : "Establishing connection"}
@@ -45,7 +45,10 @@ export function RemoteDesktopOverlay({
   if (state === "reconnecting" || state === "disconnected") {
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-reconnecting">
-        <RefreshCw size={30} className="rd-overlay__icon rd-overlay__spin" />
+        <RefreshCw
+          size={30}
+          className="rd-overlay__icon rd-overlay__spin motion-essential-spinner"
+        />
         <div className="rd-overlay__title">Connection lost. Reconnecting…</div>
         <div className="rd-overlay__sub">
           attempt {Math.max(reconnectAttempt, 1)}/{MAX_RECONNECT_ATTEMPTS}

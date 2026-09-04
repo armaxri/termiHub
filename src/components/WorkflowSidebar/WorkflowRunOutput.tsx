@@ -84,7 +84,7 @@ export function WorkflowRunOutput() {
           <meta.Icon
             size={13}
             className={`workflow-run-output__status-icon${
-              isRunning ? " workflow-run-output__status-icon--spin" : ""
+              isRunning ? " workflow-run-output__status-icon--spin motion-essential-spinner" : ""
             }`}
             aria-hidden="true"
           />

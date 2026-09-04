@@ -185,7 +185,7 @@ export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPa
                 <StatusIcon
                   size={15}
                   className={`connection-path-dialog__status connection-path-dialog__status--${status}${
-                    spin ? " connection-path-dialog__status--spin" : ""
+                    spin ? " connection-path-dialog__status--spin motion-essential-spinner" : ""
                   }`}
                   aria-label={`status: ${status}`}
                 />

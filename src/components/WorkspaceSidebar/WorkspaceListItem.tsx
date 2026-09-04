@@ -54,7 +54,7 @@ export function WorkspaceListItem({
               disabled={launchDisabled}
               icon={
                 launchDisabled ? (
-                  <Loader2 size={12} className="workspace-item__spinner" />
+                  <Loader2 size={12} className="workspace-item__spinner motion-essential-spinner" />
                 ) : (
                   <Play size={12} />
                 )

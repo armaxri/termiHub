@@ -109,7 +109,12 @@ export function ExternalFilesSettings() {
             <Button
               variant="secondary"
               size="sm"
-              icon={<RefreshCw size={14} className={reloading ? "settings-panel__spin" : ""} />}
+              icon={
+                <RefreshCw
+                  size={14}
+                  className={reloading ? "settings-panel__spin motion-essential-spinner" : ""}
+                />
+              }
               onClick={handleReload}
               disabled={reloading}
               title="Reload all external files"

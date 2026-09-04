@@ -1256,7 +1256,7 @@ export function FileBrowser() {
         <div className="file-browser__placeholder" data-testid="file-browser-session-connecting">
           {isLoading ? (
             <>
-              <Loader2 size={20} className="file-browser__spinner" />
+              <Loader2 size={20} className="file-browser__spinner motion-essential-spinner" />
               <span>Loading files...</span>
             </>
           ) : error ? (
@@ -1347,7 +1347,12 @@ export function FileBrowser() {
             <Button
               variant="ghost"
               size="sm"
-              icon={<RefreshCw size={14} className={isLoading ? "file-browser__spinner" : ""} />}
+              icon={
+                <RefreshCw
+                  size={14}
+                  className={isLoading ? "file-browser__spinner motion-essential-spinner" : ""}
+                />
+              }
               onClick={refresh}
               aria-label="Refresh file list"
               data-testid="file-browser-refresh"
@@ -1523,7 +1528,7 @@ export function FileBrowser() {
         <ContextMenu.Trigger asChild>
           {isLoading && fileEntries.length === 0 ? (
             <div className="file-browser__loading">
-              <Loader2 size={20} className="file-browser__spinner" />
+              <Loader2 size={20} className="file-browser__spinner motion-essential-spinner" />
               <span>Loading...</span>
             </div>
           ) : (

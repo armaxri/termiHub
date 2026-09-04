@@ -63,11 +63,9 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .workflow-run-output__status-icon--spin {
-    animation: none;
-  }
-}
+/* The running-status icon is an essential progress cue — it carries
+   `.motion-essential-spinner` (animations.css, #2603), so under reduced motion
+   it degrades to an opacity pulse rather than freezing. */
 
 .workflow-run-output__command {
   display: flex;
