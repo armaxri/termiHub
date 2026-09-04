@@ -759,3 +759,122 @@ fn transient_agent_break_folds_region_server_side_without_arming_the_timer() {
         "no redrive timer is armed across the whole transient-break lifecycle"
     );
 }
+
+/// #2612/#2564: the **fully-failed** resolve of the transient agent-transport-break
+/// lifecycle — the agent's in-task reconnect loop exhausts its budget and the
+/// transport cannot be re-established (`agent → disconnected`) — folded at the backend
+/// source (`agent_io_task`), not left `Reconnecting` for the frontend `disconnected`
+/// resolver.
+///
+/// Drives the production `SessionManager` identity accessor + the enter fold +
+/// `fold_agent_hosted_reconnect_failed`, with the real `ReconnectTimerDriver`, to prove
+/// every hosted session folds the terminal `Failed` state carrying the reconnect error,
+/// clears its re-attach id, leaves the reconnect loop `Idle`, and arms **no** redrive
+/// timer — the same authority the "Reconnect failed" overlay reads from the region.
+#[test]
+fn fully_failed_agent_break_folds_region_failed_at_the_source() {
+    use crate::terminal::agent_manager::{
+        fold_agent_hosted_reconnect_failed, fold_agent_hosted_reconnecting,
+    };
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let agent = Arc::new(FakeAgent::new());
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        agent.clone() as Arc<dyn AgentRpcClient>,
+    );
+    handle.manage(manager);
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    handle.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector = projection.projector.clone();
+    let projector_seed = projection.projector.clone();
+    let store_for_publish = store.clone();
+    handle.manage(projection);
+
+    let scheduler = Arc::new(ManualScheduler::default());
+    let driver = Arc::new(ReconnectTimerDriver::new(
+        store.clone(),
+        scheduler.clone(),
+        Arc::new(move || {
+            publish_sessions(&projector, &store_for_publish);
+        }),
+    ));
+    handle.manage(driver);
+
+    // Two live agent-hosted sessions on `agent-1`, each Connected after initial connect.
+    let manager_ref = handle.state::<SessionManager>();
+    let settings = serde_json::json!({ "config": {} });
+    for (tab, connect) in [("tab-1", "tab-1:0"), ("tab-2", "tab-2:0")] {
+        tauri::async_runtime::block_on(manager_ref.create_connection(
+            "shell",
+            settings.clone(),
+            Some("agent-1"),
+            Some(connect),
+            false,
+            true, // resilient
+            handle.clone(),
+        ))
+        .expect("initial connect succeeds");
+        store.connect(tab);
+        store.connected(tab);
+    }
+    publish_sessions(&projector_seed, &store);
+
+    // Enter: fold every hosted session Reconnecting at the source (the transient break).
+    tauri::async_runtime::block_on(fold_agent_hosted_reconnecting(
+        &handle,
+        "agent-1",
+        Some("connection reset"),
+    ));
+    for tab in ["tab-1", "tab-2"] {
+        assert_eq!(
+            store.get(tab).unwrap().status,
+            SessionStatus::Reconnecting,
+            "{tab} folds Reconnecting on the transient break"
+        );
+    }
+
+    // Fully failed: the in-task reconnect loop exhausted its budget. Fold every hosted
+    // session `Reconnecting → Failed` at the source with the reconnect error.
+    tauri::async_runtime::block_on(fold_agent_hosted_reconnect_failed(
+        &handle,
+        "agent-1",
+        "reconnection failed: connection refused",
+    ));
+
+    for tab in ["tab-1", "tab-2"] {
+        let failed = store.get(tab).unwrap();
+        assert_eq!(
+            failed.status,
+            SessionStatus::Failed,
+            "{tab} folds the terminal Failed state at the backend source (#2612/#2564)"
+        );
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("reconnection failed: connection refused"),
+            "{tab} carries the reconnect error the overlay surfaces from the region"
+        );
+        assert!(
+            failed.backend_session_id.is_none(),
+            "{tab} clears its re-attach id — the transport is definitively gone"
+        );
+        assert_eq!(
+            failed.reconnect.phase,
+            ReconnectPhase::Idle,
+            "{tab} resets the reconnect loop to idle (no client-driven backoff)"
+        );
+        assert!(
+            !scheduler.armed(tab),
+            "{tab} arms no redrive timer for a definitively-failed session"
+        );
+    }
+}

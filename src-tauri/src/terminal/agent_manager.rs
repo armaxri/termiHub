@@ -27,7 +27,8 @@ use crate::agents_projection::store::AgentConnectionState;
 use crate::connection::config::AgentSettings;
 use crate::session::manager::{AgentHostedSession, SessionManager};
 use crate::session_projection::projection::{
-    fold_agent_session_lost, fold_agent_session_recovered, fold_agent_transport_reconnecting,
+    fold_agent_reconnect_failed, fold_agent_session_lost, fold_agent_session_recovered,
+    fold_agent_transport_reconnecting,
 };
 use crate::terminal::agent_config_store::{decide_reattach, AgentConfigStore, ReattachDecision};
 use crate::terminal::agent_deploy::ConnectedHost;
@@ -2308,6 +2309,15 @@ async fn agent_io_task<R: Runtime>(
             }
             Err(e) => {
                 error!("Agent {}: reconnection failed: {}", agent_id, e);
+                // #2612/#2564: the in-task reconnect budget is exhausted — fold every
+                // hosted session's `session-lifecycle` region entry `Reconnecting →
+                // Failed` at the backend source with the reconnect error, the same
+                // authority the "Reconnect failed" overlay reads, rather than leaving it
+                // stuck `Reconnecting` for the frontend `disconnected` handler to resolve
+                // (whose `session.connectFailed` mirror was a no-op while the region read
+                // `reconnecting`). Folded before the agent-state event so the overlay /
+                // tab-dot readers see the failed region.
+                fold_agent_hosted_reconnect_failed(&app_handle, &agent_id, &e).await;
                 emit_agent_state_with_error(&app_handle, &agent_id, "disconnected", Some(&e));
                 alive.store(false, Ordering::SeqCst);
                 // G6 (#1239): self-reap our own map entry instead of leaving a
@@ -2345,6 +2355,27 @@ pub(crate) async fn fold_agent_hosted_reconnecting<R: tauri::Runtime>(
     }
 }
 
+/// Fold every hosted session's `session-lifecycle` region entry to the terminal
+/// `Failed` state at the backend source when the agent's in-task reconnect loop
+/// exhausts its budget (#2612/#2564). The fully-failed twin of
+/// [`fold_agent_hosted_reconnecting`]: the in-task loop owns the transient break, so it
+/// folds the definitive failure itself with the reconnect error rather than leaving the
+/// region `Reconnecting` for the frontend `disconnected` resolver. Loop-idle, so no
+/// redrive is armed for a definitively-failed session. Off-path no-op when the
+/// `SessionManager` is not managed (a headless projection unit-test app).
+pub(crate) async fn fold_agent_hosted_reconnect_failed<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    error: &str,
+) {
+    let Some(manager) = app_handle.try_state::<SessionManager>() else {
+        return;
+    };
+    for hosted in manager.agent_hosted_sessions(agent_id).await {
+        fold_agent_reconnect_failed(app_handle, &hosted.tab_id, Some(error));
+    }
+}
+
 /// The agent's hosted-session identity tuples, or an empty vec when the
 /// `SessionManager` is not managed (a headless projection unit-test app). Fetched
 /// once per reconnect so the caller can both gate the `connection.list` round-trip
@@ -2374,9 +2405,12 @@ async fn hosted_sessions_for_agent<R: tauri::Runtime>(
 ///    which mounts the overlay) via `settleSessionLost`, pending the full
 ///    view-state migration (#2139).
 ///
-/// The fully-failed (`agent → disconnected`) resolve stays frontend-owned for now:
-/// its overlay error still reads the per-client `terminalDisconnectErrors` slice
-/// that has no server-side home until #2139 (a precise follow-up carries it).
+/// The fully-failed (`agent → disconnected`, the agent's in-task reconnect loop
+/// exhausted) resolve is folded by its sibling [`fold_agent_hosted_reconnect_failed`]
+/// (`Reconnecting → Failed`, #2612/#2564). The remaining frontend-owned piece is the
+/// local terminal **view-state** (`terminalExitedTabs` / `terminalViewMode` /
+/// `terminalExitInfo`), which mounts the overlay and has no server-side home until the
+/// stateless-UI view-state migration (#2139); a precise follow-up carries it.
 pub(crate) fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
     app_handle: &AppHandle<R>,
     hosted: &[AgentHostedSession],

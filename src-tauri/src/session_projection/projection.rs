@@ -187,6 +187,40 @@ pub fn fold_agent_session_lost<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab
     sync_timer_generic(app_handle, tab_id);
 }
 
+/// The fully-failed resolve of [`fold_agent_transport_reconnecting`], folded at the
+/// **backend source** (`agent_io_task`) when the agent's own in-task reconnect loop
+/// exhausted its budget and the transport could **not** be re-established — the agent
+/// transitions to `disconnected` (#2612/#2564). The fully-failed twin of
+/// [`fold_agent_session_recovered`] (survived in place) and [`fold_agent_session_lost`]
+/// (transport back, session gone): instead of leaving the region stuck `Reconnecting`
+/// for the frontend `TerminalView` `disconnected` handler to resolve, the backend folds
+/// the terminal [`SessionStatus::Failed`](crate::session_projection::store::SessionStatus::Failed)
+/// state directly with the reconnect error — the same authority the "Reconnect failed"
+/// overlay reads from the region (#2205 PR-B), with no `appStore` twin.
+///
+/// Reuses the `session.connectFailed` store transition
+/// ([`SessionLifecycleStore::connect_failed`](crate::session_projection::store::SessionLifecycleStore::connect_failed))
+/// so the folded region entry is byte-identical to the state the frontend
+/// `setTerminalDisconnectWithError` intent mirror would have produced — except the old
+/// mirror was a **no-op while the region read `reconnecting`** (the enter fold left it
+/// there), so the region never actually left `Reconnecting` and only the per-client
+/// `terminalDisconnectErrors` slice carried the error. Moving the fold to the source is
+/// what lets the overlay surface the failure straight from the region.
+///
+/// Loop-idle (`connect_failed` resets the reconnect engine to idle and clears the
+/// re-attach id), so the subsequent timer reconcile is a *cancel* — no redrive is armed
+/// for a definitively-failed session.
+pub fn fold_agent_reconnect_failed<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    tab_id: &str,
+    error: Option<&str>,
+) {
+    fold_session_transition(app_handle, |store| {
+        store.connect_failed(tab_id, error.map(str::to_string));
+    });
+    sync_timer_generic(app_handle, tab_id);
+}
+
 /// Register the `session.*` intents on a handler registry.
 ///
 /// Each route resolves the managed [`SessionLifecycleStore`] lazily (so it

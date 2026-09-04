@@ -254,10 +254,19 @@ export function TerminalView() {
             if (!tab.sessionId) continue;
             frontendLog("disconnect", `agent disconnect: marking tab=${tab.id} as exited`);
             if (error) {
-              // Auto-reconnect exhausted its retries — surface the reason.
-              store.setTerminalDisconnectWithError(tab.id, error);
+              // Fully-failed reconnect (#2612/#2564): the backend `agent_io_task` folds
+              // the region entry `reconnecting → failed` at the source with the reconnect
+              // error (the same authority the "Reconnect failed" overlay reads). Reflect
+              // only the local presentation view-state here via `settleBackendReconnectGaveUp`
+              // — do NOT re-drive the region (the old `setTerminalDisconnectWithError`
+              // `session.connectFailed` mirror was a no-op while the region read
+              // `reconnecting`, so the region was left stuck `Reconnecting`); the backend
+              // now owns that fold.
+              store.settleBackendReconnectGaveUp(tab.id, error);
             } else {
-              // Agent connection dropped without a specific error — a dropped session (#1121).
+              // Agent connection dropped without a specific error — e.g. a user-initiated
+              // agent disconnect. A dropped session (#1121); its region fold stays
+              // frontend-owned (out of scope for the fully-failed reconnect edge).
               store.setTerminalExited(tab.id, { code: null, reason: "dropped" });
             }
             markedCount++;
