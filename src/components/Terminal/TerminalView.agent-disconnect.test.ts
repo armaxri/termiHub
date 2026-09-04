@@ -82,10 +82,7 @@ vi.mock("@/themes", () => ({
 /** Helper: collect all terminal tabs from all panels in the current store state. */
 function getAllTerminalTabs() {
   const store = layoutState();
-  return [
-    ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-    ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-  ];
+  return store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs));
 }
 
 /** Helper: filter tabs that belong to a given agent (same filter as TerminalView). */
@@ -383,10 +380,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
    */
   function simulateConnectedHandler(agentId: string, recoveredSessionIds: string[]) {
     const store = layoutState();
-    const allTabs = [
-      ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-      ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-    ];
+    const allTabs = store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs));
     const agentTerminalTabs = allTabs.filter((tab) => {
       if (tab.contentType !== "terminal") return false;
       const cfg = tab.config.config as { agentId?: string };
@@ -529,10 +523,7 @@ describe("agent-state-change 'connected': restart tabs in auto-retry/failure sta
   /** Simulate the new loop added for auto-retry tab restart. */
   function simulateRetryRestartLoop(agentId: string) {
     const store = layoutState();
-    const allTabs = [
-      ...getAllLeaves(store.rootPanel).flatMap((l) => l.tabs),
-      ...store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
-    ];
+    const allTabs = store.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs));
     const agentTerminalTabs = allTabs.filter((tab) => {
       if (tab.contentType !== "terminal") return false;
       const cfg = tab.config.config as { agentId?: string };

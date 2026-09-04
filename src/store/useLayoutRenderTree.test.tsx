@@ -57,7 +57,7 @@ describe("useLayoutRenderTree", () => {
     const root = leaf("only");
     seedLayoutState({ rootPanel: root, activePanelId: "only" });
     const hook = renderHook();
-    expect(hook.get()).toBe(root);
+    expect(hook.get()).toEqual(root);
     hook.unmount();
   });
 
@@ -67,7 +67,7 @@ describe("useLayoutRenderTree", () => {
     act(() => {
       seedLayoutState({ rootPanel: next, activePanelId: "next" });
     });
-    expect(hook.get()).toBe(next);
+    expect(hook.get()).toEqual(next);
     hook.unmount();
   });
 });

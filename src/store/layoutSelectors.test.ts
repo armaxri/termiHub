@@ -73,8 +73,12 @@ describe("layoutSelectors", () => {
         activePanelId: "A",
       });
 
-      expect(getLayoutRenderTree()).toBe(activeRoot);
-      expect(getLayoutTabGroups()).toBe(groups);
+      // The accessors compose from the region view (#2562), so they return a
+      // freshly-composed tree (structurally equal, not the same object ref).
+      const tree = getLayoutRenderTree();
+      expect(tree.id).toBe("A");
+      expect(getAllLeaves(tree).flatMap((l) => l.tabs.map((t) => t.id))).toEqual(["t1"]);
+      expect(getLayoutTabGroups().map((g) => g.id)).toEqual(["g1", "g2"]);
       expect(getActiveTabGroupId()).toBe("g1");
       expect(getActivePanelId()).toBe("A");
     });

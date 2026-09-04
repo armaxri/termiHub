@@ -188,10 +188,8 @@ describe("appStore — settings toggles", () => {
   });
 
   it("disabling global file browser keeps the files sidebar when active tab has explicit enableFileBrowser=true", async () => {
-    useAppStore.setState({
-      sidebarView: "files",
-      ...sshTabPanel({ enableFileBrowser: true }),
-    });
+    useAppStore.setState({ sidebarView: "files" });
+    seedLayoutState(sshTabPanel({ enableFileBrowser: true }));
     seedSettings({ powerMonitoringEnabled: true, fileBrowserEnabled: true });
 
     await useAppStore
