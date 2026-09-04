@@ -1,0 +1,1322 @@
+<!doctype html>
+<!--
+  Design concept: "Chain a hop to this computer" — auto-chain a companion
+  desktop-hosted local forward so an agent-hosted loopback tunnel port becomes
+  reachable at plain localhost:PORT on the desktop. This is the second, deferred
+  remediation from the endpoint-semantics sub-concept
+  (future/stateless-ui-agent-tunnel-endpoints.html → Open Design Decision #1);
+  #2155 shipped only "Widen bind". Design only — the implementation target is a
+  follow-up issue; this settles the companion-tunnel lifecycle, the affordance,
+  and how the second moving part is surfaced.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Chain a Hop to This Computer (concept)</title>
+    <link rel="stylesheet" href="../_assets/mockup.css" />
+    <link rel="stylesheet" href="../_assets/concept.css" />
+  </head>
+  <body class="mockup-doc">
+    <!-- Inline lucide sprite (real lucide geometry). Copy only the symbols used. -->
+    <svg width="0" height="0" style="position: absolute" aria-hidden="true">
+      <symbol id="i-arrows" viewBox="0 0 24 24">
+        <path d="M8 3 4 7l4 4" />
+        <path d="M4 7h16" />
+        <path d="m16 21 4-4-4-4" />
+        <path d="M20 17H4" />
+      </symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24">
+        <path
+          d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"
+        />
+        <circle cx="12" cy="12" r="3" />
+      </symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24">
+        <rect width="20" height="14" x="2" y="3" rx="2" />
+        <line x1="8" x2="16" y1="21" y2="21" />
+        <line x1="12" x2="12" y1="17" y2="21" />
+      </symbol>
+      <symbol id="i-server" viewBox="0 0 24 24">
+        <rect width="20" height="8" x="2" y="2" rx="2" ry="2" />
+        <rect width="20" height="8" x="2" y="14" rx="2" ry="2" />
+        <line x1="6" x2="6.01" y1="6" y2="6" />
+        <line x1="6" x2="6.01" y1="18" y2="18" />
+      </symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24">
+        <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+        <path d="M12 9v4" />
+        <path d="M12 17h.01" />
+      </symbol>
+      <symbol id="i-link-2" viewBox="0 0 24 24">
+        <path d="M9 17H7A5 5 0 0 1 7 7h2" />
+        <path d="M15 7h2a5 5 0 1 1 0 10h-2" />
+        <line x1="8" x2="16" y1="12" y2="12" />
+      </symbol>
+      <symbol id="i-plug" viewBox="0 0 24 24">
+        <path d="M12 22v-5" />
+        <path d="M9 8V2" />
+        <path d="M15 8V2" />
+        <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+      </symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24">
+        <path d="M5 12h14" />
+        <path d="M12 5v14" />
+      </symbol>
+      <symbol id="i-trash-2" viewBox="0 0 24 24">
+        <path d="M10 11v6" />
+        <path d="M14 11v6" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        <path d="M3 6h18" />
+        <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24">
+        <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+        <path d="M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+        <path d="M8 16H3v5" />
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24">
+        <path d="M18 6 6 18" />
+        <path d="m6 6 12 12" />
+      </symbol>
+      <symbol id="i-info" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4" />
+        <path d="M12 8h.01" />
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24">
+        <path d="M20 6 9 17l-5-5" />
+      </symbol>
+    </svg>
+
+    <div class="concept">
+      <!-- ── Header ──────────────────────────────────────────────────── -->
+      <header class="concept-header">
+        <h1>Chain a Hop to This Computer</h1>
+        <div class="concept-meta">
+          <span class="concept-status">Future · design only</span>
+          <span
+            >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/2186">#2186</a> ·
+            Follow-up to <a href="https://github.com/armaxri/termiHub/issues/2155">#2155</a> · Part
+            of <a href="https://github.com/armaxri/termiHub/issues/2139">#2139</a></span
+          >
+          <span><code>docs/concepts/future/agent-tunnel-chain-desktop-hop.html</code></span>
+        </div>
+      </header>
+
+      <!-- ── Table of contents ──────────────────────────────────────── -->
+      <nav class="concept-toc">
+        <h2>Contents</h2>
+        <ol>
+          <li><a href="#overview">Overview</a></li>
+          <li><a href="#mechanism">The Mechanism — What "Chaining a Hop" Actually Builds</a></li>
+          <li><a href="#ui">UI Interface — Affordance, Preview, and Surfacing the Pair</a></li>
+          <li><a href="#handling">General Handling — Lifecycle, Linking, Edge Cases</a></li>
+          <li><a href="#behavior">States &amp; Sequences</a></li>
+          <li><a href="#impl">Preliminary Implementation Details</a></li>
+          <li><a href="#defaults">Recommended Defaults</a></li>
+          <li><a href="#decisions">Open Design Decisions</a></li>
+          <li><a href="#status">Implementation Status</a></li>
+          <li><a href="#sync">Sync Ledger</a></li>
+        </ol>
+      </nav>
+
+      <!-- ── Overview ───────────────────────────────────────────────── -->
+      <section>
+        <h2 id="overview">Overview <a class="anchor" href="#overview">#</a></h2>
+        <p>
+          An agent-hosted local (<code>-L</code>) or dynamic (<code>-D</code>) forward bound to
+          loopback opens its listen port on the <em>agent's</em> <code>127.0.0.1</code>. Only
+          processes on the agent can use it — a database client on the user's desktop pointed at
+          <code>localhost:5432</code> connects to nothing. The
+          <a href="stateless-ui-agent-tunnel-endpoints.html">endpoint-semantics sub-concept</a>
+          named this the <strong>reachability trap</strong> and shipped one remediation under
+          <a href="https://github.com/armaxri/termiHub/issues/2155">#2155</a>:
+          <strong>Widen bind</strong>, which rewrites the agent listener to <code>0.0.0.0</code> so
+          the desktop reaches it at <code>build-box:5432</code>. Widening works, but it
+          <em>exposes the port on the agent's network</em> and abandons the familiar
+          <code>localhost</code> mental model.
+        </p>
+        <p>
+          This concept designs the second, deliberately-deferred remediation:
+          <strong>Chain a hop to this computer</strong>. One click auto-creates a
+          <em>companion desktop-hosted local forward</em> whose target is the agent's loopback port,
+          restoring plain <code>localhost:5432</code> on the desktop while keeping the agent
+          listener loopback-private. The cost — and the reason it was deferred until agent tunnels
+          had real usage — is a <strong>second moving part</strong>: two tunnel lifecycles, two
+          failure modes, and a dependency between them. The whole job of this design is to make that
+          second part <strong>never silent</strong>: created explicitly, shown as a linked pair, and
+          torn down together.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>The two remediations, side by side</th>
+                <th>Widen bind (shipped, #2155)</th>
+                <th>Chain a hop (this concept)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Where the desktop reaches the service</td>
+                <td><code>build-box:5432</code> (the agent's address)</td>
+                <td><code>localhost:5432</code> (this computer)</td>
+              </tr>
+              <tr>
+                <td>What it exposes</td>
+                <td>the port on the <strong>agent's LAN</strong></td>
+                <td>
+                  nothing new — agent stays loopback-private; a second SSH hop carries the traffic
+                </td>
+              </tr>
+              <tr>
+                <td>Moving parts</td>
+                <td>one tunnel, rewritten bind</td>
+                <td><strong>two linked tunnels</strong> (agent parent + desktop companion)</td>
+              </tr>
+              <tr>
+                <td>Best when</td>
+                <td>the desktop is on the agent's network and exposure is acceptable</td>
+                <td>
+                  the desktop is remote and you want the familiar <code>localhost</code> with no LAN
+                  exposure
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Goals</h3>
+        <ul>
+          <li>
+            One-click <strong>chain a companion desktop hop</strong> from the editor's reachability
+            warning, restoring <code>localhost:PORT</code> on the desktop for an agent-hosted
+            loopback forward.
+          </li>
+          <li>
+            Design the <strong>companion-tunnel lifecycle</strong>: how it is created, linked to its
+            agent-hosted parent, started/stopped in the correct order, and torn down with the
+            parent.
+          </li>
+          <li>
+            <strong>Surface the pair</strong> — the companion is never a hidden second tunnel. It
+            appears nested under its parent in the sidebar and as a linked pair in Open Connections,
+            with a combined status.
+          </li>
+          <li>
+            Give a precise, actionable answer to every failure of the dependency between the two
+            tunnels (agent offline, companion can't reach the agent, desktop port in use, one side
+            drops).
+          </li>
+        </ul>
+        <h3>Non-Goals</h3>
+        <ul>
+          <li>
+            Re-designing agent-hosted tunnels or endpoint semantics — those are settled in
+            <a href="stateless-ui-agent-tunnel-endpoints.html">#2155</a> and this builds strictly on
+            top of them (the <code>host</code> field, the reachability warning, the
+            <code>ReachableFrom</code> runtime classification).
+          </li>
+          <li>
+            Removing or changing <strong>Widen bind</strong>. Chaining is an additional, alternative
+            remediation offered alongside it — the user still chooses.
+          </li>
+          <li>
+            Auto-chaining <em>without</em> user action. The companion is only ever created by an
+            explicit click; the app never silently spawns a second tunnel (that was the whole risk
+            the maintainer flagged when deferring this).
+          </li>
+          <li>
+            Generalising chaining to arbitrary N-hop paths. This creates exactly one companion hop
+            (desktop → agent), which is the only case the trap needs.
+          </li>
+        </ul>
+      </section>
+
+      <!-- ── The Mechanism ──────────────────────────────────────────── -->
+      <section>
+        <h2 id="mechanism">
+          The Mechanism — What "Chaining a Hop" Actually Builds
+          <a class="anchor" href="#mechanism">#</a>
+        </h2>
+        <p>
+          The agent is itself reached over SSH (the desktop↔agent JSON-RPC transport rides an SSH
+          connection). That existing SSH reachability is exactly what the companion reuses: the
+          companion is a
+          <strong
+            >desktop-hosted <code>-L</code> forward whose SSH server is the agent's own host</strong
+          >, and whose forward target is the parent's loopback listen port
+          <em>resolved from the agent</em>. Traffic then flows through two chained SSH hops:
+        </p>
+        <div class="diagram">
+          <span class="diagram__caption"
+            >The chained data path — two SSH hops restore <code>localhost:5432</code> on the desktop
+            without exposing anything on the agent LAN</span
+          >
+          <pre class="mermaid">
+flowchart LR
+    subgraph LAP["Your computer (desktop)"]
+        CLIENT["DB client<br/>connects to localhost:5432"]
+        CL["companion listen<br/>127.0.0.1:5432 (desktop)"]
+        SSHC1["SSH client<br/>(desktop → agent)"]
+    end
+    subgraph AGT["Agent build-box"]
+        PL["parent listen<br/>127.0.0.1:5432 (agent, loopback)"]
+        SSHC2["SSH client<br/>(agent → bastion)"]
+    end
+    subgraph SRV["SSH server bastion.corp"]
+        FWD["opens conn to target"]
+    end
+    DB["db.internal:5432"]
+    CLIENT -->|"TCP localhost:5432"| CL
+    CL --> SSHC1
+    SSHC1 -->|"companion SSH hop<br/>(desktop-hosted -L)"| PL
+    PL --> SSHC2
+    SSHC2 -->|"parent SSH hop<br/>(agent-hosted -L)"| FWD
+    FWD -->|"TCP"| DB
+          </pre>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Parent (agent-hosted, the tunnel the user configured)</th>
+                <th>Companion (desktop-hosted, auto-created by chaining)</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Host (run-location)</td>
+                <td><code>Agent(build-box)</code></td>
+                <td><code>ThisComputer</code></td>
+              </tr>
+              <tr>
+                <td>Mode</td>
+                <td><code>-L</code> (or <code>-D</code>)</td>
+                <td><code>-L</code> (always, regardless of the parent's mode)</td>
+              </tr>
+              <tr>
+                <td>SSH server (<code>via</code>)</td>
+                <td><code>bastion.corp</code> (whatever the user picked)</td>
+                <td><strong>the agent's SSH connection</strong> — derived, not user-chosen</td>
+              </tr>
+              <tr>
+                <td>Listens on</td>
+                <td>agent <code>127.0.0.1:5432</code> (loopback, private)</td>
+                <td>desktop <code>127.0.0.1:5432</code> → <code>localhost:5432</code> works</td>
+              </tr>
+              <tr>
+                <td>Forwards to</td>
+                <td><code>db.internal:5432</code> (resolved from bastion)</td>
+                <td>
+                  <code>127.0.0.1:5432</code> resolved from the agent — i.e. the parent's listen
+                  port
+                </td>
+              </tr>
+              <tr>
+                <td>Lifecycle</td>
+                <td>owns the pair; start/stop/delete cascades to the companion</td>
+                <td>bound to the parent; cannot outlive it; starts only after the parent is up</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The dependency is one-directional and unavoidable: the companion's forward target
+          <em>is</em> the parent's listen socket, so the parent must be connected before the
+          companion can bind usefully. That single fact drives the whole start/stop ordering and the
+          combined-status model below.
+        </p>
+      </section>
+
+      <!-- ── UI Interface ───────────────────────────────────────────── -->
+      <section>
+        <h2 id="ui">
+          UI Interface — Affordance, Preview, and Surfacing the Pair
+          <a class="anchor" href="#ui">#</a>
+        </h2>
+        <p>
+          Four surfaces gain chaining: the tunnel <strong>editor</strong> (the affordance lives on
+          the existing reachability warning, beside "Widen bind"), a small
+          <strong>preview/confirm</strong> so the second moving part is never a surprise, the tunnel
+          <strong>sidebar</strong> (the companion nested under its parent with a link badge and a
+          combined status), and the <strong>Open Connections</strong> panel (the same linked pair
+          for the inspect/kill view).
+        </p>
+
+        <div class="mockup-section">
+          <h3>Mockup — the editor warning now offers both remediations</h3>
+          <div class="mockup-note">
+            Same non-blocking reachability warning shipped in #2155, now with a second action.
+            "Chain a hop to this computer" sits beside "Widen bind"; the user still chooses (or
+            dismisses).
+          </div>
+          <div class="app" style="height: 380px">
+            <div class="app__body">
+              <nav class="activity-bar">
+                <div class="activity-bar__top">
+                  <button class="activity-bar__item activity-bar__item--active" title="Tunnels">
+                    <svg class="li"><use href="#i-arrows" /></svg>
+                    <span class="activity-bar__indicator"></span>
+                  </button>
+                </div>
+                <div class="activity-bar__bottom">
+                  <button class="activity-bar__item" title="Settings">
+                    <svg class="li"><use href="#i-settings" /></svg>
+                  </button>
+                </div>
+              </nav>
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel" style="padding: 14px; display: block">
+                    <div style="font-weight: 600; margin-bottom: 10px">
+                      Edit tunnel — "db → localhost:5432" &nbsp;<span
+                        style="color: var(--text-secondary); font-weight: 400"
+                        >Local forwarding (-L)</span
+                      >
+                    </div>
+
+                    <!-- Tunnel host selector (from #2155) -->
+                    <div class="menu" style="width: 320px; margin-bottom: 14px">
+                      <div class="menu__title">Tunnel host</div>
+                      <div class="menu__row">
+                        <span class="radio"></span>
+                        <svg class="li"><use href="#i-monitor" /></svg> This computer
+                      </div>
+                      <div class="menu__row menu__row--selected">
+                        <span class="radio"></span>
+                        <svg class="li"><use href="#i-server" /></svg> Agent · build-box
+                      </div>
+                    </div>
+
+                    <!-- Named endpoint lines (from #2155) -->
+                    <div style="font-size: 12.5px; line-height: 1.9">
+                      <div>
+                        <strong>Listens on</strong> agent <code>build-box</code> ·
+                        <code>127.0.0.1:5432</code>
+                        <span style="color: var(--text-secondary)"
+                          >(reachable only from processes on build-box — not this computer)</span
+                        >
+                      </div>
+                      <div><strong>Via</strong> SSH server <code>bastion.corp:22</code></div>
+                      <div>
+                        <strong>Forwards to</strong> <code>db.internal:5432</code>
+                        <span style="color: var(--text-secondary)"
+                          >(resolved from the SSH server)</span
+                        >
+                      </div>
+                    </div>
+
+                    <!-- Reachability warning with BOTH remediations -->
+                    <div
+                      class="status-bar__item status-bar__item--broadcast-warning"
+                      style="margin-top: 12px; align-items: flex-start"
+                    >
+                      <svg class="li"><use href="#i-alert" /></svg>
+                      <span style="color: var(--text-primary)">
+                        <span class="callout">A</span> This port opens on
+                        <strong>build-box</strong>, not your computer.
+                        <code>localhost:5432</code> here will not reach it.<br />
+                        <a href="#">Widen bind</a> &nbsp;·&nbsp;
+                        <span class="callout">B</span>
+                        <a href="#"
+                          ><svg class="li" style="vertical-align: -2px">
+                            <use href="#i-link-2" />
+                          </svg>
+                          Chain a hop to this computer</a
+                        >
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">
+                  <svg class="li"><use href="#i-server" /></svg> host: agent build-box
+                </span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> The existing non-blocking warning (#2155) — unchanged
+                copy, still dismissible; loopback-on-agent stays valid.
+              </li>
+              <li>
+                <span class="callout">B</span> The new remediation. It is a link, not a default —
+                clicking opens the preview (next mockup) rather than silently creating a tunnel.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — chain preview / confirm (the second moving part is made explicit)</h3>
+          <div class="mockup-note">
+            Clicking "Chain a hop" opens this preview before anything is created. It names the
+            companion, its two hops, the desktop port, and warns that it is a linked second tunnel.
+            "Create &amp; link" commits; "Cancel" leaves the parent untouched.
+          </div>
+          <div class="app" style="height: 340px">
+            <div class="app__body">
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div
+                    class="panel"
+                    style="display: flex; align-items: center; justify-content: center"
+                  >
+                    <div class="menu" style="width: 460px">
+                      <div class="menu__title">
+                        <svg class="li"><use href="#i-link-2" /></svg> Chain a hop to this computer
+                      </div>
+                      <div style="padding: 6px 12px; font-size: 12.5px; line-height: 1.7">
+                        Creates a companion tunnel <strong>on this computer</strong> so
+                        <code>localhost:5432</code> reaches the port on build-box.
+                        <span class="callout">A</span>
+                        <div style="margin-top: 8px; color: var(--text-secondary)">
+                          <div>
+                            <svg class="li"><use href="#i-monitor" /></svg> Companion listens
+                            <code>127.0.0.1:5432</code> on this computer
+                          </div>
+                          <div>
+                            <svg class="li"><use href="#i-plug" /></svg> Via the agent's SSH
+                            connection <code>build-box</code>
+                          </div>
+                          <div>
+                            <svg class="li"><use href="#i-server" /></svg> Forwards to the parent's
+                            port <code>127.0.0.1:5432</code> on build-box
+                          </div>
+                        </div>
+                      </div>
+                      <div class="menu__row" style="gap: 8px">
+                        <span class="check"></span> Start the pair now
+                      </div>
+                      <div class="menu__row" style="gap: 8px">
+                        <span class="check"></span> Keep started together (auto-start with parent)
+                      </div>
+                      <div
+                        class="status-bar__item status-bar__item--broadcast-warning"
+                        style="margin: 4px 12px; align-items: flex-start"
+                      >
+                        <svg class="li"><use href="#i-info" /></svg>
+                        <span class="callout">B</span>
+                        <span style="color: var(--text-primary)"
+                          >This adds a second linked tunnel. It appears under the parent and is
+                          removed when the parent is removed.</span
+                        >
+                      </div>
+                      <div class="menu__footer">
+                        <button class="btn btn--link">Cancel</button>
+                        <button class="btn btn--primary">
+                          <svg class="li"><use href="#i-link-2" /></svg> Create &amp; link
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">edit tunnel</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> The preview spells out all three companion endpoints
+                and the derived SSH-via, so the user sees exactly what will exist — nothing hidden.
+              </li>
+              <li>
+                <span class="callout">B</span> An explicit note that this is a second, linked moving
+                part with a cascading lifecycle. This is the design's answer to "don't hide a second
+                tunnel".
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — sidebar: the companion nested under its parent, combined status</h3>
+          <div class="mockup-note">
+            A chained pair renders as the parent row with the companion nested beneath it, joined by
+            a link badge. Two states side by side: both connected (localhost works) vs. degraded
+            (parent up, companion down — port on agent works, localhost does not).
+          </div>
+          <div class="states">
+            <div>
+              <div class="state-label">Linked · connected — <code>localhost:5432</code> works</div>
+              <div class="app" style="height: 220px">
+                <div class="app__body">
+                  <nav class="activity-bar">
+                    <div class="activity-bar__top">
+                      <button class="activity-bar__item activity-bar__item--active" title="Tunnels">
+                        <svg class="li"><use href="#i-arrows" /></svg>
+                        <span class="activity-bar__indicator"></span>
+                      </button>
+                    </div>
+                  </nav>
+                  <aside class="sidebar">
+                    <div class="sidebar__header">
+                      <span class="sidebar__title">SSH Tunnels</span>
+                    </div>
+                    <div class="sidebar__content">
+                      <div class="connection-tree__item connection-tree__item--selected">
+                        <span class="state-dot state-dot--connected"></span> db → localhost:5432
+                        <span class="status-bar__item" style="margin-left: auto; padding: 0">
+                          <svg class="li"><use href="#i-server" /></svg> build-box
+                        </span>
+                      </div>
+                      <div class="connection-tree__item" style="padding-left: 30px">
+                        <svg class="li" style="opacity: 0.6"><use href="#i-link-2" /></svg>
+                        <span class="state-dot state-dot--connected"></span> ↳ hop on this computer
+                        <span class="status-bar__item" style="margin-left: auto; padding: 0">
+                          <svg class="li"><use href="#i-monitor" /></svg> this computer
+                        </span>
+                      </div>
+                      <div class="connection-tree__item">
+                        <span class="state-dot state-dot--connecting"></span> socks proxy (-D)
+                        <span class="status-bar__item" style="margin-left: auto; padding: 0">
+                          <svg class="li"><use href="#i-monitor" /></svg> this computer
+                        </span>
+                      </div>
+                    </div>
+                  </aside>
+                  <div class="terminal-view">
+                    <div class="terminal-view__content">
+                      <div class="panel">
+                        <div class="terminal">
+                          <span class="prompt">user@host $</span> <span class="cursor"></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item">chained pair · localhost:5432 ready</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div>
+              <div class="state-label">Linked · degraded — companion down</div>
+              <div class="app" style="height: 220px">
+                <div class="app__body">
+                  <nav class="activity-bar">
+                    <div class="activity-bar__top">
+                      <button class="activity-bar__item activity-bar__item--active" title="Tunnels">
+                        <svg class="li"><use href="#i-arrows" /></svg>
+                        <span class="activity-bar__indicator"></span>
+                      </button>
+                    </div>
+                  </nav>
+                  <aside class="sidebar">
+                    <div class="sidebar__header">
+                      <span class="sidebar__title">SSH Tunnels</span>
+                    </div>
+                    <div class="sidebar__content">
+                      <div class="connection-tree__item connection-tree__item--selected">
+                        <span class="state-dot state-dot--connected"></span> db → localhost:5432
+                        <span class="status-bar__item" style="margin-left: auto; padding: 0">
+                          <svg class="li"><use href="#i-server" /></svg> build-box
+                        </span>
+                      </div>
+                      <div class="connection-tree__item" style="padding-left: 30px">
+                        <svg class="li" style="opacity: 0.6"><use href="#i-link-2" /></svg>
+                        <span class="state-dot state-dot--disconnected"></span> ↳ hop on this
+                        computer
+                        <span
+                          class="status-bar__item status-bar__item--broadcast-warning"
+                          style="margin-left: auto; padding: 0 4px"
+                        >
+                          <svg class="li"><use href="#i-alert" /></svg> port in use
+                        </span>
+                      </div>
+                    </div>
+                  </aside>
+                  <div class="terminal-view">
+                    <div class="terminal-view__content">
+                      <div class="panel" style="padding: 12px; display: block">
+                        <div
+                          class="status-bar__item status-bar__item--broadcast-warning"
+                          style="align-items: flex-start"
+                        >
+                          <svg class="li"><use href="#i-alert" /></svg>
+                          <span style="color: var(--text-primary)">
+                            The hop on this computer failed: <code>localhost:5432</code> is already
+                            in use. The port still works on build-box.
+                            <a href="#">Use a different local port</a> ·
+                            <a href="#">Retry</a>
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="status-bar">
+                  <div class="status-bar__section status-bar__section--left">
+                    <span class="status-bar__item status-bar__item--broadcast-warning">
+                      <svg class="li"><use href="#i-alert" /></svg> chained pair degraded
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> The companion is <strong>indented under</strong> its
+                parent with a link badge (<svg class="li"><use href="#i-link-2" /></svg>) and its
+                own "this computer" host badge — visible, never hidden.
+              </li>
+              <li>
+                <span class="callout">B</span> When only the companion is down, the pair is
+                <strong>degraded</strong>, not simply "connected": the parent dot stays green (agent
+                port works) but the row and status bar flag that <code>localhost</code> does not,
+                with an inline fix.
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mockup-section">
+          <h3>Mockup — Open Connections panel: the linked pair in the inspect/kill view</h3>
+          <div class="mockup-note">
+            The Open Connections modal lists both tunnels as one linked group. Stopping the parent
+            stops the companion; stopping only the companion warns it breaks
+            <code>localhost:5432</code>.
+          </div>
+          <div class="app" style="height: 240px">
+            <div class="app__body">
+              <div class="terminal-view">
+                <div class="terminal-view__content">
+                  <div class="panel" style="padding: 12px; display: block">
+                    <div style="font-weight: 600; margin-bottom: 8px">
+                      Open Connections — SSH Tunnels
+                    </div>
+                    <div class="connection-tree__item">
+                      <span class="state-dot state-dot--connected"></span> db → localhost:5432
+                      <span class="status-bar__item" style="padding: 0 6px">
+                        <svg class="li"><use href="#i-server" /></svg> build-box · -L
+                      </span>
+                      <span class="status-bar__item" style="margin-left: auto; padding: 0">
+                        <svg class="li"><use href="#i-link-2" /></svg> chained
+                        <button class="btn btn--link">
+                          <svg class="li"><use href="#i-x" /></svg> stop pair
+                        </button>
+                      </span>
+                    </div>
+                    <div class="connection-tree__item" style="padding-left: 30px">
+                      <svg class="li" style="opacity: 0.6"><use href="#i-link-2" /></svg>
+                      <span class="state-dot state-dot--connected"></span> ↳ hop on this computer
+                      <span class="status-bar__item" style="padding: 0 6px">
+                        <svg class="li"><use href="#i-monitor" /></svg> this computer · -L
+                      </span>
+                      <span class="status-bar__item" style="margin-left: auto; padding: 0">
+                        127.0.0.1:5432 → build-box:5432
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="status-bar">
+              <div class="status-bar__section status-bar__section--left">
+                <span class="status-bar__item">1 chained pair · 2 sockets</span>
+              </div>
+            </div>
+          </div>
+          <div class="legend">
+            <ul>
+              <li>
+                <span class="callout">A</span> The same link badge and nesting as the sidebar. The
+                primary "stop" acts on the <strong>pair</strong>; the companion row has its own
+                controls but stopping it alone warns it will break <code>localhost</code>.
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── General Handling ───────────────────────────────────────── -->
+      <section>
+        <h2 id="handling">
+          General Handling — Lifecycle, Linking, Edge Cases <a class="anchor" href="#handling">#</a>
+        </h2>
+
+        <h3>Creating the link</h3>
+        <p>
+          Chaining is only offered where the trap exists — an <strong>agent-hosted</strong>
+          <code>-L</code>/<code>-D</code> forward bound to <strong>loopback</strong> (exactly the
+          condition <code>tunnelReachabilityWarning</code> already tests in #2155). On
+          <em>Create &amp; link</em>, the app derives a companion <code>TunnelConfig</code> (host
+          <code>ThisComputer</code>, mode <code>-L</code>, SSH-via = the agent's SSH connection,
+          target = the parent's loopback <code>host:port</code>, local bind =
+          <code>127.0.0.1:PORT</code>), stamps a <strong>bidirectional link</strong> on both configs
+          (<code>parent.companionId</code> / <code>companion.companionOf</code>), and saves the
+          pair. If "Start the pair now" is checked, it starts them in dependency order.
+        </p>
+
+        <h3>Start / stop ordering (the dependency is one-directional)</h3>
+        <ul>
+          <li>
+            <strong>Start:</strong> parent first. The companion's target is the parent's listen
+            socket, so the companion only starts once the parent reaches <code>connected</code>.
+            Starting the companion directly implies starting the parent.
+          </li>
+          <li>
+            <strong>Stop:</strong> companion first, then parent — the reverse. Stopping the parent
+            always stops the companion (it would otherwise dangle pointing at a dead port).
+          </li>
+          <li>
+            <strong>Reconnect:</strong> reconnect the parent, wait for <code>connected</code>, then
+            reconnect the companion. A parent flap therefore transiently degrades the pair rather
+            than erroring the companion permanently.
+          </li>
+        </ul>
+
+        <h3>Combined status model</h3>
+        <p>
+          The pair reports one derived status so the user reasons about "does
+          <code>localhost:5432</code> work?" rather than juggling two rows:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Parent</th>
+                <th>Companion</th>
+                <th>Pair status</th>
+                <th>What the user sees</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>connected</td>
+                <td>connected</td>
+                <td><strong>Linked · connected</strong></td>
+                <td><code>localhost:5432</code> works; both dots green</td>
+              </tr>
+              <tr>
+                <td>connected</td>
+                <td>connecting</td>
+                <td><strong>Linked · connecting</strong></td>
+                <td>parent green, companion amber — almost there</td>
+              </tr>
+              <tr>
+                <td>connected</td>
+                <td>error / disconnected</td>
+                <td><strong>Linked · degraded</strong></td>
+                <td>
+                  agent port works, <code>localhost</code> does not; warning + inline fix (Retry /
+                  different local port)
+                </td>
+              </tr>
+              <tr>
+                <td>error / disconnected</td>
+                <td>(forced down)</td>
+                <td><strong>Linked · down</strong></td>
+                <td>
+                  parent error surfaces first; companion is held down until the parent recovers
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Edge cases</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Situation</th>
+                <th>Behaviour</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Agent offline / not connected</strong></td>
+                <td>
+                  The parent cannot host, so chaining is meaningless. The "Chain a hop" action is
+                  <em>disabled</em> with a reason ("Agent build-box is offline"). An already-chained
+                  pair whose agent drops goes <strong>Linked · down</strong> and auto-recovers when
+                  the agent reconnects (rides the existing agent-reconnect machinery).
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Companion can't reach the agent over SSH</strong></td>
+                <td>
+                  The companion's own SSH hop (desktop → agent) fails like any tunnel: the pair is
+                  <strong>degraded</strong>, the companion row shows the SSH error, Retry is
+                  offered. The parent is unaffected — the agent port still works for agent-side
+                  consumers.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Desktop port already in use</strong></td>
+                <td>
+                  The companion's <code>127.0.0.1:PORT</code> bind fails. The pair is
+                  <strong>degraded</strong> with "localhost:5432 is already in use" and two fixes:
+                  <em>Use a different local port</em> (then the desktop reaches at the new port,
+                  shown explicitly — the <code>localhost:PORT</code> promise is honoured at whatever
+                  port actually bound) or <em>Retry</em>.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Hop already chained</strong></td>
+                <td>
+                  Chaining is idempotent per parent. If a companion already exists the warning shows
+                  <em>“Chained ✓ · reveal”</em> instead of the create action — never a second
+                  duplicate companion.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>User widens the parent bind later</strong></td>
+                <td>
+                  A widened parent is no longer loopback, so the companion is redundant (and its
+                  target address is now wrong). The app flags the companion as <em>redundant</em>
+                  and offers to remove it. The two remediations are mutually exclusive by intent.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Parent host changed to This computer</strong></td>
+                <td>
+                  A desktop-hosted parent already gives <code>localhost:PORT</code>; the companion
+                  is redundant and offered for removal, same as widening.
+                </td>
+              </tr>
+              <tr>
+                <td><strong>User stops / deletes the companion directly</strong></td>
+                <td>
+                  Allowed, but confirmation warns it breaks <code>localhost:5432</code> while
+                  leaving the agent port running. Deleting the companion clears the link on the
+                  parent (the warning's action reverts to "Chain a hop").
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Parent deleted</strong></td>
+                <td>
+                  Cascades: the delete confirmation names <em>both</em> tunnels and removes the
+                  companion with the parent — no orphan desktop tunnel pointing at a dead agent
+                  port.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── States & Sequences ─────────────────────────────────────── -->
+      <section>
+        <h2 id="behavior">States &amp; Sequences <a class="anchor" href="#behavior">#</a></h2>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Create &amp; link — one action produces the companion and starts the pair in dependency
+            order</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User (desktop UI)
+    participant I as Tunnel intents (projection)
+    participant M as TunnelManager
+    participant A as Agent build-box
+    U->>I: click "Chain a hop" → preview → Create &amp; link
+    Note over I: derive companion config (host ThisComputer, -L,<br/>via agent SSH, target parent loopback), link both
+    I->>M: tunnel.create (companion, companionOf=parent)
+    I->>M: tunnel.start (parent)
+    M->>A: start agent-hosted -L (parent) over agent RPC
+    A-->>M: connected, boundOn build-box, reachableFrom agentOnly
+    Note over M: parent connected → now safe to start companion
+    M->>M: tunnel.start (companion) desktop-hosted -L
+    M-->>I: diffs: parent connected, companion connecting→connected
+    I-->>U: pair "Linked · connected", localhost:5432 works
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption">Chained-pair lifecycle — the combined status machine</span>
+          <pre class="mermaid">
+stateDiagram-v2
+    [*] --> Unchained : agent-hosted loopback -L/-D
+    Unchained --> Creating : Create &amp; link
+    Creating --> StartingParent : start pair
+    StartingParent --> StartingCompanion : parent connected
+    StartingParent --> Down : parent error / agent offline
+    StartingCompanion --> LinkedConnected : companion connected
+    StartingCompanion --> Degraded : companion error (port in use / SSH fail)
+    LinkedConnected --> Degraded : companion drops
+    LinkedConnected --> Down : parent drops (companion held down)
+    Degraded --> LinkedConnected : retry / fix port succeeds
+    Down --> StartingCompanion : parent recovered
+    Degraded --> Unchained : remove companion
+    LinkedConnected --> Unchained : widen bind / host → this computer (redundant)
+    LinkedConnected --> [*] : delete parent (cascade removes companion)
+          </pre>
+        </div>
+
+        <div class="diagram">
+          <span class="diagram__caption"
+            >Teardown — stopping or deleting the parent cascades to the companion, reverse
+            order</span
+          >
+          <pre class="mermaid">
+sequenceDiagram
+    participant U as User
+    participant M as TunnelManager
+    participant A as Agent build-box
+    U->>M: stop pair (or delete parent)
+    Note over M: companion depends on parent → stop companion first
+    M->>M: stop companion (desktop -L)
+    M->>A: stop agent-hosted parent -L
+    A-->>M: parent stopped
+    alt delete
+        M->>M: remove companion config, then parent config
+        Note over M: link cleared; no orphan desktop tunnel remains
+    end
+    M-->>U: pair removed / stopped
+          </pre>
+        </div>
+      </section>
+
+      <!-- ── Preliminary Implementation Details ─────────────────────── -->
+      <section>
+        <h2 id="impl">Preliminary Implementation Details <a class="anchor" href="#impl">#</a></h2>
+        <p>
+          Based on the architecture at concept-creation time (Sep 2026); indicative, not binding.
+          Chaining is <strong>almost entirely additive</strong>: it composes two tunnels that
+          already exist as first-class objects (desktop-hosted <code>-L</code> and the agent-hosted
+          forward from #2155/<a href="https://github.com/armaxri/termiHub/issues/2185">#2185</a>).
+          The new work is the <strong>link field</strong>, the
+          <strong>ordered pair lifecycle</strong>, the <strong>combined status</strong>, and the UI
+          to create/surface the pair. SSH mechanics are untouched.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Path</th>
+                <th>Change</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>
+                  <code>src-tauri/src/tunnel/config.rs</code> · <code>src/types/tunnel.ts</code>
+                </td>
+                <td>
+                  Add a <strong>link field</strong> to <code>TunnelConfig</code>:
+                  <code>companion_of: Option&lt;TunnelId&gt;</code> on the companion (and/or a
+                  derived <code>companion_id</code> on the parent). Optional, defaulted on load, so
+                  existing configs round-trip. A companion is a normal desktop-hosted
+                  <code>-L</code> config plus this link.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/tunnel/tunnel_manager.rs</code></td>
+                <td>
+                  <strong>Ordered pair lifecycle:</strong> start = parent-then-companion (gate the
+                  companion on the parent reaching <code>connected</code>); stop/remove =
+                  companion-then-parent (cascade). A parent status transition drives the companion
+                  (start on connect, hold down on parent error). Reuses the existing status-emit
+                  choke point.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src-tauri/src/tunnel/projection.rs</code></td>
+                <td>
+                  The <code>tunnels</code> region already carries configs + per-tunnel
+                  <code>TunnelState</code>. Add a derived <strong>pair/combined status</strong> to
+                  the view model (or compute it in the frontend from the link + both states) so the
+                  UI renders one "Linked · …" status. New intents may be thin (<code
+                    >tunnel.chain</code
+                  >
+                  to create+link, <code>tunnel.unchain</code> to remove the companion) or the
+                  existing <code>tunnel.create</code>/<code>remove</code> can carry the link.
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  Companion derivation (new pure helper, e.g. <code>src/utils/tunnelChain.ts</code>)
+                </td>
+                <td>
+                  A pure function <code>deriveCompanion(parent, agentSshConnectionId)</code> that
+                  returns the companion <code>TunnelConfig</code> (host <code>ThisComputer</code>,
+                  <code>-L</code>, via the agent's SSH connection, target = parent loopback
+                  host:port, bind <code>127.0.0.1:port</code>). Unit-tested directly, mirroring the
+                  pure style of <code>src/utils/tunnelHost.ts</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/TunnelEditor/TunnelEditor.tsx</code></td>
+                <td>
+                  Add the second action beside the existing <code>handleWidenBind</code> in the
+                  <code>reachability</code> block — "Chain a hop to this computer" → open the
+                  preview → dispatch chain. Disable it when the host agent is offline or a companion
+                  already exists (show "Chained ✓" instead).
+                </td>
+              </tr>
+              <tr>
+                <td>
+                  <code>src/components/TunnelSidebar/TunnelListItem.tsx</code> ·
+                  <code>TunnelSidebar.tsx</code>
+                </td>
+                <td>
+                  Render a companion <strong>nested under</strong> its parent with the link badge
+                  and its own host badge; show the combined "Linked · …" status and the degraded
+                  inline fix. Extends the existing host/reachability rendering
+                  (<code>reportedReachability</code>).
+                </td>
+              </tr>
+              <tr>
+                <td><code>src/components/OpenConnections/OpenConnectionsModal.tsx</code></td>
+                <td>
+                  Group the pair; primary stop acts on the pair; stopping the companion alone warns
+                  it breaks <code>localhost</code>.
+                </td>
+              </tr>
+              <tr>
+                <td><code>agent/src/tunnel/mod.rs</code></td>
+                <td>
+                  <strong>No change.</strong> The agent hosts the parent forward exactly as today
+                  (#2185); the companion is entirely desktop-side. Chaining adds no agent protocol.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Recommended Defaults ───────────────────────────────────── -->
+      <section>
+        <h2 id="defaults">Recommended Defaults <a class="anchor" href="#defaults">#</a></h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fork</th>
+                <th>Recommended default</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Is chaining automatic?</td>
+                <td>
+                  <strong>No — explicit, click-and-preview only.</strong> The app never spawns a
+                  companion without the user seeing the preview and confirming. This is the core
+                  concern the maintainer raised when deferring.
+                </td>
+              </tr>
+              <tr>
+                <td>Companion's SSH-via</td>
+                <td>
+                  <strong>Derived from the agent's SSH connection</strong>, not user-picked — the
+                  agent is already SSH-reachable, and deriving it keeps the action one click.
+                </td>
+              </tr>
+              <tr>
+                <td>Companion local port</td>
+                <td>
+                  <strong>Same as the parent's port</strong> (preserve the
+                  <code>localhost:PORT</code>
+                  promise); fall back to a user-chosen port only on a desktop port conflict, shown
+                  explicitly.
+                </td>
+              </tr>
+              <tr>
+                <td>Visibility of the companion</td>
+                <td>
+                  <strong>Always shown</strong>, nested under the parent with a link badge — never a
+                  hidden second tunnel (the issue's explicit requirement).
+                </td>
+              </tr>
+              <tr>
+                <td>Lifecycle coupling</td>
+                <td>
+                  <strong>Cascade.</strong> Start/stop/delete the parent cascades to the companion
+                  in dependency order; the companion cannot outlive its parent.
+                </td>
+              </tr>
+              <tr>
+                <td>Status shown</td>
+                <td>
+                  <strong>Combined "Linked · …" status</strong> so the user reasons about whether
+                  <code>localhost:PORT</code> works, with a distinct <em>degraded</em> state when
+                  only the companion is down.
+                </td>
+              </tr>
+              <tr>
+                <td>Relationship to Widen bind</td>
+                <td>
+                  <strong>Mutually exclusive remediations.</strong> Widening a chained parent marks
+                  the companion redundant and offers removal; the two are never both active.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── Open Design Decisions ──────────────────────────────────── -->
+      <section>
+        <h2 id="decisions">Open Design Decisions <a class="anchor" href="#decisions">#</a></h2>
+        <p>
+          The parent endpoint-semantics concept escalated one product-defining question — "should
+          the chain-a-hop remediation exist at all?" This concept answers <em>how</em> it should
+          work if built; the <em>whether/when</em> remains the maintainer's call (currently: keep
+          deferred until agent tunnels have real usage). These are the remaining shape decisions.
+        </p>
+        <ol>
+          <li>
+            <strong>Whether/when to build (maintainer-gated).</strong> Per #2186's comments the
+            feature stays deferred even though its dependency #2185 landed.
+            <em
+              >Recommendation: build once agent-hosted tunnels see real use and the loopback trap is
+              hit often enough that "Widen bind" alone is insufficient.</em
+            >
+          </li>
+          <li>
+            <strong
+              >Where the companion's SSH-via comes from when the agent has several SSH reachability
+              paths.</strong
+            >
+            Derive from the primary agent SSH connection (proposed), or let the user pick in the
+            preview?
+            <em
+              >Recommendation: derive silently from the agent's primary SSH connection; expose an
+              override in the preview only if usage shows multiple paths are common.</em
+            >
+          </li>
+          <li>
+            <strong>Combined status home.</strong> Compute the "Linked · …" status in the Rust
+            projection view model, or derive it in the frontend from the link + two states?
+            <em
+              >Recommendation: derive in the frontend initially (pure, testable, no region schema
+              change); promote to the projection if other clients need it.</em
+            >
+          </li>
+          <li>
+            <strong>Depth cap.</strong> Restrict chaining to exactly one desktop hop (proposed), or
+            allow a companion to itself be chained?
+            <em
+              >Recommendation: cap at one hop — the trap never needs more, and deeper chains
+              multiply the failure surface.</em
+            >
+          </li>
+        </ol>
+      </section>
+
+      <!-- ── Implementation Status ──────────────────────────────────── -->
+      <section>
+        <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
+        <p>
+          <strong>Not started — design only.</strong> This concept settles the deferred "Chain a hop
+          to this computer" remediation from
+          <a href="stateless-ui-agent-tunnel-endpoints.html">the endpoint-semantics sub-concept</a>
+          (Open Design Decision #1). Its dependency,
+          <a href="https://github.com/armaxri/termiHub/issues/2185">#2185</a> (agent-hosted
+          forwarding), and the endpoint-semantics/reachability groundwork (<a
+            href="https://github.com/armaxri/termiHub/issues/2155"
+            >#2155</a
+          >: the <code>host</code> field, the reachability warning + "Widen bind", the
+          <code>ReachableFrom</code> runtime classification) have landed. The
+          <strong>whether/when</strong> to implement is maintainer-gated (currently deferred);
+          implementation is tracked in a separate <code>Ready2Implement</code> follow-up. Run
+          <code>/sync-concept agent-tunnel-chain-desktop-hop</code> after it lands to reconcile.
+        </p>
+      </section>
+
+      <!-- ── Sync ledger ────────────────────────────────────────────── -->
+      <section>
+        <h2 id="sync">Sync Ledger <a class="anchor" href="#sync">#</a></h2>
+        <blockquote>
+          <p>
+            Maintained by <code>/sync-concept &lt;name&gt;</code>. Records the last commit at which
+            the concept and code were reconciled, plus open divergences. The concept is the source
+            of truth.
+          </p>
+        </blockquote>
+        <p>
+          <strong>Last synced:</strong> never (design only) · <strong>Status:</strong> not
+          implemented
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Artifact claim</th>
+                <th>Code reality</th>
+                <th>Type</th>
+                <th>Recommendation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>
+                  <code>TunnelConfig</code> carries a companion link (<code>companion_of</code> /
+                  <code>companion_id</code>)
+                </td>
+                <td>Absent — tunnels have no link field</td>
+                <td>Missing</td>
+                <td>Implement with the chaining follow-up, then re-sync</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>Editor warning offers "Chain a hop to this computer" beside "Widen bind"</td>
+                <td>
+                  Only "Widen bind" exists (<code>TunnelEditor.tsx</code> →
+                  <code>handleWidenBind</code>)
+                </td>
+                <td>Missing</td>
+                <td>Add the second action + preview, then re-sync</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>Sidebar / Open Connections show the nested companion + combined status</td>
+                <td>Host + reachability badges exist; no pair nesting</td>
+                <td>Missing</td>
+                <td>Extend the list items, then re-sync</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>Ordered pair lifecycle + cascade teardown in the manager</td>
+                <td>Absent — tunnels start/stop independently</td>
+                <td>Missing</td>
+                <td>Implement in <code>tunnel_manager.rs</code>, then re-sync</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>Agent hosts the parent forward; companion is desktop-side</td>
+                <td>Present — agent-hosted forwarding landed (#2185)</td>
+                <td>Aligned</td>
+                <td>Keep unchanged; chaining adds no agent protocol</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Mermaid: vendored, offline, renders <pre class="mermaid"> as text → SVG. -->
+    <script src="../_assets/mermaid.min.js"></script>
+    <script>
+      mermaid.initialize({
+        startOnLoad: true,
+        theme: "dark",
+        securityLevel: "loose",
+        fontFamily: "Geist, sans-serif",
+      });
+    </script>
+  </body>
+</html>
