@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { Plus, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { WorkspaceEditorMeta } from "@/types/terminal";
 import { WorkspaceDefinition, WorkspaceLayoutNode, WorkspaceTabGroupDef } from "@/types/workspace";
 import { loadWorkspace } from "@/services/workspaceApi";
@@ -26,7 +27,7 @@ const DEFAULT_GROUP_NAME = "Main";
 export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps) {
   const saveWorkspace = useAppStore((s) => s.saveWorkspaceToBackend);
   const closeTab = useAppStore((s) => s.closeTab);
-  const rootPanel = useAppStore((s) => s.rootPanel);
+  const rootPanel = useLayoutRenderTree();
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

@@ -40,7 +40,12 @@ import {
   useProjectedSessionLifecycleMaps,
   useSessionAutoReconnect,
 } from "@/store/useSessionLifecycle";
-import { useLayoutRenderTree } from "@/store/useLayoutRenderTree";
+import {
+  groupRenderTree,
+  useActiveTabGroupId,
+  useLayoutRenderTree,
+  useLayoutTabGroups,
+} from "@/store/layoutSelectors";
 import { PanelNode, LeafPanel, TerminalTab, DropEdge } from "@/types/terminal";
 import { getAllLeaves, findLeafByTab, isWindowEmpty, normalizeSizes } from "@/utils/panelTree";
 import { broadcastPanelClass } from "@/utils/broadcastPanel";
@@ -79,8 +84,8 @@ export function SplitView() {
   // overlaid per-tab from appStore. Flag-off / desync falls back to appStore's
   // tree verbatim, so rendering is byte-for-byte unchanged.
   const rootPanel = useLayoutRenderTree();
-  const tabGroups = useAppStore((s) => s.tabGroups);
-  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
+  const tabGroups = useLayoutTabGroups();
+  const activeTabGroupId = useActiveTabGroupId();
   const setActivePanel = useAppStore((s) => s.setActivePanel);
   const addTabGroupWithTab = useAppStore((s) => s.addTabGroupWithTab);
   const reorderTabs = useAppStore((s) => s.reorderTabs);
@@ -273,7 +278,7 @@ export function SplitView() {
         const isActive = group.id === activeTabGroupId;
         // Active group: use live rootPanel state (always up-to-date).
         // Inactive groups: use saved rootPanel from tabGroups (preserved on switch).
-        const panelTree = isActive ? rootPanel : group.rootPanel;
+        const panelTree = groupRenderTree(group, rootPanel, activeTabGroupId);
         return (
           <div
             key={group.id}

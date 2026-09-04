@@ -3,6 +3,7 @@ import { Plus, Save, Download, Upload } from "lucide-react";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
+import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors";
 import { Button, toast, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
@@ -21,8 +22,8 @@ export function WorkspaceSidebar() {
   const launchWorkspace = useAppStore((s) => s.launchWorkspace);
   const launchingWorkspaceId = useAppStore((s) => s.launchingWorkspaceId);
   const saveCurrentAsWorkspace = useAppStore((s) => s.saveCurrentAsWorkspace);
-  const tabGroups = useAppStore((s) => s.tabGroups);
-  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
+  const tabGroups = useLayoutTabGroups();
+  const activeTabGroupId = useActiveTabGroupId();
 
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   // The workspace pending deletion once the user confirms the destructive action.

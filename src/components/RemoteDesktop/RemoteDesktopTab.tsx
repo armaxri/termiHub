@@ -3,7 +3,7 @@ import { FileDown, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
-import { getAllLeaves } from "@/utils/panelTree";
+import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import { remoteDesktopGetClipboard } from "@/services/api";
 import type { RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
@@ -55,16 +55,9 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
     return () => clearRemoteDesktopResolution(id);
   }, [session.sessionId, clearRemoteDesktopResolution]);
 
-  const title = useAppStore(
-    (s) =>
-      getAllLeaves(s.rootPanel)
-        .flatMap((l) => l.tabs)
-        .find((t) => t.id === tabId)?.title ?? ""
-  );
+  const title = useAppStore((s) => activeTreeTabs(s).find((t) => t.id === tabId)?.title ?? "");
   const host = useAppStore((s) => {
-    const tab = getAllLeaves(s.rootPanel)
-      .flatMap((l) => l.tabs)
-      .find((t) => t.id === tabId);
+    const tab = activeTreeTabs(s).find((t) => t.id === tabId);
     const cfg = tab?.config.config as Record<string, unknown> | undefined;
     return (cfg?.host as string | undefined) ?? title ?? "remote";
   });

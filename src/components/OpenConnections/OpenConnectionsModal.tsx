@@ -35,6 +35,12 @@ import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
 import { MONITORING_INTERVAL_OPTIONS, DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
 import { useAppStore } from "@/store/appStore";
+import {
+  groupRenderTree,
+  useActiveTabGroupId,
+  useLayoutRenderTree,
+  useLayoutTabGroups,
+} from "@/store/layoutSelectors";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
@@ -105,8 +111,8 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const tunnelStates = useAppStore((s) => s.tunnelStates);
   const transfers = useAppStore((s) => s.transfers);
   const cancelTransfer = useAppStore((s) => s.cancelTransfer);
-  const tabGroups = useAppStore((s) => s.tabGroups);
-  const activeTabGroupId = useAppStore((s) => s.activeTabGroupId);
+  const tabGroups = useLayoutTabGroups();
+  const activeTabGroupId = useActiveTabGroupId();
   // Every monitored host with a live backend subscription (#1231, audit gap G6);
   // each renders its own killable row. Derived from the keyed `monitors` map,
   // sourced from the projected `system-monitors` region when it faithfully
@@ -125,7 +131,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // and this "kill everything" surface can see and stop the poll loops (#1147).
   const httpMonitors = useAppStore((s) => s.httpMonitors);
   const setHttpMonitors = useAppStore((s) => s.setHttpMonitors);
-  const rootPanel = useAppStore((s) => s.rootPanel);
+  const rootPanel = useLayoutRenderTree();
   // Render cut (#2205 PR-A): connecting flags sourced from the projected
   // `session-lifecycle` region (falls back to appStore per key when not mirrored).
   const { terminalConnecting } = useProjectedSessionLifecycleMaps();
@@ -141,7 +147,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // Every tab across all tab groups (the active group is the live rootPanel, the
   // others their stored trees), walked once and reused below.
   const allTabs = tabGroups.flatMap((g) =>
-    getAllLeaves(g.id === activeTabGroupId ? rootPanel : g.rootPanel).flatMap((leaf) => leaf.tabs)
+    getAllLeaves(groupRenderTree(g, rootPanel, activeTabGroupId)).flatMap((leaf) => leaf.tabs)
   );
 
   // Session ids of spawned containers whose tab is still live (#1446): tabs

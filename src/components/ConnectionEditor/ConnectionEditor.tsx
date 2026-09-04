@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { currentConnectionsView } from "@/store/connectionsBridge";
@@ -205,7 +206,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const closeTab = useAppStore((s) => s.closeTab);
   const addTab = useAppStore((s) => s.addTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
-  const rootPanel = useAppStore((s) => s.rootPanel);
+  const rootPanel = useLayoutRenderTree();
   const { remoteAgents, agentDefinitions } = useProjectedAgents();
   const addRemoteAgent = useAppStore((s) => s.addRemoteAgent);
   const updateRemoteAgent = useAppStore((s) => s.updateRemoteAgent);

@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { getAllLeaves } from "@/utils/panelTree";
 import { reportWindowTabCount } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
+import { groupRenderTreesOf } from "@/store/layoutSelectors";
 import { frontendLog } from "@/utils/frontendLog";
 
 /**
@@ -19,7 +20,7 @@ import { frontendLog } from "@/utils/frontendLog";
  */
 export function useReportWindowTabCount(): void {
   const tabCount = useAppStore((s) => {
-    const trees = s.tabGroups.map((g) => (g.id === s.activeTabGroupId ? s.rootPanel : g.rootPanel));
+    const trees = groupRenderTreesOf(s);
     return trees.reduce(
       (n, tree) => n + getAllLeaves(tree).reduce((m, leaf) => m + leaf.tabs.length, 0),
       0
