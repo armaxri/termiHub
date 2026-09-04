@@ -824,6 +824,38 @@ pub struct ServiceStopResult {
     pub stopped: bool,
 }
 
+/// Params for `service.pause` (#2607).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServicePauseParams {
+    /// The instance id to pause in place.
+    pub instance_id: String,
+}
+
+/// Result of `service.pause` (#2607).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServicePauseResult {
+    /// Whether a running instance with that id was found and paused.
+    pub paused: bool,
+}
+
+/// Params for `service.resume` (#2607).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceResumeParams {
+    /// The instance id to resume in place.
+    pub instance_id: String,
+}
+
+/// Result of `service.resume` (#2607).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceResumeResult {
+    /// Whether a running instance with that id was found and resumed.
+    pub resumed: bool,
+}
+
 /// Params for `service.status`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

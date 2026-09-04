@@ -235,6 +235,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pause_resume_default_to_a_no_op_success() {
+        // A service with no pause concept (the embedded servers) inherits the
+        // trait's default no-op pause/resume, so a stray control call is harmless
+        // and leaves the running service untouched (#2607).
+        let registry = {
+            let mut r = ServiceRegistry::new();
+            r.register("http", "HTTP Server", "server", mock_factory("http", false));
+            r
+        };
+        let mut svc = registry.create("http").unwrap();
+        svc.start(Value::Null).await.unwrap();
+        assert_eq!(svc.status(), ServiceStatus::Running);
+
+        svc.pause().await.expect("default pause is a no-op success");
+        assert_eq!(
+            svc.status(),
+            ServiceStatus::Running,
+            "pause is a no-op here"
+        );
+        svc.resume()
+            .await
+            .expect("default resume is a no-op success");
+        assert_eq!(svc.status(), ServiceStatus::Running);
+    }
+
+    #[tokio::test]
     async fn lifecycle_transitions_and_emits_events() {
         let registry = {
             let mut r = ServiceRegistry::new();
