@@ -101,7 +101,7 @@ describe("terminal spawn error state", () => {
   });
 
   it("closeTab removes spawn error and retry counter", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     // Add a terminal tab via addTab so we have a valid panelId
     const panelId = store.activePanelId!;
     store.addTab("Test", "local");

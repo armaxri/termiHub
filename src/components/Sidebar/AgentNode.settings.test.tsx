@@ -194,7 +194,7 @@ describe("AgentNode — definition settings forwarding (bug #633)", () => {
       defButton.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
 
-    const { rootPanel, tabColors } = useAppStore.getState();
+    const { rootPanel, tabColors } = layoutState();
     const leaf = rootPanel.type === "leaf" ? rootPanel : null;
     const tabId = leaf?.tabs[0]?.id;
     expect(tabId).toBeDefined();

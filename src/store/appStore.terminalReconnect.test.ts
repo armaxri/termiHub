@@ -62,6 +62,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { PersistentSessionEntry } from "@/types/connection";
 
@@ -70,7 +71,7 @@ const DEF_ID = "def-1";
 const CONNECTION_ID = `${AGENT_ID}:${DEF_ID}`;
 
 function findTab(tabId: string) {
-  const state = useAppStore.getState();
+  const state = layoutState();
   return [
     ...getAllLeaves(state.rootPanel).flatMap((l) => l.tabs),
     ...state.tabGroups.flatMap((g) => getAllLeaves(g.rootPanel).flatMap((l) => l.tabs)),
@@ -79,7 +80,7 @@ function findTab(tabId: string) {
 
 /** Create a terminal tab attached to the agent-hosted persistent session. */
 function makePersistentTab(oldSessionId: string | null): string {
-  return useAppStore.getState().addTab(
+  return layoutState().addTab(
     "Persistent Shell",
     "remote-session",
     {
@@ -153,7 +154,7 @@ describe("appStore — restartPersistentSessionForTab", () => {
   });
 
   it("returns null for a tab without a persistent connection id", async () => {
-    const tabId = useAppStore.getState().addTab("Local", "local", {
+    const tabId = layoutState().addTab("Local", "local", {
       type: "local",
       config: {},
     });

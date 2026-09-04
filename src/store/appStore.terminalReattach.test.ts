@@ -62,7 +62,7 @@ describe("terminalReattaching state", () => {
   });
 
   it("closeTab removes terminalReattaching flag for the closed tab", () => {
-    const store = useAppStore.getState();
+    const store = layoutState();
     const panelId = store.activePanelId!;
     store.addTab("Test", "local");
 

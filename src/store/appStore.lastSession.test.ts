@@ -140,7 +140,7 @@ describe("last session persistence", () => {
 
     it("persists an empty payload when there are no real tabs", async () => {
       // Replace the live layout with an empty leaf (no tabs).
-      const state = useAppStore.getState();
+      const state = layoutState();
       const group = state.tabGroups[0];
       const emptyRoot = { type: "leaf" as const, id: "leaf-empty", tabs: [], activeTabId: null };
       seedLayoutState({
@@ -280,7 +280,7 @@ describe("last session persistence", () => {
 
       await useAppStore.getState().receivePendingWindowRestore();
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       expect(state.tabGroups.map((g) => g.name)).toEqual(["Seeded"]);
       const tabs = getAllLeaves(state.rootPanel).flatMap((l) => l.tabs);
       expect(tabs.map((t) => t.title)).toEqual(["S"]);
@@ -361,7 +361,7 @@ describe("last session persistence", () => {
       const restored = await useAppStore.getState().restoreLastSession();
 
       expect(restored).toBe(true);
-      const state = useAppStore.getState();
+      const state = layoutState();
       expect(state.tabGroups).toHaveLength(1);
       expect(state.tabGroups[0].name).toBe("Restored");
       const tabs = getAllLeaves(state.rootPanel).flatMap((l) => l.tabs);

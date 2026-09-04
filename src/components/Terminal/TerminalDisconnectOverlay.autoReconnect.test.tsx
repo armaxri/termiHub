@@ -69,8 +69,8 @@ describe("TerminalDisconnectOverlay — agentless auto-reconnect variant (#1962)
     // test (via `seedTabConfig`) does not leak into the next (the command is now
     // read from the tab config, not the removed auto-reconnect record).
     const leafId = layoutState().rootPanel.id;
+    seedLayoutState({ rootPanel: { type: "leaf", id: leafId, tabs: [], activeTabId: null } });
     useAppStore.setState({
-      rootPanel: { type: "leaf", id: leafId, tabs: [], activeTabId: null },
       terminalExitedTabs: { "tab-1": true },
       terminalDisconnectErrors: {},
       terminalViewMode: {},

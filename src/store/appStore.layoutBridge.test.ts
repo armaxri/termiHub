@@ -43,7 +43,7 @@ vi.mock("@/components/ui", async () => {
 });
 
 import { useAppStore } from "./appStore";
-import { layoutState } from "@/test/layoutState";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 import {
   buildLayoutSnapshot,
   currentLayoutView,
@@ -122,12 +122,12 @@ function tabContentFromTree(
 
 async function resetStore(root: PanelNode = seedTree(), activePanelId = "a"): Promise<void> {
   useAppStore.setState(useAppStore.getInitialState());
-  useAppStore.setState({ rootPanel: root, activePanelId, tabContent: tabContentFromTree(root) });
+  seedLayoutState({ rootPanel: root, activePanelId, tabContent: tabContentFromTree(root) });
   // Under E2 `appStore`'s layout is derived solely from the region, so seed the
   // region to this tree (the mirror composes it back) rather than leaving the
   // backend twin on its default view, which the mirror would otherwise compose
   // over `appStore`.
-  const s = useAppStore.getState();
+  const s = layoutState();
   reseedLayoutRegion(buildLayoutSnapshot(s.tabGroups, s.activeTabGroupId, root, activePanelId));
   await flush();
 }
@@ -263,7 +263,7 @@ describe("E2 — every listed op routes its granular intent", () => {
   }
 
   it("addTab dispatches layout.addTab carrying the frontend-generated tab id", async () => {
-    const id = useAppStore.getState().addTab("New", "local", { type: "local", config: {} });
+    const id = layoutState().addTab("New", "local", { type: "local", config: {} });
     await flush();
     const add = transport.dispatched.find((d) => d.kind === "layout.addTab");
     expect(add).toBeDefined();

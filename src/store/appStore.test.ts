@@ -58,10 +58,10 @@ describe("appStore", () => {
 
   describe("addTab", () => {
     it("adds a tab to the active panel", () => {
-      const { addTab, activePanelId } = useAppStore.getState();
+      const { addTab, activePanelId } = layoutState();
       addTab("Test Shell", "local", { type: "local", config: { shell: "zsh" } });
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       expect(leaf.tabs[0].title).toBe("Test Shell");
@@ -69,11 +69,11 @@ describe("appStore", () => {
     });
 
     it("sets new tab as active", () => {
-      const { addTab } = useAppStore.getState();
+      const { addTab } = layoutState();
       addTab("Tab 1", "local");
       addTab("Tab 2", "local");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(2);
       expect(leaf.activeTabId).toBe(leaf.tabs[1].id);
@@ -84,7 +84,7 @@ describe("appStore", () => {
 
   describe("addTab with sessionId", () => {
     it("creates a tab with a pre-existing sessionId", () => {
-      const { addTab, activePanelId } = useAppStore.getState();
+      const { addTab, activePanelId } = layoutState();
       addTab(
         "Setup: Pi",
         "ssh",
@@ -101,7 +101,7 @@ describe("appStore", () => {
         { contentType: "terminal", sessionId: "existing-session-123" }
       );
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       expect(leaf.tabs[0].sessionId).toBe("existing-session-123");
@@ -109,10 +109,10 @@ describe("appStore", () => {
     });
 
     it("defaults sessionId to null when not provided", () => {
-      const { addTab, activePanelId } = useAppStore.getState();
+      const { addTab, activePanelId } = layoutState();
       addTab("Terminal", "local");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
       expect(leaf.tabs[0].sessionId).toBeNull();
     });
@@ -120,7 +120,7 @@ describe("appStore", () => {
 
   describe("addTab with options object", () => {
     it("applies contentType, sessionId and persistentConnectionId from the options object", () => {
-      const { addTab, activePanelId } = useAppStore.getState();
+      const { addTab, activePanelId } = layoutState();
       addTab(
         "Persistent Shell",
         "ssh",
@@ -132,7 +132,7 @@ describe("appStore", () => {
         }
       );
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
       expect(leaf.tabs).toHaveLength(1);
       expect(leaf.tabs[0].contentType).toBe("terminal");
@@ -141,19 +141,19 @@ describe("appStore", () => {
     });
 
     it("marks the tab spawned when options.spawned is true", () => {
-      const { addTab, activePanelId } = useAppStore.getState();
+      const { addTab, activePanelId } = layoutState();
       addTab("Spawned", "docker", { type: "docker", config: {} }, { spawned: true });
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
       expect(leaf.tabs[0].spawned).toBe(true);
     });
 
     it("defaults spawned to falsy and sessionId to null when options are omitted", () => {
-      const { addTab, activePanelId } = useAppStore.getState();
+      const { addTab, activePanelId } = layoutState();
       addTab("Plain", "local");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, activePanelId!) as LeafPanel;
       expect(leaf.tabs[0].spawned).toBeFalsy();
       expect(leaf.tabs[0].sessionId).toBeNull();
@@ -162,17 +162,17 @@ describe("appStore", () => {
 
   describe("closeTab", () => {
     it("removes tab and selects next tab", () => {
-      const { addTab } = useAppStore.getState();
+      const { addTab } = layoutState();
       addTab("Tab 1", "local");
       addTab("Tab 2", "local");
 
-      const stateAfterAdd = useAppStore.getState();
+      const stateAfterAdd = layoutState();
       const leaf = findLeaf(stateAfterAdd.rootPanel, stateAfterAdd.activePanelId!) as LeafPanel;
       const tabToClose = leaf.tabs[0].id;
 
       useAppStore.getState().closeTab(tabToClose, stateAfterAdd.activePanelId!);
 
-      const stateAfterClose = useAppStore.getState();
+      const stateAfterClose = layoutState();
       const updatedLeaf = findLeaf(
         stateAfterClose.rootPanel,
         stateAfterClose.activePanelId!
@@ -184,17 +184,17 @@ describe("appStore", () => {
 
   describe("setActiveTab", () => {
     it("sets the correct tab active", () => {
-      const { addTab } = useAppStore.getState();
+      const { addTab } = layoutState();
       addTab("Tab 1", "local");
       addTab("Tab 2", "local");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaf = findLeaf(state.rootPanel, state.activePanelId!) as LeafPanel;
       const firstTabId = leaf.tabs[0].id;
 
       useAppStore.getState().setActiveTab(firstTabId, state.activePanelId!);
 
-      const updated = useAppStore.getState();
+      const updated = layoutState();
       const updatedLeaf = findLeaf(updated.rootPanel, updated.activePanelId!) as LeafPanel;
       expect(updatedLeaf.activeTabId).toBe(firstTabId);
       expect(updatedLeaf.tabs[0].isActive).toBe(true);
@@ -204,10 +204,10 @@ describe("appStore", () => {
 
   describe("splitPanel", () => {
     it("creates a new panel via split", () => {
-      const { splitPanel } = useAppStore.getState();
+      const { splitPanel } = layoutState();
       splitPanel("horizontal");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaves = getAllLeaves(state.rootPanel);
       expect(leaves).toHaveLength(2);
     });
@@ -216,15 +216,15 @@ describe("appStore", () => {
   describe("moveTab", () => {
     it("moves tab between panels", () => {
       // Add a tab then split
-      const { addTab, splitPanel } = useAppStore.getState();
+      const { addTab, splitPanel } = layoutState();
       addTab("Tab 1", "local");
       addTab("Tab 2", "local");
 
-      const stateBeforeSplit = useAppStore.getState();
+      const stateBeforeSplit = layoutState();
       const originalPanelId = stateBeforeSplit.activePanelId!;
       splitPanel("horizontal");
 
-      const stateAfterSplit = useAppStore.getState();
+      const stateAfterSplit = layoutState();
       const newPanelId = stateAfterSplit.activePanelId!;
       expect(newPanelId).not.toBe(originalPanelId);
 
@@ -235,7 +235,7 @@ describe("appStore", () => {
       // Move tab to new panel
       useAppStore.getState().moveTab(tabToMove, originalPanelId, newPanelId, 0);
 
-      const finalState = useAppStore.getState();
+      const finalState = layoutState();
       const sourceLeaf = findLeaf(finalState.rootPanel, originalPanelId) as LeafPanel;
       const targetLeaf = findLeaf(finalState.rootPanel, newPanelId) as LeafPanel;
       expect(sourceLeaf.tabs).toHaveLength(1);
@@ -246,7 +246,7 @@ describe("appStore", () => {
 
   describe("connections", () => {
     it("adds and deletes a connection", () => {
-      const { addConnection } = useAppStore.getState();
+      const { addConnection } = layoutState();
       addConnection({
         id: "conn-1",
         name: "Test Connection",
@@ -314,7 +314,7 @@ describe("appStore", () => {
   describe("toggleZoomActiveTab", () => {
     it("zooms a terminal tab", () => {
       useAppStore.getState().addTab("Shell", "local");
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaves = getAllLeaves(state.rootPanel);
       const tabId = leaves[0].activeTabId!;
 
@@ -325,7 +325,7 @@ describe("appStore", () => {
 
     it("zooms a non-terminal (editor) tab", () => {
       useAppStore.getState().openEditorTab("/some/file.txt", false);
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaves = getAllLeaves(state.rootPanel);
       const tabId = leaves[0].activeTabId!;
 
@@ -348,13 +348,13 @@ describe("appStore", () => {
   describe("setActivePanel zoom follow", () => {
     it("follows zoom to the new panel's active tab when switching panels", () => {
       useAppStore.getState().addTab("Shell", "local");
-      const state0 = useAppStore.getState();
+      const state0 = layoutState();
       const panel1Id = state0.activePanelId!;
       const tab1Id = getAllLeaves(state0.rootPanel)[0].activeTabId!;
 
       useAppStore.getState().splitPanel("horizontal");
       useAppStore.getState().addTab("Shell 2", "local");
-      const state1 = useAppStore.getState();
+      const state1 = layoutState();
       const panel2Id = state1.activePanelId!;
       const tab2Id = getAllLeaves(state1.rootPanel).find((l) => l.id === panel2Id)!.activeTabId!;
 
@@ -370,7 +370,7 @@ describe("appStore", () => {
 
     it("clears zoom when switching to a panel with no active tab", () => {
       useAppStore.getState().addTab("Shell", "local");
-      const state0 = useAppStore.getState();
+      const state0 = layoutState();
       const panel1Id = state0.activePanelId!;
       useAppStore.getState().splitPanel("horizontal");
       const panel2Id = layoutState().activePanelId!;
@@ -390,7 +390,7 @@ describe("appStore", () => {
     it("follows zoom to any tab type when switching in the same panel", () => {
       useAppStore.getState().addTab("Shell", "local");
       useAppStore.getState().openEditorTab("/file.txt", false);
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaves = getAllLeaves(state.rootPanel);
       const terminalTabId = leaves[0].tabs.find((t) => t.contentType === "terminal")!.id;
       const editorTabId = leaves[0].tabs.find((t) => t.contentType === "editor")!.id;
@@ -413,7 +413,7 @@ describe("appStore", () => {
         connectionType: "ssh",
       });
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaves = getAllLeaves(state.rootPanel);
       const tab = leaves.flatMap((l) => l.tabs).find((t) => t.contentType === "editor");
       expect(tab).toBeDefined();
@@ -434,7 +434,7 @@ describe("appStore", () => {
         connectionType: "ssh",
       });
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaves = getAllLeaves(state.rootPanel);
       const tabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "editor");
       expect(tabs).toHaveLength(1);
@@ -444,7 +444,7 @@ describe("appStore", () => {
       useAppStore.getState().openEditorTab("/etc/hosts", false);
       useAppStore.getState().openEditorTab("/etc/hosts", false);
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const tabs = getAllLeaves(state.rootPanel)
         .flatMap((l) => l.tabs)
         .filter((t) => t.contentType === "editor");
@@ -475,7 +475,7 @@ describe("appStore", () => {
         connectionType: "docker",
       });
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const tabs = getAllLeaves(state.rootPanel)
         .flatMap((l) => l.tabs)
         .filter((t) => t.contentType === "editor");
@@ -504,7 +504,7 @@ describe("appStore", () => {
         connectionType: "ftp",
       });
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const tabs = getAllLeaves(state.rootPanel)
         .flatMap((l) => l.tabs)
         .filter((t) => t.contentType === "editor");
@@ -518,7 +518,7 @@ describe("appStore", () => {
     it("creates a log-viewer tab", () => {
       useAppStore.getState().openLogViewerTab();
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaves = getAllLeaves(state.rootPanel);
       const logTab = leaves.flatMap((l) => l.tabs).find((t) => t.contentType === "log-viewer");
       expect(logTab).toBeDefined();
@@ -529,7 +529,7 @@ describe("appStore", () => {
       useAppStore.getState().openLogViewerTab();
       useAppStore.getState().openLogViewerTab();
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const leaves = getAllLeaves(state.rootPanel);
       const logTabs = leaves.flatMap((l) => l.tabs).filter((t) => t.contentType === "log-viewer");
       expect(logTabs).toHaveLength(1);

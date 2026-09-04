@@ -9,7 +9,12 @@
  * without every test having to construct a region view by hand.
  */
 
-import { getComposedLayout, tabContentFromGroups, useAppStore } from "@/store/appStore";
+import {
+  type AppState,
+  getComposedLayout,
+  tabContentFromGroups,
+  useAppStore,
+} from "@/store/appStore";
 import {
   buildLayoutSnapshot,
   type ComposedLayoutState,
@@ -53,7 +58,14 @@ export function seedLayoutState(partial: {
   });
 }
 
-/** The composed rich layout for the current store state (test read helper). */
-export function layoutState(): ComposedLayoutState {
-  return getComposedLayout(useAppStore.getState());
+/**
+ * The current store state augmented with its composed rich layout (#2562 test
+ * read helper). A drop-in for `useAppStore.getState()` in layout-reading tests:
+ * `state.rootPanel` / `state.tabGroups` / `state.activePanelId` /
+ * `state.activeTabGroupId` resolve from the composition, while every real
+ * `appStore` field (actions, per-tab maps, …) is present unchanged.
+ */
+export function layoutState(): AppState & ComposedLayoutState {
+  const s = useAppStore.getState();
+  return { ...s, ...getComposedLayout(s) };
 }

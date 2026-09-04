@@ -41,7 +41,7 @@ describe("useTerminal logic (via store)", () => {
 
   describe("openTerminal (addTab)", () => {
     it("adds a new tab to the active panel", () => {
-      const { addTab, rootPanel } = useAppStore.getState();
+      const { addTab, rootPanel } = layoutState();
       const leaves = getAllLeaves(rootPanel);
       expect(leaves[0].tabs).toHaveLength(0);
 
@@ -72,7 +72,7 @@ describe("useTerminal logic (via store)", () => {
 
   describe("closeTerminal (closeTab)", () => {
     it("removes the specified tab from the panel", () => {
-      const { addTab } = useAppStore.getState();
+      const { addTab } = layoutState();
       addTab("To Close", "local");
 
       const leaves1 = getAllLeaves(layoutState().rootPanel);

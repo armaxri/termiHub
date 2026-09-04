@@ -46,6 +46,7 @@ vi.mock("@/services/macroApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { toast } from "@/components/ui";
 
@@ -72,7 +73,8 @@ function seedConnectedTerminal(tabId = "tab-active", sessionId: string | null = 
     isActive: true,
   };
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
-  useAppStore.setState({ rootPanel: leaf, activePanelId: "leaf-1", terminalExitedTabs: {} });
+  seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
+  useAppStore.setState({ terminalExitedTabs: {} });
 }
 
 describe("appStore — macro playback slice (#1675)", () => {
@@ -144,7 +146,7 @@ describe("appStore — macro playback slice (#1675)", () => {
       ],
     });
 
-    const done = useAppStore.getState().playMacro("m1", { timingMode: "real-time" });
+    const done = layoutState().playMacro("m1", { timingMode: "real-time" });
 
     await vi.advanceTimersByTimeAsync(0);
     expect(injected).toEqual(["a"]);
@@ -170,7 +172,7 @@ describe("appStore — macro playback slice (#1675)", () => {
       ],
     });
 
-    const done = useAppStore.getState().playMacro("m1", { timingMode: "real-time" });
+    const done = layoutState().playMacro("m1", { timingMode: "real-time" });
     await vi.advanceTimersByTimeAsync(0);
     expect(injected).toEqual(["a"]);
     expect(useAppStore.getState().macroPlayback).not.toBeNull();

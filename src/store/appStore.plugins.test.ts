@@ -83,6 +83,7 @@ vi.mock("@/services/api", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import { layoutState } from "@/test/layoutState";
 import {
   listPlugins as apiListPlugins,
   installPlugin as apiInstallPlugin,
@@ -176,7 +177,7 @@ describe("appStore — plugins (#1993)", () => {
 
     await useAppStore.getState().loadPlugins();
 
-    const state = useAppStore.getState();
+    const state = layoutState();
     expect(state.plugins).toHaveLength(3);
     // Only the active plugin that declares a terminalBackend is projected.
     expect(state.pluginBackendTypes).toEqual([
@@ -358,7 +359,7 @@ describe("appStore — plugins (#1993)", () => {
 
       useAppStore.getState().selectPlugin("k8s");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       expect(state.selectedPluginId).toBe("k8s");
       const tabs = state.rootPanel && "tabs" in state.rootPanel ? state.rootPanel.tabs : [];
       const detailTabs = tabs.filter((t) => t.contentType === "plugin-detail");
@@ -376,7 +377,7 @@ describe("appStore — plugins (#1993)", () => {
       useAppStore.getState().selectPlugin("a");
       useAppStore.getState().selectPlugin("b");
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const tabs = state.rootPanel && "tabs" in state.rootPanel ? state.rootPanel.tabs : [];
       const detailTabs = tabs.filter((t) => t.contentType === "plugin-detail");
       expect(detailTabs).toHaveLength(1);

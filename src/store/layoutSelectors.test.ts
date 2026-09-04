@@ -21,6 +21,7 @@ vi.mock("@/services/storage", () => ({
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn(() => vi.fn()) }));
 
 import type { PanelNode, TabGroup, TerminalTab } from "@/types/terminal";
+import { getAllLeaves } from "@/utils/panelTree";
 
 import { useAppStore } from "./appStore";
 import { seedLayoutState } from "@/test/layoutState";
@@ -33,7 +34,6 @@ import {
   getLayoutTabGroups,
   groupRenderTree,
   groupRenderTreesOf,
-  type LayoutStateSlice,
 } from "./layoutSelectors";
 
 function tab(id: string): TerminalTab {
@@ -96,14 +96,18 @@ describe("layoutSelectors", () => {
       const activeRoot = leaf("live", [tab("t1")]);
       const g1 = group("g1", leaf("stale", [tab("old")]));
       const g2 = group("g2", leaf("B", [tab("t2")]));
-      const slice: LayoutStateSlice = {
+      seedLayoutState({
         rootPanel: activeRoot,
         tabGroups: [g1, g2],
         activeTabGroupId: "g1",
         activePanelId: "live",
-      };
+      });
 
-      expect(groupRenderTreesOf(slice)).toEqual([activeRoot, g2.rootPanel]);
+      const trees = groupRenderTreesOf(useAppStore.getState());
+      expect(trees.map((t) => getAllLeaves(t).flatMap((l) => l.tabs.map((x) => x.id)))).toEqual([
+        ["t1"],
+        ["t2"],
+      ]);
     });
   });
 
@@ -115,21 +119,21 @@ describe("layoutSelectors", () => {
         direction: "horizontal",
         children: [leaf("a", [tab("t1"), tab("t2")]), leaf("b", [tab("t3")])],
       };
-      const slice: LayoutStateSlice = {
+      seedLayoutState({
         rootPanel: activeRoot,
         tabGroups: [group("g1", activeRoot)],
         activeTabGroupId: "g1",
         activePanelId: "a",
-      };
+      });
 
-      expect(activeTreeTabs(slice).map((t) => t.id)).toEqual(["t1", "t2", "t3"]);
+      expect(activeTreeTabs(useAppStore.getState()).map((t) => t.id)).toEqual(["t1", "t2", "t3"]);
     });
   });
 
   describe("getAllTabsAcrossGroupTrees", () => {
-    it("unions the active live tree with every group's stored tree (dupes tolerated)", () => {
+    it("unions every group's composed tree (active group appears once)", () => {
       const activeRoot = leaf("A", [tab("t1")]);
-      const g1 = group("g1", leaf("A-stale", [tab("t1")])); // active group's stale entry
+      const g1 = group("g1", leaf("A-stale", [tab("t1")]));
       const g2 = group("g2", leaf("B", [tab("t2")]));
       seedLayoutState({
         rootPanel: activeRoot,
@@ -138,9 +142,9 @@ describe("layoutSelectors", () => {
         activePanelId: "A",
       });
 
-      // active live (t1) + g1 stored (t1) + g2 stored (t2) — the active group's tab
-      // appears twice, matching the pre-migration union used by `.find()` callers.
-      expect(getAllTabsAcrossGroupTrees().map((t) => t.id)).toEqual(["t1", "t1", "t2"]);
+      // Post-#2562 the composed active-group entry is the live tree, so there is no
+      // stale duplicate: g1 → t1, g2 → t2. The `.find()` callers still match.
+      expect(getAllTabsAcrossGroupTrees().map((t) => t.id)).toEqual(["t1", "t2"]);
     });
   });
 });

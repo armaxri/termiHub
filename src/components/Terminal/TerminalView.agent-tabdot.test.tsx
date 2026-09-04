@@ -15,6 +15,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { layoutState } from "@/test/layoutState";
 import { getAllLeaves } from "@/utils/panelTree";
 
 // ── Capture the `agent-state-change` listener callback ──────────────────────
@@ -87,7 +88,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 function firstTerminalTab() {
-  const store = useAppStore.getState();
+  const store = layoutState();
   return getAllLeaves(store.rootPanel).flatMap((l) => l.tabs)[0];
 }
 
@@ -109,7 +110,7 @@ describe("TerminalView agent-state-change → tab-strip dot (G5, #1236)", () => 
     root = createRoot(container);
 
     // A remote-session tab bound to agent-1 with an established session.
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -141,7 +142,7 @@ describe("TerminalView agent-state-change → tab-strip dot (G5, #1236)", () => 
 
   it("does not write remoteStates for a tab without an established session", async () => {
     // Open a second tab that never established a session.
-    const store = useAppStore.getState();
+    const store = layoutState();
     store.addTab("Shell 2", "remote-session", {
       type: "remote-session",
       config: { agentId: "agent-1", sessionType: "shell" },
@@ -150,7 +151,7 @@ describe("TerminalView agent-state-change → tab-strip dot (G5, #1236)", () => 
     await fireAgentState({ session_id: "agent-1", state: "reconnecting" });
 
     // Only the established session was mirrored; no `null`/undefined key leaks in.
-    const remoteStates = useAppStore.getState().remoteStates;
+    const remoteStates = layoutState().remoteStates;
     expect(remoteStates["session-123"]).toBe("reconnecting");
     expect(Object.keys(remoteStates)).toEqual(["session-123"]);
   });

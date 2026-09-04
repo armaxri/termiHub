@@ -61,7 +61,7 @@ describe("appStore — tab groups", () => {
 
   describe("addTabGroup", () => {
     it("creates a new group and returns its ID", () => {
-      const newId = useAppStore.getState().addTabGroup();
+      const newId = layoutState().addTabGroup();
       const { tabGroups } = layoutState();
       expect(tabGroups).toHaveLength(2);
       expect(tabGroups[1].id).toBe(newId);
@@ -80,7 +80,7 @@ describe("appStore — tab groups", () => {
     });
 
     it("switches to the new group", () => {
-      const newId = useAppStore.getState().addTabGroup();
+      const newId = layoutState().addTabGroup();
       expect(layoutState().activeTabGroupId).toBe(newId);
     });
 
@@ -182,7 +182,7 @@ describe("appStore — tab groups", () => {
 
     it("updates rootPanel after closing the active group", () => {
       const firstRootId = layoutState().rootPanel.id;
-      const newId = useAppStore.getState().addTabGroup();
+      const newId = layoutState().addTabGroup();
       // Active is now new group with different rootPanel
       useAppStore.getState().closeTabGroup(newId);
       // Should restore first group's rootPanel
@@ -249,7 +249,7 @@ describe("appStore — tab groups", () => {
       const panelId = group1Leaf.id;
 
       // Create a second group
-      const group2Id = useAppStore.getState().addTabGroup("Group 2");
+      const group2Id = layoutState().addTabGroup("Group 2");
       // Switch back to group 1 so it's active
       useAppStore.getState().setActiveTabGroup(group1Id);
 
@@ -285,7 +285,7 @@ describe("appStore — tab groups", () => {
       const group1Id = layoutState().tabGroups[0].id;
       const leaf = getAllLeaves(layoutState().rootPanel)[0];
       const tabId = leaf.tabs[0].id;
-      const group2Id = useAppStore.getState().addTabGroup("Group 2");
+      const group2Id = layoutState().addTabGroup("Group 2");
       useAppStore.getState().setActiveTabGroup(group1Id);
 
       useAppStore.getState().moveTabToGroup(tabId, leaf.id, group2Id);
@@ -298,7 +298,7 @@ describe("appStore — tab groups", () => {
       const group1Id = layoutState().tabGroups[0].id;
       const leaf = getAllLeaves(layoutState().rootPanel)[0];
       const tabId = leaf.tabs[0].id;
-      const group2Id = useAppStore.getState().addTabGroup("Group 2");
+      const group2Id = layoutState().addTabGroup("Group 2");
       const group2Leaf = getAllLeaves(layoutState().rootPanel)[0];
       useAppStore.getState().setActiveTabGroup(group1Id);
 
@@ -319,7 +319,7 @@ describe("appStore — tab groups", () => {
 
       useAppStore.getState().addTabGroupWithTab(tabId, leaf.id);
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       // New group should be active
       expect(state.tabGroups).toHaveLength(2);
       const newGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId)!;
@@ -337,7 +337,7 @@ describe("appStore — tab groups", () => {
 
       useAppStore.getState().addTabGroupWithTab(tabId, leaf.id);
 
-      const state = useAppStore.getState();
+      const state = layoutState();
       const group1 = state.tabGroups.find((g) => g.id === group1Id)!;
       const group1Tabs = getAllLeaves(group1.rootPanel).flatMap((l) => l.tabs);
       expect(group1Tabs.every((t) => t.id !== tabId)).toBe(true);
