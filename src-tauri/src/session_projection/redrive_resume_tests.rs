@@ -612,12 +612,12 @@ fn source_side_resilient_drop_fold_arms_the_reconnect_timer() {
 ///     reconnect loop stays `Idle` and **no redrive timer is armed** (the in-task
 ///     loop is the single owner of a transient break);
 ///  3. the **resolve** folds each recovered-in-place session back to `Connected`,
-///     while a session the agent did NOT recover is left `Reconnecting` (its
-///     gone-case resolve stays frontend-owned, #2139) — still no timer armed.
+///     while a session the agent did NOT recover folds the terminal `SessionLost`
+///     state at the backend source (#2564) — still no timer armed either way.
 #[test]
 fn transient_agent_break_folds_region_server_side_without_arming_the_timer() {
     use crate::terminal::agent_manager::{
-        fold_agent_hosted_reconnecting, resolve_agent_hosted_recovered,
+        fold_agent_hosted_reconnecting, resolve_agent_hosted_sessions,
     };
 
     let app = tauri::test::mock_app();
@@ -720,21 +720,39 @@ fn transient_agent_break_folds_region_server_side_without_arming_the_timer() {
     }
 
     // (3) Resolve: the agent recovered remote-0 (tab-1) in place but NOT remote-1
-    // (tab-2). tab-1 folds back to Connected; tab-2 is left Reconnecting (its
-    // gone-case resolve is frontend-owned pending #2139). No timer armed either way.
+    // (tab-2). tab-1 folds back to Connected; tab-2 folds the terminal SessionLost
+    // state at the backend source (#2564). No timer armed either way — a lost
+    // session's loop is idle, so the timer reconcile is a cancel.
     let live_ids: std::collections::HashSet<String> =
         ["remote-0".to_string()].into_iter().collect();
-    resolve_agent_hosted_recovered(&handle, &hosted, &live_ids);
+    resolve_agent_hosted_sessions(&handle, &hosted, &live_ids);
 
+    let recovered = store.get("tab-1").unwrap();
     assert_eq!(
-        store.get("tab-1").map(|s| s.status),
-        Some(SessionStatus::Connected),
+        recovered.status,
+        SessionStatus::Connected,
         "the recovered-in-place session folds back to Connected"
     );
+
+    let lost = store.get("tab-2").unwrap();
     assert_eq!(
-        store.get("tab-2").map(|s| s.status),
-        Some(SessionStatus::Reconnecting),
-        "a session the agent did not recover is left Reconnecting for the frontend resolver"
+        lost.status,
+        SessionStatus::SessionLost,
+        "a session the agent did not recover folds SessionLost at the backend source (#2564)"
+    );
+    assert_eq!(
+        lost.error.as_deref(),
+        Some("the live agent session could not be recovered"),
+        "the session-lost fold carries the same message the backend redrive uses"
+    );
+    assert!(
+        lost.backend_session_id.is_none(),
+        "the lost session clears its re-attach id — there is no live backend session"
+    );
+    assert_eq!(
+        lost.reconnect.phase,
+        ReconnectPhase::Idle,
+        "SessionLost resets the reconnect loop to idle (no client-driven backoff)"
     );
     assert!(
         !scheduler.armed("tab-1") && !scheduler.armed("tab-2"),

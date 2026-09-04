@@ -27,7 +27,7 @@ use crate::agents_projection::store::AgentConnectionState;
 use crate::connection::config::AgentSettings;
 use crate::session::manager::{AgentHostedSession, SessionManager};
 use crate::session_projection::projection::{
-    fold_agent_session_recovered, fold_agent_transport_reconnecting,
+    fold_agent_session_lost, fold_agent_session_recovered, fold_agent_transport_reconnecting,
 };
 use crate::terminal::agent_config_store::{decide_reattach, AgentConfigStore, ReattachDecision};
 use crate::terminal::agent_deploy::ConnectedHost;
@@ -2275,11 +2275,12 @@ async fn agent_io_task<R: Runtime>(
                 // G7 (#1239): reconcile the output/monitoring senders against the
                 // sessions the agent actually recovered. Senders keyed by ids that
                 // did not come back are stale — drop them so the maps don't leak.
-                // #2556: the same recovered-id set resolves each hosted session's
-                // `session-lifecycle` region entry `Reconnecting → Connected` for a
-                // session that survived in place. Fetch it once when there is either
-                // a sender to reconcile or a hosted tab to resolve; skip the extra
-                // round-trip when neither applies.
+                // #2556/#2564: the same recovered-id set resolves each hosted
+                // session's `session-lifecycle` region entry at the backend source —
+                // `Reconnecting → Connected` for a session that survived in place, or
+                // `Reconnecting → SessionLost` for one the agent did not recover.
+                // Fetch it once when there is either a sender to reconcile or a hosted
+                // tab to resolve; skip the extra round-trip when neither applies.
                 let hosted = hosted_sessions_for_agent(&app_handle, &agent_id).await;
                 if !session_outputs.is_empty()
                     || !monitoring_outputs.is_empty()
@@ -2293,7 +2294,7 @@ async fn agent_io_task<R: Runtime>(
                             &mut monitoring_outputs,
                             &live_ids,
                         );
-                        resolve_agent_hosted_recovered(&app_handle, &hosted, &live_ids);
+                        resolve_agent_hosted_sessions(&app_handle, &hosted, &live_ids);
                     }
                 }
 
@@ -2359,18 +2360,24 @@ async fn hosted_sessions_for_agent<R: tauri::Runtime>(
     }
 }
 
-/// Resolve each hosted session's region entry after a successful in-task reconnect:
-/// fold `Connected` for every session the agent recovered **in place** (its
-/// `remote_session_id` is in `live_ids`) — the survived-recovery half of #2556,
-/// folded at the backend source rather than the frontend `TerminalView` resolver.
+/// Resolve each hosted session's region entry after a successful in-task reconnect,
+/// folded at the **backend source** rather than the frontend `TerminalView`
+/// resolver:
+///  - a session the agent recovered **in place** (its `remote_session_id` is in
+///    `live_ids`) folds back to `Connected` — the survived-recovery half of #2556;
+///  - a session the agent did **not** recover (absent from `live_ids`) folds the
+///    terminal `SessionLost` state — the gone-session half (#2564). Previously this
+///    was left `Reconnecting` for the frontend `TerminalView` `connected` handler to
+///    resolve via `setTerminalExited`; the backend now owns the region authority so
+///    the "Session lost" overlay renders straight from the region (#2512). The
+///    frontend only reflects the local presentation view-state (`terminalExitedTabs`,
+///    which mounts the overlay) via `settleSessionLost`, pending the full
+///    view-state migration (#2139).
 ///
-/// The gone-session (not recovered) and fully-failed (`agent → disconnected`)
-/// resolves remain frontend-owned for now: they set local terminal view-state
-/// (`terminalExitedTabs` / view-mode) that has no server-side home until the
-/// stateless-UI view-state migration (#2139). The frontend's gone-case resolver
-/// gates on the region still reading `reconnecting`, which this deliberately does
-/// not touch, so leaving those tabs reconnecting keeps that gate intact.
-pub(crate) fn resolve_agent_hosted_recovered<R: tauri::Runtime>(
+/// The fully-failed (`agent → disconnected`) resolve stays frontend-owned for now:
+/// its overlay error still reads the per-client `terminalDisconnectErrors` slice
+/// that has no server-side home until #2139 (a precise follow-up carries it).
+pub(crate) fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
     app_handle: &AppHandle<R>,
     hosted: &[AgentHostedSession],
     live_ids: &std::collections::HashSet<String>,
@@ -2378,6 +2385,8 @@ pub(crate) fn resolve_agent_hosted_recovered<R: tauri::Runtime>(
     for h in hosted {
         if live_ids.contains(&h.remote_session_id) {
             fold_agent_session_recovered(app_handle, &h.tab_id);
+        } else {
+            fold_agent_session_lost(app_handle, &h.tab_id);
         }
     }
 }

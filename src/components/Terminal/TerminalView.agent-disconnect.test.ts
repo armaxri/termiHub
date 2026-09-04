@@ -23,6 +23,7 @@ import {
   connected,
   installSessionLifecycleHarness,
   reconnecting,
+  sessionLost,
 } from "@/test/sessionLifecycleRegionTestHarness";
 import { applyAgentReconnecting } from "./agentStateHandlers";
 
@@ -352,10 +353,11 @@ describe("agent-state-change tab discovery — regression for empty agentSession
  */
 describe("agent-state-change 'connected': session recovery after power cycle", () => {
   // Reconnecting state is region-sourced now (#2205 PR-B): the handler gates the
-  // resume-vs-exit decision on the projected `session-lifecycle` status, so seed
+  // resume-vs-lost decision on the projected `session-lifecycle` status, so seed
   // the region via the harness transport rather than the removed
-  // `terminalReconnectingTabs` slice. The exit assertions call `setTerminalExited`
-  // without a `dropped` reason, so no region reconnect fold is triggered.
+  // `terminalReconnectingTabs` slice. The gone-case resolve is folded `sessionLost`
+  // at the backend source (#2564); the handler reflects only the local view-state
+  // via `settleSessionLost`, never re-driving the region.
   const harness = installSessionLifecycleHarness();
 
   beforeEach(() => {
@@ -375,8 +377,12 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
   /**
    * Simulate the fixed 'connected' handler with a given recovered-sessions list.
    * The decision is gated on the region status (the sole reconnecting source); a
-   * survived session folds the region `reconnecting → connected`, a lost one marks
-   * the tab exited (the "Session disconnected" overlay).
+   * survived session folds the region `reconnecting → connected`, a gone one is
+   * folded `reconnecting → sessionLost` at the **backend source** (#2564) — mirror
+   * that here — and the handler reflects only the local presentation view-state via
+   * `settleSessionLost` (never re-driving the region). The gate accepts either the
+   * mid-break `reconnecting` status or the already-folded `sessionLost`, matching
+   * the real handler's race-tolerance.
    */
   function simulateConnectedHandler(agentId: string, recoveredSessionIds: string[]) {
     const store = layoutState();
@@ -391,12 +397,16 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
 
     const recovered = new Set(recoveredSessionIds);
     for (const tab of agentTerminalTabs) {
-      if (currentSessionView()[tab.id]?.status !== "reconnecting") continue;
+      const status = currentSessionView()[tab.id]?.status;
+      if (status !== "reconnecting" && status !== "sessionLost") continue;
       if (tab.sessionId && recovered.has(tab.sessionId)) {
         // Session survived — the region resolves reconnecting → connected.
         harness.transport.setSession(tab.id, connected());
       } else {
-        useAppStore.getState().setTerminalExited(tab.id);
+        // Gone: the backend folds the region sessionLost (#2564); the handler only
+        // reflects the local view-state so the overlay mounts.
+        harness.transport.setSession(tab.id, sessionLost());
+        useAppStore.getState().settleSessionLost(tab.id);
       }
     }
   }
@@ -432,7 +442,12 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
 
     simulateConnectedHandler("agent-1", []); // no sessions recovered
 
+    // Local view-state mounts the overlay …
     expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
+    // … and the region carries the backend-folded `sessionLost` authority the
+    // "Session lost" overlay renders from (#2564) — never re-driven to
+    // reconnecting/dropped by the client.
+    expect(currentSessionView()[tab.id]?.status).toBe("sessionLost");
   });
 
   it("handles mixed recovery: resumes surviving sessions, exits dead ones", async () => {
