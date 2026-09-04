@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
-import { useAppStore, getActiveTab } from "@/store/appStore";
+import { getActiveTab, getComposedLayout, useAppStore } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { dispatchCommand, type BridgeDeps } from "./dispatcher";
 import { ProjectionRecorder } from "./projectionRecorder";
@@ -73,7 +73,14 @@ export function TestBridge() {
       scrollTerminal: (tabId, lines, toBottom) => scrollTerminal(tabId, lines, toBottom),
       getTerminalViewport: (tabId) => getTerminalViewport(tabId),
       getActiveTabId: () => getActiveTab(useAppStore.getState())?.id ?? undefined,
-      getState: () => useAppStore.getState() as unknown as Record<string, unknown>,
+      // Augment the raw store state with the composed layout (#2562): the layout
+      // is no longer stored as `rootPanel` / `tabGroups` / `activePanelId` /
+      // `activeTabGroupId` fields, but external bridge consumers (the Python
+      // system-test harness) still read those paths, so compose them on demand.
+      getState: () => {
+        const s = useAppStore.getState();
+        return { ...s, ...getComposedLayout(s) } as unknown as Record<string, unknown>;
+      },
       sendTerminalInput: (tabId, text) => sendInputToTerminal(tabId, text),
       // Drive the real Tauri window so resize-triggered behavior (xterm fit →
       // PTY resize) runs exactly as it does for an interactive window drag.
