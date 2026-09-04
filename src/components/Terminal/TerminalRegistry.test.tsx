@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { TerminalPortalProvider, useTerminalRegistry } from "./TerminalRegistry";
+import { TerminalPortalProvider, useTerminalRegistry, PASTE_DEBOUNCE_MS } from "./TerminalRegistry";
 import { sendInput } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { ensureBroadcastSubscribed } from "@/store/broadcastBridge";
@@ -429,6 +429,74 @@ describe("pasteToTerminal", () => {
     expect(sendInput).toHaveBeenCalledWith("session-t2", "cfg");
     expect(sendInput).toHaveBeenCalledTimes(2);
     harness.teardown();
+  });
+});
+
+describe("pasteToTerminal debounce against bounced mouse signals (#2595)", () => {
+  let nowSpy: ReturnType<typeof vi.spyOn>;
+  let currentNow: number;
+
+  beforeEach(() => {
+    // Drive the debounce clock deterministically. A bounced right-click on
+    // Windows fires two paste triggers a couple of ms apart for one gesture;
+    // the guard must swallow the second. We control Date.now so no real timers
+    // are involved.
+    currentNow = 1_000_000;
+    nowSpy = vi.spyOn(Date, "now").mockImplementation(() => currentNow);
+    mockReadClipboard.mockResolvedValue("bounced");
+    vi.mocked(sendInput).mockClear();
+  });
+
+  afterEach(() => {
+    nowSpy.mockRestore();
+  });
+
+  it("pastes only once when two triggers for the same tab land inside the window", async () => {
+    act(() => {
+      registryActions.registerSession("tab-bounce", "session-bounce");
+    });
+
+    // Two triggers a few ms apart — a duplicated/bounced OS mouse signal.
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-bounce");
+      currentNow += Math.floor(PASTE_DEBOUNCE_MS / 2);
+      await registryActions.pasteToTerminal("tab-bounce");
+    });
+
+    expect(sendInput).toHaveBeenCalledTimes(1);
+    expect(sendInput).toHaveBeenCalledWith("session-bounce", "bounced");
+  });
+
+  it("pastes twice when two deliberate triggers are spaced beyond the window", async () => {
+    act(() => {
+      registryActions.registerSession("tab-deliberate", "session-deliberate");
+    });
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-deliberate");
+      // A deliberate second paste well outside the guard window still applies.
+      currentNow += PASTE_DEBOUNCE_MS + 5;
+      await registryActions.pasteToTerminal("tab-deliberate");
+    });
+
+    expect(sendInput).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not suppress a near-simultaneous paste into a different tab", async () => {
+    act(() => {
+      registryActions.registerSession("tab-a", "session-a");
+      registryActions.registerSession("tab-b", "session-b");
+    });
+
+    // Same instant, different tabs — the guard is keyed by tab id, so both apply.
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-a");
+      await registryActions.pasteToTerminal("tab-b");
+    });
+
+    expect(sendInput).toHaveBeenCalledTimes(2);
+    expect(sendInput).toHaveBeenCalledWith("session-a", "bounced");
+    expect(sendInput).toHaveBeenCalledWith("session-b", "bounced");
   });
 });
 
