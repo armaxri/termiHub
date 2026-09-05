@@ -34,6 +34,7 @@ import {
   effectiveConnectingMap,
   effectiveDisconnectError,
   effectiveDisconnectErrorMap,
+  effectiveExitInfo,
   effectiveReconnecting,
   effectiveReconnectingMap,
   effectiveReconnectTriggerError,
@@ -43,7 +44,7 @@ import {
   type ProjectedSessionLifecycle,
   type SessionLifecycleView,
 } from "@/store/sessionBridge";
-import type { TerminalAutoReconnectState } from "@/types/terminal";
+import type { TerminalAutoReconnectState, TerminalExitInfo } from "@/types/terminal";
 
 /**
  * The auto-reconnect display record for one tab: loop numbers sourced from the
@@ -125,6 +126,11 @@ export interface ProjectedSessionLifecycleSlice {
   /** The backend-supplied "why the session could not be recovered" message shown
    * in the session-lost notice, if any (#2512). `undefined` unless `sessionLost`. */
   sessionLostError: string | undefined;
+  /** How the session ended (#2615): the exit cause + code the disconnect overlay
+   * derives its heading / subheading wording from. Sourced from the projected
+   * region's `exit` under the faithful-mirror gate, falling back to the per-client
+   * `appStore.terminalExitInfo` slice. `undefined` when no exit is recorded. */
+  exitInfo: TerminalExitInfo | undefined;
 }
 
 /**
@@ -144,6 +150,10 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
   // the reconnect engine removed in #2205 PR-B); the connect / reconnect / trigger
   // status are now sourced purely from the region.
   const disconnectErrorLocal = useAppStore((s) => s.terminalDisconnectErrors[tabId]);
+  // #2615 PR-A render cut: the exit cause is sourced from the region's `exit`
+  // under a faithful-mirror gate, falling back to this per-client slice (kept as a
+  // dead-fallback writer until the mount-gate re-home + slice deletion, #2612 PR-B).
+  const exitInfoLocal = useAppStore((s) => s.terminalExitInfo[tabId]);
 
   const [projected, setProjected] = useState<ProjectedSessionLifecycle | undefined>(undefined);
 
@@ -180,6 +190,7 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
     reconnectTriggerError: effectiveReconnectTriggerError(p),
     sessionLost: lost,
     sessionLostError: lost ? p?.error : undefined,
+    exitInfo: effectiveExitInfo(exitInfoLocal, p),
   };
 }
 

@@ -259,6 +259,7 @@ import {
   effectiveReconnectingMap,
   ensureSessionSubscribed,
   logSessionBridgeFallback,
+  mirrorSessionExited,
   mirrorSessionIntent,
   onSessionView,
 } from "@/store/sessionBridge";
@@ -5788,6 +5789,16 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
       if (deadKey && currentMonitorsView().monitors[deadKey]) {
         get().disconnectMonitoring(deadKey);
+      }
+      // Fold the exit **cause** onto the shared `session-lifecycle` region so the
+      // disconnect overlay can derive its heading/subheading wording from the
+      // region rather than the per-client `terminalExitInfo` slice (#2615 PR-A).
+      // A pure-metadata `session.exited` write — it does not touch the coarse
+      // lifecycle status the status intents below drive. Only fires when the exit
+      // was classified (a bare `setTerminalExited(tabId)` with no info records no
+      // cause, matching the local slice, which stays untouched).
+      if (info) {
+        mirrorSessionExited(tabId, info);
       }
       // Fold the exit into the shared `session-lifecycle` region — the sole
       // reconnect authority (#2205 PR-B):

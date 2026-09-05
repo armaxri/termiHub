@@ -44,6 +44,7 @@ import {
   type ProjectedEndReason,
   type ProjectedSessionLifecycle,
 } from "@/store/sessionBridge";
+import type { TerminalExitInfo } from "@/types/terminal";
 
 /**
  * An in-memory `session-lifecycle` region double: holds one view and fans a fresh
@@ -189,4 +190,17 @@ export function sessionLost(error?: string): ProjectedSessionLifecycle {
 /** The idle reconnect detail (no loop active). */
 export function idleReconnect(): ProjectedReconnect {
   return { phase: "idle", attempt: 0, delayMs: 0 };
+}
+
+/**
+ * Attach an exit cause to a projected lifecycle (#2615): the twin of the Rust
+ * `SessionLifecycle.exit`, structurally identical to the per-client
+ * `terminalExitInfo` slice it re-homes. Used to drive the disconnect overlay's
+ * clean / dropped heading + subheading wording from the region.
+ */
+export function withExit(
+  life: ProjectedSessionLifecycle,
+  exit: TerminalExitInfo
+): ProjectedSessionLifecycle {
+  return { ...life, exit };
 }
