@@ -46,10 +46,11 @@ class TestSshExtended(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Syste
         # The entered password is used for the session but must never be written
         # into the saved connection config (the bridge-observable form of
         # "stored passwords stripped": reconnecting would prompt again).
-        connections = self.wait(
-            lambda: self.driver.get_state("connections"), what="connections to load"
-        )
-        saved = next((c for c in connections if c.get("name") == name), None)
+        # Read the connections projection region (ConnectionsView twin,
+        # {"folders": [...], "connections": [...]}) via find_connection — the
+        # get_state("connections") slice was removed in the Phase-5 reducer
+        # removal, connections is now region-authoritative (#2626).
+        saved = self.wait(lambda: self.find_connection(name), what="connection to load")
         assert saved is not None
         assert SSH_PASSWORD not in str(saved.get("config", {}))
 
@@ -60,7 +61,5 @@ class TestSshExtended(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptUi, Syste
         self.create_ssh_connection(
             name, host=HOST, port=SSH_PASSWORD_PORT, username=SSH_USERNAME, connect=False
         )
-        connections = self.wait(
-            lambda: self.driver.get_state("connections"), what="connections to load"
-        )
-        assert any(c.get("name") == name for c in connections)
+        # Region-authoritative connections read via find_connection (#2626).
+        self.wait(lambda: self.find_connection(name), what="connection to save")

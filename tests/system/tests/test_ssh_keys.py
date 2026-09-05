@@ -57,10 +57,11 @@ class TestSshKeyAuthUi(
             key_path=str(SSH_KEY_PATH),
             connect=False,
         )
-        connections = self.wait(
-            lambda: self.driver.get_state("connections"), what="connections to load"
-        )
-        assert any(c.get("name") == name for c in connections)
+        # connections is region-authoritative since the Phase-5 reducer removal:
+        # read the connections projection region (ConnectionsView twin,
+        # {"folders": [...], "connections": [...]}) via find_connection instead of
+        # the removed get_state("connections") slice (#2626).
+        self.wait(lambda: self.find_connection(name), what="connection to save")
 
     def test_ed25519_connects_without_prompt(self):
         self._connect_with_key("ssh-ed25519", SSH_KEY_PATH)

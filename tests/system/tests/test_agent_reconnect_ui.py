@@ -54,6 +54,7 @@ Skips cleanly when the app / agent binary is not built or no ``sshd`` is present
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from typing import Optional
@@ -74,6 +75,26 @@ from termihub_harness import (
 )
 
 pytestmark = pytest.mark.integration
+
+# The ``LocalAgentSshd`` fixture only guards that an ``sshd`` *binary* is present
+# (it is on the GitHub-hosted runners) — not that a full app→agent connect +
+# deploy actually succeeds over it. The nightly GUI macOS runner does not yet
+# stand up a working live dev-agent sshd endpoint, so the connect in
+# ``_connect_and_open_shell`` times out at "agent never reaches connected" and
+# hard-fails the lane (#2626 cat B; the lane itself was only just activated in
+# #2618). Skip cleanly on CI until a dev-agent is provisioned there; opt back in
+# by exporting ``TERMIHUB_LIVE_AGENT=1`` once the runner stands one up (closing
+# the #2618 / #2579 reconnect-grade loop). On a dev box (no CI env) this always
+# runs, so the grade still exercises where a live dev-agent IS available.
+LIVE_AGENT_SKIP_REASON = (
+    "needs a provisioned live dev-agent sshd the CI runner lacks; export "
+    "TERMIHUB_LIVE_AGENT=1 once one is stood up (#2626, #2618)"
+)
+_ON_CI = os.environ.get("CI") == "true" or os.environ.get("GITHUB_ACTIONS") == "true"
+_LIVE_AGENT_OPT_IN = os.environ.get("TERMIHUB_LIVE_AGENT") == "1"
+skip_without_live_agent = pytest.mark.skipif(
+    _ON_CI and not _LIVE_AGENT_OPT_IN, reason=LIVE_AGENT_SKIP_REASON
+)
 
 AGENT_NAME = "Local Reconnect Agent"
 AGENT_ID = "test-local-reconnect-agent"
@@ -140,6 +161,7 @@ def _agent_doc(sshd: LocalAgentSshd) -> str:
     )
 
 
+@skip_without_live_agent
 class TestAgentReconnectUi(TabsUi, TerminalUi, ConfigRecoveryUi, SidebarUi, SystemTest):
     """The full agent-reconnect UI cycle, driven by the #2573 in-process sever."""
 

@@ -27,11 +27,26 @@ class TestTerminalOutputIpc(TerminalUi, SystemTest):
     def test_utf8_multibyte_round_trips(self):
         """Japanese + accented + emoji bytes must render intact, not as U+FFFD."""
         self.ensure_terminal()
+        # macOS login shells emit a one-time bash→zsh deprecation banner ("The
+        # default interactive shell is now zsh… chsh") plus OSC-7 shell-integration
+        # sequences at prompt time. That startup noise can still be flushing when
+        # the payload printf runs, interleaving with its bytes and mangling the read
+        # buffer (#2626 cat D). Drain it first: emit a settle marker on its own line
+        # and wait until it renders, so the payload below prints on a clean prompt
+        # with no banner/OSC-7 bytes spliced into its line. The marker is assembled
+        # by printf ('SET''TLE-%s' → "SETTLE-READY") so it appears only in the
+        # rendered output, never in the echoed command line.
+        self.run_command(r"printf 'SET''TLE-%s\n' READY")
+        self.wait_for_output("SETTLE-READY")
         # 日本語 = e6 97 a5 / e6 9c ac / e8 aa 9e ; é = c3 a9 ; 🎉 = f0 9f 8e 89
         self.run_command(
             r"printf 'IPCUTF:h\xc3\xa9llo-\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e-\xf0\x9f\x8e\x89:END\n'"
         )
-        out = self.wait_for_output("IPCUTF:")
+        # Wait on the decoded tail (emoji + END): it only appears once the whole
+        # multibyte line has rendered, and — being the *decoded* form — never
+        # matches the echoed command (which carries the raw \xNN escapes). This
+        # guarantees the full payload is present before the assertion.
+        out = self.wait_for_output("🎉:END")
         assert "IPCUTF:héllo-日本語-🎉:END" in out, out
 
     def test_ansi_color_escapes_round_trip(self):

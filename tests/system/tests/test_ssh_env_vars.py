@@ -40,10 +40,11 @@ class TestSshEnvVars(ConnectionsUi, PasswordPromptUi, SystemTest):
             username=username,
             connect=True,
         )
-        connections = self.wait(
-            lambda: self.driver.get_state("connections"), what="connections to load"
-        )
-        saved = next((c for c in connections if c.get("name") == name), None)
+        # connections is region-authoritative since the Phase-5 reducer removal:
+        # read the connections projection region (ConnectionsView twin,
+        # {"folders": [...], "connections": [...]}) via the find_connection lookup
+        # instead of the removed get_state("connections") slice (#2626).
+        saved = self.wait(lambda: self.find_connection(name), what="connection to load")
         assert saved is not None
         # The literal ${env:…} token is preserved in the stored config (PR #68).
         assert "${env:" in str(saved.get("config", {}))

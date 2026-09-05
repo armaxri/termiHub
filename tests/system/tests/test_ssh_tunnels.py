@@ -302,10 +302,11 @@ class TestSshTunnels(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, SettingsUi, S
             key_path=str(SSH_KEY_PATH),
             connect=False,
         )
+        # Region-authoritative connections read via find_connection (the
+        # get_state("connections") slice was removed in the Phase-5 reducer
+        # removal; the ConnectionsView twin region is authoritative) — #2626.
         self.wait(
-            lambda: any(
-                c.get("name") == name for c in self.driver.get_state("connections") or []
-            ),
+            lambda: self.find_connection(name) is not None,
             what="the SSH connection to save",
         )
         return name
