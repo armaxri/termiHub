@@ -513,3 +513,118 @@ fn agent_transport_reconnecting_is_a_noop_status_for_an_unknown_session() {
     assert_eq!(s.status, SessionStatus::Reconnecting);
     assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
 }
+
+// ── Terminal exit-cause carry (#2615, part of #2612/#2564) ─────────────────────
+
+#[test]
+fn set_exit_records_a_clean_exit_with_code_without_touching_status() {
+    // The overlay derives its "Session ended (exit code N)" wording from the
+    // region exit cause. A clean exit is a pure metadata write: it records the
+    // cause but leaves `status` (and the reconnect engine) alone — the coarse
+    // lifecycle other readers render is untouched.
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_exit(
+        "tab-1",
+        Some(TerminalExit {
+            reason: TerminalExitReason::Clean,
+            code: Some(0),
+        }),
+    );
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(
+        s.exit,
+        Some(TerminalExit {
+            reason: TerminalExitReason::Clean,
+            code: Some(0),
+        })
+    );
+    // Pure metadata — status is unchanged.
+    assert_eq!(s.status, SessionStatus::Connected);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+}
+
+#[test]
+fn set_exit_records_a_dropped_exit_with_no_code() {
+    // A dropped connection has no exit code (`None`); the overlay renders the
+    // codeless "connection was lost" wording.
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_exit(
+        "tab-1",
+        Some(TerminalExit {
+            reason: TerminalExitReason::Dropped,
+            code: None,
+        }),
+    );
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(
+        s.exit,
+        Some(TerminalExit {
+            reason: TerminalExitReason::Dropped,
+            code: None,
+        })
+    );
+}
+
+#[test]
+fn set_exit_lazily_creates_the_entry_for_a_clean_exit() {
+    // A clean exit mirrors only `session.exited` (no status intent), so it may
+    // race ahead of any region entry for the tab — the write must create it.
+    let store = deterministic_store();
+    store.set_exit(
+        "tab-fresh",
+        Some(TerminalExit {
+            reason: TerminalExitReason::Clean,
+            code: Some(0),
+        }),
+    );
+    let s = store.get("tab-fresh").unwrap();
+    assert_eq!(s.exit.map(|e| e.reason), Some(TerminalExitReason::Clean));
+}
+
+#[test]
+fn a_fresh_reconnect_clears_a_stale_exit_cause() {
+    // The tab is coming back to life; the exit cause must not linger.
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_exit(
+        "tab-1",
+        Some(TerminalExit {
+            reason: TerminalExitReason::Dropped,
+            code: None,
+        }),
+    );
+    store.reconnect("tab-1");
+    assert_eq!(store.get("tab-1").unwrap().exit, None);
+    // And a subsequent successful connect keeps it cleared.
+    store.connected("tab-1");
+    assert_eq!(store.get("tab-1").unwrap().exit, None);
+}
+
+#[test]
+fn exit_is_omitted_from_the_snapshot_when_absent() {
+    // `skip_serializing_if` keeps the region view byte-identical for every
+    // non-exited session, so the additive field perturbs nothing until set.
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    let snap = store.snapshot();
+    let entry = &snap["sessions"]["tab-1"];
+    assert!(entry.get("exit").is_none(), "exit omitted when None");
+
+    store.set_exit(
+        "tab-1",
+        Some(TerminalExit {
+            reason: TerminalExitReason::Clean,
+            code: Some(0),
+        }),
+    );
+    let snap = store.snapshot();
+    let exit = &snap["sessions"]["tab-1"]["exit"];
+    assert_eq!(exit["reason"], "clean");
+    assert_eq!(exit["code"], 0);
+}

@@ -26,7 +26,7 @@ use crate::session::manager::{DropFold, EventEmitter};
 use crate::session_projection::projection::{
     fold_session_transition, publish_sessions, SESSION_LIFECYCLE_REGION,
 };
-use crate::session_projection::store::SessionLifecycleStore;
+use crate::session_projection::store::{SessionLifecycleStore, TerminalExit, TerminalExitReason};
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -99,6 +99,11 @@ fn registry_for(store: Arc<SessionLifecycleStore>) -> HandlerRegistry {
         Ok(publish_sessions(projector, &s))
     });
     let s = store.clone();
+    registry.route("session.exited", move |intent, projector| {
+        s.set_exit(&required_id(intent)?, Some(required_exit(intent)?));
+        Ok(publish_sessions(projector, &s))
+    });
+    let s = store.clone();
     registry.route(
         "session.agentTransportReconnecting",
         move |intent, projector| {
@@ -131,6 +136,25 @@ fn opt_error(intent: &Intent) -> Option<String> {
         .get("error")
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// Mirror of the production `session.exited` parse (reason + optional code).
+fn required_exit(intent: &Intent) -> Result<TerminalExit, (String, String)> {
+    let reason = match intent.payload.get("reason").and_then(Value::as_str) {
+        Some("clean") => TerminalExitReason::Clean,
+        Some("dropped") => TerminalExitReason::Dropped,
+        Some("killed") => TerminalExitReason::Killed,
+        _ => {
+            return Err((
+                "bad_payload".to_string(),
+                "missing or invalid 'reason'".to_string(),
+            ))
+        }
+    };
+    Ok(TerminalExit {
+        reason,
+        code: intent.payload.get("code").and_then(Value::as_i64),
+    })
 }
 
 /// An in-memory sink recording delivered frames; can be killed to simulate a
@@ -350,6 +374,62 @@ fn a_reconnect_trigger_intent_projects_the_cause_and_a_clear_removes_it() {
     cache.apply(&diffs[1]);
     assert!(cache.view["sessions"]["s2"].get("reconnectError").is_none());
     assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
+}
+
+#[test]
+fn a_session_exited_intent_projects_the_exit_cause_without_touching_status() {
+    // #2615: `session.exited` records the region-owned exit cause + code the
+    // disconnect overlay derives its wording from, as a pure-metadata write that
+    // leaves the coarse lifecycle status untouched.
+    let store = seeded_store();
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    // s2 was connected; fold a clean exit (exit code 0) onto it.
+    let ack = dispatcher.dispatch(intent(
+        "session.exited",
+        json!({ "sessionId": "s2", "reason": "clean", "code": 0 }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "the exit cause changes the view once");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view["sessions"]["s2"]["exit"]["reason"],
+        json!("clean")
+    );
+    assert_eq!(cache.view["sessions"]["s2"]["exit"]["code"], json!(0));
+    // Pure metadata — status is unaffected.
+    assert_eq!(cache.view["sessions"]["s2"]["status"], json!("connected"));
+    assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
+}
+
+#[test]
+fn a_session_exited_intent_with_an_invalid_reason_is_rejected() {
+    // The route rejects an unknown `reason` rather than folding a bogus cause.
+    let store = seeded_store();
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
+
+    let ack = dispatcher.dispatch(intent(
+        "session.exited",
+        json!({ "sessionId": "s2", "reason": "bogus" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Rejected);
+    assert!(
+        sink.diffs().is_empty(),
+        "a rejected intent advances nothing"
+    );
 }
 
 #[test]

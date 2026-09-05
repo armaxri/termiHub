@@ -45,7 +45,7 @@ import {
   type ProjectionCacheState,
   type Transport,
 } from "@/services/transport";
-import type { TerminalAutoReconnectState } from "@/types/terminal";
+import type { TerminalAutoReconnectState, TerminalExitInfo } from "@/types/terminal";
 import {
   DEFAULT_BACKOFF,
   initialReconnectState,
@@ -96,6 +96,12 @@ export interface ProjectedSessionLifecycle {
    * are reconnecting" note shown while a session is reconnecting (#2442). Twin of
    * the Rust `reconnect_error`. Distinct from `error` (the terminal failure msg). */
   reconnectError?: string;
+  /** How this session ended (#2615): the exit cause + code the disconnect overlay
+   * derives its heading / subheading wording from. Twin of the Rust
+   * `SessionLifecycle.exit` (`TerminalExit` — `{ reason, code }`), structurally
+   * identical to the per-client `appStore.terminalExitInfo` slice it re-homes.
+   * `undefined` whenever the session has not exited. */
+  exit?: TerminalExitInfo;
   /** The **backend** session id the frontend should attach terminal I/O to for
    * this tab, when known (#2457). Twin of the Rust `SessionLifecycle.sessionId`
    * (`backend_session_id`). The region is keyed by the stable tab id; this
@@ -123,6 +129,7 @@ export type SessionIntentKind =
   | "session.reconnectFailed"
   | "session.cancelReconnect"
   | "session.reconnectTrigger"
+  | "session.exited"
   | "session.remove";
 
 // ── Transport + region client (lazy, mirrors the tunnel slice) ─────────────────
@@ -195,6 +202,37 @@ export function mirrorSessionIntent(
       }
     })
     .catch((err) => logSessionBridgeFallback(kind, err));
+}
+
+/** Dispatch a `session.exited` intent carrying the exit cause + code, resolving
+ * with the ack. An async function, so a synchronous transport-build failure (a
+ * non-Tauri env without a socket) surfaces as a rejected promise the caller
+ * catches — never a synchronous throw. */
+async function dispatchSessionExited(
+  sessionId: string,
+  exit: TerminalExitInfo
+): Promise<IntentAck> {
+  return transport().dispatch({
+    intentId: newIntentId(),
+    kind: "session.exited",
+    payload: { sessionId, reason: exit.reason, code: exit.code },
+    clientId,
+  });
+}
+
+/** Fire a `session.exited` intent recording how a terminal session ended (#2615):
+ * the exit cause + code the disconnect overlay derives its wording from, folded
+ * onto the shared `session-lifecycle` region. A pure-metadata write (it does not
+ * touch the coarse lifecycle status). Swallows and logs any failure so the local
+ * exit path is never disrupted by a bridge hiccup; never throws. */
+export function mirrorSessionExited(sessionId: string, exit: TerminalExitInfo): void {
+  void dispatchSessionExited(sessionId, exit)
+    .then((ack) => {
+      if (ack.status === "rejected") {
+        logSessionBridgeFallback("session.exited", new Error(ack.error?.message ?? "rejected"));
+      }
+    })
+    .catch((err) => logSessionBridgeFallback("session.exited", err));
 }
 
 // ── Optimistic client-side folding (#2533) ─────────────────────────────────────
@@ -773,6 +811,26 @@ export function effectiveReconnectTriggerError(
   projected: ProjectedSessionLifecycle | undefined
 ): string | undefined {
   return projected?.reconnectError;
+}
+
+/**
+ * Effective `terminalExitInfo[tabId]` for rendering (#2615): the projected exit
+ * cause from the region when it faithfully mirrors the local slice (same
+ * `reason` + `code`), otherwise the local value verbatim (`undefined` ⇒ no exit
+ * info). The disconnect overlay reads this to branch its heading / subheading.
+ *
+ * The faithful-mirror gate guarantees the rendered wording is byte-identical to
+ * the pre-cut `appStore` read: the region sources it only when it agrees exactly
+ * with the local slice; before the `session.exited` diff lands (or in a non-Tauri
+ * transport that cannot subscribe) it falls back to the local slice.
+ */
+export function effectiveExitInfo(
+  local: TerminalExitInfo | undefined,
+  projected: ProjectedSessionLifecycle | undefined
+): TerminalExitInfo | undefined {
+  const p = projected?.exit;
+  if (p && local && p.reason === local.reason && p.code === local.code) return p;
+  return local;
 }
 
 /**

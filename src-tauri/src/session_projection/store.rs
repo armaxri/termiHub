@@ -85,6 +85,39 @@ pub enum EndReason {
     Error,
 }
 
+/// How a terminal session ended — the region twin of the frontend
+/// `TerminalExitReason` (#2615, part of #2612/#2564). Serialised lowercase so the
+/// frontend keys on `"clean"` / `"dropped"` / `"killed"` directly.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalExitReason {
+    /// The process exited normally (exit code 0 / graceful logout).
+    Clean,
+    /// The process exited non-zero, or the peer/network connection was lost.
+    Dropped,
+    /// The user explicitly terminated the session (e.g. Open Connections panel).
+    Killed,
+}
+
+/// The exit cause + code of a terminal session — the region-authoritative analog
+/// of the frontend `TerminalExitInfo` slice (`terminalExitInfo`, #1121). Carried
+/// on the shared record so the disconnect overlay can derive its heading /
+/// subheading wording from the region rather than the per-client `appStore` slice
+/// (#2615). The exit classification is a property of how the session ended (every
+/// client observing it sees the same cause), not a per-client presentation
+/// affordance, so it belongs on the shared region like [`EndReason`].
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalExit {
+    /// The classified cause used to branch the overlay's wording.
+    pub reason: TerminalExitReason,
+    /// The process exit code, or `None` when unknown (e.g. a dropped connection).
+    /// Serialised as JSON `null` (the frontend twin is `code: number | null`), so
+    /// it is **not** skipped when absent — the overlay distinguishes "no code"
+    /// (`null`) from a real code.
+    pub code: Option<i64>,
+}
+
 /// The authoritative lifecycle record for one session.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -126,6 +159,16 @@ pub struct SessionLifecycle {
     /// `None` whenever there is no live backend session for the tab.
     #[serde(rename = "sessionId", skip_serializing_if = "Option::is_none")]
     pub backend_session_id: Option<String>,
+    /// How this session ended (#2615): the exit cause + code the disconnect
+    /// overlay derives its wording from. Set by [`SessionLifecycleStore::set_exit`]
+    /// when a terminal session exits (the frontend classifies clean / dropped /
+    /// killed at the `terminal-exit` source and mirrors it via `session.exited`);
+    /// cleared on any fresh (re)connect (`connect` / `connected` / `reconnect`) so
+    /// the region never carries a stale exit for a live session. `None` whenever
+    /// the session has not exited. Pure metadata — it does not touch `status`, the
+    /// reconnect engine or the backend timer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit: Option<TerminalExit>,
 }
 
 impl SessionLifecycle {
@@ -138,6 +181,7 @@ impl SessionLifecycle {
             error: None,
             reconnect_error: None,
             backend_session_id: None,
+            exit: None,
         }
     }
 }
@@ -249,6 +293,9 @@ impl SessionLifecycleStore {
         entry.end_reason = None;
         entry.error = None;
         entry.reconnect_error = None;
+        // A fresh live session clears any stale exit cause (#2615) so the region
+        // never carries an exit for a connected tab.
+        entry.exit = None;
     }
 
     /// `session.connectFailed` — the initial connect errored. Terminal `Failed`
@@ -326,6 +373,9 @@ impl SessionLifecycleStore {
         // id so the frontend never re-attaches to a corpse (#2457). The redrive
         // repopulates it via `set_backend_session_id` once an attempt succeeds.
         entry.backend_session_id = None;
+        // A restart supersedes any prior exit cause (#2615): the tab is coming
+        // back, not exited.
+        entry.exit = None;
     }
 
     /// Transient agent-transport-break reconnecting fold (#2555, moved to the
@@ -461,6 +511,28 @@ impl SessionLifecycleStore {
         if let Some(entry) = inner.sessions.get_mut(session_id) {
             entry.backend_session_id = backend_session_id;
         }
+    }
+
+    /// `session.exited` — record (or clear) how a terminal session ended (#2615):
+    /// the exit cause + code the disconnect overlay derives its heading /
+    /// subheading wording from. `session_id` is the region key (the frontend tab
+    /// id); `exit` is the classified cause (`None` clears it). This is a pure
+    /// metadata write — like [`set_reconnect_trigger`](Self::set_reconnect_trigger)
+    /// / [`set_backend_session_id`](Self::set_backend_session_id) it does **not**
+    /// touch `status`, the reconnect engine or the backend timer, so it never
+    /// perturbs the coarse lifecycle other readers render.
+    ///
+    /// Creates the entry lazily (mirrors the fold routes): a clean exit is folded
+    /// for a tab whose live session had no prior region entry (the frontend
+    /// classifies the exit at the `terminal-exit` source before any status intent
+    /// for that variant), so the record must exist to carry the cause.
+    pub fn set_exit(&self, session_id: &str, exit: Option<TerminalExit>) {
+        let mut inner = self.lock();
+        let entry = inner
+            .sessions
+            .entry(session_id.to_string())
+            .or_insert_with(SessionLifecycle::connecting);
+        entry.exit = exit;
     }
 
     /// `session.sessionLost` (#2512) — a resilient **agent** tab re-established
