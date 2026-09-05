@@ -7,14 +7,4 @@
 # key format parsing). We only extract raw RSA key components and rebuild
 # them via OpenSSL — we never perform RSA encryption/decryption through
 # this crate, so the timing sidechannel does not apply.
-#
-# RUSTSEC-2026-0194 / RUSTSEC-2026-0195: DoS advisories in `quick-xml` <0.41
-# (quadratic parse of duplicate attribute names; unbounded namespace-declaration
-# allocation). `quick-xml` is a transitive dependency of `plist` <- `tauri-utils`
-# <- `tauri`. `plist 1.9.0` (the latest release) pins `quick-xml = "^0.39.2"`,
-# so the patched >=0.41.0 cannot be selected until plist/tauri adopt it upstream.
-# Both advisories are DoS-only and require feeding untrusted XML to the parser;
-# `plist` is used only by tauri to read its own bundle metadata, never external
-# user input, so the practical attack surface is nil. Remove once upstream
-# updates quick-xml — tracked in #1037.
-ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0194", "RUSTSEC-2026-0195"]
+ignore = ["RUSTSEC-2023-0071"]
