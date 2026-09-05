@@ -45,7 +45,7 @@ concurrency:
 
 jobs:
   system-integration:
-    name: System-Test Harness (integration lane, ${{ matrix.os }})
+    name: System-Test Harness (integration lane, ${{ matrix.os }} · ${{ matrix.branch }})
     runs-on: ${{ matrix.os }}
     # The lane builds the app (debug) and launches it once per suite against live
     # Docker fixtures; a generous ceiling keeps a slow image build or a hung app
@@ -58,6 +58,11 @@ jobs:
       # than Linux, so a Linux failure says nothing about them and vice versa.
       fail-fast: false
       matrix:
+        # Grade both lines from one nightly: the stable branch (main) and active
+        # dev (develop). This workflow lives on the default branch; each leg
+        # checks out its matrix.branch code below, so a single scheduled run
+        # covers both. main == develop until develop advances past a release.
+        branch: [main, develop]
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     env:
@@ -91,6 +96,10 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          # Grade the branch this matrix leg targets (main or develop), not just
+          # the default branch the scheduled run fires from.
+          ref: ${{ matrix.branch }}
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
