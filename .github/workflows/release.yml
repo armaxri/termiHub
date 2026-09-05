@@ -57,10 +57,35 @@ jobs:
           node scripts/internal/emit-release-notes.mjs release_notes.md > release_notes.marked.md
           mv release_notes.marked.md release_notes.md
 
+      - name: Append macOS unsigned-beta bypass note
+        # v0.x ships as an UNSIGNED public beta (maintainer decision 2026-09-06):
+        # no Apple Developer-ID / notarization yet. build-and-upload re-signs the
+        # .app ad-hoc so it launches (and satisfies the Apple Silicon kernel), but
+        # Gatekeeper still shows an "unverified developer" prompt on first open.
+        # Document the one-step bypass in every release body so the beta stays
+        # turnkey for users. Appended AFTER the security marker so the marker stays
+        # first (src-tauri/src/commands/update.rs greps the body for it).
+        run: |
+          {
+            echo ""
+            echo "---"
+            echo ""
+            echo "### macOS — unsigned public beta (one-step bypass)"
+            echo ""
+            echo "termiHub is an **unsigned public beta** (no Apple Developer ID / notarization yet)."
+            echo "The app is ad-hoc signed so it runs, but on first launch macOS shows an"
+            echo "\"unverified developer\" prompt. Bypass it once, either way:"
+            echo ""
+            echo "- **Right-click** \`termiHub.app\` in Finder → **Open** → **Open** in the dialog."
+            echo "  macOS remembers this per app, so you only do it once."
+            echo "- Or from a terminal: \`xattr -dr com.apple.quarantine /Applications/termiHub.app\`"
+          } >> release_notes.md
+
       - name: Create GitHub Release
         run: |
           gh release create "v${{ steps.get_version.outputs.version }}" \
-            --title "termiHub v${{ steps.get_version.outputs.version }}" \
+            --title "termiHub v${{ steps.get_version.outputs.version }} — Public Beta" \
+            --prerelease \
             --notes-file release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -177,6 +202,62 @@ jobs:
           prerelease: false
           args: --config src-tauri/tauri.sidecar.conf.json --target ${{ matrix.rust_target }} ${{ matrix.extra_args }}
 
+      # Tauri's internal ad-hoc signing can leave the bundle in an inconsistent state
+      # (inner components signed in the wrong order), which Gatekeeper classifies as
+      # "damaged" — no bypass path exists for that error. A *fully consistent* ad-hoc
+      # signature instead triggers "unverified developer", which users can bypass via
+      # right-click → Open (see the release notes). We re-sign the entire bundle
+      # ourselves, inside-out, to guarantee consistency. Ad-hoc signatures are also
+      # required by the Apple Silicon kernel — a completely unsigned binary is killed
+      # immediately at exec time on M1/M2/M3/M4. Ported verbatim from dev-build.yml.
+      - name: Re-sign macOS DMG with consistent ad-hoc signature
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          DMG=$(find "target/${{ matrix.rust_target }}/release/bundle/dmg" -name "*.dmg" | head -n 1)
+          WORKDIR=$(mktemp -d)
+          MOUNT="$WORKDIR/mount"
+          mkdir "$MOUNT"
+
+          hdiutil attach "$DMG" -mountpoint "$MOUNT" -nobrowse -quiet
+          APP_NAME=$(ls "$MOUNT" | grep '\.app$' | head -n 1)
+          ditto "$MOUNT/$APP_NAME" "$WORKDIR/$APP_NAME"
+          hdiutil detach "$MOUNT" -quiet
+
+          APP="$WORKDIR/$APP_NAME"
+
+          # Sign inside-out: individual Mach-O files first, then nested bundles,
+          # then the top-level app. This matches the required codesign ordering and
+          # produces a CodeResources manifest that is consistent with all signed content.
+
+          # 1. Sign all individual Mach-O binaries (dylibs, executables, helpers)
+          while IFS= read -r -d '' f; do
+            if file "$f" 2>/dev/null | grep -q 'Mach-O'; then
+              codesign -s - --force "$f" 2>/dev/null || true
+            fi
+          done < <(find "$APP" -type f -print0)
+
+          # 2. Sign nested bundle types as bundles (frameworks, plugins, XPC services)
+          while IFS= read -r -d '' bundle; do
+            codesign -s - --force "$bundle" 2>/dev/null || true
+          done < <(find "$APP" -mindepth 1 -type d \( \
+            -name "*.framework" -o -name "*.app" -o \
+            -name "*.bundle" -o -name "*.appex" -o -name "*.xpc" \) -print0)
+
+          # 3. Sign the top-level app bundle (no --deep; inner content already signed)
+          codesign -s - --force "$APP"
+
+          # Diagnostic: Gatekeeper assessment — expect "accepted" for ad-hoc
+          echo "=== Gatekeeper assessment ==="
+          spctl --assess --type exec "$APP" 2>&1 || true
+          echo "=== Signature info ==="
+          codesign -dv "$APP" 2>&1 || true
+          find "$APP" -name "_CodeSignature" -type d 2>/dev/null || echo "(none)"
+
+          rm "$DMG"
+          hdiutil create -volname "termiHub" -srcfolder "$APP" -ov -format UDZO "$DMG"
+          rm -rf "$WORKDIR"
+
       - name: Find and rename release artifact
         id: find_artifact
         shell: bash
@@ -211,6 +292,21 @@ jobs:
             mv "$DEB_FILE" "$DEB_FILENAME"
 
             gh release upload v${{ needs.create-release.outputs.version }} "$DEB_FILENAME"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ARM64 builds deb,rpm (extra_args above); the deb is the primary artifact,
+      # so upload the .rpm too — matches dev-build.yml's "Collect .rpm" step.
+      - name: Upload .rpm (Linux ARM64 only)
+        if: matrix.platform == 'linux-arm64'
+        run: |
+          RPM_FILE=$(find target/${{ matrix.rust_target }}/release/bundle/rpm -name "*.rpm" | head -n 1)
+          if [ -n "$RPM_FILE" ]; then
+            RPM_FILENAME="termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.rpm"
+            mv "$RPM_FILE" "$RPM_FILENAME"
+
+            gh release upload v${{ needs.create-release.outputs.version }} "$RPM_FILENAME"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -360,10 +456,100 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Verify the full checksummed asset set + release notes are present (folds in
+  # #480). release.yml is not exercised by per-PR CI, so this turns the old manual
+  # "eyeball the Release page" checklist into a hard gate: if any expected asset is
+  # missing, the release job fails instead of shipping an incomplete release.
+  verify-release:
+    name: Verify Release Assets
+    needs:
+      [
+        create-release,
+        build-and-upload,
+        agent-binaries-linux,
+        agent-binaries-macos,
+        agent-binaries-windows,
+      ]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify expected asset set and release notes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+
+          # Desktop bundles — names mirror build-and-upload's rename logic
+          # (termiHub-<version>-<platform><ext>) plus its .deb/.rpm side-uploads.
+          # DMG ×2 are re-signed ad-hoc before upload.
+          expected=(
+            "termiHub-${VERSION}-macos-x64.dmg"
+            "termiHub-${VERSION}-macos-arm64.dmg"
+            "termiHub-${VERSION}-windows-x64.msi"
+            "termiHub-${VERSION}-linux-x64.AppImage"
+            "termiHub-${VERSION}-linux-x64.deb"
+            "termiHub-${VERSION}-linux-arm64.deb"
+            "termiHub-${VERSION}-linux-arm64.rpm"
+          )
+
+          # Agent binaries — names mirror the agent-binaries-* matrices; each ships
+          # a .sha256 sidecar the desktop verifies before install (#1350).
+          agents=(
+            termihub-agent-linux-x64
+            termihub-agent-linux-arm64
+            termihub-agent-linux-armv7
+            termihub-agent-macos-arm64
+            termihub-agent-macos-x64
+            termihub-agent-windows-x64.exe
+          )
+          for a in "${agents[@]}"; do
+            expected+=("$a" "${a}.sha256")
+          done
+
+          echo "Fetching asset list for ${TAG}..."
+          mapfile -t actual < <(gh release view "$TAG" --json assets --jq '.assets[].name')
+
+          printf 'Found %d assets:\n' "${#actual[@]}"
+          if [ "${#actual[@]}" -gt 0 ]; then
+            printf '  %s\n' "${actual[@]}"
+          fi
+
+          missing=()
+          for want in "${expected[@]}"; do
+            found=0
+            for have in "${actual[@]}"; do
+              if [ "$have" = "$want" ]; then
+                found=1
+                break
+              fi
+            done
+            if [ "$found" -ne 1 ]; then
+              missing+=("$want")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::Release ${TAG} is missing ${#missing[@]} expected asset(s):"
+            printf '::error::  missing %s\n' "${missing[@]}"
+            exit 1
+          fi
+          echo "All ${#expected[@]} expected assets are present."
+
+          # Release notes must be non-empty (extracted from CHANGELOG or generated
+          # from commits by the create-release job).
+          BODY=$(gh release view "$TAG" --json body --jq '.body')
+          if [ -z "${BODY//[[:space:]]/}" ]; then
+            echo "::error::Release ${TAG} has empty release notes."
+            exit 1
+          fi
+          echo "Release notes present (${#BODY} chars)."
+
   # Update latest release tag
   update-latest:
     name: Update Latest Tag
-    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos, agent-binaries-windows]
+    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos, agent-binaries-windows, verify-release]
     runs-on: ubuntu-latest
 
     steps:
@@ -380,7 +566,7 @@ jobs:
   # Notify on Discord/Slack (optional)
   notify:
     name: Notify Release
-    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos, agent-binaries-windows]
+    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos, agent-binaries-windows, verify-release]
     runs-on: ubuntu-latest
     if: success()
 
