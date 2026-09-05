@@ -19,15 +19,20 @@
 //! on demand via `SessionManager::monitoring` borrowing both maps.
 
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
 
 use tauri::Emitter;
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 use tracing::{info, warn};
 
-use termihub_core::monitoring::{MonitorStatus, MonitorStatusReceiver};
+use termihub_core::monitoring::{MonitorStatus, MonitorStatusReceiver, MonitoringProvider};
 
+use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
+use crate::session::remote_proxy::RemoteMonitoringProxy;
 use crate::system_monitor_projection::projection::fold_monitor_transition;
+use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
 use super::manager::{SessionEntry, SessionMonitoringStatsEvent, SessionMonitoringStatusEvent};
@@ -54,18 +59,41 @@ async fn recv_optional(rx: &mut Option<MonitorStatusReceiver>) -> Option<Monitor
 pub(super) struct MonitoringController<'a> {
     sessions: &'a Mutex<HashMap<String, SessionEntry>>,
     monitoring_tasks: &'a Mutex<HashMap<String, AbortHandle>>,
+    /// Standalone monitoring providers for session monitors whose run-location
+    /// resolved to an agent (#2593). Keyed by session id, these agent-self
+    /// proxies are **not** owned by the session's connection, so pause /
+    /// interval / stop / cancel consult this map first before falling back to
+    /// the session provider.
+    monitoring_overrides: &'a Mutex<HashMap<String, Arc<dyn MonitoringProvider + Send + Sync>>>,
 }
 
 impl<'a> MonitoringController<'a> {
-    /// Wrap the manager's `sessions` and `monitoring_tasks` maps.
+    /// Wrap the manager's `sessions`, `monitoring_tasks` and
+    /// `monitoring_overrides` maps.
     pub(super) fn new(
         sessions: &'a Mutex<HashMap<String, SessionEntry>>,
         monitoring_tasks: &'a Mutex<HashMap<String, AbortHandle>>,
+        monitoring_overrides: &'a Mutex<HashMap<String, Arc<dyn MonitoringProvider + Send + Sync>>>,
     ) -> Self {
         Self {
             sessions,
             monitoring_tasks,
+            monitoring_overrides,
         }
+    }
+
+    /// The agent-self monitoring provider override for a session, if its monitor
+    /// was routed to an agent (#2593). A cloned `Arc` so the caller can await a
+    /// provider method without holding the overrides lock.
+    async fn override_provider(
+        &self,
+        session_id: &str,
+    ) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+        self.monitoring_overrides
+            .lock()
+            .await
+            .get(session_id)
+            .cloned()
     }
 
     /// Subscribe to a session's monitoring provider and forward stats and
@@ -82,29 +110,69 @@ impl<'a> MonitoringController<'a> {
         &self,
         session_id: &str,
         interval_ms: Option<u64>,
+        run_location: RunLocation,
         app_handle: tauri::AppHandle<R>,
     ) -> Result<(), TerminalError> {
-        let subscription = {
-            let sessions = self.sessions.lock().await;
-            let entry = sessions
-                .get(session_id)
-                .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-            let provider = entry.connection.monitoring().ok_or_else(|| {
-                TerminalError::RemoteError("No monitoring capability".to_string())
-            })?;
-            provider
-                .subscribe()
-                .await
-                .map_err(|e| TerminalError::RemoteError(e.to_string()))?
-        };
+        // Resolve *where* this monitor runs (#2593). System monitoring may run on
+        // the desktop or a chosen agent (`Locality::LocalOrAgent`); the default
+        // `ThisComputer` resolves to the session's own provider, so existing
+        // behaviour is unchanged.
+        let resolved = RunLocationResolver::new()
+            .resolve(session_id, Locality::LocalOrAgent, &run_location)
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
 
-        // Apply the caller's chosen refresh interval to the now-running loop
-        // (#1233). Done after the subscribe block so the provider reference is
-        // not held across this await. Takes effect on the next tick; omitted →
-        // provider default.
-        if let Some(ms) = interval_ms {
-            self.set_session_monitoring_interval(session_id, ms).await?;
-        }
+        let subscription = match &resolved {
+            ResolvedLocation::Local => {
+                let subscription = {
+                    let sessions = self.sessions.lock().await;
+                    let entry = sessions
+                        .get(session_id)
+                        .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+                    let provider = entry.connection.monitoring().ok_or_else(|| {
+                        TerminalError::RemoteError("No monitoring capability".to_string())
+                    })?;
+                    provider
+                        .subscribe()
+                        .await
+                        .map_err(|e| TerminalError::RemoteError(e.to_string()))?
+                };
+
+                // Apply the caller's chosen refresh interval to the now-running
+                // loop (#1233). Done after the subscribe block so the provider
+                // reference is not held across this await. Takes effect on the
+                // next tick; omitted → provider default.
+                if let Some(ms) = interval_ms {
+                    self.set_session_monitoring_interval(session_id, ms).await?;
+                }
+                subscription
+            }
+            ResolvedLocation::Agent(agent_id) => {
+                // Route the subscription through the chosen agent's own host via
+                // a standalone proxy that is not owned by the session's
+                // connection (#2593). Stored as an override so pause / interval /
+                // stop / cancel reach this proxy rather than the session provider.
+                let client = agent_rpc_client(&app_handle).ok_or_else(|| {
+                    TerminalError::RemoteError("Agent manager is not available".to_string())
+                })?;
+                let proxy: Arc<dyn MonitoringProvider + Send + Sync> = Arc::new(
+                    RemoteMonitoringProxy::for_agent_self(agent_id.clone(), client),
+                );
+                // Set the interval before subscribing so the agent's initial ask
+                // uses the chosen cadence (the proxy reads it in `subscribe`).
+                if let Some(ms) = interval_ms {
+                    proxy.set_interval(Duration::from_millis(ms.max(1))).await;
+                }
+                let subscription = proxy
+                    .subscribe()
+                    .await
+                    .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
+                self.monitoring_overrides
+                    .lock()
+                    .await
+                    .insert(session_id.to_string(), proxy);
+                subscription
+            }
+        };
 
         let sid = session_id.to_string();
         let join_handle = tokio::spawn(async move {
@@ -185,6 +253,15 @@ impl<'a> MonitoringController<'a> {
             handle.abort();
         }
 
+        // An agent-hosted monitor (#2593) is driven by a standalone override
+        // proxy, not the session's connection — unsubscribe and drop it here.
+        if let Some(proxy) = self.monitoring_overrides.lock().await.remove(session_id) {
+            if let Err(e) = proxy.unsubscribe().await {
+                warn!(session_id, error = %e, "Agent monitor unsubscribe error");
+            }
+            return Ok(());
+        }
+
         let sessions = self.sessions.lock().await;
         if let Some(entry) = sessions.get(session_id) {
             if let Some(provider) = entry.connection.monitoring() {
@@ -205,6 +282,10 @@ impl<'a> MonitoringController<'a> {
         session_id: &str,
         paused: bool,
     ) -> Result<(), TerminalError> {
+        if let Some(proxy) = self.override_provider(session_id).await {
+            proxy.set_paused(paused).await;
+            return Ok(());
+        }
         let sessions = self.sessions.lock().await;
         let entry = sessions
             .get(session_id)
@@ -223,6 +304,12 @@ impl<'a> MonitoringController<'a> {
         session_id: &str,
         interval_ms: u64,
     ) -> Result<(), TerminalError> {
+        if let Some(proxy) = self.override_provider(session_id).await {
+            proxy
+                .set_interval(Duration::from_millis(interval_ms.max(1)))
+                .await;
+            return Ok(());
+        }
         let sessions = self.sessions.lock().await;
         let entry = sessions
             .get(session_id)
@@ -244,6 +331,10 @@ impl<'a> MonitoringController<'a> {
         &self,
         session_id: &str,
     ) -> Result<(), TerminalError> {
+        if let Some(proxy) = self.override_provider(session_id).await {
+            proxy.cancel_connect().await;
+            return Ok(());
+        }
         let sessions = self.sessions.lock().await;
         if let Some(entry) = sessions.get(session_id) {
             if let Some(provider) = entry.connection.monitoring() {
@@ -251,5 +342,138 @@ impl<'a> MonitoringController<'a> {
             }
         }
         Ok(())
+    }
+}
+
+/// The agent RPC client from Tauri managed state, if available (#2593).
+///
+/// `None` before the app is fully set up (e.g. unit tests without a live Tauri
+/// app), which the agent-routed path treats as "agent unavailable".
+fn agent_rpc_client<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Option<Arc<dyn AgentRpcClient>> {
+    use tauri::Manager;
+    app.try_state::<Arc<dyn AgentRpcClient>>()
+        .map(|state| (*state).clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use termihub_core::errors::CoreError;
+    use termihub_core::monitoring::MonitoringSubscription;
+
+    use super::super::manager::SessionEntry;
+
+    /// A monitoring provider that records the control calls routed to it, so a
+    /// test can assert an agent-hosted session monitor's controls hit its
+    /// override proxy rather than the session's own connection (#2593).
+    #[derive(Default)]
+    struct RecordingProvider {
+        paused: AtomicBool,
+        interval_ms: AtomicU64,
+        unsubscribed: AtomicBool,
+        cancelled: AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl MonitoringProvider for RecordingProvider {
+        async fn subscribe(&self) -> Result<MonitoringSubscription, CoreError> {
+            unreachable!("subscribe is exercised by the live agent path, not this routing test")
+        }
+        async fn unsubscribe(&self) -> Result<(), CoreError> {
+            self.unsubscribed.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        async fn set_interval(&self, interval: std::time::Duration) {
+            self.interval_ms
+                .store(interval.as_millis() as u64, Ordering::SeqCst);
+        }
+        async fn set_paused(&self, paused: bool) {
+            self.paused.store(paused, Ordering::SeqCst);
+        }
+        async fn cancel_connect(&self) {
+            self.cancelled.store(true, Ordering::SeqCst);
+        }
+    }
+
+    type Sessions = Mutex<HashMap<String, SessionEntry>>;
+    type Tasks = Mutex<HashMap<String, AbortHandle>>;
+    type Overrides = Mutex<HashMap<String, Arc<dyn MonitoringProvider + Send + Sync>>>;
+
+    fn empty_maps() -> (Sessions, Tasks, Overrides) {
+        (
+            Mutex::new(HashMap::new()),
+            Mutex::new(HashMap::new()),
+            Mutex::new(HashMap::new()),
+        )
+    }
+
+    /// pause / interval / cancel / stop of an agent-hosted monitor are routed to
+    /// the standalone override provider — never the (absent) session provider.
+    #[tokio::test]
+    async fn agent_override_routes_all_controls_to_the_proxy() {
+        let (sessions, tasks, overrides) = empty_maps();
+        let proxy = Arc::new(RecordingProvider::default());
+        overrides.lock().await.insert(
+            "sess1".to_string(),
+            proxy.clone() as Arc<dyn MonitoringProvider + Send + Sync>,
+        );
+
+        let controller = MonitoringController::new(&sessions, &tasks, &overrides);
+
+        // pause + interval reach the proxy even though no session exists.
+        controller
+            .set_session_monitoring_paused("sess1", true)
+            .await
+            .expect("pause should route to the override");
+        controller
+            .set_session_monitoring_interval("sess1", 5000)
+            .await
+            .expect("interval should route to the override");
+        controller
+            .cancel_session_monitoring("sess1")
+            .await
+            .expect("cancel should route to the override");
+
+        assert!(proxy.paused.load(Ordering::SeqCst), "pause routed to proxy");
+        assert_eq!(proxy.interval_ms.load(Ordering::SeqCst), 5000);
+        assert!(
+            proxy.cancelled.load(Ordering::SeqCst),
+            "cancel routed to proxy"
+        );
+
+        // stop unsubscribes the proxy and drops the override.
+        controller
+            .stop_session_monitoring("sess1")
+            .await
+            .expect("stop should unsubscribe the override");
+        assert!(
+            proxy.unsubscribed.load(Ordering::SeqCst),
+            "stop unsubscribed proxy"
+        );
+        assert!(
+            overrides.lock().await.get("sess1").is_none(),
+            "override removed after stop"
+        );
+    }
+
+    /// With no override recorded, a missing session is treated as already gone —
+    /// the desktop default path is unchanged for a session that never subscribed.
+    #[tokio::test]
+    async fn no_override_falls_back_to_session_path() {
+        let (sessions, tasks, overrides) = empty_maps();
+        let controller = MonitoringController::new(&sessions, &tasks, &overrides);
+
+        // No session, no override: cancel/stop are best-effort no-ops (Ok).
+        controller
+            .cancel_session_monitoring("ghost")
+            .await
+            .expect("cancel of an unknown monitor is a no-op");
+        controller
+            .stop_session_monitoring("ghost")
+            .await
+            .expect("stop of an unknown monitor is a no-op");
     }
 }

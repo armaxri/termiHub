@@ -43,6 +43,7 @@ import {
 } from "@/store/layoutSelectors";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
+import { MonitorRunLocation } from "./MonitorRunLocation";
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
 import { getAllLeaves } from "@/utils/panelTree";
 import {
@@ -1332,6 +1333,7 @@ function MonitorRowActions({
   const isOffline = entry.status === "offline";
   return (
     <span className="oc-row__actions">
+      <MonitorRunLocation entry={entry} />
       {isOffline && (
         <Tooltip content="Retry monitor" side="top">
           <Button

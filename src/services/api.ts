@@ -13,6 +13,7 @@ import {
 } from "@/types/terminal";
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import type { RemoteClipboardFile, RemoteDesktopInput } from "@/types/remoteDesktop";
+import type { RunLocation } from "@/types/tunnel";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
@@ -2128,13 +2129,19 @@ export async function sessionGetCapabilities(
  * client threads through so the server can create the `connecting` entry in the
  * authoritative `SystemMonitorStore`. `intervalMs` sets the collection cadence;
  * when omitted the backend default is used (#1233).
+ *
+ * `runLocation` chooses the execution host for the monitor (#2593): omitted or
+ * `This computer` subscribes the session's own provider (unchanged behaviour); an
+ * agent choice routes the subscription through that agent's own host so the
+ * streamed samples come from the agent.
  */
 export async function sessionMonitoringOpen(
   sessionId: string,
   host?: string | null,
-  intervalMs?: number
+  intervalMs?: number,
+  runLocation?: RunLocation
 ): Promise<void> {
-  await invoke("session_monitoring_open", { sessionId, host, intervalMs });
+  await invoke("session_monitoring_open", { sessionId, host, intervalMs, runLocation });
 }
 
 /** Stop session-based monitoring. */

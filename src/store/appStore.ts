@@ -214,6 +214,8 @@ import {
   type ConnectTimeoutKind,
 } from "@/utils/connectTimeout";
 import { DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
+import { useRunLocationStore } from "@/store/runLocationStore";
+import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import { onPersistentSessionStateChanged } from "@/services/events";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
@@ -1345,7 +1347,11 @@ export interface AppState
    * owns entry creation and the connect outcome (#2224); this action calls the
    * `session_monitoring_open` command and the region reflects the result.
    */
-  connectMonitoring: (sessionId: string, host?: string | null) => Promise<void>;
+  connectMonitoring: (
+    sessionId: string,
+    host?: string | null,
+    runLocation?: RunLocation
+  ) => Promise<void>;
   /** Disconnect one monitor by key, or every monitor when `key` is omitted. */
   disconnectMonitoring: (key?: string) => Promise<void>;
   /** Clear a lingering error on one entry so a stale tooltip cannot persist (audit gap G9). */
@@ -6675,7 +6681,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
         sessionCapabilities: { ...state.sessionCapabilities, [sessionId]: caps },
       })),
 
-    connectMonitoring: async (sessionId: string, host: string | null = null) => {
+    connectMonitoring: async (
+      sessionId: string,
+      host: string | null = null,
+      runLocation?: RunLocation
+    ) => {
       // Unified session-based (push) monitoring: the key is the id of the terminal
       // session that owns the monitor. The backend owns the entry lifecycle in the
       // authoritative `system-monitors` region (#2224): the `session_monitoring_open`
@@ -6700,7 +6710,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // command's error branch folds it), so the UI already shows the error
       // without any client write. Propagate so callers — the status bar
       // auto-connect latch and the Open Connections retry toast — can react.
-      await sessionMonitoringOpen(key, host ?? key, intervalMs);
+      // Route the subscription to the chosen execution host (#2593): omitted or
+      // This computer keeps the session's own provider (unchanged); an agent
+      // choice hosts the monitor on that agent. Falls back to any recorded
+      // preference so a reconnect keeps the chosen vantage.
+      const location =
+        runLocation ?? useRunLocationStore.getState().systemMonitorLocations[key] ?? THIS_COMPUTER;
+      await sessionMonitoringOpen(key, host ?? key, intervalMs, location);
     },
 
     disconnectMonitoring: async (key) => {

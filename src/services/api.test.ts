@@ -80,6 +80,7 @@ import {
   switchCredentialStore,
   resolveCredential,
   removeCredential,
+  sessionMonitoringOpen,
 } from "./api";
 
 describe("api service", () => {
@@ -1140,6 +1141,38 @@ describe("api service", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("remove_credential", {
         connectionId: "conn-1",
         credentialType: "password",
+      });
+    });
+  });
+
+  describe("session monitoring run-location (#2593)", () => {
+    beforeEach(() => {
+      mockedInvoke.mockReset();
+      mockedInvoke.mockResolvedValue(undefined);
+    });
+
+    it("forwards an agent run-location to session_monitoring_open", async () => {
+      await sessionMonitoringOpen("sess-1", "host-a", 2000, {
+        kind: "agent",
+        agentId: "build",
+      });
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_monitoring_open", {
+        sessionId: "sess-1",
+        host: "host-a",
+        intervalMs: 2000,
+        runLocation: { kind: "agent", agentId: "build" },
+      });
+    });
+
+    it("omits the run-location by default (This computer preserved)", async () => {
+      await sessionMonitoringOpen("sess-2", "host-b", 5000);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_monitoring_open", {
+        sessionId: "sess-2",
+        host: "host-b",
+        intervalMs: 5000,
+        runLocation: undefined,
       });
     });
   });
