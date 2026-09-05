@@ -226,7 +226,36 @@ async function dispatchSessionExited(
  * touch the coarse lifecycle status). Swallows and logs any failure so the local
  * exit path is never disrupted by a bridge hiccup; never throws. */
 export function mirrorSessionExited(sessionId: string, exit: TerminalExitInfo): void {
-  void dispatchSessionExited(sessionId, exit)
+  // Route through the optimistic path (#2621) so the region-derived mount gate
+  // ({@link regionExited}) flips synchronously — a clean exit fires no status
+  // intent, so `exit` is the only signal and it must not wait for the async diff.
+  let client: ProjectionClient;
+  try {
+    client = sessionRegionClient();
+  } catch (err) {
+    // No transport (non-Tauri without a socket): fall back to a plain dispatch
+    // (which will itself no-op/log), preserving the pre-cut resilience contract.
+    void dispatchSessionExited(sessionId, exit)
+      .then((ack) => {
+        if (ack.status === "rejected") {
+          logSessionBridgeFallback("session.exited", new Error(ack.error?.message ?? "rejected"));
+        }
+      })
+      .catch((e) => logSessionBridgeFallback("session.exited", e));
+    logSessionBridgeFallback("session.exited", err);
+    return;
+  }
+  void ensureSessionSubscribed().catch((err) => logSessionBridgeFallback("subscribe", err));
+  const intent: Intent = {
+    intentId: newIntentId(),
+    kind: "session.exited",
+    payload: { sessionId, reason: exit.reason, code: exit.code },
+    clientId,
+  };
+  const overlay: OptimisticFold = (view) =>
+    sessionExitedFold((view ?? { sessions: {} }) as SessionLifecycleView, sessionId, exit);
+  void client
+    .dispatchOptimistic(intent, overlay)
     .then((ack) => {
       if (ack.status === "rejected") {
         logSessionBridgeFallback("session.exited", new Error(ack.error?.message ?? "rejected"));
@@ -304,7 +333,98 @@ const OPTIMISTIC_SESSION_FOLDS: Partial<Record<SessionIntentKind, SessionOptimis
   // The transient agent-transport-break reconnecting fold is no longer a client
   // intent: `agent_io_task` folds the `session-lifecycle` region at the backend
   // source (#2556), so there is no optimistic client mirror for it here.
+  //
+  // ── Exit folds (#2621, PR-B of #2612/#2564) ─────────────────────────────────
+  // Re-homing the overlay **mount** gate off the synchronous `terminalExitedTabs`
+  // slice onto the region needs the exit transitions to surface synchronously too,
+  // else the terminal would flash live between the sync `setTerminalExited` call
+  // and the async status diff. Each fold mirrors its Rust `SessionLifecycleStore`
+  // twin for the rendered fields (status + preserved `exit`); non-rendered fields
+  // reconcile invisibly against the authoritative diff (as `session.reconnect`'s
+  // estimated backoff already does).
+  //
+  // A user kill is a graceful `session.disconnect` → idle `disconnected`, reason
+  // `user`. Preserves the `exit` the preceding `session.exited` fold recorded (the
+  // Rust `disconnect` does not clear it), so the overlay keeps its killed wording.
+  "session.disconnect": (view, sessionId) => {
+    const prev = view.sessions[sessionId];
+    return {
+      ...view,
+      sessions: {
+        ...view.sessions,
+        [sessionId]: {
+          status: "disconnected",
+          reconnect: { ...initialReconnectState },
+          endReason: "user",
+          ...(prev?.exit !== undefined ? { exit: prev.exit } : {}),
+        },
+      },
+    };
+  },
+  // A terminal, non-resilient drop → idle `disconnected`, reason `unexpected`,
+  // carrying the drop error. Preserves the recorded `exit` (Rust `dropped` leaves
+  // it) so the dropped wording is gap-free.
+  "session.dropped": (view, sessionId, error) => {
+    const prev = view.sessions[sessionId];
+    return {
+      ...view,
+      sessions: {
+        ...view.sessions,
+        [sessionId]: {
+          status: "disconnected",
+          reconnect: { ...initialReconnectState },
+          endReason: "unexpected",
+          ...(error !== undefined ? { error } : {}),
+          ...(prev?.exit !== undefined ? { exit: prev.exit } : {}),
+        },
+      },
+    };
+  },
+  // A failed (re)connect → terminal `failed`, reason `error`, carrying the message
+  // the "Reconnect failed" / connect-error overlay surfaces.
+  "session.connectFailed": (view, sessionId, error) => {
+    const prev = view.sessions[sessionId];
+    return {
+      ...view,
+      sessions: {
+        ...view.sessions,
+        [sessionId]: {
+          status: "failed",
+          reconnect: { ...initialReconnectState },
+          endReason: "error",
+          ...(error !== undefined ? { error } : {}),
+          ...(prev?.exit !== undefined ? { exit: prev.exit } : {}),
+        },
+      },
+    };
+  },
 };
+
+/** The optimistic overlay for a `session.exited` metadata write (#2621): fold the
+ * exit cause onto the session's record so the region-derived {@link regionExited}
+ * mount gate flips synchronously (a *clean* process exit fires no status intent —
+ * `exit` alone is what marks it ended). Preserves the rest of the record; creates a
+ * `connected` shell if the session had no prior entry (mirrors the Rust lazy
+ * `set_exit`). */
+function sessionExitedFold(
+  view: SessionLifecycleView,
+  sessionId: string,
+  exit: TerminalExitInfo
+): SessionLifecycleView {
+  const prev = view.sessions[sessionId] ?? projectedConnected();
+  return {
+    ...view,
+    sessions: { ...view.sessions, [sessionId]: { ...prev, exit } },
+  };
+}
+
+/** The projected lifecycle for a session that has a live entry but whose status is
+ * otherwise unknown — the lazy shell the Rust `set_exit` creates via
+ * `SessionLifecycle::connecting` then leaves `connected`-equivalent for the exit
+ * metadata. Only the `exit` field is rendered off it. */
+function projectedConnected(): ProjectedSessionLifecycle {
+  return { status: "connected", reconnect: { ...initialReconnectState } };
+}
 
 /** Dispatch a folded `session.*` intent through the region client so its overlay
  * is applied to the projected view synchronously, then reconciled against the
@@ -831,6 +951,70 @@ export function effectiveExitInfo(
   const p = projected?.exit;
   if (p && local && p.reason === local.reason && p.code === local.code) return p;
   return local;
+}
+
+/**
+ * Whether a projected session has **exited** (#2621, PR-B of #2612/#2564): the
+ * disconnect-overlay + view-mode **mount** gate, re-homed off the per-client
+ * `appStore.terminalExitedTabs` slice onto the shared `session-lifecycle` region.
+ *
+ * A session is exited when the region shows it in one of the terminal-ended
+ * statuses — `disconnected` (user kill / non-resilient drop / cancelled loop),
+ * `failed` (initial-connect error / reconnect give-up) or `sessionLost` (#2512) —
+ * **or** when only the pure-metadata `session.exited` fired (a *clean* process exit
+ * dispatches no status intent, so the region keeps its live `status` and records
+ * the end solely as `exit`). A `reconnecting` session is deliberately **not**
+ * exited: the overlay mounts through the reconnecting/auto-reconnect-waiting gate
+ * instead, matching the pre-cut path where `terminalExitedTabs` was cleared the
+ * moment the resilient reconnect began (`reconnectTerminal`).
+ */
+export function regionExited(projected: ProjectedSessionLifecycle | undefined): boolean {
+  if (!projected) return false;
+  return (
+    projected.status === "disconnected" ||
+    projected.status === "failed" ||
+    projected.status === "sessionLost" ||
+    projected.exit !== undefined
+  );
+}
+
+/**
+ * Effective `terminalExitedTabs[tabId]` for the overlay/view-mode **mount** gate
+ * (#2621): the region-derived {@link regionExited} predicate, OR'd with the local
+ * slice so the gate is byte-identical to the pre-cut `appStore` read even before
+ * the `session.exited` / status diff lands (or in a transport that cannot
+ * subscribe). The optimistic exit folds ({@link OPTIMISTIC_SESSION_FOLDS}) make
+ * the region side gap-free; the local OR is the dead-fallback safety net (the
+ * slice stays an authoritative writer until #2612's slice deletion).
+ */
+export function effectiveExited(
+  local: boolean,
+  projected: ProjectedSessionLifecycle | undefined
+): boolean {
+  return regionExited(projected) || local;
+}
+
+/**
+ * Effective `terminalExitedTabs` map for the list consumers (the tab-strip status
+ * dot {@link import("@/utils/tabStatus").deriveTabStatus}, the close-confirmation
+ * live-session count {@link import("@/utils/tabLiveSession").tabHasLiveSession}):
+ * every key the local slice carries plus every region-exited key, so the map is a
+ * superset-safe byte-identical mirror of the pre-cut read (region-exited keys the
+ * local slice already carries in steady state; the OR only ever adds a key the
+ * optimistic fold set before the local write, never drops one).
+ */
+export function effectiveExitedMap(
+  local: Record<string, boolean>,
+  view: Record<string, ProjectedSessionLifecycle>
+): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const [id, on] of Object.entries(local)) {
+    if (on) out[id] = true;
+  }
+  for (const [id, life] of Object.entries(view)) {
+    if (regionExited(life)) out[id] = true;
+  }
+  return out;
 }
 
 /**

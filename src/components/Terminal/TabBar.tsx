@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { currentSettingsView } from "@/store/settingsBridge";
+import { currentSessionView, effectiveExitedMap } from "@/store/sessionBridge";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
 import { TerminalTab } from "@/types/terminal";
@@ -52,9 +53,11 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     terminalReconnectingTabs,
     terminalDisconnectErrors,
     terminalSessionLost,
+    // #2621 mount-gate cut: exited tabs sourced from the region (falls back to the
+    // per-client slice per key), replacing the direct `appStore.terminalExitedTabs`.
+    terminalExitedTabs,
   } = useProjectedSessionLifecycleMaps();
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
-  const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
   // Broadcast participation (#1957): the badge shows on every tab in the target
   // set, active or not, so participation is visible at a glance. Render cut
   // (#2242): sourced from the projected broadcast region (falls back to appStore).
@@ -122,7 +125,9 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     // user opted out via "Don't ask again". The keyboard close path is gated
     // separately by `confirmCloseTabOnShortcut`.
     const isLive = tabHasLiveSession(tab, {
-      terminalExitedTabs: state.terminalExitedTabs,
+      // #2621: region-derived exited map (OR'd with the local slice), read
+      // synchronously here since this is an imperative close handler, not render.
+      terminalExitedTabs: effectiveExitedMap(state.terminalExitedTabs, currentSessionView()),
       terminalSpawnErrors: state.terminalSpawnErrors,
     });
     if (isLive && currentSettingsView().confirmCloseLiveSession !== false) {
