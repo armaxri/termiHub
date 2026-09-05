@@ -52,7 +52,13 @@ def _region_cache(driver: Driver, region: str) -> dict[str, Any]:
         sub_id = driver.projection_subscribe(region)["subscriptionId"]
         subs[region] = sub_id
     cache = driver.projection_state(sub_id).get("cache")
-    return cache if isinstance(cache, dict) else {}
+    # The substrate records the ProjectionClient state as ``{version, view}``;
+    # callers read *document* fields (``.get("connections")`` / ``"folders"``), so
+    # unwrap the ``view`` document — never the ``{version, view}`` envelope, on
+    # which those keys would always be absent (the A2 fix, #2628, for the shared
+    # HarnessMixin.projection_region_cache twin).
+    view = cache.get("view") if isinstance(cache, dict) else None
+    return view if isinstance(view, dict) else {}
 
 
 def _region_list(driver: Driver, region: str, key: str) -> list[dict[str, Any]]:

@@ -46,7 +46,9 @@ class StubDriver:
 
     def projection_state(self, subscription_id):
         region = subscription_id.removeprefix("sub-")
-        return {"cache": self._regions.get(region, {})}
+        # Mirror the real substrate: the recorded cache is the ``{version, view}``
+        # ProjectionClient envelope, so the view document is nested under "view".
+        return {"cache": {"version": 1, "view": self._regions.get(region, {})}}
 
 
 class MenuDriver:
