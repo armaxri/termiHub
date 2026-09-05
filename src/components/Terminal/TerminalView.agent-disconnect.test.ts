@@ -18,11 +18,7 @@ import { useAppStore } from "@/store/appStore";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
-import {
-  currentSessionView,
-  ensureSessionSubscribed,
-  regionExited,
-} from "@/store/sessionBridge";
+import { currentSessionView, ensureSessionSubscribed, regionExited } from "@/store/sessionBridge";
 import {
   connected,
   failed,
@@ -108,9 +104,9 @@ describe("agent-state-change tab discovery — regression for empty agentSession
   // is **backend-owned** (`agent_io_task`), so `applyAgentReconnecting` no longer
   // mirrors it on the client; a test seeds the reconnecting region via the harness
   // to represent that server fold, then the `connected` transition gates on the
-  // region status. These tests drive the handlers directly and call
-  // `setTerminalExited` without a `dropped` reason, so the exit path triggers no
-  // region reconnect fold.
+  // region status. The exited / disconnect-error view-state is region-only now
+  // (#2625): these tests seed the region (sessionLost / failed / dropped) to
+  // represent the backend fold and assert via `regionExited` / the region status.
   const harness = installSessionLifecycleHarness();
 
   beforeEach(() => {

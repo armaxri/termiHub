@@ -253,7 +253,10 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
   });
 
   it("shows reconnecting heading and a stop button", async () => {
-    harness.transport.setSession(TAB, reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
+    harness.transport.setSession(
+      TAB,
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 })
+    );
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
@@ -266,7 +269,10 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
   });
 
   it("stop button dispatches session.cancelReconnect to the region", async () => {
-    harness.transport.setSession(TAB, reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
+    harness.transport.setSession(
+      TAB,
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 })
+    );
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
@@ -283,7 +289,9 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
     // is region-only (#2625); the observable of Stop is the cancel intent dispatch.
     expect(
       harness.transport.dispatched.some(
-        (i) => i.kind === "session.cancelReconnect" && (i.payload as { sessionId: string }).sessionId === TAB
+        (i) =>
+          i.kind === "session.cancelReconnect" &&
+          (i.payload as { sessionId: string }).sessionId === TAB
       )
     ).toBe(true);
   });
@@ -305,7 +313,10 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
   });
 
   it("does not show trigger error box when no error is set", async () => {
-    harness.transport.setSession(TAB, reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
+    harness.transport.setSession(
+      TAB,
+      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 })
+    );
     act(() => {
       root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
