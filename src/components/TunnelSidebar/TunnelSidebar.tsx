@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
@@ -6,8 +6,16 @@ import { Button, toast } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
+import {
+  combinedPairStatus,
+  findCompanion,
+  isCompanionRedundant,
+  orderTunnelRows,
+} from "@/utils/tunnelChain";
 import { TunnelListItem } from "./TunnelListItem";
 import "./TunnelSidebar.css";
+
+const DISCONNECTED: TunnelStatus = "disconnected";
 
 /** Tunnel statuses that count as "active" — deleting one tears down a live connection. */
 const ACTIVE_STATUSES: readonly TunnelStatus[] = ["connecting", "connected", "reconnecting"];
@@ -23,8 +31,9 @@ export function TunnelSidebar() {
   const deleteTunnel = useAppStore((s) => s.deleteTunnel);
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
 
-  // Tunnel pending confirmation before an active-tunnel delete, or null when idle.
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+  // Tunnel pending delete confirmation (active teardown, chained-pair cascade, or
+  // a direct companion delete that breaks localhost), or null when idle.
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; message: string } | null>(null);
 
   const handleNew = useCallback(() => {
     openTunnelEditorTab(null);
@@ -60,11 +69,35 @@ export function TunnelSidebar() {
 
   const handleDelete = useCallback(
     (tunnelId: string) => {
+      const target = tunnels.find((t) => t.id === tunnelId);
+      const name = target?.name ?? "this tunnel";
       const status = tunnelStates[tunnelId]?.status;
+      const isActive = !!status && ACTIVE_STATUSES.includes(status);
+      const companion = target ? findCompanion(tunnels, tunnelId) : undefined;
+
+      // Deleting a chained companion directly breaks localhost while leaving the
+      // agent port running — warn explicitly (#2597 edge case).
+      if (target?.companionOf) {
+        setPendingDelete({
+          id: tunnelId,
+          message: `Deleting "${name}" removes the hop on this computer. localhost will stop reaching the port (it still works on the agent). Continue?`,
+        });
+        return;
+      }
+      // Deleting a chained parent cascades to its companion — name both.
+      if (companion) {
+        setPendingDelete({
+          id: tunnelId,
+          message: `Deleting "${name}" also removes its linked hop "${companion.name}" on this computer. Continue?`,
+        });
+        return;
+      }
       // Deleting an active tunnel silently tears down a live connection — confirm first.
-      if (status && ACTIVE_STATUSES.includes(status)) {
-        const name = tunnels.find((t) => t.id === tunnelId)?.name ?? "this tunnel";
-        setPendingDelete({ id: tunnelId, name });
+      if (isActive) {
+        setPendingDelete({
+          id: tunnelId,
+          message: `"${name}" is currently active. Deleting it will stop the tunnel. Continue?`,
+        });
         return;
       }
       void deleteTunnel(tunnelId);
@@ -81,12 +114,18 @@ export function TunnelSidebar() {
 
   const cancelDelete = useCallback(() => setPendingDelete(null), []);
 
+  // Order rows so each chained companion (#2597) renders directly beneath its
+  // parent, then flatten to the nav order. Keyboard nav walks the same visible
+  // order, including nested companion rows.
+  const rows = useMemo(() => orderTunnelRows(tunnels), [tunnels]);
+  const rowTunnels = useMemo(() => rows.map((r) => r.tunnel), [rows]);
+
   // Roving-tabindex keyboard navigation over the flat tunnel list, matching the
   // Connections tree's arrow-key + Enter model. Enter edits the focused tunnel
   // (the same action as double-click).
   const handleActivate = useCallback((tunnel: TunnelConfig) => handleEdit(tunnel.id), [handleEdit]);
   const nav = useFlatRovingNav<TunnelConfig, HTMLDivElement>(
-    tunnels,
+    rowTunnels,
     (tunnel) => tunnel.name,
     handleActivate
   );
@@ -118,8 +157,24 @@ export function TunnelSidebar() {
           aria-label="SSH tunnels"
           onKeyDown={nav.onKeyDown}
         >
-          {tunnels.map((tunnel, index) => {
+          {rows.map(({ tunnel, parent }, index) => {
             const { ref, ...itemProps } = nav.getItemProps(index);
+            // A parent's combined pair status folds both live states so the row
+            // reads "does localhost:PORT work?" rather than juggling two rows.
+            const companion = parent ? undefined : findCompanion(tunnels, tunnel.id);
+            const pairStatus = combinedPairStatus(
+              tunnelStates[tunnel.id]?.status ?? DISCONNECTED,
+              (companion ? tunnelStates[companion.id]?.status : undefined) ?? DISCONNECTED,
+              !!companion
+            );
+            // Combined status the companion row also renders (degraded → inline fix).
+            const parentPairStatus = parent
+              ? combinedPairStatus(
+                  tunnelStates[parent.id]?.status ?? DISCONNECTED,
+                  tunnelStates[tunnel.id]?.status ?? DISCONNECTED,
+                  true
+                )
+              : undefined;
             return (
               <TunnelListItem
                 key={tunnel.id}
@@ -132,6 +187,10 @@ export function TunnelSidebar() {
                 onEdit={handleEdit}
                 onDuplicate={handleDuplicate}
                 onDelete={handleDelete}
+                nested={!!parent}
+                pairStatus={parent ? parentPairStatus : companion ? pairStatus : undefined}
+                companionRedundant={!!companion && isCompanionRedundant(tunnel)}
+                onRemoveCompanion={companion ? () => handleDelete(companion.id) : undefined}
                 rowRef={ref}
                 rowProps={itemProps}
               />
@@ -141,11 +200,7 @@ export function TunnelSidebar() {
       )}
       <ConfirmDeleteDialog
         open={pendingDelete !== null}
-        message={
-          pendingDelete
-            ? `"${pendingDelete.name}" is currently active. Deleting it will stop the tunnel. Continue?`
-            : ""
-        }
+        message={pendingDelete?.message ?? ""}
         onConfirm={confirmDelete}
         onCancel={cancelDelete}
       />

@@ -95,7 +95,7 @@
       <header class="concept-header">
         <h1>Chain a Hop to This Computer</h1>
         <div class="concept-meta">
-          <span class="concept-status">Future · design only</span>
+          <span class="concept-status">Implemented · #2617 (PR-A) + #2616 (PR-B)</span>
           <span
             >GitHub Issue: <a href="https://github.com/armaxri/termiHub/issues/2186">#2186</a> ·
             Follow-up to <a href="https://github.com/armaxri/termiHub/issues/2155">#2155</a> · Part
@@ -1195,6 +1195,17 @@ sequenceDiagram
               >Recommendation: derive silently from the agent's primary SSH connection; expose an
               override in the preview only if usage shows multiple paths are common.</em
             >
+            <strong>Resolved (PR-B, #2616):</strong> an agent's SSH transport is inline in its
+            <code>RemoteAgentConfig</code> and is <em>not</em> backed by a saved SSH connection id,
+            while the companion — a normal desktop-hosted <code>-L</code> whose
+            <code>sshConnectionId</code> must resolve to a saved SSH connection in the
+            <code>ConnectionManager</code> store — cannot reference the agent directly. So the
+            preview
+            <strong>matches a saved SSH connection whose host equals the agent's SSH host</strong>
+            (silent when an obvious match exists) and exposes it as an overridable select; when the
+            user has no SSH connection reaching the agent, "Create &amp; link" is disabled with
+            guidance to create one first. No backend change and no duplicated credentials — the
+            companion is a plain desktop <code>-L</code> plus the <code>companionOf</code> link.
           </li>
           <li>
             <strong>Combined status home.</strong> Compute the "Linked · …" status in the Rust
@@ -1219,8 +1230,17 @@ sequenceDiagram
       <section>
         <h2 id="status">Implementation Status <a class="anchor" href="#status">#</a></h2>
         <p>
-          <strong>Not started — design only.</strong> This concept settles the deferred "Chain a hop
-          to this computer" remediation from
+          <strong>Implemented</strong> across PR-A (<a
+            href="https://github.com/armaxri/termiHub/issues/2617"
+            >#2617</a
+          >: backend companion link, ordered pair lifecycle + cascade, and the pure
+          <code>tunnelChain.ts</code> helpers) and PR-B (<a
+            href="https://github.com/armaxri/termiHub/issues/2616"
+            >#2616</a
+          >: the editor affordance + preview/confirm, the nested-pair sidebar and Open Connections
+          rendering with combined/degraded status, and the SSH-via resolution). Tracked under
+          <a href="https://github.com/armaxri/termiHub/issues/2597">#2597</a>. This concept settled
+          the deferred "Chain a hop to this computer" remediation from
           <a href="stateless-ui-agent-tunnel-endpoints.html">the endpoint-semantics sub-concept</a>
           (Open Design Decision #1). Its dependency,
           <a href="https://github.com/armaxri/termiHub/issues/2185">#2185</a> (agent-hosted
@@ -1246,8 +1266,8 @@ sequenceDiagram
           </p>
         </blockquote>
         <p>
-          <strong>Last synced:</strong> never (design only) · <strong>Status:</strong> not
-          implemented
+          <strong>Last synced:</strong> 2026-09-05 at commit <code>8d72f11a</code> ·
+          <strong>Status:</strong> in-sync (implemented via #2617 + #2616)
         </p>
         <div class="table-wrap">
           <table>
@@ -1267,40 +1287,66 @@ sequenceDiagram
                   <code>TunnelConfig</code> carries a companion link (<code>companion_of</code> /
                   <code>companion_id</code>)
                 </td>
-                <td>Absent — tunnels have no link field</td>
-                <td>Missing</td>
-                <td>Implement with the chaining follow-up, then re-sync</td>
+                <td>
+                  Present — <code>companion_of</code> on <code>TunnelConfig</code> (Rust + TS),
+                  parent side derived via <code>findCompanion</code> (PR-A #2617)
+                </td>
+                <td>Match</td>
+                <td>None</td>
               </tr>
               <tr>
                 <td>2</td>
                 <td>Editor warning offers "Chain a hop to this computer" beside "Widen bind"</td>
                 <td>
-                  Only "Widen bind" exists (<code>TunnelEditor.tsx</code> →
-                  <code>handleWidenBind</code>)
+                  Present — <code>TunnelEditor.tsx</code> renders the action beside
+                  <code>handleWidenBind</code>, opening <code>TunnelChainPreviewDialog</code>;
+                  disabled when the agent is offline, reads "Chained ✓ · reveal" when a companion
+                  exists (PR-B #2616)
                 </td>
-                <td>Missing</td>
-                <td>Add the second action + preview, then re-sync</td>
+                <td>Match</td>
+                <td>None</td>
               </tr>
               <tr>
                 <td>3</td>
                 <td>Sidebar / Open Connections show the nested companion + combined status</td>
-                <td>Host + reachability badges exist; no pair nesting</td>
-                <td>Missing</td>
-                <td>Extend the list items, then re-sync</td>
+                <td>
+                  Present — <code>orderTunnelRows</code> nests the companion under its parent in
+                  <code>TunnelSidebar</code> and <code>OpenConnectionsModal</code>, with the
+                  combined <code>combinedPairStatus</code> label, the degraded inline fix, and the
+                  stop-pair / companion-breaks-localhost guards (PR-B #2616)
+                </td>
+                <td>Match</td>
+                <td>None</td>
               </tr>
               <tr>
                 <td>4</td>
                 <td>Ordered pair lifecycle + cascade teardown in the manager</td>
-                <td>Absent — tunnels start/stop independently</td>
-                <td>Missing</td>
-                <td>Implement in <code>tunnel_manager.rs</code>, then re-sync</td>
+                <td>
+                  Present — <code>tunnel_manager.rs</code> starts parent-then-companion, cascades
+                  stop/delete companion-first, and drives the companion off the parent's status
+                  (PR-A #2617)
+                </td>
+                <td>Match</td>
+                <td>None</td>
               </tr>
               <tr>
                 <td>5</td>
                 <td>Agent hosts the parent forward; companion is desktop-side</td>
                 <td>Present — agent-hosted forwarding landed (#2185)</td>
-                <td>Aligned</td>
+                <td>Match</td>
                 <td>Keep unchanged; chaining adds no agent protocol</td>
+              </tr>
+              <tr>
+                <td>6</td>
+                <td>Companion's SSH-via derived silently from the agent's SSH connection</td>
+                <td>
+                  Design reality — agents have no saved SSH connection id, so the companion's
+                  <code>sshConnectionId</code> is matched to a saved SSH connection by host and is
+                  overridable in the preview (see Open Design Decision #2). Concept updated to
+                  record the resolution (PR-B #2616)
+                </td>
+                <td>Design reality</td>
+                <td>Concept edited (ODD #2); no code change</td>
               </tr>
             </tbody>
           </table>

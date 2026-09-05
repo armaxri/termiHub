@@ -2,12 +2,16 @@ import { describe, it, expect } from "vitest";
 
 import type { TunnelConfig } from "@/types/tunnel";
 import {
+  bestSshViaForAgent,
   combinedPairStatus,
   companionIdFor,
   deriveCompanion,
   findCompanion,
   findParent,
   isCompanion,
+  isCompanionRedundant,
+  orderTunnelRows,
+  pairStatusLabel,
 } from "./tunnelChain";
 
 /** An agent-hosted loopback `-L` parent — the case chaining remediates. */
@@ -121,5 +125,104 @@ describe("combinedPairStatus", () => {
     for (const parentStatus of ["disconnected", "connecting", "reconnecting", "error"] as const) {
       expect(combinedPairStatus(parentStatus, "connected", true)).toBe("down");
     }
+  });
+});
+
+describe("pairStatusLabel", () => {
+  it("maps each pair status to its 'Linked · …' label", () => {
+    expect(pairStatusLabel("connected")).toBe("Linked · connected");
+    expect(pairStatusLabel("connecting")).toBe("Linked · connecting");
+    expect(pairStatusLabel("degraded")).toBe("Linked · degraded");
+    expect(pairStatusLabel("down")).toBe("Linked · down");
+  });
+
+  it("has no label for an unchained ('none') parent", () => {
+    expect(pairStatusLabel("none")).toBe("");
+  });
+});
+
+describe("bestSshViaForAgent", () => {
+  const candidates = [
+    { id: "conn-bastion", host: "bastion.corp" },
+    { id: "conn-agent", host: "build-box" },
+  ];
+
+  it("matches a saved SSH connection whose host equals the agent's host", () => {
+    expect(bestSshViaForAgent(candidates, "build-box")).toBe("conn-agent");
+  });
+
+  it("matches case-insensitively and ignores surrounding whitespace", () => {
+    expect(bestSshViaForAgent(candidates, "  BUILD-BOX ")).toBe("conn-agent");
+  });
+
+  it("falls back to the first candidate when no host matches", () => {
+    expect(bestSshViaForAgent(candidates, "other-host")).toBe("conn-bastion");
+    expect(bestSshViaForAgent(candidates, undefined)).toBe("conn-bastion");
+  });
+
+  it("returns undefined when there are no candidates", () => {
+    expect(bestSshViaForAgent([], "build-box")).toBeUndefined();
+  });
+});
+
+describe("isCompanionRedundant", () => {
+  it("is false for an agent-hosted loopback -L parent (the trap chaining fixes)", () => {
+    expect(isCompanionRedundant(agentLocalParent())).toBe(false);
+  });
+
+  it("is true once the parent bind is widened away from loopback", () => {
+    const widened = agentLocalParent({
+      tunnelType: {
+        type: "local",
+        config: {
+          localHost: "0.0.0.0",
+          localPort: 5432,
+          remoteHost: "db.internal",
+          remotePort: 5432,
+        },
+      },
+    });
+    expect(isCompanionRedundant(widened)).toBe(true);
+  });
+
+  it("is true once the parent is re-hosted to this computer", () => {
+    expect(isCompanionRedundant(agentLocalParent({ host: { kind: "thisComputer" } }))).toBe(true);
+  });
+
+  it("is true for a remote (-R) parent, which is never chained", () => {
+    const remote = agentLocalParent({
+      tunnelType: {
+        type: "remote",
+        config: {
+          remoteHost: "0.0.0.0",
+          remotePort: 8080,
+          localHost: "127.0.0.1",
+          localPort: 3000,
+        },
+      },
+    });
+    expect(isCompanionRedundant(remote)).toBe(true);
+  });
+});
+
+describe("orderTunnelRows", () => {
+  it("nests each companion directly beneath its parent, keeping other order", () => {
+    const parent = agentLocalParent({ id: "p1" });
+    const companion = deriveCompanion(parent, "conn-agent");
+    const other = agentLocalParent({ id: "p2", companionOf: undefined });
+    const rows = orderTunnelRows([parent, other, companion]);
+
+    expect(rows.map((r) => r.tunnel.id)).toEqual(["p1", "p1-hop", "p2"]);
+    expect(rows[1].parent?.id).toBe("p1");
+    expect(rows[0].parent).toBeUndefined();
+    expect(rows[2].parent).toBeUndefined();
+  });
+
+  it("keeps a companion whose parent is missing as a top-level row", () => {
+    const orphan = deriveCompanion(agentLocalParent({ id: "gone" }), "conn-agent");
+    const rows = orderTunnelRows([orphan]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].tunnel.id).toBe("gone-hop");
+    expect(rows[0].parent).toBeUndefined();
   });
 });

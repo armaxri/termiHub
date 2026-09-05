@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Monitor, Server, AlertTriangle } from "lucide-react";
+import { Monitor, Server, AlertTriangle, Link2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
@@ -24,7 +24,9 @@ import {
   tunnelReachabilityWarning,
   WIDE_BIND_HOST,
 } from "@/utils/tunnelHost";
+import { bestSshViaForAgent, deriveCompanion, findCompanion } from "@/utils/tunnelChain";
 import { TunnelDiagram } from "./TunnelDiagram";
+import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
 import { validateTunnelType } from "./tunnelValidation";
 import "./TunnelEditor.css";
 
@@ -82,6 +84,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const saveTunnel = useAppStore((s) => s.saveTunnel);
   const startTunnel = useAppStore((s) => s.startTunnel);
   const closeTab = useAppStore((s) => s.closeTab);
+  const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
   const rootPanel = useLayoutRenderTree();
 
   // Find existing tunnel if editing
@@ -143,17 +146,27 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const { errors, valid } = validateTunnelType(tunnelType);
   const canSave = !!sshConnectionId && valid;
 
+  // Build the parent `TunnelConfig` from the current editor state. Shared by
+  // Save and by "Chain a hop" (which must persist the parent before linking a
+  // companion to its id). The id is stable across both so chaining a freshly
+  // built tunnel links to the same row Save creates.
+  const buildConfig = useCallback(
+    (): TunnelConfig => ({
+      id: existingTunnel?.id ?? `tun-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      name: name || "Untitled Tunnel",
+      sshConnectionId,
+      tunnelType,
+      host,
+      autoStart,
+      reconnectOnDisconnect: reconnect,
+      companionOf: existingTunnel?.companionOf,
+    }),
+    [existingTunnel, name, sshConnectionId, tunnelType, host, autoStart, reconnect]
+  );
+
   const handleSave = useCallback(
     async (andStart: boolean) => {
-      const config: TunnelConfig = {
-        id: existingTunnel?.id ?? `tun-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        name: name || "Untitled Tunnel",
-        sshConnectionId,
-        tunnelType,
-        host,
-        autoStart,
-        reconnectOnDisconnect: reconnect,
-      };
+      const config = buildConfig();
 
       try {
         await saveTunnel(config);
@@ -174,20 +187,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         throw err instanceof Error ? err : new Error("Failed to save tunnel");
       }
     },
-    [
-      existingTunnel,
-      name,
-      sshConnectionId,
-      tunnelType,
-      host,
-      autoStart,
-      reconnect,
-      saveTunnel,
-      startTunnel,
-      closeTab,
-      rootPanel,
-      tabId,
-    ]
+    [buildConfig, saveTunnel, startTunnel, closeTab, rootPanel, tabId]
   );
 
   const handleCancel = useCallback(async () => {
@@ -219,6 +219,67 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const handleWidenBind = useCallback(() => {
     updateConfig("localHost", WIDE_BIND_HOST);
   }, [updateConfig]);
+
+  // ── Chain a hop to this computer (#2597) ──────────────────────────────────
+  // The affordance sits beside "Widen bind" on the same reachability warning.
+  // It is offered only for a *saved* agent-hosted loopback parent (chaining links
+  // a companion to the parent's persisted id), disabled while the host agent is
+  // offline, and replaced by "Chained ✓ · reveal" once a companion exists.
+  const hostAgent = isAgentHost(host) ? remoteAgents.find((a) => a.id === host.agentId) : undefined;
+  const agentOnline = hostAgent?.connectionState === "connected";
+  const existingCompanion = existingTunnel ? findCompanion(tunnels, existingTunnel.id) : undefined;
+
+  // The user's saved SSH connections as SSH-via candidates for the companion —
+  // its `sshConnectionId` must resolve to a saved SSH connection (the backend has
+  // no agent→connection link), so we match one whose host reaches the agent.
+  const sshViaCandidates = sshConnections.map((c) => ({
+    id: c.id,
+    host: typeof c.config.config.host === "string" ? c.config.config.host : "",
+  }));
+  const [chainOpen, setChainOpen] = useState(false);
+  const [chainSshId, setChainSshId] = useState("");
+  const [chainStartNow, setChainStartNow] = useState(true);
+
+  const handleOpenChain = useCallback(() => {
+    setChainSshId(bestSshViaForAgent(sshViaCandidates, hostAgent?.config.host) ?? "");
+    setChainStartNow(true);
+    setChainOpen(true);
+  }, [sshViaCandidates, hostAgent]);
+
+  const handleRevealCompanion = useCallback(() => {
+    if (existingCompanion) openTunnelEditorTab(existingCompanion.id);
+  }, [existingCompanion, openTunnelEditorTab]);
+
+  const handleChainConfirm = useCallback(async () => {
+    const parent = buildConfig();
+    const companion = deriveCompanion(parent, chainSshId);
+    try {
+      // Persist the parent first so the companion can link to its id, then the
+      // companion. Starting the parent brings the companion up in dependency
+      // order (the backend's ordered pair lifecycle, #2597).
+      await saveTunnel(parent);
+      await saveTunnel(companion);
+      toast.success(`Chained ${parent.name} to this computer`);
+      if (chainStartNow) {
+        startTunnel(parent.id).catch((err) => {
+          frontendLog("tunnel_editor", `Failed to start chained pair: ${err}`);
+          toast.error("Failed to start chained pair");
+        });
+      }
+      setChainOpen(false);
+      const { findLeafByTab } = await import("@/utils/panelTree");
+      const leaf = findLeafByTab(rootPanel, tabId);
+      if (leaf) closeTab(tabId, leaf.id);
+    } catch (err) {
+      frontendLog("tunnel_editor", `Failed to chain hop: ${err}`);
+      toast.error("Failed to chain a hop to this computer");
+    }
+  }, [buildConfig, chainSshId, chainStartNow, saveTunnel, startTunnel, rootPanel, tabId, closeTab]);
+
+  // The companion the preview describes, derived from the current parent draft.
+  const chainCompanion = deriveCompanion(buildConfig(), chainSshId);
+  const chainCompanionLocal =
+    chainCompanion.tunnelType.type === "local" ? chainCompanion.tunnelType.config : undefined;
 
   const nameRef = useAutofocusSelect<HTMLInputElement>();
 
@@ -338,6 +399,34 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
               >
                 Widen bind
               </button>
+              {" · "}
+              {existingCompanion ? (
+                <button
+                  type="button"
+                  className="tunnel-editor__reachability-action"
+                  onClick={handleRevealCompanion}
+                  data-testid="tunnel-editor-chain-reveal"
+                >
+                  <Link2 size={12} className="tunnel-editor__reachability-action-icon" /> Chained
+                  &#10003; &middot; reveal
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="tunnel-editor__reachability-action"
+                  onClick={handleOpenChain}
+                  disabled={!agentOnline}
+                  title={
+                    agentOnline
+                      ? undefined
+                      : `Agent ${hostAgent?.name ?? "host"} is offline — connect it to chain a hop`
+                  }
+                  data-testid="tunnel-editor-chain-hop"
+                >
+                  <Link2 size={12} className="tunnel-editor__reachability-action-icon" /> Chain a
+                  hop to this computer
+                </button>
+              )}
             </span>
           </div>
         )}
@@ -545,6 +634,29 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           </Button>
         </div>
       </div>
+
+      <TunnelChainPreviewDialog
+        open={chainOpen}
+        onOpenChange={setChainOpen}
+        port={reachability ? (tunnelType.type !== "remote" ? tunnelType.config.localPort : "") : ""}
+        agentName={hostAgentName ?? "the agent"}
+        companionListen={
+          chainCompanionLocal
+            ? `${chainCompanionLocal.localHost}:${chainCompanionLocal.localPort === "" ? "?" : chainCompanionLocal.localPort}`
+            : ""
+        }
+        companionForwards={
+          chainCompanionLocal
+            ? `${chainCompanionLocal.remoteHost}:${chainCompanionLocal.remotePort === "" ? "?" : chainCompanionLocal.remotePort}`
+            : ""
+        }
+        sshOptions={sshOptions}
+        sshConnectionId={chainSshId}
+        onSshConnectionChange={setChainSshId}
+        startNow={chainStartNow}
+        onStartNowChange={setChainStartNow}
+        onConfirm={handleChainConfirm}
+      />
     </div>
   );
 }
