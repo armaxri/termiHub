@@ -238,9 +238,22 @@ jobs:
         # and UI integration suites run natively. This is the coverage the bridge
         # newly unlocks on macOS, where `tauri-driver` never had a WKWebView
         # driver. Run under Git Bash on Windows so pytest.sh executes as written.
+        #
+        # Sharded with pytest-xdist (#2639): once the #2626 harness fixes let the
+        # ~82 previously-fast-failing suites actually run their real
+        # connection/terminal flows, the serial macOS lane overflowed the 120-min
+        # ceiling (cancelled at ~43%). `-n auto` fans the suites across one worker
+        # per core; the work is dominated by app-launch settle / terminal-output
+        # waits rather than CPU, so it parallelises well past a naive core-count
+        # estimate (tune the count here if a runner over-subscribes). `--dist
+        # loadscope` groups by test class so each class-scoped app fixture stays
+        # on a single worker — one app launch per class, exactly as serial, just
+        # fanned across workers. The Docker-fixture suites still self-skip per
+        # worker. Linux keeps running serially (above): its fixtures publish fixed
+        # host ports (2201/2203/…) that parallel workers would contend for.
         if: runner.os != 'Linux'
         shell: bash
-        run: ./tests/system/pytest.sh -m integration -v --durations=25
+        run: ./tests/system/pytest.sh -m integration -n auto --dist loadscope -v --durations=25
 
       - name: Dump container logs on failure
         # Linux only — the other legs bring up no containers.
@@ -260,3 +273,120 @@ jobs:
         # Linux only — nothing was brought up on the other legs.
         if: always() && runner.os == 'Linux'
         run: docker compose -f tests/docker/docker-compose.yml --profile all down -v
+
+  # Fast display-critical grades, split into their own job (#2639) so they ALWAYS
+  # report an independent pass/fail even when the bulk `system-integration` lane
+  # above is slow: a job-level timeout *cancels* the whole job, erasing the signal
+  # from any grade that happened to run inside it, so only a separate job with its
+  # own timeout guarantees these two always surface a green/red check. It runs
+  # just the two grades (`-k`), needs no Docker fixtures, and so finishes well
+  # inside its own budget. (These grades also still run inside the bulk lane; this
+  # job is the guaranteed signal, not their only home — keeping them in the bulk
+  # lane leaves #2634's Linux-enable of test_agent_reconnect_ui untouched.)
+  display-grades:
+    needs: setup
+    name: Display-critical grades (${{ matrix.os }} · ${{ matrix.branch }})
+    runs-on: ${{ matrix.os }}
+    # Only the app+agent build plus two short grades — a fraction of the bulk
+    # lane, but generous enough to absorb a slow debug build.
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.setup.outputs.branches) }}
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    env:
+      # Same webkit2gtk-only knobs as the bulk lane (Linux WebKitGTK under Xvfb;
+      # harmless no-ops on macOS/Windows).
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+      NO_AT_BRIDGE: "1"
+
+      # Preserve the bulk lane's gating for test_agent_reconnect_ui EXACTLY:
+      # macOS-only opt-in (skip-guarded elsewhere). Do NOT widen this to new
+      # platforms here — extending the reconnect grade to the Linux leg is owned
+      # by #2634, which edits the matching expression in the bulk lane above.
+      TERMIHUB_LIVE_AGENT: ${{ matrix.os == 'macos-latest' && '1' || '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.branch }}
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.29'
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: tests/system/uv.lock
+
+      - name: Install system dependencies (Tauri + headless display)
+        # Linux only: Tauri webview build deps + xvfb to give the app a display.
+        # No socat/Docker — these two grades need neither.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xvfb
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the agent (release)
+        # test_agent_reconnect_ui deploys target/release/termihub-agent via its
+        # loopback LocalAgentSshd; build it so the grade runs instead of skipping.
+        run: cargo build --release -p termihub-agent
+
+      - name: Build the desktop app (debug)
+        # Same debug bundle + test-CSP overlay as the bulk lane (see its note).
+        run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json
+
+      - name: Run the display-critical grades (Linux, headless via Xvfb)
+        if: runner.os == 'Linux'
+        run: >-
+          xvfb-run -a ./tests/system/pytest.sh -m integration
+          -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
+
+      - name: Run the display-critical grades (macOS/Windows, native display)
+        # No fixtures needed, so no xdist — the two suites run quickly serially.
+        if: runner.os != 'Linux'
+        shell: bash
+        run: >-
+          ./tests/system/pytest.sh -m integration
+          -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
+
+      - name: Upload failure artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: display-grades-artifacts-${{ matrix.os }}
+          path: tests/system/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
