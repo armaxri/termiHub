@@ -20,10 +20,19 @@ from termihub_harness.ui.tabs import TabsUi
 
 
 class StubDriver:
-    """Minimal Driver stand-in: serves ``get_state(path)`` from a dict of slices."""
+    """Minimal Driver stand-in: serves ``get_state(path)`` slices and projection
+    region caches.
 
-    def __init__(self, state: dict):
-        self._state = state
+    ``get_state`` reads the ``state`` dict (used by the panel-tree lookups).
+    ``regions`` maps a region id to its projected cache dict, served through the
+    ``projection_subscribe``/``projection_state`` pair the connections/folders
+    lookups now use — those slices are region-authoritative, so ``get_state`` no
+    longer resolves them.
+    """
+
+    def __init__(self, state: dict | None = None, *, regions: dict | None = None):
+        self._state = state or {}
+        self._regions = regions or {}
 
     def get_state(self, path=None):
         if path is None:
@@ -31,6 +40,15 @@ class StubDriver:
         if path not in self._state:
             raise BridgeError("getState", f'state path "{path}" does not resolve')
         return self._state[path]
+
+    def projection_subscribe(self, region):
+        return {"subscriptionId": f"sub-{region}", "region": region}
+
+    def projection_state(self, subscription_id):
+        region = subscription_id.removeprefix("sub-")
+        # Mirror the real substrate: the recorded cache is the ``{version, view}``
+        # ProjectionClient envelope, so the view document is nested under "view".
+        return {"cache": {"version": 1, "view": self._regions.get(region, {})}}
 
 
 class MenuDriver:
@@ -76,23 +94,29 @@ class FakeHarness(HarnessMixin):
 
 
 def test_find_connection_matches_by_name():
+    # The connections region cache holds both lists (the ConnectionsView twin);
+    # find_connection reads its "connections" list.
     driver = StubDriver(
-        {"connections": [{"id": "a", "name": "prod"}, {"id": "b", "name": "dev"}]}
+        regions={
+            "connections": {
+                "connections": [{"id": "a", "name": "prod"}, {"id": "b", "name": "dev"}]
+            }
+        }
     )
     assert find_connection(driver, "dev") == {"id": "b", "name": "dev"}
     assert find_connection(driver, "missing") is None
 
 
 def test_find_folder_matches_by_name():
-    driver = StubDriver({"folders": [{"id": "f1", "name": "work"}]})
+    driver = StubDriver(regions={"connections": {"folders": [{"id": "f1", "name": "work"}]}})
     assert find_folder(driver, "work")["id"] == "f1"
     assert find_folder(driver, "home") is None
 
 
 def test_lookups_are_resilient_to_unresolved_state():
-    # Before any connections exist the path may not resolve; helpers return None
+    # Before any connections exist the region cache is empty; helpers return None
     # rather than raising, so a poll can simply keep waiting.
-    driver = StubDriver({})
+    driver = StubDriver()
     assert find_connection(driver, "x") is None
     assert find_folder(driver, "x") is None
 
