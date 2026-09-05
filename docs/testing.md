@@ -1353,6 +1353,15 @@ It runs on the nightly `-m integration` lane:
 ./scripts/test-system-py.sh -m integration -k test_agent_reconnect_ui
 ```
 
+On CI the grade carries a skip-guard (#2631): it needs a live app→agent SSH
+connect (not merely an `sshd` binary), so it stays skipped unless
+`TERMIHUB_LIVE_AGENT=1` is exported. The nightly `system-integration.yml` lane
+sets that flag on the **macOS** leg (#2579), where the harness `LocalAgentSshd`
+stands up its own loopback `sshd` and deploys the release `termihub-agent` built
+earlier in the job — so the grade runs unattended there, no operator and no
+foreground display. It stays skipped on the Linux and Windows legs (Windows
+loopback `sshd` is unreliable); a dev box (no `CI` env) always runs it.
+
 Unlike the retired manual grade it does **not** need a foreground display: the
 client reconnect engine was deleted (#2558) and reconnect is backend-driven
 (#2560), so the outcome cannot be webview-stalled, and the test-bridge
