@@ -1,0 +1,66 @@
+/* Preview / confirm dialog for "Chain a hop to this computer" (#2597).
+   Layout only — all colours/spacing/radii reference design tokens. */
+
+.tunnel-chain-preview__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.tunnel-chain-preview__lede {
+  margin: 0 0 var(--spacing-md);
+  font-size: var(--font-size-sm);
+  line-height: 1.6;
+  color: var(--text-primary);
+}
+
+.tunnel-chain-preview__endpoints {
+  list-style: none;
+  margin: 0 0 var(--spacing-md);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.tunnel-chain-preview__endpoints li {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.tunnel-chain-preview__endpoints svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.tunnel-chain-preview__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin: var(--spacing-md) 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.tunnel-chain-preview__note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--bg-warning);
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.tunnel-chain-preview__note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--color-warning);
+}

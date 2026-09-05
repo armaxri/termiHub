@@ -186,6 +186,16 @@
   text-decoration: underline;
 }
 
-.tunnel-editor__reachability-action:hover {
+.tunnel-editor__reachability-action:hover:not(:disabled) {
   color: var(--text-primary);
+}
+
+.tunnel-editor__reachability-action:disabled {
+  color: var(--text-disabled);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+.tunnel-editor__reachability-action-icon {
+  vertical-align: -2px;
 }
