@@ -31,6 +31,7 @@ import {
   tunnelHostBadge,
   reportedReachability,
 } from "@/utils/tunnelHost";
+import { findCompanion, isCompanion, orderTunnelRows } from "@/utils/tunnelChain";
 import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
 import { MONITORING_INTERVAL_OPTIONS, DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
@@ -174,6 +175,11 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // the panel opens. Sparse — only claimed sessions (e.g. moved between windows)
   // appear — so a session with no entry renders no window badge.
   const [sessionOwners, setSessionOwners] = useState<Record<string, string>>({});
+
+  // A chained companion (#2597) the user asked to stop directly — held for a
+  // confirm, since stopping only the companion breaks localhost while leaving the
+  // agent port up. Null when idle.
+  const [companionStop, setCompanionStop] = useState<{ id: string; name: string } | null>(null);
 
   // Split backend-local sessions: spawned containers get their own section, the
   // rest stay under "Local Sessions" (#1446). A session is spawned when the
@@ -820,9 +826,15 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
             count={activeTunnels.length}
             onKillAll={handleKillAllTunnels}
           >
-            {activeTunnels.map((t) => {
+            {orderTunnelRows(activeTunnels).map(({ tunnel: t, parent }) => {
               const state = tunnelStates[t.id];
               const status = state?.status ?? "connecting";
+              // Chained-pair grouping (#2597): a companion row nests under its
+              // parent; a parent with a companion stops the whole pair (the
+              // backend cascade stops the companion first), while stopping a
+              // companion alone is gated behind a "breaks localhost" confirm.
+              const nested = !!parent;
+              const companion = parent ? undefined : findCompanion(tunnels, t.id);
               // Map the tunnel status onto a badge; connecting/reconnecting share
               // the "connecting" badge, error surfaces its persisted message.
               const badge: BadgeVariant =
@@ -858,15 +870,21 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
               ]
                 .filter(Boolean)
                 .join(" · ");
+              const detailWithLink = isCompanion(t) ? `chained · ${detail}` : detail;
               return (
                 <ConnectionRow
                   key={t.id}
                   icon={<ArrowLeftRight size={14} />}
                   title={t.name}
-                  detail={detail}
+                  detail={detailWithLink}
                   badge={badge}
-                  onKill={() => handleKillTunnel(t.id)}
-                  killLabel="Stop"
+                  indent={nested}
+                  onKill={
+                    isCompanion(t)
+                      ? () => setCompanionStop({ id: t.id, name: t.name })
+                      : () => handleKillTunnel(t.id)
+                  }
+                  killLabel={companion ? "Stop pair" : "Stop"}
                 />
               );
             })}
@@ -1001,6 +1019,23 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
         open={xServerSetupOpen}
         onOpenChange={setXServerSetupOpen}
         onProvisioned={(report) => setXServer(report)}
+      />
+
+      <ConfirmDialog
+        open={companionStop !== null}
+        title="Stop the hop on this computer?"
+        message={
+          companionStop
+            ? `Stopping "${companionStop.name}" alone will break localhost — the port still works on the agent. Stop just this hop?`
+            : ""
+        }
+        confirmLabel="Stop hop"
+        onConfirm={() => {
+          if (companionStop) void handleKillTunnel(companionStop.id);
+          setCompanionStop(null);
+        }}
+        onCancel={() => setCompanionStop(null)}
+        data-testid="open-connections-companion-stop-confirm"
       />
     </Modal>
   );
@@ -1233,6 +1268,8 @@ interface ConnectionRowProps {
    * Disconnect vs Shutdown). When set, `onKill` is ignored.
    */
   actions?: React.ReactNode;
+  /** Indent the row + show a link badge — a chained companion nested under its parent (#2597). */
+  indent?: boolean;
 }
 
 function ConnectionRow({
@@ -1248,9 +1285,10 @@ function ConnectionRow({
   "data-testid": testId,
   killTestId,
   actions,
+  indent = false,
 }: ConnectionRowProps) {
   return (
-    <div className="oc-row" data-testid={testId}>
+    <div className={indent ? "oc-row oc-row--indent" : "oc-row"} data-testid={testId}>
       <span className="oc-row__icon">{icon}</span>
       <span className="oc-row__title" title={title}>
         {title}
