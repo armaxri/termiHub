@@ -23,6 +23,7 @@ import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
+import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { currentMonitorsView } from "@/store/systemMonitorBridge";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
 import { frontendLog } from "@/utils/frontendLog";
@@ -528,7 +529,10 @@ function MonitoringStatus() {
   const activeTabId = useAppStore((s) => getActiveTab(s)?.id ?? null);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
   const activeTabConfig = useAppStore((s) => getActiveTab(s)?.config ?? undefined);
-  const activeTabExited = useAppStore((s) => !!(activeTabId && s.terminalExitedTabs[activeTabId]));
+  // #2621 mount-gate cut: the active tab's exited state, region-derived (OR'd with
+  // the local slice). The hook is called unconditionally with a stable "" key when
+  // no tab is active (an empty key never matches a session, so `exited` is false).
+  const activeTabExited = useProjectedSessionLifecycle(activeTabId ?? "").exited;
 
   // Per-host keying (#1231, audit gap G6): the status bar renders the entry for
   // the active tab's monitor key — the owning terminal session id (#1232).

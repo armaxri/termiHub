@@ -22,11 +22,15 @@ import {
   currentSessionView,
   dispatchSessionIntent,
   effectiveAutoReconnect,
+  effectiveExited,
+  effectiveExitedMap,
   effectiveReconnectingMap,
   ensureSessionSubscribed,
+  mirrorSessionExited,
   mirrorSessionIntent,
   onSessionView,
   projectedToAutoReconnect,
+  regionExited,
   runSessionIntent,
   SESSION_LIFECYCLE_REGION,
   setSessionTransportForTest,
@@ -383,11 +387,14 @@ describe("optimistic client-side folding (#2533)", () => {
   });
 
   it("does not overlay non-folded intents (minimal blast radius)", () => {
-    // `session.disconnect` has no registered fold, so it dispatches without any
+    // `session.cancelReconnect` has no registered fold, so it dispatches without any
     // synchronous overlay: the projected view is untouched for an unknown tab.
-    mirrorSessionIntent("session.disconnect", "tab-x");
+    // (The exit intents `disconnect` / `dropped` / `connectFailed` DO fold now, #2621.)
+    mirrorSessionIntent("session.cancelReconnect", "tab-x");
     expect(currentSessionView()["tab-x"]).toBeUndefined();
-    expect(transport.dispatched[transport.dispatched.length - 1]?.kind).toBe("session.disconnect");
+    expect(transport.dispatched[transport.dispatched.length - 1]?.kind).toBe(
+      "session.cancelReconnect"
+    );
   });
 
   it("effectiveReconnectingMap picks up a transient-break shape so the tab-strip dot shows connecting (#2555)", () => {
@@ -431,5 +438,108 @@ describe("optimistic client-side folding (#2533)", () => {
       status: "connected",
       reconnect: initialReconnectState,
     });
+  });
+});
+
+describe("regionExited — the overlay mount-gate predicate (#2621)", () => {
+  const life = (
+    status: ProjectedSessionLifecycle["status"],
+    extra = {}
+  ): ProjectedSessionLifecycle => ({ status, reconnect: initialReconnectState, ...extra });
+
+  it("is true for the terminal statuses and false for the live/reconnecting ones", () => {
+    expect(regionExited(undefined)).toBe(false);
+    expect(regionExited(life("connecting"))).toBe(false);
+    expect(regionExited(life("connected"))).toBe(false);
+    expect(regionExited(life("reconnecting"))).toBe(false);
+    expect(regionExited(life("disconnected"))).toBe(true);
+    expect(regionExited(life("failed"))).toBe(true);
+    expect(regionExited(life("sessionLost"))).toBe(true);
+  });
+
+  it("is true for a clean exit that fired only `session.exited` (status still connected)", () => {
+    // A clean process exit dispatches no status intent — the region keeps its live
+    // status and records the end solely as `exit`, which is what marks it ended.
+    expect(regionExited(life("connected", { exit: { reason: "clean", code: 0 } }))).toBe(true);
+  });
+
+  it("effectiveExited OR's the local slice (byte-identical dead-fallback)", () => {
+    expect(effectiveExited(false, undefined)).toBe(false);
+    expect(effectiveExited(true, undefined)).toBe(true); // local-only (region not yet mirrored)
+    expect(effectiveExited(false, life("failed"))).toBe(true); // region-only (slice cleared)
+    expect(effectiveExited(false, life("reconnecting"))).toBe(false); // reconnecting is NOT exited
+  });
+
+  it("effectiveExitedMap unions the local slice with region-exited keys", () => {
+    const map = effectiveExitedMap(
+      { a: true, b: false },
+      {
+        b: life("failed"),
+        c: life("reconnecting"),
+        d: life("connected", { exit: { reason: "dropped", code: null } }),
+      }
+    );
+    expect(map).toEqual({ a: true, b: true, d: true });
+  });
+});
+
+describe("exit folds — synchronous mount-gate (#2621)", () => {
+  const flush = () => new Promise<void>((r) => setTimeout(r, 0));
+
+  it("folds session.disconnect (killed) to disconnected synchronously, preserving a prior exit", () => {
+    // A killed exit fires `session.exited` (metadata) then `session.disconnect`;
+    // the disconnect fold must preserve the recorded exit so the overlay keeps its
+    // killed wording, and flip the region-derived mount gate the same tick.
+    mirrorSessionExited("tab-1", { reason: "killed", code: null });
+    mirrorSessionIntent("session.disconnect", "tab-1");
+    const life = currentSessionView()["tab-1"];
+    expect(life?.status).toBe("disconnected");
+    expect(life?.endReason).toBe("user");
+    expect(life?.exit).toEqual({ reason: "killed", code: null });
+    expect(regionExited(life)).toBe(true);
+  });
+
+  it("folds session.dropped (non-resilient) to disconnected with the error", () => {
+    mirrorSessionIntent("session.dropped", "tab-2", "peer reset");
+    const life = currentSessionView()["tab-2"];
+    expect(life?.status).toBe("disconnected");
+    expect(life?.endReason).toBe("unexpected");
+    expect(life?.error).toBe("peer reset");
+    expect(regionExited(life)).toBe(true);
+  });
+
+  it("folds session.connectFailed to failed with the error", () => {
+    mirrorSessionIntent("session.connectFailed", "tab-3", "auth failed");
+    const life = currentSessionView()["tab-3"];
+    expect(life?.status).toBe("failed");
+    expect(life?.error).toBe("auth failed");
+    expect(regionExited(life)).toBe(true);
+  });
+
+  it("folds a clean session.exited synchronously (no status intent needed)", () => {
+    // The gap-free crux: a clean exit only fires `session.exited`, so its optimistic
+    // fold must record `exit` synchronously to flip the mount gate before the diff.
+    mirrorSessionExited("tab-4", { reason: "clean", code: 0 });
+    const life = currentSessionView()["tab-4"];
+    expect(life?.exit).toEqual({ reason: "clean", code: 0 });
+    expect(regionExited(life)).toBe(true);
+    expect(transport.dispatched[transport.dispatched.length - 1]?.kind).toBe("session.exited");
+  });
+
+  it("reconciles the exit fold against the authoritative diff without a flip", async () => {
+    // The backend records the same exit; after the diff lands the mount gate stays.
+    transport.onDispatch = (intent, sessions) => {
+      if (intent.kind !== "session.exited") return;
+      const p = intent.payload as { sessionId: string; reason: string; code: number | null };
+      sessions[p.sessionId] = {
+        status: "connected",
+        reconnect: initialReconnectState,
+        exit: { reason: p.reason as "clean", code: p.code },
+      };
+    };
+    mirrorSessionExited("tab-5", { reason: "clean", code: 0 });
+    expect(regionExited(currentSessionView()["tab-5"])).toBe(true);
+    await flush();
+    expect(regionExited(currentSessionView()["tab-5"])).toBe(true);
   });
 });

@@ -17,6 +17,8 @@ import {
 import { Macro, MacroStep } from "@/types/macro";
 import { frontendLog } from "@/utils/frontendLog";
 
+import { currentSessionView, regionExited } from "../sessionBridge";
+
 import { collectLiveTabs, getActiveTab, type AppState } from "../appStore";
 
 /** UI-facing metadata describing an in-flight macro playback (#1675). */
@@ -308,6 +310,8 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       !tab ||
       tab.contentType !== "terminal" ||
       !tab.sessionId ||
+      // #2621 mount-gate cut: region-derived exited (OR'd with the local slice).
+      regionExited(currentSessionView()[targetTabId]) ||
       state.terminalExitedTabs[targetTabId]
     ) {
       toast.error("The target terminal is not connected");
