@@ -58,8 +58,13 @@ export class FakeSessionTransport implements Transport {
   private handlers: FrameHandler[] = [];
   /** How many times a client subscribed — asserts the region was actually read. */
   subscribeCount = 0;
+  /** Every intent dispatched through this transport, in order — lets a test assert
+   * an action drove the region (e.g. `session.cancelReconnect`) when the intent has
+   * no optimistic fold to observe in {@link view}. */
+  dispatched: Intent[] = [];
 
   async dispatch(intent: Intent): Promise<IntentAck> {
+    this.dispatched.push(intent);
     return { intentId: intent.intentId, status: "accepted", produced: [] };
   }
 
@@ -161,6 +166,25 @@ export function reconnecting(
     status: "reconnecting",
     reconnect,
     ...(reconnectError !== undefined ? { reconnectError } : {}),
+  };
+}
+
+/**
+ * A terminal `disconnected` projected lifecycle (#2625): the session ended without
+ * an error — a user-initiated disconnect (`user`) or an unexpected drop
+ * (`unexpected`) on a non-resilient tab. Makes {@link import("@/store/sessionBridge").regionExited}
+ * true so the disconnect overlay / view-mode mount gate fires, the region-only
+ * successor to seeding the deleted `terminalExitedTabs` slice.
+ */
+export function disconnected(
+  endReason: ProjectedEndReason = "user",
+  error?: string
+): ProjectedSessionLifecycle {
+  return {
+    status: "disconnected",
+    reconnect: idleReconnect(),
+    endReason,
+    ...(error !== undefined ? { error } : {}),
   };
 }
 

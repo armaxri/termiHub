@@ -463,23 +463,21 @@ describe("regionExited — the overlay mount-gate predicate (#2621)", () => {
     expect(regionExited(life("connected", { exit: { reason: "clean", code: 0 } }))).toBe(true);
   });
 
-  it("effectiveExited OR's the local slice (byte-identical dead-fallback)", () => {
-    expect(effectiveExited(false, undefined)).toBe(false);
-    expect(effectiveExited(true, undefined)).toBe(true); // local-only (region not yet mirrored)
-    expect(effectiveExited(false, life("failed"))).toBe(true); // region-only (slice cleared)
-    expect(effectiveExited(false, life("reconnecting"))).toBe(false); // reconnecting is NOT exited
+  it("effectiveExited is the region-only mount gate (#2625)", () => {
+    expect(effectiveExited(undefined)).toBe(false);
+    expect(effectiveExited(life("failed"))).toBe(true);
+    expect(effectiveExited(life("disconnected"))).toBe(true);
+    expect(effectiveExited(life("connected", { exit: { reason: "clean", code: 0 } }))).toBe(true);
+    expect(effectiveExited(life("reconnecting"))).toBe(false); // reconnecting is NOT exited
   });
 
-  it("effectiveExitedMap unions the local slice with region-exited keys", () => {
-    const map = effectiveExitedMap(
-      { a: true, b: false },
-      {
-        b: life("failed"),
-        c: life("reconnecting"),
-        d: life("connected", { exit: { reason: "dropped", code: null } }),
-      }
-    );
-    expect(map).toEqual({ a: true, b: true, d: true });
+  it("effectiveExitedMap collects the region-exited keys (#2625)", () => {
+    const map = effectiveExitedMap({
+      b: life("failed"),
+      c: life("reconnecting"),
+      d: life("connected", { exit: { reason: "dropped", code: null } }),
+    });
+    expect(map).toEqual({ b: true, d: true });
   });
 });
 

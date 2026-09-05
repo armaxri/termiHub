@@ -70,8 +70,6 @@ function tabEl(tabId: string): HTMLElement {
 function resetStore() {
   useAppStore.setState({
     terminalSpawnErrors: {},
-    terminalDisconnectErrors: {},
-    terminalExitedTabs: {},
   });
 }
 

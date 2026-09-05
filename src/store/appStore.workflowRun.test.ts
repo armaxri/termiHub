@@ -102,6 +102,7 @@ import {
   stopWorkflowSubscription,
 } from "./workflowRunBridge";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { serializeWorkflows } from "@/services/workflowIo";
 import { resetOnConnectDispatchState } from "@/services/workflowTriggers";
@@ -308,12 +309,14 @@ function seedConnectedTerminal(tabId = "tab-active", sessionId: string | null = 
   };
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
   seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
-  useAppStore.setState({ terminalExitedTabs: {} });
+  // The exited guard is region-only now (#2625); the harness resets the region per
+  // test, so the target starts non-exited with no explicit reset needed.
 }
 
 describe("appStore — workflow run slice (#1852)", () => {
   let injected: string[];
   let transport: WorkflowStoreTransport;
+  installSessionLifecycleHarness();
 
   /** The authoritative projected run/output-panel status (the twin's region). */
   const regionView = (): RegionView => transport.onlyRegionView();
@@ -635,8 +638,9 @@ describe("appStore — workflow run slice (#1852)", () => {
     seedConnectedTerminal();
     useAppStore.setState({
       workflows: [workflow("w1", [cmd("x")])],
-      terminalExitedTabs: { "tab-active": true },
     });
+    // Drive the target exited in the region (region-only now, #2625).
+    useAppStore.getState().setTerminalExited("tab-active", { code: null, reason: "dropped" });
 
     await useAppStore.getState().runWorkflow("w1");
 
@@ -744,7 +748,8 @@ describe("appStore — on-connect trigger dispatch (#1855)", () => {
     };
     const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
     seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
-    useAppStore.setState({ terminalExitedTabs: {} });
+    // The exited guard is region-only now (#2625); this tab has no session id so the
+    // run guard short-circuits before it, no region reset needed.
   }
 
   function onConnectWorkflow(id: string, connectionIds: string[]): Workflow {

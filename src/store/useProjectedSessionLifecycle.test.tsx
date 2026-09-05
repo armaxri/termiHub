@@ -1,16 +1,15 @@
 /**
  * `useProjectedSessionLifecycle` / `useProjectedSessionLifecycleMaps` — the
- * terminal lifecycle status readers. Since #2205 PR-B removed the `appStore`
- * reconnect engine, connect / reconnect status is sourced **purely** from the
- * projected `session-lifecycle` region (the disconnect error keeps its per-client
- * slice). Drives the hooks against the in-memory region harness and asserts they
- * reflect the region as the single source of truth.
+ * terminal lifecycle status readers. Connect / reconnect status AND the disconnect
+ * error are sourced **purely** from the projected `session-lifecycle` region
+ * (#2205 PR-B removed the reconnect engine; #2625 deleted the per-client
+ * `terminalDisconnectErrors` slice). Drives the hooks against the in-memory region
+ * harness and asserts they reflect the region as the single source of truth.
  */
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { useAppStore } from "@/store/appStore";
 import {
   connecting,
   connected,
@@ -45,9 +44,6 @@ afterEach(() => {
   container?.remove();
   root = null;
   container = null;
-  useAppStore.setState({
-    terminalDisconnectErrors: {},
-  });
 });
 
 describe("useProjectedSessionLifecycle (per tab)", () => {
@@ -78,10 +74,7 @@ describe("useProjectedSessionLifecycle (per tab)", () => {
     await flushSessionRegion();
     expect(latest?.reconnecting).toBe(true);
 
-    // Now a failed disconnect with a matching error string.
-    useAppStore.setState({
-      terminalDisconnectErrors: { [TAB]: "auth failed" },
-    });
+    // Now a failed disconnect — the region carries the error (region-only, #2625).
     act(() => harness.transport.setSession(TAB, failed("auth failed")));
     await flushSessionRegion();
     expect(latest?.disconnectError).toBe("auth failed");
@@ -126,10 +119,7 @@ describe("useProjectedSessionLifecycleMaps (list consumers)", () => {
     return null;
   }
 
-  it("mirrors the appStore maps sourced through the region", async () => {
-    useAppStore.setState({
-      terminalDisconnectErrors: { c: "boom" },
-    });
+  it("builds the maps purely from the region view", async () => {
     harness.transport.setSession("a", connecting());
     harness.transport.setSession(
       "b",

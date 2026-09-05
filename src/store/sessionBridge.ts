@@ -902,17 +902,18 @@ export function effectiveReconnecting(projected: ProjectedSessionLifecycle | und
 }
 
 /**
- * Effective `terminalDisconnectErrors[tabId]` for rendering: the projected error
- * when the status is `failed` and the error string mirrors the local one exactly,
- * otherwise the local error verbatim (`undefined` ⇒ no error).
+ * Effective `terminalDisconnectErrors[tabId]` for rendering (#2625): the projected
+ * failed-(re)connect error, sourced purely from the region — `projected.error`
+ * when the status is `failed`, otherwise `undefined`. The per-client
+ * `terminalDisconnectErrors` slice was deleted once the region became the sole
+ * authority: an initial-connect failure folds `session.connectFailed` → `failed`,
+ * and a backend reconnect give-up folds `reconnectFailed` → `failed`/`gaveup`
+ * server-side, so the error is always region-carried.
  */
 export function effectiveDisconnectError(
-  local: string | undefined,
   projected: ProjectedSessionLifecycle | undefined
 ): string | undefined {
-  const projectedError = projected?.status === "failed" ? projected.error : undefined;
-  if (projectedError !== local) return local;
-  return projectedError;
+  return projected?.status === "failed" ? projected.error : undefined;
 }
 
 /**
@@ -934,23 +935,19 @@ export function effectiveReconnectTriggerError(
 }
 
 /**
- * Effective `terminalExitInfo[tabId]` for rendering (#2615): the projected exit
- * cause from the region when it faithfully mirrors the local slice (same
- * `reason` + `code`), otherwise the local value verbatim (`undefined` ⇒ no exit
- * info). The disconnect overlay reads this to branch its heading / subheading.
+ * Effective `terminalExitInfo[tabId]` for rendering (#2625): the projected exit
+ * cause, sourced purely from the region's `exit` metadata (`undefined` ⇒ no exit
+ * recorded). The disconnect overlay reads this to branch its heading / subheading.
  *
- * The faithful-mirror gate guarantees the rendered wording is byte-identical to
- * the pre-cut `appStore` read: the region sources it only when it agrees exactly
- * with the local slice; before the `session.exited` diff lands (or in a non-Tauri
- * transport that cannot subscribe) it falls back to the local slice.
+ * The per-client `terminalExitInfo` slice was deleted once the region became the
+ * sole authority: every classified exit folds `session.exited` (the optimistic
+ * fold {@link OPTIMISTIC_SESSION_FOLDS} records `exit` synchronously), so the
+ * region always carries the cause the moment the overlay mounts.
  */
 export function effectiveExitInfo(
-  local: TerminalExitInfo | undefined,
   projected: ProjectedSessionLifecycle | undefined
 ): TerminalExitInfo | undefined {
-  const p = projected?.exit;
-  if (p && local && p.reason === local.reason && p.code === local.code) return p;
-  return local;
+  return projected?.exit;
 }
 
 /**
@@ -980,37 +977,26 @@ export function regionExited(projected: ProjectedSessionLifecycle | undefined): 
 
 /**
  * Effective `terminalExitedTabs[tabId]` for the overlay/view-mode **mount** gate
- * (#2621): the region-derived {@link regionExited} predicate, OR'd with the local
- * slice so the gate is byte-identical to the pre-cut `appStore` read even before
- * the `session.exited` / status diff lands (or in a transport that cannot
- * subscribe). The optimistic exit folds ({@link OPTIMISTIC_SESSION_FOLDS}) make
- * the region side gap-free; the local OR is the dead-fallback safety net (the
- * slice stays an authoritative writer until #2612's slice deletion).
+ * (#2625): the region-derived {@link regionExited} predicate, sourced purely from
+ * the region now the per-client `terminalExitedTabs` slice is deleted. The
+ * optimistic exit folds ({@link OPTIMISTIC_SESSION_FOLDS}) record the terminal
+ * status / `exit` synchronously, so the gate flips the instant a session ends.
  */
-export function effectiveExited(
-  local: boolean,
-  projected: ProjectedSessionLifecycle | undefined
-): boolean {
-  return regionExited(projected) || local;
+export function effectiveExited(projected: ProjectedSessionLifecycle | undefined): boolean {
+  return regionExited(projected);
 }
 
 /**
  * Effective `terminalExitedTabs` map for the list consumers (the tab-strip status
  * dot {@link import("@/utils/tabStatus").deriveTabStatus}, the close-confirmation
  * live-session count {@link import("@/utils/tabLiveSession").tabHasLiveSession}):
- * every key the local slice carries plus every region-exited key, so the map is a
- * superset-safe byte-identical mirror of the pre-cut read (region-exited keys the
- * local slice already carries in steady state; the OR only ever adds a key the
- * optimistic fold set before the local write, never drops one).
+ * every region-exited key, sourced purely from the region now the per-client
+ * `terminalExitedTabs` slice is deleted (#2625).
  */
 export function effectiveExitedMap(
-  local: Record<string, boolean>,
   view: Record<string, ProjectedSessionLifecycle>
 ): Record<string, boolean> {
   const out: Record<string, boolean> = {};
-  for (const [id, on] of Object.entries(local)) {
-    if (on) out[id] = true;
-  }
   for (const [id, life] of Object.entries(view)) {
     if (regionExited(life)) out[id] = true;
   }
@@ -1044,14 +1030,15 @@ export function effectiveReconnectingMap(
   return out;
 }
 
-/** Effective `terminalDisconnectErrors` map, sourced through {@link effectiveDisconnectError}. */
+/** Effective `terminalDisconnectErrors` map (#2625), sourced purely from the
+ * region through {@link effectiveDisconnectError} — a key per `failed` session
+ * carrying its error. */
 export function effectiveDisconnectErrorMap(
-  local: Record<string, string>,
   view: Record<string, ProjectedSessionLifecycle>
 ): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const id of Object.keys(local)) {
-    const eff = effectiveDisconnectError(local[id], view[id]);
+  for (const [id, life] of Object.entries(view)) {
+    const eff = effectiveDisconnectError(life);
     if (eff !== undefined) out[id] = eff;
   }
   return out;

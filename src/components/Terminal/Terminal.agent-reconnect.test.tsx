@@ -20,7 +20,9 @@ import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import {
+  currentSessionView,
   ensureSessionSubscribed,
+  regionExited,
   setSessionTransportForTest,
   stopSessionSubscription,
 } from "@/store/sessionBridge";
@@ -252,8 +254,11 @@ describe("Terminal — backend-driven agent reconnect (#2476)", () => {
     });
 
     expect(mockCreateTerminal).not.toHaveBeenCalled();
-    const state = useAppStore.getState();
-    expect(state.terminalDisconnectErrors[tabId]).toBe("agent unreachable after 3 attempts");
-    expect(state.terminalExitedTabs[tabId]).toBe(true);
+    // The give-up state is region-only now (#2625): the backend fold lands the
+    // region `failed` + error, which mounts the overlay and renders the message.
+    const life = currentSessionView()[tabId];
+    expect(life?.status).toBe("failed");
+    expect(life?.error).toBe("agent unreachable after 3 attempts");
+    expect(regionExited(life)).toBe(true);
   });
 });

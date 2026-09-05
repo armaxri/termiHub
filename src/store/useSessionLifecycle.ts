@@ -26,7 +26,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { onReconnectCommandForTabId, useAppStore } from "@/store/appStore";
+import { onReconnectCommandForTabId } from "@/store/appStore";
 import {
   currentSessionView,
   effectiveAutoReconnect,
@@ -106,16 +106,16 @@ export function useSessionAutoReconnect(tabId: string): TerminalAutoReconnectSta
 
 /**
  * The per-tab session-status slice the terminal overlays render: the connect /
- * reconnect flags and the disconnect error, sourced from the projected
- * `session-lifecycle` region when it faithfully mirrors `appStore` and otherwise
- * from `appStore` verbatim (#2205 PR-A render cut).
+ * reconnect flags, the disconnect error, the exit cause and the exited mount gate,
+ * all sourced purely from the projected `session-lifecycle` region (#2625 — the
+ * per-client `appStore` twins were deleted once the region became authoritative).
  */
 export interface ProjectedSessionLifecycleSlice {
-  /** True while an initial connect is in flight (mirrors `terminalConnecting`). */
+  /** True while an initial connect is in flight (region `status: connecting`). */
   connecting: boolean;
-  /** True while the agent is actively reconnecting (mirrors `terminalReconnectingTabs`). */
+  /** True while the agent is actively reconnecting (region `status: reconnecting`). */
   reconnecting: boolean;
-  /** The failed-(re)connect error, if any (mirrors `terminalDisconnectErrors`). */
+  /** The failed-(re)connect error, if any (region `status: failed` + `error`). */
   disconnectError: string | undefined;
   /** The reconnect-trigger cause shown while reconnecting, if any (mirrors
    * `terminalReconnectTriggerErrors`, #2442). */
@@ -129,42 +129,28 @@ export interface ProjectedSessionLifecycleSlice {
    * in the session-lost notice, if any (#2512). `undefined` unless `sessionLost`. */
   sessionLostError: string | undefined;
   /** How the session ended (#2615): the exit cause + code the disconnect overlay
-   * derives its heading / subheading wording from. Sourced from the projected
-   * region's `exit` under the faithful-mirror gate, falling back to the per-client
-   * `appStore.terminalExitInfo` slice. `undefined` when no exit is recorded. */
+   * derives its heading / subheading wording from. Sourced purely from the
+   * projected region's `exit` metadata (#2625). `undefined` when no exit recorded. */
   exitInfo: TerminalExitInfo | undefined;
   /** True when the session has **exited** (#2621): the overlay/view-mode **mount**
-   * gate, re-homed off `appStore.terminalExitedTabs` onto the region's terminal
-   * statuses / `exit` metadata ({@link effectiveExited}), OR'd with the local slice
-   * so it is byte-identical to the pre-cut read. */
+   * gate, derived purely from the region's terminal statuses / `exit` metadata
+   * ({@link effectiveExited}, #2625). */
   exited: boolean;
 }
 
 /**
  * `useProjectedSessionLifecycle` — the per-tab render cut for the terminal
- * lifecycle overlays (#2205 PR-A). Returns the connect / reconnect flags and the
- * disconnect error for one tab, sourced from the shared `session-lifecycle`
- * projection region under the faithful-mirror gate, with an `appStore` fallback so
- * the rendered output is byte-identical to the pre-cut path. The direct analog of
+ * lifecycle overlays (#2205 PR-A). Returns the connect / reconnect flags, the
+ * disconnect error, the exit cause and the exited mount gate for one tab, sourced
+ * purely from the shared `session-lifecycle` projection region (#2625 — the
+ * per-client `appStore` twins were deleted). The direct analog of
  * {@link useSessionAutoReconnect} for the coarse status fields.
- *
- * `appStore` remains the authoritative writer (its slices, the
- * `driveAutoReconnect` engine and the client `session.*` dispatch are untouched by
- * PR-A) — this hook only changes where components *read*.
  */
 export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLifecycleSlice {
-  // The disconnect error keeps its per-client `appStore` slice (it is not part of
-  // the reconnect engine removed in #2205 PR-B); the connect / reconnect / trigger
-  // status are now sourced purely from the region.
-  const disconnectErrorLocal = useAppStore((s) => s.terminalDisconnectErrors[tabId]);
-  // #2615 PR-A render cut: the exit cause is sourced from the region's `exit`
-  // under a faithful-mirror gate, falling back to this per-client slice (kept as a
-  // dead-fallback writer until the mount-gate re-home + slice deletion, #2612 PR-B).
-  const exitInfoLocal = useAppStore((s) => s.terminalExitInfo[tabId]);
-  // #2621 mount-gate cut: the exited predicate is derived from the region's
-  // terminal statuses / `exit`, OR'd with this per-client slice (dead-fallback).
-  const exitedLocal = useAppStore((s) => s.terminalExitedTabs[tabId] ?? false);
-
+  // The connect / reconnect / trigger status, the disconnect error, the exit cause
+  // and the exited mount gate are all sourced purely from the region now the
+  // per-client `terminalDisconnectErrors` / `terminalExitInfo` / `terminalExitedTabs`
+  // slices are deleted (#2625).
   const [projected, setProjected] = useState<ProjectedSessionLifecycle | undefined>(undefined);
 
   useEffect(() => {
@@ -196,12 +182,12 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
   return {
     connecting: effectiveConnecting(p),
     reconnecting: effectiveReconnecting(p),
-    disconnectError: effectiveDisconnectError(disconnectErrorLocal, p),
+    disconnectError: effectiveDisconnectError(p),
     reconnectTriggerError: effectiveReconnectTriggerError(p),
     sessionLost: lost,
     sessionLostError: lost ? p?.error : undefined,
-    exitInfo: effectiveExitInfo(exitInfoLocal, p),
-    exited: effectiveExited(exitedLocal, p),
+    exitInfo: effectiveExitInfo(p),
+    exited: effectiveExited(p),
   };
 }
 
@@ -209,8 +195,8 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
  * The tab-id-keyed session-status maps the list consumers render: the tab-strip
  * status dot ({@link import("@/utils/tabStatus").deriveTabStatus}), Open
  * Connections' connecting filter and the split-panel overlay gates all read the
- * whole maps rather than a single tab. Same fields, same faithful-mirror gate as
- * {@link useProjectedSessionLifecycle}, sourced from the region view.
+ * whole maps rather than a single tab. Same fields as
+ * {@link useProjectedSessionLifecycle}, sourced purely from the region view (#2625).
  */
 export interface ProjectedSessionLifecycleMaps {
   terminalConnecting: Record<string, boolean>;
@@ -223,9 +209,8 @@ export interface ProjectedSessionLifecycleMaps {
    */
   terminalSessionLost: Record<string, boolean>;
   /** Tabs whose session has **exited** (#2621): the overlay/view-mode mount gate,
-   * region-derived ({@link effectiveExitedMap}) and OR'd with the per-client
-   * `appStore.terminalExitedTabs` slice so it is byte-identical to the pre-cut
-   * read. Drives the tab-strip status dot and the close-confirmation live count. */
+   * derived purely from the region ({@link effectiveExitedMap}, #2625). Drives the
+   * tab-strip status dot and the close-confirmation live count. */
   terminalExitedTabs: Record<string, boolean>;
 }
 
@@ -241,19 +226,15 @@ function sessionLostMap(view: Record<string, ProjectedSessionLifecycle>): Record
 /**
  * `useProjectedSessionLifecycleMaps` — the map-level render cut for the list
  * consumers (#2205 PR-A). Subscribes to the shared `session-lifecycle` region once
- * and returns the connect / reconnect / disconnect-error maps sourced through the
- * faithful-mirror gate, falling back to `appStore` per key. Byte-identical to the
- * pre-cut `appStore` reads; the analog of
+ * and returns the connect / reconnect / disconnect-error / exited maps sourced
+ * purely from the region view (#2625); the analog of
  * {@link import("./useLayoutRenderTree").useLayoutRenderTree} for the lifecycle
  * status maps.
  */
 export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMaps {
-  // Disconnect errors keep their per-client `appStore` slice; connect / reconnect
-  // are sourced purely from the region (#2205 PR-B).
-  const disconnectErrorsLocal = useAppStore((s) => s.terminalDisconnectErrors);
-  // #2621 mount-gate cut: exited tabs are region-derived, OR'd with the local slice.
-  const exitedLocal = useAppStore((s) => s.terminalExitedTabs);
-
+  // Connect / reconnect / disconnect-error and the exited map are all sourced
+  // purely from the region now the per-client `terminalDisconnectErrors` /
+  // `terminalExitedTabs` slices are deleted (#2625).
   const [view, setView] = useState<Record<string, ProjectedSessionLifecycle>>(() =>
     currentSessionView()
   );
@@ -284,10 +265,10 @@ export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMap
     () => ({
       terminalConnecting: effectiveConnectingMap(view),
       terminalReconnectingTabs: effectiveReconnectingMap(view),
-      terminalDisconnectErrors: effectiveDisconnectErrorMap(disconnectErrorsLocal, view),
+      terminalDisconnectErrors: effectiveDisconnectErrorMap(view),
       terminalSessionLost: sessionLostMap(view),
-      terminalExitedTabs: effectiveExitedMap(exitedLocal, view),
+      terminalExitedTabs: effectiveExitedMap(view),
     }),
-    [disconnectErrorsLocal, exitedLocal, view]
+    [view]
   );
 }

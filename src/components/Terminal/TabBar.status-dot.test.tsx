@@ -8,6 +8,7 @@ import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import {
   connecting,
+  disconnected,
   flushSessionRegion,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
@@ -42,10 +43,10 @@ vi.mock("./RenameDialog", () => ({ RenameDialog: () => null }));
 
 const PANEL_ID = "panel-1";
 
-// The connecting/reconnecting status the dot reads is sourced purely from the
-// projected `session-lifecycle` region (#2205), so seed the region for those
-// states. The failed/disconnected dots still read their `appStore` slices
-// (`terminalSpawnErrors` / `terminalExitedTabs`) and leave the region empty.
+// The connecting/reconnecting AND disconnected(exited) status the dot reads is
+// sourced purely from the projected `session-lifecycle` region (#2205 / #2625), so
+// seed the region for those states. Only the failed dot still reads its `appStore`
+// slice (`terminalSpawnErrors`).
 const harness = installSessionLifecycleHarness();
 
 function makeTerminalTab(id: string, isActive: boolean): TerminalTab {
@@ -83,8 +84,6 @@ function dotFor(tabId: string): HTMLElement | null {
 function resetStore() {
   useAppStore.setState({
     terminalSpawnErrors: {},
-    terminalDisconnectErrors: {},
-    terminalExitedTabs: {},
   });
 }
 
@@ -124,25 +123,25 @@ describe("TabBar — per-tab connection status dot", () => {
     expect(dotFor("t1")?.className).toContain("tab__state-dot--failed");
   });
 
-  it("renders a 'disconnected' dot when the terminal session has exited", () => {
+  it("renders a 'disconnected' dot when the terminal session has exited", async () => {
+    harness.transport.setSession("t1", disconnected());
     render([makeTerminalTab("t1", true)]);
-    act(() => {
-      useAppStore.setState({ terminalExitedTabs: { t1: true } });
-    });
+    await flushSessionRegion();
     expect(dotFor("t1")?.className).toContain("tab__state-dot--disconnected");
   });
 
-  it("reflects state changes on a background (inactive) tab without focusing it", () => {
+  it("reflects state changes on a background (inactive) tab without focusing it", async () => {
     // t1 is active/focused, t2 is a background tab.
     render([makeTerminalTab("t1", true), makeTerminalTab("t2", false)]);
+    // Establish the region subscription before mutating it post-render.
+    await flushSessionRegion();
 
     // Background tab starts connected.
     expect(dotFor("t2")?.className).toContain("tab__state-dot--connected");
 
     // Its session drops while it stays in the background.
-    act(() => {
-      useAppStore.setState({ terminalExitedTabs: { t2: true } });
-    });
+    act(() => harness.transport.setSession("t2", disconnected()));
+    await flushSessionRegion();
 
     expect(dotFor("t2")?.className).toContain("tab__state-dot--disconnected");
     // The focused tab is unaffected.

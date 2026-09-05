@@ -256,12 +256,15 @@ import {
 import {
   currentSessionView,
   effectiveConnectingMap,
+  effectiveDisconnectErrorMap,
+  effectiveExitedMap,
   effectiveReconnectingMap,
   ensureSessionSubscribed,
   logSessionBridgeFallback,
   mirrorSessionExited,
   mirrorSessionIntent,
   onSessionView,
+  regionExited,
 } from "@/store/sessionBridge";
 import {
   currentMonitorsView,
@@ -1091,8 +1094,10 @@ export interface AppState
    */
   abortTerminalConnect: (tabId: string) => void;
 
-  // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close)
-  terminalExitedTabs: Record<string, boolean>;
+  // Per-tab terminal session disconnects (runtime-only, cleared on reconnect, dismiss, or tab close).
+  // The exited / exit-info / disconnect-error view-state now lives purely in the shared
+  // `session-lifecycle` region (#2625) — read via `useProjectedSessionLifecycle` / the
+  // `effective*` helpers in `sessionBridge`; no per-client `appStore` twin.
   /**
    * Tabs whose next reconnect must start a **fresh** session rather than
    * re-attach to a retained one (#2512). Set by {@link startFreshShellForTab} when
@@ -1102,16 +1107,12 @@ export interface AppState
    * one-shot (consumed by the effect).
    */
   terminalForceFreshReconnect: Record<string, boolean>;
-  /** How each exited tab's session ended — drives the disconnect overlay wording (#1121). */
-  terminalExitInfo: Record<string, TerminalExitInfo>;
   /**
    * Session IDs the user explicitly killed (e.g. from the Open Connections panel).
    * Consumed by the exit handler so a user kill is classified as `killed` rather
    * than an unexpected disconnect (#1121).
    */
   intentionallyKilledSessions: Record<string, boolean>;
-  /** Error message from a failed reconnect attempt (agent auto-reconnect exhausted). */
-  terminalDisconnectErrors: Record<string, string>;
   /** True when the disconnect overlay was dismissed — session is dead but user is browsing scrollback. */
   terminalViewMode: Record<string, boolean>;
   /** True while cached scrollback is being fetched and written after a persistent session reattach. */
@@ -4470,9 +4471,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const remainingSpawnErrors = omitKey(state.terminalSpawnErrors, tabId);
         const remainingRetryCounters = omitKey(state.terminalRetryCounters, tabId);
         const remainingConnectDeadline = omitKey(state.terminalConnectDeadline, tabId);
-        const remainingExited = omitKey(state.terminalExitedTabs, tabId);
-        const remainingExitInfo = omitKey(state.terminalExitInfo, tabId);
-        const remainingDiscErr = omitKey(state.terminalDisconnectErrors, tabId);
         const remainingView = omitKey(state.terminalViewMode, tabId);
         const remainingReattach = omitKey(state.terminalReattaching, tabId);
         const remainingPrompt = omitKey(state.terminalReconnectPrompt, tabId);
@@ -4521,9 +4519,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
             terminalSpawnErrors: remainingSpawnErrors,
             terminalRetryCounters: remainingRetryCounters,
             terminalConnectDeadline: remainingConnectDeadline,
-            terminalExitedTabs: remainingExited,
-            terminalExitInfo: remainingExitInfo,
-            terminalDisconnectErrors: remainingDiscErr,
             terminalViewMode: remainingView,
             terminalReattaching: remainingReattach,
             terminalReconnectPrompt: remainingPrompt,
@@ -4546,9 +4541,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
           terminalSpawnErrors: remainingSpawnErrors,
           terminalRetryCounters: remainingRetryCounters,
           terminalConnectDeadline: remainingConnectDeadline,
-          terminalExitedTabs: remainingExited,
-          terminalExitInfo: remainingExitInfo,
-          terminalDisconnectErrors: remainingDiscErr,
           terminalViewMode: remainingView,
           terminalReattaching: remainingReattach,
           terminalReconnectPrompt: remainingPrompt,
@@ -5761,30 +5753,23 @@ export const useAppStore = create<AppState>((set, get, store) => {
         };
       }),
 
-    // Per-tab terminal session disconnects (runtime-only)
-    terminalExitedTabs: {},
+    // Per-tab terminal session disconnects (runtime-only). The exited / exit-info
+    // / disconnect-error view-state now lives purely in the shared
+    // `session-lifecycle` region (#2625); no per-client `appStore` twin.
     terminalForceFreshReconnect: {},
-    terminalExitInfo: {},
     intentionallyKilledSessions: {},
-    terminalDisconnectErrors: {},
     terminalViewMode: {},
     terminalReattaching: {},
     terminalReconnectPrompt: {},
     setTerminalExited: (tabId, info) => {
-      set((state) => ({
-        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
-        // Record the exit cause/code so the overlay can branch its wording (#1121).
-        terminalExitInfo: info
-          ? { ...state.terminalExitInfo, [tabId]: info }
-          : state.terminalExitInfo,
-        // A user-initiated kill goes straight to view mode: the session is dead
-        // and scrollback is preserved, but no "unexpected disconnect" overlay is
-        // shown for something the user asked for (#1121).
-        terminalViewMode:
-          info?.reason === "killed"
-            ? { ...state.terminalViewMode, [tabId]: true }
-            : state.terminalViewMode,
-      }));
+      // A user-initiated kill goes straight to view mode: the session is dead
+      // and scrollback is preserved, but no "unexpected disconnect" overlay is
+      // shown for something the user asked for (#1121).
+      if (info?.reason === "killed") {
+        set((state) => ({
+          terminalViewMode: { ...state.terminalViewMode, [tabId]: true },
+        }));
+      }
       // Stop monitoring the dying tab's host — its stats are no longer updated
       // and the overlay hides the terminal anyway. Other hosts keep monitoring.
       const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
@@ -5793,11 +5778,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
       // Fold the exit **cause** onto the shared `session-lifecycle` region so the
       // disconnect overlay can derive its heading/subheading wording from the
-      // region rather than the per-client `terminalExitInfo` slice (#2615 PR-A).
-      // A pure-metadata `session.exited` write — it does not touch the coarse
-      // lifecycle status the status intents below drive. Only fires when the exit
-      // was classified (a bare `setTerminalExited(tabId)` with no info records no
-      // cause, matching the local slice, which stays untouched).
+      // region — the sole authority now the `terminalExitInfo` slice is deleted
+      // (#2625). A pure-metadata `session.exited` write — it does not touch the
+      // coarse lifecycle status the status intents below drive. Also makes
+      // `regionExited` true (exit != null), which mounts the overlay for a clean
+      // exit (which dispatches no status intent). Only fires when the exit was
+      // classified (a bare `setTerminalExited(tabId)` with no info records nothing).
       if (info) {
         mirrorSessionExited(tabId, info);
       }
@@ -5838,17 +5824,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
     setTerminalDisconnectWithError: (tabId, error) => {
       // Session-intents cut (#2203): a failed (re)connect is a terminal
-      // `session.connectFailed`. Skipped while the region shows the tab
-      // reconnecting — the backend redrive owns that loop's outcome and folds the
-      // give-up itself (#2205 PR-B), so a client `connectFailed` would be a
+      // `session.connectFailed` — the sole record of the exit + error now the
+      // per-client `terminalExitedTabs` / `terminalDisconnectErrors` slices are
+      // deleted (#2625). The fold lands the region on `failed` + `error`, so
+      // `regionExited` mounts the overlay and `effectiveDisconnectError` renders the
+      // message. Skipped while the region shows the tab reconnecting — the backend
+      // redrive owns that loop's outcome and folds the give-up (`reconnectFailed` →
+      // `failed`) itself (#2205 PR-B), so a client `connectFailed` would be a
       // divergent second signal.
       if (currentSessionView()[tabId]?.status !== "reconnecting") {
         mirrorSessionIntent("session.connectFailed", tabId, error);
       }
-      set((state) => ({
-        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
-        terminalDisconnectErrors: { ...state.terminalDisconnectErrors, [tabId]: error },
-      }));
       // A failed (re)connect settles this tab as failed in any in-flight
       // restore/launch cohort so the aggregate summary reflects it (#1146).
       get().settleRestoreTab(tabId, "failed");
@@ -5857,19 +5843,20 @@ export const useAppStore = create<AppState>((set, get, store) => {
         get().disconnectMonitoring(deadKey);
       }
     },
-    settleBackendReconnectGaveUp: (tabId, error) => {
-      // The backend already folded the give-up (region → Failed/gaveup); reflect
-      // it locally without re-mirroring an intent. Clear every in-flight connect
-      // flag (deadline / waiting / spawn-error) so no competing overlay lingers,
-      // then show the disconnect overlay with the give-up error (offering View
-      // Scrollback / Reconnect).
+    settleBackendReconnectGaveUp: (tabId, _error) => {
+      // The backend already folded the give-up (region → Failed/gaveup with the
+      // error) — that fold is now the sole record: `regionExited` mounts the
+      // overlay and `effectiveDisconnectError` renders the message, so no
+      // `terminalExitedTabs` / `terminalDisconnectErrors` write (and no use of the
+      // `error` arg) is needed here (#2625).
+      // Still clear every in-flight connect flag (deadline / waiting / auto-retry /
+      // spawn-error) — those stay per-client (not region-covered) — so no competing
+      // overlay lingers over the give-up state.
       set((state) => ({
         terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
         terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
         terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
-        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
-        terminalDisconnectErrors: { ...state.terminalDisconnectErrors, [tabId]: error },
       }));
       get().settleRestoreTab(tabId, "failed");
       const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
@@ -5880,19 +5867,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     settleSessionLost: (tabId) => {
       // The backend folded `session.sessionLost` into the region (the live agent
-      // session was unrecoverable). Reflect it locally without re-mirroring an
-      // intent: clear the loop record + every in-flight connect flag so no
-      // competing overlay lingers, and mark the tab exited so the disconnect
-      // overlay mounts. Deliberately no `terminalDisconnectErrors` write — the
-      // session-lost variant sources its message from the projected region, and a
-      // disconnect error would otherwise drive the generic "Reconnect failed"
-      // variant.
+      // session was unrecoverable), landing status `SessionLost` — `regionExited`
+      // is true for it, so the disconnect overlay mounts and renders the projected
+      // session-lost notice with no client write needed (#2625). Still clear the
+      // per-client in-flight connect flags (not region-covered) so no competing
+      // overlay lingers. Deliberately no disconnect-error signal — the session-lost
+      // variant sources its message from the region, and a `failed` error would
+      // otherwise drive the generic "Reconnect failed" variant.
       set((state) => ({
         terminalConnectDeadline: omitKey(state.terminalConnectDeadline, tabId),
         terminalWaitingForAgent: omitKey(state.terminalWaitingForAgent, tabId),
         terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
         terminalSpawnErrors: omitKey(state.terminalSpawnErrors, tabId),
-        terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
       }));
       get().settleRestoreTab(tabId, "failed");
       const deadKey = monitorKeyForTab(collectLiveTabs(get()).find((t) => t.id === tabId));
@@ -5963,8 +5949,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       })),
     dismissTerminalDisconnect: (tabId) =>
       set((state) => ({
-        // Keep terminalExitedTabs[tabId] = true so the banner can detect the dead session;
-        // only flip the overlay off by entering view mode.
+        // The region keeps the terminal status / `exit` so the banner can detect the
+        // dead session (`regionExited`, #2625); only flip the overlay off here by
+        // entering view mode.
         terminalViewMode: { ...state.terminalViewMode, [tabId]: true },
       })),
     reconnectTerminal: (tabId) =>
@@ -5977,10 +5964,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // not a client timer, is what settles the tab (the give-up-aware wait in
         // Terminal.tsx resolves it). Every other tab keeps the safety-net deadline.
         const deferToBackendLoop = isBackendDrivenAgentReconnectTabId(tabId);
+        // The exited / exit-info / disconnect-error view-state now lives purely in
+        // the region (#2625): a manual reconnect's `setTerminalConnecting(true)`
+        // dispatches `session.connect` (region → connecting, clears `exit`); a
+        // backend-driven reconnect keeps the region `reconnecting` — either way
+        // `regionExited` goes false, so no client clear is needed here.
         return {
-          terminalExitedTabs: omitKey(state.terminalExitedTabs, tabId),
-          terminalExitInfo: omitKey(state.terminalExitInfo, tabId),
-          terminalDisconnectErrors: omitKey(state.terminalDisconnectErrors, tabId),
           terminalViewMode: omitKey(state.terminalViewMode, tabId),
           terminalReconnectPrompt: omitKey(state.terminalReconnectPrompt, tabId),
           terminalAutoRetryCount: omitKey(state.terminalAutoRetryCount, tabId),
@@ -6023,17 +6012,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // (`session.cancelReconnect` → disconnected, `endReason: user`) — the backend
       // is the sole reconnect authority.
       mirrorSessionIntent("session.cancelReconnect", tabId, error ?? undefined);
+      // The `session.cancelReconnect` fold lands the region on `disconnected`
+      // (`endReason: user`), which is enough for `regionExited` to mount the
+      // standard disconnect overlay (Reconnect / View Scrollback) once the region
+      // leaves reconnecting — no client exited write is needed (#2625).
       if (error) {
         // Stopped with a reason (attempts exhausted): show the "Reconnect failed"
-        // overlay with that message.
+        // overlay with that message. `setTerminalDisconnectWithError` folds
+        // `session.connectFailed` → `failed` + `error` (the region carries both).
         get().setTerminalDisconnectWithError(tabId, error);
-      } else {
-        // User cancelled mid-loop: mark the tab exited so the standard disconnect
-        // overlay (Reconnect / View Scrollback) shows once the region leaves
-        // reconnecting.
-        set((state) => ({
-          terminalExitedTabs: { ...state.terminalExitedTabs, [tabId]: true },
-        }));
       }
     },
 
@@ -6989,16 +6976,16 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const view = currentBroadcastView();
       if (!view.active) return [];
       const state = get();
-      // Connect / reconnect status is sourced from the shared `session-lifecycle`
-      // region — the sole authority since the `appStore` slices were removed
-      // (#2205 PR-B); the spawn/disconnect-error + exited slices stay per-client.
+      // Connect / reconnect / disconnect-error / exited status is sourced from the
+      // shared `session-lifecycle` region — the sole authority since the `appStore`
+      // twins were removed (#2205 PR-B / #2625); only spawn errors stay per-client.
       const sessionView = currentSessionView();
       const statusMaps: TabStatusMaps = {
         terminalConnecting: effectiveConnectingMap(sessionView),
         terminalReconnectingTabs: effectiveReconnectingMap(sessionView),
         terminalSpawnErrors: state.terminalSpawnErrors,
-        terminalDisconnectErrors: state.terminalDisconnectErrors,
-        terminalExitedTabs: state.terminalExitedTabs,
+        terminalDisconnectErrors: effectiveDisconnectErrorMap(sessionView),
+        terminalExitedTabs: effectiveExitedMap(sessionView),
       };
       const tabsById = new Map(collectLiveTabs(state).map((t) => [t.id, t]));
       const result: string[] = [];
@@ -7108,7 +7095,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         !tab ||
         tab.contentType !== "terminal" ||
         !tab.sessionId ||
-        state.terminalExitedTabs[targetTabId]
+        // #2625: exited is region-only now the per-client slice is deleted.
+        regionExited(currentSessionView()[targetTabId])
       ) {
         toast.error("The target terminal is not connected");
         return;

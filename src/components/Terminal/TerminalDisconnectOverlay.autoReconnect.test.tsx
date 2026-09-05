@@ -71,8 +71,6 @@ describe("TerminalDisconnectOverlay — agentless auto-reconnect variant (#1962)
     const leafId = layoutState().rootPanel.id;
     seedLayoutState({ rootPanel: { type: "leaf", id: leafId, tabs: [], activeTabId: null } });
     useAppStore.setState({
-      terminalExitedTabs: { "tab-1": true },
-      terminalDisconnectErrors: {},
       terminalViewMode: {},
     });
   });

@@ -1,10 +1,9 @@
 /**
- * Unit tests for the terminal lifecycle readers in `sessionBridge`. Since #2205
- * PR-B removed the `appStore` reconnect engine, the connect / reconnect /
- * reconnect-trigger status is sourced **purely** from the projected
- * `session-lifecycle` region — no local slice, no faithful-mirror gate. The
- * disconnect **error** keeps its per-client `appStore` slice, so
- * `effectiveDisconnectError` still blends the region value with that local slice.
+ * Unit tests for the terminal lifecycle readers in `sessionBridge`. The connect /
+ * reconnect / reconnect-trigger status AND the disconnect error are all sourced
+ * **purely** from the projected `session-lifecycle` region — no local slice, no
+ * faithful-mirror gate (#2205 PR-B removed the reconnect engine; #2625 deleted the
+ * `terminalDisconnectErrors` slice, so `effectiveDisconnectError` is region-only).
  */
 
 import { describe, expect, it } from "vitest";
@@ -55,20 +54,15 @@ describe("effectiveReconnecting", () => {
   });
 });
 
-describe("effectiveDisconnectError", () => {
-  it("sources the error from a mirroring failed status", () => {
-    expect(effectiveDisconnectError("boom", life("failed", "boom"))).toBe("boom");
+describe("effectiveDisconnectError (#2625 region-only)", () => {
+  it("sources the error from the region's failed status", () => {
+    expect(effectiveDisconnectError(life("failed", "boom"))).toBe("boom");
   });
 
-  it("falls back to the local error when the strings diverge", () => {
-    expect(effectiveDisconnectError("boom", life("failed", "different"))).toBe("boom");
-    // Region reports no error but local has one.
-    expect(effectiveDisconnectError("boom", life("connected"))).toBe("boom");
-    expect(effectiveDisconnectError("boom", undefined)).toBe("boom");
-  });
-
-  it("returns undefined when neither has an error", () => {
-    expect(effectiveDisconnectError(undefined, life("connected"))).toBeUndefined();
+  it("returns undefined when the region is not in a failed status", () => {
+    expect(effectiveDisconnectError(life("connected"))).toBeUndefined();
+    expect(effectiveDisconnectError(life("reconnecting"))).toBeUndefined();
+    expect(effectiveDisconnectError(undefined)).toBeUndefined();
   });
 });
 
@@ -102,10 +96,12 @@ describe("effective*Map helpers", () => {
     expect(effectiveConnectingMap({})).toEqual({});
   });
 
-  it("keep the disconnect-error map on its per-client slice (region blend)", () => {
-    const view: Record<string, ProjectedSessionLifecycle> = { c: life("failed", "stale") };
-    // Local diverges from the region → local wins (the disconnect error is not
-    // part of the removed engine, so it keeps its appStore fallback).
-    expect(effectiveDisconnectErrorMap({ c: "fresh" }, view)).toEqual({ c: "fresh" });
+  it("build the disconnect-error map purely from the region view (#2625)", () => {
+    const view: Record<string, ProjectedSessionLifecycle> = {
+      a: life("connecting"),
+      c: life("failed", "boom"),
+      d: life("connected"),
+    };
+    expect(effectiveDisconnectErrorMap(view)).toEqual({ c: "boom" });
   });
 });

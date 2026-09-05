@@ -21,7 +21,7 @@ import {
   useLayoutRenderTree,
   useLayoutTabGroups,
 } from "@/store/layoutSelectors";
-import { currentSessionView } from "@/store/sessionBridge";
+import { currentSessionView, effectiveExitedMap } from "@/store/sessionBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { TerminalTab } from "@/types/terminal";
@@ -184,9 +184,9 @@ export function TerminalView() {
             } else {
               // Session is gone — the backend `agent_io_task` folds the region entry
               // `reconnecting → sessionLost` at the source (#2564), the same
-              // authority the "Session lost" overlay renders from (#2512). Reflect
-              // only the local presentation view-state here (`terminalExitedTabs`,
-              // which mounts the overlay) via `settleSessionLost` — do NOT re-drive
+              // authority the "Session lost" overlay renders from (#2512) and that
+              // `regionExited` mounts the overlay from (#2625). `settleSessionLost`
+              // only clears the per-client in-flight connect flags — do NOT re-drive
               // the region, which would double-fold against the server authority.
               frontendLog(
                 "disconnect",
@@ -256,9 +256,10 @@ export function TerminalView() {
             if (error) {
               // Fully-failed reconnect (#2612/#2564): the backend `agent_io_task` folds
               // the region entry `reconnecting → failed` at the source with the reconnect
-              // error (the same authority the "Reconnect failed" overlay reads). Reflect
-              // only the local presentation view-state here via `settleBackendReconnectGaveUp`
-              // — do NOT re-drive the region (the old `setTerminalDisconnectWithError`
+              // error (the same authority the "Reconnect failed" overlay reads, and that
+              // `regionExited` / `effectiveDisconnectError` render from, #2625).
+              // `settleBackendReconnectGaveUp` only clears the per-client in-flight connect
+              // flags — do NOT re-drive the region (the old `setTerminalDisconnectWithError`
               // `session.connectFailed` mirror was a no-op while the region read
               // `reconnecting`, so the region was left stuck `Reconnecting`); the backend
               // now owns that fold.
@@ -291,7 +292,6 @@ export function TerminalView() {
   const activePanelId = useActivePanelId();
   const removePanel = useAppStore((s) => s.removePanel);
   const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
-  const terminalExitedTabs = useAppStore((s) => s.terminalExitedTabs);
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
   const confirmCloseLiveSession = useProjectedSettings().confirmCloseLiveSession;
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
@@ -418,7 +418,9 @@ export function TerminalView() {
     const panel = allLeaves.find((p) => p.id === activePanelId);
     const panelTabs = panel?.tabs ?? [];
     const liveCount = countLiveSessions(panelTabs, {
-      terminalExitedTabs,
+      // #2625: exited is region-only now the per-client slice is deleted; read
+      // synchronously here since this is an imperative close handler, not render.
+      terminalExitedTabs: effectiveExitedMap(currentSessionView()),
       terminalSpawnErrors,
     });
     // Confirm before destroying every tab/session in the panel, unless the user

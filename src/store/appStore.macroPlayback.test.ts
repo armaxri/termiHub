@@ -49,6 +49,7 @@ import { useAppStore } from "./appStore";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { toast } from "@/components/ui";
+import { installSessionLifecycleHarness } from "@/test/sessionLifecycleRegionTestHarness";
 
 const macro = (id: string, steps: Macro["steps"]): Macro => ({
   id,
@@ -74,11 +75,13 @@ function seedConnectedTerminal(tabId = "tab-active", sessionId: string | null = 
   };
   const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: tabId };
   seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
-  useAppStore.setState({ terminalExitedTabs: {} });
+  // The exited guard is region-only now (#2625); the harness resets the region per
+  // test, so the target starts non-exited with no explicit reset needed.
 }
 
 describe("appStore — macro playback slice (#1675)", () => {
   let injected: string[];
+  installSessionLifecycleHarness();
 
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
@@ -207,8 +210,9 @@ describe("appStore — macro playback slice (#1675)", () => {
     seedConnectedTerminal();
     useAppStore.setState({
       macros: [macro("m1", [{ data: "x", delayMs: 0 }])],
-      terminalExitedTabs: { "tab-active": true },
     });
+    // Drive the target exited in the region (region-only now, #2625).
+    useAppStore.getState().setTerminalExited("tab-active", { code: null, reason: "dropped" });
 
     await useAppStore.getState().playMacro("m1");
 

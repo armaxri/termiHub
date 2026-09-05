@@ -46,6 +46,7 @@ import { ensureSessionSubscribed } from "./sessionBridge";
 import { installBroadcastHarness } from "@/test/broadcastHarness";
 import {
   connecting,
+  disconnected,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
 import type { LeafPanel, TerminalTab, TabContentType } from "@/types/terminal";
@@ -171,12 +172,11 @@ describe("appStore — broadcast input actions (#1955, region-authoritative #220
         makeTab({ id: "t5", contentType: "editor" }), // non-terminal tab
         makeTab({ id: "t6", sessionId: null }), // terminal without a live session
       ]);
-      useAppStore.setState({
-        terminalExitedTabs: { t3: true },
-      });
-      // Connecting status is sourced from the session-lifecycle region now
-      // (#2205 PR-B): seed t4 as connecting there so it is excluded.
+      // Exited and connecting status are both sourced from the session-lifecycle
+      // region now (#2205 PR-B / #2625): seed t3 disconnected + t4 connecting there
+      // so both are excluded.
       await ensureSessionSubscribed();
+      sessionHarness.transport.setSession("t3", disconnected());
       sessionHarness.transport.setSession("t4", connecting());
       useAppStore.getState().startBroadcast("all", "src", ["t2", "t3", "t4", "t5", "t6"]);
 

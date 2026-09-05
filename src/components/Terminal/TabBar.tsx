@@ -44,17 +44,16 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const setPendingSessionCloseConfirm = useAppStore((s) => s.setPendingSessionCloseConfirm);
   const setPendingAttachedTabCloseConfirm = useAppStore((s) => s.setPendingAttachedTabCloseConfirm);
   // Tab-id-keyed lifecycle maps that drive the per-tab connection status dot.
-  // Render cut (#2205 PR-A): the session-lifecycle maps (connecting / reconnecting
-  // / disconnect errors) are sourced from the projected region (falls back to
-  // appStore per key when not mirrored); spawn errors and exited tabs stay on
-  // appStore (not part of the session-lifecycle region).
+  // Render cut (#2205 PR-A / #2625): the session-lifecycle maps (connecting /
+  // reconnecting / disconnect errors / exited) are sourced purely from the projected
+  // region; only spawn errors stay on appStore (not part of the region).
   const {
     terminalConnecting,
     terminalReconnectingTabs,
     terminalDisconnectErrors,
     terminalSessionLost,
-    // #2621 mount-gate cut: exited tabs sourced from the region (falls back to the
-    // per-client slice per key), replacing the direct `appStore.terminalExitedTabs`.
+    // #2625: exited tabs sourced purely from the region (the per-client
+    // `appStore.terminalExitedTabs` slice was deleted).
     terminalExitedTabs,
   } = useProjectedSessionLifecycleMaps();
   const terminalSpawnErrors = useAppStore((s) => s.terminalSpawnErrors);
@@ -125,9 +124,9 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     // user opted out via "Don't ask again". The keyboard close path is gated
     // separately by `confirmCloseTabOnShortcut`.
     const isLive = tabHasLiveSession(tab, {
-      // #2621: region-derived exited map (OR'd with the local slice), read
-      // synchronously here since this is an imperative close handler, not render.
-      terminalExitedTabs: effectiveExitedMap(state.terminalExitedTabs, currentSessionView()),
+      // #2625: region-only exited map, read synchronously here since this is an
+      // imperative close handler, not render.
+      terminalExitedTabs: effectiveExitedMap(currentSessionView()),
       terminalSpawnErrors: state.terminalSpawnErrors,
     });
     if (isLive && currentSettingsView().confirmCloseLiveSession !== false) {

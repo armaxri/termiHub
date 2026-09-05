@@ -5,6 +5,11 @@ import { TabBar } from "./TabBar";
 import { useAppStore } from "@/store/appStore";
 import { TerminalTab } from "@/types/terminal";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
+import {
+  disconnected,
+  flushSessionRegion,
+  installSessionLifecycleHarness,
+} from "@/test/sessionLifecycleRegionTestHarness";
 
 const toastSuccess = vi.fn();
 vi.mock("@/components/ui", async (importOriginal) => {
@@ -60,6 +65,7 @@ let container: HTMLDivElement;
 let root: Root;
 
 setupSettingsRegion();
+const harness = installSessionLifecycleHarness();
 
 function render(tabs: TerminalTab[]) {
   act(() => root.render(<TabBar panelId={PANEL_ID} tabs={tabs} />));
@@ -111,10 +117,13 @@ describe("TabBar — closing a live-session tab via the X", () => {
     expect(toastSuccess).toHaveBeenCalled();
   });
 
-  it("does not confirm when the tab's session has already exited", () => {
+  it("does not confirm when the tab's session has already exited", async () => {
     const closeTab = vi.fn();
-    useAppStore.setState({ closeTab, terminalExitedTabs: { [TAB_ID]: true } });
+    useAppStore.setState({ closeTab });
+    // #2625: the exited state is region-only now — seed the region.
+    harness.transport.setSession(TAB_ID, disconnected());
     render([liveTerminalTab()]);
+    await flushSessionRegion();
 
     act(() => {
       (container.querySelector(`[data-testid="tab-close-${TAB_ID}"]`) as HTMLElement).click();

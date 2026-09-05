@@ -132,7 +132,6 @@ describe("bulk reconnect of failed restore tabs", () => {
     mockLoad.mockResolvedValue(null);
     useAppStore.setState({
       defaultShell: "bash",
-      terminalDisconnectErrors: {},
       terminalRetryCounters: {},
     });
     seedSettings({ restoreLastSessionOnStartup: true });
@@ -159,11 +158,10 @@ describe("bulk reconnect of failed restore tabs", () => {
 
     useAppStore.getState().reconnectFailedRestoreTabs();
 
-    // The failed tab is being re-driven: its disconnect error is cleared and a
-    // fresh connect deadline is armed (the connecting overlay itself is sourced
-    // from the region now, #2205 PR-B).
+    // The failed tab is being re-driven: a fresh connect deadline is armed (the
+    // connecting overlay + the disconnect error are both region-sourced now, #2205
+    // PR-B / #2625).
     expect(useAppStore.getState().terminalConnectDeadline[ids[2]]?.kind).toBe("connecting");
-    expect(useAppStore.getState().terminalDisconnectErrors[ids[2]]).toBeUndefined();
 
     // The already-connected tabs are untouched: not re-driven, sessions intact.
     expect(useAppStore.getState().terminalConnectDeadline[ids[0]]).toBeUndefined();
