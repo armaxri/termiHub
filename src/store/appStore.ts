@@ -5193,13 +5193,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }
         // Toggling the experimental frontend-plugin gate (#2048) reconciles the
         // injected plugin scripts: enabling loads active frontend plugins,
-        // disabling tears them down. loadPlugins re-runs reconcile with the new
-        // flag value it reads from the just-persisted settings.
-        if (
-          (oldSettings.frontendPluginsEnabled ?? false) !==
-          (newSettings.frontendPluginsEnabled ?? false)
-        ) {
-          void get().loadPlugins();
+        // disabling tears them down. Pass the known-new gate value straight into
+        // loadPlugins rather than let it read the eventually-consistent region
+        // (#2630): the `settings.replace` above is fire-and-forget, so a re-read
+        // of `currentSettingsView()` can still return the stale pre-toggle value
+        // and skip the teardown, leaving the widget mounted after a live disable.
+        const nextGate = newSettings.frontendPluginsEnabled ?? false;
+        if ((oldSettings.frontendPluginsEnabled ?? false) !== nextGate) {
+          void get().loadPlugins(nextGate);
         }
       } catch (err) {
         frontendLog(

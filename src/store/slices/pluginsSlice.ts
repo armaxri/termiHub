@@ -104,8 +104,17 @@ export interface PluginsSlice {
    * set directly.
    */
   pluginThemes: ThemeDefinition[];
-  /** Load the installed-plugin list from the backend and refresh derived state. */
-  loadPlugins: () => Promise<void>;
+  /**
+   * Load the installed-plugin list from the backend and refresh derived state.
+   *
+   * `frontendEnabled` overrides the experimental frontend-plugin gate (#2048) for
+   * the reconcile step. Callers reacting to a gate toggle pass the known-new value
+   * (#2630) because the authoritative `settings` region is eventually-consistent:
+   * reading it back here can still return the stale pre-toggle value, so a live
+   * disable would keep the plugin loaded. Omitted (the common refresh case) reads
+   * the current projected gate value.
+   */
+  loadPlugins: (frontendEnabled?: boolean) => Promise<void>;
   /**
    * Install a `.termihub-plugin` package from `filePath`, then refresh the list.
    * Surfaces a pending → success/error toast; rejects on failure.
@@ -145,7 +154,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
   pluginBackendTypes: [],
   pluginThemes: [],
 
-  loadPlugins: async () => {
+  loadPlugins: async (frontendEnabled) => {
     try {
       const plugins = await apiListPlugins();
       // Load plugin-provided themes (#1996) and register them into the theme
@@ -160,9 +169,11 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       // so a load failure now surfaces as a `loadError` inside the worker (#2266)
       // rather than here. Frontend-plugin execution is gated behind the
       // experimental opt-in (#2048): when it is off, reconcile loads nothing and
-      // unloads anything already loaded.
-      const frontendEnabled = currentSettingsView().frontendPluginsEnabled ?? false;
-      reconcileFrontendPlugins(plugins, frontendEnabled);
+      // unloads anything already loaded. Prefer the caller-supplied gate value
+      // (#2630) over reading the eventually-consistent region, so a live toggle
+      // reconciles against the known-new value rather than a possibly-stale read.
+      const gate = frontendEnabled ?? currentSettingsView().frontendPluginsEnabled ?? false;
+      reconcileFrontendPlugins(plugins, gate);
       // Re-apply the active theme: a just-registered plugin theme now takes
       // effect, and a theme whose plugin was disabled/uninstalled falls back
       // to the default (concept edge case).
