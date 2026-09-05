@@ -71,6 +71,23 @@ jobs:
       WEBKIT_DISABLE_COMPOSITING_MODE: "1"
       NO_AT_BRIDGE: "1"
 
+      # Un-skip the automated agent-reconnect UI grade
+      # (test_agent_reconnect_ui.py, #2574) on the macOS leg. That suite carries a
+      # skip-guard (#2631): on CI it stays skipped unless TERMIHUB_LIVE_AGENT=1,
+      # because it needs a live app->agent SSH connect rather than merely an sshd
+      # binary. Nothing extra has to be *installed* to un-skip it — the runner
+      # already has everything the grade needs: its harness (LocalAgentSshd) stands
+      # up its own throwaway loopback sshd from the macOS /usr/sbin/sshd, and the
+      # release termihub-agent it deploys is built by the "Build the agent
+      # (release)" step above. A live connect over exactly this path was already
+      # observed on the macOS runner (the failure that motivated #2579 was a harness
+      # region-read bug since fixed in #2628, not a missing agent), so flipping the
+      # opt-in is all that is required. Scoped to macOS via the matrix expression
+      # (empty string elsewhere = still skipped): the macOS GUI lane is the grade's
+      # home (#2618/#2579), and Windows loopback sshd is unreliable. (#2579, #2618,
+      # #2626 cat B)
+      TERMIHUB_LIVE_AGENT: ${{ matrix.os == 'macos-latest' && '1' || '' }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
