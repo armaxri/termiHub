@@ -32,7 +32,7 @@
 //! | `session.reconnectFailed`   | `{ sessionId, error? }`     | the attempt failed (back off or give up)       |
 //! | `session.cancelReconnect`   | `{ sessionId }`             | user stopped the retry loop                    |
 //! | `session.reconnectTrigger`  | `{ sessionId, error? }`     | record/clear the reconnect-trigger cause       |
-//! | `session.exited`            | `{ sessionId, reason, code? }` | record how the session ended (exit cause) |
+//! | `session.exited`            | `{ sessionId, reason, code? }` | record the exit cause; a *clean* exit also folds status → disconnected (#2637) |
 //! | `session.remove`            | `{ sessionId }`             | session/tab gone; drop it from the region      |
 //!
 //! The transient agent-transport-break reconnecting fold is **not** a client
@@ -356,10 +356,20 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
     registry.route("session.exited", move |intent, projector| {
         let store = store_of(&handle)?;
         let id = required_str(intent, "sessionId")?;
-        store.set_exit(&id, Some(required_exit(intent)?));
-        // Pure metadata write (like `session.reconnectTrigger`): does not touch
-        // status / the reconnect engine, so no `sync_timer`.
-        Ok(publish_sessions(projector, &store))
+        let exit = required_exit(intent)?;
+        let clean = exit.reason == TerminalExitReason::Clean;
+        store.set_exit(&id, Some(exit));
+        let produced = publish_sessions(projector, &store);
+        // A dropped / killed exit is a pure metadata write (like
+        // `session.reconnectTrigger`): its status is folded by the accompanying
+        // `session.dropped` / `session.disconnect` intent, which already synced the
+        // timer, so nothing to reconcile here. A *clean* exit folds the coarse
+        // status to `Disconnected` (#2637), resetting the reconnect loop to idle —
+        // reconcile the backend timer so any armed backoff window is torn down.
+        if clean {
+            sync_timer(&handle, &id);
+        }
+        Ok(produced)
     });
 
     let handle = app_handle;
