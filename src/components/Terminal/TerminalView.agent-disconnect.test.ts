@@ -18,7 +18,11 @@ import { useAppStore } from "@/store/appStore";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
-import { currentSessionView, ensureSessionSubscribed } from "@/store/sessionBridge";
+import {
+  currentSessionView,
+  ensureSessionSubscribed,
+  regionExited,
+} from "@/store/sessionBridge";
 import {
   connected,
   failed,
@@ -238,17 +242,19 @@ describe("agent-state-change tab discovery — regression for empty agentSession
       reconnecting({ phase: "waiting", attempt: 0, delayMs: 1000 })
     );
 
-    // Simulate the "connected" handler — a gone session (not recovered) marks the
-    // tab exited. The handler gates on the region status (the sole reconnecting
-    // source), which the backend leaves reading `reconnecting` for a gone session.
+    // Simulate the "connected" handler — a gone session (not recovered) settles the
+    // tab session-lost. The handler gates on the region status (the sole
+    // reconnecting source); the backend folds the gone session to `sessionLost`,
+    // which `settleSessionLost` reflects (clearing the in-flight flags).
     for (const t of findAgentTerminalTabs("agent-1")) {
       if (currentSessionView()[t.id]?.status === "reconnecting") {
-        useAppStore.getState().setTerminalExited(t.id);
+        harness.transport.setSession(t.id, sessionLost());
+        useAppStore.getState().settleSessionLost(t.id);
       }
     }
 
-    // Overlay should now show "Session disconnected" (exited flag set).
-    expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
+    // The overlay now mounts from the region's terminal (session-lost) status.
+    expect(regionExited(currentSessionView()[tab.id])).toBe(true);
   });
 
   it("'connected' on initial connect does not mark tabs as exited", () => {
@@ -264,18 +270,19 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     // Simulate fixed "connected" handler — should be a no-op for this tab.
     for (const t of findAgentTerminalTabs("agent-1")) {
       if (currentSessionView()[t.id]?.status === "reconnecting") {
-        useAppStore.getState().setTerminalExited(t.id);
+        harness.transport.setSession(t.id, sessionLost());
+        useAppStore.getState().settleSessionLost(t.id);
       }
     }
 
-    const state = layoutState();
-    expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
+    // Not reconnecting, so the loop is a no-op and the region never marks it exited.
+    expect(regionExited(currentSessionView()[tab.id])).toBe(false);
     expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
   });
 
   // ── State machine: disconnected ─────────────────────────────────────────────
 
-  it("'disconnected' marks active-session tabs as exited", () => {
+  it("'disconnected' (no error) arms the backend reconnect for active-session agent tabs", () => {
     const store = layoutState();
     store.addTab("Shell", "remote-session", {
       type: "remote-session",
@@ -284,13 +291,15 @@ describe("agent-state-change tab discovery — regression for empty agentSession
     const tab = getAllTerminalTabs()[0];
     useAppStore.getState().setTabSessionId(tab.id, "session-123");
 
-    // Simulate fixed "disconnected" handler:
+    // Simulate the "disconnected" handler (no error): a dropped exit. An agent tab
+    // is always resilient, so the drop folds `session.reconnect` (region →
+    // reconnecting), arming the backend redrive rather than landing exited.
     for (const t of findAgentTerminalTabs("agent-1")) {
       if (!t.sessionId) continue;
-      useAppStore.getState().setTerminalExited(t.id);
+      useAppStore.getState().setTerminalExited(t.id, { code: null, reason: "dropped" });
     }
 
-    expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
+    expect(currentSessionView()[tab.id]?.status).toBe("reconnecting");
   });
 
   it("'disconnected' with error surfaces the error from the region (#2612/#2564)", async () => {
@@ -316,13 +325,12 @@ describe("agent-state-change tab discovery — regression for empty agentSession
       useAppStore.getState().settleBackendReconnectGaveUp(t.id, errorMsg);
     }
 
-    const state = layoutState();
-    // Local view-state mounts the overlay, and the region carries the backend-folded
-    // `failed` authority the "Reconnect failed" overlay surfaces the error from.
-    expect(state.terminalExitedTabs[tab.id]).toBe(true);
-    expect(state.terminalDisconnectErrors[tab.id]).toBe(errorMsg);
-    expect(currentSessionView()[tab.id]?.status).toBe("failed");
-    expect(currentSessionView()[tab.id]?.error).toBe(errorMsg);
+    // The region carries the backend-folded `failed` authority (#2625): it both
+    // mounts the overlay (`regionExited`) and surfaces the "Reconnect failed" error.
+    const life = currentSessionView()[tab.id];
+    expect(life?.status).toBe("failed");
+    expect(life?.error).toBe(errorMsg);
+    expect(regionExited(life)).toBe(true);
   });
 
   it("'disconnected' while reconnecting folds the region off reconnecting to failed", async () => {
@@ -350,12 +358,12 @@ describe("agent-state-change tab discovery — regression for empty agentSession
       useAppStore.getState().settleBackendReconnectGaveUp(t.id, errorMsg);
     }
 
-    const state = layoutState();
-    // The region left `reconnecting` (no stuck spinner) and the tab lands exited so
-    // the "Reconnect failed" error overlay is shown.
-    expect(currentSessionView()[tab.id]?.status).toBe("failed");
-    expect(state.terminalExitedTabs[tab.id]).toBe(true);
-    expect(state.terminalDisconnectErrors[tab.id]).toBe(errorMsg);
+    // The region left `reconnecting` (no stuck spinner) and lands `failed` + error,
+    // so `regionExited` mounts the "Reconnect failed" overlay (region-only, #2625).
+    const life = currentSessionView()[tab.id];
+    expect(life?.status).toBe("failed");
+    expect(life?.error).toBe(errorMsg);
+    expect(regionExited(life)).toBe(true);
   });
 });
 
@@ -443,11 +451,10 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
 
     simulateConnectedHandler("agent-1", ["session-123"]);
 
-    const state = layoutState();
     // Reconnecting resolved — session resumes automatically (region → connected).
     expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
-    // Must NOT be marked as exited.
-    expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
+    // Must NOT be marked as exited (region-only, #2625).
+    expect(regionExited(currentSessionView()[tab.id])).toBe(false);
   });
 
   it("marks a tab as exited when its session was NOT recovered", async () => {
@@ -462,12 +469,11 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
 
     simulateConnectedHandler("agent-1", []); // no sessions recovered
 
-    // Local view-state mounts the overlay …
-    expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
-    // … and the region carries the backend-folded `sessionLost` authority the
-    // "Session lost" overlay renders from (#2564) — never re-driven to
-    // reconnecting/dropped by the client.
+    // The region carries the backend-folded `sessionLost` authority (#2564): it
+    // mounts the overlay (`regionExited`, #2625) and renders the "Session lost"
+    // notice — never re-driven to reconnecting/dropped by the client.
     expect(currentSessionView()[tab.id]?.status).toBe("sessionLost");
+    expect(regionExited(currentSessionView()[tab.id])).toBe(true);
   });
 
   it("handles mixed recovery: resumes surviving sessions, exits dead ones", async () => {
@@ -489,10 +495,9 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
     // Only session-aaa recovered.
     simulateConnectedHandler("agent-1", ["session-aaa"]);
 
-    const state = layoutState();
     expect(currentSessionView()[tabA.id]?.status).not.toBe("reconnecting");
-    expect(state.terminalExitedTabs[tabA.id]).toBeUndefined(); // resumed
-    expect(state.terminalExitedTabs[tabB.id]).toBe(true); // not recovered
+    expect(regionExited(currentSessionView()[tabA.id])).toBe(false); // resumed
+    expect(regionExited(currentSessionView()[tabB.id])).toBe(true); // not recovered
   });
 
   it("marks all reconnecting tabs as exited when listAgentSessions fails (safe fallback)", async () => {
@@ -508,7 +513,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
     // Simulate catch branch: recoveredSessionIds is empty Set.
     simulateConnectedHandler("agent-1", []);
 
-    expect(useAppStore.getState().terminalExitedTabs[tab.id]).toBe(true);
+    expect(regionExited(currentSessionView()[tab.id])).toBe(true);
   });
 
   it("does not affect tabs that are not in reconnecting state", async () => {
@@ -524,8 +529,7 @@ describe("agent-state-change 'connected': session recovery after power cycle", (
 
     simulateConnectedHandler("agent-1", []);
 
-    const state = layoutState();
-    expect(state.terminalExitedTabs[tab.id]).toBeUndefined();
+    expect(regionExited(currentSessionView()[tab.id])).toBe(false);
     expect(currentSessionView()[tab.id]?.status).not.toBe("reconnecting");
   });
 });
