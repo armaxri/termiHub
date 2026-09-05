@@ -76,8 +76,11 @@ export type ProjectedSessionStatus =
    * `SessionStatus::SessionLost`. */
   | "sessionLost";
 
-/** Why a session left `connected` (twin of Rust `EndReason`). */
-export type ProjectedEndReason = "user" | "unexpected" | "error";
+/** Why a session left `connected` (twin of Rust `EndReason`). `"normal"` is a clean
+ * process exit (graceful logout / `exit 0`), folded server-side by the backend
+ * `session.exited` route (#2637); the overlay's variant selection never reads this
+ * field, so it is carried for faithfulness/diagnostics only. */
+export type ProjectedEndReason = "user" | "unexpected" | "error" | "normal";
 
 /** The composed auto-reconnect loop detail (twin of the ported `ReconnectState`). */
 export interface ProjectedReconnect {

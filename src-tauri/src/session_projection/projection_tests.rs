@@ -377,10 +377,12 @@ fn a_reconnect_trigger_intent_projects_the_cause_and_a_clear_removes_it() {
 }
 
 #[test]
-fn a_session_exited_intent_projects_the_exit_cause_without_touching_status() {
-    // #2615: `session.exited` records the region-owned exit cause + code the
-    // disconnect overlay derives its wording from, as a pure-metadata write that
-    // leaves the coarse lifecycle status untouched.
+fn a_clean_session_exited_intent_folds_status_disconnected() {
+    // #2637: a clean `session.exited` records the region-owned exit cause + code the
+    // disconnect overlay derives its wording from, AND folds the coarse status to
+    // terminal `disconnected` (reason `normal`) — a clean exit fires no status
+    // intent, so this is the one variant whose ended state must be made explicit
+    // here rather than inferred from `exit != null`.
     let store = seeded_store();
     let projector = Arc::new(Projector::new());
     projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
@@ -405,7 +407,46 @@ fn a_session_exited_intent_projects_the_exit_cause_without_touching_status() {
         json!("clean")
     );
     assert_eq!(cache.view["sessions"]["s2"]["exit"]["code"], json!(0));
-    // Pure metadata — status is unaffected.
+    // The clean exit folds the terminal status explicitly (#2637). Crucially it is
+    // `disconnected`, not `failed`, and carries no `error` — so the overlay renders
+    // the default clean-exit variant, not the "Reconnect failed" error variant.
+    assert_eq!(
+        cache.view["sessions"]["s2"]["status"],
+        json!("disconnected")
+    );
+    assert_eq!(cache.view["sessions"]["s2"]["endReason"], json!("normal"));
+    assert!(cache.view["sessions"]["s2"].get("error").is_none());
+    assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
+}
+
+#[test]
+fn a_dropped_session_exited_intent_is_pure_metadata() {
+    // #2637: unlike a clean exit, a dropped `session.exited` stays a pure-metadata
+    // write — its status is folded by the accompanying `session.dropped` intent, so
+    // re-folding here would double-write. The coarse status is left untouched.
+    let store = seeded_store();
+    let projector = Arc::new(Projector::new());
+    projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    let ack = dispatcher.dispatch(intent(
+        "session.exited",
+        json!({ "sessionId": "s2", "reason": "dropped" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1, "the exit cause changes the view once");
+    cache.apply(&diffs[0]);
+    assert_eq!(
+        cache.view["sessions"]["s2"]["exit"]["reason"],
+        json!("dropped")
+    );
+    // Pure metadata — status is unaffected (owned by `session.dropped`).
     assert_eq!(cache.view["sessions"]["s2"]["status"], json!("connected"));
     assert_eq!(cache.view, store.snapshot(), "cache converges on authority");
 }

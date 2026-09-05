@@ -83,6 +83,13 @@ pub enum EndReason {
     Unexpected,
     /// A connect/reconnect attempt errored out.
     Error,
+    /// The session ended by a *clean* process exit — a graceful logout / `exit 0`
+    /// / normal end of the hosted program (#2637). Distinct from [`User`](Self::User)
+    /// (an explicit user teardown request): the process ended on its own. Folded by
+    /// [`SessionLifecycleStore::set_exit`] when the recorded exit cause is
+    /// [`TerminalExitReason::Clean`], so the terminal `Disconnected` state is
+    /// explicit rather than inferred solely from `exit != null`.
+    Normal,
 }
 
 /// How a terminal session ended — the region twin of the frontend
@@ -516,11 +523,33 @@ impl SessionLifecycleStore {
     /// `session.exited` — record (or clear) how a terminal session ended (#2615):
     /// the exit cause + code the disconnect overlay derives its heading /
     /// subheading wording from. `session_id` is the region key (the frontend tab
-    /// id); `exit` is the classified cause (`None` clears it). This is a pure
-    /// metadata write — like [`set_reconnect_trigger`](Self::set_reconnect_trigger)
-    /// / [`set_backend_session_id`](Self::set_backend_session_id) it does **not**
-    /// touch `status`, the reconnect engine or the backend timer, so it never
-    /// perturbs the coarse lifecycle other readers render.
+    /// id); `exit` is the classified cause (`None` clears it).
+    ///
+    /// For a **dropped** or **killed** exit this is a pure metadata write — like
+    /// [`set_reconnect_trigger`](Self::set_reconnect_trigger) /
+    /// [`set_backend_session_id`](Self::set_backend_session_id) it only records
+    /// `exit` and does **not** touch `status`, the reconnect engine or the backend
+    /// timer: those variants already have their coarse status folded by the
+    /// dedicated [`disconnect`](Self::disconnect) (`session.disconnect`, a killed
+    /// tab → `User`) / [`dropped`](Self::dropped) (`session.dropped` → `Unexpected`)
+    /// intents that accompany their `session.exited` write, so re-folding here would
+    /// double-write.
+    ///
+    /// For a **clean** exit (#2637) this *additionally* folds the coarse status to
+    /// terminal [`Disconnected`](SessionStatus::Disconnected) with reason
+    /// [`EndReason::Normal`], resets the reconnect loop to idle and clears the
+    /// re-attach id — making the ended state explicit rather than inferred solely
+    /// from `exit != null`. A clean exit is the one variant that fires **no** status
+    /// intent (`setTerminalExited(tab, { reason: "clean" })` mirrors only
+    /// `session.exited`), so it is the one variant that needs the fold here.
+    ///
+    /// **Byte-identical overlay-variant selection (#2637).** A clean-exited tab
+    /// renders the *same* default disconnect overlay through the
+    /// `exit.reason == clean` copy branch either way: `Disconnected` is not `Failed`
+    /// (so the region-derived `effectiveDisconnectError` stays `None` — no error
+    /// variant), not `Reconnecting`, not `SessionLost`; the overlay-mount gate
+    /// `regionExited` was already true via the `exit != null` predicate and stays
+    /// true; and the overlay's variant selection never reads `end_reason`.
     ///
     /// Creates the entry lazily (mirrors the fold routes): a clean exit is folded
     /// for a tab whose live session had no prior region entry (the frontend
@@ -532,6 +561,25 @@ impl SessionLifecycleStore {
             .sessions
             .entry(session_id.to_string())
             .or_insert_with(SessionLifecycle::connecting);
+        if matches!(
+            exit,
+            Some(TerminalExit {
+                reason: TerminalExitReason::Clean,
+                ..
+            })
+        ) {
+            // A clean process exit is a graceful, expected end — fold the terminal
+            // status explicitly (#2637). See the byte-identical note above.
+            entry.status = SessionStatus::Disconnected;
+            entry.reconnect = INITIAL_RECONNECT_STATE;
+            entry.end_reason = Some(EndReason::Normal);
+            entry.error = None;
+            entry.reconnect_error = None;
+            // The process exited; there is no live backend session to re-attach to —
+            // drop the id so the region never advertises a dead session (#2457),
+            // matching every sibling `Disconnected` fold.
+            entry.backend_session_id = None;
+        }
         entry.exit = exit;
     }
 
