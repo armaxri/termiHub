@@ -135,11 +135,7 @@ export function TunnelChainPreviewDialog({
       </Field>
 
       <div className="tunnel-chain-preview__toggle">
-        <Toggle
-          id="tunnel-chain-start-now"
-          checked={startNow}
-          onCheckedChange={onStartNowChange}
-        />
+        <Toggle id="tunnel-chain-start-now" checked={startNow} onCheckedChange={onStartNowChange} />
         <label htmlFor="tunnel-chain-start-now">Start the pair now</label>
       </div>
 

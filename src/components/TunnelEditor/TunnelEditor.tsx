@@ -225,13 +225,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // It is offered only for a *saved* agent-hosted loopback parent (chaining links
   // a companion to the parent's persisted id), disabled while the host agent is
   // offline, and replaced by "Chained ✓ · reveal" once a companion exists.
-  const hostAgent = isAgentHost(host)
-    ? remoteAgents.find((a) => a.id === host.agentId)
-    : undefined;
+  const hostAgent = isAgentHost(host) ? remoteAgents.find((a) => a.id === host.agentId) : undefined;
   const agentOnline = hostAgent?.connectionState === "connected";
-  const existingCompanion = existingTunnel
-    ? findCompanion(tunnels, existingTunnel.id)
-    : undefined;
+  const existingCompanion = existingTunnel ? findCompanion(tunnels, existingTunnel.id) : undefined;
 
   // The user's saved SSH connections as SSH-via candidates for the companion —
   // its `sshConnectionId` must resolve to a saved SSH connection (the backend has
@@ -427,8 +423,8 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
                   }
                   data-testid="tunnel-editor-chain-hop"
                 >
-                  <Link2 size={12} className="tunnel-editor__reachability-action-icon" /> Chain a hop
-                  to this computer
+                  <Link2 size={12} className="tunnel-editor__reachability-action-icon" /> Chain a
+                  hop to this computer
                 </button>
               )}
             </span>

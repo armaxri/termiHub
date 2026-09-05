@@ -174,7 +174,12 @@ describe("isCompanionRedundant", () => {
     const widened = agentLocalParent({
       tunnelType: {
         type: "local",
-        config: { localHost: "0.0.0.0", localPort: 5432, remoteHost: "db.internal", remotePort: 5432 },
+        config: {
+          localHost: "0.0.0.0",
+          localPort: 5432,
+          remoteHost: "db.internal",
+          remotePort: 5432,
+        },
       },
     });
     expect(isCompanionRedundant(widened)).toBe(true);
@@ -188,7 +193,12 @@ describe("isCompanionRedundant", () => {
     const remote = agentLocalParent({
       tunnelType: {
         type: "remote",
-        config: { remoteHost: "0.0.0.0", remotePort: 8080, localHost: "127.0.0.1", localPort: 3000 },
+        config: {
+          remoteHost: "0.0.0.0",
+          remotePort: 8080,
+          localHost: "127.0.0.1",
+          localPort: 3000,
+        },
       },
     });
     expect(isCompanionRedundant(remote)).toBe(true);
