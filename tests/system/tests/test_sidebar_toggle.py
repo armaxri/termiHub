@@ -14,7 +14,10 @@ from termihub_harness import LayoutUi, SystemTest, TabsUi, TerminalUi
 pytestmark = pytest.mark.integration
 
 TOGGLE = "terminal-view-toggle-sidebar"
-ACTIVE_CLASS = "terminal-view__toolbar-btn--active"
+# The toolbar toggle renders the `--active` class off the `toolbar-action` BEM
+# block (TerminalView.tsx renamed btn→action); the old `toolbar-btn--active`
+# never matched, so the toggle read as always-inactive (#2626).
+ACTIVE_CLASS = "terminal-view__toolbar-action--active"
 
 
 class TestSidebarToggle(TerminalUi, TabsUi, LayoutUi, SystemTest):
