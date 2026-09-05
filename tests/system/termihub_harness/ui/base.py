@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
-from ..bridge import Driver
+from ..bridge import BridgeError, Driver
 
 _T = TypeVar("_T")
 
@@ -45,28 +45,53 @@ class HarnessMixin:
         return self.driver.get_attribute(test_id, "disabled") is not None
 
     def projection_region_cache(self, region: str) -> dict[str, Any]:
-        """The current projected cache of a ``region``, read through the substrate.
+        """The current projected **view document** of a ``region``.
 
         Some domains are **region-authoritative** — their state lives in a
         projection region, not in ``appStore`` — so a ``get_state("<slice>")`` read
         no longer resolves (agents since #2409, settings since #2227). This reads
         the live region cache instead: it subscribes once per region (reused across
         calls on the same test via a per-instance map) and returns the substrate's
-        current cache dict on every call, so a poll always sees the latest diff.
+        current view on every call, so a poll always sees the latest diff.
 
-        Returns ``{}`` when the region has no cache yet (never subscribed content),
+        The substrate's recorded cache is ``{version, view}`` (the
+        ``ProjectionClient`` state); callers read *document* fields
+        (``.get("experimentalFeaturesEnabled")``, ``.get("theme")``,
+        ``.get("agents")``), so this unwraps the ``view`` document and returns it —
+        never the ``{version, view}`` envelope, on which those keys would always be
+        absent.
+
+        Restart-safe: a subscription id minted against a previous app page is
+        invalidated when the app restarts (its ``ProjectionRecorder`` is gone). If
+        the cached id no longer resolves, it re-subscribes against the fresh page
+        rather than surfacing ``no projection subscription "<id>"``. (``restart_app``
+        also drops the cache proactively.)
+
+        Returns ``{}`` when the region has no view yet (never subscribed content),
         so a ``.get(...)`` on the result is always safe.
         """
         subs = getattr(self, "_projection_region_subs", None)
         if subs is None:
             subs = {}
             self._projection_region_subs = subs
+
+        def read(sub_id: str) -> dict[str, Any]:
+            cache = self.driver.projection_state(sub_id).get("cache")
+            view = cache.get("view") if isinstance(cache, dict) else None
+            return view if isinstance(view, dict) else {}
+
         sub_id = subs.get(region)
-        if sub_id is None:
-            sub_id = self.driver.projection_subscribe(region)["subscriptionId"]
-            subs[region] = sub_id
-        cache = self.driver.projection_state(sub_id).get("cache")
-        return cache if isinstance(cache, dict) else {}
+        if sub_id is not None:
+            try:
+                return read(sub_id)
+            except BridgeError:
+                # The cached subscription id was invalidated — the app restarted
+                # under us and its ProjectionRecorder no longer knows the id. Fall
+                # through and re-subscribe against the fresh page.
+                subs.pop(region, None)
+        sub_id = self.driver.projection_subscribe(region)["subscriptionId"]
+        subs[region] = sub_id
+        return read(sub_id)
 
     def open_named_context_menu(
         self,

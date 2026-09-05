@@ -193,3 +193,8 @@ class SystemTest:
         type(self).driver = self.bridge.wait_for_app(
             request_timeout=type(self).request_timeout
         )
+        # The relaunched page has a fresh ProjectionRecorder, so any projection
+        # subscription ids cached by projection_region_cache against the previous
+        # page are now invalid. Drop them so the next read re-subscribes rather
+        # than replaying a stale id (`no projection subscription "harness:…"`).
+        self._projection_region_subs = {}
