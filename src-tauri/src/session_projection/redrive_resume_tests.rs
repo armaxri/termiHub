@@ -29,7 +29,9 @@ use crate::connection::config::AgentSettings;
 use crate::session::manager::SessionManager;
 use crate::session_projection::projection::{publish_sessions, SESSION_LIFECYCLE_REGION};
 use crate::session_projection::redrive::AppReconnectRedrive;
-use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
+use crate::session_projection::store::{
+    EndReason, SessionLifecycleStore, SessionStatus, TerminalExit, TerminalExitReason,
+};
 use crate::session_projection::timer::{
     ReconnectRedrive, ReconnectScheduler, ReconnectTimerDriver,
 };
@@ -877,4 +879,170 @@ fn fully_failed_agent_break_folds_region_failed_at_the_source() {
             "{tab} arms no redrive timer for a definitively-failed session"
         );
     }
+}
+
+/// #2637: a **clean** process exit folds the coarse status to terminal
+/// `Disconnected` (reason `Normal`) server-side, reconciling the real
+/// `ReconnectTimerDriver`.
+///
+/// A clean exit is the one disconnect variant that fires no status intent
+/// (`setTerminalExited(tab, { reason: "clean" })` mirrors only `session.exited`),
+/// so before #2637 the ended state was inferred solely from `exit != null`. This
+/// drives the two steps the production `session.exited` route performs for a clean
+/// exit — `SessionLifecycleStore::set_exit` (the fold) then the timer `sync` the
+/// route calls when the exit is clean — the same store + driver wiring the sibling
+/// source-fold tests in this file use. It proves the fold makes the ended state
+/// explicit: status `Disconnected` / `Normal`, the reconnect loop reset to idle,
+/// the re-attach id dropped — and that a clean exit tears down any armed backoff
+/// window. The published region carries exactly the fields the disconnect overlay
+/// reads, with **no** `error` (so its "Reconnect failed" error variant never fires)
+/// — byte-identical overlay-variant selection to the pre-fold representation.
+#[test]
+fn clean_exit_folds_status_disconnected_and_disarms_the_timer() {
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    store.connect("tab-1");
+    store.connected("tab-1");
+    handle.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector = projection.projector.clone();
+    let store_for_publish = store.clone();
+    handle.manage(projection);
+
+    let scheduler = Arc::new(ManualScheduler::default());
+    let driver = Arc::new(ReconnectTimerDriver::new(
+        store.clone(),
+        scheduler.clone(),
+        Arc::new(move || {
+            publish_sessions(&projector, &store_for_publish);
+        }),
+    ));
+
+    // Arm the reconnect timer via a genuine drop (the `session.reconnect` route's
+    // two steps: fold Reconnecting, then sync the timer → Waiting arms the backoff).
+    store.reconnect("tab-1");
+    driver.sync("tab-1");
+    assert_eq!(
+        store.get("tab-1").map(|s| s.status),
+        Some(SessionStatus::Reconnecting)
+    );
+    assert!(
+        scheduler.armed("tab-1"),
+        "a resilient reconnect arms the backoff timer"
+    );
+
+    // A clean exit: the `session.exited` route's steps for `reason == clean` — the
+    // fold, then the timer sync the route now performs for a clean exit (#2637).
+    store.set_exit(
+        "tab-1",
+        Some(TerminalExit {
+            reason: TerminalExitReason::Clean,
+            code: Some(0),
+        }),
+    );
+    driver.sync("tab-1");
+
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(
+        s.status,
+        SessionStatus::Disconnected,
+        "a clean exit folds the coarse status explicitly (#2637)"
+    );
+    assert_eq!(s.end_reason, Some(EndReason::Normal));
+    assert_eq!(
+        s.reconnect.phase,
+        ReconnectPhase::Idle,
+        "a clean exit resets the reconnect loop to idle"
+    );
+    assert_eq!(
+        s.error, None,
+        "no error → the overlay's error variant never fires"
+    );
+    assert_eq!(s.exit.map(|e| e.reason), Some(TerminalExitReason::Clean));
+    assert!(
+        !scheduler.armed("tab-1"),
+        "a clean exit tears down any armed reconnect backoff"
+    );
+
+    // The published region carries exactly the fields the overlay's variant
+    // selection reads — the terminal `disconnected` status + the clean `exit` cause,
+    // and crucially NO `error` field and NO live re-attach id.
+    let snap = store.snapshot();
+    let entry = &snap["sessions"]["tab-1"];
+    assert_eq!(entry["status"], "disconnected");
+    assert_eq!(entry["endReason"], "normal");
+    assert_eq!(entry["exit"]["reason"], "clean");
+    assert_eq!(entry["exit"]["code"], 0);
+    assert!(
+        entry.get("error").is_none(),
+        "no error field is serialised for a clean exit"
+    );
+    assert!(
+        entry.get("sessionId").is_none(),
+        "the dead re-attach id is dropped from the region"
+    );
+}
+
+/// #2637: a **dropped** exit stays a pure metadata write in `set_exit` — its status
+/// is folded by the accompanying `session.dropped` intent, so `session.exited` must
+/// NOT re-fold it (double-write) and the route performs no timer sync for it. Only
+/// the clean variant folds status. Contrasts the clean-exit fold above.
+#[test]
+fn dropped_exit_is_pure_metadata_and_leaves_the_timer_untouched() {
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    store.connect("tab-1");
+    store.connected("tab-1");
+    handle.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector = projection.projector.clone();
+    let store_for_publish = store.clone();
+    handle.manage(projection);
+
+    let scheduler = Arc::new(ManualScheduler::default());
+    let _driver = Arc::new(ReconnectTimerDriver::new(
+        store.clone(),
+        scheduler.clone(),
+        Arc::new(move || {
+            publish_sessions(&projector, &store_for_publish);
+        }),
+    ));
+
+    // A dropped exit records only the cause: status stays `Connected` (the
+    // accompanying `session.dropped` intent owns the status fold), and — because the
+    // route performs no sync for a non-clean exit — no timer arms.
+    store.set_exit(
+        "tab-1",
+        Some(TerminalExit {
+            reason: TerminalExitReason::Dropped,
+            code: None,
+        }),
+    );
+
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(
+        s.status,
+        SessionStatus::Connected,
+        "a dropped exit does not fold status in `session.exited` (#2637)"
+    );
+    assert_eq!(s.end_reason, None);
+    assert_eq!(s.exit.map(|e| e.reason), Some(TerminalExitReason::Dropped));
+    assert!(
+        !scheduler.armed("tab-1"),
+        "a dropped exit's pure-metadata write arms no reconnect timer"
+    );
 }
