@@ -986,13 +986,12 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
   const { getElement, focusTerminal, fitTerminal, parkingRef } = useTerminalRegistry();
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
   const isViewMode = useAppStore((s) => s.terminalViewMode[tabId] ?? false);
-  // Render cut (#2205 PR-A / #2204 / #2621): the reconnect flag and the exited
-  // **mount** gate are sourced from the projected `session-lifecycle` region (both
-  // fall back to appStore when it does not mirror).
+  // Render cut (#2205 PR-A / #2204 / #2625): the reconnect flag and the exited
+  // **mount** gate are sourced purely from the projected `session-lifecycle` region.
   const lifecycle = useProjectedSessionLifecycle(tabId);
   const isReconnecting = lifecycle.reconnecting;
-  // #2621: the overlay/view-mode mount gate, re-homed off `terminalExitedTabs` onto
-  // the region's terminal statuses / `exit` metadata (OR'd with the local slice).
+  // #2625: the overlay/view-mode mount gate, derived purely from the region's
+  // terminal statuses / `exit` metadata (the per-client slice was deleted).
   const isExited = lifecycle.exited;
   const isReconnectPromptVisible = useAppStore((s) => s.terminalReconnectPrompt[tabId] ?? false);
   // Agentless resilient reconnect (#1962): the backoff countdown overlay must

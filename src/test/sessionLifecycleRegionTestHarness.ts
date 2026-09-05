@@ -164,6 +164,25 @@ export function reconnecting(
   };
 }
 
+/**
+ * A terminal `disconnected` projected lifecycle (#2625): the session ended without
+ * an error — a user-initiated disconnect (`user`) or an unexpected drop
+ * (`unexpected`) on a non-resilient tab. Makes {@link import("@/store/sessionBridge").regionExited}
+ * true so the disconnect overlay / view-mode mount gate fires, the region-only
+ * successor to seeding the deleted `terminalExitedTabs` slice.
+ */
+export function disconnected(
+  endReason: ProjectedEndReason = "user",
+  error?: string
+): ProjectedSessionLifecycle {
+  return {
+    status: "disconnected",
+    reconnect: idleReconnect(),
+    endReason,
+    ...(error !== undefined ? { error } : {}),
+  };
+}
+
 /** A terminal `failed` projected lifecycle carrying the disconnect error. */
 export function failed(
   error: string,

@@ -168,9 +168,9 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   // The auto-reconnect gate reads the same projected-with-fallback loop detail as
   // the countdown overlay itself, so the region drives which variant shows (#2204).
   const autoReconnectWaiting = useSessionAutoReconnect(tabId)?.phase === "waiting";
-  // Exit-cause render cut (#2615 PR-A): the clean/dropped heading + subheading are
-  // derived from the region's `exit` under the faithful-mirror gate (falling back
-  // to the per-client `appStore.terminalExitInfo` slice), byte-identical to before.
+  // Exit-cause render cut (#2615 / #2625): the clean/dropped heading + subheading
+  // are derived purely from the region's `exit` metadata (the per-client
+  // `appStore.terminalExitInfo` slice was deleted).
   const exitInfo = lifecycle.exitInfo;
 
   const handleReconnect = useCallback(() => {

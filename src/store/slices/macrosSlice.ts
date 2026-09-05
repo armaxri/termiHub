@@ -310,9 +310,9 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       !tab ||
       tab.contentType !== "terminal" ||
       !tab.sessionId ||
-      // #2621 mount-gate cut: region-derived exited (OR'd with the local slice).
-      regionExited(currentSessionView()[targetTabId]) ||
-      state.terminalExitedTabs[targetTabId]
+      // #2625: exited is region-only now the per-client `terminalExitedTabs` slice
+      // is deleted.
+      regionExited(currentSessionView()[targetTabId])
     ) {
       toast.error("The target terminal is not connected");
       return;
