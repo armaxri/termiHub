@@ -4,11 +4,24 @@ import { createRoot } from "react-dom/client";
 import { TerminalDisconnectOverlay } from "./TerminalDisconnectOverlay";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
+import { currentSessionView, regionExited } from "@/store/sessionBridge";
 import {
+  connected,
+  disconnected,
+  failed,
   flushSessionRegion,
   installSessionLifecycleHarness,
   reconnecting,
+  withExit,
 } from "@/test/sessionLifecycleRegionTestHarness";
+
+// The disconnect overlay renders purely from the projected `session-lifecycle`
+// region now the per-client `terminalExitedTabs` / `terminalExitInfo` /
+// `terminalDisconnectErrors` slices are deleted (#2625): the variant is chosen by
+// the region status (`failed` → "Reconnect failed", `sessionLost` → "Session
+// lost") and the region `exit` metadata (clean / dropped wording). Seed the region
+// via the harness rather than the removed slices.
+const TAB = "tab-1";
 
 // Stub lucide-react icons used in the overlay
 vi.mock("lucide-react", () => ({
@@ -18,7 +31,13 @@ vi.mock("lucide-react", () => ({
   AlertTriangle: () => null,
   Loader2: () => null,
   CheckCircle2: () => null,
+  Unplug: () => null,
+  Plus: () => null,
 }));
+
+// One region double for every test in this file; also gives the store actions a
+// transport so their optimistic `session.*` folds land in `currentSessionView()`.
+const harness = installSessionLifecycleHarness();
 
 describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
   let container: HTMLDivElement;
@@ -30,9 +49,7 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     root = createRoot(container);
 
     useAppStore.setState({
-      terminalExitedTabs: {},
       terminalRetryCounters: {},
-      terminalDisconnectErrors: {},
       terminalViewMode: {},
       terminalReconnectPrompt: {},
     });
@@ -43,19 +60,23 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     container.remove();
   });
 
-  it("renders the overlay with the disconnected heading", () => {
+  it("renders the overlay with the disconnected heading", async () => {
+    harness.transport.setSession(TAB, disconnected());
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     expect(container.querySelector("[data-testid='terminal-disconnect-overlay']")).not.toBeNull();
     expect(container.textContent).toContain("Session disconnected");
   });
 
-  it("renders reconnect and view-scrollback buttons", () => {
+  it("renders reconnect and view-scrollback buttons", async () => {
+    harness.transport.setSession(TAB, disconnected());
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     expect(
       container.querySelector("[data-testid='terminal-disconnect-reconnect-btn']")
@@ -66,12 +87,12 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     ).not.toBeNull();
   });
 
-  it("reconnect button clears exited flag and increments retry counter", () => {
-    useAppStore.setState({ terminalExitedTabs: { "tab-1": true } });
-
+  it("reconnect button increments the retry counter", async () => {
+    harness.transport.setSession(TAB, disconnected());
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     const btn = container.querySelector(
       "[data-testid='terminal-disconnect-reconnect-btn']"
@@ -80,17 +101,17 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
       btn.click();
     });
 
-    const state = useAppStore.getState();
-    expect(state.terminalExitedTabs["tab-1"]).toBeUndefined();
-    expect(state.terminalRetryCounters["tab-1"]).toBe(1);
+    // Re-driving the tab is now observed via the retry counter (the exited state
+    // clears through the region once the fresh connect dispatches `session.connect`).
+    expect(useAppStore.getState().terminalRetryCounters[TAB]).toBe(1);
   });
 
-  it("view-scrollback button enters view mode (keeps exited flag, sets viewMode)", () => {
-    useAppStore.setState({ terminalExitedTabs: { "tab-1": true }, terminalRetryCounters: {} });
-
+  it("view-scrollback button enters view mode", async () => {
+    harness.transport.setSession(TAB, disconnected());
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     const btn = container.querySelector(
       "[data-testid='terminal-disconnect-view-btn']"
@@ -100,20 +121,19 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     });
 
     const state = useAppStore.getState();
-    // Session is still marked exited — banner will show instead of overlay
-    expect(state.terminalExitedTabs["tab-1"]).toBe(true);
-    // View mode flag is set
-    expect(state.terminalViewMode["tab-1"]).toBe(true);
-    // Retry counter unchanged
-    expect(state.terminalRetryCounters["tab-1"]).toBeUndefined();
+    // View mode flag is set; the region keeps the tab exited so the banner shows.
+    expect(state.terminalViewMode[TAB]).toBe(true);
+    expect(regionExited(currentSessionView()[TAB])).toBe(true);
+    // Retry counter unchanged.
+    expect(state.terminalRetryCounters[TAB]).toBeUndefined();
   });
 
-  it("dismiss button (×) also enters view mode", () => {
-    useAppStore.setState({ terminalExitedTabs: { "tab-1": true } });
-
+  it("dismiss button (×) also enters view mode", async () => {
+    harness.transport.setSession(TAB, disconnected());
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     const btn = container.querySelector(
       "[data-testid='terminal-disconnect-dismiss-btn']"
@@ -123,8 +143,8 @@ describe("TerminalDisconnectOverlay — default (disconnected) state", () => {
     });
 
     const state = useAppStore.getState();
-    expect(state.terminalExitedTabs["tab-1"]).toBe(true);
-    expect(state.terminalViewMode["tab-1"]).toBe(true);
+    expect(regionExited(currentSessionView()[TAB])).toBe(true);
+    expect(state.terminalViewMode[TAB]).toBe(true);
   });
 });
 
@@ -138,10 +158,7 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
     root = createRoot(container);
 
     useAppStore.setState({
-      terminalExitedTabs: { "tab-1": true },
-      terminalExitInfo: {},
       terminalRetryCounters: {},
-      terminalDisconnectErrors: {},
       terminalViewMode: {},
       terminalReconnectPrompt: {},
     });
@@ -152,28 +169,29 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
     container.remove();
   });
 
-  it("shows a clean-exit heading for a normal exit (code 0)", () => {
-    useAppStore.setState({
-      terminalExitInfo: { "tab-1": { code: 0, reason: "clean" } },
-    });
-
+  it("shows a clean-exit heading for a normal exit (code 0)", async () => {
+    // A clean exit fires only `session.exited` — the region keeps its status and
+    // records the cause solely as `exit`.
+    harness.transport.setSession(TAB, withExit(connected(), { code: 0, reason: "clean" }));
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     expect(container.textContent).toContain("Session ended");
     // Must NOT read as an unexpected disconnect.
     expect(container.textContent).not.toContain("The remote process has exited");
   });
 
-  it("shows a non-zero exit-code heading and surfaces the code", () => {
-    useAppStore.setState({
-      terminalExitInfo: { "tab-1": { code: 137, reason: "dropped" } },
-    });
-
+  it("shows a non-zero exit-code heading and surfaces the code", async () => {
+    harness.transport.setSession(
+      TAB,
+      withExit(disconnected("unexpected"), { code: 137, reason: "dropped" })
+    );
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     expect(container.textContent).toContain("Session disconnected");
     expect(container.textContent).toContain("137");
@@ -181,25 +199,28 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
     expect(container.textContent).not.toContain("Session ended");
   });
 
-  it("shows a peer-drop message when the exit code is unknown (null)", () => {
-    useAppStore.setState({
-      terminalExitInfo: { "tab-1": { code: null, reason: "dropped" } },
-    });
-
+  it("shows a peer-drop message when the exit code is unknown (null)", async () => {
+    harness.transport.setSession(
+      TAB,
+      withExit(disconnected("unexpected"), { code: null, reason: "dropped" })
+    );
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     expect(container.textContent).toContain("Session disconnected");
     // Distinct wording from the clean-exit variant.
     expect(container.textContent).toContain("connection was lost");
   });
 
-  it("falls back to the generic disconnect heading when no exit info is present", () => {
-    // No terminalExitInfo entry — legacy behaviour.
+  it("falls back to the generic disconnect heading when no exit info is present", async () => {
+    // Disconnected with no recorded `exit` — the legacy generic wording.
+    harness.transport.setSession(TAB, disconnected());
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     expect(container.textContent).toContain("Session disconnected");
     expect(container.textContent).toContain("The remote process has exited");
@@ -207,12 +228,10 @@ describe("TerminalDisconnectOverlay — exit-cause branching (#1121)", () => {
 });
 
 describe("TerminalDisconnectOverlay — reconnecting state", () => {
-  // The reconnecting flag + trigger error are now sourced purely from the
-  // projected `session-lifecycle` region (#2205), so seed the region rather than
-  // the removed `appStore` slices. A `connecting`-phase reconnect drives the
-  // reconnecting-spinner variant (a `waiting` phase would show the countdown).
-  const harness = installSessionLifecycleHarness();
-
+  // The reconnecting flag + trigger error are sourced purely from the projected
+  // `session-lifecycle` region (#2205), so seed the region. A `connecting`-phase
+  // reconnect drives the reconnecting-spinner variant (a `waiting` phase would show
+  // the countdown).
   let container: HTMLDivElement;
   let root: ReturnType<typeof createRoot>;
 
@@ -222,9 +241,7 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
     root = createRoot(container);
 
     useAppStore.setState({
-      terminalExitedTabs: {},
       terminalRetryCounters: {},
-      terminalDisconnectErrors: {},
       terminalViewMode: {},
       terminalReconnectPrompt: {},
     });
@@ -236,12 +253,9 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
   });
 
   it("shows reconnecting heading and a stop button", async () => {
-    harness.transport.setSession(
-      "tab-1",
-      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 })
-    );
+    harness.transport.setSession(TAB, reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
     await flushSessionRegion();
 
@@ -251,13 +265,10 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
     expect(container.querySelector("[data-testid='terminal-disconnect-view-btn']")).toBeNull();
   });
 
-  it("stop button transitions tab from reconnecting to exited", async () => {
-    harness.transport.setSession(
-      "tab-1",
-      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 })
-    );
+  it("stop button dispatches session.cancelReconnect to the region", async () => {
+    harness.transport.setSession(TAB, reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
     await flushSessionRegion();
 
@@ -268,19 +279,22 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
       btn.click();
     });
 
-    // The reconnecting state moved off `appStore` into the region (#2205 PR-B);
-    // the surviving observable of the Stop action is the tab landing exited.
-    const state = useAppStore.getState();
-    expect(state.terminalExitedTabs["tab-1"]).toBe(true);
+    // The reconnecting state lives in the region (#2205 PR-B) and the exited state
+    // is region-only (#2625); the observable of Stop is the cancel intent dispatch.
+    expect(
+      harness.transport.dispatched.some(
+        (i) => i.kind === "session.cancelReconnect" && (i.payload as { sessionId: string }).sessionId === TAB
+      )
+    ).toBe(true);
   });
 
   it("shows trigger error when the region carries a reconnect-trigger cause for the tab", async () => {
     harness.transport.setSession(
-      "tab-1",
+      TAB,
       reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }, "Connection lost: broken pipe")
     );
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
     await flushSessionRegion();
 
@@ -291,12 +305,9 @@ describe("TerminalDisconnectOverlay — reconnecting state", () => {
   });
 
   it("does not show trigger error box when no error is set", async () => {
-    harness.transport.setSession(
-      "tab-1",
-      reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 })
-    );
+    harness.transport.setSession(TAB, reconnecting({ phase: "connecting", attempt: 1, delayMs: 0 }));
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
     await flushSessionRegion();
 
@@ -316,9 +327,7 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
     root = createRoot(container);
 
     useAppStore.setState({
-      terminalExitedTabs: { "tab-1": true },
       terminalRetryCounters: {},
-      terminalDisconnectErrors: { "tab-1": "Failed to reconnect after 10 attempts" },
       terminalViewMode: {},
       terminalReconnectPrompt: {},
     });
@@ -329,20 +338,24 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
     container.remove();
   });
 
-  it("shows error heading and the error message", () => {
+  it("shows error heading and the error message", async () => {
+    harness.transport.setSession(TAB, failed("Failed to reconnect after 10 attempts"));
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     expect(container.textContent).toContain("Reconnect failed");
     expect(container.textContent).toContain("Failed to reconnect after 10 attempts");
     expect(container.querySelector("[data-testid='terminal-disconnect-error-box']")).not.toBeNull();
   });
 
-  it("try-again button clears error and increments retry counter", () => {
+  it("try-again button increments the retry counter", async () => {
+    harness.transport.setSession(TAB, failed("Failed to reconnect after 10 attempts"));
     act(() => {
-      root.render(withTooltip(<TerminalDisconnectOverlay tabId="tab-1" />));
+      root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />));
     });
+    await flushSessionRegion();
 
     const btn = container.querySelector(
       "[data-testid='terminal-disconnect-reconnect-btn']"
@@ -351,59 +364,52 @@ describe("TerminalDisconnectOverlay — error (reconnect failed) state", () => {
       btn.click();
     });
 
-    const state = useAppStore.getState();
-    expect(state.terminalExitedTabs["tab-1"]).toBeUndefined();
-    expect(state.terminalDisconnectErrors["tab-1"]).toBeUndefined();
-    expect(state.terminalRetryCounters["tab-1"]).toBe(1);
+    // The error clears through the region on the fresh connect; the observable here
+    // is the retry counter bump.
+    expect(useAppStore.getState().terminalRetryCounters[TAB]).toBe(1);
   });
 });
 
 describe("appStore disconnect actions", () => {
   beforeEach(() => {
     useAppStore.setState({
-      terminalExitedTabs: {},
-      terminalExitInfo: {},
       intentionallyKilledSessions: {},
       terminalRetryCounters: {},
-      terminalDisconnectErrors: {},
       terminalViewMode: {},
       terminalReconnectPrompt: {},
     });
   });
 
-  it("setTerminalExited marks a tab as exited", () => {
-    useAppStore.getState().setTerminalExited("tab-42");
-    expect(useAppStore.getState().terminalExitedTabs["tab-42"]).toBe(true);
+  it("setTerminalExited marks a tab as exited in the region", () => {
+    useAppStore.getState().setTerminalExited("tab-42", { code: 0, reason: "clean" });
+    expect(regionExited(currentSessionView()["tab-42"])).toBe(true);
   });
 
-  it("setTerminalExited records exit info (code + reason) when provided (#1121)", () => {
+  it("setTerminalExited records exit info (code + reason) in the region (#1121)", () => {
     useAppStore.getState().setTerminalExited("tab-42", { code: 0, reason: "clean" });
-    const info = useAppStore.getState().terminalExitInfo["tab-42"];
-    expect(info).toEqual({ code: 0, reason: "clean" });
+    expect(currentSessionView()["tab-42"]?.exit).toEqual({ code: 0, reason: "clean" });
   });
 
   it("setTerminalExited records a non-zero exit code with a dropped reason (#1121)", () => {
     useAppStore.getState().setTerminalExited("tab-42", { code: 137, reason: "dropped" });
-    expect(useAppStore.getState().terminalExitInfo["tab-42"]).toEqual({
-      code: 137,
-      reason: "dropped",
-    });
+    expect(currentSessionView()["tab-42"]?.exit).toEqual({ code: 137, reason: "dropped" });
   });
 
   it("setTerminalExited with a killed reason enters view mode so no overlay is shown (#1121)", () => {
     useAppStore.getState().setTerminalExited("tab-42", { code: null, reason: "killed" });
     const state = useAppStore.getState();
-    // Session is marked dead...
-    expect(state.terminalExitedTabs["tab-42"]).toBe(true);
+    // Session is marked dead in the region...
+    expect(regionExited(currentSessionView()["tab-42"])).toBe(true);
     // ...but view mode is set, so `isExited && !isViewMode` is false and the
     // "unexpected disconnect" overlay never appears.
     expect(state.terminalViewMode["tab-42"]).toBe(true);
-    expect(state.terminalExitInfo["tab-42"]).toEqual({ code: null, reason: "killed" });
+    expect(currentSessionView()["tab-42"]?.exit).toEqual({ code: null, reason: "killed" });
   });
 
-  it("setTerminalExited without info leaves no exit info entry (legacy fallback) (#1121)", () => {
+  it("setTerminalExited without info records nothing (no region fold) (#1121)", () => {
     useAppStore.getState().setTerminalExited("tab-42");
-    expect(useAppStore.getState().terminalExitInfo["tab-42"]).toBeUndefined();
+    // A bare exit dispatches no intent — the region stays untouched.
+    expect(currentSessionView()["tab-42"]).toBeUndefined();
     // A non-killed exit must not force view mode.
     expect(useAppStore.getState().terminalViewMode["tab-42"]).toBeUndefined();
   });
@@ -422,45 +428,42 @@ describe("appStore disconnect actions", () => {
   });
 
   it("setTerminalExited does not affect other tabs", () => {
-    useAppStore.setState({ terminalExitedTabs: { "tab-1": true } });
-    useAppStore.getState().setTerminalExited("tab-2");
-    expect(useAppStore.getState().terminalExitedTabs["tab-1"]).toBe(true);
-    expect(useAppStore.getState().terminalExitedTabs["tab-2"]).toBe(true);
+    useAppStore.getState().setTerminalExited("tab-1", { code: 0, reason: "clean" });
+    useAppStore.getState().setTerminalExited("tab-2", { code: 0, reason: "clean" });
+    expect(regionExited(currentSessionView()["tab-1"])).toBe(true);
+    expect(regionExited(currentSessionView()["tab-2"])).toBe(true);
   });
 
-  it("setTerminalDisconnectWithError sets exited flag and error message", () => {
+  it("setTerminalDisconnectWithError folds a failed status + error into the region", () => {
     useAppStore.getState().setTerminalDisconnectWithError("tab-42", "Connection refused");
-    const state = useAppStore.getState();
-    expect(state.terminalExitedTabs["tab-42"]).toBe(true);
-    expect(state.terminalDisconnectErrors["tab-42"]).toBe("Connection refused");
+    const life = currentSessionView()["tab-42"];
+    expect(life?.status).toBe("failed");
+    expect(life?.error).toBe("Connection refused");
+    expect(regionExited(life)).toBe(true);
   });
 
-  it("dismissTerminalDisconnect enters view mode without clearing exited flag", () => {
-    useAppStore.setState({ terminalExitedTabs: { "tab-42": true } });
+  it("dismissTerminalDisconnect enters view mode without clearing the region exited state", () => {
+    useAppStore.getState().setTerminalExited("tab-42", { code: null, reason: "dropped" });
     useAppStore.getState().dismissTerminalDisconnect("tab-42");
     const state = useAppStore.getState();
-    expect(state.terminalExitedTabs["tab-42"]).toBe(true);
+    expect(regionExited(currentSessionView()["tab-42"])).toBe(true);
     expect(state.terminalViewMode["tab-42"]).toBe(true);
   });
 
   it("dismissTerminalDisconnect does not increment retry counter", () => {
-    useAppStore.setState({ terminalExitedTabs: { "tab-42": true } });
+    useAppStore.getState().setTerminalExited("tab-42", { code: null, reason: "dropped" });
     useAppStore.getState().dismissTerminalDisconnect("tab-42");
     expect(useAppStore.getState().terminalRetryCounters["tab-42"]).toBeUndefined();
   });
 
-  it("reconnectTerminal clears all disconnect state and increments retry counter", () => {
+  it("reconnectTerminal clears view mode and increments retry counter", () => {
     useAppStore.setState({
-      terminalExitedTabs: { "tab-42": true },
-      terminalDisconnectErrors: { "tab-42": "some error" },
       terminalViewMode: { "tab-42": true },
       terminalReconnectPrompt: { "tab-42": true },
     });
     useAppStore.getState().reconnectTerminal("tab-42");
 
     const state = useAppStore.getState();
-    expect(state.terminalExitedTabs["tab-42"]).toBeUndefined();
-    expect(state.terminalDisconnectErrors["tab-42"]).toBeUndefined();
     expect(state.terminalViewMode["tab-42"]).toBeUndefined();
     expect(state.terminalReconnectPrompt["tab-42"]).toBeUndefined();
     expect(state.terminalRetryCounters["tab-42"]).toBe(1);
@@ -468,19 +471,10 @@ describe("appStore disconnect actions", () => {
 
   it("reconnectTerminal increments existing retry counter", () => {
     useAppStore.setState({
-      terminalExitedTabs: { "tab-42": true },
       terminalRetryCounters: { "tab-42": 3 },
     });
     useAppStore.getState().reconnectTerminal("tab-42");
     expect(useAppStore.getState().terminalRetryCounters["tab-42"]).toBe(4);
-  });
-
-  it("reconnectTerminal does not affect other tabs", () => {
-    useAppStore.setState({
-      terminalExitedTabs: { "tab-1": true, "tab-2": true },
-    });
-    useAppStore.getState().reconnectTerminal("tab-1");
-    expect(useAppStore.getState().terminalExitedTabs["tab-2"]).toBe(true);
   });
 
   it("showTerminalReconnectPrompt sets the prompt flag", () => {

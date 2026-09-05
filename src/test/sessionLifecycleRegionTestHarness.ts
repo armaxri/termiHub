@@ -58,8 +58,13 @@ export class FakeSessionTransport implements Transport {
   private handlers: FrameHandler[] = [];
   /** How many times a client subscribed — asserts the region was actually read. */
   subscribeCount = 0;
+  /** Every intent dispatched through this transport, in order — lets a test assert
+   * an action drove the region (e.g. `session.cancelReconnect`) when the intent has
+   * no optimistic fold to observe in {@link view}. */
+  dispatched: Intent[] = [];
 
   async dispatch(intent: Intent): Promise<IntentAck> {
+    this.dispatched.push(intent);
     return { intentId: intent.intentId, status: "accepted", produced: [] };
   }
 

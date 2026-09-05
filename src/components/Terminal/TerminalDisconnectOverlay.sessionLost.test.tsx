@@ -46,8 +46,6 @@ describe("TerminalDisconnectOverlay — session-lost variant (#2512)", () => {
     transport = new FakeSessionTransport();
     setSessionTransportForTest(transport);
     useAppStore.setState({
-      terminalExitedTabs: { [TAB]: true },
-      terminalDisconnectErrors: {},
       terminalViewMode: {},
     });
   });

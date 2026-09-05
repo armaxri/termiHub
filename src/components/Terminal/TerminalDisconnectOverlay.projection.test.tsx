@@ -46,8 +46,6 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     transport = new FakeSessionTransport();
     setSessionTransportForTest(transport);
     useAppStore.setState({
-      terminalExitedTabs: { [TAB]: true },
-      terminalDisconnectErrors: {},
       terminalViewMode: {},
     });
   });
@@ -166,8 +164,7 @@ describe("TerminalDisconnectOverlay — projected session-lifecycle render cut (
     expect(errorBox?.textContent).not.toContain("local cause");
   });
 
-  it("renders the disconnect error sourced from a mirroring failed snapshot", async () => {
-    useAppStore.setState({ terminalDisconnectErrors: { [TAB]: "auth failed" } });
+  it("renders the disconnect error sourced from a failed region snapshot", async () => {
     transport.setSession(TAB, failed("auth failed"));
 
     act(() => root.render(withTooltip(<TerminalDisconnectOverlay tabId={TAB} />)));
