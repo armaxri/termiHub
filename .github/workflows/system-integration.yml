@@ -31,20 +31,55 @@ name: System Integration (nightly)
 
 on:
   schedule:
-    # 04:42 UTC daily — off the top of the hour to dodge scheduler congestion,
-    # and clear of the 03:17 core-fixtures nightly (integration-fixtures.yml) so
-    # the two Docker-heavy lanes do not contend for a runner at once.
-    - cron: "42 4 * * *"
+    # develop — daily ~05:00 UTC (:05 off the top of the hour to dodge scheduler
+    # congestion). Which branch each schedule grades is resolved by the `setup`
+    # job below from github.event.schedule.
+    - cron: "5 5 * * *"
+    # main — weekly, Wednesday ~05:00 UTC. Both crons fire on Wednesday, so that
+    # day gets a develop run (daily) AND a main run (weekly) as separate runs.
+    - cron: "5 5 * * 3"
   workflow_dispatch:
+    inputs:
+      branch:
+        description: "Which branch(es) to grade"
+        type: choice
+        options: [both, develop, main]
+        default: both
 
-# A run is self-contained (its own app build + throwaway containers); cancel an
-# in-flight run when a newer one starts on the same ref.
+# Key concurrency on the trigger so the daily-develop and weekly-main runs (which
+# overlap on Wednesday) do not cancel each other, while a redundant re-fire of the
+# same trigger still cancels the older in-flight run.
 concurrency:
-  group: system-integration-${{ github.ref }}
+  group: system-integration-${{ github.event.schedule || github.event.inputs.branch || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Resolve which branch(es) this run grades from the trigger: the daily cron →
+  # develop, the Wednesday cron → main, a manual dispatch → the chosen input
+  # (default both). Emitted as a JSON array the matrix below expands over.
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      branches: ${{ steps.pick.outputs.branches }}
+    steps:
+      - id: pick
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            case "${{ github.event.schedule }}" in
+              "5 5 * * 3") echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
+              *) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
+            esac
+          else
+            case "${{ github.event.inputs.branch }}" in
+              develop) echo 'branches=["develop"]' >> "$GITHUB_OUTPUT" ;;
+              main) echo 'branches=["main"]' >> "$GITHUB_OUTPUT" ;;
+              *) echo 'branches=["main","develop"]' >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
+
   system-integration:
+    needs: setup
     name: System-Test Harness (integration lane, ${{ matrix.os }} · ${{ matrix.branch }})
     runs-on: ${{ matrix.os }}
     # The lane builds the app (debug) and launches it once per suite against live
@@ -58,11 +93,11 @@ jobs:
       # than Linux, so a Linux failure says nothing about them and vice versa.
       fail-fast: false
       matrix:
-        # Grade both lines from one nightly: the stable branch (main) and active
-        # dev (develop). This workflow lives on the default branch; each leg
-        # checks out its matrix.branch code below, so a single scheduled run
-        # covers both. main == develop until develop advances past a release.
-        branch: [main, develop]
+        # Which branch(es) to grade is resolved per-trigger by the `setup` job:
+        # develop daily, main weekly (Wed), both on manual dispatch. Each leg
+        # checks out its matrix.branch code below. main == develop until develop
+        # advances past a release.
+        branch: ${{ fromJSON(needs.setup.outputs.branches) }}
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     env:
