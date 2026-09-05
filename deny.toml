@@ -31,19 +31,13 @@ unmaintained = "none"
 
 # RUSTSEC advisories accepted as a conscious release sign-off. These mirror the
 # cargo-audit ignore list (.cargo/audit.toml) so the two tools agree; each has a
-# documented rationale there and is tracked for removal via #1037.
+# documented rationale there.
 #
 # - RUSTSEC-2023-0071: Marvin timing sidechannel in `rsa` (transitive via
 #   ssh-key). We only extract raw RSA key components and rebuild via OpenSSL;
 #   we never decrypt through this crate, so the sidechannel does not apply.
-# - RUSTSEC-2026-0194 / RUSTSEC-2026-0195: DoS advisories in `quick-xml` <0.41,
-#   transitive via plist <- tauri-utils <- tauri. `plist` only parses tauri's
-#   own bundle metadata, never external input; blocked until tauri adopts the
-#   patched quick-xml upstream.
 ignore = [
     "RUSTSEC-2023-0071",
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
 ]
 
 [licenses]
