@@ -13,6 +13,10 @@
 #     git source fails CI (#2096).
 # cargo-audit (also in the Security Audit job) covers RUSTSEC *vulnerability*
 # advisories.
+#
+# A yanked TRANSITIVE crate reds every open PR here at once. It is auto-mitigated
+# by the weekly `cargo update` chore (.github/workflows/cargo-update-lockfile.yml)
+# and, when one slips through, fixed via the runbook: docs/ci-yanked-crate-runbook.md.
 
 [advisories]
 # A yanked crate in the lockfile fails CI. This is the headline gate: it is how
