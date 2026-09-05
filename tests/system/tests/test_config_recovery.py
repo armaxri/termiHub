@@ -133,7 +133,11 @@ class TestConfigRecovery(SidebarUi, ConnectionsUi, ConfigRecoveryUi, SystemTest)
         assert any("corrupt" in w.get("message", "").lower() for w in warnings)
         assert self.backup_path(CONNECTIONS).exists()
         assert json.loads(self.read_config(CONNECTIONS))["children"] == []
-        assert self.driver.get_state("connections") == []
+        # connections is region-authoritative since the Phase-5 reducer removal;
+        # read the "connections" list off the connections projection region
+        # (ConnectionsView twin, {"folders": [...], "connections": [...]}) rather
+        # than the removed get_state("connections") slice (#2626).
+        assert self.projection_region_cache("connections").get("connections", []) == []
 
         # MT-RECOVERY-05: the recovery dialog is shown and can be dismissed.
         self.dismiss_recovery_dialog()
