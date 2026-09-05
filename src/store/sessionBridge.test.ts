@@ -523,7 +523,7 @@ describe("exit folds — synchronous mount-gate (#2621)", () => {
     const life = currentSessionView()["tab-4"];
     expect(life?.exit).toEqual({ reason: "clean", code: 0 });
     expect(regionExited(life)).toBe(true);
-    expect(transport.dispatched.at(-1)?.kind).toBe("session.exited");
+    expect(transport.dispatched[transport.dispatched.length - 1]?.kind).toBe("session.exited");
   });
 
   it("reconciles the exit fold against the authoritative diff without a flip", async () => {
