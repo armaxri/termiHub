@@ -32,6 +32,7 @@
 //! | `session.reconnectFailed`   | `{ sessionId, error? }`     | the attempt failed (back off or give up)       |
 //! | `session.cancelReconnect`   | `{ sessionId }`             | user stopped the retry loop                    |
 //! | `session.reconnectTrigger`  | `{ sessionId, error? }`     | record/clear the reconnect-trigger cause       |
+//! | `session.exited`            | `{ sessionId, reason, code? }` | record how the session ended (exit cause) |
 //! | `session.remove`            | `{ sessionId }`             | session/tab gone; drop it from the region      |
 //!
 //! The transient agent-transport-break reconnecting fold is **not** a client
@@ -56,7 +57,7 @@ use termihub_core::reconnect_backoff::ReconnectPhase;
 use crate::commands::projection::ProjectionState;
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 use crate::session::manager::SessionManager;
-use crate::session_projection::store::SessionLifecycleStore;
+use crate::session_projection::store::{SessionLifecycleStore, TerminalExit, TerminalExitReason};
 use crate::session_projection::timer::ReconnectTimerDriver;
 
 /// The projection region id for the session-lifecycle domain (shared, per Open
@@ -351,6 +352,16 @@ pub fn register_session_intents(registry: &mut HandlerRegistry, app_handle: AppH
         Ok(publish_sessions(projector, &store))
     });
 
+    let handle = app_handle.clone();
+    registry.route("session.exited", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let id = required_str(intent, "sessionId")?;
+        store.set_exit(&id, Some(required_exit(intent)?));
+        // Pure metadata write (like `session.reconnectTrigger`): does not touch
+        // status / the reconnect engine, so no `sync_timer`.
+        Ok(publish_sessions(projector, &store))
+    });
+
     let handle = app_handle;
     registry.route("session.remove", move |intent, projector| {
         let store = store_of(&handle)?;
@@ -422,6 +433,26 @@ fn optional_str(intent: &Intent, key: &str) -> Option<String> {
         .get(key)
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+/// Extract the terminal exit cause from a `session.exited` payload (#2615):
+/// `reason` is a required lowercase enum string, `code` an optional integer
+/// (absent or JSON `null` → `None`, matching the frontend `code: number | null`).
+fn required_exit(intent: &Intent) -> Result<TerminalExit, (String, String)> {
+    let reason = match intent.payload.get("reason").and_then(Value::as_str) {
+        Some("clean") => TerminalExitReason::Clean,
+        Some("dropped") => TerminalExitReason::Dropped,
+        Some("killed") => TerminalExitReason::Killed,
+        _ => {
+            return Err((
+                "bad_payload".to_string(),
+                "missing or invalid 'reason' (expected clean|dropped|killed)".to_string(),
+            ))
+        }
+    };
+    // `code` is optional: absent or explicit `null` both mean "no code known".
+    let code = intent.payload.get("code").and_then(Value::as_i64);
+    Ok(TerminalExit { reason, code })
 }
 
 #[cfg(test)]
