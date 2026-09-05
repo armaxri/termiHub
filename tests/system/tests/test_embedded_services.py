@@ -214,8 +214,19 @@ class TestEmbeddedServices(
 
         # Quick-share switches to the Services sidebar and starts a server.
         self.wait(lambda: self.driver.exists(self.SIDEBAR), what="the Services sidebar")
+        # Select the server just shared by the unique folder it serves — NOT
+        # ``servers()[0]``. The per-test teardown is best-effort, so a server
+        # created by an earlier quick-share case can linger in the store; picking
+        # index 0 then reads that stale server, and a Share-via-FTP/TFTP assertion
+        # sees the leftover HTTP server's ``serverType`` instead of the one just
+        # shared. Matching on the folder basename (``unique_name`` per test) ties
+        # the result to this test's own share regardless of any leftover.
         server = self.wait(
-            lambda: self.servers()[0] if self.servers() else None, what="a shared server"
+            lambda: next(
+                (s for s in self.servers() if Path(s.get("rootDirectory") or "").name == folder),
+                None,
+            ),
+            what="the shared server",
         )
         self.wait(lambda: self.server_running(server["id"]), what="the shared server to start")
         return server
