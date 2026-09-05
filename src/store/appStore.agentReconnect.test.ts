@@ -134,16 +134,20 @@ describe("reconnectTerminal connect-deadline reconciliation (#2476)", () => {
 });
 
 describe("settleBackendReconnectGaveUp (#2476)", () => {
-  it("clears the loop + connect flags and shows the disconnect overlay with the error", () => {
+  it("clears the in-flight connect flags (the exited + error state is region-folded server-side)", () => {
     const tabId = makeAgentTab();
     // Simulate a live backend-driven reconnect: a fresh connect deadline armed.
     useAppStore.getState().reconnectTerminal(tabId);
 
     useAppStore.getState().settleBackendReconnectGaveUp(tabId, "agent unreachable");
 
+    // #2625: the give-up (region → failed + error) is folded by the backend
+    // `agent_io_task`, not by this action — it only clears the per-client in-flight
+    // connect flags so no competing overlay lingers.
     const state = useAppStore.getState();
     expect(state.terminalConnectDeadline[tabId]).toBeUndefined();
-    expect(state.terminalExitedTabs[tabId]).toBe(true);
-    expect(state.terminalDisconnectErrors[tabId]).toBe("agent unreachable");
+    expect(state.terminalWaitingForAgent[tabId]).toBeUndefined();
+    expect(state.terminalAutoRetryCount[tabId]).toBeUndefined();
+    expect(state.terminalSpawnErrors[tabId]).toBeUndefined();
   });
 });

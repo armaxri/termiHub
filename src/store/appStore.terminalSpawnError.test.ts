@@ -67,32 +67,21 @@ describe("terminal spawn error state", () => {
   it("reconnectTerminal arms a fresh connect deadline for the retry", () => {
     // The connecting overlay is sourced from the region now (#2205 PR-B); the
     // surviving synchronous signal is the fresh wall-clock connect deadline.
-    useAppStore.getState().setTerminalExited("tab-1");
     useAppStore.getState().reconnectTerminal("tab-1");
     expect(useAppStore.getState().terminalConnectDeadline["tab-1"]?.kind).toBe("connecting");
   });
 
-  it("reconnectTerminal clears terminalExitedTabs", () => {
-    useAppStore.getState().setTerminalExited("tab-1");
-    useAppStore.getState().reconnectTerminal("tab-1");
-    expect(useAppStore.getState().terminalExitedTabs["tab-1"]).toBeUndefined();
-  });
-
+  // The exited / disconnect-error state is region-only now (#2625): it clears when
+  // the fresh connect dispatches `session.connect`, not via `reconnectTerminal`
+  // itself, so those slice-clear assertions are gone. `reconnectTerminal` still
+  // clears the per-client spawn-error flag.
   it("reconnectTerminal clears terminalSpawnErrors so stale errors do not surface", () => {
-    useAppStore.getState().setTerminalExited("tab-1");
     useAppStore.getState().setTerminalSpawnError("tab-1", "stale error");
     useAppStore.getState().reconnectTerminal("tab-1");
     expect(useAppStore.getState().terminalSpawnErrors["tab-1"]).toBeUndefined();
   });
 
-  it("reconnectTerminal clears terminalDisconnectErrors", () => {
-    useAppStore.getState().setTerminalDisconnectWithError("tab-1", "disconnect error");
-    useAppStore.getState().reconnectTerminal("tab-1");
-    expect(useAppStore.getState().terminalDisconnectErrors["tab-1"]).toBeUndefined();
-  });
-
   it("reconnectTerminal increments terminalRetryCounters to trigger Terminal effect re-run", () => {
-    useAppStore.getState().setTerminalExited("tab-1");
     useAppStore.getState().reconnectTerminal("tab-1");
     expect(useAppStore.getState().terminalRetryCounters["tab-1"]).toBe(1);
     useAppStore.getState().setTerminalExited("tab-1");

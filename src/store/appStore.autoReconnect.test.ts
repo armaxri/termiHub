@@ -211,8 +211,8 @@ describe("appStore — resilient reconnect is region-authoritative (#1962 / #220
     const kinds = reconnectKinds(fake, tabId);
     expect(kinds).toContain("session.dropped");
     expect(kinds).not.toContain("session.reconnect");
-    // The standard disconnect overlay path still applies.
-    expect(useAppStore.getState().terminalExitedTabs[tabId]).toBe(true);
+    // The `session.dropped` fold lands the region `disconnected` → exited server-side
+    // (region-only now, #2625); the observable here is the dropped intent.
   });
 
   it("does NOT reconnect on a clean exit or a user kill", async () => {
@@ -242,7 +242,7 @@ describe("appStore — resilient reconnect is region-authoritative (#1962 / #220
     expect(useAppStore.getState().terminalRetryCounters[tabId] ?? 0).toBe(retryBefore + 1);
   });
 
-  it("cancel dispatches session.cancelReconnect and marks the tab exited", async () => {
+  it("cancel dispatches session.cancelReconnect (the region folds it to disconnected server-side)", async () => {
     const tabId = makeSshTab(true);
     useAppStore.getState().setTerminalExited(tabId, { code: null, reason: "dropped" });
     await flush();
@@ -251,8 +251,9 @@ describe("appStore — resilient reconnect is region-authoritative (#1962 / #220
     useAppStore.getState().cancelAutoReconnect(tabId);
     await flush();
 
+    // #2625: the exited state is region-only; the backend folds
+    // `session.cancelReconnect` → disconnected, so the observable here is the intent.
     expect(reconnectKinds(fake, tabId)).toContain("session.cancelReconnect");
-    expect(useAppStore.getState().terminalExitedTabs[tabId]).toBe(true);
   });
 
   it("cancel is a no-op when the region shows no active reconnect", async () => {
