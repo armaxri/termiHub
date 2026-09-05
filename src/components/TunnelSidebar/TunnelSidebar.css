@@ -124,3 +124,67 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Chained-hop pair (#2597) ─────────────────────────────────────────────── */
+
+/* A companion row nests under its parent. */
+.tunnel-item--nested {
+  padding-left: var(--spacing-lg);
+}
+
+.tunnel-item__companion-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+.tunnel-item__link-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+/* Combined "Linked · …" status chip on the parent row. */
+.tunnel-item__pair {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-secondary);
+}
+
+.tunnel-item__pair[data-warn="true"] {
+  color: var(--color-warning);
+}
+
+.tunnel-item__pair-icon {
+  flex-shrink: 0;
+}
+
+/* Redundant-hop notice + inline degraded fix. */
+.tunnel-item__redundant,
+.tunnel-item__degraded-fix {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--color-warning);
+}
+
+.tunnel-item__redundant-icon,
+.tunnel-item__degraded-icon {
+  flex-shrink: 0;
+}
+
+.tunnel-item__inline-action {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-color);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.tunnel-item__inline-action:hover {
+  color: var(--text-primary);
+}
