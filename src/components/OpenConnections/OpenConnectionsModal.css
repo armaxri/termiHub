@@ -63,6 +63,11 @@
   background: var(--bg-hover);
 }
 
+/* A chained companion row (#2597) nested under its parent tunnel. */
+.oc-row--indent {
+  margin-left: var(--spacing-lg);
+}
+
 .oc-row__icon {
   color: var(--text-muted);
   flex-shrink: 0;

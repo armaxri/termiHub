@@ -17,6 +17,7 @@
 
 import type { PortValue, TunnelConfig, TunnelStatus } from "@/types/tunnel";
 import { THIS_COMPUTER } from "@/types/tunnel";
+import { isAgentHost, isLoopbackBind, resolveTunnelHost } from "@/utils/tunnelHost";
 
 /** The loopback listen endpoint (`host:port`) a parent forward exposes on its host. */
 interface ListenEndpoint {
@@ -146,4 +147,119 @@ export function combinedPairStatus(
       // disconnected / error while the parent is up → localhost is broken.
       return "degraded";
   }
+}
+
+/**
+ * The short "Linked · …" label the UI shows for a chained pair's combined
+ * {@link PairStatus}. `none` (an unchained parent) has no pair label, so the
+ * caller renders the plain single-tunnel status instead — hence the empty
+ * string.
+ */
+export function pairStatusLabel(status: PairStatus): string {
+  switch (status) {
+    case "connected":
+      return "Linked · connected";
+    case "connecting":
+      return "Linked · connecting";
+    case "degraded":
+      return "Linked · degraded";
+    case "down":
+      return "Linked · down";
+    case "none":
+      return "";
+  }
+}
+
+/** A candidate saved SSH connection for the companion's SSH-via selection. */
+export interface SshViaCandidate {
+  /** The saved connection's id — becomes the companion's `sshConnectionId`. */
+  id: string;
+  /** The SSH target host of the saved connection (`config.config.host`). */
+  host: string;
+}
+
+/**
+ * Pick the saved SSH connection that best reaches an agent, for the companion's
+ * derived SSH-via (concept Open Design Decision #2).
+ *
+ * An agent's SSH transport is inline in its `RemoteAgentConfig` and is **not**
+ * backed by a saved SSH connection id, so the companion — a normal desktop-hosted
+ * `-L` whose `sshConnectionId` must resolve to a saved SSH connection — cannot
+ * reference the agent directly. We instead match a saved SSH connection whose
+ * target host equals the agent's SSH host (the desktop→agent hop the companion
+ * needs), so the derived via is silent when an obvious match exists; the UI still
+ * lets the user override it in the preview. Falls back to the first candidate
+ * when no host matches, and to `undefined` when the user has no SSH connections
+ * (chaining is then blocked with guidance to create one first).
+ *
+ * @param candidates - the user's saved SSH connections (id + target host).
+ * @param agentHost - the host agent's SSH host (`RemoteAgentConfig.host`).
+ */
+export function bestSshViaForAgent(
+  candidates: SshViaCandidate[],
+  agentHost: string | undefined
+): string | undefined {
+  if (candidates.length === 0) return undefined;
+  if (agentHost) {
+    const target = agentHost.trim().toLowerCase();
+    const match = candidates.find((c) => c.host.trim().toLowerCase() === target);
+    if (match) return match.id;
+  }
+  return candidates[0].id;
+}
+
+/**
+ * Whether a chained companion has become **redundant** because its parent no
+ * longer sits in the reachability trap the companion remediates (concept edge
+ * cases "User widens the parent bind later" / "Parent host changed to This
+ * computer"). A companion is redundant when its parent is either:
+ *
+ * - **hosted on this computer** — a desktop-hosted parent already gives
+ *   `localhost:PORT`, so the desktop hop adds nothing; or
+ * - **widened** — its `-L`/`-D` listen bind is no longer loopback, so the
+ *   desktop reaches it directly at the agent's address and the companion's target
+ *   (the old loopback socket) is wrong.
+ *
+ * A `-R` remote-forward parent is never chained, so it is never flagged.
+ */
+export function isCompanionRedundant(parent: TunnelConfig): boolean {
+  if (!isAgentHost(resolveTunnelHost(parent))) return true;
+  const t = parent.tunnelType;
+  if (t.type === "remote") return true;
+  return !isLoopbackBind(t.config.localHost);
+}
+
+/** A tunnel and, when it is a chained companion, the parent it nests under. */
+export interface TunnelRow {
+  tunnel: TunnelConfig;
+  /** The parent this companion nests under, or `undefined` for a top-level row. */
+  parent?: TunnelConfig;
+}
+
+/**
+ * Order tunnels for display so each chained **companion renders directly beneath
+ * its parent** (the nested-pair layout from the concept), leaving every other
+ * tunnel in its original position.
+ *
+ * Parents (and unchained tunnels) keep their input order; a companion is spliced
+ * in immediately after its parent and marked with that parent so the row can
+ * indent it and show the link badge + combined status. A companion whose parent
+ * is missing (a dangling link) falls back to a top-level row at the end, so it is
+ * never silently dropped.
+ */
+export function orderTunnelRows(tunnels: TunnelConfig[]): TunnelRow[] {
+  const byId = new Map(tunnels.map((t) => [t.id, t]));
+  const companionByParent = new Map<string, TunnelConfig>();
+  for (const t of tunnels) {
+    if (t.companionOf) companionByParent.set(t.companionOf, t);
+  }
+
+  const rows: TunnelRow[] = [];
+  for (const t of tunnels) {
+    if (isCompanion(t) && byId.has(t.companionOf as string)) continue; // placed under its parent
+    rows.push({ tunnel: t });
+    const companion = companionByParent.get(t.id);
+    if (companion) rows.push({ tunnel: companion, parent: t });
+  }
+  return rows;
 }
