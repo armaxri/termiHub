@@ -80,10 +80,7 @@ vi.mock("@/services/api", () => ({
 
 import { useAppStore } from "./appStore";
 import { listPlugins as apiListPlugins } from "@/services/api";
-import {
-  loadedFrontendPluginIds,
-  resetLoadedFrontendPlugins,
-} from "@/plugins/frontendPlugins";
+import { loadedFrontendPluginIds, resetLoadedFrontendPlugins } from "@/plugins/frontendPlugins";
 import { __emitSettingsViewForTest, currentSettingsView } from "@/store/settingsBridge";
 import {
   installSettingsHarness,
