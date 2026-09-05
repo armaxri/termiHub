@@ -2,10 +2,20 @@
 
 The bridge addresses elements by ``data-testid``, but connection items and
 folders carry **UUID** testids a test cannot know up front. These helpers resolve
-a stable *name* to its element by reading the Zustand store through ``getState``
-— the bridge-native analog of the WebdriverIO suites' find-by-title lookup. They
-are plain functions (no polling, no app) so they stay unit-testable against the
+a stable *name* to its element by reading the connections-tree state — the
+bridge-native analog of the WebdriverIO suites' find-by-title lookup. They are
+plain functions (no polling, no app) so they stay unit-testable against the
 ``StubDriver`` in ``test_ui_helpers.py``.
+
+The connections domain is **region-authoritative** since the Phase-5 reducer
+removal: ``appStore`` no longer holds a ``connections`` / ``folders`` slice, so a
+``get_state("connections")`` / ``get_state("folders")`` read no longer resolves.
+The data now lives in the ``connections`` projection region, whose cache is the
+``ConnectionsView`` twin — a single region holding both lists,
+``{"folders": [...], "connections": [...]}`` (``ConnectionsStore::snapshot`` /
+``src/store/connectionsBridge.ts``). These lookups read that region cache instead,
+the same way :meth:`HarnessMixin.projection_region_cache` does for the ``settings``
+/ ``agents`` domains.
 """
 
 from __future__ import annotations
@@ -14,14 +24,40 @@ from typing import Any, Optional
 
 from ..bridge import BridgeError, Driver
 
+#: Projection region id for the connections-tree domain (twin of the frontend
+#: ``CONNECTIONS_REGION`` const in ``src/store/connectionsBridge.ts``). Its cache
+#: is the ``ConnectionsView``: both the folder list and the saved-connection list
+#: live in this one region, keyed ``"folders"`` / ``"connections"``.
+CONNECTIONS_REGION = "connections"
+
 
 # ── State lookups (no polling) ─────────────────────────────────────────────────
-def _state_list(driver: Driver, path: str) -> list[dict[str, Any]]:
-    """Read a top-level array of objects from the store, or ``[]`` if unresolved."""
-    try:
-        value = driver.get_state(path)
-    except BridgeError:
-        return []
+def _region_cache(driver: Driver, region: str) -> dict[str, Any]:
+    """The current projected cache dict of a ``region``, read through the substrate.
+
+    Free-function twin of :meth:`HarnessMixin.projection_region_cache` (the
+    lookups take a bare :class:`Driver`, not a ``HarnessMixin`` ``self``). The
+    subscription is memoised on the driver so a polled lookup reuses one
+    subscription for the whole app lifetime instead of leaking one per poll; the
+    driver is recreated with the app (and on restart), so the memo never outlives
+    its subscription. Returns ``{}`` when the region has no cache yet, so a
+    ``.get(...)`` on the result is always safe.
+    """
+    subs = getattr(driver, "_lookup_region_subs", None)
+    if subs is None:
+        subs = {}
+        driver._lookup_region_subs = subs  # type: ignore[attr-defined]
+    sub_id = subs.get(region)
+    if sub_id is None:
+        sub_id = driver.projection_subscribe(region)["subscriptionId"]
+        subs[region] = sub_id
+    cache = driver.projection_state(sub_id).get("cache")
+    return cache if isinstance(cache, dict) else {}
+
+
+def _region_list(driver: Driver, region: str, key: str) -> list[dict[str, Any]]:
+    """Read a top-level array of objects from a region's cache, or ``[]``."""
+    value = _region_cache(driver, region).get(key)
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
@@ -29,7 +65,7 @@ def _state_list(driver: Driver, path: str) -> list[dict[str, Any]]:
 
 def connections(driver: Driver) -> list[dict[str, Any]]:
     """Every saved connection in the store (id, name, config, …)."""
-    return _state_list(driver, "connections")
+    return _region_list(driver, CONNECTIONS_REGION, "connections")
 
 
 def find_connection(driver: Driver, name: str) -> Optional[dict[str, Any]]:
@@ -39,7 +75,7 @@ def find_connection(driver: Driver, name: str) -> Optional[dict[str, Any]]:
 
 def folders(driver: Driver) -> list[dict[str, Any]]:
     """Every connection folder in the store (id, name, parentId, …)."""
-    return _state_list(driver, "folders")
+    return _region_list(driver, CONNECTIONS_REGION, "folders")
 
 
 def find_folder(driver: Driver, name: str) -> Optional[dict[str, Any]]:
