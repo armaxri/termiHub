@@ -289,18 +289,32 @@ jobs:
         # Sharded with pytest-xdist (#2639): once the #2626 harness fixes let the
         # ~82 previously-fast-failing suites actually run their real
         # connection/terminal flows, the serial macOS lane overflowed the 120-min
-        # ceiling (cancelled at ~43%). `-n auto` fans the suites across one worker
-        # per core; the work is dominated by app-launch settle / terminal-output
-        # waits rather than CPU, so it parallelises well past a naive core-count
-        # estimate (tune the count here if a runner over-subscribes). `--dist
-        # loadscope` groups by test class so each class-scoped app fixture stays
-        # on a single worker — one app launch per class, exactly as serial, just
-        # fanned across workers. The Docker-fixture suites still self-skip per
-        # worker. Linux keeps running serially (above): its fixtures publish fixed
-        # host ports (2201/2203/…) that parallel workers would contend for.
+        # ceiling (cancelled at ~43%), so the suites are fanned across xdist
+        # workers. `--dist loadscope` groups by test class so each class-scoped app
+        # fixture stays on a single worker — one app launch per class, exactly as
+        # serial, just fanned across workers. The Docker-fixture suites still
+        # self-skip per worker. Linux keeps running serially (above): its fixtures
+        # publish fixed host ports (2201/2203/…) that parallel workers would
+        # contend for.
+        #
+        # Worker count is a FIXED per-OS cap, not `-n auto` (#2660). Each worker
+        # launches a full Tauri app, so `-n auto` (one worker per core) over-
+        # subscribed the ~3-core macos-latest runner: 3–4 concurrent apps thrashed
+        # CPU/memory and the 30s per-op UI waits timed out under load — run
+        # 33999534618 lost 9 previously-passing tests to `timed out waiting for …`
+        # while still taking ~110 of the 120 min. The cap follows a "cores − 1"
+        # rule so one core stays free for the OS + the pytest controller + app
+        # coordination: macos-latest (~3 cores) → 2 workers; windows-latest
+        # (~4 cores) → 3 workers. That removes the per-app contention (killing the
+        # load flakes) with only a modest worker reduction from `-n auto`
+        # (macOS 3→2, Windows 4→3), so wall-time stays under the ceiling — on macOS
+        # dropping the thrashing also speeds each op, offsetting the lost worker.
+        # Re-tune these if a runner's core count changes or a lane over-subscribes.
         if: runner.os != 'Linux'
         shell: bash
-        run: ./tests/system/pytest.sh -m integration -n auto --dist loadscope -v --durations=25
+        env:
+          TERMIHUB_XDIST_WORKERS: ${{ matrix.os == 'windows-latest' && '3' || '2' }}
+        run: ./tests/system/pytest.sh -m integration -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25
 
       - name: Dump container logs on failure
         # Linux only — the other legs bring up no containers.
