@@ -20,4 +20,8 @@ pub mod ssh_key_validate;
 pub mod test_bridge;
 pub mod version;
 pub mod vscode;
+/// Linux-only WebKitGTK webview console + page-load diagnostics for the full-app
+/// test bridge (#2646).
+#[cfg(target_os = "linux")]
+pub mod webview_console;
 pub mod x11_detect;

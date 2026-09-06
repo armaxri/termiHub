@@ -453,6 +453,17 @@ pub fn run() {
                 // macOS-only, test-bridge-only.
                 #[cfg(target_os = "macos")]
                 utils::macos_unthrottle::engage_test_bridge_unthrottle();
+
+                // On Linux (the headless CI leg), route the WebKitGTK webview's
+                // JS console output + page-load lifecycle into the captured app
+                // log, so a bridge-timeout run shows whether the page's bridge
+                // bootstrap failed to load, threw, or silently never dialed
+                // (#2646). Linux-only + test-bridge-only; other platforms and
+                // production launches compile/reach none of it.
+                #[cfg(target_os = "linux")]
+                if let Some(window) = app.get_webview_window("main") {
+                    utils::webview_console::attach_console_capture(&window);
+                }
             }
 
             let mut recovery_warnings: Vec<RecoveryWarning> = Vec::new();
