@@ -35,6 +35,7 @@ from typing import Callable, ClassVar, Optional, TypeVar
 
 import pytest
 
+from .artifacts import ARTIFACT_ROOT, sanitize_nodeid
 from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver
 from .display import ensure_local_display
 from .orchestrator import AppInstance
@@ -43,6 +44,32 @@ T = TypeVar("T")
 
 DEFAULT_WAIT_TIMEOUT = 20.0
 DEFAULT_WAIT_INTERVAL = 0.25
+
+
+def _preserve_setup_failure_log(request: pytest.FixtureRequest, app: AppInstance) -> None:
+    """Surface the app log when the class-scoped app fixture fails to come up.
+
+    On a launch/connect failure the fixture is about to call ``app.cleanup()``,
+    which deletes the config dir *and its ``app.log``* — and the failure-artifact
+    hook in ``conftest`` only fires for ``call``-phase failures, so a setup-phase
+    launch failure would otherwise leave **no captured app output at all** (the
+    ubuntu WebKitGTK launch wall in #2646). Echo the merged app stdout/stderr to
+    the job log (greppable banner) and persist a copy into the failure-artifact
+    bundle so it survives cleanup and rides the workflow's artifact upload.
+    Best-effort: capture must never mask the original launch failure.
+    """
+    try:
+        log_text = app.read_log()
+    except Exception:  # noqa: BLE001 — diagnostics must never raise
+        log_text = ""
+    print("\n[app-setup-failure] app did not become drivable; captured app log follows:")
+    print(log_text or "[app-setup-failure] (app log was empty)")
+    try:
+        dest = ARTIFACT_ROOT / sanitize_nodeid(request.node.nodeid)
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "app.log").write_text(log_text, encoding="utf-8")
+    except Exception:  # noqa: BLE001 — best-effort persistence
+        pass
 
 
 def unique_name(purpose: str) -> str:
@@ -117,6 +144,9 @@ class SystemTest:
             app.start(bridge.port)
             driver = bridge.wait_for_app(request_timeout=request.cls.request_timeout)
         except BaseException:
+            # Capture the app log BEFORE cleanup() deletes it (#2646): a setup-phase
+            # launch failure never reaches the call-phase failure-artifact hook.
+            _preserve_setup_failure_log(request, app)
             bridge.close()
             app.cleanup()
             raise
