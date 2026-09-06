@@ -46,24 +46,41 @@ DEFAULT_WAIT_TIMEOUT = 20.0
 DEFAULT_WAIT_INTERVAL = 0.25
 
 
-def _preserve_setup_failure_log(request: pytest.FixtureRequest, app: AppInstance) -> None:
-    """Surface the app log when the class-scoped app fixture fails to come up.
+def _preserve_app_log(
+    request: pytest.FixtureRequest,
+    app: AppInstance,
+    *,
+    banner: str,
+    what: str,
+) -> None:
+    """Surface + persist the app log when the class-scoped app fixture fails.
 
-    On a launch/connect failure the fixture is about to call ``app.cleanup()``,
-    which deletes the config dir *and its ``app.log``* — and the failure-artifact
-    hook in ``conftest`` only fires for ``call``-phase failures, so a setup-phase
-    launch failure would otherwise leave **no captured app output at all** (the
-    ubuntu WebKitGTK launch wall in #2646). Echo the merged app stdout/stderr to
-    the job log (greppable banner) and persist a copy into the failure-artifact
-    bundle so it survives cleanup and rides the workflow's artifact upload.
-    Best-effort: capture must never mask the original launch failure.
+    The fixture is about to call ``app.cleanup()``, which deletes the config dir
+    *and its ``app.log``* — and the failure-artifact hook in ``conftest`` only
+    fires for ``call``-phase failures, so a setup-phase failure would otherwise
+    leave **no captured app output at all** (the ubuntu WebKitGTK wall in #2646).
+    Echo the merged app stdout/stderr to the job log under a greppable ``banner``
+    and persist a copy into the failure-artifact bundle so it survives cleanup and
+    rides the workflow's artifact upload. Best-effort: capture must never mask the
+    original failure.
+
+    ``banner`` names the failing layer so a nightly log is greppable and the two
+    shapes behind a setup failure stay separable:
+
+    * ``app-setup-failure`` — the app never launched, or its process exited before
+      the in-app TestBridge WebSocket client connected out.
+    * ``app-bridge-timeout`` — ``app.start()`` succeeded and the process is still
+      alive, but the in-app bridge client never connected within the wait budget
+      (the remaining #2646 layer). The captured log then shows what the web
+      process / page did: whether it loaded under llvmpipe, whether the loopback
+      ``ws://`` dial was blocked (CSP ``connect-src``), etc.
     """
     try:
         log_text = app.read_log()
     except Exception:  # noqa: BLE001 — diagnostics must never raise
         log_text = ""
-    print("\n[app-setup-failure] app did not become drivable; captured app log follows:")
-    print(log_text or "[app-setup-failure] (app log was empty)")
+    print(f"\n[{banner}] {what}; captured app log follows:")
+    print(log_text or f"[{banner}] (app log was empty)")
     try:
         dest = ARTIFACT_ROOT / sanitize_nodeid(request.node.nodeid)
         dest.mkdir(parents=True, exist_ok=True)
@@ -142,11 +159,42 @@ class SystemTest:
         bridge = Bridge().start()
         try:
             app.start(bridge.port)
+        except BaseException:
+            # Could not even spawn the app process. Capture the log BEFORE
+            # cleanup() deletes it (#2646) — a setup-phase failure never reaches
+            # the call-phase failure-artifact hook.
+            _preserve_app_log(
+                request, app, banner="app-setup-failure", what="app failed to launch"
+            )
+            bridge.close()
+            app.cleanup()
+            raise
+        try:
             driver = bridge.wait_for_app(request_timeout=request.cls.request_timeout)
         except BaseException:
-            # Capture the app log BEFORE cleanup() deletes it (#2646): a setup-phase
-            # launch failure never reaches the call-phase failure-artifact hook.
-            _preserve_setup_failure_log(request, app)
+            # The process launched but never became drivable. Distinguish the two
+            # shapes so the nightly log is legible (#2646): a *crash* at launch
+            # (process gone) still reads as app-setup-failure; a genuine
+            # bridge-timeout (process alive, in-app WS client never dialed out)
+            # gets its own greppable [app-bridge-timeout] banner — the remaining
+            # ubuntu WebKitGTK layer. Capture BEFORE cleanup() deletes app.log.
+            if app.is_running():
+                _preserve_app_log(
+                    request,
+                    app,
+                    banner="app-bridge-timeout",
+                    what=(
+                        "app launched and is still running but its in-app bridge "
+                        "client never connected within the wait budget"
+                    ),
+                )
+            else:
+                _preserve_app_log(
+                    request,
+                    app,
+                    banner="app-setup-failure",
+                    what=f"app process exited (code {app.returncode}) before connecting",
+                )
             bridge.close()
             app.cleanup()
             raise
