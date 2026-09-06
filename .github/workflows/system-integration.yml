@@ -111,6 +111,23 @@ jobs:
       WEBKIT_DISABLE_COMPOSITING_MODE: "1"
       NO_AT_BRIDGE: "1"
 
+      # #2646: force fully-software GL for the WebKitGTK web-content process. The
+      # userns sysctl (step below) alone did NOT restore launch — the app still
+      # boots and pins its window but the webview never runs the in-app bridge
+      # client ("no app connected to the bridge"), and its log shows libEGL DRI3
+      # errors, i.e. the web process is dying on GL/EGL init under Xvfb. Route all
+      # GL through Mesa's llvmpipe software rasteriser (needs libgl1-mesa-dri,
+      # installed below) so no real GPU/DRI3 device is required. Linux/Mesa-only —
+      # inert on macOS (WKWebView) and Windows (WebView2), like the knobs above.
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: "llvmpipe"
+
+      # #2646 diagnostics: make the web-process lifecycle and GLib/GTK warnings
+      # visible in the captured app log so a launch failure names its real cause
+      # instead of timing out silently. Also inert off-Linux; cheap to keep.
+      WEBKIT_DEBUG: "Process"
+      G_MESSAGES_DEBUG: "all"
+
       # Un-skip the automated agent-reconnect UI grade
       # (test_agent_reconnect_ui.py, #2574) on the macOS leg. That suite carries a
       # skip-guard (#2631): on CI it stays skipped unless TERMIHUB_LIVE_AGENT=1,
@@ -178,8 +195,30 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
+            libgl1-mesa-dri \
+            dbus-x11 \
             xvfb \
             socat
+
+      - name: Relax AppArmor unprivileged-userns restriction (#2646)
+        # ubuntu-24.04 ships an AppArmor policy that blocks unprivileged user
+        # namespaces (kernel.apparmor_restrict_unprivileged_userns=1). WebKitGTK
+        # 2.44+ launches its web/network processes inside a bubblewrap sandbox that
+        # needs an unprivileged userns; with the kernel blocking it the web-content
+        # process never spawns, so the webview loads no page and the in-app bridge
+        # client never connects — every integration test then errored in
+        # class-fixture setup with "no app connected to the bridge within 30.0s"
+        # (the backend booted and pinned its window, but the page never ran). Relax
+        # the restriction so the sandbox userns can be created. Runner-local and
+        # CI-only; guarded so it is a clean no-op on kernels without the knob.
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            echo "kernel.apparmor_restrict_unprivileged_userns absent; nothing to relax"
+          fi
 
       - name: Install serial fixture dependency (socat)
         # macOS only: socat backs the virtual serial-port suites the same way it
@@ -228,8 +267,16 @@ jobs:
         # — surface rot). Xvfb gives the app a display; the harness owns launching
         # the app and driving the fixtures. Suites whose fixtures are unavailable
         # skip cleanly rather than error.
+        #
+        # dbus-run-session (#2646): the app inherits this process's environment,
+        # and on startup WebKitGTK/GTK asks the xdg-desktop-portal for an inhibit
+        # proxy over the D-Bus *session* bus. A headless runner has no session bus,
+        # so StartServiceByName for org.freedesktop.portal.Desktop blocks for the
+        # full ~25s D-Bus timeout — which alone eats the 30s bridge-connect budget
+        # ("no app connected within 30s"). Running under a throwaway session bus
+        # makes that call fail fast instead of hanging, so the bridge connects.
         if: runner.os == 'Linux'
-        run: xvfb-run -a ./tests/system/pytest.sh -m integration -v --durations=25
+        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -v --durations=25
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
@@ -304,6 +351,13 @@ jobs:
       WEBKIT_DISABLE_COMPOSITING_MODE: "1"
       NO_AT_BRIDGE: "1"
 
+      # #2646: same software-GL + webkit diagnostics as the bulk lane above (see
+      # its comment). Needs libgl1-mesa-dri (installed below). Inert off-Linux.
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: "llvmpipe"
+      WEBKIT_DEBUG: "Process"
+      G_MESSAGES_DEBUG: "all"
+
       # Preserve the bulk lane's gating for test_agent_reconnect_ui EXACTLY:
       # macOS-only opt-in (skip-guarded elsewhere). Do NOT widen this to new
       # platforms here — extending the reconnect grade to the Linux leg is owned
@@ -354,7 +408,23 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
+            libgl1-mesa-dri \
+            dbus-x11 \
             xvfb
+
+      - name: Relax AppArmor unprivileged-userns restriction (#2646)
+        # Same WebKitGTK-2.44+/ubuntu-24.04 sandbox fix as the bulk lane above: the
+        # blocked unprivileged userns stops the webview's web-content process from
+        # spawning, so the app boots but the bridge never connects. Relax it before
+        # launching the app under Xvfb. Guarded no-op on kernels without the knob.
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            echo "kernel.apparmor_restrict_unprivileged_userns absent; nothing to relax"
+          fi
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -369,9 +439,12 @@ jobs:
         run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json
 
       - name: Run the display-critical grades (Linux, headless via Xvfb)
+        # dbus-run-session (#2646): same headless-portal hang fix as the bulk lane
+        # — a throwaway session bus makes the startup xdg-desktop-portal call fail
+        # fast instead of blocking ~25s and eating the bridge-connect budget.
         if: runner.os == 'Linux'
         run: >-
-          xvfb-run -a ./tests/system/pytest.sh -m integration
+          xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
 
       - name: Run the display-critical grades (macOS/Windows, native display)
