@@ -196,6 +196,7 @@ jobs:
             librsvg2-dev \
             patchelf \
             libgl1-mesa-dri \
+            dbus-x11 \
             xvfb \
             socat
 
@@ -266,8 +267,16 @@ jobs:
         # — surface rot). Xvfb gives the app a display; the harness owns launching
         # the app and driving the fixtures. Suites whose fixtures are unavailable
         # skip cleanly rather than error.
+        #
+        # dbus-run-session (#2646): the app inherits this process's environment,
+        # and on startup WebKitGTK/GTK asks the xdg-desktop-portal for an inhibit
+        # proxy over the D-Bus *session* bus. A headless runner has no session bus,
+        # so StartServiceByName for org.freedesktop.portal.Desktop blocks for the
+        # full ~25s D-Bus timeout — which alone eats the 30s bridge-connect budget
+        # ("no app connected within 30s"). Running under a throwaway session bus
+        # makes that call fail fast instead of hanging, so the bridge connects.
         if: runner.os == 'Linux'
-        run: xvfb-run -a ./tests/system/pytest.sh -m integration -v --durations=25
+        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -v --durations=25
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
@@ -400,6 +409,7 @@ jobs:
             librsvg2-dev \
             patchelf \
             libgl1-mesa-dri \
+            dbus-x11 \
             xvfb
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)
@@ -429,9 +439,12 @@ jobs:
         run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json
 
       - name: Run the display-critical grades (Linux, headless via Xvfb)
+        # dbus-run-session (#2646): same headless-portal hang fix as the bulk lane
+        # — a throwaway session bus makes the startup xdg-desktop-portal call fail
+        # fast instead of blocking ~25s and eating the bridge-connect budget.
         if: runner.os == 'Linux'
         run: >-
-          xvfb-run -a ./tests/system/pytest.sh -m integration
+          xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
 
       - name: Run the display-critical grades (macOS/Windows, native display)

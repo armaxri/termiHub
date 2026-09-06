@@ -127,6 +127,7 @@ jobs:
             libayatana-appindicator3-1 \
             librsvg2-2 \
             libgl1-mesa-dri \
+            dbus-x11 \
             xvfb
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)
@@ -203,10 +204,13 @@ jobs:
           BIN: ${{ steps.appimage.outputs.bin }}
         run: |
           set -euo pipefail
+          # dbus-run-session (#2646): give the app a throwaway D-Bus session bus so
+          # its startup xdg-desktop-portal call fails fast instead of blocking ~25s
+          # on a headless runner (same fix as system-integration.yml).
           echo "== AppImage --version =="
-          timeout 60 xvfb-run -a "$BIN" --version 2>&1 | tee appimage-version.log
+          timeout 60 xvfb-run -a dbus-run-session -- "$BIN" --version 2>&1 | tee appimage-version.log
           echo "== AppImage smoke-test.sh =="
-          xvfb-run -a ./scripts/smoke-test.sh "$BIN" 2>&1 | tee appimage-smoke.log
+          xvfb-run -a dbus-run-session -- ./scripts/smoke-test.sh "$BIN" 2>&1 | tee appimage-smoke.log
 
       - name: Smoke-test .deb (headless)
         id: smoke_deb
@@ -216,10 +220,12 @@ jobs:
           BIN: ${{ steps.deb.outputs.bin }}
         run: |
           set -euo pipefail
+          # dbus-run-session (#2646): same headless-portal fast-fail as the AppImage
+          # step above.
           echo "== .deb --version =="
-          timeout 60 xvfb-run -a "$BIN" --version 2>&1 | tee deb-version.log
+          timeout 60 xvfb-run -a dbus-run-session -- "$BIN" --version 2>&1 | tee deb-version.log
           echo "== .deb smoke-test.sh =="
-          xvfb-run -a ./scripts/smoke-test.sh "$BIN" 2>&1 | tee deb-smoke.log
+          xvfb-run -a dbus-run-session -- ./scripts/smoke-test.sh "$BIN" 2>&1 | tee deb-smoke.log
 
       - name: Enforce smoke results
         # ENFORCE=false for now: report the two GUI-launch smoke outcomes without
