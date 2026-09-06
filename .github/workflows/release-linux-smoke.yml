@@ -1,0 +1,238 @@
+name: Release Linux Smoke
+
+# Automates the Linux x64 post-release install-smoke test (#478) so it needs no
+# human (#2651). After the "Release" workflow finishes publishing a tag's
+# artifacts, this downloads the just-published Linux x64 AppImage and .deb,
+# installs/extracts each on ubuntu-latest, and runs scripts/smoke-test.sh against
+# the installed binary headlessly under xvfb-run (the same WebKitGTK headless
+# knobs as system-integration.yml). tauri-driver is retired, so smoke-test.sh
+# uses its process-based fallback: launch the app, confirm it stays alive, and
+# shut it down cleanly.
+#
+# This is a SEPARATE workflow (not a job inside release.yml) on purpose: it is
+# fully decoupled from the release-build matrix and cannot collide with concurrent
+# edits to release.yml. It is triggered by the completion of the "Release" run
+# rather than the `release: published` event, because release.yml publishes the
+# (non-draft) release BEFORE its build matrix uploads the assets — a
+# `release: published` job would run too early and find no artifacts to test.
+#
+# NOTE (#2646): the built desktop app currently does NOT launch headless under
+# WebKitGTK 2.52 on ubuntu-latest (the nightly integration Xvfb leg hits the same
+# wall). Until #2646 restores headless launch, the two GUI-launch smoke steps are
+# `continue-on-error` and the final gate is advisory (ENFORCE=false) — the job
+# still HARD-fails if an artifact is missing, cannot be extracted, or will not
+# install, which is real signal on artifact well-formedness. Once #2646 lands,
+# flip ENFORCE to "true" in the "Enforce smoke results" step so any GUI-launch
+# smoke regression fails this job loudly.
+
+on:
+  # Fire after the Release workflow completes. workflow_run runs the copy of this
+  # file on the default branch, which is the correct behavior for release
+  # automation (releases are cut from the default branch's tags).
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  # Manual re-run against any already-published release, for verification without
+  # cutting a new release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to smoke-test (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x64-install-smoke:
+    name: Linux x64 install + smoke (AppImage + .deb)
+    # Only run for a manual dispatch, or for a Release run that was triggered by a
+    # tag push AND succeeded — a failed/cancelled Release has no assets to test.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # webkit2gtk headless knobs — identical to system-integration.yml. They let
+      # the WebKitGTK webview render in software under Xvfb (no real GPU/display)
+      # and silence at-spi accessibility-bus warnings on a headless box.
+      WEBKIT_DISABLE_DMABUF_RENDERER: "1"
+      WEBKIT_DISABLE_COMPOSITING_MODE: "1"
+      NO_AT_BRIDGE: "1"
+
+    steps:
+      - name: Resolve release tag
+        id: tag
+        env:
+          GH_EVENT: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$GH_EVENT" = "workflow_dispatch" ]; then
+            TAG="${DISPATCH_TAG:-}"
+          else
+            # For a tag-triggered upstream run, head_branch is the tag name.
+            TAG="${RUN_TAG:-}"
+            case "$TAG" in
+              v*.*.*) ;;
+              *)
+                # Fallback: resolve the version tag pointing at the release commit.
+                echo "head_branch '$TAG' is not a version tag; resolving from head_sha"
+                TAG="$(gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate \
+                        --jq "map(select(.commit.sha==\"${RUN_SHA:-}\")) | .[].name" \
+                        | grep -E '^v[0-9]' | head -n1 || true)"
+                ;;
+            esac
+          fi
+          case "$TAG" in
+            v*.*.*) ;;
+            *) echo "::error::could not resolve a version tag (got '$TAG')"; exit 1 ;;
+          esac
+          echo "Resolved release tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout code
+        # smoke-test.sh cd's to the git top-level, so a checkout must be present.
+        uses: actions/checkout@v6
+
+      - name: Install headless runtime dependencies
+        # Runtime WebKitGTK/GTK libs the app links against plus Xvfb for a virtual
+        # display. Mirrors the runtime-relevant subset of system-integration.yml's
+        # Tauri dep list (build-only tools like build-essential/patchelf are not
+        # needed to RUN a prebuilt app). apt-get install of the .deb below also
+        # pulls the package's own declared dependencies.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-0 \
+            libgtk-3-0 \
+            libayatana-appindicator3-1 \
+            librsvg2-2 \
+            xvfb
+
+      - name: Download Linux x64 release assets
+        id: download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PWD/dist"
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern '*linux-x64.AppImage' \
+            --pattern '*linux-x64.deb' \
+            --dir "$PWD/dist"
+          ls -la "$PWD/dist"
+          APPIMAGE="$(find "$PWD/dist" -name '*linux-x64.AppImage' | head -n1)"
+          DEB="$(find "$PWD/dist" -name '*linux-x64.deb' | head -n1)"
+          [ -n "$APPIMAGE" ] || { echo "::error::AppImage asset not found for $TAG"; exit 1; }
+          [ -n "$DEB" ] || { echo "::error::.deb asset not found for $TAG"; exit 1; }
+          echo "appimage=$APPIMAGE" >> "$GITHUB_OUTPUT"
+          echo "deb=$DEB" >> "$GITHUB_OUTPUT"
+
+      - name: Extract AppImage
+        id: appimage
+        env:
+          APPIMAGE: ${{ steps.download.outputs.appimage }}
+        run: |
+          set -euo pipefail
+          chmod +x "$APPIMAGE"
+          workdir="$PWD/appimage-extract"
+          rm -rf "$workdir"
+          mkdir -p "$workdir"
+          # FUSE is unavailable on GitHub runners, so extract rather than mount.
+          ( cd "$workdir" && "$APPIMAGE" --appimage-extract >/dev/null )
+          BIN="$workdir/squashfs-root/AppRun"
+          [ -x "$BIN" ] || { echo "::error::extracted AppRun not executable at $BIN"; exit 1; }
+          echo "bin=$BIN" >> "$GITHUB_OUTPUT"
+
+      - name: Install .deb
+        id: deb
+        env:
+          DEB: ${{ steps.download.outputs.deb }}
+        run: |
+          set -euo pipefail
+          # apt-get install of a local path resolves the package's dependencies,
+          # equivalent to `dpkg -i` followed by `apt-get -f install`.
+          sudo apt-get install -y "$DEB"
+          BIN="$(command -v termihub || true)"
+          [ -n "$BIN" ] || { echo "::error::termihub not on PATH after .deb install"; exit 1; }
+          echo "Installed binary: $BIN"
+          echo "bin=$BIN" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke-test AppImage (headless)
+        id: smoke_appimage
+        # #2646: the built app may not launch headless under WebKitGTK 2.52 yet.
+        continue-on-error: true
+        env:
+          BIN: ${{ steps.appimage.outputs.bin }}
+        run: |
+          set -euo pipefail
+          echo "== AppImage --version =="
+          timeout 60 xvfb-run -a "$BIN" --version 2>&1 | tee appimage-version.log
+          echo "== AppImage smoke-test.sh =="
+          xvfb-run -a ./scripts/smoke-test.sh "$BIN" 2>&1 | tee appimage-smoke.log
+
+      - name: Smoke-test .deb (headless)
+        id: smoke_deb
+        # #2646: the built app may not launch headless under WebKitGTK 2.52 yet.
+        continue-on-error: true
+        env:
+          BIN: ${{ steps.deb.outputs.bin }}
+        run: |
+          set -euo pipefail
+          echo "== .deb --version =="
+          timeout 60 xvfb-run -a "$BIN" --version 2>&1 | tee deb-version.log
+          echo "== .deb smoke-test.sh =="
+          xvfb-run -a ./scripts/smoke-test.sh "$BIN" 2>&1 | tee deb-smoke.log
+
+      - name: Enforce smoke results
+        # ENFORCE=false while #2646 is open: report the two GUI-launch smoke
+        # outcomes without failing the release. The download/extract/install steps
+        # above already HARD-fail on malformed or non-installable artifacts. Flip
+        # ENFORCE to "true" once #2646 restores headless app launch so any smoke
+        # regression fails this job loudly.
+        if: always()
+        env:
+          ENFORCE: "false"
+          APPIMAGE_OUTCOME: ${{ steps.smoke_appimage.outcome }}
+          DEB_OUTCOME: ${{ steps.smoke_deb.outcome }}
+        run: |
+          set -euo pipefail
+          echo "AppImage smoke outcome: $APPIMAGE_OUTCOME"
+          echo ".deb smoke outcome:     $DEB_OUTCOME"
+          {
+            echo "### Linux x64 install-smoke"
+            echo ""
+            echo "- AppImage smoke: \`$APPIMAGE_OUTCOME\`"
+            echo "- .deb smoke: \`$DEB_OUTCOME\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$APPIMAGE_OUTCOME" != "success" ] || [ "$DEB_OUTCOME" != "success" ]; then
+            if [ "$ENFORCE" = "true" ]; then
+              echo "::error::Linux x64 install-smoke failed"
+              exit 1
+            fi
+            echo "::warning::Linux x64 install-smoke did not fully pass (advisory until #2646 lands)"
+          fi
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-install-smoke-logs
+          path: |
+            appimage-version.log
+            appimage-smoke.log
+            deb-version.log
+            deb-smoke.log
+          if-no-files-found: ignore
+          retention-days: 14
