@@ -61,8 +61,18 @@ class TestLayoutScrollbackUi(TerminalUi, TabsUi, LayoutUi, SystemTest):
     def _assert_scrollback_survived(self, term_id: str, marker: str, op: str) -> None:
         """The same live terminal still holds ``marker`` in its buffer after ``op``."""
         assert term_id in self.tab_ids(), f"{op} must not replace the terminal tab (no remount)"
-        buf = self.driver.read_terminal(term_id)
-        assert marker in buf, f"{op} must preserve the live scrollback ({marker!r} lost)"
+        # Poll until the buffer settles rather than grabbing it once: right after a
+        # layout op the marker can be captured mid-render, fragmented across a
+        # prompt/hostname redraw (`echo SC` / `ROLLBACK_MERGE_...` on separate lines),
+        # so the contiguous substring isn't present yet — a capture-timing race, not a
+        # scrollback loss (#2657). ``wait_for_output`` re-reads the same live buffer
+        # until the full marker appears (bounded timeout). Re-read + assert on timeout
+        # so a genuine loss still fails with the clear per-op message.
+        try:
+            self.wait_for_output(marker, tab_id=term_id)
+        except AssertionError:
+            buf = self.driver.read_terminal(term_id)
+            assert marker in buf, f"{op} must preserve the live scrollback ({marker!r} lost)"
 
     def _panel_of_tab(self, tab_id: str, node=None):
         """The id of the leaf panel holding ``tab_id`` in the active group, or None."""
