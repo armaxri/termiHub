@@ -64,6 +64,16 @@ jobs:
       WEBKIT_DISABLE_COMPOSITING_MODE: "1"
       NO_AT_BRIDGE: "1"
 
+      # #2646: force fully-software GL (Mesa llvmpipe) for the WebKitGTK web
+      # process so it launches headless without a real GPU/DRI3 device — mirrors
+      # system-integration.yml. Needs libgl1-mesa-dri (installed below). The two
+      # WEBKIT_DEBUG/G_MESSAGES_DEBUG diagnostics surface the real cause in the
+      # smoke logs if a launch still fails.
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: "llvmpipe"
+      WEBKIT_DEBUG: "Process"
+      G_MESSAGES_DEBUG: "all"
+
     steps:
       - name: Resolve release tag
         id: tag
@@ -116,6 +126,7 @@ jobs:
             libgtk-3-0 \
             libayatana-appindicator3-1 \
             librsvg2-2 \
+            libgl1-mesa-dri \
             xvfb
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)

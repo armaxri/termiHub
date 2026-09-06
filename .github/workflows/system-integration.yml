@@ -111,6 +111,23 @@ jobs:
       WEBKIT_DISABLE_COMPOSITING_MODE: "1"
       NO_AT_BRIDGE: "1"
 
+      # #2646: force fully-software GL for the WebKitGTK web-content process. The
+      # userns sysctl (step below) alone did NOT restore launch — the app still
+      # boots and pins its window but the webview never runs the in-app bridge
+      # client ("no app connected to the bridge"), and its log shows libEGL DRI3
+      # errors, i.e. the web process is dying on GL/EGL init under Xvfb. Route all
+      # GL through Mesa's llvmpipe software rasteriser (needs libgl1-mesa-dri,
+      # installed below) so no real GPU/DRI3 device is required. Linux/Mesa-only —
+      # inert on macOS (WKWebView) and Windows (WebView2), like the knobs above.
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: "llvmpipe"
+
+      # #2646 diagnostics: make the web-process lifecycle and GLib/GTK warnings
+      # visible in the captured app log so a launch failure names its real cause
+      # instead of timing out silently. Also inert off-Linux; cheap to keep.
+      WEBKIT_DEBUG: "Process"
+      G_MESSAGES_DEBUG: "all"
+
       # Un-skip the automated agent-reconnect UI grade
       # (test_agent_reconnect_ui.py, #2574) on the macOS leg. That suite carries a
       # skip-guard (#2631): on CI it stays skipped unless TERMIHUB_LIVE_AGENT=1,
@@ -178,6 +195,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
+            libgl1-mesa-dri \
             xvfb \
             socat
 
@@ -324,6 +342,13 @@ jobs:
       WEBKIT_DISABLE_COMPOSITING_MODE: "1"
       NO_AT_BRIDGE: "1"
 
+      # #2646: same software-GL + webkit diagnostics as the bulk lane above (see
+      # its comment). Needs libgl1-mesa-dri (installed below). Inert off-Linux.
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      GALLIUM_DRIVER: "llvmpipe"
+      WEBKIT_DEBUG: "Process"
+      G_MESSAGES_DEBUG: "all"
+
       # Preserve the bulk lane's gating for test_agent_reconnect_ui EXACTLY:
       # macOS-only opt-in (skip-guarded elsewhere). Do NOT widen this to new
       # platforms here — extending the reconnect grade to the Linux leg is owned
@@ -374,6 +399,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
+            libgl1-mesa-dri \
             xvfb
 
       - name: Relax AppArmor unprivileged-userns restriction (#2646)
