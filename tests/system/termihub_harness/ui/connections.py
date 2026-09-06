@@ -509,23 +509,41 @@ class ConnectionsUi(HarnessMixin):
             self.driver.click(self.CONFIRM_DELETE)
 
     def folder_context_action(self, folder_id: str, action_test_id: str) -> None:
-        """Right-click a folder and click a context-menu action, atomically.
+        """Right-click a folder and click a context-menu action, robustly.
 
         The Radix folder menu auto-closes, so the old ``exists``-poll followed by
         a *separate* ``click`` races the close — the menu can dismiss between the
         poll succeeding and the click landing, so the click misses and the flow
-        times out (#2670, B7). This re-opens the menu and clicks the action in one
-        guarded poll: each attempt re-issues the right-click, and a run only
-        succeeds once the action item is present *and* clicked, so a menu that
-        closed under the gesture is simply retried on the next poll.
+        times out (#2670, B7). This guards both ends in one poll:
+
+        - When the action item is **not** in the DOM the menu is closed (or closed
+          under us), so re-open it — pressing Escape first to dismiss any stale /
+          half-open menu, otherwise its full-screen Radix overlay makes the folder
+          toggle unhittable and the right-click blocks. The click is deferred to
+          the next poll, once the item is confirmed present.
+        - When the action item **is** present, click it immediately in the same
+          step — no polling gap for the menu to close in between.
+
+        Re-issuing the right-click only while no menu item is visible avoids
+        firing ``context_menu`` into an already-open overlay (which hangs the
+        bridge command), the failure the naive "re-open every poll" form hit.
         """
 
         def opened_and_clicked() -> bool:
+            # Menu already open (item in the DOM) — click it now, no polling gap
+            # for it to close in.
+            if self.driver.exists(action_test_id):
+                self.driver.click(action_test_id)
+                return True
+            # Menu closed (or closed under us) — dismiss any stale/half-open menu
+            # so its overlay does not make the toggle unhittable, re-open, and
+            # click if the item mounted immediately (else retry on the next poll).
+            self.driver.press_key("Escape")
             self.driver.context_menu(folder_toggle_testid(folder_id))
-            if not self.driver.exists(action_test_id):
-                return False
-            self.driver.click(action_test_id)
-            return True
+            if self.driver.exists(action_test_id):
+                self.driver.click(action_test_id)
+                return True
+            return False
 
         self.wait(opened_and_clicked, what=f"the folder menu action {action_test_id!r}")
 
