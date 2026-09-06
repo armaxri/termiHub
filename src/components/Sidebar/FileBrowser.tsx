@@ -3,6 +3,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
+import { openPath } from "@tauri-apps/plugin-opener";
 import {
   Folder,
   File,
@@ -34,6 +35,7 @@ import {
   Search,
   ChevronUp,
   ChevronDown,
+  ExternalLink,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -57,6 +59,7 @@ import {
   type SortDirection,
 } from "@/utils/fileBrowserNav";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
+import { fileManagerActionLabel } from "@/utils/platform";
 import { baseNameSelectionEnd } from "@/utils/fileNameSelection";
 import { frontendLog } from "@/utils/frontendLog";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
@@ -164,6 +167,27 @@ export function FileMenuItems({
           >
             <Globe size={14} /> Share via TFTP Server
           </Item>
+          <Separator className="context-menu__separator" />
+        </>
+      )}
+      {entry.isDirectory && onShareVia && (
+        <>
+          <Item
+            className="context-menu__item"
+            onSelect={() => onContextAction(entry, "openInExplorer")}
+            data-testid={`${testIdPrefix}-open-in-explorer`}
+          >
+            <ExternalLink size={14} /> {fileManagerActionLabel()}
+          </Item>
+          {vscodeAvailable && (
+            <Item
+              className="context-menu__item"
+              onSelect={() => onContextAction(entry, "openFolderVscode")}
+              data-testid={`${testIdPrefix}-open-folder-vscode`}
+            >
+              <CodeXml size={14} /> Open Folder in VS Code
+            </Item>
+          )}
           <Separator className="context-menu__separator" />
         </>
       )}
@@ -1010,6 +1034,20 @@ export function FileBrowser() {
             toast.error(`Failed to open "${entry.name}" in VS Code: ${err}`);
           });
           break;
+        case "openInExplorer":
+          // Local-only: open the OS-native file manager at this folder.
+          openPath(entry.path).catch((err: unknown) => {
+            frontendLog("file_browser", `Open in file manager failed: ${err}`);
+            toast.error(`Failed to open "${entry.name}" in the file manager: ${err}`);
+          });
+          break;
+        case "openFolderVscode":
+          // Local-only: open this folder as a VS Code workspace (`code <dir>`).
+          openInVscode(entry.path).catch((err: unknown) => {
+            frontendLog("file_browser", `Open folder in VS Code failed: ${err}`);
+            toast.error(`Failed to open "${entry.name}" in VS Code: ${err}`);
+          });
+          break;
         case "copy":
           copyEntry([entry]);
           break;
@@ -1091,6 +1129,25 @@ export function FileBrowser() {
     // pasteEntry surfaces its own per-item success/error toast (see useFileSystem).
     void pasteEntry();
   }, [pasteEntry]);
+
+  // Local-only: open the OS-native file manager at the currently-browsed folder.
+  const handleOpenInExplorer = useCallback(() => {
+    openPath(currentPath).catch((err: unknown) => {
+      frontendLog("file_browser", `Open in file manager failed: ${err}`);
+      toast.error(`Failed to open the file manager: ${err}`);
+    });
+  }, [currentPath]);
+
+  // Local-only: open the current folder as a VS Code workspace (`code <dir>`).
+  const handleOpenFolderInVscode = useCallback(() => {
+    openInVscode(currentPath).catch((err: unknown) => {
+      frontendLog("file_browser", `Open folder in VS Code failed: ${err}`);
+      toast.error(`Failed to open the folder in VS Code: ${err}`);
+    });
+  }, [currentPath, openInVscode]);
+
+  // File-manager action label, worded per the host OS (Finder / File Explorer / …).
+  const fileManagerLabel = fileManagerActionLabel();
 
   const handleRowClick = useCallback(
     (entry: FileEntry, e: React.MouseEvent) => {
@@ -1358,6 +1415,30 @@ export function FileBrowser() {
               data-testid="file-browser-refresh"
             />
           </Tooltip>
+          {mode === "local" && (
+            <Tooltip content={fileManagerLabel} side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<ExternalLink size={14} />}
+                onClick={handleOpenInExplorer}
+                aria-label={fileManagerLabel}
+                data-testid="file-browser-open-in-explorer"
+              />
+            </Tooltip>
+          )}
+          {mode === "local" && vscodeAvailable && (
+            <Tooltip content="Open Folder in VS Code" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<CodeXml size={14} />}
+                onClick={handleOpenFolderInVscode}
+                aria-label="Open folder in VS Code"
+                data-testid="file-browser-open-folder-vscode"
+              />
+            </Tooltip>
+          )}
           {mode === "session" && (
             <Tooltip content="Upload File" side="top">
               <Button
