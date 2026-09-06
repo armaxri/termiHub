@@ -191,6 +191,16 @@ x11rb = { version = "0.13", default-features = false }
 # and `cargo tree -i` clean off Linux.
 wayland-client = { version = "0.31", features = ["dlopen"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# WebKitGTK bindings for reaching the underlying `webkit2gtk::WebView` behind the
+# Tauri window (via `WebviewWindow::with_webview` → `PlatformWebview::inner()`) so
+# the full-app test bridge can route the page's JS console + page-load lifecycle
+# into the captured app log on the headless CI leg (#2646). The `2.x` requirement
+# unifies with the `webkit2gtk` `wry` already pulls (2.0.2) — cargo resolves both
+# to a single 2.x instance, so the `WebView` type from `.inner()` matches.
+# Linux-only: `utils::webview_console` is `#[cfg(target_os = "linux")]` and
+# `cargo tree -i` is clean off Linux. No extra system-library build dependency
+# beyond the WebKitGTK headers Tauri/wry already require on Linux.
+webkit2gtk = "2.0"
 # (`percent-encoding` — used here on Linux to encode staged temp paths into
 # `file://` URIs for the clipboard sidecar — is declared once in the top-level
 # `[dependencies]` so it is available on every platform, see #2251.)
