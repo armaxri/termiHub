@@ -8,6 +8,7 @@ import {
   isUnboundCombo,
 } from "@/services/keybindings";
 import { ShortcutCategory } from "@/types/keybindings";
+import { resolveUiLocale } from "@/utils/locale";
 
 const CATEGORY_LABELS: Record<ShortcutCategory, string> = {
   general: "General",
@@ -69,7 +70,7 @@ export function buildCheatSheetHtml(): string {
     ? '<p class="footer-note"><span class="override-mark">&dagger;</span> Custom binding (user override)</p>'
     : "<p></p>";
 
-  const date = new Date().toLocaleDateString(undefined, {
+  const date = new Date().toLocaleDateString(resolveUiLocale(), {
     year: "numeric",
     month: "long",
     day: "numeric",

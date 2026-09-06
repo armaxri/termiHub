@@ -10,6 +10,7 @@ import {
 } from "@/services/networkApi";
 import type { WolDevice } from "@/types/network";
 import { validatePort, validateHost, validateMac } from "@/utils/fieldValidation";
+import { resolveUiLocale } from "@/utils/locale";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface WolHistoryEntry {
@@ -58,7 +59,10 @@ export function WolPanel() {
     try {
       await networkWolSend(mac, broadcast, Number(port));
       setSentMessage(`Magic packet sent to ${mac}`);
-      setHistory((prev) => [{ mac, sentAt: new Date().toLocaleTimeString() }, ...prev.slice(0, 9)]);
+      setHistory((prev) => [
+        { mac, sentAt: new Date().toLocaleTimeString(resolveUiLocale()) },
+        ...prev.slice(0, 9),
+      ]);
     } catch (err) {
       setError(String(err));
       frontendLog("wol_panel", `WoL send failed: ${err}`);
@@ -70,7 +74,7 @@ export function WolPanel() {
     try {
       await networkWolSend(device.mac, device.broadcast, device.port);
       setHistory((prev) => [
-        { mac: device.mac, sentAt: new Date().toLocaleTimeString() },
+        { mac: device.mac, sentAt: new Date().toLocaleTimeString(resolveUiLocale()) },
         ...prev.slice(0, 9),
       ]);
       toast.success(`Magic packet sent to ${device.name}`);

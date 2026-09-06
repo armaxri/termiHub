@@ -12,6 +12,7 @@ import {
   onSweepError,
 } from "@/services/networkApi";
 import type { PingSweepSummary } from "@/types/network";
+import { resolveUiLocale } from "@/utils/locale";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { countHosts } from "@/utils/scanEstimate";
@@ -269,7 +270,7 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
         open={warnOpen}
         title="Large ping sweep"
         description="Confirm before starting a sweep that may take a while."
-        message={`This sweep will ping about ${hostEstimate.toLocaleString()} hosts and may take a while. Continue?`}
+        message={`This sweep will ping about ${hostEstimate.toLocaleString(resolveUiLocale())} hosts and may take a while. Continue?`}
         confirmLabel="Start sweep"
         confirmVariant="primary"
         testIdBase="ping-sweep-warn"

@@ -12,6 +12,7 @@ import {
   onScanError,
 } from "@/services/networkApi";
 import type { PortScanSummary } from "@/types/network";
+import { resolveUiLocale } from "@/utils/locale";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { estimateScanProbes } from "@/utils/scanEstimate";
@@ -292,7 +293,7 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
         title="Large scan"
         variant="warn"
         description="Confirm before starting a scan that may take a while."
-        message={`This scan will probe about ${probeEstimate.toLocaleString()} host/port combinations and may take several minutes. Continue?`}
+        message={`This scan will probe about ${probeEstimate.toLocaleString(resolveUiLocale())} host/port combinations and may take several minutes. Continue?`}
         confirmLabel="Start scan"
         confirmVariant="primary"
         testIdBase="port-scan-warn"
