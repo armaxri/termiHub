@@ -32,6 +32,11 @@ class EmbeddedServicesUi(HarnessMixin):
     DIALOG_CANCEL = "server-dialog-cancel"
     LAN_CONFIRM = "lan-warning-confirm"
     LAN_CANCEL = "lan-warning-cancel"
+    # Confirm button of the delete-service confirmation dialog. Deleting an
+    # embedded server became guarded by a confirm dialog in #1393; it renders
+    # through the shared ``ConfirmDialog`` with the default ``testIdBase``, so the
+    # confirm button is ``confirm-dialog-confirm``.
+    DELETE_CONFIRM = "confirm-dialog-confirm"
 
     if TYPE_CHECKING:  # supplied by SettingsUi / SidebarUi when the suite combines them
 
@@ -104,9 +109,24 @@ class EmbeddedServicesUi(HarnessMixin):
         self.driver.click(f"server-stop-{server_id}")
         self.wait(lambda: not self.server_running(server_id), what="the server to stop")
 
+    def _confirm_delete(self) -> None:
+        """Answer the delete-service confirmation dialog (#1393).
+
+        Both the inline ``server-delete-*`` button and the context-menu
+        ``ctx-delete-*`` item now only *arm* a confirm dialog; without clicking
+        its confirm button the delete never reaches the backend, which surfaced as
+        a silent timeout on the now-live nightly lane (#2670).
+        """
+        self.wait(
+            lambda: self.driver.exists(self.DELETE_CONFIRM),
+            what="the delete-service confirm dialog",
+        )
+        self.driver.click(self.DELETE_CONFIRM)
+
     def delete_server(self, server_id: str, name: str) -> None:
         """Delete a server and wait for it to vanish from the store."""
         self.driver.click(f"server-delete-{server_id}")
+        self._confirm_delete()
         self.wait(lambda: self.find_server(name) is None, what="the server to be deleted")
 
     # ── Per-server right-click context menu ──────────────────────────────────
@@ -140,6 +160,7 @@ class EmbeddedServicesUi(HarnessMixin):
         """Delete a server via its context menu; wait for it to vanish from store."""
         self.open_server_menu(server_id)
         self.driver.click(f"ctx-delete-{server_id}")
+        self._confirm_delete()
         self.wait(lambda: self.find_server(name) is None, what="the server to be deleted")
 
     # ── Cleanup ──────────────────────────────────────────────────────────────
