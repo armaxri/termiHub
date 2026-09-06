@@ -1,0 +1,152 @@
+name: Release Linux arm64 Smoke
+
+# Automates the cheap arm64 half of the Linux post-release install-smoke (#2654),
+# the follow-up to the x64 smoke (#478/#2651, release-linux-smoke.yml). After the
+# "Release" workflow finishes publishing a tag's artifacts, this downloads the
+# just-published Linux arm64 .deb, installs it on the native ubuntu-24.04-arm
+# hosted runner (the same aarch64 runner release.yml already uses to BUILD the
+# linux-arm64 bundle), and asserts the installed `termihub` binary prints its
+# version and exits 0.
+#
+# HEADLESS, NO XVFB: since #2655 the desktop binary handles --version/--help on an
+# early pre-init path that prints and exits 0 with no GUI/window/display. So this
+# is a clean, cheap headless check — unlike release-linux-smoke.yml's GUI-launch
+# steps it needs no virtual display and no #2646-style advisory gating. The
+# arm64 *GUI* smoke stays a manual session on real Raspberry-Pi hardware (#479),
+# and is deliberately NOT attempted here.
+#
+# This is a SEPARATE workflow (not a job inside release.yml, and separate from
+# release-linux-smoke.yml) on purpose: it is fully decoupled and cannot collide
+# with concurrent edits to those files. Like release-linux-smoke.yml it triggers
+# on the completion of the "Release" run rather than the `release: published`
+# event, because release.yml publishes the (non-draft) release BEFORE its build
+# matrix uploads the assets — a `release: published` job would run too early and
+# find no arm64 .deb to test.
+
+on:
+  # Fire after the Release workflow completes. workflow_run runs the copy of this
+  # file on the default branch, which is the correct behavior for release
+  # automation (releases are cut from the default branch's tags).
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  # Manual re-run against any already-published release, for verification without
+  # cutting a new release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to smoke-test (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  linux-arm64-install-smoke:
+    name: Linux arm64 install + headless --version (.deb)
+    # Only run for a manual dispatch, or for a Release run that was triggered by a
+    # tag push AND succeeded — a failed/cancelled Release has no assets to test.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+
+    steps:
+      - name: Resolve release tag
+        id: tag
+        env:
+          GH_EVENT: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$GH_EVENT" = "workflow_dispatch" ]; then
+            TAG="${DISPATCH_TAG:-}"
+          else
+            # For a tag-triggered upstream run, head_branch is the tag name.
+            TAG="${RUN_TAG:-}"
+            case "$TAG" in
+              v*.*.*) ;;
+              *)
+                # Fallback: resolve the version tag pointing at the release commit.
+                echo "head_branch '$TAG' is not a version tag; resolving from head_sha"
+                TAG="$(gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate \
+                        --jq "map(select(.commit.sha==\"${RUN_SHA:-}\")) | .[].name" \
+                        | grep -E '^v[0-9]' | head -n1 || true)"
+                ;;
+            esac
+          fi
+          case "$TAG" in
+            v*.*.*) ;;
+            *) echo "::error::could not resolve a version tag (got '$TAG')"; exit 1 ;;
+          esac
+          echo "Resolved release tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download Linux arm64 release asset
+        id: download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$PWD/dist"
+          # release.yml uploads the arm64 Debian package as
+          # termiHub-<version>-linux-arm64.deb (see its "Find and rename release
+          # artifact" step: file_ext '.deb', platform 'linux-arm64').
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern '*linux-arm64.deb' \
+            --dir "$PWD/dist"
+          ls -la "$PWD/dist"
+          DEB="$(find "$PWD/dist" -name '*linux-arm64.deb' | head -n1)"
+          [ -n "$DEB" ] || { echo "::error::arm64 .deb asset not found for $TAG"; exit 1; }
+          echo "deb=$DEB" >> "$GITHUB_OUTPUT"
+
+      - name: Install .deb
+        id: deb
+        env:
+          DEB: ${{ steps.download.outputs.deb }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # apt-get install of a local path resolves the package's dependencies,
+          # equivalent to `dpkg -i` followed by `apt-get -f install`.
+          sudo apt-get install -y "$DEB"
+          # The Debian bundle installs the Cargo bin name `termihub`
+          # (src-tauri/Cargo.toml [[bin]] name), matching release-linux-smoke.yml.
+          BIN="$(command -v termihub || true)"
+          [ -n "$BIN" ] || { echo "::error::termihub not on PATH after .deb install"; exit 1; }
+          echo "Installed binary: $BIN"
+          echo "bin=$BIN" >> "$GITHUB_OUTPUT"
+
+      - name: Assert headless --version
+        id: version
+        env:
+          BIN: ${{ steps.deb.outputs.bin }}
+        run: |
+          set -euo pipefail
+          # #2655: --version prints and exits 0 with no GUI/window/display, so no
+          # xvfb is needed. version_line() prints "termiHub <version>".
+          echo "== termihub --version (headless, no xvfb) =="
+          timeout 60 "$BIN" --version 2>&1 | tee arm64-version.log
+          if ! grep -Eq '^termiHub [0-9]+\.[0-9]+\.[0-9]+' arm64-version.log; then
+            echo "::error::termihub --version did not print an expected version line"
+            exit 1
+          fi
+          echo "arm64 headless --version smoke passed"
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arm64-install-smoke-logs
+          path: |
+            arm64-version.log
+          if-no-files-found: ignore
+          retention-days: 14
