@@ -181,6 +181,26 @@ jobs:
             xvfb \
             socat
 
+      - name: Relax AppArmor unprivileged-userns restriction (#2646)
+        # ubuntu-24.04 ships an AppArmor policy that blocks unprivileged user
+        # namespaces (kernel.apparmor_restrict_unprivileged_userns=1). WebKitGTK
+        # 2.44+ launches its web/network processes inside a bubblewrap sandbox that
+        # needs an unprivileged userns; with the kernel blocking it the web-content
+        # process never spawns, so the webview loads no page and the in-app bridge
+        # client never connects — every integration test then errored in
+        # class-fixture setup with "no app connected to the bridge within 30.0s"
+        # (the backend booted and pinned its window, but the page never ran). Relax
+        # the restriction so the sandbox userns can be created. Runner-local and
+        # CI-only; guarded so it is a clean no-op on kernels without the knob.
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            echo "kernel.apparmor_restrict_unprivileged_userns absent; nothing to relax"
+          fi
+
       - name: Install serial fixture dependency (socat)
         # macOS only: socat backs the virtual serial-port suites the same way it
         # does on Linux; without it those integration tests skip cleanly. Windows
@@ -355,6 +375,20 @@ jobs:
             librsvg2-dev \
             patchelf \
             xvfb
+
+      - name: Relax AppArmor unprivileged-userns restriction (#2646)
+        # Same WebKitGTK-2.44+/ubuntu-24.04 sandbox fix as the bulk lane above: the
+        # blocked unprivileged userns stops the webview's web-content process from
+        # spawning, so the app boots but the bridge never connects. Relax it before
+        # launching the app under Xvfb. Guarded no-op on kernels without the knob.
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            echo "kernel.apparmor_restrict_unprivileged_userns absent; nothing to relax"
+          fi
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile

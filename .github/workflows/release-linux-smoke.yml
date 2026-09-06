@@ -118,6 +118,21 @@ jobs:
             librsvg2-2 \
             xvfb
 
+      - name: Relax AppArmor unprivileged-userns restriction (#2646)
+        # ubuntu-24.04 blocks unprivileged user namespaces
+        # (kernel.apparmor_restrict_unprivileged_userns=1), which stops WebKitGTK
+        # 2.44+ from spawning its bubblewrap-sandboxed web-content process — the app
+        # boots but its webview never loads, so the headless GUI-launch smoke below
+        # cannot pass. Relax it before the smoke steps (same fix as
+        # system-integration.yml). Guarded no-op on kernels without the knob.
+        run: |
+          set -euo pipefail
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          else
+            echo "kernel.apparmor_restrict_unprivileged_userns absent; nothing to relax"
+          fi
+
       - name: Download Linux x64 release assets
         id: download
         env:
@@ -196,11 +211,14 @@ jobs:
           xvfb-run -a ./scripts/smoke-test.sh "$BIN" 2>&1 | tee deb-smoke.log
 
       - name: Enforce smoke results
-        # ENFORCE=false while #2646 is open: report the two GUI-launch smoke
-        # outcomes without failing the release. The download/extract/install steps
-        # above already HARD-fail on malformed or non-installable artifacts. Flip
-        # ENFORCE to "true" once #2646 restores headless app launch so any smoke
-        # regression fails this job loudly.
+        # ENFORCE=false for now: report the two GUI-launch smoke outcomes without
+        # failing the release. The download/extract/install steps above already
+        # HARD-fail on malformed or non-installable artifacts. #2646 adds the
+        # AppArmor userns relax above that should restore headless launch here;
+        # flip ENFORCE to "true" once #2646 is verified green on CI (the
+        # system-integration ubuntu leg passes) so any GUI-launch smoke regression
+        # fails this job loudly. Left false here deliberately — the coordinator
+        # flips it after that verification, not this change.
         if: always()
         env:
           ENFORCE: "false"
