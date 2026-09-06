@@ -42,14 +42,19 @@ from termihub_harness import (
     SidebarUi,
     SystemTest,
     TabsUi,
-    folder_toggle_testid,
     unique_name,
 )
-from termihub_harness.bridge import BridgeError
 
 pytestmark = pytest.mark.integration
 
 DEFAULT_KEY = "/home/tester/.ssh/id_ed25519"
+
+#: Projection region id for the settings domain (twin of the frontend
+#: ``SETTINGS_REGION`` const). The Phase-5 reducer removal (#2404) deleted the
+#: ``appStore.settings`` / ``savedSettings`` slices this suite read via
+#: ``get_state``; the persisted ``AppSettings`` document is now this region's view
+#: one-to-one, so its fields are read straight off the region cache (#2670).
+SETTINGS_REGION = "settings"
 
 
 class TestConnectionEditor(
@@ -69,31 +74,27 @@ class TestConnectionEditor(
         )
         yield
 
-    def _settings_value(self, path: str):
-        """Read a settings store path, treating an unset (unresolved) path as None.
+    def _settings_value(self, key: str):
+        """Read a top-level field of the authoritative ``settings`` region cache.
 
-        ``getState`` raises for a path that does not resolve, which is exactly the
-        state of an optional setting that was cleared (``value || undefined``), so
-        a plain equality check against ``None`` would never settle.
+        Region-authoritative since #2404: the ``appStore.settings`` /
+        ``savedSettings`` slices are gone, so the value is read off the ``settings``
+        projection region view (which maps one-to-one to the persisted
+        ``AppSettings`` document). An unset optional field (``value || undefined``)
+        is simply absent from the document, so a missing key reads as ``None`` —
+        the region cache always returns a dict, so there is no error to catch.
         """
-        try:
-            return self.driver.get_state(path)
-        except BridgeError:
-            return None
+        return self.projection_region_cache(SETTINGS_REGION).get(key)
 
     def _set_general_defaults(self, *, user: str, key_path: str) -> None:
         """Set Settings → General default user + SSH key, waiting for the save.
 
-        The settings panel writes typed values to the live ``settings`` store
-        slice immediately but only commits the **persisted** snapshot
-        (``savedSettings``) after a short debounce. Closing the tab before that
-        debounce fires leaves the tab *dirty*, and ``close_all_tabs`` answers the
-        unsaved-changes dialog with "just close" — which **discards** the change,
-        reverting ``settings`` back to ``savedSettings``.
-
-        So the helper waits on ``savedSettings`` (not the immediate ``settings``
-        slice): once the persisted snapshot matches, the tab is clean and the
-        close keeps the values, which a new editor then reads on open.
+        The settings panel debounces its save and folds the result into the
+        authoritative ``settings`` region; the region also carries the optimistic
+        edit, so a field settling to the typed value confirms the write took. A
+        settings tab auto-flushes any pending debounced save when it closes (it
+        raises no unsaved-changes dialog), so once the region reflects the values
+        ``close_all_tabs`` persists them and a new editor reads them on open.
         """
         self.open_settings_category("general")
         self.wait(
@@ -103,12 +104,11 @@ class TestConnectionEditor(
         self.driver.type("settings-default-user", user)
         self.driver.type("general-settings-key-path-input", key_path)
         self.wait(
-            lambda: self._settings_value("savedSettings.defaultUser") == (user or None),
+            lambda: self._settings_value("defaultUser") == (user or None),
             what="the default user to persist",
         )
         self.wait(
-            lambda: self._settings_value("savedSettings.defaultSshKeyPath")
-            == (key_path or None),
+            lambda: self._settings_value("defaultSshKeyPath") == (key_path or None),
             what="the default SSH key to persist",
         )
         self.close_all_tabs()
@@ -122,12 +122,7 @@ class TestConnectionEditor(
     # ── PR #146: folder placement via the folder context menu ──────────────────
     def test_new_connection_in_folder_via_context_menu(self):
         folder = self.create_folder(unique_name("ctx-folder"))
-        self.driver.context_menu(folder_toggle_testid(folder["id"]))
-        self.wait(
-            lambda: self.driver.exists("context-folder-new-connection"),
-            what="the folder context menu",
-        )
-        self.driver.click("context-folder-new-connection")
+        self.folder_context_action(folder["id"], "context-folder-new-connection")
         self.wait(self.editor_open, what="the new-connection editor")
 
         name = unique_name("in-folder")
@@ -139,12 +134,7 @@ class TestConnectionEditor(
 
     def test_connection_stays_in_folder_after_edit(self):
         folder = self.create_folder(unique_name("edit-folder"))
-        self.driver.context_menu(folder_toggle_testid(folder["id"]))
-        self.wait(
-            lambda: self.driver.exists("context-folder-new-connection"),
-            what="the folder context menu",
-        )
-        self.driver.click("context-folder-new-connection")
+        self.folder_context_action(folder["id"], "context-folder-new-connection")
         self.wait(self.editor_open, what="the new-connection editor")
 
         name = unique_name("folder-edit")

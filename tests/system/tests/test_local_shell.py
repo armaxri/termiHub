@@ -29,6 +29,17 @@ from termihub_harness.shell import ShellCommands, is_absolute_path
 
 pytestmark = pytest.mark.integration
 
+#: Projection region id for the session-lifecycle domain (twin of the Rust /
+#: frontend ``SESSION_LIFECYCLE_REGION`` const in ``src/store/sessionBridge.ts``).
+#: The Phase-5 reducer removal (#2625) deleted the ``appStore.terminalExitedTabs``
+#: slice this suite read via ``get_state``; the exited flag now lives in this
+#: region, whose view document is ``{"sessions": {<tabId>: {status, exit, …}}}``.
+SESSION_LIFECYCLE_REGION = "session-lifecycle"
+
+#: Session statuses that mean the terminal has ended (twin of the frontend
+#: ``regionExited`` in ``src/store/sessionBridge.ts``).
+_EXITED_STATUSES = frozenset({"disconnected", "failed", "sessionLost"})
+
 # Starting-directory cases for test_starting_directory_is_applied, built for the
 # host's shell: one absolute directory plus the home-resolving start values, each
 # paired with the marker command that confirms the shell landed there.
@@ -172,9 +183,14 @@ class TestLocalShell(
         )
 
     def _terminal_exited(self, tab_id: str) -> bool:
-        from termihub_harness import BridgeError
-
-        try:
-            return bool(self.driver.get_state(f"terminalExitedTabs.{tab_id}"))
-        except BridgeError:
+        # Region-authoritative since #2625: the per-client `terminalExitedTabs`
+        # slice was deleted, so read the exited flag off the `session-lifecycle`
+        # region cache instead — the same repoint the connections lookups already
+        # made (#2670). The region view is `{"sessions": {<tabId>: {...}}}`; a tab
+        # is exited when its lifecycle reports a terminal status or carries an
+        # `exit`. A missing entry (never connected) reads as not-exited.
+        sessions = self.projection_region_cache(SESSION_LIFECYCLE_REGION).get("sessions")
+        life = sessions.get(tab_id) if isinstance(sessions, dict) else None
+        if not isinstance(life, dict):
             return False
+        return life.get("status") in _EXITED_STATUSES or life.get("exit") is not None
