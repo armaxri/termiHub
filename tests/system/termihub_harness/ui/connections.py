@@ -17,7 +17,12 @@ from typing import Any, Optional
 
 from ..bridge import BridgeError
 from .base import HarnessMixin
-from .lookups import connection_item_testid, find_connection, find_folder
+from .lookups import (
+    connection_item_testid,
+    find_connection,
+    find_folder,
+    folder_toggle_testid,
+)
 
 
 class ConnectionsUi(HarnessMixin):
@@ -44,6 +49,12 @@ class ConnectionsUi(HarnessMixin):
     CTX_DUPLICATE = "context-connection-duplicate"
     CTX_DELETE = "context-connection-delete"
     CTX_PING = "context-connection-ping"
+
+    # Confirm button of the connection-delete confirmation dialog. Deleting a
+    # connection became guarded by a confirm dialog in #1343; it renders through
+    # ``ConfirmDeleteDialog`` with ``testIdBase="confirm-delete"``, so the confirm
+    # button is ``confirm-delete-confirm`` (not the default ``confirm-dialog-*``).
+    CONFIRM_DELETE = "confirm-delete-confirm"
 
     # -- lookups -----------------------------------------------------------------
     def find_connection(self, name: str) -> Optional[dict[str, Any]]:
@@ -480,9 +491,43 @@ class ConnectionsUi(HarnessMixin):
         )
 
     def connection_context_action(self, name: str, action_test_id: str) -> None:
-        """Right-click a connection by name and click a context-menu action."""
+        """Right-click a connection by name and click a context-menu action.
+
+        The Delete action (#1343) opens a confirmation dialog before the delete
+        reaches the backend, so this answers that confirm — otherwise the click
+        only *arms* the dialog and the connection is never removed, which read as
+        a silent timeout on the now-live nightly lane (#2670). Edit / duplicate /
+        ping act immediately and need no confirm, so only the delete path waits.
+        """
         self.open_connection_menu(name)
         self.driver.click(action_test_id)
+        if action_test_id == self.CTX_DELETE:
+            self.wait(
+                lambda: self.driver.exists(self.CONFIRM_DELETE),
+                what="the delete-connection confirm dialog",
+            )
+            self.driver.click(self.CONFIRM_DELETE)
+
+    def folder_context_action(self, folder_id: str, action_test_id: str) -> None:
+        """Right-click a folder and click a context-menu action, atomically.
+
+        The Radix folder menu auto-closes, so the old ``exists``-poll followed by
+        a *separate* ``click`` races the close — the menu can dismiss between the
+        poll succeeding and the click landing, so the click misses and the flow
+        times out (#2670, B7). This re-opens the menu and clicks the action in one
+        guarded poll: each attempt re-issues the right-click, and a run only
+        succeeds once the action item is present *and* clicked, so a menu that
+        closed under the gesture is simply retried on the next poll.
+        """
+
+        def opened_and_clicked() -> bool:
+            self.driver.context_menu(folder_toggle_testid(folder_id))
+            if not self.driver.exists(action_test_id):
+                return False
+            self.driver.click(action_test_id)
+            return True
+
+        self.wait(opened_and_clicked, what=f"the folder menu action {action_test_id!r}")
 
     def dismiss_menu(self) -> None:
         """Close any open context menu / dialog via Escape."""
