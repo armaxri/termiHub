@@ -1,4 +1,5 @@
 import { Modal, Button } from "@/components/ui";
+import { resolveUiLocale } from "@/utils/locale";
 
 interface LargePasteDialogProps {
   open: boolean;
@@ -26,8 +27,8 @@ export function LargePasteDialog({ open, charCount, onConfirm, onCancel }: Large
         </>
       }
     >
-      You are about to paste {charCount.toLocaleString()} characters into the terminal. Are you
-      sure?
+      You are about to paste {charCount.toLocaleString(resolveUiLocale())} characters into the
+      terminal. Are you sure?
     </Modal>
   );
 }

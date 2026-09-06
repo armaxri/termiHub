@@ -19,6 +19,7 @@ import { THIS_COMPUTER, isAgentHost, type RunLocation } from "@/utils/runLocatio
 import { LatencyChart } from "./LatencyChart";
 import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
+import { resolveUiLocale } from "@/utils/locale";
 
 const MAX_HISTORY = 120;
 
@@ -439,7 +440,7 @@ export function HttpMonitorPanel() {
                       className={r.ok ? "" : "network-panel__row--error"}
                       data-testid={`http-monitor-entry-${i}`}
                     >
-                      <td>{new Date(r.timestampMs).toLocaleTimeString()}</td>
+                      <td>{new Date(r.timestampMs).toLocaleTimeString(resolveUiLocale())}</td>
                       <td>{r.statusCode ?? "—"}</td>
                       <td>{r.latencyMs != null ? `${r.latencyMs}ms` : "—"}</td>
                       <td>{r.ok ? "OK" : (r.error ?? "Failed")}</td>

@@ -6,6 +6,7 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { setUpdateAutoCheck } from "@/services/api";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
+import { resolveUiLocale } from "@/utils/locale";
 import { Button } from "@/components/ui";
 import "./UpdateSettings.css";
 
@@ -16,7 +17,7 @@ interface UpdateSettingsProps {
 function formatCheckTime(iso?: string): string {
   if (!iso) return "Never";
   try {
-    return new Date(iso).toLocaleString();
+    return new Date(iso).toLocaleString(resolveUiLocale());
   } catch {
     return iso;
   }
