@@ -234,6 +234,22 @@ class AppInstance:
         except OSError:
             return ""
 
+    def is_running(self) -> bool:
+        """True if the launched app process is still alive (has not exited).
+
+        Lets a failure-diagnostics path tell a *crash at launch* (process gone)
+        from a *hang* (process alive but the in-app bridge never connected) — the
+        two shapes behind a ``wait_for_app`` timeout in #2646.
+        """
+        return self._process is not None and self._process.poll() is None
+
+    @property
+    def returncode(self) -> Optional[int]:
+        """Exit code of the app process if it has already exited, else ``None``."""
+        if self._process is None:
+            return None
+        return self._process.poll()
+
     def start(self, bridge_port: int) -> "AppInstance":
         """Launch the app pointed at the bridge server on ``bridge_port``.
 
