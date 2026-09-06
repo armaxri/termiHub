@@ -25,21 +25,48 @@ pub enum InfoFlag {
 /// `spawn --help` are left for the subcommand and a normal launch (or a bare
 /// `--workspace foo`) is never mistaken for an info request.
 pub fn classify_info_flag(args: &[String]) -> Option<InfoFlag> {
-    unimplemented!("impl commit")
+    match args.first().map(String::as_str) {
+        Some("--version" | "-V") => Some(InfoFlag::Version),
+        Some("--help" | "-h") => Some(InfoFlag::Help),
+        _ => None,
+    }
 }
 
 /// The single line printed by `--version`. Uses the same
 /// `env!("CARGO_PKG_VERSION")` that the startup log line records, so the CLI and
 /// the log agree on the version.
 pub fn version_line() -> String {
-    unimplemented!("impl commit")
+    format!("termiHub {}", env!("CARGO_PKG_VERSION"))
 }
 
 /// The usage summary printed by `--help`. Lists only the flags and subcommands
 /// the binary actually honors (declared in `tauri.conf.json`'s `cli.args` and in
 /// [`crate::spawn::classify_command`]).
 pub fn help_text() -> String {
-    unimplemented!("impl commit")
+    format!(
+        "\
+{version}
+termiHub — cross-platform terminal hub
+
+Usage:
+  termihub [OPTIONS]
+  termihub <COMMAND> [ARGS]
+
+Options:
+  -w, --workspace <NAME>       Launch a workspace by name
+      --workspace-file <FILE>  Launch a workspace from a JSON definition file
+      --list-workspaces        List all saved workspaces and exit
+  -V, --version                Print version information and exit
+  -h, --help                   Print this help and exit
+
+Commands:
+  spawn                        Open a session in the running instance (see `spawn --help`)
+  install-shell-integration    Register the OS shell/context-menu integration
+  uninstall-shell-integration  Remove the OS shell/context-menu integration
+
+Run with no arguments to launch the desktop application.",
+        version = version_line()
+    )
 }
 
 /// Print the output for `flag` and exit the process with status 0. Never

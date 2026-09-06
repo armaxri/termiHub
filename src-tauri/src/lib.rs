@@ -273,6 +273,16 @@ pub fn run() {
     // request this instance must handle itself (no running instance accepted
     // the forward) is threaded into `setup()` via `pending_spawn`.
     let raw_args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Top-level `--version`/`-V` and `--help`/`-h` must print and exit before
+    // any window, spawn IPC, or logging setup, so they work headlessly with no
+    // display (#2655). `tauri_plugin_cli`'s matches are only available inside
+    // `setup()` (after the window is built), so these are routed here from the
+    // raw args, ahead of the spawn/shell-integration classification below.
+    if let Some(flag) = cli::classify_info_flag(&raw_args) {
+        cli::handle_info_flag(flag);
+    }
+
     let pending_spawn = match spawn::classify_command(&raw_args) {
         spawn::Command::Spawn(request) => handle_spawn_command(request),
         spawn::Command::InstallShellIntegration => handle_shell_integration_command(true),
