@@ -2377,6 +2377,25 @@ frontend cut (#2313, step B) routes SSH remote-edit through the session path.
 3. Confirm the change is re-uploaded to the host (`cat` it in a shell) and
    termiHub is still running (no crash — regression #828).
 
+### Local folder OS integration: file manager + VS Code workspace (#2656)
+
+Two local-only file-browser toolbar actions (and matching folder-row context
+items) act on the currently-browsed folder. The guided-manual harness drives
+them via `test_open_file_manager_local` (MT-FB-21),
+`test_open_folder_in_vscode_local` (MT-FB-22), and
+`test_open_folder_vscode_toolbar_matches_availability` (MT-FB-23) in
+`tests/system/tests/test_external_app.py`; the operator only confirms the
+external result.
+
+1. On a **local** terminal, open the Files sidebar. Click the
+   file-manager toolbar action (labelled per-OS: **Reveal in Finder** /
+   **Show in File Explorer** / **Open in File Manager**). Confirm the OS-native
+   file manager opens at the currently-browsed folder.
+2. With the VS Code CLI (`code`) available, click the **Open Folder in VS Code**
+   toolbar action. Confirm VS Code opens that folder as a workspace.
+3. Confirm both actions are absent for a **remote session** browser, and that
+   the VS Code action is absent when VS Code is not detected.
+
 ### File editor SFTP-only read-only fallback (#1330)
 
 Verifies the graceful fallback for a read-only file on an SFTP-only / relayed
@@ -2454,13 +2473,13 @@ At the end of a `--manual` session a `manual-<ts>-<platform>-<arch>.{json,md}` r
 
 Migrated guided-manual suites so far:
 
-| Suite                                                                        | Covers (manual IDs)                                                              | The human step                                                                                                                                                                                                                        |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                                                | eyeball colours / drive a save dialog / yes-no                                                                                                                                                                                        |
-| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17/12..16/23, MT-TAB-08/17/18/19, MT-PORT-04                       | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store (incl. encrypted import, Save As, portable export, external file — #1004)                                                       |
-| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02.., MT-UI-01/16/19, MT-LOCAL-05 | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar, no startup/connect white-flash, no black bottom bar, OS app icon) — screenshot attached                                                    |
-| [`test_external_app.py`](../tests/system/tests/test_external_app.py)         | MT-FB-04/14/15/16, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04           | confirm the external result — VS Code launched, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect)                                            |
-| [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)       | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20          | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder) |
+| Suite                                                                        | Covers (manual IDs)                                                              | The human step                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [`test_manual_examples.py`](../tests/system/tests/test_manual_examples.py)   | worked examples (visual / dialog)                                                | eyeball colours / drive a save dialog / yes-no                                                                                                                                                                                             |
+| [`test_native_dialogs.py`](../tests/system/tests/test_native_dialogs.py)     | MT-CONN-08/09/17/12..16/23, MT-TAB-08/17/18/19, MT-PORT-04                       | pick / save the path the harness names in the native OS dialog; the harness verifies the file / store (incl. encrypted import, Save As, portable export, external file — #1004)                                                            |
+| [`test_visual_rendering.py`](../tests/system/tests/test_visual_rendering.py) | MT-SSH-02, MT-UI-31/35/36, MT-SER-01/02, MT-UI-02.., MT-UI-01/16/19, MT-LOCAL-05 | look and confirm the rendered result (glyphs, ANSI colours, box-drawing, theme, scrollbar, no startup/connect white-flash, no black bottom bar, OS app icon) — screenshot attached                                                         |
+| [`test_external_app.py`](../tests/system/tests/test_external_app.py)         | MT-FB-04/14/15/16/21/22/23, MT-SSH-07/09/14/15/16/18, MT-XPLAT-03, MT-KB-01..04  | confirm the external result — VS Code launched, the OS file manager / VS Code workspace opened, the SSH-agent/X11 window appeared, the clipboard pasted (harness verifies the in-app side: menu item, persisted X11 flag, session connect) |
+| [`test_input_routing.py`](../tests/system/tests/test_input_routing.py)       | MT-KB-09..14, MT-UI-26..30/34, MT-TAB-06/07/16, MT-CONN-01/24, MT-FB-20          | perform the real keypress / drag / right-click / OS file-drop the synthetic bridge cannot reproduce (harness verifies the in-app side: persisted pass-through flag, resulting leaf count / panel tree, the moved connection's folder)      |
 
 > **MT-UI-01/16/19, MT-LOCAL-05 — startup/connect white-flash + app icon (#1003).**
 > Follow-up to #915 (delivered in PR #943): the remaining timing- and OS-level
@@ -3087,6 +3106,7 @@ Mapping of manual test IDs that have been automated to their Python harness test
 | MT-FB-03, 13, 19                 | `tests/system/tests/test_sftp_infra.py`                                                                                                                                                  |
 | MT-FB-06, 17                     | _manual_ (serial not bridge-selectable; SFTP fault injection)                                                                                                                            |
 | MT-FB-05, 11, 18                 | `tests/system/tests/test_file_browser_local.py`                                                                                                                                          |
+| MT-FB-21, 22, 23                 | `tests/system/tests/test_external_app.py` (open OS file manager / VS Code workspace at the current local folder, #2656)                                                                  |
 | EDITOR-01/STATUS/INDENT/LANG     | `tests/system/tests/test_editor.py`                                                                                                                                                      |
 | #504 (terminal auto-scroll)      | `tests/system/tests/test_terminal_auto_scroll.py`                                                                                                                                        |
 | MT-UI-06–08                      | `tests/system/tests/test_ui_state.py`                                                                                                                                                    |

@@ -17,6 +17,9 @@ Covered:
 
 - **Open in VS Code** — local (MT-FB-04/14), SFTP (MT-FB-15), and the
   "VS Code not installed → menu item hidden" path (MT-FB-16).
+- **Local folder OS integration** (#2656) — open the OS file manager at the
+  current folder (MT-FB-21), open the folder as a VS Code workspace (MT-FB-22),
+  and the toolbar VS Code action tracking ``vscodeAvailable`` (MT-FB-23).
 - **SSH agent auth** — connecting with the ``agent`` auth method (MT-SSH-07) and
   the "Setup SSH Agent" button in the connection editor (MT-SSH-09, #955).
 - **X11 forwarding** — enabling ``enableX11Forwarding`` on a connection, proving
@@ -160,6 +163,63 @@ class TestExternalApp(
             "VS Code menu item presence does not match vscodeAvailable"
         )
         self.dismiss_menu()
+
+    # ── Open file manager here: local (MT-FB-21, #2656) ──────────────────────
+    def test_open_file_manager_local(self):
+        """Harness opens a local file browser and triggers the toolbar
+        "open file manager here" action; operator confirms the OS-native file
+        manager (Finder / Explorer / file manager) opened at that folder."""
+        self.close_all_tabs()
+        self.ensure_terminal()
+        path = self.open_file_browser()
+
+        assert self.driver.exists(self.OPEN_IN_EXPLORER), (
+            "open-file-manager toolbar action missing in local mode"
+        )
+        self.driver.click(self.OPEN_IN_EXPLORER)
+
+        self.manual_observe(
+            f"termiHub opened the OS file manager at {path}.",
+            "The native file manager (Finder/Explorer/file manager) shows that folder.",
+        )
+
+    # ── Open folder as VS Code workspace: local (MT-FB-22, #2656) ─────────────
+    def test_open_folder_in_vscode_local(self):
+        """Harness triggers the toolbar "open folder as VS Code workspace"
+        action; operator confirms VS Code opened the folder as a workspace."""
+        if not self._vscode_available():
+            pytest.skip("VS Code not detected (vscodeAvailable=false)")
+        self.close_all_tabs()
+        self.ensure_terminal()
+        path = self.open_file_browser()
+
+        assert self.driver.exists(self.OPEN_FOLDER_VSCODE), (
+            "open-folder-in-VS-Code toolbar action missing in local mode"
+        )
+        self.driver.click(self.OPEN_FOLDER_VSCODE)
+
+        self.manual_observe(
+            f"termiHub opened {path} as a VS Code workspace.",
+            "VS Code shows that folder as an open workspace.",
+        )
+
+    # ── Open-folder-in-VS-Code toolbar tracks availability (MT-FB-23, #2656) ──
+    def test_open_folder_vscode_toolbar_matches_availability(self):
+        """The toolbar "open folder in VS Code" action is present iff the app
+        detected VS Code. The file-manager action is always present locally.
+
+        Fully harness-verified (no operator step).
+        """
+        self.close_all_tabs()
+        self.ensure_terminal()
+        self.open_file_browser()
+
+        assert self.driver.exists(self.OPEN_IN_EXPLORER), (
+            "file-manager toolbar action should always be present in local mode"
+        )
+        assert self.driver.exists(self.OPEN_FOLDER_VSCODE) == self._vscode_available(), (
+            "VS Code toolbar action presence does not match vscodeAvailable"
+        )
 
     # ── Open in VS Code: SFTP (MT-FB-15) ─────────────────────────────────────
     @pytest.mark.usefixtures("ssh_fixtures")

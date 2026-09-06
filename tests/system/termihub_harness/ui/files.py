@@ -83,6 +83,9 @@ class FilesUi(FileBrowserPathReads):
     NEW_FOLDER = "file-browser-new-folder"
     NEW_FOLDER_INPUT = "file-browser-new-folder-input"
     NEW_FOLDER_CONFIRM = "file-browser-new-folder-confirm"
+    #: Local-only toolbar actions that act on the current folder (#2656).
+    OPEN_IN_EXPLORER = "file-browser-open-in-explorer"
+    OPEN_FOLDER_VSCODE = "file-browser-open-folder-vscode"
 
     if TYPE_CHECKING:  # provided by SidebarUi, with which suites combine this
         def switch_to_files_sidebar(self) -> None: ...

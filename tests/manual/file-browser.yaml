@@ -129,6 +129,49 @@ tests:
       - "'Open in VS Code' menu item does not appear"
     verification: manual
 
+  # --- Local folder OS integration (#2656) ---
+
+  - id: MT-FB-21
+    name: "Open OS file manager at the current local folder"
+    issue: 2656
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On a local terminal, open the Files sidebar"
+      - "Click the file-manager toolbar action (Reveal in Finder / Show in File Explorer / Open in File Manager)"
+    expected:
+      - "The OS-native file manager opens at the currently-browsed folder"
+      - "The action is absent for a remote-session file browser"
+    verification: manual
+
+  - id: MT-FB-22
+    name: "Open the current local folder as a VS Code workspace"
+    issue: 2656
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "With the VS Code CLI (code) available, open the Files sidebar on a local terminal"
+      - "Click the 'Open Folder in VS Code' toolbar action"
+    expected:
+      - "VS Code opens the folder as a workspace"
+      - "The action is absent for a remote-session file browser"
+    verification: manual
+
+  - id: MT-FB-23
+    name: "Open-folder-in-VS-Code action tracks availability"
+    issue: 2656
+    platforms: [all]
+    prerequisites:
+      - app: true
+    instructions:
+      - "On a system without VS Code installed, open the Files sidebar on a local terminal"
+    expected:
+      - "The 'Open Folder in VS Code' action does not appear"
+      - "The file-manager action is still present"
+    verification: manual
+
   # --- Editor: Built-in file editor with Monaco (PR #54) ---
 
   - id: MT-FB-20

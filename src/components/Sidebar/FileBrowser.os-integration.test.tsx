@@ -339,7 +339,9 @@ describe("FileBrowser — folder-row OS-integration context items (#2656)", () =
   it("dispatches openInExplorer when the file-manager item is clicked", () => {
     const onAction = renderMenu(dirEntry, { vscodeAvailable: true, local: true });
     act(() => {
-      (container.querySelector('[data-testid="file-menu-open-in-explorer"]') as HTMLElement).click();
+      (
+        container.querySelector('[data-testid="file-menu-open-in-explorer"]') as HTMLElement
+      ).click();
     });
     expect(onAction).toHaveBeenCalledWith(dirEntry, "openInExplorer");
   });
