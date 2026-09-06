@@ -12,6 +12,7 @@ mod agents_projection;
 /// default), with the `appStore` reducers retained as the parity-safe fallback —
 /// see [`broadcast_projection`].
 mod broadcast_projection;
+mod cli;
 mod commands;
 mod connection;
 /// Shadow connections-tree authority (#2225, Phase 5 of #2139/#2153): the shared
