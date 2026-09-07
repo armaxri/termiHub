@@ -1,5 +1,15 @@
-/* UI font: Geist for premium, developer-tool typography */
-@import url("https://fonts.googleapis.com/css2?family=Geist:wght@100..900&display=swap");
+/* UI font: Geist for premium, developer-tool typography.
+   Self-hosted from a vendored OFL-1.1 woff2 (src/assets/fonts/Geist-Variable.woff2,
+   license alongside it) so it loads under the app's shipped CSP (style-src 'self')
+   with no external request. The variable font covers the full wght@100..900 range
+   the app uses. See #2673. */
+@font-face {
+  font-family: "Geist";
+  src: url("../assets/fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 /* Bundled MesloLGS Nerd Font Mono for Powerline glyph support */
 
