@@ -34,6 +34,8 @@ no-op):
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from termihub_harness import (
@@ -48,6 +50,19 @@ from termihub_harness import (
 pytestmark = pytest.mark.integration
 
 DEFAULT_KEY = "/home/tester/.ssh/id_ed25519"
+
+#: An existing file that is definitively *not* an SSH private key, chosen per OS.
+#: The key-path field validates the file on the *local* machine (the app runs on
+#: the test runner), so the path must exist there: the hosts file is present on
+#: every platform and is plain text, so it reads back as "Not a recognized SSH
+#: private key format." ``/etc/hosts`` does not exist on Windows — using it there
+#: yielded "File not found." instead, so the Windows nightly leg never saw the
+#: unrecognized-format hint (#2683). Windows keeps the hosts file under System32.
+EXISTING_NON_KEY_FILE = (
+    r"C:\Windows\System32\drivers\etc\hosts"
+    if sys.platform.startswith("win")
+    else "/etc/hosts"
+)
 
 #: Projection region id for the settings domain (twin of the frontend
 #: ``SETTINGS_REGION`` const). The Phase-5 reducer removal (#2404) deleted the
@@ -192,9 +207,10 @@ class TestConnectionEditor(
         )
         assert "File not found." in self.driver.get_text(self.KEY_PATH_VALIDATION)
 
-        # Existing non-key file → "not recognized" warning (/etc/hosts is present
-        # on the Linux/macOS runners and is not a private key).
-        self.driver.type(self.KEY_PATH_INPUT, "/etc/hosts")
+        # Existing non-key file → "not recognized" warning. The hosts file is
+        # present on every platform and is not a private key; its path differs on
+        # Windows (see EXISTING_NON_KEY_FILE), where /etc/hosts does not exist.
+        self.driver.type(self.KEY_PATH_INPUT, EXISTING_NON_KEY_FILE)
         self.wait(
             lambda: "Not a recognized" in self.driver.get_text(self.KEY_PATH_VALIDATION),
             what="the unrecognized-format validation hint",
