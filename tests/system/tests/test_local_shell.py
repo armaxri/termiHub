@@ -178,6 +178,15 @@ class TestLocalShell(
         self.connect_connection(name)
         tab = self.wait(lambda: self.find_tab(name), what=f"the {name!r} tab")
 
+        # Wait for the shell to print its prompt before typing `exit`. Finding the
+        # tab only proves it mounted, not that the shell is reading input yet, and
+        # Git Bash on Windows starts noticeably slower under ConPTY than the
+        # platform-default POSIX shell on macOS/Linux — so `exit` typed into a
+        # still-starting shell is swallowed and the session never ends. This is
+        # why #2674's Git-Bash routing alone did not fix the Windows leg (#2683);
+        # a readable active buffer is the prompt-printed signal the other terminal
+        # suites already gate on.
+        self.wait(self.has_terminal, what="the shell to print its prompt")
         self.run_command("exit")
         # The store flags an exited terminal; that drives the "[Process exited]"
         # overlay the old test could not read off the canvas.
