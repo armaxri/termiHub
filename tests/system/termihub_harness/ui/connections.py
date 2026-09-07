@@ -491,16 +491,57 @@ class ConnectionsUi(HarnessMixin):
         )
 
     def connection_context_action(self, name: str, action_test_id: str) -> None:
-        """Right-click a connection by name and click a context-menu action.
+        """Right-click a connection by name and click a context-menu action, robustly.
 
-        The Delete action (#1343) opens a confirmation dialog before the delete
-        reaches the backend, so this answers that confirm — otherwise the click
-        only *arms* the dialog and the connection is never removed, which read as
-        a silent timeout on the now-live nightly lane (#2670). Edit / duplicate /
+        The Radix connection menu auto-closes, so opening it (polling until its
+        sentinel mounts) and then firing a *separate* ``click`` races that close —
+        the menu can dismiss between the sentinel appearing and the click landing,
+        so the click misses and the flow times out under CI load (#2670/#2674, the
+        context-menu flake). This guards both ends in one poll, mirroring
+        :meth:`folder_context_action`:
+
+        - The connection id can change across the store's post-save disk reloads,
+          so the item is re-resolved by name every poll and the right-click is
+          aimed at the *current* trigger (never a cached, unmounted id).
+        - When the action item is already in the DOM the menu is open — click it
+          in the same step, leaving no polling gap for it to close in.
+        - Otherwise press Escape first to dismiss any stale / half-open menu (its
+          full-screen Radix overlay would make the trigger unhittable and hang the
+          right-click), re-open on the freshly-resolved trigger, and click if the
+          item mounted immediately (else retry on the next poll). Re-issuing the
+          right-click only while no menu item is visible avoids firing
+          ``context_menu`` into an already-open overlay.
+
+        The Delete action (#1343) then answers its confirm dialog — otherwise the
+        click only *arms* it and the connection is never removed, which read as a
+        silent timeout on the now-live nightly lane (#2670). Edit / duplicate /
         ping act immediately and need no confirm, so only the delete path waits.
         """
-        self.open_connection_menu(name)
-        self.driver.click(action_test_id)
+
+        def opened_and_clicked() -> bool:
+            # Menu already open (item mounted) — click now, no gap to close in.
+            if self.driver.exists(action_test_id):
+                self.driver.click(action_test_id)
+                return True
+            conn = self.find_connection(name)
+            if conn is None:
+                return False
+            trigger = connection_item_testid(conn["id"])
+            if not self.driver.exists(trigger):
+                return False
+            # Clear any stale/half-open menu so its overlay does not block the
+            # right-click, re-open on the current trigger, and click if it mounted.
+            self.driver.press_key("Escape")
+            self.driver.context_menu(trigger)
+            if self.driver.exists(action_test_id):
+                self.driver.click(action_test_id)
+                return True
+            return False
+
+        self.wait(
+            opened_and_clicked,
+            what=f"the {name!r} connection menu action {action_test_id!r}",
+        )
         if action_test_id == self.CTX_DELETE:
             self.wait(
                 lambda: self.driver.exists(self.CONFIRM_DELETE),

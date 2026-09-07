@@ -95,6 +95,17 @@ class TestConnectionEditor(
         settings tab auto-flushes any pending debounced save when it closes (it
         raises no unsaved-changes dialog), so once the region reflects the values
         ``close_all_tabs`` persists them and a new editor reads them on open.
+
+        **Each field is typed and settled before the next.** Both General inputs'
+        ``onChange`` spread the *current* ``settings`` prop
+        (``onChange({...settings, <field>: value})``), so firing the two ``type``s
+        back-to-back can run the second against a ``settings`` snapshot that
+        predates the first — its spread then drops the first field's just-typed
+        value. That stale-closure clobber surfaced only under CI render latency:
+        ``test_defaults_prefill`` (which types a real key path) reliably lost its
+        default *user*, timing out on "the default user to persist" (#2674).
+        Waiting for each field to reach the region forces the re-render that
+        refreshes the prop, so the next ``type`` spreads a current snapshot.
         """
         self.open_settings_category("general")
         self.wait(
@@ -102,11 +113,11 @@ class TestConnectionEditor(
             what="the General settings fields",
         )
         self.driver.type("settings-default-user", user)
-        self.driver.type("general-settings-key-path-input", key_path)
         self.wait(
             lambda: self._settings_value("defaultUser") == (user or None),
             what="the default user to persist",
         )
+        self.driver.type("general-settings-key-path-input", key_path)
         self.wait(
             lambda: self._settings_value("defaultSshKeyPath") == (key_path or None),
             what="the default SSH key to persist",
