@@ -570,6 +570,15 @@ export async function dispatchCommand(
       if (command.testId) {
         target = findByTestId(deps.root, command.testId);
         if (!target) return fail("pressKey", `no element with data-testid="${command.testId}"`);
+        // A real keystroke always lands on the *focused* element: the browser
+        // focuses an element as the default action of a user mousedown, which the
+        // synthetic pointer sequence behind `click` does NOT reproduce. Focus the
+        // target here so keybinding-driven editors (Monaco) see `textInputFocus`
+        // and resolve cursor navigation (arrows) and the Save chord (Ctrl/Cmd+S)
+        // — otherwise those keydowns fire but no-op (#2681). `.focus()` is a
+        // no-op for non-focusable targets, so document-level handlers (e.g. an
+        // Escape dismiss) keep working via event bubbling.
+        if (target instanceof HTMLElement) target.focus();
       } else {
         // No explicit target: aim at the focused element so a bare Escape/Enter
         // reaches document-level handlers (e.g. Radix's dismiss layer) by bubbling.
