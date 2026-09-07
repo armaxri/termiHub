@@ -74,6 +74,14 @@ export function HttpMonitorPanel() {
   // two backend monitors for one URL. This synchronous ref rejects the second
   // call immediately, so only one start is ever in flight.
   const startInFlightRef = useRef(false);
+  // Buffers check events that arrive *while a start is in flight* but before the
+  // monitor id has come back (#2684). The backend runs an immediate first check
+  // the moment its poll task runs, which can be emitted before
+  // `networkHttpMonitorStart` resolves — so the listener cannot yet match it by
+  // id. Rather than drop it (leaving the panel blank until the next check, up to
+  // one full interval — 30s by default — away), buffer it here and reconcile the
+  // matching ones once the id is known.
+  const pendingChecksRef = useRef<HttpCheckResult[]>([]);
 
   const loadMonitors = useCallback(async () => {
     try {
@@ -92,6 +100,14 @@ export function HttpMonitorPanel() {
   const stopListening = useCallback(() => {
     unlistenCheckRef.current?.();
     unlistenCheckRef.current = null;
+    pendingChecksRef.current = [];
+  }, []);
+
+  /** Append a check result to the rolling history (capped at MAX_HISTORY). */
+  const appendCheck = useCallback((result: HttpCheckResult) => {
+    setHistory((prev) =>
+      prev.length >= MAX_HISTORY ? [...prev.slice(1), result] : [...prev, result]
+    );
   }, []);
 
   const clearActiveMonitor = useCallback(() => {
@@ -128,14 +144,23 @@ export function HttpMonitorPanel() {
       // interval sleep) and emits it as soon as the spawned task runs, so a
       // listener attached only after start — as the old activeMonitorId-gated
       // effect did — could miss that first check and leave the panel blank for
-      // up to one interval (#1002). The id is set synchronously the moment start
-      // resolves, before any emitted event can be processed, so filtering by it
-      // never drops the first check.
+      // up to one interval (#1002).
+      //
+      // Even with the listener attached first, that immediate check can be
+      // emitted *before* networkHttpMonitorStart resolves — i.e. before the
+      // monitor id is known — so the listener cannot yet match it by id. Buffer
+      // such checks and reconcile them once the id is set (#2684); dropping them
+      // left the panel blank until the next interval (30s by default) on a fast
+      // (e.g. loopback) target.
       unlistenCheckRef.current = await onHttpMonitorCheck((result: HttpCheckResult) => {
-        if (result.monitorId !== activeMonitorIdRef.current) return;
-        setHistory((prev) =>
-          prev.length >= MAX_HISTORY ? [...prev.slice(1), result] : [...prev, result]
-        );
+        const activeId = activeMonitorIdRef.current;
+        if (activeId !== null) {
+          if (result.monitorId === activeId) appendCheck(result);
+          return;
+        }
+        // No active id yet: only buffer while our own start is in flight, so a
+        // stray event outside a start is still ignored.
+        if (startInFlightRef.current) pendingChecksRef.current.push(result);
       });
 
       const monitorId = await networkHttpMonitorStart(
@@ -150,6 +175,12 @@ export function HttpMonitorPanel() {
       setMonitorLocation(monitorId, runLocation);
       activeMonitorIdRef.current = monitorId;
       setActiveMonitorId(monitorId);
+      // Reconcile any checks buffered before the id was known (see the listener).
+      const buffered = pendingChecksRef.current;
+      pendingChecksRef.current = [];
+      for (const result of buffered) {
+        if (result.monitorId === monitorId) appendCheck(result);
+      }
       await loadMonitors();
     } catch (err) {
       stopListening();
@@ -169,6 +200,7 @@ export function HttpMonitorPanel() {
     setMonitorLocation,
     loadMonitors,
     stopListening,
+    appendCheck,
   ]);
 
   const handleStop = useCallback(async () => {
