@@ -1097,17 +1097,22 @@ mod tests {
     }
 
     #[test]
-    fn osc9_powershell_contains_expected_parts() {
+    fn osc7_powershell_contains_expected_parts() {
         let setup = osc7_setup_command("powershell").expect("expected Some for powershell");
         // Must redefine the prompt function
         assert!(
             setup.contains("function prompt"),
             "expected prompt function override, got: {setup}"
         );
-        // Must emit OSC 9;9 sequence (raw Windows path, no URL conversion)
+        // Must emit an OSC 7 file:// sequence (the cross-platform CWD standard
+        // the file browser follows) — not the OSC 9;9 Windows-Terminal variant.
         assert!(
-            setup.contains("]9;9;"),
-            "expected OSC 9;9 marker, got: {setup}"
+            setup.contains("]7;file://"),
+            "expected OSC 7 file:// marker, got: {setup}"
+        );
+        assert!(
+            !setup.contains("]9;9;"),
+            "must not emit OSC 9;9 (file browser follows OSC 7), got: {setup}"
         );
         assert!(
             setup.contains("[char]27"),
@@ -1117,15 +1122,56 @@ mod tests {
             setup.contains("[char]7"),
             "expected BEL via [char]7, got: {setup}"
         );
-        // Must NOT do backslash conversion (OSC 9;9 carries raw Windows paths)
+        // Must convert Windows backslashes to forward slashes for the file:// URI.
         assert!(
-            !setup.contains(r#"-replace '\\','/'"#),
-            "OSC 9;9 should not convert backslashes, got: {setup}"
+            setup.contains(r#"-replace '\\','/'"#),
+            "expected backslash->slash conversion for OSC 7, got: {setup}"
+        );
+        // Must URL-encode the path so spaces/specials form a valid URI.
+        assert!(
+            setup.contains("EscapeUriString"),
+            "expected URL encoding via EscapeUriString, got: {setup}"
+        );
+        // Must use the real hostname as the file:// authority.
+        assert!(
+            setup.contains("COMPUTERNAME"),
+            "expected hostname via $env:COMPUTERNAME, got: {setup}"
         );
         // Must clear screen at end
         assert!(
             setup.contains("Clear-Host"),
             "expected Clear-Host at end, got: {setup}"
+        );
+    }
+
+    /// The dispatch in [`osc7_setup_command`] must be shell-aware: PowerShell
+    /// receives the PowerShell `prompt`-function snippet (OSC 7 file:// URI),
+    /// while bash/zsh receive the POSIX `PROMPT_COMMAND`/`precmd_functions`
+    /// snippet — never the other way around. Sending bash syntax to PowerShell
+    /// (or vice-versa) was the #2674 root cause.
+    #[test]
+    fn osc7_dispatch_is_shell_aware() {
+        let ps = osc7_setup_command("powershell").expect("expected Some for powershell");
+        let bash = osc7_setup_command("bash").expect("expected Some for bash");
+
+        // PowerShell gets PowerShell syntax, not POSIX prompt-hook syntax.
+        assert!(
+            ps.contains("function prompt") && ps.contains("file://"),
+            "powershell must get the PS OSC 7 snippet, got: {ps}"
+        );
+        assert!(
+            !ps.contains("PROMPT_COMMAND") && !ps.contains("precmd_functions"),
+            "powershell must NOT get POSIX bash/zsh syntax, got: {ps}"
+        );
+
+        // bash/zsh get POSIX syntax, not PowerShell syntax.
+        assert!(
+            bash.contains("__termihub_osc7") && bash.contains("PROMPT_COMMAND"),
+            "bash must get the POSIX prompt-hook snippet, got: {bash}"
+        );
+        assert!(
+            !bash.contains("function prompt") && !bash.contains("EscapeUriString"),
+            "bash must NOT get PowerShell syntax, got: {bash}"
         );
     }
 
