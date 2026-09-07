@@ -7,12 +7,12 @@ A different suite gets its own clean app.
 
 import pytest
 
-from termihub_harness import SystemTest, TerminalUi
+from termihub_harness import ConnectionsUi, SidebarUi, SystemTest, TerminalUi
 
 pytestmark = pytest.mark.integration
 
 
-class TestTerminalBasics(TerminalUi, SystemTest):
+class TestTerminalBasics(TerminalUi, ConnectionsUi, SidebarUi, SystemTest):
     def test_echo_runs(self):
         self.ensure_terminal()
         self.delay4user(1, reason="terminal opened")  # no-op unless --delay4user
@@ -21,8 +21,12 @@ class TestTerminalBasics(TerminalUi, SystemTest):
         self.delay4user(2, reason="echo output visible")
 
     def test_pwd_runs_in_the_same_instance(self):
-        # No new app launch — reuses the instance (and terminal) from above.
-        self.ensure_terminal()  # idempotent: keeps the existing terminal
+        # No new app launch — reuses the instance from above. `pwd` and the
+        # forward-slash assertion are POSIX, so this needs a POSIX shell: on
+        # macOS/Linux `ensure_posix_terminal` keeps the existing default-shell
+        # terminal (idempotent), while on Windows it opens Git Bash rather than the
+        # PowerShell default, whose `pwd` prints backslash paths with no `/` (#2674).
+        self.ensure_posix_terminal()
         self.run_command("pwd")
         assert "/" in self.wait_for_output("/")
         self.delay4user(2, reason="pwd output visible")

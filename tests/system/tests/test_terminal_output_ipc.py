@@ -18,15 +18,20 @@ ASCII is typed as input — isolating the **output** path this change touches.
 
 import pytest
 
-from termihub_harness import SystemTest, TerminalUi
+from termihub_harness import ConnectionsUi, SidebarUi, SystemTest, TerminalUi
 
 pytestmark = pytest.mark.integration
 
 
-class TestTerminalOutputIpc(TerminalUi, SystemTest):
+class TestTerminalOutputIpc(TerminalUi, ConnectionsUi, SidebarUi, SystemTest):
+    # These assert byte-fidelity by driving POSIX `printf '\xNN'` payloads, so they
+    # need a POSIX shell. `ensure_posix_terminal` gives one on every host — the
+    # default shell on macOS/Linux, Git Bash on Windows (the local default there is
+    # PowerShell, where `printf '\xNN'` does not run; #2674). macOS/Linux behaviour
+    # is unchanged (it defers to `ensure_terminal`).
     def test_utf8_multibyte_round_trips(self):
         """Japanese + accented + emoji bytes must render intact, not as U+FFFD."""
-        self.ensure_terminal()
+        self.ensure_posix_terminal()
         # macOS login shells emit a one-time bash→zsh deprecation banner ("The
         # default interactive shell is now zsh… chsh") plus OSC-7 shell-integration
         # sequences at prompt time. That startup noise can still be flushing when
@@ -51,7 +56,17 @@ class TestTerminalOutputIpc(TerminalUi, SystemTest):
 
     def test_ansi_color_escapes_round_trip(self):
         """ESC-based color sequences must not corrupt the surrounding text."""
-        self.ensure_terminal()
+        self.ensure_posix_terminal()
+        # Same settle-drain as test_utf8_multibyte_round_trips: the shell-integration
+        # OSC-7 sequences (and, on macOS, the login banner) emitted at prompt time
+        # can still be flushing when the payload printf runs, splicing bytes into the
+        # asserted line (#2626 cat D / #2674). Emit a marker on its own line and wait
+        # for it to render, so the color payload below prints on a clean prompt. The
+        # marker is a distinct token from the sibling test's: on macOS/Linux these
+        # tests share one terminal, so "SETTLE-READY" is already in the scrollback
+        # and would match immediately without actually draining this prompt.
+        self.run_command(r"printf 'SET''TLE-%s\n' ANSI")
+        self.wait_for_output("SETTLE-ANSI")
         self.run_command(
             r"printf 'IPCCLR:\x1b[31mR\x1b[32mG\x1b[34mB\x1b[0m:END\n'"
         )
@@ -62,7 +77,7 @@ class TestTerminalOutputIpc(TerminalUi, SystemTest):
 
     def test_high_throughput_burst_is_not_dropped(self):
         """A large single burst must arrive whole — start, middle, and end."""
-        self.ensure_terminal()
+        self.ensure_posix_terminal()
         # ~5000 comma-joined numbers emitted in one burst → a big coalesced flush.
         self.run_command(
             "printf 'IPCHT:'; seq 1 5000 | tr '\\n' ','; printf ':END\\n'"

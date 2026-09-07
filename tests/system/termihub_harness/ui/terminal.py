@@ -7,18 +7,70 @@ mix this in alongside :class:`~termihub_harness.SystemTest`.
 
 from __future__ import annotations
 
-from typing import Optional
+import sys
+from typing import TYPE_CHECKING, Optional
+
+import pytest
 
 from ..bridge import BridgeError
-from ..systemtest import DEFAULT_WAIT_TIMEOUT
+from ..git_bash import detect_git_bash
+from ..systemtest import DEFAULT_WAIT_TIMEOUT, unique_name
 from .base import HarnessMixin
 from .lookups import active_leaf, iter_tabs
 
 NEW_TERMINAL = "terminal-view-new-terminal"
 
+#: The ``field-shell`` value that selects a POSIX shell on Windows. The local
+#: backend defaults to PowerShell there, so suites that drive POSIX command syntax
+#: (``printf '\xNN'``, ``exit``, forward-slash paths) request Git Bash instead —
+#: the repo's POSIX-on-Windows shell (see ``tests/system/tests/test_windows_shells.py``).
+WINDOWS_POSIX_SHELL = "gitbash"
+
 
 class TerminalUi(HarnessMixin):
     """Create a terminal, send commands, and poll its output."""
+
+    if TYPE_CHECKING:  # provided by ConnectionsUi / SidebarUi, mixed in alongside
+        def create_local_connection(
+            self, name: str, *, shell: Optional[str] = None, connect: bool = False
+        ) -> str: ...
+
+        def switch_to_connections_sidebar(self) -> None: ...
+
+    def posix_shell_name(self) -> Optional[str]:
+        """The ``field-shell`` value that yields a POSIX shell on this host.
+
+        Returns :data:`WINDOWS_POSIX_SHELL` (``"gitbash"``) on Windows, where the
+        local backend otherwise defaults to PowerShell, and ``None`` on macOS/Linux,
+        where the default shell is already POSIX (so ``create_local_connection``
+        keeps the platform default). On Windows without Git for Windows installed
+        there is no POSIX shell, so the calling test is **skipped** — mirroring the
+        ``skip_without_git_bash`` gate in ``test_windows_shells.py``.
+        """
+        if not sys.platform.startswith("win"):
+            return None
+        if not detect_git_bash():
+            pytest.skip("Git Bash (Git for Windows) is not installed; no POSIX shell on Windows")
+        return WINDOWS_POSIX_SHELL
+
+    def ensure_posix_terminal(self) -> None:
+        """Ensure a terminal running a **POSIX** shell exists and has printed a prompt.
+
+        The generic terminal suites drive POSIX command syntax; :meth:`ensure_terminal`
+        opens the platform *default* shell, which on Windows is PowerShell — where
+        that syntax does not run, so those tests hung or mismatched once the Windows
+        integration lane went live (#2674). On macOS/Linux the default shell is
+        already POSIX, so this defers to :meth:`ensure_terminal` unchanged. On Windows
+        it opens a Git Bash connection instead (the repo's POSIX-on-Windows shell,
+        see ``test_windows_shells.py``), skipping the test when Git Bash is absent.
+        """
+        shell = self.posix_shell_name()
+        if shell is None:
+            self.ensure_terminal()
+            return
+        self.switch_to_connections_sidebar()
+        self.create_local_connection(unique_name("posix-shell"), shell=shell, connect=True)
+        self.wait(self.has_terminal, what="the Git Bash POSIX shell to be readable")
 
     def has_terminal(self) -> bool:
         """Whether the **active** tab is a readable terminal.
