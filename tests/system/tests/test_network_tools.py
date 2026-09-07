@@ -88,21 +88,24 @@ class TestNetworkTools(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, SystemTest
 
     # ── NT-05: open ports responds to a local query ─────────────────────────────
     def test_open_ports_refresh_returns_a_result(self):
-        """NT-05: the Open Ports panel opens, and Refresh (a local query)
-        replaces the idle placeholder with a result or an error."""
+        """NT-05: the Open Ports panel auto-loads listening ports on open, and
+        Refresh (a local query) re-fetches — a results footer means the backend
+        answered."""
         self.open_tool_panel("open-ports", "open-ports-panel")
         assert self.driver.exists("open-ports-refresh")
-        self.wait(
-            lambda: "Click Refresh" in self.driver.get_text("open-ports-panel"),
-            what="the idle Open Ports placeholder",
-        )
+
+        # The panel auto-loads on mount, so the idle "Click Refresh" placeholder
+        # is replaced by a results footer ("N listening port(s)") once the backend
+        # responds; that footer is the deterministic "it answered" signal (there
+        # is always at least the app's own listening socket, and even 0 answers).
+        def answered() -> bool:
+            return "listening port" in (self.driver.get_text("open-ports-panel") or "")
+
+        self.wait(answered, what="Open Ports to auto-load a result")
+
+        # Explicit Refresh re-queries the local backend; it must resolve too.
         self.driver.click("open-ports-refresh")
-        # The placeholder only shows while idle+empty; once the backend responds
-        # (results table or error) it is gone — either outcome means it answered.
-        self.wait(
-            lambda: "Click Refresh" not in self.driver.get_text("open-ports-panel"),
-            what="Open Ports to return a result or error",
-        )
+        self.wait(answered, what="Open Ports to return a result after Refresh")
 
     # ── NT-09: multiple diagnostic tabs coexist ─────────────────────────────────
     def test_multiple_panels_open_simultaneously(self):
