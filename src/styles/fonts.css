@@ -1,10 +1,11 @@
 /* UI font: Geist for premium, developer-tool typography.
-   Self-hosted from the OFL-licensed `geist` npm package so it loads under the
-   app's shipped CSP (style-src 'self') with no external request — the variable
-   font covers the full wght@100..900 range the app uses. See #2673. */
+   Self-hosted from a vendored OFL-1.1 woff2 (src/assets/fonts/Geist-Variable.woff2,
+   license alongside it) so it loads under the app's shipped CSP (style-src 'self')
+   with no external request. The variable font covers the full wght@100..900 range
+   the app uses. See #2673. */
 @font-face {
   font-family: "Geist";
-  src: url("../../node_modules/geist/dist/fonts/geist-sans/Geist-Variable.woff2") format("woff2");
+  src: url("../assets/fonts/Geist-Variable.woff2") format("woff2");
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
