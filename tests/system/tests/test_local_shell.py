@@ -169,7 +169,11 @@ class TestLocalShell(
     def test_typing_exit_ends_the_session(self):
         self.close_all_tabs()
         name = unique_name("baseline-exit")
-        self.create_local_connection(name)
+        # `exit` is typed as a POSIX builtin; on Windows the local default is
+        # PowerShell, so drive Git Bash there (the repo's POSIX-on-Windows shell)
+        # rather than the default — `posix_shell_name` returns None on macOS/Linux,
+        # keeping the platform-default shell unchanged (#2674).
+        self.create_local_connection(name, shell=self.posix_shell_name())
         self.switch_to_connections_sidebar()
         self.connect_connection(name)
         tab = self.wait(lambda: self.find_tab(name), what=f"the {name!r} tab")
