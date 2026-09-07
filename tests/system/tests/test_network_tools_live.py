@@ -27,7 +27,6 @@ manual carve-out, as the issue allows.
 
 from __future__ import annotations
 
-import os
 import re
 import socket
 import threading
@@ -45,21 +44,6 @@ from termihub_harness import (
 )
 
 pytestmark = pytest.mark.integration
-
-# Live ping opens a raw ICMP socket to loopback, but the GitHub-hosted CI
-# sandboxes have no working ICMP there, so the ping never receives a reply and
-# the case fails on every platform regardless of the app. #2671 tracks the
-# real-hardware check that exercises it for real. Skip only on the hosted CI
-# lane (``GITHUB_ACTIONS``) — it stays active locally and on real hardware, and
-# ``TERMIHUB_LIVE_PING=1`` force-runs it even on CI for the #2671 check.
-_skip_ping_on_hosted_ci = pytest.mark.skipif(
-    os.environ.get("GITHUB_ACTIONS") == "true"
-    and os.environ.get("TERMIHUB_LIVE_PING") != "1",
-    reason=(
-        "no working ICMP loopback in hosted CI sandboxes; real-hardware check "
-        "tracked in #2671 (set TERMIHUB_LIVE_PING=1 to force-run)"
-    ),
-)
 
 
 @pytest.fixture
@@ -116,14 +100,17 @@ class TestNetworkToolsLive(NetworkToolsUi, SidebarUi, SettingsUi, TabsUi, System
         self.switch_to_connections_sidebar()
 
     # ── MT-NET-10: Ping — live stats + latency chart ────────────────────────────
-    @_skip_ping_on_hosted_ci
     def test_ping_streams_stats_and_chart(self):
+        # Loopback is deterministic on hosted CI: if ICMP is unavailable or its
+        # echo is silently dropped, the backend falls back to a TCP ping of
+        # 127.0.0.1, which always answers or refuses immediately — so a reply
+        # always streams in (#2684, closing #2671's real-hardware carve-out).
         self.start_ping("127.0.0.1")
 
-        # While running, replies stream in (the panel shows "N replies received…")
-        # and the latency chart renders once results begin.
+        # While running, replies stream in (the panel shows "Received: N") and the
+        # latency chart renders once results begin.
         self.wait(
-            lambda: re.search(r"[1-9]\d*\s+repl", self.driver.get_text("ping-stats") or ""),
+            lambda: re.search(r"Received:\s*[1-9]", self.driver.get_text("ping-stats") or ""),
             what="ping replies to stream in",
         )
         self.wait(lambda: self.driver.exists("ping-chart"), what="the ping latency chart")
