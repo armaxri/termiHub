@@ -27,13 +27,31 @@ from __future__ import annotations
 
 import pytest
 
-from termihub_harness import ConnectionsUi, SidebarUi, SystemTest, TabsUi, unique_name
+from termihub_harness import (
+    LIVE_CONNECT_REQUEST_TIMEOUT,
+    ConnectionsUi,
+    SidebarUi,
+    SystemTest,
+    TabsUi,
+    unique_name,
+)
 
 pytestmark = pytest.mark.integration
 
 
 class TestConnectionCrud(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
     """One app for the whole suite; methods run in order and share its state."""
+
+    # The first store read of a freshly-launched app opens its projection-region
+    # subscription, and that first round-trip can exceed the 10s default bridge
+    # timeout while the WKWebView warms up under the parallel Windows nightly
+    # lane (the app froze for the whole first call in run 34166557731, so
+    # ``test_create_local_connection`` timed out with "command timed out after
+    # 10.0s"). Raise the per-command ceiling the same way the live-connect suites
+    # do for VM starvation (#2460) so the cold-start call completes rather than
+    # firing mid-warmup (#2683). Responsive commands still return immediately —
+    # only a genuinely stalled one waits longer.
+    request_timeout = LIVE_CONNECT_REQUEST_TIMEOUT
 
     @pytest.fixture(autouse=True)
     def _connection_suite(self):
@@ -149,11 +167,24 @@ class TestConnectionCrud(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.wait(lambda: self.find_tab(f"Edit: {name1}") is not None, what="first edit tab")
         after_first = self.tab_count()
 
+        # Fully dismiss the first connection's context menu before driving the
+        # second. The edit menu item shares one testid across connections, and
+        # ``connection_context_action`` clicks an already-mounted item on its
+        # first poll — so a menu left half-open under Windows nightly load makes
+        # the second action re-click the *first* connection's edit item,
+        # reactivating its tab instead of opening a new one, and no second tab
+        # ever appears (#2683).
+        self.dismiss_menu()
+
         self.connection_context_action(name2, self.CTX_EDIT)
+        # Gate on the second connection's own edit tab (not just a count delta),
+        # so a reused/retitled single editor still fails the count assertion
+        # below rather than passing a bare "+1".
         self.wait(
-            lambda: self.tab_count() == after_first + 1,
+            lambda: self.find_tab(f"Edit: {name2}") is not None,
             what="a second, distinct edit tab",
         )
+        assert self.tab_count() == after_first + 1
         assert self.find_tab(f"Edit: {name1}") is not None
         assert self.find_tab(f"Edit: {name2}") is not None
 
