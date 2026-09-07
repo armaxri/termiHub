@@ -161,7 +161,11 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
 /// cross-platform standard emitted natively by zsh and injected via
 /// `PROMPT_COMMAND` / `precmd_functions` for bash variants.
 ///
-/// Native Windows shells use **OSC 9;9** (Windows Terminal standard), which
+/// PowerShell also uses **OSC 7** so the file browser's CWD-following works on
+/// the default Windows shell (issue #2676): the snippet converts backslashes to
+/// slashes, URL-encodes the path, and uses the hostname as the authority.
+/// `cmd.exe` cannot cleanly build a URL-encoded file:// URI in its `PROMPT`
+/// syntax, so it stays on **OSC 9;9** (Windows Terminal standard), which
 /// carries the raw Windows path with no URL encoding or slash conversion.
 ///
 /// - `"wsl:<distro>"` — OSC 7, WSL variant: `cd $HOME` guard for `/mnt/`
@@ -171,7 +175,8 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
 /// - `"bash"` / `"gitbash"` / `"zsh"` — OSC 7; uses `if [ -n "$ZSH_VERSION" ]`
 ///   to route zsh to `precmd_functions` and bash to `PROMPT_COMMAND`;
 ///   injected visibly via stdin.
-/// - `"powershell"` — OSC 9;9: overrides the `prompt` function; injected via
+/// - `"powershell"` — OSC 7: overrides the `prompt` function to emit a
+///   `file://` URI (both `powershell.exe` and `pwsh`); injected via
 ///   `-NoExit -Command` startup args (not stdin) to avoid echo.
 /// - `"cmd"` — OSC 9;9: sets the `PROMPT` variable via `/K` startup arg
 ///   (not stdin) to avoid echo.
@@ -182,7 +187,7 @@ pub fn osc7_setup_command(shell_type: &str) -> Option<&'static str> {
     } else if matches!(shell_type, "ssh" | "bash" | "gitbash" | "zsh") {
         Some(bash_osc7_command())
     } else if shell_type == "powershell" {
-        Some(powershell_osc9_command())
+        Some(powershell_osc7_command())
     } else if shell_type == "cmd" {
         Some(cmd_osc9_command())
     } else {
@@ -368,18 +373,35 @@ fn bash_osc7_command() -> &'static str {
     )
 }
 
-/// OSC 9;9 setup command for PowerShell (both `powershell.exe` and `pwsh`).
+/// OSC 7 setup command for PowerShell (both `powershell.exe` and `pwsh`).
 ///
-/// Overrides the built-in `prompt` function to emit an OSC 9;9 CWD sequence
-/// before each prompt. OSC 9;9 is the Windows Terminal native CWD sequence:
-/// it carries the raw Windows path (`C:\foo`) with no URL encoding or
-/// backslash conversion required. Ends with `Clear-Host` to clear the screen.
-/// Injected via `-NoExit -Command` startup args so the command never echoes.
-fn powershell_osc9_command() -> &'static str {
+/// Overrides the built-in `prompt` function to emit an **OSC 7** CWD sequence
+/// (`ESC ]7;file://<host>/<path> BEL`) before each prompt. OSC 7 is the
+/// cross-platform standard the file browser follows for CWD-following; the
+/// previous OSC 9;9 variant only drove the terminal's own CWD state, so
+/// PowerShell users got no file-browser CWD-follow (issue #2676).
+///
+/// The snippet builds the file:// URI the way the frontend OSC 7 handler
+/// expects: backslashes are converted to forward slashes (`C:\foo` ->
+/// `C:/foo`), the path is URL-encoded via `[uri]::EscapeUriString` (so spaces
+/// and other specials form a valid URI), and `$env:COMPUTERNAME` is the
+/// authority. Works identically for Windows PowerShell 5 (`powershell.exe`)
+/// and PowerShell 7 (`pwsh`).
+///
+/// The user's existing `prompt` (from their profile, loaded before `-Command`
+/// runs) is captured in `$__th_op` and invoked so the original prompt text is
+/// preserved; a default `PS <path}> ` prompt is used only when none exists.
+/// Ends with `Clear-Host` to clear the screen. Injected via `-NoExit -Command`
+/// startup args so the command never echoes.
+fn powershell_osc7_command() -> &'static str {
     concat!(
+        r#"$__th_op=$function:prompt;"#,
         r#"function prompt{"#,
-        r#"[Console]::Write([char]27+']9;9;'+$PWD.Path+[char]7);"#,
-        r#""PS $($PWD.Path)> "};Clear-Host"#,
+        r#"$p=$PWD.Path;"#,
+        r#"$u=[uri]::EscapeUriString(($p -replace '\\','/'));"#,
+        r#"[Console]::Write([char]27+']7;file://'+$env:COMPUTERNAME+'/'+$u+[char]7);"#,
+        r#"if($__th_op){& $__th_op}else{'PS '+$p+'> '}"#,
+        r#"};Clear-Host"#,
     )
 }
 
@@ -1097,17 +1119,22 @@ mod tests {
     }
 
     #[test]
-    fn osc9_powershell_contains_expected_parts() {
+    fn osc7_powershell_contains_expected_parts() {
         let setup = osc7_setup_command("powershell").expect("expected Some for powershell");
         // Must redefine the prompt function
         assert!(
             setup.contains("function prompt"),
             "expected prompt function override, got: {setup}"
         );
-        // Must emit OSC 9;9 sequence (raw Windows path, no URL conversion)
+        // Must emit an OSC 7 file:// sequence (the cross-platform CWD standard
+        // the file browser follows) — not the OSC 9;9 Windows-Terminal variant.
         assert!(
-            setup.contains("]9;9;"),
-            "expected OSC 9;9 marker, got: {setup}"
+            setup.contains("]7;file://"),
+            "expected OSC 7 file:// marker, got: {setup}"
+        );
+        assert!(
+            !setup.contains("]9;9;"),
+            "must not emit OSC 9;9 (file browser follows OSC 7), got: {setup}"
         );
         assert!(
             setup.contains("[char]27"),
@@ -1117,15 +1144,56 @@ mod tests {
             setup.contains("[char]7"),
             "expected BEL via [char]7, got: {setup}"
         );
-        // Must NOT do backslash conversion (OSC 9;9 carries raw Windows paths)
+        // Must convert Windows backslashes to forward slashes for the file:// URI.
         assert!(
-            !setup.contains(r#"-replace '\\','/'"#),
-            "OSC 9;9 should not convert backslashes, got: {setup}"
+            setup.contains(r#"-replace '\\','/'"#),
+            "expected backslash->slash conversion for OSC 7, got: {setup}"
+        );
+        // Must URL-encode the path so spaces/specials form a valid URI.
+        assert!(
+            setup.contains("EscapeUriString"),
+            "expected URL encoding via EscapeUriString, got: {setup}"
+        );
+        // Must use the real hostname as the file:// authority.
+        assert!(
+            setup.contains("COMPUTERNAME"),
+            "expected hostname via $env:COMPUTERNAME, got: {setup}"
         );
         // Must clear screen at end
         assert!(
             setup.contains("Clear-Host"),
             "expected Clear-Host at end, got: {setup}"
+        );
+    }
+
+    /// The dispatch in [`osc7_setup_command`] must be shell-aware: PowerShell
+    /// receives the PowerShell `prompt`-function snippet (OSC 7 file:// URI),
+    /// while bash/zsh receive the POSIX `PROMPT_COMMAND`/`precmd_functions`
+    /// snippet — never the other way around. Sending bash syntax to PowerShell
+    /// (or vice-versa) was the #2674 root cause.
+    #[test]
+    fn osc7_dispatch_is_shell_aware() {
+        let ps = osc7_setup_command("powershell").expect("expected Some for powershell");
+        let bash = osc7_setup_command("bash").expect("expected Some for bash");
+
+        // PowerShell gets PowerShell syntax, not POSIX prompt-hook syntax.
+        assert!(
+            ps.contains("function prompt") && ps.contains("file://"),
+            "powershell must get the PS OSC 7 snippet, got: {ps}"
+        );
+        assert!(
+            !ps.contains("PROMPT_COMMAND") && !ps.contains("precmd_functions"),
+            "powershell must NOT get POSIX bash/zsh syntax, got: {ps}"
+        );
+
+        // bash/zsh get POSIX syntax, not PowerShell syntax.
+        assert!(
+            bash.contains("__termihub_osc7") && bash.contains("PROMPT_COMMAND"),
+            "bash must get the POSIX prompt-hook snippet, got: {bash}"
+        );
+        assert!(
+            !bash.contains("function prompt") && !bash.contains("EscapeUriString"),
+            "bash must NOT get PowerShell syntax, got: {bash}"
         );
     }
 
