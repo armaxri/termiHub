@@ -109,7 +109,15 @@ class TestFileBrowserLocal(
         self.ensure_terminal()
         # Keep the browser hidden while we cd; revealing it re-reads the CWD.
         self.switch_to_connections_sidebar()
-        self.run_command(f'cd "{self._workspace}"')
+        # Use forward slashes so the cd is valid regardless of which shell the
+        # toolbar's new-terminal opened. On Windows the temp dir is a
+        # backslash path (C:\Users\...\e2e_fb_*), and backslashes are escape
+        # characters in a POSIX shell — so if the default terminal is Git Bash
+        # the cd silently fails and the browser never follows there (#2683).
+        # PowerShell also accepts forward slashes, and on macOS/Linux the path
+        # has no backslashes, so this is a no-op off Windows.
+        cd_target = self._workspace.replace("\\", "/")
+        self.run_command(f'cd "{cd_target}"')
         self.switch_to_files_sidebar()
         return self.wait_for_path_contains(self._workspace_name)
 
