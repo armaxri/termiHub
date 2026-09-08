@@ -653,6 +653,32 @@ describe("dispatchCommand", () => {
       expect(document.activeElement).toBe(textarea);
     });
 
+    it("fires a focus event on the target before keydown even when focus() no-ops", async () => {
+      // On WKWebView, `element.focus()` only takes effect when the webview's
+      // document is the key/active window; under CI it silently no-ops, so
+      // Monaco's focus tracker never flips `textInputFocus` and its cursor
+      // -navigation keybindings (arrows) don't resolve — the flaky macOS half of
+      // #2689 (the Save chord still works, as its keybinding only needs
+      // `editorId`). The bridge must therefore fire the `focus` event a real
+      // focus default action would, so Monaco sees the input focused regardless
+      // of whether the OS-level focus stuck. Simulate the no-op focus() here.
+      const { deps, container } = setup(`<textarea data-testid="editor-input"></textarea>`);
+      const textarea = container.querySelector("textarea")!;
+      textarea.focus = () => {}; // reproduce WKWebView's silent no-op focus
+      const order: string[] = [];
+      textarea.addEventListener("focus", () => order.push("focus"));
+      textarea.addEventListener("keydown", () => order.push("keydown"));
+
+      const res = await dispatchCommand(
+        { action: "pressKey", key: "ArrowDown", testId: "editor-input" },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "pressKey" });
+      // A focus event reaches the target before the keydown, so a focus-gated
+      // handler (Monaco's `textInputFocus`) is set when the key resolves.
+      expect(order).toEqual(["focus", "keydown"]);
+    });
+
     it("dispatches on the focused element when no testId is given", async () => {
       const { deps, container } = setup(`<input data-testid="field" />`);
       const input = container.querySelector("input")!;
