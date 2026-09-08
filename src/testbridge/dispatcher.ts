@@ -578,7 +578,22 @@ export async function dispatchCommand(
         // — otherwise those keydowns fire but no-op (#2681). `.focus()` is a
         // no-op for non-focusable targets, so document-level handlers (e.g. an
         // Escape dismiss) keep working via event bubbling.
-        if (target instanceof HTMLElement) target.focus();
+        //
+        // `.focus()` alone is not enough on WKWebView: there it only takes
+        // effect when the webview's document is the key/active window, so under
+        // CI (occluded/background) it silently no-ops and Monaco's focus tracker
+        // never flips `textInputFocus` — cursor navigation then flakily fails on
+        // macOS while the Save chord still works (its keybinding only requires
+        // `editorId`, not focus). So also dispatch the `focus` event a real focus
+        // default action fires: Monaco's FocusTracker / TextAreaInput sets
+        // `textInputFocus` from that event regardless of whether the OS-level
+        // focus stuck, making cursor keys resolve deterministically on every
+        // engine. Idempotent when focus already landed (the tracker's onFocus
+        // no-ops if it already holds focus). (#2689)
+        if (target instanceof HTMLElement) {
+          target.focus();
+          target.dispatchEvent(new FocusEvent("focus"));
+        }
       } else {
         // No explicit target: aim at the focused element so a bare Escape/Enter
         // reaches document-level handlers (e.g. Radix's dismiss layer) by bubbling.
