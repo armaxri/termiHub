@@ -492,11 +492,25 @@ export async function dispatchCommand(
         // Nudge past the activation distance in a fixed direction — the only
         // requirement is to cross it so the drop zones render; the real target
         // coordinates are read afterwards.
-        await moveTo(start.x + WAKE_DISTANCE, start.y);
+        let wakeX = start.x + WAKE_DISTANCE;
+        await moveTo(wakeX, start.y);
         to = findByTestId(deps.root, command.toTestId);
+        // The drag-only overlays mount only after the drag-start state change
+        // flows through a React render/effect cycle, which can take more than the
+        // single wake frame under load (CI, headless) — the race that failed the
+        // whole layout-scrollback family as `no element panel-drop-…` on the
+        // integration lane (#2668). Keep the drag active with a 1px jitter (a
+        // zero-delta move is a no-op dnd-kit ignores) and poll across a bounded
+        // number of frames until the now-mounted target resolves.
+        const WAKE_POLL_FRAMES = 30;
+        for (let attempt = 0; !to && attempt < WAKE_POLL_FRAMES; attempt++) {
+          wakeX += attempt % 2 === 0 ? 1 : -1;
+          await moveTo(wakeX, start.y);
+          to = findByTestId(deps.root, command.toTestId);
+        }
         if (!to) {
           // Release so no drag is left dangling, then report the miss.
-          dispatchPointer(doc, "pointerup", start.x + WAKE_DISTANCE, start.y);
+          dispatchPointer(doc, "pointerup", wakeX, start.y);
           return fail("dragTo", `no element with data-testid="${command.toTestId}"`);
         }
         const end = centerOf(to);

@@ -239,6 +239,46 @@ describe("Terminal auto-scroll behavior", () => {
     expect(mockScrollToBottom).not.toHaveBeenCalled();
   });
 
+  it("suppresses auto-scroll from the live buffer even if onScroll never fired (#2682)", async () => {
+    // Regression for the macOS nightly yank: the write-path decision must read
+    // the *actual* buffer scroll position, not the event-driven ref. A
+    // programmatic scroll (harness `scroll_terminal`, a wheel gesture routed via
+    // xterm) can leave the buffer scrolled up (viewportY < baseY) while the
+    // `onScroll` handler that updates the ref has not run — on WebKit it can even
+    // fire mid-write reporting viewportY == baseY. In that window new output must
+    // still NOT yank the viewport to the bottom.
+    renderTerminal();
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Buffer is genuinely scrolled up, but the onScroll handler is deliberately
+    // NOT invoked — the ref stays at its at-bottom default (the stale case).
+    mockBuffer.active.viewportY = 50;
+    mockBuffer.active.baseY = 100;
+
+    mockScrollToBottom.mockClear();
+
+    if (outputCallback) {
+      act(() => {
+        outputCallback!(new Uint8Array([74, 75, 76]));
+      });
+    }
+
+    act(() => flushRaf());
+
+    if (capturedWriteCallback) {
+      act(() => capturedWriteCallback!());
+    }
+
+    act(() => flushRaf());
+
+    // The output must not scroll to the bottom — the decision comes from the
+    // pre-write buffer position, so the stale ref cannot yank the view.
+    expect(mockScrollToBottom).not.toHaveBeenCalled();
+  });
+
   it("resumes auto-scroll when user scrolls back to bottom", async () => {
     renderTerminal();
 
