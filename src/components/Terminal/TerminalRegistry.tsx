@@ -24,6 +24,7 @@ import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { frontendLog } from "@/utils/frontendLog";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
+import { isFitReady } from "./safeFit";
 
 const LARGE_PASTE_THRESHOLD = 5000;
 
@@ -180,6 +181,17 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     const el = registryRef.current.get(tabId);
     const w = el?.offsetWidth ?? -1;
     const h = el?.offsetHeight ?? -1;
+    // Never fit a degenerate container (#2693). TerminalSlot re-fits at adopt
+    // time, right after reparenting the element into a panel that a drag/move op
+    // may not have laid out yet. Fitting a ~0-sized element makes FitAddon
+    // propose ~2 cols × 1 row; resizing the xterm (and its PTY) that narrow
+    // reflows the buffer destructively and loses the scrollback — the real
+    // "scrollback lost on drag/move" bug. Skip until real dimensions land; the
+    // ResizeObserver re-fits (same guard) once layout settles.
+    if (!isFitReady(el)) {
+      frontendLog("terminal_registry", `fitTerminal skipped (container ${w}×${h}) tab=${tabId}`);
+      return;
+    }
     frontendLog(
       "terminal_registry",
       `fitTerminal tab=${tabId} el=${w}×${h} xterm=${xterm?.cols}×${xterm?.rows}`

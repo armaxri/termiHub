@@ -51,6 +51,7 @@ import { resolveLineEnding } from "@/utils/lineEndings";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
+import { isFitReady, MIN_FIT_PX } from "./safeFit";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import { currentSessionView, waitForBackendAgentReconnectOutcome } from "@/store/sessionBridge";
@@ -1444,7 +1445,10 @@ export function Terminal({
       // backend shell to redraw at that width and fill the buffer with
       // line-wrapped garbage that persists after the element is re-adopted.
       const entry = entries[0];
-      if (entry && (entry.contentRect.width < 10 || entry.contentRect.height < 10)) {
+      if (
+        entry &&
+        (entry.contentRect.width < MIN_FIT_PX || entry.contentRect.height < MIN_FIT_PX)
+      ) {
         frontendLog(
           "terminal",
           `ResizeObserver skipped fit (parking) tab=${tabId} rect=${entry.contentRect.width}×${entry.contentRect.height}`
@@ -1554,14 +1558,25 @@ export function Terminal({
   // Re-fit and focus when visibility changes
   useEffect(() => {
     if (isVisible && fitAddonRef.current && xtermRef.current && terminalElRef.current) {
-      try {
-        if (horizontalScrollingRef.current) {
-          applyHorizontalScrollResize(xtermRef.current, fitAddonRef.current, terminalElRef.current);
-        } else {
-          fitAddonRef.current.fit();
+      // Skip the fit while the element is still ~0-sized (#2693). A move op makes
+      // the moved tab visible in a freshly-created panel; this effect can fire
+      // before that panel is laid out, and fitting a degenerate container resizes
+      // the xterm/PTY to ~2 cols, destructively reflowing the scrollback. The
+      // ResizeObserver re-fits once real dimensions land. Focus is still safe.
+      if (isFitReady(terminalElRef.current)) {
+        try {
+          if (horizontalScrollingRef.current) {
+            applyHorizontalScrollResize(
+              xtermRef.current,
+              fitAddonRef.current,
+              terminalElRef.current
+            );
+          } else {
+            fitAddonRef.current.fit();
+          }
+        } catch {
+          // Ignore
         }
-      } catch {
-        // Ignore
       }
       xtermRef.current.focus();
     }
