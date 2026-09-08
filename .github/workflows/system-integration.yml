@@ -302,18 +302,37 @@ jobs:
         # subscribed the ~3-core macos-latest runner: 3–4 concurrent apps thrashed
         # CPU/memory and the 30s per-op UI waits timed out under load — run
         # 33999534618 lost 9 previously-passing tests to `timed out waiting for …`
-        # while still taking ~110 of the 120 min. The cap follows a "cores − 1"
-        # rule so one core stays free for the OS + the pytest controller + app
-        # coordination: macos-latest (~3 cores) → 2 workers; windows-latest
-        # (~4 cores) → 3 workers. That removes the per-app contention (killing the
-        # load flakes) with only a modest worker reduction from `-n auto`
-        # (macOS 3→2, Windows 4→3), so wall-time stays under the ceiling — on macOS
-        # dropping the thrashing also speeds each op, offsetting the lost worker.
-        # Re-tune these if a runner's core count changes or a lane over-subscribes.
+        # while still taking ~110 of the 120 min.
+        #
+        # Both parallel runners now cap at 2 workers (#2690). The original cap
+        # followed a "cores − 1" rule (macOS ~3 cores → 2; Windows ~4 → 3), but
+        # that counted one worker as ~one core of load. It is not: each worker
+        # runs a full webview app, and on Windows that app is WebView2 — a
+        # *multi-process* tree (an msedgewebview2.exe browser process plus GPU,
+        # utility and per-frame renderer processes), so 3 Windows workers put far
+        # more than 3 cores of contention on the ~4-core runner. The result was a
+        # churning ~10–14 failures per nightly, a *different* set each run, all
+        # `timed out waiting for …` / `command timed out` — pure contention, not
+        # real bugs (the app/bridge/config are isolated per worker: OS-assigned
+        # free bridge port + a distinct mkdtemp config & WebView2 user-data dir).
+        # Windows has huge time headroom to spend on the extra worker — its whole
+        # test step runs in ~6 min against the 120-min ceiling (most fixture
+        # suites self-skip with no Linux Docker), so dropping 3→2 costs a few
+        # minutes and removes the over-subscription. macOS stays at 2.
+        # Re-tune if a runner's core count changes or a lane over-subscribes.
+        #
+        # TERMIHUB_WAIT_SCALE multiplies every harness wait/command budget under
+        # this contention (#2690): even at 2 workers macOS still shed a *few*
+        # flaky `timed out waiting …` failures run-to-run, so the two facets are
+        # fixed together — right-size the workers AND give the shared readiness
+        # primitives headroom, so a slow-but-fine op is not read as a failure.
+        # Passing ops return immediately, so a scale up costs wall-time only on a
+        # (now rare) genuine failure. Serial/local runs leave it unset (1.0).
         if: runner.os != 'Linux'
         shell: bash
         env:
-          TERMIHUB_XDIST_WORKERS: ${{ matrix.os == 'windows-latest' && '3' || '2' }}
+          TERMIHUB_XDIST_WORKERS: '2'
+          TERMIHUB_WAIT_SCALE: '2'
         run: ./tests/system/pytest.sh -m integration -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25
 
       - name: Dump container logs on failure
@@ -463,8 +482,13 @@ jobs:
 
       - name: Run the display-critical grades (macOS/Windows, native display)
         # No fixtures needed, so no xdist — the two suites run quickly serially.
+        # Carry the same TERMIHUB_WAIT_SCALE headroom as the bulk lane (#2690):
+        # these grades share the harness readiness primitives, and a busy runner
+        # can still starve the webview JS thread even for a serial suite.
         if: runner.os != 'Linux'
         shell: bash
+        env:
+          TERMIHUB_WAIT_SCALE: '2'
         run: >-
           ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
