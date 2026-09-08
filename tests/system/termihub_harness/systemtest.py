@@ -36,7 +36,7 @@ from typing import Callable, ClassVar, Optional, TypeVar
 import pytest
 
 from .artifacts import ARTIFACT_ROOT, sanitize_nodeid
-from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver
+from .bridge import DEFAULT_REQUEST_TIMEOUT, Bridge, BridgeError, Driver, scale_timeout
 from .display import ensure_local_display
 from .orchestrator import AppInstance
 
@@ -223,8 +223,12 @@ class SystemTest:
         The UI is asynchronous (a shell prints when ready, output streams in), so
         a read right after an action usually needs polling. A ``BridgeError``
         (e.g. "no active terminal" before one exists) counts as "not ready yet".
+
+        ``timeout`` is scaled by ``TERMIHUB_WAIT_SCALE`` so this one primitive —
+        which nearly every UI helper polls through — gets contention headroom on
+        the parallel CI lanes without any per-call change (issue #2690).
         """
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + scale_timeout(timeout)
         last_error: Optional[BridgeError] = None
         while time.monotonic() < deadline:
             try:
