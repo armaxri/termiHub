@@ -49,6 +49,7 @@ import { onLocalFileChanged } from "@/services/events";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog";
 import { SaveCopyDialog } from "./SaveCopyDialog";
+import { tagMonacoInput } from "./editorInput";
 import { frontendLog } from "@/utils/frontendLog";
 import "./FileEditor.css";
 
@@ -1064,10 +1065,10 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       // Tag Monaco's hidden input so the test bridge can target it with pressKey
       // (Ctrl+S, Ctrl+End, …). Monaco renders to a canvas with no addressable
       // input otherwise; this gives the keybinding/cursor path a stable testid.
-      editor
-        .getDomNode()
-        ?.querySelector("textarea.inputarea")
-        ?.setAttribute("data-testid", "editor-input");
+      // The input is a `<textarea class="inputarea">` or, on EditContext engines
+      // (WebView2), a `<div class="native-edit-context">` — tag whichever exists
+      // so the harness works on every webview (#2689).
+      tagMonacoInput(editor.getDomNode());
 
       editor.addAction({
         id: "termihub-save",
