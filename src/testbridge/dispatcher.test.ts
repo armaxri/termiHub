@@ -483,6 +483,33 @@ describe("dispatchCommand", () => {
       expect(seq[seq.length - 1]).toBe("up");
     });
 
+    it("polls for a drop zone that mounts several frames into the drag (#2668)", async () => {
+      // On a loaded/headless runner the drag-start state change takes more than
+      // one render/effect cycle to flow through React and mount the PanelDropZone
+      // overlays, so the zone is still absent one frame after the wake move. A
+      // single wake+resolve raced this and failed as `no element panel-drop-…`
+      // across the whole layout-scrollback family on the integration lane. dragTo
+      // must keep the drag active and poll across frames until the zone mounts.
+      const { deps, container } = setup(`<div data-testid="tab"></div>`);
+      let moves = 0;
+      document.addEventListener("pointermove", () => {
+        moves += 1;
+        // Mount the zone only after a few frames of dragging — not on the first
+        // wake move — modelling the deferred overlay mount under load.
+        if (moves >= 4 && !container.querySelector('[data-testid="zone"]')) {
+          const zone = document.createElement("div");
+          zone.setAttribute("data-testid", "zone");
+          container.appendChild(zone);
+        }
+      });
+
+      const res = await dispatchCommand(
+        { action: "dragTo", fromTestId: "tab", toTestId: "zone" },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "dragTo" });
+    });
+
     it("releases and fails when a deferred target never mounts (#2583)", async () => {
       // Even when the target is absent both before and after the wake move, the
       // gesture must not leave a drag dangling — it releases, then reports.
