@@ -532,6 +532,10 @@ describe("fitTerminal", () => {
     const xterm = createMockXterm();
     const fitAddon = createMockFitAddon();
     const el = document.createElement("div");
+    // A laid-out container so the #2693 degenerate-size guard does not skip the
+    // fit (jsdom reports 0×0 by default).
+    Object.defineProperty(el, "offsetWidth", { configurable: true, value: 640 });
+    Object.defineProperty(el, "offsetHeight", { configurable: true, value: 480 });
 
     act(() => {
       registryActions.register("tab-fit", el, xterm, fitAddon);
@@ -575,5 +579,50 @@ describe("sendInputToTerminal", () => {
 
     expect(sent).toBe(false);
     expect(sendInput).not.toHaveBeenCalled();
+  });
+});
+
+describe("fitTerminal — degenerate-container guard (#2693)", () => {
+  /** A div reporting fixed layout dimensions (jsdom has no real layout). */
+  function sizedEl(width: number, height: number): HTMLDivElement {
+    const el = document.createElement("div");
+    Object.defineProperty(el, "offsetWidth", { configurable: true, value: width });
+    Object.defineProperty(el, "offsetHeight", { configurable: true, value: height });
+    return el;
+  }
+
+  it("does NOT fit when the container is ~0-sized (reparent/parking window)", () => {
+    // The exact state a drag/move reparent hits: TerminalSlot appends the
+    // terminal element into a freshly-created panel that has not been laid out
+    // yet, so the adopt-time fit measures a 0×0 element. Fitting here proposes
+    // ~2 cols and resizes the xterm/PTY that narrow, destructively reflowing the
+    // scrollback (the 'scrollback lost' nightly failure). It must be skipped.
+    const el = sizedEl(0, 0);
+    const xterm = createMockXterm();
+    const fitAddon = createMockFitAddon();
+    act(() => {
+      registryActions.register("tab-parked", el, xterm, fitAddon);
+    });
+
+    act(() => {
+      registryActions.fitTerminal("tab-parked");
+    });
+
+    expect(fitAddon.fit).not.toHaveBeenCalled();
+  });
+
+  it("fits once the container is laid out at a sane size", () => {
+    const el = sizedEl(640, 480);
+    const xterm = createMockXterm();
+    const fitAddon = createMockFitAddon();
+    act(() => {
+      registryActions.register("tab-sized", el, xterm, fitAddon);
+    });
+
+    act(() => {
+      registryActions.fitTerminal("tab-sized");
+    });
+
+    expect(fitAddon.fit).toHaveBeenCalledTimes(1);
   });
 });
