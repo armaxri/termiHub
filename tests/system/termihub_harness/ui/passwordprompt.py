@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import time
 
-from ..bridge import BridgeError
+from ..bridge import BridgeError, scale_timeout
 from ..fixtures import SSH_PASSWORD
 from .base import HarnessMixin
 
@@ -49,7 +49,7 @@ class PasswordPromptUi(HarnessMixin):
         completed without a prompt). Returns ``True`` when it accepted one.
         """
         button = "ssh-hostkey-accept-remember" if remember else "ssh-hostkey-accept-once"
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + scale_timeout(timeout)  # xdist headroom (#2690)
         while time.monotonic() < deadline:
             try:
                 if self.driver.exists("ssh-hostkey-prompt"):

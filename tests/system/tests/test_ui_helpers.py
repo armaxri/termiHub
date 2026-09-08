@@ -7,7 +7,8 @@ these run anywhere without a build, like the protocol tests.
 import pytest
 
 from termihub_harness import find_connection, find_folder
-from termihub_harness.bridge import BridgeError
+from termihub_harness import bridge as bridge_mod
+from termihub_harness.bridge import BridgeError, _timeout_scale, scale_timeout
 from termihub_harness.ui import (
     active_leaf,
     connection_item_testid,
@@ -311,3 +312,35 @@ def test_active_leaf_is_none_when_unresolved():
     assert active_leaf(StubDriver({"activePanelId": None, "rootPanel": _SPLIT_TREE})) is None
     assert active_leaf(StubDriver({"rootPanel": _SPLIT_TREE})) is None
     assert active_leaf(StubDriver({"activePanelId": "p1"})) is None
+
+
+# ── TERMIHUB_WAIT_SCALE contention-headroom knob (#2690) ─────────────────────
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        (None, 1.0),  # unset → identity (local/serial runs unchanged)
+        ("1", 1.0),
+        ("2", 2.0),
+        ("1.5", 1.5),
+        ("0", 1.0),  # non-positive falls back to 1.0 (never zero a budget)
+        ("-3", 1.0),
+        ("nonsense", 1.0),  # unparseable falls back to 1.0
+        ("", 1.0),
+    ],
+)
+def test_timeout_scale_parses_env_and_defends_defaults(monkeypatch, env, expected):
+    if env is None:
+        monkeypatch.delenv("TERMIHUB_WAIT_SCALE", raising=False)
+    else:
+        monkeypatch.setenv("TERMIHUB_WAIT_SCALE", env)
+    assert _timeout_scale() == expected
+
+
+def test_scale_timeout_applies_the_resolved_scale(monkeypatch):
+    # scale_timeout reads the module-level WAIT_SCALE resolved once at import;
+    # patch it to prove the multiply is wired (identity at 1.0, doubles at 2.0).
+    monkeypatch.setattr(bridge_mod, "WAIT_SCALE", 1.0)
+    assert scale_timeout(20.0) == 20.0
+    monkeypatch.setattr(bridge_mod, "WAIT_SCALE", 2.0)
+    assert scale_timeout(20.0) == 40.0
+    assert scale_timeout(10.0) == 20.0

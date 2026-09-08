@@ -17,12 +17,47 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import os
 import threading
 from typing import Any, Optional
 
 import websockets
 
 from .protocol import Command, Response, decode_response, encode_request
+
+
+def _timeout_scale() -> float:
+    """Global multiplier for every harness wait/command budget (``TERMIHUB_WAIT_SCALE``).
+
+    The integration lane fans several full webview apps across xdist workers on a
+    core-constrained CI runner (``--dist loadscope -n <workers>``). Under that
+    contention a UI op that settles in well under a second when a suite runs
+    alone can take multiples longer, so a fixed, serial-tuned budget fires
+    mid-op and reds a test that is *passing* — just slow (issue #2690; the same
+    shape the #2460 live-connect timeout addressed for one suite). Rather than
+    bump each helper's literal one by one, a single env-driven multiplier scales
+    them all at their shared chokepoints (``SystemTest.wait``, ``Driver._call``,
+    ``Bridge.wait_for_app``, and the standalone UI poll loops).
+
+    Default ``1.0`` leaves local and serial (Linux) runs unchanged; the parallel
+    macOS/Windows CI lanes set it >1 for headroom. A non-positive or unparseable
+    value falls back to ``1.0`` so a typo can never zero out a budget.
+    """
+    try:
+        scale = float(os.environ.get("TERMIHUB_WAIT_SCALE", "1"))
+    except ValueError:
+        return 1.0
+    return scale if scale > 0 else 1.0
+
+
+#: Resolved once at import from ``TERMIHUB_WAIT_SCALE`` (see :func:`_timeout_scale`).
+WAIT_SCALE = _timeout_scale()
+
+
+def scale_timeout(seconds: float) -> float:
+    """Apply :data:`WAIT_SCALE` to a timeout budget. Identity when the scale is 1.0."""
+    return seconds * WAIT_SCALE
+
 
 DEFAULT_REQUEST_TIMEOUT = 10.0
 #: Command timeout for the **live-connect / SFTP** suites (issue #2460). A real
@@ -147,7 +182,9 @@ class Driver:
         # A per-call ``timeout`` overrides the Driver's default — used by the
         # failure-artifact probes, which must outlive the live path's own timeout
         # to capture evidence from a slow (not-yet-hung) webview (issue #2460).
-        effective_timeout = self._timeout if timeout is None else timeout
+        # Scaled by TERMIHUB_WAIT_SCALE so a command budget that is fine serially
+        # gets headroom under xdist contention (issue #2690).
+        effective_timeout = scale_timeout(self._timeout if timeout is None else timeout)
         cfut = asyncio.run_coroutine_threadsafe(
             self._conn.send(command, effective_timeout), self._loop
         )
@@ -531,6 +568,12 @@ class Bridge:
         """
         if self._loop is None or self._conn_queue is None:
             raise RuntimeError("bridge is not started")
+        # Scale the connect budget (not the settle grace) by TERMIHUB_WAIT_SCALE:
+        # under xdist contention several apps build + boot at once, so the in-app
+        # bridge client can take well past the serial-tuned 30s to dial out, and
+        # a fixed budget reds the whole suite in class-fixture setup with
+        # "no app connected …" (issue #2690).
+        timeout = scale_timeout(timeout)
         cfut = asyncio.run_coroutine_threadsafe(
             self._acquire_settled(timeout, settle), self._loop
         )
