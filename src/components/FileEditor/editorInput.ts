@@ -39,3 +39,32 @@ export function findMonacoInput(domNode: Element | null | undefined): Element | 
 export function tagMonacoInput(domNode: Element | null | undefined): void {
   findMonacoInput(domNode)?.setAttribute("data-testid", EDITOR_INPUT_TESTID);
 }
+
+/**
+ * Editor-construction option overrides that make Monaco's hidden input reliably
+ * addressable by the test bridge, keyed on whether the bridge is active.
+ *
+ * Under the bridge we force the classic `<textarea class="inputarea">` input by
+ * disabling Monaco's `EditContext` path (`editContext: false`). This is the
+ * root fix for the cursor-navigation E2E (#2694): Monaco gates arrow keys on the
+ * `textInputFocus` context key, which the bridge's `pressKey` flips by
+ * dispatching a synthetic `focus` event at the input.
+ *
+ *  - In **textarea mode** that event is authoritative — `TextAreaInput` sets its
+ *    focus flag straight from the DOM `focus` event, so `textInputFocus` flips
+ *    true regardless of whether OS-level focus actually landed.
+ *  - In **EditContext mode** (Chromium/WebView2, and the WebKit engines that now
+ *    ship it — WKWebView, recent WebKitGTK) a `FocusTracker` instead *re-reads*
+ *    `document.activeElement` on every `focus` event and ignores the synthetic
+ *    one. When the webview is not the OS key window (occluded CI) `element.focus()`
+ *    no-ops, so the tracker keeps reporting "not focused", `textInputFocus` never
+ *    flips, and arrow keydowns silently no-op — while the Save chord still works
+ *    because its custom keybinding has no `textInputFocus` precondition. That
+ *    asymmetry is exactly the #2694 failure (save passes, cursor times out).
+ *
+ * Forcing textarea mode makes the keyboard path engine-agnostic across all three
+ * webviews. It is test-only: production launches (bridge off) keep EditContext.
+ */
+export function testInputEditorOptions(bridgeEnabled: boolean): { editContext?: boolean } {
+  return bridgeEnabled ? { editContext: false } : {};
+}
