@@ -593,17 +593,18 @@ export async function dispatchCommand(
         // no-op for non-focusable targets, so document-level handlers (e.g. an
         // Escape dismiss) keep working via event bubbling.
         //
-        // `.focus()` alone is not enough on WKWebView: there it only takes
-        // effect when the webview's document is the key/active window, so under
-        // CI (occluded/background) it silently no-ops and Monaco's focus tracker
-        // never flips `textInputFocus` — cursor navigation then flakily fails on
-        // macOS while the Save chord still works (its keybinding only requires
-        // `editorId`, not focus). So also dispatch the `focus` event a real focus
-        // default action fires: Monaco's FocusTracker / TextAreaInput sets
-        // `textInputFocus` from that event regardless of whether the OS-level
-        // focus stuck, making cursor keys resolve deterministically on every
-        // engine. Idempotent when focus already landed (the tracker's onFocus
-        // no-ops if it already holds focus). (#2689)
+        // `.focus()` alone is not enough on an occluded CI webview: it only
+        // takes effect when the webview's document is the key/active window, so
+        // it silently no-ops and Monaco's cursor keys (gated on `textInputFocus`)
+        // never resolve — while the Save chord still works (its keybinding needs
+        // only `editorId`, not focus). So also dispatch the `focus` event a real
+        // focus default action fires. In Monaco's classic textarea input,
+        // `TextAreaInput` flips `textInputFocus` straight from that DOM event,
+        // regardless of whether OS-level focus stuck. The editor is forced into
+        // textarea mode under the bridge for exactly this reason (see
+        // `FileEditor` / `testInputEditorOptions`, #2694) — the EditContext input
+        // ignores a synthetic focus (its `FocusTracker` re-reads the real
+        // `activeElement`). Idempotent when focus already landed. (#2689, #2694)
         if (target instanceof HTMLElement) {
           target.focus();
           target.dispatchEvent(new FocusEvent("focus"));

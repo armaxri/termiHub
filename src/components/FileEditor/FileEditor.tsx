@@ -49,7 +49,8 @@ import { onLocalFileChanged } from "@/services/events";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog";
 import { SaveCopyDialog } from "./SaveCopyDialog";
-import { tagMonacoInput } from "./editorInput";
+import { tagMonacoInput, testInputEditorOptions } from "./editorInput";
+import { isTestBridgeEnabled } from "@/testbridge/testMode";
 import { frontendLog } from "@/utils/frontendLog";
 import "./FileEditor.css";
 
@@ -1423,6 +1424,10 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             fontSize: 13,
             wordWrap: "on",
             scrollBeyondLastLine: false,
+            // Under the test bridge, force Monaco's classic textarea input so the
+            // harness can drive cursor keys deterministically on every webview
+            // (#2694). No-op in production. See `testInputEditorOptions`.
+            ...testInputEditorOptions(isTestBridgeEnabled()),
           }}
         />
       </div>
