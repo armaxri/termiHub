@@ -656,6 +656,30 @@ describe("dispatchCommand", () => {
       expect(keys).toEqual(["down:Enter", "up:Enter"]);
     });
 
+    it("focuses a focusable target before dispatching so the key lands on it", async () => {
+      // A real keystroke always reaches the *focused* element — the browser
+      // focuses an element as the default action of a user mousedown, which the
+      // synthetic pointer sequence behind `click` does NOT reproduce. Without an
+      // explicit focus, Monaco's `textInputFocus` context key stays false and its
+      // cursor-navigation / Ctrl+S keybindings no-op even though keydown fires
+      // (#2681). Assert the target is the active element at keydown time.
+      const { deps, container } = setup(`<textarea data-testid="editor-input"></textarea>`);
+      const textarea = container.querySelector("textarea")!;
+      expect(document.activeElement).not.toBe(textarea);
+      let activeAtKeydown: Element | null = null;
+      textarea.addEventListener("keydown", () => {
+        activeAtKeydown = document.activeElement;
+      });
+
+      const res = await dispatchCommand(
+        { action: "pressKey", key: "ArrowDown", testId: "editor-input" },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "pressKey" });
+      expect(activeAtKeydown).toBe(textarea);
+      expect(document.activeElement).toBe(textarea);
+    });
+
     it("dispatches on the focused element when no testId is given", async () => {
       const { deps, container } = setup(`<input data-testid="field" />`);
       const input = container.querySelector("input")!;

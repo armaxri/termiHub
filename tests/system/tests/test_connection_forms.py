@@ -144,7 +144,12 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.driver.type(self.EDITOR_NAME, name)
         self.driver.type("field-host", "127.0.0.1")
         self.driver.type("field-username", "tester")
-        self.driver.click(self.EDITOR_SAVE)
+        # Gate the click on the form reporting itself valid: canSave is recomputed
+        # asynchronously (react-hook-form + zod validity trails the last typed
+        # field), and the Save button is aria-disabled — not natively disabled —
+        # so a click landing before validity settles is a silent no-op and the
+        # connection is never saved (the CI flake behind #2684).
+        self._click_editor_save(False)
         conn = self.require_connection(name)
         cfg = (conn.get("config") or {}).get("config") or {}
         assert cfg.get("enableX11Forwarding") is True, (
@@ -166,7 +171,10 @@ class TestConnectionForms(TabsUi, SidebarUi, ConnectionsUi, SystemTest):
         self.driver.type("field-host", "127.0.0.1")
         self.driver.type("field-username", "tester")
         self.driver.click("field-enableX11Forwarding")  # on → off
-        self.driver.click(self.EDITOR_SAVE)
+        # Gate on the form reporting itself valid before saving (see the
+        # defaults-on test); the aria-disabled Save button would otherwise
+        # silently no-op if clicked before validity settles.
+        self._click_editor_save(False)
         conn = self.require_connection(name)
         cfg = (conn.get("config") or {}).get("config") or {}
         assert cfg.get("enableX11Forwarding") is False, (

@@ -49,6 +49,10 @@ pub async fn ping_stream(
     let mut sent: u32 = 0;
     let mut received: u32 = 0;
     let mut latencies: Vec<f64> = Vec::new();
+    // Once ICMP proves unusable (the socket can't be built, or the first echo is
+    // silently dropped though the host is reachable over TCP), stick to the TCP
+    // fallback for the rest of the session instead of re-probing ICMP each tick.
+    let mut use_tcp = false;
 
     loop {
         if cancel.is_cancelled() {
@@ -60,9 +64,33 @@ pub async fn ping_stream(
             }
         }
 
-        let result = match icmp_ping(ip, seq, 2000).await {
-            Ok(r) => r,
-            Err(_) => tcp_ping(ip, seq, 2000).await?,
+        let result = if use_tcp {
+            tcp_ping(ip, seq, 2000).await?
+        } else {
+            match icmp_ping(ip, seq, 2000).await {
+                Ok(r) if r.timed_out && seq == 1 => {
+                    // ICMP created a socket but the first echo got no reply. This
+                    // is the signature of an environment where ICMP is silently
+                    // dropped (e.g. sandboxed CI runners) rather than the host
+                    // being down. Probe once over TCP: if the host answers (or
+                    // refuses) the connection it *is* reachable and ICMP is
+                    // blocked, so switch to TCP for the rest of the session; if
+                    // TCP also times out the host is genuinely unreachable, so
+                    // keep the ICMP timeout and stay on ICMP.
+                    let tcp = tcp_ping(ip, seq, 2000).await?;
+                    if tcp.timed_out {
+                        r
+                    } else {
+                        use_tcp = true;
+                        tcp
+                    }
+                }
+                Ok(r) => r,
+                Err(_) => {
+                    use_tcp = true;
+                    tcp_ping(ip, seq, 2000).await?
+                }
+            }
         };
 
         sent += 1;
@@ -283,5 +311,43 @@ mod tests {
     async fn resolve_localhost() {
         let ip = resolve_host("localhost").await.unwrap();
         assert!(ip.is_loopback());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ping_stream_loopback_receives_a_reply() {
+        // Pinging loopback must yield at least one reply on any host — including
+        // sandboxed CI runners with no working ICMP — because the TCP fallback
+        // engages when ICMP is unavailable or its first echo is silently dropped
+        // (127.0.0.1 always answers or refuses a TCP connection immediately).
+        // This is the unit-lane counterpart to the `test_ping_streams_stats_and_chart`
+        // integration case (#2684) and pins the loopback determinism it relies on.
+        use std::sync::{Arc, Mutex};
+
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&results);
+        let cancel = CancellationToken::new();
+
+        let stats = ping_stream(
+            "127.0.0.1",
+            50,
+            Some(2),
+            move |r| sink.lock().expect("results lock").push(r),
+            cancel,
+        )
+        .await
+        .expect("ping loopback");
+
+        assert_eq!(stats.sent, 2, "both requested pings were sent");
+        assert!(
+            stats.received >= 1,
+            "loopback must answer at least one ping (ICMP or TCP fallback); got {stats:?}"
+        );
+        let received = results.lock().expect("results lock");
+        assert!(
+            received
+                .iter()
+                .any(|r| r.latency_ms.is_some() && !r.timed_out),
+            "at least one streamed result carries a latency: {received:?}"
+        );
     }
 }

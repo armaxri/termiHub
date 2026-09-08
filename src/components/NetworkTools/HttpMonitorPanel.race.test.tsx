@@ -122,6 +122,49 @@ describe("HttpMonitorPanel — first-check race", () => {
     expect(container.textContent).toContain("200");
   });
 
+  it("does not drop the immediate first check that arrives before start resolves", async () => {
+    // The real race the harness caught (#2684): the backend emits the immediate
+    // first check as soon as its poll task runs — which can be *before*
+    // networkHttpMonitorStart resolves and the panel learns the monitor id. With
+    // the default 30s interval, a dropped first check leaves the panel blank well
+    // past any reasonable wait. Reproduce it by holding the start promise pending
+    // while the first check is emitted, then resolving it.
+    let resolveStart!: (id: string) => void;
+    vi.mocked(networkHttpMonitorStart).mockImplementationOnce(
+      () =>
+        new Promise<string>((res) => {
+          resolveStart = res;
+        })
+    );
+
+    await act(async () => {
+      root.render(withTooltip(<HttpMonitorPanel />));
+    });
+    await flush();
+
+    // Start: the listener is registered, but the start promise stays pending, so
+    // activeMonitorId is not set yet.
+    await clickStart();
+
+    // The immediate first check arrives before start resolves.
+    const checkCb = vi.mocked(onHttpMonitorCheck).mock.calls[0][0];
+    await act(async () => {
+      checkCb(checkResult("mon-1"));
+    });
+    await flush();
+
+    // Now start resolves with the monitor id.
+    await act(async () => {
+      resolveStart("mon-1");
+    });
+    await flush();
+
+    // The buffered first check is reconciled once the id is known, so the panel
+    // shows it rather than staying blank until the next interval.
+    expect(container.querySelector('[data-testid="http-monitor-entry-0"]')).not.toBeNull();
+    expect(container.textContent).toContain("200");
+  });
+
   it("ignores checks for a different monitor id", async () => {
     await act(async () => {
       root.render(withTooltip(<HttpMonitorPanel />));
