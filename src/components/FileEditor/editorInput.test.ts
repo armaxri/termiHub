@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { EDITOR_INPUT_TESTID, findMonacoInput, tagMonacoInput } from "./editorInput";
+import {
+  EDITOR_INPUT_TESTID,
+  findMonacoInput,
+  tagMonacoInput,
+  testInputEditorOptions,
+} from "./editorInput";
 
 /**
  * Build a fake Monaco editor DOM node containing the given hidden-input element,
@@ -57,5 +62,26 @@ describe("Monaco hidden-input tagging (#2689)", () => {
     expect(() => tagMonacoInput(null)).not.toThrow();
     expect(() => tagMonacoInput(undefined)).not.toThrow();
     expect(findMonacoInput(editorDomNode(`<span></span>`))).toBeNull();
+  });
+});
+
+describe("test-bridge editor input mode (#2694)", () => {
+  it("forces the textarea input (editContext off) when the bridge is active", () => {
+    // Under the bridge, Monaco must use the classic `<textarea class="inputarea">`
+    // input rather than the Chromium `EditContext` path. Arrow-key cursor
+    // navigation is gated on Monaco's `textInputFocus` context key, which the
+    // bridge's `pressKey` flips by dispatching a synthetic `focus` event at the
+    // input. Only the textarea input honours that synthetic event (its
+    // `TextAreaInput` sets focus straight from the DOM `focus`); the EditContext
+    // input's `FocusTracker` instead re-reads `document.activeElement` and
+    // ignores it, so `textInputFocus` never flips on an occluded CI webview and
+    // arrows silently no-op — the #2694 macOS/WebKit failure. Forcing textarea
+    // mode makes the keyboard path engine-agnostic across all three webviews.
+    expect(testInputEditorOptions(true)).toEqual({ editContext: false });
+  });
+
+  it("leaves EditContext untouched in production (bridge off)", () => {
+    // Real users keep Monaco's default input path; the override is test-only.
+    expect(testInputEditorOptions(false)).toEqual({});
   });
 });
