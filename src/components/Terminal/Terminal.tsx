@@ -830,9 +830,21 @@ export function Terminal({
           // bug, so the forced refresh is pure overhead there. The ref flips
           // back to false on WebGL context loss, so the refresh resumes for the
           // DOM fallback path.
+          // Decide whether to keep the view pinned to the bottom from the LIVE
+          // buffer position captured *before* this write grows it — not from the
+          // event-driven `userScrolledUpRef`. That ref can be wrong at this
+          // moment: a programmatic scroll (the test bridge's `scroll_terminal`, a
+          // wheel gesture routed through `scrollLines`) may not have fired
+          // `onScroll` yet, and on WebKit an `onScroll` can fire mid-write
+          // transiently reporting `viewportY == baseY`. Either desyncs the ref and
+          // yanks a scrolled-up viewport to the bottom on new output (#2682).
+          // Reading the buffer here is authoritative and race-free.
+          const preWriteBuf = xterm.buffer.active;
+          const stickToBottom = preWriteBuf.viewportY >= preWriteBuf.baseY;
+
           const afterWrite = () => {
             requestAnimationFrame(() => {
-              if (!userScrolledUpRef.current) {
+              if (stickToBottom) {
                 xterm.scrollToBottom();
               }
               if (!webglRendererActiveRef.current) {
