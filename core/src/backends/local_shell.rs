@@ -81,6 +81,16 @@ fn parse_env_vars(settings: &serde_json::Value) -> HashMap<String, String> {
 ///      drop, portable-pty calls `ClosePseudoConsole`, which closes the
 ///      pseudoconsole and signals the child via the normal shutdown path.
 ///      The reader thread observes EOF the same way as on Unix.
+///   4. **The output pipe does NOT reach EOF when the child exits on its
+///      own.** Unlike a Unix PTY — where closing the slave fd makes the
+///      master read EOF as soon as the child exits — ConPTY keeps the
+///      pseudoconsole (and thus the reader) open after a self-exited child
+///      (e.g. the user typed `exit`). Relying on reader EOF alone therefore
+///      never reports the session as ended on Windows (issue #2704). The
+///      backend closes this gap by watching the child process directly
+///      (`SpawnedShell::wait_for_exit`) and closing the PTY
+///      (`SpawnedShell::close_pty`) once it exits, which makes the reader
+///      drain and then EOF through the normal cleanup path.
 pub struct NativeLocalShellSpawner;
 
 impl LocalShellSpawner for NativeLocalShellSpawner {
@@ -126,30 +136,53 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             .try_clone_reader()
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
-        let master = Arc::new(Mutex::new(pty_pair.master));
-        let child = Arc::new(Mutex::new(child));
+        // Master is stored behind an `Option` so `close_pty` can drop it,
+        // closing the pseudoterminal and unblocking the reader with EOF.
+        let master = Arc::new(Mutex::new(Some(pty_pair.master)));
+
+        // A killer handle split off from the child (`clone_killer`): it can
+        // terminate the process from `kill()` even while the watcher thread is
+        // blocked in `child.wait()` inside `wait_for_exit` (see the portable-pty
+        // docs and note #4 on `NativeLocalShellSpawner`).
+        let killer = Arc::new(Mutex::new(child.clone_killer()));
 
         let master_for_resize = master.clone();
-        let child_for_kill = child.clone();
+        let master_for_close = master.clone();
 
         Ok(SpawnedShell {
             writer: Box::new(writer),
             reader: Box::new(reader),
             resize: Box::new(move |cols, rows| {
-                let m = master_for_resize.lock().map_err(|e| {
+                let guard = master_for_resize.lock().map_err(|e| {
                     SessionError::Io(std::io::Error::other(format!("lock failed: {e}")))
                 })?;
-                m.resize(PtySize {
-                    rows,
-                    cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                })
-                .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string())))
+                match guard.as_ref() {
+                    Some(m) => m
+                        .resize(PtySize {
+                            rows,
+                            cols,
+                            pixel_width: 0,
+                            pixel_height: 0,
+                        })
+                        .map_err(|e| SessionError::Io(std::io::Error::other(e.to_string()))),
+                    // PTY already closed (the shell exited) — nothing to resize.
+                    None => Ok(()),
+                }
             }),
             kill: Box::new(move || {
-                if let Ok(mut c) = child_for_kill.lock() {
-                    let _ = c.kill();
+                if let Ok(mut k) = killer.lock() {
+                    let _ = k.kill();
+                }
+            }),
+            wait_for_exit: Box::new(move || {
+                let mut child = child;
+                let _ = child.wait();
+            }),
+            close_pty: Box::new(move || {
+                if let Ok(mut guard) = master_for_close.lock() {
+                    // Dropping the master closes the pseudoterminal (ConPTY on
+                    // Windows), making the reader thread drain and hit EOF.
+                    let _ = guard.take();
                 }
             }),
         })
@@ -709,6 +742,9 @@ mod tests {
         reader_tx: Arc<Mutex<Option<std::sync::mpsc::SyncSender<Vec<u8>>>>>,
         /// Captures the environment of the last spawned command.
         captured_env: Arc<Mutex<Option<HashMap<String, String>>>>,
+        /// Unblocks `wait_for_exit`. Sending on it (or dropping it) simulates
+        /// the child process exiting — mirroring a real `exit` or `kill()`.
+        child_exit: Arc<Mutex<Option<std::sync::mpsc::Sender<()>>>>,
     }
 
     impl MockLocalShellSpawner {
@@ -720,6 +756,7 @@ mod tests {
                 killed: Arc::new(AtomicBool::new(false)),
                 reader_tx: Arc::new(Mutex::new(None)),
                 captured_env: Arc::new(Mutex::new(None)),
+                child_exit: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -741,10 +778,17 @@ mod tests {
             let resize_log = self.resize_log.clone();
             let killed = self.killed.clone();
             let reader_tx_slot = self.reader_tx.clone();
+            let reader_tx_for_close = self.reader_tx.clone();
+            let child_exit_for_kill = self.child_exit.clone();
 
             // Bounded-0 channel: no buffering; drop sender to signal EOF.
             let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(0);
             *reader_tx_slot.lock().unwrap() = Some(tx);
+
+            // Exit channel: `wait_for_exit` blocks on the receiver until the
+            // test signals a child exit (or the sender is dropped via kill).
+            let (exit_tx, exit_rx) = std::sync::mpsc::channel::<()>();
+            *self.child_exit.lock().unwrap() = Some(exit_tx);
 
             Ok(SpawnedShell {
                 writer: Box::new(LogWriter { log: write_log }),
@@ -760,6 +804,17 @@ mod tests {
                     killed.store(true, Ordering::SeqCst);
                     // Drop the sender → ChannelReader.read() returns Ok(0) (EOF)
                     *reader_tx_slot.lock().unwrap() = None;
+                    // Killing the process also ends the exit wait.
+                    *child_exit_for_kill.lock().unwrap() = None;
+                }),
+                wait_for_exit: Box::new(move || {
+                    // Blocks until the test signals an exit or the sender drops.
+                    let _ = exit_rx.recv();
+                }),
+                close_pty: Box::new(move || {
+                    // Closing the PTY makes the reader observe EOF — the ConPTY
+                    // close that a self-exited Windows shell needs.
+                    *reader_tx_for_close.lock().unwrap() = None;
                 }),
             })
         }
@@ -1207,6 +1262,54 @@ mod tests {
         shell.disconnect().await.ok();
     }
 
+    /// Regression for #2704. On Windows the PTY (ConPTY) output pipe does not
+    /// reach EOF when the shell process exits on its own, so the output reader
+    /// thread stays blocked and — before the child-exit watcher — the session
+    /// was never reported as ended: typing `exit` left the tab "alive" forever.
+    ///
+    /// The mock reproduces the Windows shape: the child exits (`wait_for_exit`
+    /// returns) while the reader is still blocked (no EOF yet). The watcher must
+    /// notice and close the PTY, which closes the output channel and flips
+    /// `is_connected()` to false — the signal the session manager forwards as
+    /// "Session ended". Without the fix this deadlocks and times out.
+    #[tokio::test]
+    async fn child_exit_ends_session_even_without_reader_eof() {
+        let mock = MockLocalShellSpawner::new();
+        let child_exit = mock.child_exit.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+        let mut rx = shell.subscribe_output();
+        assert!(shell.is_connected());
+
+        // The shell process exits on its own; the reader does NOT see EOF
+        // (mirrors Windows ConPTY keeping the pseudoconsole open).
+        if let Some(tx) = child_exit.lock().unwrap().as_ref() {
+            // Tolerate a dropped receiver: without the watcher there is nothing
+            // listening, and the point of this test is that the session must
+            // still be driven to end — so a failed signal must surface as the
+            // drain timeout below, not as an early panic here.
+            let _ = tx.send(());
+        }
+
+        // The watcher must close the PTY, closing the output channel.
+        let ended = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while rx.recv().await.is_some() {}
+            true
+        })
+        .await;
+        assert!(
+            ended.unwrap_or(false),
+            "session should end after the child exits, even without reader EOF"
+        );
+        assert!(
+            !shell.is_connected(),
+            "is_connected() should be false once the shell has exited"
+        );
+
+        shell.disconnect().await.ok();
+    }
+
     // ── Integration tests (spawn real shells, require PTY) ───────────
 
     #[tokio::test]
@@ -1249,6 +1352,49 @@ mod tests {
         shell.resize(120, 40).expect("resize failed");
         shell.disconnect().await.expect("disconnect failed");
         assert!(!shell.is_connected());
+    }
+
+    /// Real-PTY regression for #2704: typing `exit` must end the session on
+    /// every platform. This is the guard for the Windows ConPTY exit-detection
+    /// gap — on Unix the reader EOFs on child exit anyway, but on Windows the
+    /// output pipe does not, so without the child-exit watcher the output
+    /// channel here would never close and the assertion would time out.
+    #[tokio::test]
+    async fn typing_exit_ends_the_session() {
+        let mut shell = LocalShell::new();
+
+        let shells = detect_available_shells();
+        let shell_name = shells.first().expect("at least one shell available");
+        let settings = serde_json::json!({ "shell": shell_name });
+
+        shell.connect(settings).await.expect("connect failed");
+        assert!(shell.is_connected());
+
+        let mut rx = shell.subscribe_output();
+        // Let the shell start and print its prompt so `exit` is not typed into
+        // a still-starting shell (best-effort; the PTY buffers input regardless).
+        let _ = tokio::time::timeout(pty_output_timeout(), rx.recv()).await;
+
+        shell.write(b"exit\n").expect("write exit failed");
+
+        // The session must end: the reader hits EOF (Unix) or the child-exit
+        // watcher closes the ConPTY (Windows), closing the output channel.
+        let ended = tokio::time::timeout(pty_output_timeout(), async {
+            while rx.recv().await.is_some() {}
+            true
+        })
+        .await;
+
+        assert!(
+            ended.unwrap_or(false),
+            "shell session did not end after typing `exit`"
+        );
+        assert!(
+            !shell.is_connected(),
+            "is_connected() should be false after the shell exits"
+        );
+
+        shell.disconnect().await.ok();
     }
 
     #[tokio::test]

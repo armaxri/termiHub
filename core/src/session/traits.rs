@@ -144,7 +144,27 @@ pub struct SpawnedShell {
     /// Resize the PTY to the given `(cols, rows)`.
     pub resize: Box<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>,
     /// Kill the shell process.
+    ///
+    /// Must be able to run concurrently with a thread blocked in
+    /// [`wait_for_exit`](Self::wait_for_exit) — the native spawner backs this
+    /// with an independent `portable_pty` killer handle (`clone_killer`).
     pub kill: Box<dyn Fn() + Send + Sync>,
+    /// Block the calling thread until the shell process exits on its own.
+    ///
+    /// `connect()` runs this on a dedicated watcher thread. It is the reliable
+    /// cross-platform signal that the shell ended (e.g. the user typed `exit`):
+    /// on Unix the output reader also sees EOF when the child exits (the slave
+    /// fd is closed), but **Windows ConPTY does not EOF the output pipe on
+    /// child exit**, so without this watcher a self-exited Windows shell was
+    /// never reported as ended (issue #2704). Returns once the child is gone —
+    /// whether it exited itself or was terminated via [`kill`](Self::kill).
+    pub wait_for_exit: Box<dyn FnOnce() + Send>,
+    /// Close the pseudoterminal master, forcing the output reader to EOF.
+    ///
+    /// Called by the watcher once [`wait_for_exit`](Self::wait_for_exit)
+    /// returns, so the reader drains any buffered output and then observes EOF,
+    /// running the same end-of-session cleanup as a Unix child exit.
+    pub close_pty: Box<dyn Fn() + Send + Sync>,
 }
 
 /// PTY / process spawn abstraction for the local shell backend.
