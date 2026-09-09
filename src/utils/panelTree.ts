@@ -149,20 +149,27 @@ export function removeLeaf(root: PanelNode, leafId: string): PanelNode | null {
 /**
  * Split a leaf by wrapping it in a SplitContainer with a new leaf.
  * If the parent already splits in the same direction, inserts as sibling instead of nesting.
+ *
+ * `newSplitId`, when supplied, becomes the id of the wrapping SplitContainer that
+ * is created when the target leaf is wrapped (rather than minting one). This lets
+ * the optimistic split and the authoritative `layout.split` produce byte-identical
+ * container ids, eliminating the optimistic→authoritative id churn (#2708). It is
+ * ignored on the sibling-insert path (no new container is created).
  */
 export function splitLeaf(
   root: PanelNode,
   targetId: string,
   newLeaf: LeafPanel,
   direction: "horizontal" | "vertical",
-  position: "before" | "after"
+  position: "before" | "after",
+  newSplitId?: string
 ): PanelNode {
   if (root.type === "leaf") {
     if (root.id !== targetId) return root;
     const children = position === "before" ? [newLeaf, root] : [root, newLeaf];
     return {
       type: "split",
-      id: generatePanelId(),
+      id: newSplitId ?? generatePanelId(),
       direction,
       children,
     };
@@ -189,7 +196,7 @@ export function splitLeaf(
   return {
     ...root,
     children: root.children.map((child) =>
-      splitLeaf(child, targetId, newLeaf, direction, position)
+      splitLeaf(child, targetId, newLeaf, direction, position, newSplitId)
     ),
   };
 }
