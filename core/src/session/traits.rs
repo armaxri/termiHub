@@ -144,7 +144,31 @@ pub struct SpawnedShell {
     /// Resize the PTY to the given `(cols, rows)`.
     pub resize: Box<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>,
     /// Kill the shell process.
+    ///
+    /// Must be able to run concurrently with a thread blocked in
+    /// [`wait_for_exit`](Self::wait_for_exit) — the native spawner backs this
+    /// with an independent `portable_pty` killer handle (`clone_killer`).
     pub kill: Box<dyn Fn() + Send + Sync>,
+    /// Block the calling thread until the shell process exits on its own.
+    ///
+    /// `connect()` runs this on a dedicated watcher thread. It is the reliable
+    /// cross-platform signal that the shell ended (e.g. the user typed `exit`):
+    /// on Unix the output reader also sees EOF when the child exits (the slave
+    /// fd is closed), but **Windows ConPTY does not EOF the output pipe on
+    /// child exit** (nor reliably when the master is later closed), so without
+    /// this watcher a self-exited Windows shell was never reported as ended
+    /// (issue #2704). When it returns, the watcher drives the end-of-session
+    /// path directly. Returns once the child is gone — whether it exited itself
+    /// or was terminated via [`kill`](Self::kill).
+    pub wait_for_exit: Box<dyn FnOnce() + Send>,
+    /// Release the pseudoterminal master (best-effort).
+    ///
+    /// Called by the watcher once [`wait_for_exit`](Self::wait_for_exit)
+    /// returns, to free the PTY and give the still-blocked reader a chance to
+    /// unwind. Exit detection does **not** depend on it: the watcher already
+    /// ended the session by dropping the output sender, because closing the
+    /// master does not reliably EOF the reader on Windows ConPTY.
+    pub close_pty: Box<dyn Fn() + Send + Sync>,
 }
 
 /// PTY / process spawn abstraction for the local shell backend.
