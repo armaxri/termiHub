@@ -342,6 +342,81 @@ fn split_leaf_no_sizes_when_parent_has_none() {
     }
 }
 
+#[test]
+fn split_leaf_with_id_adopts_provided_container_id() {
+    // Wrapping a lone leaf: the new container adopts the supplied id verbatim
+    // (#2708), instead of a freshly-minted `panel-…` id.
+    let existing = leaf_node("leaf-1", &[]);
+    let new_leaf = make_leaf("new-leaf", &[]);
+    let result = split_leaf_with_id(
+        &existing,
+        "leaf-1",
+        &new_leaf,
+        Direction::Horizontal,
+        Position::After,
+        Some("split-adopted"),
+    );
+    match result {
+        PanelNode::Split(s) => assert_eq!(s.id, "split-adopted"),
+        _ => panic!("expected split"),
+    }
+}
+
+#[test]
+fn split_leaf_with_id_mints_when_absent() {
+    // `None` preserves the pre-#2708 behaviour: a fresh `panel-…` id.
+    let existing = leaf_node("leaf-1", &[]);
+    let new_leaf = make_leaf("new-leaf", &[]);
+    let result = split_leaf_with_id(
+        &existing,
+        "leaf-1",
+        &new_leaf,
+        Direction::Horizontal,
+        Position::After,
+        None,
+    );
+    match result {
+        PanelNode::Split(s) => assert!(s.id.starts_with("panel-")),
+        _ => panic!("expected split"),
+    }
+}
+
+#[test]
+fn split_leaf_with_id_ignores_container_id_on_sibling_insert() {
+    // Inserting into a same-direction split creates no new container, so the
+    // supplied id is ignored and the existing container id is preserved.
+    let split = split_node(
+        "split-1",
+        Direction::Horizontal,
+        vec![leaf_node("leaf-1", &[]), leaf_node("leaf-2", &[])],
+    );
+    let new_leaf = make_leaf("new-leaf", &[]);
+    let result = split_leaf_with_id(
+        &split,
+        "leaf-1",
+        &new_leaf,
+        Direction::Horizontal,
+        Position::After,
+        Some("unused-id"),
+    );
+    match result {
+        PanelNode::Split(s) => assert_eq!(s.id, "split-1"),
+        _ => panic!("expected split"),
+    }
+}
+
+#[test]
+fn contains_panel_id_finds_leaf_and_split_ids() {
+    let tree = split_node(
+        "split-1",
+        Direction::Horizontal,
+        vec![leaf_node("leaf-1", &[]), leaf_node("leaf-2", &[])],
+    );
+    assert!(contains_panel_id(&tree, "split-1"));
+    assert!(contains_panel_id(&tree, "leaf-2"));
+    assert!(!contains_panel_id(&tree, "absent"));
+}
+
 // ── simplifyTree ────────────────────────────────────────────────────────────
 
 #[test]

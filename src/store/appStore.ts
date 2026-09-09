@@ -230,6 +230,7 @@ import {
   createLeafPanel,
   findLeaf,
   findLeafByTab,
+  generatePanelId,
   getAllLeaves,
   updateLeaf,
   removeLeaf,
@@ -4675,13 +4676,19 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
       const { activePanelId } = getComposedLayout(prev);
+      // Mint the new leaf and wrapping-container ids here (not inside the algebra)
+      // so the very same ids are threaded through the `layout.split` intent and
+      // adopted by the authoritative region — optimistic id == authoritative id,
+      // eliminating the id churn a fresh backend mint would cause (#2708).
+      const newPanelId = generatePanelId();
+      const newSplitId = generatePanelId();
       const next = setLayoutLocal((state) => {
         const dir = direction ?? "horizontal";
         const targetId = state.activePanelId;
         if (!targetId) return state;
 
-        const newLeaf = createLeafPanel();
-        let rootPanel = splitLeaf(state.rootPanel, targetId, newLeaf, dir, "after");
+        const newLeaf: LeafPanel = { type: "leaf", id: newPanelId, tabs: [], activeTabId: null };
+        let rootPanel = splitLeaf(state.rootPanel, targetId, newLeaf, dir, "after", newSplitId);
         rootPanel = simplifyTree(rootPanel);
         return { rootPanel, activePanelId: newLeaf.id };
       });
@@ -4691,7 +4698,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (activePanelId) {
         mirrorLayoutIntent(
           "layout.split",
-          { panelId: activePanelId, direction: direction ?? "horizontal", position: "after" },
+          {
+            panelId: activePanelId,
+            direction: direction ?? "horizontal",
+            position: "after",
+            newPanelId,
+            newSplitId,
+          },
           pre,
           postLayoutSnapshot(prev, next)
         );

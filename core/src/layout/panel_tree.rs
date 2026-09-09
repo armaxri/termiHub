@@ -196,6 +196,18 @@ pub fn create_leaf_panel() -> LeafPanel {
     }
 }
 
+/// Whether any node in the tree — leaf **or** split container — already carries
+/// `id`. Used to reject a client-supplied id that would collide before adopting
+/// it (#2708), falling back to a freshly-minted one.
+pub fn contains_panel_id(root: &PanelNode, id: &str) -> bool {
+    match root {
+        PanelNode::Leaf(leaf) => leaf.id == id,
+        PanelNode::Split(split) => {
+            split.id == id || split.children.iter().any(|c| contains_panel_id(c, id))
+        }
+    }
+}
+
 /// Find a leaf by ID.
 pub fn find_leaf<'a>(root: &'a PanelNode, leaf_id: &str) -> Option<&'a LeafPanel> {
     match root {
@@ -379,6 +391,25 @@ pub fn split_leaf(
     direction: Direction,
     position: Position,
 ) -> PanelNode {
+    split_leaf_with_id(root, target_id, new_leaf, direction, position, None)
+}
+
+/// Like [`split_leaf`], but adopts `new_split_id` as the id of the wrapping
+/// `SplitContainer` when a **new** container is created (a wrap), instead of
+/// minting one. This lets an optimistic frontend split and this authoritative
+/// split produce byte-identical container ids, eliminating the
+/// optimistic→authoritative id churn (#2708). It is ignored when the split
+/// inserts as a sibling of an existing same-direction container (no new
+/// container is created, so the existing id is preserved). `None` mints a fresh
+/// id via [`generate_panel_id`], matching the pre-#2708 behaviour.
+pub fn split_leaf_with_id(
+    root: &PanelNode,
+    target_id: &str,
+    new_leaf: &LeafPanel,
+    direction: Direction,
+    position: Position,
+    new_split_id: Option<&str>,
+) -> PanelNode {
     let split = match root {
         PanelNode::Leaf(leaf) => {
             if leaf.id != target_id {
@@ -395,7 +426,9 @@ pub fn split_leaf(
                 ],
             };
             return PanelNode::Split(SplitContainer {
-                id: generate_panel_id(),
+                id: new_split_id
+                    .map(str::to_string)
+                    .unwrap_or_else(generate_panel_id),
                 direction,
                 children,
                 sizes: None,
@@ -446,7 +479,16 @@ pub fn split_leaf(
         children: split
             .children
             .iter()
-            .map(|child| split_leaf(child, target_id, new_leaf, direction, position))
+            .map(|child| {
+                split_leaf_with_id(
+                    child,
+                    target_id,
+                    new_leaf,
+                    direction,
+                    position,
+                    new_split_id,
+                )
+            })
             .collect(),
         sizes: split.sizes.clone(),
         last_active_leaf_id: split.last_active_leaf_id.clone(),

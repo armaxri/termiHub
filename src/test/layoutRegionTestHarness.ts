@@ -157,13 +157,18 @@ export class FakeLayoutTransport implements Transport {
         break;
       case "layout.split": {
         const g = this.groupFor(gid);
-        const newLeaf = createLeafPanel();
+        // Adopt the client-supplied leaf/container ids when present (#2708),
+        // mirroring the authoritative Rust `LayoutStore::split`, so the round-trip
+        // yields the same ids the optimistic overlay minted (no churn).
+        const newPanelId = (p.newPanelId as string | undefined) ?? generatePanelId();
+        const newLeaf: LeafPanel = { type: "leaf", id: newPanelId, tabs: [], activeTabId: null };
         let root = splitLeaf(
           g.root,
           p.panelId as string,
           newLeaf,
           p.direction as "horizontal" | "vertical",
-          p.position as "before" | "after"
+          p.position as "before" | "after",
+          p.newSplitId as string | undefined
         );
         root = simplifyTree(root);
         this.setRoot(g, root, newLeaf.id);

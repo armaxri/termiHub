@@ -31,7 +31,7 @@
 //!
 //! | kind                        | payload                                        | effect                                        |
 //! | --------------------------- | ---------------------------------------------- | --------------------------------------------- |
-//! | `layout.split`              | `{ groupId?, panelId, direction, position }`   | split a leaf, inserting a new empty leaf       |
+//! | `layout.split`              | `{ groupId?, panelId, direction, position, newPanelId?, newSplitId? }` | split a leaf, inserting a new empty leaf (adopting the supplied ids) |
 //! | `layout.merge`              | `{ groupId?, sourcePanelId, targetPanelId }`   | move all tabs into the target, drop the source |
 //! | `layout.moveTab`            | `{ groupId?, tabId, targetPanelId, edge }`     | move a tab (center = merge; edge = split)      |
 //! | `layout.closeTabStructure`  | `{ groupId?, tabId }`                          | remove a tab; drop its leaf if left empty      |
@@ -69,7 +69,7 @@ use tauri::{AppHandle, Manager};
 
 use termihub_core::layout::panel_tree::{PanelNode, Tab};
 
-use crate::layout::store::{GroupLayout, LayoutError, LayoutStore};
+use crate::layout::store::{GroupLayout, LayoutError, LayoutStore, SplitIds};
 use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
 
 /// The projection region id for a client's layout (`layout@<clientId>`).
@@ -111,6 +111,10 @@ pub fn register_layout_intents(registry: &mut HandlerRegistry, app_handle: AppHa
         let panel_id = required_str(intent, "panelId")?;
         let direction = required_enum(intent, "direction")?;
         let position = required_enum(intent, "position")?;
+        // Optional client-minted ids for the new leaf and its wrapping container,
+        // adopted so the authoritative tree matches the optimistic overlay (#2708).
+        let new_panel_id = optional_str(intent, "newPanelId");
+        let new_split_id = optional_str(intent, "newSplitId");
         store
             .split(
                 &intent.client_id,
@@ -118,6 +122,10 @@ pub fn register_layout_intents(registry: &mut HandlerRegistry, app_handle: AppHa
                 &panel_id,
                 direction,
                 position,
+                SplitIds {
+                    new_panel_id: new_panel_id.as_deref(),
+                    new_split_id: new_split_id.as_deref(),
+                },
             )
             .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &store, &intent.client_id))

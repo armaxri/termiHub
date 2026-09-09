@@ -30,9 +30,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use termihub_core::layout::panel_tree::{
-    create_leaf_panel, edge_to_split, find_leaf, find_leaf_by_tab, generate_panel_id,
-    get_all_leaves, normalize_sizes, remove_leaf, simplify_tree, split_leaf, update_leaf,
-    Direction, DropEdge, LeafPanel, PanelNode, Position, SplitContainer, Tab,
+    contains_panel_id, create_leaf_panel, edge_to_split, find_leaf, find_leaf_by_tab,
+    generate_panel_id, get_all_leaves, normalize_sizes, remove_leaf, simplify_tree, split_leaf,
+    split_leaf_with_id, update_leaf, Direction, DropEdge, LeafPanel, PanelNode, Position,
+    SplitContainer, Tab,
 };
 
 /// A rejectable layout-intent failure. Maps to an intent ack `(code, message)`
@@ -82,6 +83,19 @@ impl LayoutError {
             | LayoutError::SizeMismatch => "bad_payload",
         }
     }
+}
+
+/// Client-minted node ids to adopt for a [`LayoutStore::split`] (#2708): the new
+/// leaf's id and, when the split wraps its target in a fresh container, that
+/// container's id. Both are optional — [`SplitIds::default`] mints both, the
+/// pre-#2708 behaviour — and an absent or unusable id is minted rather than
+/// adopted (see [`adoptable_id`]).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SplitIds<'a> {
+    /// The id to assign the newly-created leaf panel.
+    pub new_panel_id: Option<&'a str>,
+    /// The id to assign the wrapping split container, when one is created.
+    pub new_split_id: Option<&'a str>,
 }
 
 /// One tab group: an independent panel tree plus its metadata and focused panel.
@@ -217,6 +231,14 @@ impl LayoutStore {
 
     /// `layout.split` — split a leaf panel, inserting a new empty leaf beside it
     /// and focusing the new leaf.
+    ///
+    /// `ids` lets the caller supply the ids for the new leaf and (when the split
+    /// wraps in a fresh container) that container, so the authoritative tree
+    /// adopts the ids the frontend's optimistic overlay already minted —
+    /// eliminating the optimistic→authoritative panel-id churn (#2708). Each id is
+    /// adopted only when present, non-empty, and not already used elsewhere in the
+    /// group's tree; otherwise a fresh id is minted, which is the back-compat
+    /// behaviour when the ids are absent ([`SplitIds::default`]).
     pub fn split(
         &self,
         client_id: &str,
@@ -224,6 +246,7 @@ impl LayoutStore {
         panel_id: &str,
         direction: Direction,
         position: Position,
+        ids: SplitIds<'_>,
     ) -> Result<(), LayoutError> {
         let mut clients = self.lock();
         let group = clients
@@ -233,10 +256,26 @@ impl LayoutStore {
         if find_leaf(&group.root, panel_id).is_none() {
             return Err(LayoutError::PanelNotFound(panel_id.to_string()));
         }
-        let new_leaf = create_leaf_panel();
-        let new_id = new_leaf.id.clone();
-        group.root = split_leaf(&group.root, panel_id, &new_leaf, direction, position);
-        group.active_panel_id = Some(new_id);
+        // Adopt the client-supplied leaf id when it is safe (non-empty, unique);
+        // otherwise mint one. The split-container id is resolved the same way but
+        // must also differ from the just-chosen leaf id.
+        let leaf_id =
+            adoptable_id(ids.new_panel_id, &group.root, None).unwrap_or_else(generate_panel_id);
+        let new_leaf = LeafPanel {
+            id: leaf_id.clone(),
+            tabs: Vec::new(),
+            active_tab_id: None,
+        };
+        let split_id = adoptable_id(ids.new_split_id, &group.root, Some(&leaf_id));
+        group.root = split_leaf_with_id(
+            &group.root,
+            panel_id,
+            &new_leaf,
+            direction,
+            position,
+            split_id.as_deref(),
+        );
+        group.active_panel_id = Some(leaf_id);
         fix_active(group);
         Ok(())
     }
@@ -963,6 +1002,29 @@ fn fix_active(group: &mut GroupLayout) {
     if !still_present {
         group.active_panel_id = get_all_leaves(&group.root).first().map(|l| l.id.clone());
     }
+}
+
+/// Resolve a client-supplied node id to one safe to adopt into `root` (#2708),
+/// or `None` when it must be minted instead. An id is adoptable only when it is
+/// present and non-empty (after trimming), is not already used anywhere in
+/// `root`, and differs from `also_exclude` (e.g. a sibling id chosen in the same
+/// split). Returning `None` signals the caller to fall back to a fresh id.
+fn adoptable_id(
+    provided: Option<&str>,
+    root: &PanelNode,
+    also_exclude: Option<&str>,
+) -> Option<String> {
+    let candidate = provided?.trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    if contains_panel_id(root, candidate) {
+        return None;
+    }
+    if also_exclude == Some(candidate) {
+        return None;
+    }
+    Some(candidate.to_string())
 }
 
 /// Generate a unique tab-group id (mirrors the TS `group-<ts>-<n>` shape).

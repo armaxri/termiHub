@@ -78,12 +78,18 @@ fn registry_for(store: Arc<LayoutStore>) -> HandlerRegistry {
         let panel_id = required_str(intent, "panelId")?;
         let direction: Direction = required_enum(intent, "direction")?;
         let position: Position = required_enum(intent, "position")?;
+        let new_panel_id = optional_str(intent, "newPanelId");
+        let new_split_id = optional_str(intent, "newSplitId");
         s.split(
             &intent.client_id,
             group.as_deref(),
             &panel_id,
             direction,
             position,
+            SplitIds {
+                new_panel_id: new_panel_id.as_deref(),
+                new_split_id: new_split_id.as_deref(),
+            },
         )
         .map_err(to_ack_err)?;
         Ok(publish_layout(projector, &s, &intent.client_id))
@@ -403,6 +409,59 @@ fn split_intent_produces_one_diff_fanned_to_two_subscribers() {
         cache_a.view,
         store.snapshot_full("A"),
         "cache converges on authority"
+    );
+}
+
+#[test]
+fn split_intent_adopts_client_supplied_ids() {
+    // #2708: the `layout.split` intent carries the ids the frontend optimistic
+    // overlay minted; the authoritative region adopts them, so the confirmed tree
+    // has the same new-leaf and container ids (no optimistic→authoritative churn).
+    let store = seeded_store("A");
+    let region = layout_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot_full("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let ack = dispatcher.dispatch(intent(
+        "layout.split",
+        "A",
+        json!({
+            "panelId": "a",
+            "direction": "vertical",
+            "position": "after",
+            "newPanelId": "panel-opt-leaf",
+            "newSplitId": "panel-opt-split",
+        }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+
+    let snap = store.snapshot("A");
+    assert_eq!(
+        snap["activePanelId"],
+        json!("panel-opt-leaf"),
+        "the new leaf adopted the supplied id and is focused"
+    );
+    let root: PanelNode = serde_json::from_value(snap["root"].clone()).expect("root deserializes");
+    fn contains_split(node: &PanelNode, id: &str) -> bool {
+        match node {
+            PanelNode::Leaf(_) => false,
+            PanelNode::Split(s) => s.id == id || s.children.iter().any(|c| contains_split(c, id)),
+        }
+    }
+    fn contains_leaf(node: &PanelNode, id: &str) -> bool {
+        match node {
+            PanelNode::Leaf(l) => l.id == id,
+            PanelNode::Split(s) => s.children.iter().any(|c| contains_leaf(c, id)),
+        }
+    }
+    assert!(
+        contains_split(&root, "panel-opt-split"),
+        "the wrapping container adopted the supplied split id"
+    );
+    assert!(
+        contains_leaf(&root, "panel-opt-leaf"),
+        "the new leaf is present"
     );
 }
 
