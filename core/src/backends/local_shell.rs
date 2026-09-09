@@ -1414,7 +1414,15 @@ mod tests {
         // a still-starting shell (best-effort; the PTY buffers input regardless).
         let _ = tokio::time::timeout(pty_output_timeout(), rx.recv()).await;
 
-        shell.write(b"exit\n").expect("write exit failed");
+        // Submit with CR (`\r`), NOT LF (`\n`). CR is the byte a terminal sends
+        // for Enter and the only line terminator the Windows default shell
+        // (PowerShell/cmd) accepts under ConPTY — sending `\n` there is merely
+        // echoed and never submits, so the shell never exits and this test
+        // hangs (this is what bit #2709's earlier iterations). On Unix the PTY
+        // line discipline (ICRNL) / readline treats CR as Enter too, so CR is
+        // the correct universal submit byte — and it matches the app's default
+        // line ending (`DEFAULT_LINE_ENDING = "cr"`, see `src/utils/lineEndings.ts`).
+        shell.write(b"exit\r").expect("write exit failed");
 
         // The session must end: the reader hits EOF (Unix) or the child-exit
         // watcher closes the ConPTY (Windows), closing the output channel.
