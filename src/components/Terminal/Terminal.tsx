@@ -51,7 +51,7 @@ import { resolveLineEnding } from "@/utils/lineEndings";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
-import { isFitReady, MIN_FIT_PX } from "./safeFit";
+import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import { currentSessionView, waitForBackendAgentReconnectOutcome } from "@/store/sessionBridge";
@@ -1470,7 +1470,14 @@ export function Terminal({
             xterm.resize(HORIZONTAL_SCROLL_COLS, dims.rows);
             updateHorizontalScrollWidth(xterm, fitAddon, el);
           }
-        } else {
+        } else if (isProposedFitSafe(fitAddon)) {
+          // Second degenerate-resize guard (#2700): the element-rect floor above
+          // rejects a ~0×0 (parking) rect, but a cross-panel / drag-to-edge
+          // reparent fires this observer with a full-HEIGHT, ~0-WIDTH rect whose
+          // width clears MIN_FIT_PX yet still proposes ~2 cols (FitAddon reserves
+          // ~14px for the scrollbar first). Fitting then would clamp the PTY to
+          // 2 columns and shred the scrollback. Skip on the proposed dims; a
+          // later observer fire re-fits once the panel reaches real width.
           fitAddon.fit();
         }
         // Force SmoothScrollableElement to refresh its layout after the
@@ -1571,7 +1578,12 @@ export function Terminal({
               fitAddonRef.current,
               terminalElRef.current
             );
-          } else {
+          } else if (isProposedFitSafe(fitAddonRef.current)) {
+            // Second degenerate-resize guard (#2700): a move op makes the tab
+            // visible in a freshly-created panel that can be full-HEIGHT but
+            // ~0-WIDTH when this fires, so isFitReady passes yet proposeDimensions
+            // clamps to ~2 cols. Fitting there shreds the scrollback; skip and
+            // let the ResizeObserver re-fit once real width lands.
             fitAddonRef.current.fit();
           }
         } catch {
