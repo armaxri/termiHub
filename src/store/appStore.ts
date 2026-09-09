@@ -247,7 +247,7 @@ import {
   type LayoutSplitMarks,
   type LayoutView,
   mirrorLayoutIntent,
-  moveTabPayload,
+  mirrorLayoutMove,
   reseedLayoutRegion,
   splitMarksOfTree,
   subscribeLayoutRegion,
@@ -3046,13 +3046,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
           activePanelId: newActivePanelId,
         };
       });
-      // Dispatch the cross-group move to the region; the mirror composes it (E2).
-      mirrorLayoutIntent(
-        "layout.moveTabToGroup",
-        { tabId, fromPanelId, targetGroupId },
-        pre,
-        postLayoutSnapshot(prev, next)
-      );
+      // Commit the cross-group move to the region as a single settled-tree
+      // replace (#2712): the emptied source panel is pruned, so pre/post differ
+      // in panel geometry; the seed+granular path would emit the pre-prune tree
+      // as an intermediate frame (a transient narrow width that corrupts terminal
+      // scrollback on macOS/WKWebView). See mirrorLayoutMove.
+      mirrorLayoutMove(pre, postLayoutSnapshot(prev, next));
       // Moving a tab across groups changes broadcast membership when the source
       // or a target crosses the group boundary (#1980) — re-resolve so an
       // "all"/"panel" scope drops/adds it in the source's own group.
@@ -3119,15 +3118,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
           activePanelId: newPanel.id,
         };
       });
-      // Dispatch the "tab to new group" move to the region; the mirror composes it
-      // back (E2). The backend assigns its own group id; the overlay carries
-      // appStore's until the next reseed.
-      mirrorLayoutIntent(
-        "layout.addGroupWithTab",
-        { tabId, fromPanelId },
-        pre,
-        postLayoutSnapshot(prev, next)
-      );
+      // Commit the "tab to new group" move as a single settled-tree replace
+      // (#2712): lifting the tab out of its source panel prunes that panel, so the
+      // active group's geometry changes. The seed+granular path would emit the
+      // pre-prune tree as an intermediate frame — the transient narrow width that
+      // destroys terminal scrollback on macOS/WKWebView. A whole-layout replace
+      // carries appStore's group id (the backend keeps it under replaceGroups,
+      // rather than minting its own as the granular addGroupWithTab did), so the
+      // overlay and authoritative views stay structurally identical.
+      mirrorLayoutMove(pre, postLayoutSnapshot(prev, next));
     },
 
     // ── Multi-window foundation (#1900) ──
@@ -4831,14 +4830,16 @@ export const useAppStore = create<AppState>((set, get, store) => {
         return { rootPanel, activePanelId: newLeaf.id };
       });
 
-      // Dispatch the move to the region via `layout.moveTab` (center = merge into
-      // the target stack, edge = split the target); the mirror composes it back.
-      mirrorLayoutIntent(
-        "layout.moveTab",
-        moveTabPayload(tabId, targetPanelId, edge),
-        pre,
-        postLayoutSnapshot(prev, next)
-      );
+      // Commit the move to the region as a single settled-tree replace (#2712).
+      // A move prunes the emptied source leaf (center = merge into the target
+      // stack; edge = split the target), so pre/post differ in panel geometry and
+      // width. Dispatching the granular `layout.moveTab` on a `preSnapshot` seed
+      // would make the region emit the pre-prune two-panel tree as an intermediate
+      // frame — a transient ~40-col width that reflows xterm and destroys terminal
+      // scrollback on macOS/WKWebView. Installing the settled tree in one commit
+      // keeps the optimistic and authoritative views structurally identical, so
+      // no intermediate narrow width is ever produced. See mirrorLayoutMove.
+      mirrorLayoutMove(pre, postLayoutSnapshot(prev, next));
     },
 
     // Connections — the saved-connection / folder tree is region-authoritative

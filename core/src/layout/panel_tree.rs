@@ -512,6 +512,131 @@ pub fn edge_to_split(edge: DropEdge) -> Option<SplitSpec> {
     }
 }
 
+/// A copy of `leaf` with `tab_id` removed. When the removed tab was the active
+/// one, the active tab falls back **positionally** — the tab that shifts into the
+/// removed slot, or the new last tab (`min(idx, len-1)`) — matching the frontend
+/// `removeTabFromLeaf` and the desktop `with_tab_removed` exactly.
+fn with_tab_removed(leaf: &LeafPanel, tab_id: &str) -> LeafPanel {
+    let removed_idx = leaf.tabs.iter().position(|t| t.id == tab_id);
+    let tabs: Vec<Tab> = leaf
+        .tabs
+        .iter()
+        .filter(|t| t.id != tab_id)
+        .cloned()
+        .collect();
+    let active_tab_id = if leaf.active_tab_id.as_deref() == Some(tab_id) {
+        match removed_idx {
+            Some(idx) if !tabs.is_empty() => {
+                let new_idx = idx.min(tabs.len() - 1);
+                Some(tabs[new_idx].id.clone())
+            }
+            _ => None,
+        }
+    } else {
+        leaf.active_tab_id.clone()
+    };
+    LeafPanel {
+        id: leaf.id.clone(),
+        tabs,
+        active_tab_id,
+    }
+}
+
+/// A copy of `leaf` with `tab` appended and focused.
+fn with_tab_added(leaf: &LeafPanel, tab: Tab) -> LeafPanel {
+    let mut tabs = leaf.tabs.clone();
+    let active_tab_id = Some(tab.id.clone());
+    tabs.push(tab);
+    LeafPanel {
+        id: leaf.id.clone(),
+        tabs,
+        active_tab_id,
+    }
+}
+
+/// A single empty leaf — the collapse target when a whole tree is emptied.
+fn single_empty_leaf() -> PanelNode {
+    PanelNode::Leaf(create_leaf_panel())
+}
+
+/// Remove `leaf_id` from the tree iff it is now an empty leaf, collapsing an
+/// emptied tree to a single empty leaf rather than nothing. A structural clone
+/// when the leaf still holds tabs or is absent.
+fn remove_leaf_if_empty(root: &PanelNode, leaf_id: &str) -> PanelNode {
+    match find_leaf(root, leaf_id) {
+        Some(leaf) if leaf.tabs.is_empty() => {
+            remove_leaf(root, leaf_id).unwrap_or_else(single_empty_leaf)
+        }
+        _ => root.clone(),
+    }
+}
+
+/// Move a tab onto a target panel in a **single atomic tree transform** — detach
+/// it from its source leaf, place it at the target, then prune the emptied source
+/// leaf and simplify, all in one rewrite that yields the settled tree directly.
+///
+/// A `Center` edge merges the tab into the target leaf's stack; any other edge
+/// splits the target and drops the tab into a new leaf on that side. When the move
+/// empties the source leaf it is pruned in the *same* transform, so the settled
+/// tree is produced without ever materialising the intermediate **pre-prune**
+/// state (the source panel still present alongside the destination). That
+/// intermediate two-panel geometry is exactly what, when emitted through the
+/// optimistic→authoritative layout-region round-trip (#2283), briefly reflowed a
+/// terminal to a narrow width and destroyed its scrollback on macOS/WKWebView
+/// (#2712, the same round-trip behind #2705's stale-id facet). Keeping the move
+/// atomic here means no caller can observe a transient extra panel or narrower
+/// interim width.
+///
+/// Returns a structural clone unchanged when the tab, or the target panel, is
+/// absent (a defensive no-op, mirroring the frontend `splitPanelWithTab` guards
+/// and the desktop `LayoutStore::move_tab`). This is a faithful Rust port of the
+/// frontend move; every panel id is preserved, so a live pane keyed by id is
+/// reparented, never remounted.
+pub fn move_tab(
+    root: &PanelNode,
+    tab_id: &str,
+    target_panel_id: &str,
+    edge: DropEdge,
+) -> PanelNode {
+    let source = match find_leaf_by_tab(root, tab_id) {
+        Some(leaf) => leaf,
+        None => return root.clone(),
+    };
+    let source_id = source.id.clone();
+    let tab = match source.tabs.iter().find(|t| t.id == tab_id) {
+        Some(t) => t.clone(),
+        None => return root.clone(),
+    };
+    if find_leaf(root, target_panel_id).is_none() {
+        return root.clone();
+    }
+
+    let detached = update_leaf(root, &source_id, |leaf| with_tab_removed(leaf, tab_id));
+    let placed = match edge_to_split(edge) {
+        // Center (no split): merge the tab into the target leaf's stack.
+        None => update_leaf(&detached, target_panel_id, |leaf| {
+            with_tab_added(leaf, tab.clone())
+        }),
+        // Edge: split the target and drop the tab into a fresh leaf.
+        Some(spec) => {
+            let new_leaf = LeafPanel {
+                id: generate_panel_id(),
+                tabs: vec![tab.clone()],
+                active_tab_id: Some(tab.id.clone()),
+            };
+            split_leaf(
+                &detached,
+                target_panel_id,
+                &new_leaf,
+                spec.direction,
+                spec.position,
+            )
+        }
+    };
+    let pruned = remove_leaf_if_empty(&placed, &source_id);
+    simplify_tree(&pruned)
+}
+
 /// One step on the path from root to a leaf: the split and the child index taken.
 struct PathEntry<'a> {
     node: &'a SplitContainer,

@@ -486,6 +486,47 @@ export function mirrorLayoutIntent(
     .catch((err) => logBridgeFallback(kind, err));
 }
 
+/**
+ * Mirror a **panel-geometry-changing move** (a cross-panel tab move or a
+ * cross-group tab move) into the region as a single atomic commit of the
+ * *settled* tree (#2712).
+ *
+ * A move detaches a tab and prunes its now-empty source leaf, so the pre-move
+ * (`preSnapshot`) and settled (`postSnapshot`) trees differ in panel **count** —
+ * and therefore in panel **width**. The generic {@link mirrorLayoutIntent} path
+ * seeds the backend to `preSnapshot` and then applies the granular intent, which
+ * makes the authoritative region emit **two** frames: the pre-prune tree, then
+ * the settled tree. The optimistic overlay is meant to mask the first, but the
+ * masking is version-gated, and on macOS/WKWebView the intermediate pre-prune
+ * frame is exposed for ~300 ms. That transient reflows the terminal's xterm to
+ * the narrow (~40-col) two-panel width and back; the shell's SIGWINCH prompt
+ * redraw at the narrow width overwrites and destroys the scrollback
+ * (`test_cross_panel_move_preserves_scrollback`). ubuntu/Windows coalesce the
+ * two frames so the transient stays latent, but it is the same #2283
+ * optimistic→authoritative round-trip that produced #2705's stale-id facet.
+ *
+ * Installing the settled tree in a **single** `layout.replaceGroups` commit under
+ * the optimistic overlay means the region only ever holds the final tree: the
+ * optimistic and authoritative views are structurally identical, so no
+ * intermediate two-panel snapshot — and thus no interim narrow width — is ever
+ * produced, on any platform. The whole-layout replace is exact: the backend
+ * `replace_groups` stores the tree verbatim (`src-tauri/src/layout/store.rs`),
+ * and `appStore` already computed `postSnapshot` with the shared panel-tree
+ * algebra, so the region converges to the very tree the granular move would have
+ * yielded — without the pre-prune step.
+ *
+ * Never throws (resilience): delegates to {@link reseedLayoutRegion}, which
+ * catches a missing transport or a rejected dispatch and logs it while
+ * `appStore` stays authoritative.
+ */
+export function mirrorLayoutMove(preSnapshot: LayoutSnapshot, postSnapshot: LayoutSnapshot): void {
+  // No-op guard (parity with mirrorLayoutIntent): a move that changed nothing —
+  // dropping a tab onto its own panel, or onto the active group — leaves the tree
+  // structurally identical, so there is nothing to commit.
+  if (layoutSnapshotsEqual(preSnapshot, postSnapshot)) return;
+  reseedLayoutRegion(postSnapshot);
+}
+
 /** Map a {@link DropEdge} to a `layout.moveTab` payload for a split-with-tab drop. */
 export function moveTabPayload(
   tabId: string,

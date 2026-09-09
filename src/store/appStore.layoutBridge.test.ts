@@ -49,6 +49,7 @@ import {
   currentLayoutView,
   ensureLayoutRegionClient,
   reseedLayoutRegion,
+  subscribeLayoutRegion,
 } from "./layoutBridge";
 
 function tab(id: string): TerminalTab {
@@ -225,11 +226,6 @@ describe("E2 — every listed op routes its granular intent", () => {
       kind: "layout.setActiveTab",
     },
     {
-      name: "splitPanelWithTab (move)",
-      run: () => useAppStore.getState().splitPanelWithTab("t1", "a", "b", "center"),
-      kind: "layout.moveTab",
-    },
-    {
       name: "addTabGroup",
       run: () => useAppStore.getState().addTabGroup("Extra"),
       kind: "layout.addGroup",
@@ -280,6 +276,77 @@ describe("E2 — every listed op routes its granular intent", () => {
     expect(findLeaf(layoutState().rootPanel, "a")!.activeTabId).toBe("t2");
     const regionA = findLeaf(regionActiveRoot(transport.regionView())!, "a");
     expect(regionA!.activeTabId).toBe("t2");
+  });
+});
+
+describe("#2712 — a panel-geometry move is a single settled-tree commit (no pre-prune emit)", () => {
+  /** Record every leaf-count the region emits while running `op`. */
+  async function leafCountsDuring(op: () => void): Promise<number[]> {
+    transport.dispatched.length = 0;
+    const counts: number[] = [];
+    const unsub = subscribeLayoutRegion((view) => {
+      const root = regionActiveRoot(view as Parameters<typeof regionActiveRoot>[0]);
+      if (root) counts.push(getAllLeaves(root).length);
+    });
+    op();
+    await flush();
+    unsub();
+    return counts;
+  }
+
+  it("a cross-panel merge commits the pruned 1-panel tree without emitting the 2-panel one", async () => {
+    // seedTree: panel `a` = [t1, t2], panel `b` = [t3]. Moving t3 from `b` onto
+    // `a`'s stack (center) empties `b`, which is pruned → the tree collapses to a
+    // single panel. Pre = 2 panels (~narrow), settled = 1 panel (~full width).
+    const counts = await leafCountsDuring(() =>
+      useAppStore.getState().splitPanelWithTab("t3", "b", "a", "center")
+    );
+
+    // The move is delivered as ONE authoritative commit of the settled tree — not
+    // the seed(pre)+granular pair, which would emit the pre-prune 2-panel frame
+    // first. That intermediate frame is the transient narrow width that destroys
+    // terminal scrollback on macOS/WKWebView (#2712, same round-trip as #2705).
+    expect(transport.kinds()).toEqual(["layout.replaceGroups"]);
+
+    // The region never emits a two-panel (pre-prune) view during the move: every
+    // emitted view already holds the settled single panel.
+    expect(counts.length).toBeGreaterThan(0);
+    expect(counts.every((n) => n === 1)).toBe(true);
+
+    // Optimistic overlay and the authoritative backend view are structurally
+    // identical — the merged single panel holding all three tabs.
+    const overlayRoot = regionActiveRoot(currentLayoutView())!;
+    const backendRoot = regionActiveRoot(transport.regionView())!;
+    expect(getAllLeaves(overlayRoot)).toHaveLength(1);
+    expect(getAllLeaves(backendRoot)).toHaveLength(1);
+    expect(tabIds(overlayRoot).sort()).toEqual(["t1", "t2", "t3"]);
+    expect(tabIds(overlayRoot)).toEqual(tabIds(backendRoot));
+  });
+
+  it("a cross-group move commits both groups in one replaceGroups (source pruned, no 2-panel emit)", async () => {
+    // seedTree's active group is a 2-panel split: `a` = [t1, t2], `b` = [t3].
+    // Moving t3 out of panel `b` empties and prunes `b`, collapsing the origin
+    // group to a single panel. Add a fresh target group, keep the origin active.
+    const originGroup = layoutState().activeTabGroupId;
+    const targetGroup = useAppStore.getState().addTabGroup("Target");
+    useAppStore.getState().setActiveTabGroup(originGroup);
+    await flush();
+
+    const counts = await leafCountsDuring(() =>
+      useAppStore.getState().moveTabToGroup("t3", "b", targetGroup)
+    );
+
+    // Single atomic commit of the whole multi-group layout: no seed(pre)+granular
+    // pair, so the region never re-renders the pre-prune source geometry.
+    expect(transport.kinds()).toEqual(["layout.replaceGroups"]);
+    // The active (origin) group's emitted views never revert to the pre-prune
+    // two-panel state — the emptied source panel is already gone in every emit.
+    expect(counts.length).toBeGreaterThan(0);
+    expect(counts.every((n) => n === 1)).toBe(true);
+    // The tab left the origin group and landed in the target group.
+    expect(tabIds(layoutState().rootPanel)).toEqual(["t1", "t2"]);
+    const target = layoutState().tabGroups.find((g) => g.id === targetGroup)!;
+    expect(tabIds(target.rootPanel)).toContain("t3");
   });
 });
 
