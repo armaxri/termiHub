@@ -90,6 +90,80 @@ class TestLayoutScrollbackUi(TerminalUi, TabsUi, LayoutUi, SystemTest):
                 return found
         return None
 
+    def _empty_leaves(self, node, out=None):
+        """Ids of every empty (tab-less) leaf panel in ``node`` (active group)."""
+        if out is None:
+            out = []
+        if not isinstance(node, dict):
+            return out
+        if node.get("type") == "leaf":
+            if not (node.get("tabs") or []):
+                out.append(node.get("id"))
+            return out
+        for child in node.get("children") or []:
+            self._empty_leaves(child, out)
+        return out
+
+    def _layout_signature(self, node):
+        """A structural fingerprint of a panel tree: node types, **panel ids**,
+        split direction, and tab **ids** — deliberately excluding volatile tab
+        content (title/cwd/session status) so the signature changes iff the tree
+        *structure or ids* change. Used to detect a settled layout without tripping
+        on a live terminal's incidental title/cwd churn."""
+        if not isinstance(node, dict):
+            return ("?",)
+        if node.get("type") == "leaf":
+            return ("leaf", node.get("id"), tuple(t.get("id") for t in node.get("tabs") or []))
+        return (
+            "split",
+            node.get("id"),
+            node.get("direction"),
+            tuple(self._layout_signature(c) for c in node.get("children") or []),
+        )
+
+    def _settled_split_target(self, source_panel: str) -> str:
+        """The **authoritative** id of the empty panel a split stood up next to
+        ``source_panel``, read only once the layout has settled.
+
+        ``splitPanel`` is a region-authoritative op (#2283): it first installs an
+        *optimistic overlay* carrying a locally-minted panel id, then the Rust
+        layout region confirms the split with **its own** freshly-minted id
+        (``core::layout::panel_tree::generate_panel_id``), which replaces the
+        overlay id in ``rootPanel``/``activePanelId`` after the round-trip. So the
+        new panel's id briefly churns (optimistic -> authoritative). Reading
+        ``activePanelId`` the instant ``leaf_count()==2`` is satisfied — which the
+        optimistic overlay alone satisfies — captures the *transient* id; the
+        drop-zone overlay that later mounts carries the *authoritative* id, so a
+        pre-captured ``panel-drop-center-<staleId>`` never resolves. That is the
+        deterministic Windows failure of ``test_drag_to_center`` (#2705): the
+        slower region round-trip there means the read reliably lands in the
+        optimistic window, so ``drag_to`` aborts with ``no element ... panel-drop-
+        center-<staleId>`` (never reaching the scrollback assertion — the resize
+        path is healthy; #2697/#2702 already prevent degenerate fits).
+
+        Wait until the active group's tree is byte-stable across consecutive reads
+        (the id churn is a single optimistic->authoritative transition, so the tree
+        stops changing once the authoritative view lands), then return the sole
+        empty non-source leaf's now-stable id.
+        """
+        stable_reads = 4
+        history: dict[str, object] = {"prev": None, "count": 0}
+
+        def settled():
+            root = self.driver.get_state("rootPanel")
+            signature = self._layout_signature(root)
+            if signature == history["prev"]:
+                history["count"] = int(history["count"]) + 1
+            else:
+                history["prev"] = signature
+                history["count"] = 1
+            if int(history["count"]) < stable_reads:
+                return None
+            empties = [pid for pid in self._empty_leaves(root) if pid and pid != source_panel]
+            return empties[0] if len(empties) == 1 else None
+
+        return self.wait(settled, what="the split's target panel id to settle")
+
     def test_split_preserves_scrollback(self):
         marker = "SCROLLBACK_SPLIT_2561"
         term_id = self._fresh_terminal_with_marker(marker)
@@ -166,7 +240,10 @@ class TestLayoutScrollbackUi(TerminalUi, TabsUi, LayoutUi, SystemTest):
         # Split to stand up a second (empty, focused) panel to drop the tab into.
         self.driver.click(SPLIT_H)
         self.wait(lambda: self.leaf_count() == 2, what="a second panel")
-        target_panel = self.driver.get_state("activePanelId")
+        # Read the target panel id only once the split has settled to its
+        # authoritative form — the new panel's id churns optimistic->authoritative
+        # and the transient id has no drop zone by drag time (#2705).
+        target_panel = self._settled_split_target(source_panel)
         assert target_panel and target_panel != source_panel
 
         # Drag the marked tab onto the empty panel's center → it joins that panel's
