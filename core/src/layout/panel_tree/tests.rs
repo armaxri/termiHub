@@ -1052,3 +1052,130 @@ fn assert_ancestors_marked(node: &PanelNode, leaf_id: &str) {
         }
     }
 }
+
+// ── moveTab (atomic move + prune, #2712) ─────────────────────────────────────
+
+/// Every tab id anywhere in the tree, in leaf order.
+fn all_tab_ids(root: &PanelNode) -> Vec<String> {
+    get_all_leaves(root)
+        .iter()
+        .flat_map(|l| l.tabs.iter().map(|t| t.id.clone()))
+        .collect()
+}
+
+/// Every leaf id anywhere in the tree.
+fn all_leaf_ids(root: &PanelNode) -> Vec<String> {
+    get_all_leaves(root).iter().map(|l| l.id.clone()).collect()
+}
+
+/// A two-panel horizontal split with fixed 50/50 sizes: `a` holds `t1,t2`, `b`
+/// holds `t3`. The `sizes` make the width invariant checkable.
+fn two_panel_tree() -> PanelNode {
+    PanelNode::Split(SplitContainer {
+        id: "root".to_string(),
+        direction: Direction::Horizontal,
+        children: vec![leaf_node("a", &["t1", "t2"]), leaf_node("b", &["t3"])],
+        sizes: Some(vec![50.0, 50.0]),
+        last_active_leaf_id: None,
+    })
+}
+
+#[test]
+fn move_tab_center_merge_prunes_source_in_one_transform() {
+    let tree = two_panel_tree();
+    // Move the sole tab out of `b` onto `a`'s stack: `b` empties and is pruned, so
+    // the tree collapses straight to the single merged leaf `a`.
+    let result = move_tab(&tree, "t3", "a", DropEdge::Center);
+
+    // The settled tree is a single full-width leaf — never the pre-prune two-panel
+    // (narrower) geometry. Because the result is a bare `Leaf` (no split, no
+    // `sizes`), no interim narrower panel width was ever produced.
+    match &result {
+        PanelNode::Leaf(leaf) => {
+            assert_eq!(leaf.id, "a", "the surviving leaf is the merge destination");
+            assert_eq!(
+                leaf.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+                vec!["t1", "t2", "t3"],
+                "the moved tab is appended to the destination stack"
+            );
+            assert_eq!(
+                leaf.active_tab_id.as_deref(),
+                Some("t3"),
+                "the moved tab is focused in its new home"
+            );
+        }
+        PanelNode::Split(_) => {
+            panic!("expected a single merged leaf, got a split (pre-prune state)")
+        }
+    }
+
+    // The emptied source leaf id is gone from the whole tree — no orphan panel.
+    assert!(!all_leaf_ids(&result).contains(&"b".to_string()));
+    assert_eq!(get_all_leaves(&result).len(), 1);
+    assert_eq!(count_tabs_in_tree(&result), 3);
+}
+
+#[test]
+fn move_tab_edge_splits_target_and_prunes_source() {
+    let tree = two_panel_tree();
+    // Drop `t3` on `a`'s right edge: `a` splits, the tab lands in a new leaf on the
+    // right, and the emptied `b` is pruned — the panel count stays at 2, but the
+    // tree never transits a stale 3-panel intermediate (source + target-halves).
+    let result = move_tab(&tree, "t3", "a", DropEdge::Right);
+
+    let leaves = get_all_leaves(&result);
+    assert_eq!(leaves.len(), 2, "target split into two, source pruned");
+    assert!(!all_leaf_ids(&result).contains(&"b".to_string()));
+    // The original destination leaf keeps its tabs; the new leaf holds the move.
+    assert!(leaves
+        .iter()
+        .any(|l| l.id == "a" && all_tab_ids(&PanelNode::Leaf((*l).clone())) == vec!["t1", "t2"]));
+    assert!(leaves
+        .iter()
+        .any(|l| l.tabs.len() == 1 && l.tabs[0].id == "t3"));
+    assert_eq!(count_tabs_in_tree(&result), 3);
+}
+
+#[test]
+fn move_tab_center_keeps_both_panels_when_source_not_emptied() {
+    let tree = two_panel_tree();
+    // Move `t1` (one of two tabs in `a`) onto `b`: `a` still holds `t2`, so it is
+    // not pruned and both panels remain.
+    let result = move_tab(&tree, "t1", "b", DropEdge::Center);
+
+    assert_eq!(get_all_leaves(&result).len(), 2, "source retains a tab");
+    let a = find_leaf(&result, "a").expect("source panel survives");
+    assert_eq!(
+        a.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        vec!["t2"]
+    );
+    let b = find_leaf(&result, "b").expect("target panel survives");
+    assert_eq!(
+        b.tabs.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+        vec!["t3", "t1"]
+    );
+    assert_eq!(b.active_tab_id.as_deref(), Some("t1"));
+}
+
+#[test]
+fn move_tab_preserves_every_tab_id() {
+    let tree = two_panel_tree();
+    let before: HashSet<String> = all_tab_ids(&tree).into_iter().collect();
+    let result = move_tab(&tree, "t3", "a", DropEdge::Center);
+    let after: HashSet<String> = all_tab_ids(&result).into_iter().collect();
+    assert_eq!(before, after, "no tab id is dropped or invented by a move");
+}
+
+#[test]
+fn move_tab_unknown_tab_is_structural_noop() {
+    let tree = two_panel_tree();
+    let result = move_tab(&tree, "does-not-exist", "a", DropEdge::Center);
+    assert_eq!(result, tree, "an unknown tab leaves the tree unchanged");
+}
+
+#[test]
+fn move_tab_unknown_target_is_structural_noop() {
+    let tree = two_panel_tree();
+    let result = move_tab(&tree, "t3", "no-such-panel", DropEdge::Center);
+    assert_eq!(result, tree, "an unknown target leaves the tree unchanged");
+}
