@@ -43,6 +43,8 @@ immediately from the queue. Status: `queued` → `running` → `done` (or `block
 | 34 | deadcode-flags | Feature-flag & dead-code / post-inversion residue | src/store, core, feature flags |
 | 35 | code-duplication | Code duplication; core centralization; app↔agent shared logic | core, src-tauri, agent (dup detection) |
 | 36 | ui-shared-foundation | UI features reuse shared libs / display primitives / logic+hooks | src/components, src/components/ui, src/hooks |
+| 37 | lib-usage-frontend | Buy-vs-build: hand-rolled code replaceable by external npm libs | src (utils, hooks, parsing) + package.json |
+| 38 | lib-usage-backend | Buy-vs-build: hand-rolled code replaceable by mature crates | core, src-tauri, agent + Cargo.toml |
 
 ## Status
 
