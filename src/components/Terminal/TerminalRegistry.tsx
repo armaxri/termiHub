@@ -24,7 +24,7 @@ import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { frontendLog } from "@/utils/frontendLog";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
-import { isFitReady } from "./safeFit";
+import { isFitReady, isProposedFitSafe } from "./safeFit";
 
 const LARGE_PASTE_THRESHOLD = 5000;
 
@@ -190,6 +190,19 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     // ResizeObserver re-fits (same guard) once layout settles.
     if (!isFitReady(el)) {
       frontendLog("terminal_registry", `fitTerminal skipped (container ${w}×${h}) tab=${tabId}`);
+      return;
+    }
+    // Second guard (#2700): a cross-panel / edge reparent transiently lays the
+    // destination panel out full-HEIGHT but ~0-WIDTH, so isFitReady passes
+    // (offsetWidth clears the 10px floor) yet proposeDimensions still clamps to
+    // ~2 cols (it subtracts a ~14px scrollbar reservation first). Applying that
+    // resize reflows the scrollback into 2-column garbage. Skip on the proposed
+    // dimensions — the value that actually reaches the PTY.
+    if (!isProposedFitSafe(fitAddon)) {
+      frontendLog(
+        "terminal_registry",
+        `fitTerminal skipped (degenerate proposed cols) tab=${tabId} el=${w}×${h}`
+      );
       return;
     }
     frontendLog(

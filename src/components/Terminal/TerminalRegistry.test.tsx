@@ -50,9 +50,11 @@ function createMockXterm(selection?: string): XTerm {
   } as unknown as XTerm;
 }
 
-/** Creates a minimal mock FitAddon for testing. */
-function createMockFitAddon(): FitAddon {
-  return { fit: vi.fn() } as unknown as FitAddon;
+/** Creates a minimal mock FitAddon for testing. `proposeDimensions` defaults to
+ * a healthy, non-degenerate size so the #2700 proposed-dims guard permits the
+ * fit; pass a smaller size to simulate a collapsed (mid-reparent) container. */
+function createMockFitAddon(proposed: { cols: number; rows: number } = { cols: 80, rows: 24 }) {
+  return { fit: vi.fn(), proposeDimensions: vi.fn(() => proposed) } as unknown as FitAddon;
 }
 
 let container: HTMLDivElement;
@@ -624,5 +626,28 @@ describe("fitTerminal — degenerate-container guard (#2693)", () => {
     });
 
     expect(fitAddon.fit).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT fit a full-HEIGHT, ~0-WIDTH container that still proposes ~2 cols (#2700)", () => {
+    // The residual second path after #2697: a cross-panel move / drag-to-edge
+    // reparent transiently lays the destination panel out at full height but
+    // near-zero width. offsetWidth clears the 10px isFitReady floor, so the
+    // element-size guard passes — but FitAddon subtracts a ~14px scrollbar
+    // reservation and clamps proposeDimensions() to cols=2 (full rows). Applying
+    // that resize to the PTY reflows the scrollback into 2-column garbage. The
+    // nightly app.log showed exactly this `cols=2 rows=<full>` resize on the
+    // moved session. fitTerminal must skip it (guard on the proposed dims).
+    const el = sizedEl(24, 480);
+    const xterm = createMockXterm();
+    const fitAddon = createMockFitAddon({ cols: 2, rows: 27 });
+    act(() => {
+      registryActions.register("tab-collapsed-width", el, xterm, fitAddon);
+    });
+
+    act(() => {
+      registryActions.fitTerminal("tab-collapsed-width");
+    });
+
+    expect(fitAddon.fit).not.toHaveBeenCalled();
   });
 });
