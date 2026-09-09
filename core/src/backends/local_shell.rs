@@ -564,6 +564,23 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             }
         });
 
+        // Spawn child-exit watcher: block until the shell process exits on its
+        // own (e.g. the user typed `exit`), then close the PTY so the reader
+        // drains and hits EOF, running the normal end-of-session cleanup above.
+        //
+        // On Unix the reader thread already sees EOF when the child exits, so
+        // this is a redundant-but-harmless backstop; on Windows ConPTY the
+        // output pipe does NOT EOF on child exit, so this watcher is what makes
+        // a self-exited shell get reported as ended at all (issue #2704). The
+        // watcher also returns when the shell is terminated via `kill()` (on
+        // `disconnect()`), so it never outlives the session.
+        let wait_for_exit = spawned.wait_for_exit;
+        let close_pty = spawned.close_pty;
+        std::thread::spawn(move || {
+            wait_for_exit();
+            close_pty();
+        });
+
         self.state = Some(ConnectedState {
             writer: Arc::new(Mutex::new(spawned.writer)),
             resize: spawned.resize,
