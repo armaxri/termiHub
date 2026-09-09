@@ -101,7 +101,23 @@ class ConnectionsUi(HarnessMixin):
         return self.driver.exists(f"field-{key}")
 
     def create_folder(self, name: str) -> dict[str, Any]:
-        """Create a connection folder via the sidebar toolbar, returning it."""
+        """Create a connection folder via the sidebar toolbar, returning it with a
+        *settled* (persisted) id.
+
+        The sidebar adds the folder with an optimistic ``folder-<timestamp>`` id
+        (``ConnectionList.tsx``), but the backend persists the tree and reloads it
+        with a **path-based** id (``compute_folder_id`` == the folder name for a
+        top-level folder), so the region cache — and the ``folder-toggle-<id>``
+        the tree renders — swap to that persisted id a moment later. Returning the
+        transient optimistic id lets a caller key a folder-context gesture on an id
+        the DOM has already re-rendered away from: :meth:`folder_context_action`
+        then polls forever for ``folder-toggle-folder-<timestamp>`` and times out,
+        the deterministic macOS+Windows nightly failure in #2703. So wait for the
+        id to settle out of the ``folder-`` optimistic form before handing it back,
+        mirroring :meth:`require_stable_connection` for the ``conn-`` placeholder.
+        (Harness folder names never begin ``folder-``, so the prefix check cannot
+        mistake a persisted id for the optimistic one.)
+        """
         self.driver.click(self.NEW_FOLDER)
         self.wait(
             lambda: self.driver.exists(self.FOLDER_NAME_INPUT),
@@ -109,7 +125,14 @@ class ConnectionsUi(HarnessMixin):
         )
         self.driver.type(self.FOLDER_NAME_INPUT, name)
         self.driver.click(self.FOLDER_CONFIRM)
-        return self.wait(lambda: self.find_folder(name), what=f"folder {name!r}")
+
+        def settled() -> Optional[dict[str, Any]]:
+            folder = self.find_folder(name)
+            if folder is None or str(folder["id"]).startswith("folder-"):
+                return None
+            return folder
+
+        return self.wait(settled, what=f"folder {name!r} id to settle")
 
     def open_new_connection_editor(self) -> None:
         """Open a fresh connection editor and wait for its name field.
