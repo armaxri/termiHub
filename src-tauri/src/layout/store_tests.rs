@@ -60,6 +60,15 @@ fn active_of(store: &LayoutStore, client: &str) -> Option<String> {
     }
 }
 
+/// Whether any **split container** in the tree carries `id` (a leaf with the same
+/// id does not count) — for asserting an adopted container id (#2708).
+fn contains_split_id(node: &PanelNode, id: &str) -> bool {
+    match node {
+        PanelNode::Leaf(_) => false,
+        PanelNode::Split(s) => s.id == id || s.children.iter().any(|c| contains_split_id(c, id)),
+    }
+}
+
 const ALL_EDGES: [DropEdge; 5] = [
     DropEdge::Left,
     DropEdge::Right,
@@ -144,7 +153,14 @@ fn split_inserts_a_new_empty_focused_leaf_and_preserves_tab_count() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     store
-        .split("C", None, "b", Direction::Vertical, Position::After)
+        .split(
+            "C",
+            None,
+            "b",
+            Direction::Vertical,
+            Position::After,
+            SplitIds::default(),
+        )
         .unwrap();
 
     let root = root_of(&store, "C");
@@ -161,10 +177,96 @@ fn split_of_unknown_panel_is_rejected() {
     let store = LayoutStore::new();
     store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
     let err = store
-        .split("C", None, "nope", Direction::Horizontal, Position::After)
+        .split(
+            "C",
+            None,
+            "nope",
+            Direction::Horizontal,
+            Position::After,
+            SplitIds::default(),
+        )
         .unwrap_err();
     assert_eq!(err, LayoutError::PanelNotFound("nope".to_string()));
     assert_eq!(err.code(), "panel_not_found");
+}
+
+#[test]
+fn split_adopts_client_supplied_leaf_and_container_ids() {
+    // #2708: a split threads the ids the optimistic overlay already minted, so the
+    // authoritative tree carries the very same new-leaf and container ids — no
+    // optimistic→authoritative id churn. `b` is a lone leaf, so the split wraps it
+    // in a fresh container whose id is adopted from `newSplitId`.
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    store
+        .split(
+            "C",
+            None,
+            "b",
+            Direction::Vertical,
+            Position::After,
+            SplitIds {
+                new_panel_id: Some("panel-client-leaf"),
+                new_split_id: Some("panel-client-split"),
+            },
+        )
+        .unwrap();
+
+    let root = root_of(&store, "C");
+    // The focused new leaf carries the supplied id verbatim.
+    assert_eq!(active_of(&store, "C").as_deref(), Some("panel-client-leaf"));
+    let new_leaf = find_leaf(&root, "panel-client-leaf").expect("adopted leaf present");
+    assert!(new_leaf.tabs.is_empty(), "new leaf is empty");
+    // The wrapping container carries the supplied split id.
+    assert!(
+        contains_split_id(&root, "panel-client-split"),
+        "adopted container id present in {root:?}"
+    );
+}
+
+#[test]
+fn split_mints_ids_when_absent() {
+    // Back-compat: with no ids supplied, the store mints `panel-…` ids as before.
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    store
+        .split(
+            "C",
+            None,
+            "b",
+            Direction::Vertical,
+            Position::After,
+            SplitIds::default(),
+        )
+        .unwrap();
+    let active = active_of(&store, "C").unwrap();
+    assert!(active.starts_with("panel-"), "minted leaf id: {active}");
+}
+
+#[test]
+fn split_ignores_a_colliding_supplied_id_and_mints_instead() {
+    // A supplied leaf id that already exists in the tree must not be adopted (it
+    // would duplicate an id); the store falls back to a fresh id.
+    let store = LayoutStore::new();
+    store.seed_for_test("C", two_panel_tree(), Some("a".to_string()));
+    store
+        .split(
+            "C",
+            None,
+            "b",
+            Direction::Vertical,
+            Position::After,
+            SplitIds {
+                new_panel_id: Some("a"), // already used by the other leaf
+                new_split_id: None,
+            },
+        )
+        .unwrap();
+    let active = active_of(&store, "C").unwrap();
+    assert_ne!(active, "a", "colliding id was not adopted");
+    assert!(active.starts_with("panel-"), "minted a fresh id: {active}");
+    // Both original leaves plus the new one — the collision did not clobber `a`.
+    assert_eq!(get_all_leaves(&root_of(&store, "C")).len(), 3);
 }
 
 // ── merge ────────────────────────────────────────────────────────────────────
@@ -665,7 +767,14 @@ fn an_omitted_group_id_targets_the_active_group() {
     store.seed_groups_for_test("C", two_group_client());
     // None → active group g1 gains a leaf; g2 is untouched.
     store
-        .split("C", None, "b", Direction::Vertical, Position::After)
+        .split(
+            "C",
+            None,
+            "b",
+            Direction::Vertical,
+            Position::After,
+            SplitIds::default(),
+        )
         .unwrap();
     assert_eq!(get_all_leaves(&group_root(&store, "C", "g1")).len(), 3);
     assert_eq!(get_all_leaves(&group_root(&store, "C", "g2")).len(), 1);
@@ -678,7 +787,14 @@ fn a_group_id_scopes_a_transform_to_that_group_only() {
     let g1_before = group_root(&store, "C", "g1");
     // Split inside the *inactive* group g2; g1 must be byte-identical afterwards.
     store
-        .split("C", Some("g2"), "z", Direction::Horizontal, Position::After)
+        .split(
+            "C",
+            Some("g2"),
+            "z",
+            Direction::Horizontal,
+            Position::After,
+            SplitIds::default(),
+        )
         .unwrap();
     assert_eq!(
         get_all_leaves(&group_root(&store, "C", "g2")).len(),
@@ -703,6 +819,7 @@ fn a_transform_on_an_unknown_group_is_rejected() {
             "a",
             Direction::Horizontal,
             Position::After,
+            SplitIds::default(),
         )
         .unwrap_err();
     assert_eq!(err, LayoutError::GroupNotFound("ghost".to_string()));
@@ -1153,7 +1270,9 @@ proptest! {
                 0 => {
                     let direction = if e % 2 == 0 { Direction::Horizontal } else { Direction::Vertical };
                     let position = if (e / 2) % 2 == 0 { Position::Before } else { Position::After };
-                    store.split(client, None, &src_id, direction, position).unwrap();
+                    store
+                        .split(client, None, &src_id, direction, position, SplitIds::default())
+                        .unwrap();
                     prop_assert_eq!(count_tabs_in_tree(&root_of(&store, client)), before);
                 }
                 1 => {

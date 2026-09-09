@@ -82,6 +82,15 @@ function tabIds(root: PanelNode): string[] {
   return getAllLeaves(root).flatMap((l) => l.tabs.map((t) => t.id));
 }
 
+/** Every node id (leaf **and** split container) in a tree — for churn checks. */
+function allNodeIds(root: PanelNode): string[] {
+  const out: string[] = [root.id];
+  if (root.type === "split") {
+    for (const c of root.children) out.push(...allNodeIds(c));
+  }
+  return out;
+}
+
 /**
  * The active group's tree in a projected region view. Accepts both the client's
  * effective {@link currentLayoutView} (minimal tabs) and the fake backend's
@@ -179,6 +188,39 @@ describe("E2 — region is the sole writer of appStore's layout", () => {
     const backendRoot = regionActiveRoot(transport.regionView())!;
     expect(tabIds(backendRoot)).toEqual(tabIds(layoutState().rootPanel));
     expect(tabIds(regionActiveRoot(currentLayoutView())!)).toEqual(tabIds(layoutState().rootPanel));
+  });
+
+  it("threads the split's ids so optimistic id == authoritative id (no churn, #2708)", async () => {
+    useAppStore.getState().splitPanel("vertical");
+    // The optimistic overlay applies synchronously; capture its ids before the
+    // region round-trip resolves.
+    const optimisticActive = layoutState().activePanelId;
+    const optimisticIds = allNodeIds(layoutState().rootPanel);
+    expect(optimisticActive).toBeTruthy();
+
+    await flush();
+
+    // After the authoritative `layout.split` confirms, the focused-leaf id and the
+    // whole tree's node ids are unchanged — the region adopted the client-minted
+    // ids rather than replacing them (the pre-#2708 churn).
+    expect(layoutState().activePanelId).toBe(optimisticActive);
+    expect([...allNodeIds(layoutState().rootPanel)].sort()).toEqual([...optimisticIds].sort());
+    // The backend's authoritative tree carries the very same ids.
+    const backendRoot = regionActiveRoot(transport.regionView())!;
+    expect([...allNodeIds(backendRoot)].sort()).toEqual([...optimisticIds].sort());
+  });
+
+  it("passes the client-minted newPanelId/newSplitId in the layout.split payload (#2708)", async () => {
+    transport.dispatched.length = 0;
+    useAppStore.getState().splitPanel("vertical");
+    const optimisticActive = layoutState().activePanelId;
+    await flush();
+    const splitIntent = transport.dispatched.find((d) => d.kind === "layout.split");
+    expect(splitIntent).toBeDefined();
+    const payload = splitIntent!.payload as Record<string, unknown>;
+    expect(payload.newPanelId).toBe(optimisticActive);
+    expect(typeof payload.newSplitId).toBe("string");
+    expect(payload.newSplitId).not.toBe(payload.newPanelId);
   });
 
   it("a rejected dispatch leaves appStore on the backend's (unchanged) view", async () => {
