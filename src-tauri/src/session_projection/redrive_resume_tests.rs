@@ -408,9 +408,14 @@ fn agent_reconnect_resumes_after_transport_restore() {
         || store.get("tab-1").map(|s| s.reconnect.phase) == Some(ReconnectPhase::Waiting),
         "redrive folds failure and re-arms Waiting",
     );
-    assert!(
-        scheduler.armed("tab-1"),
-        "timer re-armed after failed attempt"
+    // The re-arm is driven by the timer-driver reconcile that runs *after* the
+    // store fold, so on a loaded runner the `Waiting` phase is observable a beat
+    // before the re-arm lands. Wait for the observable re-arm instead of asserting
+    // it is instantaneous (a bare `assert!` here raced — #2719); a timeout here
+    // still fails the test, so this keeps proving the timer IS re-armed.
+    poll_until(
+        || scheduler.armed("tab-1"),
+        "timer re-armed after failed attempt",
     );
     assert_eq!(
         store.get("tab-1").map(|s| s.status),
