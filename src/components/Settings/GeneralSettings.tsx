@@ -40,9 +40,17 @@ function getShellLabel(shell: ShellType, defaultShell: ShellType): string {
   return shell === defaultShell ? `${label} (platform default)` : label;
 }
 
+/**
+ * A settings change: either the full replacement document or a functional updater
+ * `(prev) => next`. The updater form lets a handler read the latest state at apply
+ * time rather than spreading a captured render snapshot, so two edits fired
+ * back-to-back before a re-render don't clobber each other (#2680).
+ */
+export type SettingsUpdate = AppSettings | ((prev: AppSettings) => AppSettings);
+
 interface GeneralSettingsProps {
   settings: AppSettings;
-  onChange: (settings: AppSettings) => void;
+  onChange: (update: SettingsUpdate) => void;
   visibleFields?: Set<string>;
 }
 
@@ -98,7 +106,9 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             <input
               type="text"
               value={settings.defaultUser ?? ""}
-              onChange={(e) => onChange({ ...settings, defaultUser: e.target.value || undefined })}
+              onChange={(e) =>
+                onChange((prev) => ({ ...prev, defaultUser: e.target.value || undefined }))
+              }
               placeholder="e.g. admin"
               data-testid="settings-default-user"
             />
@@ -112,7 +122,9 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           >
             <KeyPathInput
               value={settings.defaultSshKeyPath ?? ""}
-              onChange={(value) => onChange({ ...settings, defaultSshKeyPath: value || undefined })}
+              onChange={(value) =>
+                onChange((prev) => ({ ...prev, defaultSshKeyPath: value || undefined }))
+              }
               placeholder="~/.ssh/id_ed25519"
               testIdPrefix="general-settings"
             />
@@ -134,10 +146,10 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
                   setGitBashSetupOpen(true);
                   return;
                 }
-                onChange({
-                  ...settings,
+                onChange((prev) => ({
+                  ...prev,
                   defaultShell: value === PLATFORM_DEFAULT_SHELL ? undefined : value,
-                });
+                }));
               }}
             >
               <SelectItem value={PLATFORM_DEFAULT_SHELL}>
@@ -168,7 +180,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             <Toggle
               checked={settings.confirmCloseTabOnShortcut ?? true}
               onCheckedChange={(checked) =>
-                onChange({ ...settings, confirmCloseTabOnShortcut: checked })
+                onChange((prev) => ({ ...prev, confirmCloseTabOnShortcut: checked }))
               }
               data-testid="settings-confirm-close-tab-on-shortcut"
             />
@@ -183,7 +195,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             <Toggle
               checked={settings.confirmCloseLiveSession ?? true}
               onCheckedChange={(checked) =>
-                onChange({ ...settings, confirmCloseLiveSession: checked })
+                onChange((prev) => ({ ...prev, confirmCloseLiveSession: checked }))
               }
               data-testid="settings-confirm-close-live-session"
             />
@@ -198,7 +210,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             <Toggle
               checked={settings.confirmCloseAttachedTab ?? true}
               onCheckedChange={(checked) =>
-                onChange({ ...settings, confirmCloseAttachedTab: checked })
+                onChange((prev) => ({ ...prev, confirmCloseAttachedTab: checked }))
               }
               data-testid="settings-confirm-close-attached-tab"
             />
@@ -212,7 +224,9 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           >
             <Toggle
               checked={settings.warnLargePortScan ?? true}
-              onCheckedChange={(checked) => onChange({ ...settings, warnLargePortScan: checked })}
+              onCheckedChange={(checked) =>
+                onChange((prev) => ({ ...prev, warnLargePortScan: checked }))
+              }
               data-testid="settings-warn-large-port-scan"
             />
           </SettingsField>
@@ -225,7 +239,9 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           >
             <Toggle
               checked={settings.warnLargePingSweep ?? true}
-              onCheckedChange={(checked) => onChange({ ...settings, warnLargePingSweep: checked })}
+              onCheckedChange={(checked) =>
+                onChange((prev) => ({ ...prev, warnLargePingSweep: checked }))
+              }
               data-testid="settings-warn-large-ping-sweep"
             />
           </SettingsField>
@@ -240,7 +256,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             <Toggle
               checked={settings.experimentalFeaturesEnabled ?? false}
               onCheckedChange={(checked) =>
-                onChange({ ...settings, experimentalFeaturesEnabled: checked })
+                onChange((prev) => ({ ...prev, experimentalFeaturesEnabled: checked }))
               }
               data-testid="settings-experimental-features"
             />
@@ -255,10 +271,10 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             <Select
               value={restoreMode}
               onChange={(value) =>
-                onChange({
-                  ...settings,
+                onChange((prev) => ({
+                  ...prev,
                   restoreLastSessionMode: value as "never" | "ask" | "always",
-                })
+                }))
               }
               options={[
                 { value: "never", label: "Never" },
@@ -286,7 +302,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               <Toggle
                 checked={settings.sessionHistoryEnabled ?? true}
                 onCheckedChange={(checked) =>
-                  onChange({ ...settings, sessionHistoryEnabled: checked })
+                  onChange((prev) => ({ ...prev, sessionHistoryEnabled: checked }))
                 }
                 data-testid="settings-session-history-enabled"
               />
@@ -301,10 +317,10 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               <NumberInput
                 value={settings.sessionHistoryLimit ?? 50}
                 onValueChange={(value) =>
-                  onChange({
-                    ...settings,
+                  onChange((prev) => ({
+                    ...prev,
                     sessionHistoryLimit: value === "" ? undefined : value,
-                  })
+                  }))
                 }
                 min={10}
                 max={500}
@@ -321,7 +337,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               <Toggle
                 checked={settings.showRecentSessions ?? true}
                 onCheckedChange={(checked) =>
-                  onChange({ ...settings, showRecentSessions: checked })
+                  onChange((prev) => ({ ...prev, showRecentSessions: checked }))
                 }
                 data-testid="settings-show-recent-sessions"
               />
@@ -362,7 +378,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               <Toggle
                 checked={settings.defaultShellIntegration ?? true}
                 onCheckedChange={(checked) =>
-                  onChange({ ...settings, defaultShellIntegration: checked })
+                  onChange((prev) => ({ ...prev, defaultShellIntegration: checked }))
                 }
                 data-testid="settings-default-shell-integration"
               />
@@ -377,7 +393,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               <Toggle
                 checked={settings.defaultX11Forwarding ?? true}
                 onCheckedChange={(checked) =>
-                  onChange({ ...settings, defaultX11Forwarding: checked })
+                  onChange((prev) => ({ ...prev, defaultX11Forwarding: checked }))
                 }
                 data-testid="settings-default-x11-forwarding"
               />
@@ -398,7 +414,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               <Toggle
                 checked={settings.provideXServerAutomatically ?? isWindows()}
                 onCheckedChange={(checked) =>
-                  onChange({ ...settings, provideXServerAutomatically: checked })
+                  onChange((prev) => ({ ...prev, provideXServerAutomatically: checked }))
                 }
                 data-testid="settings-provide-x-server"
               />
@@ -413,7 +429,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               <Toggle
                 checked={settings.stopXServerWhenIdle ?? true}
                 onCheckedChange={(checked) =>
-                  onChange({ ...settings, stopXServerWhenIdle: checked })
+                  onChange((prev) => ({ ...prev, stopXServerWhenIdle: checked }))
                 }
                 data-testid="settings-stop-x-server-idle"
               />

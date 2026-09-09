@@ -23,7 +23,7 @@ import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
 import { filterSettings, getMatchingCategories } from "./settingsRegistry";
 import { SettingsNav } from "./SettingsNav";
 import { SettingsSearch } from "./SettingsSearch";
-import { GeneralSettings } from "./GeneralSettings";
+import { GeneralSettings, type SettingsUpdate } from "./GeneralSettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { TerminalSettings } from "./TerminalSettings";
 import { ExternalFilesSettings } from "./ExternalFilesSettings";
@@ -97,6 +97,12 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   // dirty).
   const savedSettingsRef = useRef<AppSettings>(settings);
   const dirtyRef = useRef(false);
+  // Always-fresh view of the projected settings, updated every render. A change
+  // handler resolves a functional updater against this (or the pending edit)
+  // rather than a captured render snapshot, so two edits fired back-to-back before
+  // a re-render both apply instead of the second clobbering the first (#2680).
+  const settingsRef = useRef<AppSettings>(settings);
+  settingsRef.current = settings;
 
   // Keep the persisted baseline current with external region updates (e.g. a
   // startup load or a skipUpdate refresh) — but only while the tab is clean, so an
@@ -171,12 +177,19 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
     useAppStore.setState({ pendingSettingsCategory: null, pendingSettingsPluginId: null });
   }, [pendingSettingsCategory, pendingSettingsPluginId]);
 
-  // Debounced save for General/Appearance/Terminal settings
+  // Debounced save for General/Appearance/Terminal settings. Accepts either a full
+  // replacement document or a functional updater `(prev) => next` (#2680): the
+  // updater is resolved against the latest state — the pending (not-yet-persisted)
+  // edit if there is one, else the freshest projected view — so rapid successive
+  // edits compose instead of each rebuilding from a stale snapshot.
   const handleSettingsChange = useCallback(
-    (newSettings: AppSettings) => {
+    (update: SettingsUpdate) => {
+      const base = pendingSettingsRef.current ?? settingsRef.current;
+      const newSettings = typeof update === "function" ? update(base) : update;
+
       // Apply theme immediately so the user sees the change without waiting
       // for the debounced save (which would compare against already-updated state).
-      if (newSettings.theme !== settings.theme) {
+      if (newSettings.theme !== base.theme) {
         applyTheme(newSettings.theme);
       }
 
@@ -218,7 +231,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         setEditorDirty(tabId, false);
       }
     },
-    [updateSettings, settings.theme, tabId, setEditorDirty, acknowledgeSaved]
+    [updateSettings, tabId, setEditorDirty, acknowledgeSaved]
   );
 
   // Settings auto-save, so a close request never needs a confirmation dialog.
