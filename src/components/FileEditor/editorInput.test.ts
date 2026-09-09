@@ -1,7 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
+  CURSOR_TRIGGER_SOURCE,
   EDITOR_INPUT_TESTID,
   findMonacoInput,
+  moveEditorCursor,
   tagMonacoInput,
   testInputEditorOptions,
 } from "./editorInput";
@@ -83,5 +85,43 @@ describe("test-bridge editor input mode (#2694)", () => {
   it("leaves EditContext untouched in production (bridge off)", () => {
     // Real users keep Monaco's default input path; the override is test-only.
     expect(testInputEditorOptions(false)).toEqual({});
+  });
+});
+
+describe("moveEditorCursor — command API caret navigation (#2694)", () => {
+  it("invokes Monaco's core cursor command per direction, not a synthetic key", () => {
+    // The deterministic #2694 failure was that an arrow keydown never moved the
+    // caret on an occluded CI webview (Monaco's `textInputFocus` gate stays
+    // false without genuine input focus). Driving the *command* directly has no
+    // focus precondition, so it must map each direction to Monaco's core cursor
+    // command id and trigger it — engine- and focus-independent.
+    for (const [direction, handlerId] of [
+      ["up", "cursorUp"],
+      ["down", "cursorDown"],
+      ["left", "cursorLeft"],
+      ["right", "cursorRight"],
+    ] as const) {
+      const trigger = vi.fn();
+      moveEditorCursor({ trigger }, direction);
+      expect(trigger).toHaveBeenCalledTimes(1);
+      expect(trigger).toHaveBeenCalledWith(CURSOR_TRIGGER_SOURCE, handlerId, null);
+    }
+  });
+
+  it("repeats the command `times` times (each step fires its own cursor move)", () => {
+    // Each single-step command fires its own onDidChangeCursorPosition, so the
+    // status bar reflects the final Ln/Col after N steps — the loop must trigger
+    // exactly N times.
+    const trigger = vi.fn();
+    moveEditorCursor({ trigger }, "down", 3);
+    expect(trigger).toHaveBeenCalledTimes(3);
+    expect(trigger).toHaveBeenNthCalledWith(1, CURSOR_TRIGGER_SOURCE, "cursorDown", null);
+    expect(trigger).toHaveBeenNthCalledWith(3, CURSOR_TRIGGER_SOURCE, "cursorDown", null);
+  });
+
+  it("defaults to a single step", () => {
+    const trigger = vi.fn();
+    moveEditorCursor({ trigger }, "up");
+    expect(trigger).toHaveBeenCalledTimes(1);
   });
 });

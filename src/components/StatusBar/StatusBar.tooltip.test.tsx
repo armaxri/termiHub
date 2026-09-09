@@ -56,6 +56,7 @@ const noopEditorActions: EditorActions = {
   setIndent: () => {},
   toggleEol: () => {},
   setLanguage: () => {},
+  moveCursor: () => {},
 };
 
 describe("StatusBar — dropdown-trigger tooltip adoption (#1163)", () => {

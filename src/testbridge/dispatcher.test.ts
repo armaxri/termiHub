@@ -717,6 +717,42 @@ describe("dispatchCommand", () => {
       expect(res).toEqual({ ok: true, action: "pressKey" });
       expect(keys).toEqual(["Escape"]);
     });
+  });
+
+  describe("editorCursor", () => {
+    it("moves the caret through the store's editorActions, not a synthetic key", async () => {
+      // The #2694 fix: cursor navigation goes through Monaco's command API via
+      // `editorActions.moveCursor` (no focus/keybinding gate), so the verb must
+      // forward the direction and repeat count to that action.
+      const moveCursor = vi.fn();
+      const { deps } = setup(`<div></div>`, {
+        getState: () => ({ editorActions: { moveCursor } }),
+      });
+
+      const res = await dispatchCommand(
+        { action: "editorCursor", direction: "down", times: 2 },
+        deps
+      );
+      expect(res).toEqual({ ok: true, action: "editorCursor" });
+      expect(moveCursor).toHaveBeenCalledWith("down", 2);
+    });
+
+    it("defaults times to 1", async () => {
+      const moveCursor = vi.fn();
+      const { deps } = setup(`<div></div>`, {
+        getState: () => ({ editorActions: { moveCursor } }),
+      });
+
+      await dispatchCommand({ action: "editorCursor", direction: "up" }, deps);
+      expect(moveCursor).toHaveBeenCalledWith("up", 1);
+    });
+
+    it("fails when no editor is active (editorActions absent)", async () => {
+      const { deps } = setup(`<div></div>`, { getState: () => ({ editorActions: null }) });
+      const res = await dispatchCommand({ action: "editorCursor", direction: "down" }, deps);
+      expect(res.ok).toBe(false);
+      expect(res.error).toMatch(/no active editor/i);
+    });
 
     it("fails when an explicit testId target is absent", async () => {
       const { deps } = setup(`<div></div>`);

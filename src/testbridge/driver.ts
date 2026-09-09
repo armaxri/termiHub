@@ -48,6 +48,15 @@ export interface KeyModifiers {
   alt?: boolean;
 }
 
+/** A caret-movement direction for {@link Driver.editorCursor}. */
+export type EditorCursorDirection = "up" | "down" | "left" | "right";
+
+/** Options for {@link Driver.editorCursor}. */
+export interface EditorCursorOptions {
+  /** Number of single-step moves to apply; defaults to 1. */
+  times?: number;
+}
+
 /** Options for {@link Driver.getComputedStyle}. */
 export interface GetComputedStyleOptions {
   /** Read this element instead of the document root (theme CSS variables). */
@@ -102,6 +111,17 @@ export interface Driver {
    * editors (Monaco) respond as they do to real input.
    */
   pressKey(key: string, testId?: string, modifiers?: KeyModifiers): Promise<void>;
+  /**
+   * Move the file editor's caret one step in `direction`, `options.times` times
+   * (default 1), through Monaco's cursor command API rather than a synthetic
+   * arrow keydown. A keydown only moves the caret when Monaco's `textInputFocus`
+   * gate is set, which needs the hidden input genuinely focused — impossible to
+   * guarantee on an occluded/headless CI webview, so the keydown no-opped
+   * deterministically (#2694). The command API has no focus precondition and
+   * still fires `onDidChangeCursorPosition` → `editorStatus`. Fails when no
+   * editor is active.
+   */
+  editorCursor(direction: EditorCursorDirection, options?: EditorCursorOptions): Promise<void>;
   /** Drag one element onto another (pointer-based, e.g. @dnd-kit reordering). */
   dragTo(fromTestId: string, toTestId: string): Promise<void>;
   /**
@@ -238,6 +258,13 @@ export class InAppBridgeDriver implements Driver {
       shift: modifiers.shift,
       alt: modifiers.alt,
     });
+  }
+
+  async editorCursor(
+    direction: EditorCursorDirection,
+    options: EditorCursorOptions = {}
+  ): Promise<void> {
+    await this.send({ action: "editorCursor", direction, times: options.times });
   }
 
   async dragTo(fromTestId: string, toTestId: string): Promise<void> {

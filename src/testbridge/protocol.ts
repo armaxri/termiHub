@@ -225,6 +225,28 @@ export interface PressKeyCommand {
 }
 
 /**
+ * Move the active file editor's caret through Monaco's cursor **command API**.
+ *
+ * Monaco renders to a canvas, so `pressKey` can only reach it via a synthetic
+ * arrow keydown on its hidden input — which moves the caret only when Monaco's
+ * `textInputFocus` context key is set, requiring genuine input focus. An
+ * occluded CI webview cannot guarantee that focus, so the keydown fires but the
+ * caret never moves (the deterministic #2694 failure that survived three
+ * key/focus/input-mode fixes). This verb instead invokes Monaco's core cursor
+ * command directly through the store's `editorActions.moveCursor`, with no
+ * keybinding resolution and no focus precondition, so it works identically on
+ * every engine while still firing `onDidChangeCursorPosition` (→ `editorStatus`
+ * Ln/Col → status bar) exactly as an arrow key would. Fails when no editor is
+ * active. `direction` is `"up" | "down" | "left" | "right"`; `times` defaults 1.
+ */
+export interface EditorCursorCommand {
+  action: "editorCursor";
+  direction: "up" | "down" | "left" | "right";
+  /** Number of single-step moves to apply; defaults to 1. */
+  times?: number;
+}
+
+/**
  * Read the reconstructed text of a terminal's scrollback + viewport.
  *
  * When `tabId` is omitted the active tab's terminal is used. `joinFullWidthRows`
@@ -434,6 +456,7 @@ export type BridgeCommand =
   | SelectCommand
   | ContextMenuCommand
   | PressKeyCommand
+  | EditorCursorCommand
   | TerminalInputCommand
   | ExistsCommand
   | GetTextCommand

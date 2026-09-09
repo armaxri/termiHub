@@ -631,6 +631,25 @@ export async function dispatchCommand(
       return ok("pressKey");
     }
 
+    case "editorCursor": {
+      // Move the active editor's caret through Monaco's command API rather than a
+      // synthetic arrow keydown: an occluded CI webview cannot flip Monaco's
+      // `textInputFocus` gate, so a keydown fires but the caret never moves (the
+      // deterministic #2694 failure). `editorActions.moveCursor` invokes the core
+      // cursor command directly (no focus precondition) and still fires
+      // `onDidChangeCursorPosition` → `editorStatus`. Absent unless a FileEditor
+      // is mounted and visible, so a missing action means "no active editor".
+      const actions = deps.getState().editorActions as
+        | { moveCursor?: (direction: string, times?: number) => void }
+        | null
+        | undefined;
+      if (!actions || typeof actions.moveCursor !== "function") {
+        return fail("editorCursor", "no active editor to move the cursor in");
+      }
+      actions.moveCursor(command.direction, command.times ?? 1);
+      return ok("editorCursor");
+    }
+
     case "select": {
       const el = findByTestId(deps.root, command.testId);
       if (!el) return fail("select", `no element with data-testid="${command.testId}"`);

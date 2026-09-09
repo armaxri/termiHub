@@ -132,6 +132,18 @@ describe("InAppBridgeDriver", () => {
     ]);
   });
 
+  it("maps editorCursor to an editorCursor command with direction + times", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).editorCursor("down", { times: 2 });
+    expect(sent).toEqual([{ action: "editorCursor", direction: "down", times: 2 }]);
+  });
+
+  it("maps editorCursor with times defaulting to undefined", async () => {
+    const { transport, sent } = scriptedTransport({});
+    await new InAppBridgeDriver(transport).editorCursor("up");
+    expect(sent).toEqual([{ action: "editorCursor", direction: "up", times: undefined }]);
+  });
+
   it("unwraps the value of a query command", async () => {
     const { transport } = scriptedTransport({
       getText: { ok: true, action: "getText", value: "Connected" },

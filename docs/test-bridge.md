@@ -142,6 +142,7 @@ unmount.
 | `contextMenu`         | Open an element's right-click menu (`contextmenu` event)       |
 | `resizeWindow`        | Resize the app window (Tauri `setSize` → xterm fit → PTY size) |
 | `pressKey`            | Dispatch a key + optional modifiers (`Ctrl+S`, `ArrowDown`)    |
+| `editorCursor`        | Move the file editor's caret via Monaco's cursor command API   |
 | `terminalInput`       | Send a command into a terminal **session** (see below)         |
 | `scrollTerminal`      | Scroll a terminal's viewport by lines / to the bottom          |
 | `drag`                | Drag an element by a pixel delta (resize handles)              |
@@ -238,13 +239,28 @@ read-only and absent from `KeyboardEventInit`): a synthetic event leaves it `0`,
 and Monaco's `StandardKeyboardEvent` reads `e.keyCode` to resolve keybindings — so
 without it, `Ctrl+S` would resolve to `Unknown` and do nothing. With it, keybinding
 -driven editors respond as they do to real input. This is what lets a test target
-Monaco's hidden input (tagged `editor-input` by `FileEditor`) to drive **cursor
-movement** (`ArrowDown` updates `editorStatus.line`) and the **Save keybinding**
-(`Cmd+S`/`Ctrl+S` clears the dirty flag).
+Monaco's hidden input (tagged `editor-input` by `FileEditor`) to drive the **Save
+keybinding** (`Cmd+S`/`Ctrl+S` clears the dirty flag).
 
 ```ts
-await driver.pressKey("ArrowDown", "editor-input"); // caret moves; Ln/Col updates
 await driver.pressKey("s", "editor-input", { meta: true }); // Cmd+S → save
+```
+
+### Moving the editor caret (`editorCursor`)
+
+Cursor navigation does **not** go through `pressKey`. A synthetic arrow keydown
+only moves Monaco's caret when its `textInputFocus` context key is set, which
+needs the hidden input genuinely focused — and an occluded/headless CI webview
+(ubuntu/macOS) cannot guarantee that focus, so the keydown fired but the caret
+never moved (the deterministic #2694 failure that survived three key/focus/input
+-mode fixes). Instead, `editorCursor` invokes Monaco's core cursor command
+(`cursorUp`/`cursorDown`/…) directly through the store's `editorActions.moveCursor`
+— no keybinding resolution, no focus precondition — while still firing
+`onDidChangeCursorPosition` → `editorStatus` (Ln/Col) exactly as a real arrow key
+would, which is the app wiring the test actually asserts.
+
+```ts
+await driver.editorCursor("down", { times: 2 }); // caret to line 3; Ln/Col updates
 ```
 
 ### Dragging (`drag`) and computed styles (`getComputedStyle`)
