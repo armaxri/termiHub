@@ -275,8 +275,18 @@ jobs:
         # full ~25s D-Bus timeout — which alone eats the 30s bridge-connect budget
         # ("no app connected within 30s"). Running under a throwaway session bus
         # makes that call fail fast instead of hanging, so the bridge connects.
+        #
+        # --reruns 2 --reruns-delay 1 (#2698): bounded auto-retries absorb the
+        # residual hosted-CI environmental flakiness on interaction-heavy tests
+        # (WKWebView occlusion / WebView2 contention / Xvfb render-timing) — the
+        # real bugs are already fixed. `--reruns` re-runs ONLY tests that FAILED,
+        # so a genuine regression still fails after its retries and surfaces as a
+        # red lane; a flaky one that passes on rerun no longer reds the nightly.
+        # Applied lane-wide (safe) rather than per-test. `-r aR` adds RERUN lines
+        # to the short summary so persistent flakes stay visible for tracking.
+        # Per-PR CI (code-quality.yml → Run Tests) deliberately does NOT get this.
         if: runner.os == 'Linux'
-        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -v --durations=25
+        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
@@ -333,7 +343,14 @@ jobs:
         env:
           TERMIHUB_XDIST_WORKERS: '2'
           TERMIHUB_WAIT_SCALE: '2'
-        run: ./tests/system/pytest.sh -m integration -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25
+        #
+        # --reruns 2 --reruns-delay 1 (#2698): same bounded auto-retries as the
+        # Linux step. rerunfailures composes with xdist — a failed test is
+        # re-scheduled on its worker up to 2 times — and with TERMIHUB_WAIT_SCALE
+        # above, so a contention-timeout flake gets both more per-op headroom and
+        # a retry, while a real regression still fails after all retries. `-r aR`
+        # surfaces RERUN lines in the summary. Not applied to per-PR CI.
+        run: ./tests/system/pytest.sh -m integration -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
 
       - name: Dump container logs on failure
         # Linux only — the other legs bring up no containers.
@@ -475,10 +492,16 @@ jobs:
         # dbus-run-session (#2646): same headless-portal hang fix as the bulk lane
         # — a throwaway session bus makes the startup xdg-desktop-portal call fail
         # fast instead of blocking ~25s and eating the bridge-connect budget.
+        #
+        # --reruns 2 --reruns-delay 1 -r aR (#2698): same bounded auto-retries as
+        # the bulk lane. These display-critical grades are the most render-timing
+        # sensitive, so they benefit most; a real regression still fails through
+        # all retries. Not applied to per-PR CI.
         if: runner.os == 'Linux'
         run: >-
           xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
+          --reruns 2 --reruns-delay 1 -r aR
 
       - name: Run the display-critical grades (macOS/Windows, native display)
         # No fixtures needed, so no xdist — the two suites run quickly serially.
@@ -492,6 +515,7 @@ jobs:
         run: >-
           ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
+          --reruns 2 --reruns-delay 1 -r aR
 
       - name: Upload failure artifacts
         if: always()

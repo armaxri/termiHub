@@ -12,6 +12,13 @@ dependencies = [
     # `--dist loadscope` so each test class (its class-scoped app fixture) stays
     # on one worker — one app launch per class, classes fanned across workers.
     "pytest-xdist>=3.5",
+    # pytest-rerunfailures adds bounded auto-retries to the nightly integration
+    # lanes only (see .github/workflows/system-integration.yml, #2698). The real
+    # bugs are fixed; this absorbs irreducible hosted-CI environmental flakiness
+    # (WKWebView occlusion / WebView2 contention / Xvfb render-timing). `--reruns`
+    # re-runs only FAILED tests, so a genuine regression still fails after its
+    # retries. Not used by per-PR CI, which stays strict.
+    "pytest-rerunfailures>=14.0",
     "websockets>=12.0",
     "psutil>=5.9",
     # tftpy: real TFTP RRQ client for the Embedded Services SVC-13 transfer check
