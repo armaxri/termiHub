@@ -41,6 +41,8 @@ immediately from the queue. Status: `queued` → `running` → `done` (or `block
 | 32 | workaround-frontend | Workaround hunter — TS/frontend | src |
 | 33 | workaround-ci-scripts | Workaround hunter — CI / scripts / config | .github, scripts, config files |
 | 34 | deadcode-flags | Feature-flag & dead-code / post-inversion residue | src/store, core, feature flags |
+| 35 | code-duplication | Code duplication; core centralization; app↔agent shared logic | core, src-tauri, agent (dup detection) |
+| 36 | ui-shared-foundation | UI features reuse shared libs / display primitives / logic+hooks | src/components, src/components/ui, src/hooks |
 
 ## Status
 
