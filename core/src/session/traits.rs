@@ -155,15 +155,19 @@ pub struct SpawnedShell {
     /// cross-platform signal that the shell ended (e.g. the user typed `exit`):
     /// on Unix the output reader also sees EOF when the child exits (the slave
     /// fd is closed), but **Windows ConPTY does not EOF the output pipe on
-    /// child exit**, so without this watcher a self-exited Windows shell was
-    /// never reported as ended (issue #2704). Returns once the child is gone —
-    /// whether it exited itself or was terminated via [`kill`](Self::kill).
+    /// child exit** (nor reliably when the master is later closed), so without
+    /// this watcher a self-exited Windows shell was never reported as ended
+    /// (issue #2704). When it returns, the watcher drives the end-of-session
+    /// path directly. Returns once the child is gone — whether it exited itself
+    /// or was terminated via [`kill`](Self::kill).
     pub wait_for_exit: Box<dyn FnOnce() + Send>,
-    /// Close the pseudoterminal master, forcing the output reader to EOF.
+    /// Release the pseudoterminal master (best-effort).
     ///
     /// Called by the watcher once [`wait_for_exit`](Self::wait_for_exit)
-    /// returns, so the reader drains any buffered output and then observes EOF,
-    /// running the same end-of-session cleanup as a Unix child exit.
+    /// returns, to free the PTY and give the still-blocked reader a chance to
+    /// unwind. Exit detection does **not** depend on it: the watcher already
+    /// ended the session by dropping the output sender, because closing the
+    /// master does not reliably EOF the reader on Windows ConPTY.
     pub close_pty: Box<dyn Fn() + Send + Sync>,
 }
 

@@ -82,15 +82,17 @@ fn parse_env_vars(settings: &serde_json::Value) -> HashMap<String, String> {
 ///      pseudoconsole and signals the child via the normal shutdown path.
 ///      The reader thread observes EOF the same way as on Unix.
 ///   4. **The output pipe does NOT reach EOF when the child exits on its
-///      own.** Unlike a Unix PTY — where closing the slave fd makes the
-///      master read EOF as soon as the child exits — ConPTY keeps the
-///      pseudoconsole (and thus the reader) open after a self-exited child
-///      (e.g. the user typed `exit`). Relying on reader EOF alone therefore
-///      never reports the session as ended on Windows (issue #2704). The
-///      backend closes this gap by watching the child process directly
-///      (`SpawnedShell::wait_for_exit`) and closing the PTY
-///      (`SpawnedShell::close_pty`) once it exits, which makes the reader
-///      drain and then EOF through the normal cleanup path.
+///      own — nor reliably even when the pty master is closed.** Unlike a
+///      Unix PTY — where closing the slave fd makes the master read EOF as
+///      soon as the child exits — ConPTY keeps the reader blocked after a
+///      self-exited child (e.g. the user typed `exit`), and closing the
+///      pseudoconsole does not dependably unblock it either. Relying on
+///      reader EOF therefore never reports the session as ended on Windows
+///      (issue #2704). The backend closes this gap by watching the child
+///      process directly (`SpawnedShell::wait_for_exit`) and, when it exits,
+///      driving the end-of-session path itself rather than via the reader
+///      (see the watcher in `connect()`); `SpawnedShell::close_pty` is only a
+///      best-effort release of the ConPTY afterwards.
 pub struct NativeLocalShellSpawner;
 
 impl LocalShellSpawner for NativeLocalShellSpawner {
@@ -137,7 +139,8 @@ impl LocalShellSpawner for NativeLocalShellSpawner {
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
         // Master is stored behind an `Option` so `close_pty` can drop it,
-        // closing the pseudoterminal and unblocking the reader with EOF.
+        // releasing the pseudoterminal (a best-effort attempt to unblock the
+        // reader; on Windows ConPTY this is not guaranteed — see note #4).
         let master = Arc::new(Mutex::new(Some(pty_pair.master)));
 
         // A killer handle split off from the child (`clone_killer`): it can
@@ -564,20 +567,34 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             }
         });
 
-        // Spawn child-exit watcher: block until the shell process exits on its
-        // own (e.g. the user typed `exit`), then close the PTY so the reader
-        // drains and hits EOF, running the normal end-of-session cleanup above.
+        // Spawn a child-exit watcher: block until the shell process exits on
+        // its own (e.g. the user typed `exit`), then drive the end-of-session
+        // path DIRECTLY — do not wait for the output reader to notice.
         //
-        // On Unix the reader thread already sees EOF when the child exits, so
-        // this is a redundant-but-harmless backstop; on Windows ConPTY the
-        // output pipe does NOT EOF on child exit, so this watcher is what makes
-        // a self-exited shell get reported as ended at all (issue #2704). The
-        // watcher also returns when the shell is terminated via `kill()` (on
-        // `disconnect()`), so it never outlives the session.
+        // On Unix the reader thread sees EOF when the child exits (the slave fd
+        // is closed) and runs the cleanup above, but Windows ConPTY does NOT
+        // reliably EOF the reader when the child exits — nor even when the pty
+        // master is later closed — so a reader-dependent scheme hangs the
+        // session forever (issue #2704). Instead the watcher marks the
+        // connection dead and drops the output sender itself: the exact signal
+        // the reader-EOF path emits, which makes the session forwarder observe
+        // the channel close and report the session ended. This is idempotent
+        // with the reader's own EOF cleanup — whichever runs first ends the
+        // session, the other is a no-op. `close_pty()` is then a best-effort
+        // release of the ConPTY (and a chance to unblock the reader); exit
+        // detection no longer depends on it. The watcher also returns when the
+        // shell is terminated via `kill()` on `disconnect()`, so it never
+        // outlives the session.
         let wait_for_exit = spawned.wait_for_exit;
         let close_pty = spawned.close_pty;
+        let alive_for_watcher = alive.clone();
+        let output_tx_for_watcher = self.output_tx.clone();
         std::thread::spawn(move || {
             wait_for_exit();
+            alive_for_watcher.store(false, Ordering::SeqCst);
+            if let Ok(mut guard) = output_tx_for_watcher.lock() {
+                *guard = None;
+            }
             close_pty();
         });
 
@@ -795,7 +812,6 @@ mod tests {
             let resize_log = self.resize_log.clone();
             let killed = self.killed.clone();
             let reader_tx_slot = self.reader_tx.clone();
-            let reader_tx_for_close = self.reader_tx.clone();
             let child_exit_for_kill = self.child_exit.clone();
 
             // Bounded-0 channel: no buffering; drop sender to signal EOF.
@@ -828,10 +844,12 @@ mod tests {
                     // Blocks until the test signals an exit or the sender drops.
                     let _ = exit_rx.recv();
                 }),
-                close_pty: Box::new(move || {
-                    // Closing the PTY makes the reader observe EOF — the ConPTY
-                    // close that a self-exited Windows shell needs.
-                    *reader_tx_for_close.lock().unwrap() = None;
+                close_pty: Box::new(|| {
+                    // Model Windows ConPTY faithfully: closing the pty master
+                    // does NOT make the reader observe EOF (this is exactly what
+                    // #2709's first attempt got wrong). Intentionally a no-op on
+                    // the mock reader, so the reader NEVER EOFs and the session
+                    // can only end via the watcher's direct signal.
                 }),
             })
         }
@@ -1280,15 +1298,19 @@ mod tests {
     }
 
     /// Regression for #2704. On Windows the PTY (ConPTY) output pipe does not
-    /// reach EOF when the shell process exits on its own, so the output reader
-    /// thread stays blocked and — before the child-exit watcher — the session
-    /// was never reported as ended: typing `exit` left the tab "alive" forever.
+    /// reach EOF when the shell process exits on its own — and, as #2709's first
+    /// attempt discovered, not even when the pty master is later closed — so the
+    /// output reader thread stays blocked forever. Before the child-exit
+    /// watcher drove the exit directly, the session was never reported as ended:
+    /// typing `exit` left the tab "alive" forever.
     ///
-    /// The mock reproduces the Windows shape: the child exits (`wait_for_exit`
-    /// returns) while the reader is still blocked (no EOF yet). The watcher must
-    /// notice and close the PTY, which closes the output channel and flips
-    /// `is_connected()` to false — the signal the session manager forwards as
-    /// "Session ended". Without the fix this deadlocks and times out.
+    /// The mock reproduces this faithfully: the child exits (`wait_for_exit`
+    /// returns) while the reader is still blocked, and `close_pty()` is a no-op
+    /// on the reader (it NEVER EOFs). The session must therefore end purely from
+    /// the watcher's direct signal — dropping the output sender and flipping
+    /// `is_connected()` to false, the signal the session manager forwards as
+    /// "Session ended". A reader-EOF-dependent fix (like the first #2709
+    /// attempt) fails this test, mirroring the real-Windows failure.
     #[tokio::test]
     async fn child_exit_ends_session_even_without_reader_eof() {
         let mock = MockLocalShellSpawner::new();
