@@ -129,21 +129,20 @@ jobs:
       G_MESSAGES_DEBUG: "all"
 
       # Un-skip the automated agent-reconnect UI grade
-      # (test_agent_reconnect_ui.py, #2574) on the macOS leg. That suite carries a
-      # skip-guard (#2631): on CI it stays skipped unless TERMIHUB_LIVE_AGENT=1,
-      # because it needs a live app->agent SSH connect rather than merely an sshd
-      # binary. Nothing extra has to be *installed* to un-skip it — the runner
-      # already has everything the grade needs: its harness (LocalAgentSshd) stands
-      # up its own throwaway loopback sshd from the macOS /usr/sbin/sshd, and the
-      # release termihub-agent it deploys is built by the "Build the agent
-      # (release)" step above. A live connect over exactly this path was already
-      # observed on the macOS runner (the failure that motivated #2579 was a harness
-      # region-read bug since fixed in #2628, not a missing agent), so flipping the
-      # opt-in is all that is required. Scoped to macOS via the matrix expression
-      # (empty string elsewhere = still skipped): the macOS GUI lane is the grade's
-      # home (#2618/#2579), and Windows loopback sshd is unreliable. (#2579, #2618,
-      # #2626 cat B)
-      TERMIHUB_LIVE_AGENT: ${{ matrix.os == 'macos-latest' && '1' || '' }}
+      # (test_agent_reconnect_ui.py, #2574) on the macOS AND Linux legs. That suite
+      # carries a skip-guard (#2631): on CI it stays skipped unless
+      # TERMIHUB_LIVE_AGENT=1, because it needs a live app->agent SSH connect rather
+      # than merely an sshd binary. Nothing extra has to be *installed* to un-skip
+      # it — each runner already has everything the grade needs: its harness
+      # (LocalAgentSshd) stands up its own throwaway loopback sshd from the runner's
+      # /usr/sbin/sshd, and the release termihub-agent it deploys is built by the
+      # "Build the agent (release)" step above.
+      # Linux enable (#2669, the intent of the closed #2634): with the headless app
+      # launch restored (#2646) the ubuntu leg now connects to the test bridge, so
+      # the reconnect grade can run there too (loopback /usr/sbin/sshd + release
+      # agent are both present). Windows stays skipped — its loopback sshd is
+      # unreliable. (#2579, #2618, #2626 cat B, #2634, #2646, #2669)
+      TERMIHUB_LIVE_AGENT: ${{ (matrix.os == 'macos-latest' || matrix.os == 'ubuntu-latest') && '1' || '' }}
 
     steps:
       - name: Checkout code
@@ -378,8 +377,8 @@ jobs:
   # own timeout guarantees these two always surface a green/red check. It runs
   # just the two grades (`-k`), needs no Docker fixtures, and so finishes well
   # inside its own budget. (These grades also still run inside the bulk lane; this
-  # job is the guaranteed signal, not their only home — keeping them in the bulk
-  # lane leaves #2634's Linux-enable of test_agent_reconnect_ui untouched.)
+  # job is the guaranteed signal, not their only home. Both lanes now enable
+  # test_agent_reconnect_ui on Linux too — #2669, the intent of the closed #2634.)
   display-grades:
     needs: setup
     name: Display-critical grades (${{ matrix.os }} · ${{ matrix.branch }})
@@ -408,11 +407,11 @@ jobs:
       WEBKIT_DEBUG: "Process"
       G_MESSAGES_DEBUG: "all"
 
-      # Preserve the bulk lane's gating for test_agent_reconnect_ui EXACTLY:
-      # macOS-only opt-in (skip-guarded elsewhere). Do NOT widen this to new
-      # platforms here — extending the reconnect grade to the Linux leg is owned
-      # by #2634, which edits the matching expression in the bulk lane above.
-      TERMIHUB_LIVE_AGENT: ${{ matrix.os == 'macos-latest' && '1' || '' }}
+      # Mirror the bulk lane's gating for test_agent_reconnect_ui EXACTLY: opt-in
+      # on macOS AND Linux (skip-guarded on Windows, whose loopback sshd is
+      # unreliable). The Linux enable (#2669, intent of the closed #2634) is now
+      # live in the bulk lane above; keep this expression identical to it.
+      TERMIHUB_LIVE_AGENT: ${{ (matrix.os == 'macos-latest' || matrix.os == 'ubuntu-latest') && '1' || '' }}
 
     steps:
       - name: Checkout code
