@@ -16,14 +16,14 @@ name: Release Linux Smoke
 # (non-draft) release BEFORE its build matrix uploads the assets — a
 # `release: published` job would run too early and find no artifacts to test.
 #
-# NOTE (#2646): the built desktop app currently does NOT launch headless under
-# WebKitGTK 2.52 on ubuntu-latest (the nightly integration Xvfb leg hits the same
-# wall). Until #2646 restores headless launch, the two GUI-launch smoke steps are
-# `continue-on-error` and the final gate is advisory (ENFORCE=false) — the job
-# still HARD-fails if an artifact is missing, cannot be extracted, or will not
-# install, which is real signal on artifact well-formedness. Once #2646 lands,
-# flip ENFORCE to "true" in the "Enforce smoke results" step so any GUI-launch
-# smoke regression fails this job loudly.
+# NOTE (#2646 fixed, #2669): the built desktop app now launches headless under
+# WebKitGTK on ubuntu-latest (the nightly integration Xvfb leg passes), so the two
+# GUI-launch smoke steps are load-bearing again and the final gate is enforcing
+# (ENFORCE=true) — a GUI-launch smoke regression fails the job. The job already
+# HARD-fails if an artifact is missing, cannot be extracted, or will not install,
+# which is real signal on artifact well-formedness. (The steps stay
+# `continue-on-error` so both outcomes are captured and reported together, then
+# the "Enforce smoke results" step fails on any non-success.)
 
 on:
   # Fire after the Release workflow completes. workflow_run runs the copy of this
@@ -228,17 +228,15 @@ jobs:
           xvfb-run -a dbus-run-session -- ./scripts/smoke-test.sh "$BIN" 2>&1 | tee deb-smoke.log
 
       - name: Enforce smoke results
-        # ENFORCE=false for now: report the two GUI-launch smoke outcomes without
-        # failing the release. The download/extract/install steps above already
-        # HARD-fail on malformed or non-installable artifacts. #2646 adds the
-        # AppArmor userns relax above that should restore headless launch here;
-        # flip ENFORCE to "true" once #2646 is verified green on CI (the
-        # system-integration ubuntu leg passes) so any GUI-launch smoke regression
-        # fails this job loudly. Left false here deliberately — the coordinator
-        # flips it after that verification, not this change.
+        # ENFORCE=true (#2669): #2646 is fixed — the ubuntu headless app now launches
+        # (the system-integration ubuntu leg passes) — so the two GUI-launch smoke
+        # steps are load-bearing again and a real regression must fail the release.
+        # The download/extract/install steps above already HARD-fail on malformed or
+        # non-installable artifacts; this gate now also fails on a GUI-launch smoke
+        # regression. (Was advisory/false while #2646 was open.)
         if: always()
         env:
-          ENFORCE: "false"
+          ENFORCE: "true"
           APPIMAGE_OUTCOME: ${{ steps.smoke_appimage.outcome }}
           DEB_OUTCOME: ${{ steps.smoke_deb.outcome }}
         run: |
