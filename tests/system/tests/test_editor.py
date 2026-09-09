@@ -7,10 +7,13 @@ Monaco renders to a canvas, so most assertions map to **store state** —
 ``editorStatus`` (Ln/Col, indent, EOL, encoding, language) and ``editorDirtyTabs``
 (the tab dirty dot). An "edit" is made through a genuine model-mutating gesture
 (toggling the EOL via the status bar), which dirties the buffer like typing.
-Keyboard-driven checks (cursor movement, the Save keybinding) reach Monaco through
-its hidden input — tagged ``editor-input`` — via the bridge's ``pressKey`` verb,
-whose synthetic events carry a real legacy ``keyCode`` so Monaco resolves them
-(#866).
+The Save keybinding check reaches Monaco through its hidden input — tagged
+``editor-input`` — via the bridge's ``pressKey`` verb, whose synthetic events
+carry a real legacy ``keyCode`` so Monaco resolves them (#866). Cursor movement
+instead drives Monaco's cursor command API through the ``editorCursor`` bridge
+verb: a synthetic arrow keydown only moves the caret when Monaco's
+``textInputFocus`` context key is set, which a headless CI webview cannot
+guarantee, so that path no-opped deterministically on ubuntu/macOS (#2694).
 
 The binary/non-UTF-8 graceful-error path (EDITOR-01) is covered too: a non-UTF-8
 file authored from the terminal is opened through the browser, and the editor is
@@ -164,9 +167,12 @@ class TestEditor(TerminalUi, TabsUi, SidebarUi, FilesUi, EditorUi, ShellFsUi, Sy
 
     def test_cursor_movement_updates_line_and_column(self):
         # The file has three lines; moving the caret must update editorStatus.line.
+        # `move_cursor` drives Monaco's cursor command API (not a synthetic arrow
+        # keydown), so no editor focus is needed — a headless CI webview can't
+        # focus Monaco's hidden input, which is why the keydown path no-opped
+        # deterministically on ubuntu/macOS (#2694).
         self._open_editor()
         assert self.editor_status()["line"] == 1
-        self.focus_editor()
         self.move_cursor("ArrowDown", times=2)
         self.wait(
             lambda: (self.editor_status() or {}).get("line") == 3,

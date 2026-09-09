@@ -260,6 +260,17 @@ class Driver:
             }
         )
 
+    def editor_cursor(self, direction: str, *, times: int = 1) -> None:
+        """Move the active file editor's caret ``times`` steps in ``direction``.
+
+        Drives Monaco's cursor **command API** (``cursorUp``/``cursorDown``/…) via
+        the store's ``editorActions`` rather than a synthetic arrow keydown, so it
+        moves the caret deterministically on every webview — a headless CI webview
+        cannot focus Monaco's hidden input, so an arrow keydown fires but no-ops
+        (#2694). ``direction`` is ``"up" | "down" | "left" | "right"``.
+        """
+        self._call({"action": "editorCursor", "direction": direction, "times": times})
+
     def drag_to(self, from_test_id: str, to_test_id: str) -> None:
         """Drag one element onto another (pointer-based, e.g. @dnd-kit reorder)."""
         self._call({"action": "dragTo", "fromTestId": from_test_id, "toTestId": to_test_id})

@@ -162,15 +162,33 @@ class EditorUi(HarnessMixin):
         """Focus Monaco's hidden input so subsequent key presses reach the editor."""
         self.driver.click(self.INPUT)
 
-    def move_cursor(self, key: str, *, times: int = 1) -> None:
-        """Press an arrow key ``times`` times on the editor (e.g. ``"ArrowDown"``).
+    #: Arrow-key name → Monaco cursor direction for :meth:`move_cursor`.
+    _ARROW_DIRECTION = {
+        "ArrowUp": "up",
+        "ArrowDown": "down",
+        "ArrowLeft": "left",
+        "ArrowRight": "right",
+    }
 
-        Plain arrows are platform-agnostic and move the caret, which drives
-        ``onDidChangeCursorPosition`` → ``editorStatus`` — no chord/modifier and so
-        no per-OS keybinding difference.
+    def move_cursor(self, key: str, *, times: int = 1) -> None:
+        """Move the caret ``times`` steps for arrow ``key`` (e.g. ``"ArrowDown"``).
+
+        Routes through the ``editorCursor`` bridge verb, which invokes Monaco's
+        core cursor command (``cursorDown`` …) via the editor's command API rather
+        than dispatching a synthetic arrow keydown at Monaco's hidden input. A
+        keydown only moves the caret when Monaco's ``textInputFocus`` context key
+        is set, which needs the hidden input genuinely focused; an occluded CI
+        webview (headless ubuntu/macOS) cannot guarantee that focus, so the
+        keydown fired but the caret never moved — the deterministic #2694 failure
+        that survived three key/focus/input-mode fixes (#2685, #2692, #2696). The
+        command API has no focus precondition and still fires
+        ``onDidChangeCursorPosition`` → ``editorStatus`` (Ln/Col), the exact app
+        wiring under test, so it is engine-independent.
         """
-        for _ in range(times):
-            self.driver.press_key(key, self.INPUT)
+        direction = self._ARROW_DIRECTION.get(key)
+        if direction is None:
+            raise ValueError(f"unsupported cursor key {key!r}; expected an arrow key")
+        self.driver.editor_cursor(direction, times=times)
 
     def save_via_keybinding(self) -> None:
         """Save through Monaco's **Save** keybinding (``Cmd+S`` on macOS, else ``Ctrl+S``).

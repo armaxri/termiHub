@@ -49,7 +49,7 @@ import { onLocalFileChanged } from "@/services/events";
 import { UnsavedChangesDialog } from "@/components/ConnectionEditor/UnsavedChangesDialog";
 import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog";
 import { SaveCopyDialog } from "./SaveCopyDialog";
-import { tagMonacoInput, testInputEditorOptions } from "./editorInput";
+import { tagMonacoInput, testInputEditorOptions, moveEditorCursor } from "./editorInput";
 import { isTestBridgeEnabled } from "@/testbridge/testMode";
 import { frontendLog } from "@/utils/frontendLog";
 import "./FileEditor.css";
@@ -1113,6 +1113,11 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
           monaco.editor.setModelLanguage(model, languageId);
           setEditorStatus(readEditorStatus(editor));
         },
+        // Drive caret navigation through Monaco's command API (not synthetic
+        // keys) so the system-test harness can move the cursor deterministically
+        // on every webview. onDidChangeCursorPosition (above) then updates the
+        // status bar exactly as a real arrow key would (#2694).
+        moveCursor: (direction, times) => moveEditorCursor(editor, direction, times),
       });
     },
     [setEditorStatus, setEditorActions]
@@ -1145,6 +1150,9 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
           if (!model) return;
           monaco.editor.setModelLanguage(model, languageId);
           if (editorRef.current) setEditorStatus(readEditorStatus(editorRef.current));
+        },
+        moveCursor: (direction, times) => {
+          if (editorRef.current) moveEditorCursor(editorRef.current, direction, times);
         },
       });
     } else if (!isVisible) {

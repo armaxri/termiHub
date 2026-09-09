@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { runScenario, type RunOptions } from "./runner";
 import type {
   Driver,
+  EditorCursorDirection,
+  EditorCursorOptions,
   GetComputedStyleOptions,
   GetTerminalViewportOptions,
   KeyModifiers,
@@ -77,6 +79,14 @@ class FakeDriver implements Driver {
     // compare equal to `{ key, testId }` (toEqual ignores undefined).
     const mods = modifiers && Object.values(modifiers).some(Boolean) ? modifiers : undefined;
     this.pressedKeys.push({ key, testId, modifiers: mods });
+  }
+
+  cursorMoves: Array<{ direction: EditorCursorDirection; times?: number }> = [];
+  async editorCursor(
+    direction: EditorCursorDirection,
+    options?: EditorCursorOptions
+  ): Promise<void> {
+    this.cursorMoves.push({ direction, times: options?.times });
   }
 
   async dragTo(from: string, to: string): Promise<void> {

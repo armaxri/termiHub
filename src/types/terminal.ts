@@ -492,10 +492,20 @@ export interface EditorStatus {
   encoding: string;
 }
 
+/** A caret-movement direction the editor status bar reflects (Ln/Col). */
+export type EditorCursorDirection = "up" | "down" | "left" | "right";
+
 export interface EditorActions {
   setIndent: (tabSize: number, insertSpaces: boolean) => void;
   toggleEol: () => void;
   setLanguage: (languageId: string) => void;
+  /**
+   * Move the caret one step in `direction`, `times` times, through Monaco's
+   * cursor command API (not synthetic keys) — so the system-test harness can
+   * drive cursor navigation deterministically on every webview. See
+   * {@link import("@/components/FileEditor/editorInput").moveEditorCursor}.
+   */
+  moveCursor: (direction: EditorCursorDirection, times?: number) => void;
 }
 
 export interface LogEntry {
