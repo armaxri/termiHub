@@ -54,6 +54,12 @@ safety-relevant transport are defined twice, with the compiler unable to see the
   as `serde_json::json!({...})` rather than by serializing a shared struct.
 - Response parsing on the desktop is likewise hand-rolled (`agent_manager.rs` `parse_agent_*`
   helpers), re-deriving the same field names the agent struct declares.
+- **Concrete manifestation (likely latent bug):** `RemoteFileBrowserProxy::rename` sends
+  `{"from","to"}` (`src-tauri/src/session/remote_proxy.rs:601-604`), but the agent's
+  `FilesRenameParams` deserializes `old_path`/`new_path`
+  (`agent/src/protocol/methods.rs:408`, consumed at `agent/src/handler/dispatch.rs`). No serde alias
+  bridges them, so a rename routed through the agent proxy would fail params-parsing. Exactly the
+  drift a shared struct would have made a compile error. (Medium confidence — read, not executed.)
 
 ## Recommendation
 
