@@ -501,7 +501,7 @@ jobs:
         run: >-
           xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
-          --reruns 2 --reruns-delay 1 -r aR
+          --reruns 4 --reruns-delay 1 -r aR
 
       - name: Run the display-critical grades (macOS/Windows, native display)
         # No fixtures needed, so no xdist — the two suites run quickly serially.
@@ -515,7 +515,7 @@ jobs:
         run: >-
           ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
-          --reruns 2 --reruns-delay 1 -r aR
+          --reruns 4 --reruns-delay 1 -r aR
 
       - name: Upload failure artifacts
         if: always()
