@@ -17,6 +17,7 @@ from termihub_harness.ui import (
     iter_tabs,
 )
 from termihub_harness.ui.base import HarnessMixin
+from termihub_harness.ui.connections import ConnectionsUi
 from termihub_harness.ui.tabs import TabsUi
 
 
@@ -171,6 +172,86 @@ def test_open_named_context_menu_waits_for_resolve_then_a_mounted_trigger():
         what="the menu",
     )
     assert driver.context_menu_calls == ["trigger-9"]
+
+
+class FolderCreateDriver:
+    """Driver stub for ``create_folder``: the just-created folder's id starts as
+    the optimistic ``folder-<timestamp>`` the sidebar assigns, then swaps to its
+    persisted path-based id after a couple of region reads.
+
+    This mirrors the backend's optimistic->persisted id swap: the frontend adds a
+    folder with ``id: folder-${Date.now()}`` (``ConnectionList.tsx``), the backend
+    persists it as a tree and reloads it with a path-based id
+    (``compute_folder_id`` == the folder name for a top-level folder), and the
+    region cache the harness reads then reflects that settled id. A folder-context
+    gesture keyed on the transient optimistic id polls forever for a
+    ``folder-toggle-<optimistic>`` element the DOM has already re-rendered under
+    the persisted id (#2703).
+    """
+
+    def __init__(self, name, optimistic_id, settled_id, *, settle_after=2):
+        self._name = name
+        self._optimistic = optimistic_id
+        self._settled = settled_id
+        self._settle_after = settle_after
+        self._reads = 0
+        self._present = {ConnectionsUi.FOLDER_NAME_INPUT}
+        self.clicks: list[str] = []
+        self.typed: dict[str, str] = {}
+
+    def click(self, test_id: str) -> None:
+        self.clicks.append(test_id)
+
+    def type(self, test_id: str, value: str) -> None:
+        self.typed[test_id] = value
+
+    def exists(self, test_id: str) -> bool:
+        return test_id in self._present
+
+    def projection_subscribe(self, region):
+        return {"subscriptionId": f"sub-{region}", "region": region}
+
+    def projection_state(self, subscription_id):
+        # Serve the optimistic id for the first ``settle_after`` reads, then the
+        # persisted one — so a helper that returns on the first match captures the
+        # stale optimistic id, while one that waits for the settle gets the real id.
+        self._reads += 1
+        folder_id = self._optimistic if self._reads <= self._settle_after else self._settled
+        view = {"folders": [{"id": folder_id, "name": self._name}]}
+        return {"cache": {"version": 1, "view": view}}
+
+
+class FakeConnectionsHarness(ConnectionsUi):
+    """``ConnectionsUi`` with the eager unit-test ``wait`` (no app, no timing)."""
+
+    _MAX_POLLS = 50
+
+    def __init__(self, driver):
+        self.driver = driver
+
+    def wait(self, predicate, *, timeout=0, interval=0, what=""):
+        for _ in range(self._MAX_POLLS):
+            result = predicate()
+            if result:
+                return result
+        raise AssertionError(f"timed out waiting for {what}")
+
+
+def test_create_folder_returns_the_settled_persisted_id():
+    # Regression for #2703: create_folder must not hand back the transient
+    # optimistic ``folder-<ts>`` id, which the backend replaces with a path-based
+    # id on the disk round-trip. A folder-context gesture keyed on the optimistic
+    # id polls forever for a toggle the DOM re-rendered under the persisted id
+    # (the deterministic macOS+Windows nightly failure).
+    driver = FolderCreateDriver(
+        "edit-folder-42",
+        optimistic_id="folder-1788939527346",
+        settled_id="edit-folder-42",
+    )
+    harness = FakeConnectionsHarness(driver)
+    folder = harness.create_folder("edit-folder-42")
+    assert folder["id"] == "edit-folder-42"
+    assert not str(folder["id"]).startswith("folder-")
 
 
 class TabDriver:
