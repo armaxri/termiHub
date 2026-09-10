@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { HelpCircle, Info, Plus, TriangleAlert, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
@@ -45,24 +45,44 @@ export function DynamicField({
   credentialSaved,
   availablePorts,
 }: DynamicFieldProps) {
+  const reactId = useId();
+
   // Display-only callout: render the standalone banner without the label /
   // hint / error scaffolding used by input fields.
   if (field.fieldType.type === "notice") {
     return <NoticeField field={field} severity={field.fieldType.severity} />;
   }
 
+  // Stable, unique ids so the visible label, the control, and the inline error
+  // are programmatically associated (WCAG 1.3.1 / 3.3.1 / 3.3.2 / 4.1.2). The
+  // control gets `id`, the label `htmlFor={id}`, and the control points at the
+  // error/description via `aria-describedby`.
+  const controlId = `${reactId}-${field.key}`;
+  const errorId = `${controlId}-error`;
+  const descriptionId = field.description ? `${controlId}-description` : undefined;
+  const hasError = Boolean(error);
+  const describedBy =
+    [hasError ? errorId : null, descriptionId].filter(Boolean).join(" ") || undefined;
+  const a11y: FieldA11y = { id: controlId, describedBy, invalid: hasError };
+
   return (
     <div className="settings-form__field" data-testid={`dynamic-field-${field.key}`}>
-      {renderFieldInput(field, field.fieldType, value, onChange, availablePorts, onBlur)}
+      {renderFieldInput(field, field.fieldType, value, onChange, a11y, availablePorts, onBlur)}
       {error && (
         <p
+          id={errorId}
+          role="alert"
           className="settings-form__hint settings-form__hint--error"
           data-testid={`field-${field.key}-error`}
         >
           {error}
         </p>
       )}
-      {field.description && <p className="settings-form__hint">{field.description}</p>}
+      {field.description && (
+        <p id={descriptionId} className="settings-form__hint">
+          {field.description}
+        </p>
+      )}
       {credentialSaved && (
         <p
           className="settings-form__hint settings-form__hint--success"
@@ -80,22 +100,41 @@ function renderFieldInput(
   fieldType: FieldType,
   value: unknown,
   onChange: (v: unknown) => void,
+  a11y: FieldA11y,
   availablePorts?: string[],
   onBlur?: () => void
 ): React.ReactNode {
   switch (fieldType.type) {
     case "text":
-      return <TextField field={field} value={value} onChange={onChange} onBlur={onBlur} />;
+      return (
+        <TextField field={field} value={value} onChange={onChange} onBlur={onBlur} a11y={a11y} />
+      );
     case "password":
-      return <PasswordField field={field} value={value} onChange={onChange} />;
+      return <PasswordField field={field} value={value} onChange={onChange} a11y={a11y} />;
     case "number":
-      return <NumberField field={field} value={value} onChange={onChange} fieldType={fieldType} />;
+      return (
+        <NumberField
+          field={field}
+          value={value}
+          onChange={onChange}
+          fieldType={fieldType}
+          a11y={a11y}
+        />
+      );
     case "boolean":
-      return <BooleanField field={field} value={value} onChange={onChange} />;
+      return <BooleanField field={field} value={value} onChange={onChange} a11y={a11y} />;
     case "select":
-      return <SelectField field={field} value={value} onChange={onChange} fieldType={fieldType} />;
+      return (
+        <SelectField
+          field={field}
+          value={value}
+          onChange={onChange}
+          fieldType={fieldType}
+          a11y={a11y}
+        />
+      );
     case "port":
-      return <PortField field={field} value={value} onChange={onChange} />;
+      return <PortField field={field} value={value} onChange={onChange} a11y={a11y} />;
     case "serialPort":
       return (
         <SerialPortField
@@ -103,11 +142,18 @@ function renderFieldInput(
           value={value}
           onChange={onChange}
           availablePorts={availablePorts}
+          a11y={a11y}
         />
       );
     case "filePath":
       return (
-        <FilePathField field={field} value={value} onChange={onChange} fieldType={fieldType} />
+        <FilePathField
+          field={field}
+          value={value}
+          onChange={onChange}
+          fieldType={fieldType}
+          a11y={a11y}
+        />
       );
     case "keyValueList":
       return <KeyValueListField field={field} value={value} onChange={onChange} />;
@@ -149,12 +195,30 @@ interface FieldProps {
 }
 
 /**
- * Field label with a required marker for required fields. The asterisk is
- * `aria-hidden` (decorative); inputs carry `aria-required` for assistive tech.
+ * Accessibility wiring computed once per field in {@link DynamicField} and
+ * threaded to each control: the control's `id` (matched by the label's
+ * `htmlFor`), the `aria-describedby` target (error + description ids), and
+ * whether the field is currently invalid.
  */
-function FieldLabel({ field }: { field: SettingsField }) {
+interface FieldA11y {
+  /** `id` set on the control and referenced by the label's `htmlFor`. */
+  id: string;
+  /** Space-separated ids of the error/description nodes, or `undefined`. */
+  describedBy?: string;
+  /** True when a validation error is present (sets `aria-invalid`). */
+  invalid: boolean;
+}
+
+/**
+ * Field label with a required marker for required fields. Renders a real
+ * `<label htmlFor>` so screen readers associate the visible name with the
+ * control (WCAG 1.3.1 / 3.3.2). List/group fields with no single control omit
+ * `htmlFor`. The asterisk is `aria-hidden` (decorative); inputs also carry
+ * `aria-required` for assistive tech.
+ */
+function FieldLabel({ field, htmlFor }: { field: SettingsField; htmlFor?: string }) {
   return (
-    <span className="settings-form__label">
+    <label className="settings-form__label" htmlFor={htmlFor}>
       {field.label}
       {field.required && (
         <span className="settings-form__required" aria-hidden="true">
@@ -162,35 +226,47 @@ function FieldLabel({ field }: { field: SettingsField }) {
           *
         </span>
       )}
-    </span>
+    </label>
   );
 }
 
-function TextField({ field, value, onChange, onBlur }: FieldProps & { onBlur?: () => void }) {
+function TextField({
+  field,
+  value,
+  onChange,
+  onBlur,
+  a11y,
+}: FieldProps & { onBlur?: () => void; a11y: FieldA11y }) {
   return (
     <>
-      <FieldLabel field={field} />
+      <FieldLabel field={field} htmlFor={a11y.id} />
       <Input
+        id={a11y.id}
         type="text"
         value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value || undefined)}
         onBlur={onBlur}
         placeholder={field.placeholder}
         aria-required={field.required || undefined}
+        aria-describedby={a11y.describedBy}
+        error={a11y.invalid}
         data-testid={`field-${field.key}`}
       />
     </>
   );
 }
 
-function PasswordField({ field, value, onChange }: FieldProps) {
+function PasswordField({ field, value, onChange, a11y }: FieldProps & { a11y: FieldA11y }) {
   return (
     <>
-      <FieldLabel field={field} />
+      <FieldLabel field={field} htmlFor={a11y.id} />
       <PasswordInput
+        id={a11y.id}
         value={(value as string) ?? ""}
         onChange={(e) => onChange(e.target.value || undefined)}
         placeholder={field.placeholder}
+        aria-describedby={a11y.describedBy}
+        aria-invalid={a11y.invalid}
         data-testid={`field-${field.key}`}
       />
     </>
@@ -202,24 +278,28 @@ function NumberField({
   value,
   onChange,
   fieldType,
-}: FieldProps & { fieldType: { type: "number"; min?: number; max?: number } }) {
+  a11y,
+}: FieldProps & { fieldType: { type: "number"; min?: number; max?: number }; a11y: FieldA11y }) {
   return (
     <>
-      <FieldLabel field={field} />
+      <FieldLabel field={field} htmlFor={a11y.id} />
       <NumberInput
+        id={a11y.id}
         value={value != null ? Number(value) : ""}
         onValueChange={(v) => onChange(v === "" ? undefined : v)}
         min={fieldType.min}
         max={fieldType.max}
         placeholder={field.placeholder}
         aria-required={field.required || undefined}
+        aria-describedby={a11y.describedBy}
+        error={a11y.invalid}
         data-testid={`field-${field.key}`}
       />
     </>
   );
 }
 
-function BooleanField({ field, value, onChange }: FieldProps) {
+function BooleanField({ field, value, onChange, a11y }: FieldProps & { a11y: FieldA11y }) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   return (
@@ -243,9 +323,11 @@ function BooleanField({ field, value, onChange }: FieldProps) {
         )}
       </span>
       <Toggle
+        id={a11y.id}
         checked={(value as boolean) ?? (field.default as boolean) ?? false}
         onCheckedChange={(checked) => onChange(checked)}
         aria-label={field.label}
+        aria-describedby={a11y.describedBy}
         data-testid={`field-${field.key}`}
       />
       {field.helpText && (
@@ -269,17 +351,24 @@ function SelectField({
   value,
   onChange,
   fieldType,
-}: FieldProps & { fieldType: { type: "select"; options: { value: string; label: string }[] } }) {
+  a11y,
+}: FieldProps & {
+  fieldType: { type: "select"; options: { value: string; label: string }[] };
+  a11y: FieldA11y;
+}) {
   const isLocked = fieldType.options.length <= 1;
   return (
     <>
-      <FieldLabel field={field} />
+      <FieldLabel field={field} htmlFor={a11y.id} />
       <Select
+        id={a11y.id}
         value={(value as string) || undefined}
         onChange={(v) => onChange(v)}
         options={fieldType.options}
         disabled={isLocked}
         aria-label={field.label}
+        aria-describedby={a11y.describedBy}
+        aria-invalid={a11y.invalid}
         placeholder={field.placeholder}
         data-testid={`field-${field.key}`}
       />
@@ -287,11 +376,14 @@ function SelectField({
   );
 }
 
-function PortField({ field, value, onChange }: FieldProps) {
+function PortField({ field, value, onChange, a11y }: FieldProps & { a11y: FieldA11y }) {
   return (
     <>
-      <FieldLabel field={field} />
+      <FieldLabel field={field} htmlFor={a11y.id} />
       <NumberInput
+        id={a11y.id}
+        aria-describedby={a11y.describedBy}
+        error={a11y.invalid}
         value={value != null ? Number(value) : ""}
         onValueChange={(v) => onChange(v === "" ? undefined : v)}
         min={1}
@@ -309,7 +401,8 @@ function SerialPortField({
   value,
   onChange,
   availablePorts: propPorts,
-}: FieldProps & { availablePorts?: string[] }) {
+  a11y,
+}: FieldProps & { availablePorts?: string[]; a11y: FieldA11y }) {
   const [detectedPorts, setDetectedPorts] = useState<string[]>([]);
   const currentValue = (value as string) ?? "";
 
@@ -330,8 +423,9 @@ function SerialPortField({
 
   return (
     <>
-      <FieldLabel field={field} />
+      <FieldLabel field={field} htmlFor={a11y.id} />
       <Input
+        id={a11y.id}
         type="text"
         value={currentValue}
         onChange={(e) => onChange(e.target.value || undefined)}
@@ -340,6 +434,8 @@ function SerialPortField({
         autoComplete="off"
         spellCheck={false}
         aria-required={field.required || undefined}
+        aria-describedby={a11y.describedBy}
+        error={a11y.invalid}
         data-testid={`field-${field.key}`}
       />
       <datalist id={listId}>
@@ -361,16 +457,20 @@ function FilePathField({
   value,
   onChange,
   fieldType,
-}: FieldProps & { fieldType: { type: "filePath"; kind: string } }) {
+  a11y,
+}: FieldProps & { fieldType: { type: "filePath"; kind: string }; a11y: FieldA11y }) {
   if (field.key === "keyPath") {
     return (
       <>
-        <FieldLabel field={field} />
+        <FieldLabel field={field} htmlFor={a11y.id} />
         <KeyPathInput
+          id={a11y.id}
           value={(value as string) ?? ""}
           onChange={(v) => onChange(v || undefined)}
           placeholder={field.placeholder}
           testIdPrefix={`field-${field.key}`}
+          aria-describedby={a11y.describedBy}
+          aria-invalid={a11y.invalid}
         />
       </>
     );
@@ -389,14 +489,17 @@ function FilePathField({
 
   return (
     <>
-      <FieldLabel field={field} />
+      <FieldLabel field={field} htmlFor={a11y.id} />
       <div className="settings-form__file-row">
         <Input
+          id={a11y.id}
           type="text"
           value={(value as string) ?? ""}
           onChange={(e) => onChange(e.target.value || undefined)}
           placeholder={field.placeholder}
           aria-required={field.required || undefined}
+          aria-describedby={a11y.describedBy}
+          error={a11y.invalid}
           data-testid={`field-${field.key}`}
         />
         <Button

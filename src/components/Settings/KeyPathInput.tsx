@@ -13,10 +13,24 @@ interface KeyPathInputProps {
   onChange: (value: string) => void;
   placeholder?: string;
   testIdPrefix?: string;
+  /** `id` of the combobox input, so an external `<label htmlFor>` can point at it. */
+  id?: string;
+  /** Space-separated ids of elements describing the input (e.g. an error message). */
+  "aria-describedby"?: string;
+  /** Marks the input invalid for assistive tech when validation fails. */
+  "aria-invalid"?: boolean;
 }
 
 /** Combobox input for selecting SSH key files from ~/.ssh/ with type-ahead filtering. */
-export function KeyPathInput({ value, onChange, placeholder, testIdPrefix }: KeyPathInputProps) {
+export function KeyPathInput({
+  value,
+  onChange,
+  placeholder,
+  testIdPrefix,
+  id,
+  "aria-describedby": ariaDescribedBy,
+  "aria-invalid": ariaInvalid,
+}: KeyPathInputProps) {
   const { keyFiles, sshDirPath } = useSshKeyFiles();
   const [isOpen, setIsOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
@@ -144,6 +158,7 @@ export function KeyPathInput({ value, onChange, placeholder, testIdPrefix }: Key
       <div className="key-path-input" ref={wrapperRef} onBlur={handleBlur}>
         <input
           ref={inputRef}
+          id={id}
           type="text"
           className="key-path-input__field"
           value={value}
@@ -157,6 +172,8 @@ export function KeyPathInput({ value, onChange, placeholder, testIdPrefix }: Key
           role="combobox"
           aria-expanded={isOpen}
           aria-autocomplete="list"
+          aria-describedby={ariaDescribedBy}
+          aria-invalid={ariaInvalid || undefined}
           data-testid={`${prefix}key-path-input`}
         />
         <Tooltip content="Browse">
