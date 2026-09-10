@@ -8,6 +8,7 @@ import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 import type { ConnectionConfig } from "@/types/terminal";
 import type { SessionHistoryEntry } from "@/types/sessionHistory";
 import { sessionTypeBadge } from "@/utils/sessionHistoryTitle";
+import { newId } from "@/services/transport/ids";
 
 /** Sentinel for the "No folder" option (Radix Select forbids empty-string item values). */
 const NO_FOLDER = "__no_folder__";
@@ -19,11 +20,9 @@ const AUTH_OPTIONS = [
   { value: "agent", label: "Agent" },
 ];
 
-/** Generate a unique connection id, falling back when `crypto.randomUUID` is absent. */
+/** Generate a unique connection id. */
 function generateConnectionId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return `conn-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("conn");
 }
 
 /** Read a config field as a string, else "". */

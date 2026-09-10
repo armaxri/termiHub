@@ -10,15 +10,12 @@ import { serializeMacros } from "@/services/macroIo";
 import type { Macro } from "@/types/macro";
 import { MacroListItem } from "./MacroListItem";
 import { MacroEditorDialog, type MacroEditorResult } from "./MacroEditorDialog";
+import { newId } from "@/services/transport/ids";
 import "./MacroSidebar.css";
 
 /** Generate a unique macro id for a duplicated macro. */
 function generateMacroId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") {
-    return `macro-${c.randomUUID()}`;
-  }
-  return `macro-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("macro");
 }
 
 /** Turn a macro name into a filesystem-friendly slug for the default filename. */

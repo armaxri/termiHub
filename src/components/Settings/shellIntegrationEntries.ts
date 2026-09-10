@@ -1,4 +1,5 @@
 import type { ShellEntry, ShellIntegrationSettings } from "@/types/connection";
+import { newId } from "@/services/transport/ids";
 
 /**
  * Factory for a fresh {@link ShellIntegrationSettings} value. Mirrors the Rust
@@ -33,11 +34,7 @@ export function createEntry(): ShellEntry {
 
 /** Generate a stable, collision-resistant id for a new entry. */
 export function generateEntryId(): string {
-  const cryptoObj = globalThis.crypto;
-  if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
-    return cryptoObj.randomUUID();
-  }
-  return `entry-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("entry");
 }
 
 /** Append an entry to the end of the list, returning a new array. */
