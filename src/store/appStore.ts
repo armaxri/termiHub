@@ -223,7 +223,7 @@ import {
   registerAdditionalLanguagePackages,
   registerCustomGrammars,
 } from "@/utils/monacoCustomLanguages";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
 import {
@@ -6192,7 +6192,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Disconnect first if connected
       const agent = currentAgentsView().remoteAgents.find((a) => a.id === agentId);
       if (agent && agent.connectionState !== "disconnected") {
-        apiDisconnectAgent(agentId).catch(() => {});
+        // Best-effort transport teardown during delete — a failure leaks the
+        // connection, so log it to the LogViewer rather than swallowing it
+        // (WA-FE-005).
+        apiDisconnectAgent(agentId).catch((err) => {
+          frontendError(
+            "app_store",
+            `Failed to disconnect agent ${agentId} during delete: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
       }
       // Optimistic remove in the region — drops the agent and all of its sub-state
       // (the store's `remove` clears sessions/definitions/folders too, #2409);

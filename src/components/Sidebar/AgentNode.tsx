@@ -40,7 +40,7 @@ import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Button, Tooltip, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { RemoteAgentDefinition } from "@/types/connection";
 import {
   AgentSessionInfo,
@@ -870,7 +870,15 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       } catch (err) {
         const classified = classifyAgentError(err);
         if (resolution.usedStoredCredential && classified.category === "auth-failure") {
-          await removeCredential(agent.id, resolution.credentialType).catch(() => {});
+          // A failed removal leaves a known-bad stored credential in place — log
+          // it to the LogViewer instead of swallowing it (WA-FE-005). The flow
+          // still re-prompts for a password below.
+          await removeCredential(agent.id, resolution.credentialType).catch((err) => {
+            frontendError(
+              "agent_node",
+              `Failed to remove stale credential for agent ${agent.id}: ${err}`
+            );
+          });
           const retryPassword = await requestPassword(agent.config.host, agent.config.username);
           if (!retryPassword) {
             setConnecting(false);
