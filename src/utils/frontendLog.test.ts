@@ -136,6 +136,67 @@ describe("frontendLog", () => {
       unsub();
     });
   });
+
+  describe("log levels", () => {
+    it("frontendError emits an ERROR-level entry the LogViewer receives", async () => {
+      vi.resetModules();
+      const { frontendError, onFrontendLog } = await import("./frontendLog");
+
+      const received: LogEntry[] = [];
+      const unsub = onFrontendLog((e) => received.push(e));
+
+      frontendError("mod", "boom");
+
+      expect(received).toHaveLength(1);
+      expect(received[0].level).toBe("ERROR");
+      expect(received[0].target).toBe("frontend::mod");
+      expect(received[0].message).toBe("boom");
+      unsub();
+    });
+
+    it("frontendWarn emits a WARN-level entry", async () => {
+      vi.resetModules();
+      const { frontendWarn, onFrontendLog } = await import("./frontendLog");
+
+      const received: LogEntry[] = [];
+      const unsub = onFrontendLog((e) => received.push(e));
+
+      frontendWarn("mod", "careful");
+
+      expect(received).toHaveLength(1);
+      expect(received[0].level).toBe("WARN");
+      unsub();
+    });
+
+    it("frontendInfo emits an INFO-level entry", async () => {
+      vi.resetModules();
+      const { frontendInfo, onFrontendLog } = await import("./frontendLog");
+
+      const received: LogEntry[] = [];
+      const unsub = onFrontendLog((e) => received.push(e));
+
+      frontendInfo("mod", "fyi");
+
+      expect(received).toHaveLength(1);
+      expect(received[0].level).toBe("INFO");
+      unsub();
+    });
+
+    it("buffers non-DEBUG levels before a listener subscribes", async () => {
+      vi.resetModules();
+      const { frontendError, onFrontendLog } = await import("./frontendLog");
+
+      frontendError("early", "buffered error");
+
+      const received: LogEntry[] = [];
+      const unsub = onFrontendLog((e) => received.push(e));
+
+      expect(received).toHaveLength(1);
+      expect(received[0].level).toBe("ERROR");
+      expect(received[0].message).toBe("buffered error");
+      unsub();
+    });
+  });
 });
 
 // Restore module registry after all tests in this file
