@@ -1,4 +1,4 @@
-//! Shadow connections-tree authority — Phase 5 of the stateless-UI migration
+//! Connections-tree authority — Phase 5 of the stateless-UI migration
 //! (#2225, part of #2139 and #2153).
 //!
 //! Moves the saved-connection / folder tree the frontend drives in `appStore`
@@ -11,8 +11,8 @@
 //! It owns a single **shared** `connections` projection region (Open Design
 //! Decision #4) and serves the `connection.*` intents through the projection
 //! substrate ([`crate::projection`]), mirroring the SSH-tunnels pilot
-//! ([`crate::tunnel::projection`]), the session-lifecycle shadow
-//! ([`crate::session_projection`]) and the system-monitor shadow
+//! ([`crate::tunnel::projection`]), the session-lifecycle region
+//! ([`crate::session_projection`]) and the system-monitor region
 //! ([`crate::system_monitor_projection`]).
 //!
 //! # Shared region — Open Design Decision #4
@@ -25,14 +25,12 @@
 //! the `useTreeSelection` React hook and is never persisted — stays a frontend
 //! concern under partial projection and is deliberately kept out of the store.
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! This step is deliberately **not** authoritative. The store exists, accepts
-//! `connection.*` intents, and projects diffs, but nothing in the live UI
-//! subscribes to or renders the `connections` region, and no frontend code
-//! dispatches `connection.*` intents yet. The existing `appStore` connections
-//! slice and the sidebar rendering are untouched. Later steps cut rendering, then
-//! mutation, over to the region, then remove the `appStore` state.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The sidebar renders from the `connections` region and frontend code dispatches
+//! `connection.*` intents; the former `appStore` connections reducers were
+//! removed.
 
 pub mod projection;
 pub mod store;

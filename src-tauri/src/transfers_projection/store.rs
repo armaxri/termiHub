@@ -28,12 +28,11 @@
 //! the same row (like SSH tunnels, session-lifecycle and system-monitors). The
 //! store therefore keeps a single map and projects one shared `transfers` region.
 //!
-//! # Shadow only (#2229)
+//! # Authoritative — drives the live UI (#2229)
 //!
-//! Managed authoritative state that serves the `transfer.*` intents, but nothing
-//! in the live UI subscribes to or renders the region yet: `appStore` stays
-//! authoritative. Later steps cut rendering, then the mutations, over to it,
-//! keeping the `appStore` reducers as the parity-safe fallback.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The live UI subscribes to and renders the region and dispatches `transfer.*`
+//! intents; the former `appStore` transfer reducers were removed.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};

@@ -20,14 +20,12 @@
 //! dismissed disconnect overlay, browsing scrollback in "view mode") are *not*
 //! lifecycle and stay a frontend concern under partial projection.
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! This step is deliberately **not authoritative**. The store exists, accepts
-//! `session.*` intents, and projects diffs, but nothing in the live UI
-//! subscribes to or renders the `session-lifecycle` region, and no frontend code
-//! dispatches `session.*` intents yet. The existing `appStore` lifecycle
-//! reducers and the terminal overlays remain authoritative. Later steps cut the
-//! transitions over, then rendering, then remove the `appStore` state.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The live UI subscribes to and renders the `session-lifecycle` region and
+//! dispatches `session.*` intents; the former `appStore` lifecycle reducers and
+//! terminal-overlay reducers were removed.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};

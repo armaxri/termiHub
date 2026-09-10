@@ -38,13 +38,13 @@ pub fn load_connections_and_folders(
     manager: State<'_, ConnectionManager>,
 ) -> Result<ConnectionData, String> {
     info!("Loading connections and folders");
-    // The unified main + external view (the same one reflected into the shadow
+    // The unified main + external view (the same one reflected into the
     // `ConnectionsStore` server-side, #2394), so the command and the projection
     // region cannot drift.
     let view = manager.load_unified_view().map_err(|e| e.to_string())?;
 
     // Server-authority fold (#2403): reflect the loaded agent list-membership into
-    // the shadow `AgentsStore` at the source, so the `agents` region tracks the
+    // the `AgentsStore` at the source, so the `agents` region tracks the
     // persisted list on a reload — not only the client seed. Additive; no
     // user-facing change.
     crate::agents_projection::projection::fold_agents_from_manager(&app);
@@ -81,7 +81,7 @@ pub fn save_connection(
         .save_connection_routed(connection)
         .map_err(|e| e.to_string())?;
     // Server-authority fold (#2389/#2394): reflect the persisted tree — main
-    // store *and* the external-file overlay — into the shadow `ConnectionsStore`
+    // store *and* the external-file overlay — into the `ConnectionsStore`
     // at the source. A save routed to an external file (`sourceFile` set) updates
     // the region via that overlay. Additive; no user-facing change.
     crate::connections_projection::projection::fold_connections_from_manager(&app);
@@ -192,7 +192,7 @@ pub fn save_settings(
 ) -> Result<(), String> {
     manager.save_settings(settings).map_err(|e| e.to_string())?;
     // Server-authority fold (#2386): reflect the persisted `AppSettings`
-    // document into the shadow `SettingsStore` at the source. Additive; no
+    // document into the `SettingsStore` at the source. Additive; no
     // user-facing change. (`AppHandle` is Tauri-injected — no JS invoke change.)
     crate::settings_projection::projection::fold_settings_from_manager(&app);
     Ok(())
@@ -211,7 +211,7 @@ pub fn save_external_file(
     manager::save_external_file(&file_path, &name, folders, connections, &**credential_store)
         .map_err(|e| e.to_string())?;
     // Server-authority fold (#2394): reflect the external-file overlay (as it is
-    // now on disk) into the shadow `ConnectionsStore` when the saved file is a
+    // now on disk) into the `ConnectionsStore` when the saved file is a
     // currently-enabled external source. The fold resolves the `ConnectionManager`
     // from `app`. Additive; no user-facing change.
     crate::connections_projection::projection::fold_connections_from_manager(&app);
@@ -231,7 +231,7 @@ pub fn reload_external_connections(
     }
     // Server-authority fold (#2394): the external overlay just changed on disk /
     // in the enabled set — reflect the unified main + external tree into the
-    // shadow `ConnectionsStore` so the region stays in sync with the frontend's
+    // `ConnectionsStore` so the region stays in sync with the frontend's
     // `reloadExternalConnections`. Additive; no user-facing change.
     crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(connections)
@@ -246,7 +246,7 @@ pub fn save_remote_agent(
 ) -> Result<(), String> {
     manager.save_agent(agent).map_err(|e| e.to_string())?;
     // Server-authority fold (#2403): reflect the persisted agent list-membership
-    // into the shadow `AgentsStore` at the source, so a newly-added agent's identity
+    // into the `AgentsStore` at the source, so a newly-added agent's identity
     // enters the `agents` region without a client `agent.add`. Additive; no
     // user-facing change.
     crate::agents_projection::projection::fold_agents_from_manager(&app);

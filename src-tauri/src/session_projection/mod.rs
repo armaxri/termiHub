@@ -1,4 +1,4 @@
-//! Shadow session-lifecycle authority — Phase 4 step 1 of the stateless-UI
+//! Session-lifecycle authority — Phase 4 step 1 of the stateless-UI
 //! migration (#2152, part of #2139).
 //!
 //! Moves the connect / reconnect / disconnect / error state machine the frontend
@@ -9,16 +9,14 @@
 //! the projection substrate ([`crate::projection`]), mirroring the SSH-tunnels
 //! pilot ([`crate::tunnel::projection`]).
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! This step is deliberately **not authoritative**. The store exists, accepts
-//! intents, and projects diffs, but nothing in the live UI subscribes to or
-//! renders the `session-lifecycle` region, and no frontend code dispatches
-//! `session.*` intents yet. The existing `appStore` lifecycle reducers and the
-//! terminal overlays are untouched. Later steps cut the transitions over, then
-//! rendering, then remove the `appStore` state; broadcast/restore-cohort logic
-//! (built on the ported #2145 `restore_mode`) migrates as its own step and keeps
-//! a clean per-domain boundary.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The terminal overlays render from the `session-lifecycle` region and frontend
+//! code dispatches `session.*` intents; the former `appStore` lifecycle reducers
+//! were removed. The broadcast/restore-cohort logic (built on the ported #2145
+//! `restore_mode`) migrated as its own step and keeps a clean per-domain
+//! boundary.
 
 pub mod projection;
 pub mod redrive;

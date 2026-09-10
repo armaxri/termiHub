@@ -7,11 +7,25 @@
 //! open an exec channel at all, or (later) piping content into `sudo tee` for
 //! privilege-elevated writes.
 
+use std::time::Duration;
+
 use russh::ChannelMsg;
 
 use crate::errors::CoreError;
 
 use super::handler::SshSession;
+
+/// Default upper bound on how long a single SSH exec may run before it is
+/// abandoned with a timeout error.
+///
+/// A half-dead server that opens the exec channel but never sends EOF/Close
+/// would otherwise hang the caller forever (there is no cancellation token
+/// plumbed into the drain). Direct callers — the exec-capability probe, the
+/// `sudo`-elevated write path — get this bound; the monitoring loop wraps its
+/// own (shorter) [`COLLECT_TIMEOUT`](super::monitoring). Kept generous so a
+/// legitimately large elevated write is never cut off, while still bounding a
+/// genuinely stalled connection.
+pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Captured result of running a command over an SSH exec channel.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -20,9 +34,18 @@ pub struct SshExecOutput {
     pub stdout: String,
     /// Everything the command wrote to standard error.
     pub stderr: String,
-    /// The command's exit status (`0` on success; defaults to `0` when the
-    /// server closes the channel without reporting one).
+    /// The command's exit status. `0` on success; defaults to `0` only when the
+    /// server closes the channel without reporting a status **or** a signal. A
+    /// command killed by a signal reports a non-zero `128 + signum` status (see
+    /// [`terminated_by_signal`](Self::terminated_by_signal)), so a signalled
+    /// death never masquerades as success.
     pub exit_status: i32,
+    /// When the remote command was terminated by a signal (SSH `exit-signal`
+    /// rather than `exit-status`), the signal name (e.g. `"KILL"`, `"TERM"`,
+    /// `"SEGV"`). `None` for a normally-exited command. This makes a
+    /// signal-killed command distinguishable from a clean exit even before
+    /// inspecting `exit_status`.
+    pub terminated_by_signal: Option<String>,
 }
 
 /// A single event read from an exec channel while a command runs.
@@ -38,6 +61,10 @@ enum ExecEvent {
     Stderr(Vec<u8>),
     /// The command's reported exit status.
     Exit(i32),
+    /// The command was terminated by a signal; carries the signal name (e.g.
+    /// `"KILL"`). The remote sends this (SSH `exit-signal`) instead of an exit
+    /// status when a process dies from a signal.
+    Signal(String),
     /// The remote signalled end-of-output.
     Eof,
     /// The channel closed; no further events will arrive.
@@ -83,12 +110,22 @@ async fn run_exec<C: ExecChannel>(
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
     let mut exit_status = 0;
+    let mut terminated_by_signal: Option<String> = None;
 
     while let Some(event) = channel.next_event().await {
         match event {
             ExecEvent::Stdout(data) => stdout.extend_from_slice(&data),
             ExecEvent::Stderr(data) => stderr.extend_from_slice(&data),
             ExecEvent::Exit(status) => exit_status = status,
+            ExecEvent::Signal(name) => {
+                // A signal-killed command reports `exit-signal`, never
+                // `exit-status`. Surface it as a non-zero failure so callers
+                // that key success off `exit_status == 0` (elevated writes,
+                // the exec-capability probe) never treat a killed command as
+                // success.
+                exit_status = signal_exit_status(&name);
+                terminated_by_signal = Some(name);
+            }
             ExecEvent::Eof => {}
             ExecEvent::Closed => break,
         }
@@ -98,7 +135,85 @@ async fn run_exec<C: ExecChannel>(
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         stderr: String::from_utf8_lossy(&stderr).into_owned(),
         exit_status,
+        terminated_by_signal,
     })
+}
+
+/// Run [`run_exec`] with an upper time bound.
+///
+/// A stalled server that opens the channel but never sends EOF/Close would
+/// otherwise leave the drain looping forever. On timeout the exec is abandoned
+/// and a [`CoreError::Other`] is returned instead of hanging the caller.
+async fn run_exec_bounded<C: ExecChannel>(
+    channel: &mut C,
+    command: &str,
+    stdin: &str,
+    timeout: Duration,
+) -> Result<SshExecOutput, CoreError> {
+    match tokio::time::timeout(timeout, run_exec(channel, command, stdin)).await {
+        Ok(result) => result,
+        Err(_) => Err(CoreError::Other(format!(
+            "SSH exec timed out after {}s",
+            timeout.as_secs()
+        ))),
+    }
+}
+
+/// Conventional POSIX signal number for a signal name, as used by SSH
+/// `exit-signal` (RFC 4254 §6.10 names them without the `SIG` prefix).
+///
+/// Unknown / custom signal names map to `0`, which still yields a non-zero
+/// `128 + 0` exit status via [`signal_exit_status`] so a signalled death is
+/// never mistaken for success.
+fn signal_number(name: &str) -> i32 {
+    match name {
+        "HUP" => 1,
+        "INT" => 2,
+        "QUIT" => 3,
+        "ILL" => 4,
+        "TRAP" => 5,
+        "ABRT" | "IOT" => 6,
+        "BUS" => 7,
+        "FPE" => 8,
+        "KILL" => 9,
+        "USR1" => 10,
+        "SEGV" => 11,
+        "USR2" => 12,
+        "PIPE" => 13,
+        "ALRM" => 14,
+        "TERM" => 15,
+        _ => 0,
+    }
+}
+
+/// Non-zero exit status for a command terminated by `signal_name`, following the
+/// shell convention of `128 + signum` (e.g. `SIGKILL` → `137`). Always non-zero,
+/// so a signal-killed command reads as a failure to callers that key success off
+/// `exit_status == 0`.
+fn signal_exit_status(signal_name: &str) -> i32 {
+    128 + signal_number(signal_name)
+}
+
+/// Human-readable name for a russh signal (the RFC 4254 name without the `SIG`
+/// prefix, e.g. `"KILL"`). Custom signals pass their raw name through.
+fn russh_signal_name(sig: &russh::Sig) -> String {
+    use russh::Sig;
+    match sig {
+        Sig::ABRT => "ABRT",
+        Sig::ALRM => "ALRM",
+        Sig::FPE => "FPE",
+        Sig::HUP => "HUP",
+        Sig::ILL => "ILL",
+        Sig::INT => "INT",
+        Sig::KILL => "KILL",
+        Sig::PIPE => "PIPE",
+        Sig::QUIT => "QUIT",
+        Sig::SEGV => "SEGV",
+        Sig::TERM => "TERM",
+        Sig::USR1 => "USR1",
+        Sig::Custom(name) => return name.clone(),
+    }
+    .to_string()
 }
 
 /// Adapter implementing [`ExecChannel`] over a live russh channel.
@@ -143,6 +258,9 @@ impl ExecChannel for RusshExecChannel {
                 Some(ChannelMsg::ExitStatus { exit_status }) => {
                     return Some(ExecEvent::Exit(exit_status as i32));
                 }
+                Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
+                    return Some(ExecEvent::Signal(russh_signal_name(&signal_name)));
+                }
                 Some(ChannelMsg::Eof) => return Some(ExecEvent::Eof),
                 Some(ChannelMsg::Close) => return Some(ExecEvent::Closed),
                 None => return None,
@@ -158,17 +276,32 @@ impl ExecChannel for RusshExecChannel {
 ///
 /// Pass an empty `stdin` for commands that read no input. This generalizes the
 /// stdout-only exec used internally by the monitoring provider.
+///
+/// The exec is bounded by [`DEFAULT_EXEC_TIMEOUT`] so a stalled server cannot
+/// hang the caller forever; use [`ssh_exec_with_stdin_timeout`] to override it.
 pub async fn ssh_exec_with_stdin(
     session: &SshSession,
     command: &str,
     stdin: &str,
+) -> Result<SshExecOutput, CoreError> {
+    ssh_exec_with_stdin_timeout(session, command, stdin, DEFAULT_EXEC_TIMEOUT).await
+}
+
+/// Like [`ssh_exec_with_stdin`], but with an explicit upper time bound on the
+/// exec. On timeout the operation returns a [`CoreError::Other`] rather than
+/// hanging indefinitely on a server that never closes the channel.
+pub async fn ssh_exec_with_stdin_timeout(
+    session: &SshSession,
+    command: &str,
+    stdin: &str,
+    timeout: Duration,
 ) -> Result<SshExecOutput, CoreError> {
     let channel = session
         .channel_open_session()
         .await
         .map_err(|e| CoreError::Other(format!("Channel open failed: {e}")))?;
     let mut channel = RusshExecChannel(channel);
-    run_exec(&mut channel, command, stdin).await
+    run_exec_bounded(&mut channel, command, stdin, timeout).await
 }
 
 /// Marker string echoed by the exec-capability probe.
@@ -221,12 +354,25 @@ mod tests {
         stdin: Vec<u8>,
         eof_sent: bool,
         fail_exec: bool,
+        /// When set, `next_event` never resolves — models a half-dead server
+        /// that opened the channel but never sends EOF/Close, so the exec drain
+        /// must be bounded by a timeout to recover.
+        hang: bool,
     }
 
     impl MockChannel {
         fn with_events(events: Vec<ExecEvent>) -> Self {
             Self {
                 events: events.into(),
+                ..Default::default()
+            }
+        }
+
+        /// A channel whose `next_event` blocks forever, simulating a stalled
+        /// server that never closes the exec channel.
+        fn hanging() -> Self {
+            Self {
+                hang: true,
                 ..Default::default()
             }
         }
@@ -253,6 +399,10 @@ mod tests {
         }
 
         async fn next_event(&mut self) -> Option<ExecEvent> {
+            if self.hang {
+                // Never resolves; the caller must impose a timeout.
+                std::future::pending::<()>().await;
+            }
             self.events.pop_front()
         }
     }
@@ -329,8 +479,13 @@ mod tests {
         assert!(ch.eof_sent, "EOF must still be signalled");
     }
 
+    /// When the server reports **neither** an exit status **nor** a signal
+    /// (it just closes the channel), the status defaults to `0` and no signal
+    /// is recorded. This "clean close, no status" case must stay distinct from
+    /// a signal-killed command, which reports a non-zero status (see
+    /// [`signal_killed_command_reports_failure_not_exit_zero`]).
     #[tokio::test]
-    async fn defaults_exit_status_to_zero_when_unreported() {
+    async fn defaults_exit_status_to_zero_when_neither_status_nor_signal_reported() {
         let mut ch =
             MockChannel::with_events(vec![ExecEvent::Stdout(bytes("done")), ExecEvent::Closed]);
 
@@ -338,6 +493,99 @@ mod tests {
 
         assert_eq!(out.exit_status, 0);
         assert_eq!(out.stdout, "done");
+        assert_eq!(
+            out.terminated_by_signal, None,
+            "a clean close with no status is not a signal death"
+        );
+    }
+
+    /// Regression for CORE-004/TBE-001: a command killed by a signal (SSH sends
+    /// `exit-signal`, never `exit-status`) must be reported as a **failure**,
+    /// not the default exit `0` that would read as success on the elevated-write
+    /// / probe paths.
+    #[tokio::test]
+    async fn signal_killed_command_reports_failure_not_exit_zero() {
+        let mut ch = MockChannel::with_events(vec![
+            ExecEvent::Stdout(bytes("partial write")),
+            ExecEvent::Signal("KILL".to_string()),
+            ExecEvent::Closed,
+        ]);
+
+        let out = run_exec(&mut ch, "sudo tee /etc/hosts", "new content")
+            .await
+            .expect("run_exec should succeed");
+
+        assert_ne!(
+            out.exit_status, 0,
+            "a signal-killed command must not report success (exit 0)"
+        );
+        assert_eq!(
+            out.exit_status,
+            signal_exit_status("KILL"),
+            "SIGKILL should map to 128 + 9 = 137"
+        );
+        assert_eq!(out.terminated_by_signal.as_deref(), Some("KILL"));
+        // The captured partial output is still preserved.
+        assert_eq!(out.stdout, "partial write");
+    }
+
+    /// The exec-capability probe discriminator and sudo classifier both key off
+    /// `exit_status == 0`; confirm a signal death flips them to "not
+    /// capable"/"failed" via the non-zero status.
+    #[tokio::test]
+    async fn signal_death_makes_probe_report_not_capable() {
+        let mut ch = MockChannel::with_events(vec![
+            ExecEvent::Stdout(bytes(&format!("{EXEC_PROBE_MARKER}\n"))),
+            ExecEvent::Signal("TERM".to_string()),
+            ExecEvent::Closed,
+        ]);
+
+        let out = run_exec(&mut ch, "echo marker", "").await.expect("ok");
+
+        assert!(
+            !exec_probe_indicates_capability(&out),
+            "a signal-killed probe must not read as capable even if the marker was emitted"
+        );
+    }
+
+    #[test]
+    fn signal_exit_status_follows_128_plus_signum_convention() {
+        assert_eq!(signal_exit_status("KILL"), 137);
+        assert_eq!(signal_exit_status("TERM"), 143);
+        assert_eq!(signal_exit_status("SEGV"), 139);
+        assert_eq!(signal_exit_status("INT"), 130);
+        // Unknown / custom signal names are still a non-zero failure.
+        assert_ne!(signal_exit_status("SOMETHING_CUSTOM"), 0);
+    }
+
+    /// Regression for CORE-005: a server that opens the channel but never sends
+    /// EOF/Close must not hang the exec forever — the bound returns an error.
+    #[tokio::test]
+    async fn bounded_exec_times_out_on_a_stalled_channel() {
+        let mut ch = MockChannel::hanging();
+
+        let err = run_exec_bounded(&mut ch, "sleep forever", "", Duration::from_millis(50))
+            .await
+            .expect_err("a stalled channel must time out, not hang");
+
+        assert!(matches!(err, CoreError::Other(_)));
+    }
+
+    /// A command that completes within the bound returns its result normally.
+    #[tokio::test]
+    async fn bounded_exec_returns_result_when_within_timeout() {
+        let mut ch = MockChannel::with_events(vec![
+            ExecEvent::Stdout(bytes("ok")),
+            ExecEvent::Exit(0),
+            ExecEvent::Closed,
+        ]);
+
+        let out = run_exec_bounded(&mut ch, "echo ok", "", Duration::from_secs(30))
+            .await
+            .expect("should complete within the timeout");
+
+        assert_eq!(out.stdout, "ok");
+        assert_eq!(out.exit_status, 0);
     }
 
     #[tokio::test]

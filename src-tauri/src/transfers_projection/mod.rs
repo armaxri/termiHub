@@ -1,4 +1,4 @@
-//! Shadow transfer-queue authority — Phase 5 of the stateless-UI migration
+//! Transfer-queue authority — Phase 5 of the stateless-UI migration
 //! (#2229, part of #2153 / #2139).
 //!
 //! Moves the SFTP/FTP transfer-queue UI state the frontend drives in `appStore`
@@ -27,17 +27,14 @@
 //! **shared** `transfers` region. The per-window choice of *which* transfers a
 //! given window renders (the #1951 / #1964 ownership scoping) is presentation and
 //! stays a frontend concern under partial projection — the same boundary the
-//! system-monitor shadow drew for the status-bar active tab.
+//! system-monitor region drew for the status-bar active tab.
 //!
-//! # Shadow only (#2229)
+//! # Authoritative — drives the live UI (#2229)
 //!
-//! Landed as a pure shadow foundation: managed authoritative state that serves
-//! the `transfer.*` intents, but nothing in the live UI subscribes to or
-//! dispatches them yet — `appStore` stays authoritative and nothing user-facing
-//! changes. Later steps cut rendering (the Transfer Queue panel + Open
-//! Connections read the projected `transfers` region), then the mutations, then
-//! remove the `appStore` reducers, keeping them as the parity-safe fallback until
-//! then.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The Transfer Queue panel and Open Connections render from the projected
+//! `transfers` region and frontend code dispatches the `transfer.*` intents; the
+//! former `appStore` transfer reducers were removed.
 
 pub mod projection;
 pub mod store;

@@ -1,4 +1,4 @@
-//! Shadow agents authority — Phase 5 of the stateless-UI migration
+//! Agents authority — Phase 5 of the stateless-UI migration
 //! (#2226, part of #2139).
 //!
 //! Moves the agents slice the frontend drives in `appStore` (the ordered
@@ -10,14 +10,14 @@
 //! ([`crate::tunnel::projection`]) and the system-monitor shadow
 //! ([`crate::system_monitor_projection`]).
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! This step is deliberately **not** authoritative. The store exists, accepts
-//! intents, and projects diffs, but nothing in the live UI subscribes to or
-//! renders the `agents` region, and no frontend code dispatches `agent.*` intents
-//! yet. The existing `appStore` agents slice and the agent sidebar / Open
-//! Connections rendering are untouched. Later steps cut rendering, then mutation,
-//! over to the region, then remove the `appStore` state.
+//! The stateless-UI inversion is complete (#2283): this store is the source of
+//! truth for the agents slice. The agent sidebar and Open Connections render from
+//! the projected `agents` region, and agent transitions dispatch the `agent.*`
+//! intents; the former `appStore` agents reducers were removed. Per the substrate
+//! contract an intent's result is never returned inline — it always arrives as a
+//! projection diff on the `agents` region.
 
 pub mod projection;
 pub mod store;

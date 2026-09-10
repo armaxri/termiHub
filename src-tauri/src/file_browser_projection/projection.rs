@@ -55,14 +55,13 @@
 //! status, transfers) is out of scope; see
 //! [`crate::file_browser_projection::store`].
 //!
-//! # Shadow only (#2228)
+//! # Authoritative (#2228)
 //!
-//! Registered and fully served, but nothing in the live UI subscribes to or
-//! dispatches these intents yet — a pure shadow foundation. Later steps cut
-//! rendering, then the mutations, over to it, keeping the `appStore` reducers as
-//! the parity-safe fallback. Per the substrate contract the result of an intent
-//! is never returned inline — it always arrives as a projection diff on the
-//! client's region.
+//! Registered, fully served, and driving the live UI: the frontend subscribes to
+//! and dispatches these intents (the former `appStore` file-browser reducers were
+//! removed, #2283). Per the substrate contract the result of an intent is never
+//! returned inline — it always arrives as a projection diff on the client's
+//! region.
 
 use std::sync::Arc;
 

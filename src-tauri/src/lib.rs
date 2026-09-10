@@ -1,7 +1,7 @@
-/// Shadow agents authority (#2226, Phase 5 of #2139): the shared `agents`
-/// projection region + `agent.*` intents modeling the `appStore` agents slice
-/// (the ordered agent list + per-agent sessions/definitions/folders). Registered
-/// and served but not yet driving the live UI — see [`agents_projection`].
+/// Agents authority (#2226, Phase 5 of #2139): the shared `agents`
+/// projection region + `agent.*` intents modeling the agents slice
+/// (the ordered agent list + per-agent sessions/definitions/folders). Drives the
+/// live UI (stateless-UI inversion complete, #2283) — see [`agents_projection`].
 mod agents_projection;
 /// Broadcast-membership authority (#2242, Phase 4 step 5b of #2139, part of
 /// #2206 / #2152): the client-scoped `broadcast@<clientId>` projection region +
@@ -15,18 +15,18 @@ mod broadcast_projection;
 mod cli;
 mod commands;
 mod connection;
-/// Shadow connections-tree authority (#2225, Phase 5 of #2139/#2153): the shared
+/// Connections-tree authority (#2225, Phase 5 of #2139/#2153): the shared
 /// `connections` projection region + `connection.*` intents, wrapping the
-/// existing saved-connection authority (`crate::connection`). Registered and
-/// served but not yet driving the live UI — see [`connections_projection`].
+/// existing saved-connection authority (`crate::connection`). Drives the live UI
+/// (stateless-UI inversion complete, #2283) — see [`connections_projection`].
 mod connections_projection;
 mod credential;
 mod embedded_servers;
-/// Shadow file-browser view authority (#2228, Phase 5 of #2139/#2153): the
+/// File-browser view authority (#2228, Phase 5 of #2139/#2153): the
 /// client-scoped `file-browser@<clientId>` region + `fileBrowser.*` intents
-/// modeling the file-browser UI state (`appStore` browser panes, active mode,
-/// clipboard). Registered and served but not yet driving the live UI — a pure
-/// shadow foundation. See [`file_browser_projection`].
+/// modeling the file-browser UI state (browser panes, active mode, clipboard).
+/// Drives the live UI (stateless-UI inversion complete, #2283). See
+/// [`file_browser_projection`].
 mod file_browser_projection;
 /// File-system access: local FS, session-scoped SFTP ops, and the cancellable
 /// transfer subsystem (public so integration tests can drive the transfer
@@ -34,8 +34,9 @@ mod file_browser_projection;
 pub mod files;
 /// Shadow `LayoutStore` (#2151, Phase 3 step 1 of #2139): the client-scoped
 /// `layout@<clientId>` projection region + `layout.*` intents, built on the
-/// ported panel-tree algebra (#2143). Registered and served but not yet driving
-/// the live UI — see [`layout`].
+/// ported panel-tree algebra (#2143). The remaining migration outlier —
+/// registered and served but **not yet** driving the live UI (deferred reducer
+/// removal tracked as #2562) — see [`layout`].
 mod layout;
 /// Native Linux X11 `CLIPBOARD`-selection binding for pasting remote-copied RDP
 /// clipboard files into local apps with delayed rendering (`text/uri-list`) —
@@ -68,31 +69,30 @@ mod restore_cohort_projection;
 pub mod run_location;
 mod session;
 mod session_history;
-/// Shadow session-lifecycle authority (#2152, Phase 4 step 1 of #2139): the
+/// Session-lifecycle authority (#2152, Phase 4 step 1 of #2139): the
 /// shared `session-lifecycle` projection region + `session.*` intents, built on
-/// the ported auto-reconnect engine (#2144). Registered and served but not yet
-/// driving the live UI — see [`session_projection`].
+/// the ported auto-reconnect engine (#2144). Drives the live UI (stateless-UI
+/// inversion complete, #2283) — see [`session_projection`].
 mod session_projection;
-/// Shadow app-settings authority (#2227, Phase 5 of #2139/#2153): the shared
-/// `settings` projection region + `settings.*` intents modeling the `appStore`
-/// `AppSettings` document (the persisted user-preferences slice behind
-/// `updateSettings` / `saveSettings`), held as an opaque JSON document.
-/// Registered and served but not yet driving the live UI — see
-/// [`settings_projection`].
+/// App-settings authority (#2227, Phase 5 of #2139/#2153): the shared
+/// `settings` projection region + `settings.*` intents modeling the
+/// `AppSettings` document (the persisted user-preferences slice), held as an
+/// opaque JSON document. Drives the live UI (stateless-UI inversion complete,
+/// #2283) — see [`settings_projection`].
 mod settings_projection;
 mod spawn;
-/// Shadow system-monitor authority (#2224, Phase 5 of #2139): the shared
+/// System-monitor authority (#2224, Phase 5 of #2139): the shared
 /// `system-monitors` projection region + `monitor.*` intents, built on the
 /// monitoring types shared with the agent crate (`termihub_core::monitoring`).
-/// Registered and served but not yet driving the live UI — see
+/// Drives the live UI (stateless-UI inversion complete, #2283) — see
 /// [`system_monitor_projection`].
 mod system_monitor_projection;
 mod terminal;
-/// Shadow transfer-queue authority (#2229, Phase 5 of #2139 / #2153): the shared
-/// `transfers` projection region + `transfer.*` intents modeling the `appStore`
+/// Transfer-queue authority (#2229, Phase 5 of #2139 / #2153): the shared
+/// `transfers` projection region + `transfer.*` intents modeling the
 /// Transfer Queue slice (per-transfer queue-row lifecycle + panel-minimized
-/// flag). Registered and served but not yet driving the live UI — a pure shadow
-/// foundation. See [`transfers_projection`].
+/// flag). Drives the live UI (stateless-UI inversion complete, #2283). See
+/// [`transfers_projection`].
 mod transfers_projection;
 mod tunnel;
 mod utils;
@@ -103,11 +103,11 @@ mod window;
 /// into local apps with delayed rendering (`CF_HDROP`, #1814). Windows-only.
 #[cfg(windows)]
 mod windows_clipboard;
-/// Shadow workflow-run authority (#2243, Phase 4 step 5c of #2139, part of
+/// Workflow-run authority (#2243, Phase 4 step 5c of #2139, part of
 /// #2206 / #2152): the client-scoped `workflow-run@<clientId>` projection region
-/// + `workflow.*` intents modeling the `appStore` workflow-run state machine
+/// + `workflow.*` intents modeling the workflow-run state machine
 /// (in-flight run progress + the dismissible local-process output panel, #1852 /
-/// #1865). Registered and served but not yet driving the live UI — see
+/// #1865). Drives the live UI (stateless-UI inversion complete, #2283) — see
 /// [`workflow_projection`].
 mod workflow_projection;
 mod workflows;
@@ -776,24 +776,25 @@ pub fn run() {
                 tunnel::projection::register_tunnel_intents(&mut registry, app.handle().clone());
                 // Shadow LayoutStore (#2151 step 1): client-scoped
                 // `layout@<clientId>` region + `layout.*` intents on the ported
-                // panel-tree algebra (#2143). The store is managed authoritative
-                // state and serves intents, but nothing in the live UI subscribes
-                // to or renders the region yet — a pure shadow foundation (steps
-                // 2+ cut mutations, then rendering, over to it). No client region
-                // is seeded here: layout regions are client-scoped and created
-                // lazily on a client's first `layout.*` intent.
+                // panel-tree algebra (#2143). Layout is the remaining migration
+                // outlier: the store is managed authoritative state and serves
+                // intents, but nothing in the live UI subscribes to or renders the
+                // region yet — still a shadow (deferred reducer removal tracked as
+                // #2562; steps 2+ cut mutations, then rendering, over to it). No
+                // client region is seeded here: layout regions are client-scoped
+                // and created lazily on a client's first `layout.*` intent.
                 app.manage(Arc::new(layout::LayoutStore::new()));
                 layout::projection::register_layout_intents(
                     &mut registry,
                     app.handle().clone(),
                 );
-                // Shadow SessionLifecycleStore (#2152 step 1): the shared
+                // SessionLifecycleStore (#2152 step 1): the shared
                 // `session-lifecycle` region + `session.*` intents on the ported
-                // auto-reconnect engine (#2144). Managed authoritative state that
-                // serves intents, but nothing in the live UI subscribes to or
-                // renders the region yet — a pure shadow foundation (later steps
-                // cut the transitions, then rendering, over to it). The shared
-                // region is seeded below once the store is managed.
+                // auto-reconnect engine (#2144). Authoritative and driving the live
+                // UI (stateless-UI inversion complete, #2283): the terminal
+                // overlays render from the region and the transitions route through
+                // the intents; the appStore lifecycle reducers were removed. The
+                // shared region is seeded below once the store is managed.
                 app.manage(Arc::new(session_projection::SessionLifecycleStore::new()));
                 session_projection::projection::register_session_intents(
                     &mut registry,
@@ -829,16 +830,15 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
-                // Shadow WorkflowRunStore (#2243, Phase 4 step 5c, part of
+                // WorkflowRunStore (#2243, Phase 4 step 5c, part of
                 // #2206): the client-scoped `workflow-run@<clientId>` region +
                 // `workflow.*` intents modeling the in-flight workflow-run state
                 // machine (run step-progress + the dismissible local-process
-                // output panel, #1852 / #1865). Managed authoritative state that
-                // serves intents, but nothing in the live UI subscribes to or
-                // renders the region yet — a pure shadow foundation (later steps
-                // cut rendering, then the mutations, over to it, keeping the
-                // appStore reducers as the parity-safe fallback). No client
-                // region is seeded here: like layout, restore-cohort, and
+                // output panel, #1852 / #1865). Authoritative and driving the live
+                // UI (stateless-UI inversion complete, #2283): the Workflow
+                // Manager renders from the region and the run transitions route
+                // through the intents; the appStore run reducers were removed. No
+                // client region is seeded here: like layout, restore-cohort, and
                 // broadcast, workflow-run regions are client-scoped and created
                 // lazily on a client's first `workflow.*` intent.
                 app.manage(Arc::new(workflow_projection::WorkflowRunStore::new()));
@@ -846,20 +846,19 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
-                // Shadow FileBrowserStore (#2228, Phase 5, part of #2153): the
+                // FileBrowserStore (#2228, Phase 5, part of #2153): the
                 // client-scoped `file-browser@<clientId>` region +
                 // `fileBrowser.*` intents modeling the file-browser UI *view*
                 // state (the local/sftp/session browser panes — each cwd +
                 // listing — the active `fileBrowserMode`, and the copy/cut
                 // `fileClipboard`). Only the browser view: the backend
                 // SFTP/session *session* model (sessions, connect status,
-                // transfers) stays out of scope (#2236). Managed authoritative
-                // state that serves intents, but nothing in the live UI
-                // subscribes to or renders the region yet — a pure shadow
-                // foundation (later steps cut rendering, then the mutations,
-                // over to it, keeping the appStore reducers as the parity-safe
-                // fallback). No client region is seeded here: like layout,
-                // broadcast, and workflow-run, file-browser regions are
+                // transfers) stays out of scope (#2236). Authoritative and
+                // driving the live UI (stateless-UI inversion complete, #2283):
+                // the browser panels render from the region and the browser
+                // actions route through the intents; the appStore file-browser
+                // reducers were removed. No client region is seeded here: like
+                // layout, broadcast, and workflow-run, file-browser regions are
                 // client-scoped and created lazily on a client's first
                 // `fileBrowser.*` intent.
                 app.manage(Arc::new(file_browser_projection::FileBrowserStore::new()));
@@ -867,30 +866,31 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
-                // Shadow SystemMonitorStore (#2224, Phase 5): the shared
+                // SystemMonitorStore (#2224, Phase 5): the shared
                 // `system-monitors` region + `monitor.*` intents on the
                 // monitoring types shared with the agent crate
-                // (`termihub_core::monitoring`). Managed authoritative state that
-                // serves intents, but nothing in the live UI subscribes to or
-                // renders the region yet — a pure shadow foundation (later steps
-                // cut rendering, then mutations, over to it). The shared region is
-                // seeded below once the store is managed.
+                // (`termihub_core::monitoring`). Authoritative and driving the live
+                // UI (stateless-UI inversion complete, #2283): the status bar and
+                // Open Connections render from the region and the transitions route
+                // through the intents; the appStore monitoring reducers were
+                // removed. The shared region is seeded below once the store is
+                // managed.
                 app.manage(Arc::new(system_monitor_projection::SystemMonitorStore::new()));
                 system_monitor_projection::projection::register_monitor_intents(
                     &mut registry,
                     app.handle().clone(),
                 );
-                // Shadow AgentsStore (#2226, Phase 5): the shared `agents` region
-                // + `agent.*` intents modeling the `appStore` agents slice (the
+                // AgentsStore (#2226, Phase 5): the shared `agents` region
+                // + `agent.*` intents modeling the agents slice (the
                 // ordered agent list + per-agent sessions/definitions/folders).
-                // Shadow ConnectionsStore (#2225, Phase 5): the shared
+                // ConnectionsStore (#2225, Phase 5): the shared
                 // `connections` region + `connection.*` intents, wrapping the
                 // existing saved-connection authority (`crate::connection`).
-                // Managed authoritative state that serves intents, but nothing in
-                // the live UI subscribes to or renders the region yet — a pure
-                // shadow foundation (later steps cut rendering, then mutations,
-                // over to it). The shared region is seeded below once the store is
-                // managed.
+                // Both are authoritative and drive the live UI (stateless-UI
+                // inversion complete, #2283): the sidebar renders from the regions
+                // and the actions route through the intents; the appStore agents
+                // and connections reducers were removed. The shared region is
+                // seeded below once the store is managed.
                 app.manage(Arc::new(agents_projection::AgentsStore::new()));
                 agents_projection::projection::register_agent_intents(
                     &mut registry,
@@ -901,28 +901,28 @@ pub fn run() {
                     &mut registry,
                     app.handle().clone(),
                 );
-                // Shadow SettingsStore (#2227, Phase 5): the shared `settings`
-                // region + `settings.*` intents modeling the `appStore`
+                // SettingsStore (#2227, Phase 5): the shared `settings`
+                // region + `settings.*` intents modeling the
                 // `AppSettings` document (the persisted user-preferences slice),
-                // held opaquely as JSON. Managed authoritative state that serves
-                // intents, but nothing in the live UI subscribes to or renders the
-                // region yet — a pure shadow foundation (later steps cut rendering,
-                // then mutations, over to it). The shared region is seeded below
-                // once the store is managed.
+                // held opaquely as JSON. Authoritative and driving the live UI
+                // (stateless-UI inversion complete, #2283): the live UI renders
+                // from the region and the settings actions route through the
+                // intents; the appStore settings reducers were removed. The shared
+                // region is seeded below once the store is managed.
                 app.manage(Arc::new(settings_projection::SettingsStore::new()));
                 settings_projection::projection::register_settings_intents(
                     &mut registry,
                     app.handle().clone(),
                 );
-                // Shadow TransferStore (#2229, Phase 5): the shared `transfers`
-                // region + `transfer.*` intents modeling the `appStore` Transfer
+                // TransferStore (#2229, Phase 5): the shared `transfers`
+                // region + `transfer.*` intents modeling the Transfer
                 // Queue slice (per-transfer queue-row lifecycle + the
                 // panel-minimized flag), mirroring the frontend `TransferEntry`
-                // folds. Managed authoritative state that serves intents, but
-                // nothing in the live UI subscribes to or renders the region yet —
-                // a pure shadow foundation (later steps cut rendering, then
-                // mutations, over to it). The shared region is seeded below once
-                // the store is managed.
+                // folds. Authoritative and driving the live UI (stateless-UI
+                // inversion complete, #2283): the Transfer Queue panel and Open
+                // Connections render from the region and the actions route through
+                // the intents; the appStore transfer reducers were removed. The
+                // shared region is seeded below once the store is managed.
                 app.manage(Arc::new(transfers_projection::TransferStore::new()));
                 transfers_projection::projection::register_transfer_intents(
                     &mut registry,

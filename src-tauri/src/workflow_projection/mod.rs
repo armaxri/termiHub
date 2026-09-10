@@ -1,4 +1,4 @@
-//! Shadow workflow-run authority — Phase 4 step 5c of the stateless-UI
+//! Workflow-run authority — Phase 4 step 5c of the stateless-UI
 //! migration (#2243, part of #2206 / #2152 / #2139).
 //!
 //! Moves the in-flight **workflow-run** state machine the frontend drives

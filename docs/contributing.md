@@ -791,7 +791,7 @@ Use [Keep a Changelog](https://keepachangelog.com/) categories (`Added`, `Change
 
 > **Security releases**: put security-relevant notes under a `### Security` category. At
 > release time the release workflow detects that section and injects the `<!-- security -->`
-> marker into the GitHub release body, which is what makes the desktop app's self-update
+> marker into the GitHub release body, which is what makes the desktop app's update check
 > flag the release as a security update (a non-suppressible, red-dot notification — see
 > [`src-tauri/src/commands/update.rs`](../src-tauri/src/commands/update.rs)). A maintainer
 > can also force the marker on a release by setting the `TERMIHUB_SECURITY_RELEASE`
