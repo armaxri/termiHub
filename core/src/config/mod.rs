@@ -1443,6 +1443,134 @@ mod tests {
         unsafe { std::env::remove_var("THUB_JUMP_TEST_HOST") };
     }
 
+    // --- secret fields must NOT be env/tilde-expanded (CORE-031 / SEC-001 / PER-007) ---
+    //
+    // A password is opaque secret material: `$`, `${VAR}`, and a leading `~` are
+    // all valid password characters and must survive `expand()` byte-for-byte.
+    // Expanding them corrupts the secret (an unknown var is deleted; a leading `~`
+    // becomes a home path) and — worse — expands a `${VAR}` to the desktop
+    // process's environment value, leaking it into the credential sent on the
+    // wire. Path fields (`key_path`) must still expand — that is guarded below.
+
+    /// A password containing `$`, `${VAR}`, and a leading `~` must round-trip
+    /// unchanged, with no env-var value leaking into the secret.
+    const SECRET_WITH_METACHARS: &str = "~p@$$${TERMIHUB_TEST_SECRET_LEAK}w0rd";
+
+    #[test]
+    fn ssh_config_expand_leaves_password_verbatim() {
+        temp_env::with_var("TERMIHUB_TEST_SECRET_LEAK", Some("leaked-env-value"), || {
+            let cfg = SshConfig {
+                host: "example.com".into(),
+                username: "admin".into(),
+                auth_method: "password".into(),
+                password: Some(SECRET_WITH_METACHARS.into()),
+                ..SshConfig::default()
+            }
+            .expand();
+            assert_eq!(
+                cfg.password.as_deref(),
+                Some(SECRET_WITH_METACHARS),
+                "SSH password must be preserved verbatim (no expansion, no env leak)"
+            );
+        });
+    }
+
+    #[test]
+    fn ftp_config_expand_leaves_password_verbatim() {
+        temp_env::with_var("TERMIHUB_TEST_SECRET_LEAK", Some("leaked-env-value"), || {
+            let cfg = FtpConfig {
+                host: "ftp.example.com".into(),
+                username: "admin".into(),
+                password: Some(SECRET_WITH_METACHARS.into()),
+                ..FtpConfig::default()
+            }
+            .expand();
+            assert_eq!(
+                cfg.password.as_deref(),
+                Some(SECRET_WITH_METACHARS),
+                "FTP password must be preserved verbatim (no expansion, no env leak)"
+            );
+        });
+    }
+
+    #[test]
+    fn jump_host_config_expand_leaves_password_verbatim() {
+        temp_env::with_var("TERMIHUB_TEST_SECRET_LEAK", Some("leaked-env-value"), || {
+            let hop = JumpHostConfig {
+                host: "bastion".into(),
+                username: "admin".into(),
+                auth_method: "password".into(),
+                password: Some(SECRET_WITH_METACHARS.into()),
+                ..JumpHostConfig::default()
+            }
+            .expand();
+            assert_eq!(
+                hop.password.as_deref(),
+                Some(SECRET_WITH_METACHARS),
+                "jump-host password must be preserved verbatim (no expansion, no env leak)"
+            );
+        });
+    }
+
+    #[test]
+    fn ssh_config_expand_via_proxy_jump_leaves_hop_password_verbatim() {
+        // The nested-hop path also runs through `JumpHostConfig::expand`.
+        temp_env::with_var("TERMIHUB_TEST_SECRET_LEAK", Some("leaked-env-value"), || {
+            let cfg = SshConfig {
+                host: "target".into(),
+                username: "u".into(),
+                auth_method: "key".into(),
+                proxy_jump: vec![JumpHostConfig {
+                    host: "bastion".into(),
+                    username: "admin".into(),
+                    auth_method: "password".into(),
+                    password: Some(SECRET_WITH_METACHARS.into()),
+                    ..Default::default()
+                }],
+                ..SshConfig::default()
+            }
+            .expand();
+            assert_eq!(cfg.proxy_jump[0].password.as_deref(), Some(SECRET_WITH_METACHARS));
+        });
+    }
+
+    /// Guard against over-correcting: non-secret path fields must STILL expand.
+    #[test]
+    fn ssh_config_expand_still_expands_key_path_and_host() {
+        temp_env::with_vars(
+            [
+                ("TERMIHUB_TEST_KEYDIR", Some("/opt/keys")),
+                ("TERMIHUB_TEST_HOSTNAME", Some("host.internal")),
+            ],
+            || {
+                let cfg = SshConfig {
+                    host: "${TERMIHUB_TEST_HOSTNAME}".into(),
+                    username: "admin".into(),
+                    auth_method: "key".into(),
+                    key_path: Some("${TERMIHUB_TEST_KEYDIR}/id_ed25519".into()),
+                    ..SshConfig::default()
+                }
+                .expand();
+                assert_eq!(cfg.host, "host.internal");
+                assert_eq!(cfg.key_path.as_deref(), Some("/opt/keys/id_ed25519"));
+            },
+        );
+    }
+
+    #[test]
+    fn ftp_config_expand_still_expands_initial_directory() {
+        temp_env::with_var("TERMIHUB_TEST_FTP_DIR", Some("/srv/data"), || {
+            let cfg = FtpConfig {
+                host: "ftp.example.com".into(),
+                username: "admin".into(),
+                initial_directory: Some("${TERMIHUB_TEST_FTP_DIR}/incoming".into()),
+                ..FtpConfig::default()
+            }
+            .expand();
+            assert_eq!(cfg.initial_directory.as_deref(), Some("/srv/data/incoming"));
+        });
+    }
+
     // --- camelCase field name tests ---
 
     #[test]

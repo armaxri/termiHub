@@ -450,6 +450,61 @@ mod tests {
     }
 
     #[test]
+    fn remote_agent_config_expand_leaves_password_verbatim() {
+        // A password is opaque secret material: `$`, `${VAR}`, and a leading `~`
+        // are all valid password characters and must survive `expand()`
+        // byte-for-byte — no env/tilde expansion, no env-var value leaking into
+        // the credential (CORE-031 / SEC-001 / PER-007).
+        const SECRET: &str = "~p@$$${TERMIHUB_TEST_AGENT_SECRET_LEAK}w0rd";
+        temp_env::with_var(
+            "TERMIHUB_TEST_AGENT_SECRET_LEAK",
+            Some("leaked-env-value"),
+            || {
+                let cfg = RemoteAgentConfig {
+                    host: "pi.local".to_string(),
+                    port: 22,
+                    username: "pi".to_string(),
+                    auth_method: "password".to_string(),
+                    password: Some(SECRET.to_string()),
+                    key_path: None,
+                    save_password: Some(true),
+                    agent_path: None,
+                    external_connection_files: vec![],
+                    ..Default::default()
+                }
+                .expand();
+                assert_eq!(
+                    cfg.password.as_deref(),
+                    Some(SECRET),
+                    "agent password must be preserved verbatim (no expansion, no env leak)"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn remote_agent_config_expand_still_expands_key_path() {
+        // Guard against over-correcting: the SSH key *path* is a path, not a
+        // secret, and must still expand.
+        temp_env::with_var("TERMIHUB_TEST_AGENT_KEYDIR", Some("/opt/keys"), || {
+            let cfg = RemoteAgentConfig {
+                host: "pi.local".to_string(),
+                port: 22,
+                username: "pi".to_string(),
+                auth_method: "key".to_string(),
+                password: None,
+                key_path: Some("${TERMIHUB_TEST_AGENT_KEYDIR}/id_ed25519".to_string()),
+                save_password: None,
+                agent_path: None,
+                external_connection_files: vec![],
+                ..Default::default()
+            }
+            .expand();
+            assert_eq!(cfg.key_path.as_deref(), Some("/opt/keys/id_ed25519"));
+        });
+    }
+
+    #[test]
     fn connection_config_backward_compat_local() {
         let json = r#"{"type": "local", "config": {"shellType": "bash"}}"#;
         let config: ConnectionConfig = serde_json::from_str(json).unwrap();
