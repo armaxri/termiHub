@@ -60,4 +60,42 @@ describe("Field", () => {
     const describedById = msg!.getAttribute("id");
     expect(describedById).toBe("port-error");
   });
+
+  it("links the error to the wrapped control via aria-describedby and marks it invalid", () => {
+    render(
+      <Field data-testid="field" label="Port" htmlFor="port" error="Must be 1–65535">
+        <Input id="port" data-testid="port-input" />
+      </Field>
+    );
+    const input = document.querySelector('[data-testid="port-input"]') as HTMLInputElement;
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    const describedBy = input.getAttribute("aria-describedby");
+    expect(describedBy).toBe("port-error");
+    // The referenced node is the visible error message.
+    const msg = document.getElementById(describedBy!);
+    expect(msg?.textContent).toContain("Must be 1–65535");
+  });
+
+  it("leaves aria-describedby/aria-invalid off the control when there is no error", () => {
+    render(
+      <Field data-testid="field" label="Host" htmlFor="host">
+        <Input id="host" data-testid="host-input" />
+      </Field>
+    );
+    const input = document.querySelector('[data-testid="host-input"]') as HTMLInputElement;
+    expect(input.getAttribute("aria-invalid")).toBeNull();
+    expect(input.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("merges an existing aria-describedby on the child with the error id", () => {
+    render(
+      <Field data-testid="field" label="Port" htmlFor="port" error="bad">
+        <Input id="port" data-testid="port-input" aria-describedby="port-hint" />
+      </Field>
+    );
+    const input = document.querySelector('[data-testid="port-input"]') as HTMLInputElement;
+    const ids = (input.getAttribute("aria-describedby") ?? "").split(" ");
+    expect(ids).toContain("port-hint");
+    expect(ids).toContain("port-error");
+  });
 });

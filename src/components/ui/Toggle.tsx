@@ -16,6 +16,8 @@ export interface ToggleProps {
   disabled?: boolean;
   /** Accessible label (use when there is no associated visible `<label>`). */
   "aria-label"?: string;
+  /** Space-separated ids of elements describing the switch (e.g. an error message). */
+  "aria-describedby"?: string;
   /** Associates the switch with a `<label htmlFor>`. */
   id?: string;
   /** Test hook forwarded to the switch root. */
