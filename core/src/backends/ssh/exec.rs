@@ -20,9 +20,18 @@ pub struct SshExecOutput {
     pub stdout: String,
     /// Everything the command wrote to standard error.
     pub stderr: String,
-    /// The command's exit status (`0` on success; defaults to `0` when the
-    /// server closes the channel without reporting one).
+    /// The command's exit status. `0` on success; defaults to `0` only when the
+    /// server closes the channel without reporting a status **or** a signal. A
+    /// command killed by a signal reports a non-zero `128 + signum` status (see
+    /// [`terminated_by_signal`](Self::terminated_by_signal)), so a signalled
+    /// death never masquerades as success.
     pub exit_status: i32,
+    /// When the remote command was terminated by a signal (SSH `exit-signal`
+    /// rather than `exit-status`), the signal name (e.g. `"KILL"`, `"TERM"`,
+    /// `"SEGV"`). `None` for a normally-exited command. This makes a
+    /// signal-killed command distinguishable from a clean exit even before
+    /// inspecting `exit_status`.
+    pub terminated_by_signal: Option<String>,
 }
 
 /// A single event read from an exec channel while a command runs.
@@ -38,6 +47,10 @@ enum ExecEvent {
     Stderr(Vec<u8>),
     /// The command's reported exit status.
     Exit(i32),
+    /// The command was terminated by a signal; carries the signal name (e.g.
+    /// `"KILL"`). The remote sends this (SSH `exit-signal`) instead of an exit
+    /// status when a process dies from a signal.
+    Signal(String),
     /// The remote signalled end-of-output.
     Eof,
     /// The channel closed; no further events will arrive.
@@ -83,12 +96,14 @@ async fn run_exec<C: ExecChannel>(
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
     let mut exit_status = 0;
+    let mut terminated_by_signal: Option<String> = None;
 
     while let Some(event) = channel.next_event().await {
         match event {
             ExecEvent::Stdout(data) => stdout.extend_from_slice(&data),
             ExecEvent::Stderr(data) => stderr.extend_from_slice(&data),
             ExecEvent::Exit(status) => exit_status = status,
+            ExecEvent::Signal(_name) => {}
             ExecEvent::Eof => {}
             ExecEvent::Closed => break,
         }
@@ -98,7 +113,43 @@ async fn run_exec<C: ExecChannel>(
         stdout: String::from_utf8_lossy(&stdout).into_owned(),
         stderr: String::from_utf8_lossy(&stderr).into_owned(),
         exit_status,
+        terminated_by_signal,
     })
+}
+
+/// Conventional POSIX signal number for a signal name, as used by SSH
+/// `exit-signal` (RFC 4254 §6.10 names them without the `SIG` prefix).
+///
+/// Unknown / custom signal names map to `0`, which still yields a non-zero
+/// `128 + 0` exit status via [`signal_exit_status`] so a signalled death is
+/// never mistaken for success.
+fn signal_number(name: &str) -> i32 {
+    match name {
+        "HUP" => 1,
+        "INT" => 2,
+        "QUIT" => 3,
+        "ILL" => 4,
+        "TRAP" => 5,
+        "ABRT" | "IOT" => 6,
+        "BUS" => 7,
+        "FPE" => 8,
+        "KILL" => 9,
+        "USR1" => 10,
+        "SEGV" => 11,
+        "USR2" => 12,
+        "PIPE" => 13,
+        "ALRM" => 14,
+        "TERM" => 15,
+        _ => 0,
+    }
+}
+
+/// Non-zero exit status for a command terminated by `signal_name`, following the
+/// shell convention of `128 + signum` (e.g. `SIGKILL` → `137`). Always non-zero,
+/// so a signal-killed command reads as a failure to callers that key success off
+/// `exit_status == 0`.
+fn signal_exit_status(signal_name: &str) -> i32 {
+    128 + signal_number(signal_name)
 }
 
 /// Adapter implementing [`ExecChannel`] over a live russh channel.
@@ -221,12 +272,25 @@ mod tests {
         stdin: Vec<u8>,
         eof_sent: bool,
         fail_exec: bool,
+        /// When set, `next_event` never resolves — models a half-dead server
+        /// that opened the channel but never sends EOF/Close, so the exec drain
+        /// must be bounded by a timeout to recover.
+        hang: bool,
     }
 
     impl MockChannel {
         fn with_events(events: Vec<ExecEvent>) -> Self {
             Self {
                 events: events.into(),
+                ..Default::default()
+            }
+        }
+
+        /// A channel whose `next_event` blocks forever, simulating a stalled
+        /// server that never closes the exec channel.
+        fn hanging() -> Self {
+            Self {
+                hang: true,
                 ..Default::default()
             }
         }
@@ -253,6 +317,10 @@ mod tests {
         }
 
         async fn next_event(&mut self) -> Option<ExecEvent> {
+            if self.hang {
+                // Never resolves; the caller must impose a timeout.
+                std::future::pending::<()>().await;
+            }
             self.events.pop_front()
         }
     }
@@ -329,8 +397,13 @@ mod tests {
         assert!(ch.eof_sent, "EOF must still be signalled");
     }
 
+    /// When the server reports **neither** an exit status **nor** a signal
+    /// (it just closes the channel), the status defaults to `0` and no signal
+    /// is recorded. This "clean close, no status" case must stay distinct from
+    /// a signal-killed command, which reports a non-zero status (see
+    /// [`signal_killed_command_reports_failure_not_exit_zero`]).
     #[tokio::test]
-    async fn defaults_exit_status_to_zero_when_unreported() {
+    async fn defaults_exit_status_to_zero_when_neither_status_nor_signal_reported() {
         let mut ch =
             MockChannel::with_events(vec![ExecEvent::Stdout(bytes("done")), ExecEvent::Closed]);
 
@@ -338,6 +411,69 @@ mod tests {
 
         assert_eq!(out.exit_status, 0);
         assert_eq!(out.stdout, "done");
+        assert_eq!(
+            out.terminated_by_signal, None,
+            "a clean close with no status is not a signal death"
+        );
+    }
+
+    /// Regression for CORE-004/TBE-001: a command killed by a signal (SSH sends
+    /// `exit-signal`, never `exit-status`) must be reported as a **failure**,
+    /// not the default exit `0` that would read as success on the elevated-write
+    /// / probe paths.
+    #[tokio::test]
+    async fn signal_killed_command_reports_failure_not_exit_zero() {
+        let mut ch = MockChannel::with_events(vec![
+            ExecEvent::Stdout(bytes("partial write")),
+            ExecEvent::Signal("KILL".to_string()),
+            ExecEvent::Closed,
+        ]);
+
+        let out = run_exec(&mut ch, "sudo tee /etc/hosts", "new content")
+            .await
+            .expect("run_exec should succeed");
+
+        assert_ne!(
+            out.exit_status, 0,
+            "a signal-killed command must not report success (exit 0)"
+        );
+        assert_eq!(
+            out.exit_status,
+            signal_exit_status("KILL"),
+            "SIGKILL should map to 128 + 9 = 137"
+        );
+        assert_eq!(out.terminated_by_signal.as_deref(), Some("KILL"));
+        // The captured partial output is still preserved.
+        assert_eq!(out.stdout, "partial write");
+    }
+
+    /// The exec-capability probe discriminator and sudo classifier both key off
+    /// `exit_status == 0`; confirm a signal death flips them to "not
+    /// capable"/"failed" via the non-zero status.
+    #[tokio::test]
+    async fn signal_death_makes_probe_report_not_capable() {
+        let mut ch = MockChannel::with_events(vec![
+            ExecEvent::Stdout(bytes(&format!("{EXEC_PROBE_MARKER}\n"))),
+            ExecEvent::Signal("TERM".to_string()),
+            ExecEvent::Closed,
+        ]);
+
+        let out = run_exec(&mut ch, "echo marker", "").await.expect("ok");
+
+        assert!(
+            !exec_probe_indicates_capability(&out),
+            "a signal-killed probe must not read as capable even if the marker was emitted"
+        );
+    }
+
+    #[test]
+    fn signal_exit_status_follows_128_plus_signum_convention() {
+        assert_eq!(signal_exit_status("KILL"), 137);
+        assert_eq!(signal_exit_status("TERM"), 143);
+        assert_eq!(signal_exit_status("SEGV"), 139);
+        assert_eq!(signal_exit_status("INT"), 130);
+        // Unknown / custom signal names are still a non-zero failure.
+        assert_ne!(signal_exit_status("SOMETHING_CUSTOM"), 0);
     }
 
     #[tokio::test]
