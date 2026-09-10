@@ -41,6 +41,7 @@ import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { SavedConnection, ConnectionFolder, InventoryHost } from "@/types/connection";
 import { type AgentDefinitionInfo, importInventoryHosts } from "@/services/api";
+import { newId } from "@/services/transport/ids";
 import { toast } from "@/components/ui";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -964,7 +965,7 @@ export function ConnectionList() {
   const handleCreateFolder = useCallback(
     (parentId: string | null, name: string) => {
       addFolder({
-        id: `folder-${Date.now()}`,
+        id: newId("folder"),
         name,
         parentId,
         isExpanded: true,

@@ -33,16 +33,18 @@ vi.mock("@/services/api", () => ({
 import { useAppStore } from "@/store/appStore";
 import { currentConnectionsView } from "@/store/connectionsBridge";
 import { setupConnectionsRegion } from "@/test/connectionsHarness";
+import { newId } from "@/services/transport/ids";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
 
 // Re-implement the hook logic under test (it's just thin store wrappers).
-// We test the unique logic: ID generation and object construction.
+// We test the unique logic: ID generation and object construction. IDs are
+// minted through the shared collision-safe generator, exactly as the hook does.
 
 function simulateCreateConnection(
   connection: Omit<SavedConnection, "id">,
   addConnection: (c: SavedConnection) => void
 ) {
-  const id = `conn-${Date.now()}`;
+  const id = newId("conn");
   addConnection({ ...connection, id });
   return id;
 }
@@ -53,7 +55,7 @@ function simulateCreateFolder(
   addFolder: (f: ConnectionFolder) => void
 ) {
   const folder: ConnectionFolder = {
-    id: `folder-${Date.now()}`,
+    id: newId("folder"),
     name,
     parentId,
     isExpanded: true,
@@ -83,7 +85,7 @@ describe("useConnections logic", () => {
 
       const id = simulateCreateConnection(conn, addConnection);
 
-      expect(id).toMatch(/^conn-\d+$/);
+      expect(id).toMatch(/^conn-[0-9A-HJKMNP-TV-Z]{26}$/);
       const stored = currentConnectionsView().connections.find((c) => c.id === id);
       expect(stored).toBeDefined();
       expect(stored!.name).toBe("My SSH");
@@ -100,10 +102,31 @@ describe("useConnections logic", () => {
       const id1 = simulateCreateConnection(base, addConnection);
       const id2 = simulateCreateConnection(base, addConnection);
 
-      // IDs should be different (Date.now() may collide in same ms but they're still unique objects)
-      expect(id1).toMatch(/^conn-\d+$/);
-      expect(id2).toMatch(/^conn-\d+$/);
+      expect(id1).toMatch(/^conn-[0-9A-HJKMNP-TV-Z]{26}$/);
+      expect(id2).toMatch(/^conn-[0-9A-HJKMNP-TV-Z]{26}$/);
+      expect(id1).not.toBe(id2);
       expect(currentConnectionsView().connections).toHaveLength(2);
+    });
+
+    it("mints distinct IDs for rapid same-tick creations (no Date.now collision)", () => {
+      // Regression for FES-001 / LIBFE-001: bare `conn-${Date.now()}` ids collide
+      // when two connections are created within the same millisecond (bulk import,
+      // fleet onboarding, double-fire), silently overwriting the first entity.
+      const { addConnection } = useAppStore.getState();
+      const base = {
+        name: "Bulk",
+        config: { type: "local" as const, config: { shell: "bash" } },
+        folderId: null,
+      };
+
+      const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+      try {
+        const ids = Array.from({ length: 50 }, () => simulateCreateConnection(base, addConnection));
+        expect(new Set(ids).size).toBe(ids.length);
+        expect(currentConnectionsView().connections).toHaveLength(ids.length);
+      } finally {
+        nowSpy.mockRestore();
+      }
     });
   });
 
@@ -113,7 +136,7 @@ describe("useConnections logic", () => {
 
       const folder = simulateCreateFolder("Production Servers", null, addFolder);
 
-      expect(folder.id).toMatch(/^folder-\d+$/);
+      expect(folder.id).toMatch(/^folder-[0-9A-HJKMNP-TV-Z]{26}$/);
       const stored = currentConnectionsView().folders.find((f) => f.id === folder.id);
       expect(stored).toBeDefined();
       expect(stored!.name).toBe("Production Servers");

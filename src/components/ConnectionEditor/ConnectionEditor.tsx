@@ -34,6 +34,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import type { ConnectionTypeInfo } from "@/services/api";
+import { newId } from "@/services/transport/ids";
 import {
   SavedConnection,
   RemoteAgentDefinition,
@@ -747,7 +748,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         return updated;
       } else {
         const newAgent: RemoteAgentDefinition = {
-          id: `agent-${Date.now()}`,
+          id: newId("agent"),
           name,
           config: agentConfig,
           agentSettings,
@@ -783,7 +784,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return saved;
     } else {
       const saved: SavedConnection = {
-        id: `conn-${Date.now()}`,
+        id: newId("conn"),
         name,
         config: connectionConfig,
         folderId,
