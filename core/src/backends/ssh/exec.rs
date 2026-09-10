@@ -103,7 +103,15 @@ async fn run_exec<C: ExecChannel>(
             ExecEvent::Stdout(data) => stdout.extend_from_slice(&data),
             ExecEvent::Stderr(data) => stderr.extend_from_slice(&data),
             ExecEvent::Exit(status) => exit_status = status,
-            ExecEvent::Signal(_name) => {}
+            ExecEvent::Signal(name) => {
+                // A signal-killed command reports `exit-signal`, never
+                // `exit-status`. Surface it as a non-zero failure so callers
+                // that key success off `exit_status == 0` (elevated writes,
+                // the exec-capability probe) never treat a killed command as
+                // success.
+                exit_status = signal_exit_status(&name);
+                terminated_by_signal = Some(name);
+            }
             ExecEvent::Eof => {}
             ExecEvent::Closed => break,
         }
@@ -152,6 +160,28 @@ fn signal_exit_status(signal_name: &str) -> i32 {
     128 + signal_number(signal_name)
 }
 
+/// Human-readable name for a russh signal (the RFC 4254 name without the `SIG`
+/// prefix, e.g. `"KILL"`). Custom signals pass their raw name through.
+fn russh_signal_name(sig: &russh::Sig) -> String {
+    use russh::Sig;
+    match sig {
+        Sig::ABRT => "ABRT",
+        Sig::ALRM => "ALRM",
+        Sig::FPE => "FPE",
+        Sig::HUP => "HUP",
+        Sig::ILL => "ILL",
+        Sig::INT => "INT",
+        Sig::KILL => "KILL",
+        Sig::PIPE => "PIPE",
+        Sig::QUIT => "QUIT",
+        Sig::SEGV => "SEGV",
+        Sig::TERM => "TERM",
+        Sig::USR1 => "USR1",
+        Sig::Custom(name) => return name.clone(),
+    }
+    .to_string()
+}
+
 /// Adapter implementing [`ExecChannel`] over a live russh channel.
 struct RusshExecChannel(russh::Channel<russh::client::Msg>);
 
@@ -193,6 +223,9 @@ impl ExecChannel for RusshExecChannel {
                 }
                 Some(ChannelMsg::ExitStatus { exit_status }) => {
                     return Some(ExecEvent::Exit(exit_status as i32));
+                }
+                Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
+                    return Some(ExecEvent::Signal(russh_signal_name(&signal_name)));
                 }
                 Some(ChannelMsg::Eof) => return Some(ExecEvent::Eof),
                 Some(ChannelMsg::Close) => return Some(ExecEvent::Closed),
