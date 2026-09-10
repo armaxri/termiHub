@@ -11,7 +11,8 @@ evidence:
   - core/src/config/mod.rs:626
   - core/src/config/mod.rs:637
   - core/src/config/mod.rs:65
-status: open
+status: in-progress
+resolution: "#2729"
 ---
 
 ## What

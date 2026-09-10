@@ -9,8 +9,8 @@ subsystem: core/ipc/ndjson
 evidence:
   - core/src/ipc/ndjson.rs:35
   - core/Cargo.toml:85
-status: in-progress
-resolution: "#2725"
+status: fixed
+resolution: "#2725 — capped explicitly rather than adopting LinesCodec"
 ---
 
 ## What

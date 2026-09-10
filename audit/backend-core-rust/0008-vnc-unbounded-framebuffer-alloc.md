@@ -9,7 +9,7 @@ subsystem: core/backends/vnc
 evidence:
   - core/src/backends/vnc/mod.rs:377
   - core/src/backends/vnc/mod.rs:397
-status: in-progress
+status: fixed
 resolution: "#2725"
 ---
 

@@ -9,7 +9,8 @@ subsystem: core/config
 evidence:
   - core/src/config/mod.rs:637
   - core/src/config/mod.rs:625
-status: open
+status: in-progress
+resolution: "#2729"
 ---
 
 ## What
