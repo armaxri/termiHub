@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { newId } from "@/services/transport/ids";
 
 /**
  * Hook for connection management operations.
@@ -17,7 +18,7 @@ export function useConnections() {
 
   const createConnection = useCallback(
     (connection: Omit<SavedConnection, "id">) => {
-      addConnection({ ...connection, id: `conn-${Date.now()}` });
+      addConnection({ ...connection, id: newId("conn") });
     },
     [addConnection]
   );
@@ -25,7 +26,7 @@ export function useConnections() {
   const createFolder = useCallback(
     (name: string, parentId: string | null) => {
       const folder: ConnectionFolder = {
-        id: `folder-${Date.now()}`,
+        id: newId("folder"),
         name,
         parentId,
         isExpanded: true,

@@ -21,3 +21,17 @@ export function newIntentId(): string {
 export function newClientId(): string {
   return `client-${ulid()}`;
 }
+
+/**
+ * A collision-safe entity id, optionally carrying a short readable prefix
+ * (e.g. `conn`, `folder`, `agent`). Backed by {@link ulid} — time-ordered,
+ * lexicographically sortable, and collision-resistant — so two entities minted
+ * in the same millisecond still get distinct ids. Prefer this over deriving an
+ * id from a bare `Date.now()`, which collides on rapid/bulk creation and
+ * silently overwrites the first entity on its store/React key.
+ *
+ * @param prefix optional readable prefix; when given the id is `<prefix>-<ulid>`.
+ */
+export function newId(prefix?: string): string {
+  return prefix ? `${prefix}-${ulid()}` : ulid();
+}
