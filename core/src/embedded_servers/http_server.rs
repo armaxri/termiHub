@@ -57,6 +57,30 @@ async fn track_connections(
     resp
 }
 
+/// Escape a string for safe interpolation into HTML text and double-quoted
+/// attribute contexts.
+///
+/// Entity-encodes the five HTML-significant characters (`& < > " '`) so an
+/// attacker-controlled filename or reflected request path — e.g. a file literally
+/// named `"><img src=x onerror=alert(1)>`, a legal name on Unix — cannot break out
+/// of the `href` attribute or the surrounding markup and inject script
+/// (SEC-007 / CORE-025). `&` is replaced first (it is the escape introducer) so
+/// already-escaped output is never double-mangled beyond the intended entities.
+fn html_escape(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#x27;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 /// Build a simple HTML directory listing page for the given path.
 fn directory_listing_html(
     dir_path: &std::path::Path,
@@ -88,12 +112,18 @@ fn directory_listing_html(
 
     for (is_dir, name) in names {
         let suffix = if is_dir { "/" } else { "" };
+        // Escape the filename before interpolating it into both the `href`
+        // attribute and the anchor text so a hostile filename cannot inject HTML.
+        let name = html_escape(&name);
         items.push(format!(
             r#"<li><a href="{name}{suffix}">{name}{suffix}</a></li>"#
         ));
     }
 
     let listing = items.join("\n        ");
+    // Escape the reflected request path before interpolating it into the
+    // `<title>`/`<h1>` so a crafted URL cannot reflect script into the page.
+    let url_path = html_escape(url_path);
     Ok(format!(
         r#"<!DOCTYPE html>
 <html>
@@ -312,5 +342,59 @@ mod tests {
         let (_dir, router) = router_with_hello(true);
         let (status, _) = get(router, "/nope.txt").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn html_escape_encodes_significant_characters() {
+        assert_eq!(
+            html_escape(r#"<img src=x onerror=alert(1)>"#),
+            "&lt;img src=x onerror=alert(1)&gt;"
+        );
+        assert_eq!(html_escape(r#""><script>"#), "&quot;&gt;&lt;script&gt;");
+        assert_eq!(html_escape("a&b'c"), "a&amp;b&#x27;c");
+        // Ordinary names pass through unchanged.
+        assert_eq!(html_escape("hello.txt"), "hello.txt");
+    }
+
+    /// SEC-007 / CORE-025 regression: a hostile filename must be HTML-escaped in
+    /// the generated directory listing so it cannot inject a live tag.
+    #[tokio::test]
+    async fn listing_escapes_hostile_filename() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let hostile = r#"<img src=x onerror=alert(1)>.txt"#;
+        std::fs::write(dir.path().join(hostile), "x").expect("write file");
+        let tracking_state = TrackingState {
+            stats: AtomicServerStats::new(),
+        };
+        let router = build_router(dir.path().to_path_buf(), true, tracking_state);
+        let (status, body) = get(router, "/").await;
+        assert_eq!(status, StatusCode::OK);
+        // The raw, unescaped tag must NOT appear anywhere in the output.
+        assert!(
+            !body.contains("<img src=x onerror=alert(1)>"),
+            "hostile filename must not be emitted as a live tag: {body}"
+        );
+        // The escaped form must be present instead.
+        assert!(
+            body.contains("&lt;img src=x onerror=alert(1)&gt;"),
+            "escaped filename should appear in the listing: {body}"
+        );
+    }
+
+    /// SEC-007 regression: the reflected request path must be HTML-escaped in the
+    /// `<title>`/`<h1>` so a crafted URL cannot reflect script into the page.
+    #[test]
+    fn directory_listing_escapes_reflected_url_path() {
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let html = directory_listing_html(dir.path(), r#"/<script>alert(1)</script>/"#)
+            .expect("render listing");
+        assert!(
+            !html.contains("<script>alert(1)</script>"),
+            "reflected path must not be emitted raw: {html}"
+        );
+        assert!(
+            html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"),
+            "reflected path should be escaped: {html}"
+        );
     }
 }
