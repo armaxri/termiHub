@@ -11,6 +11,7 @@ pub mod log_capture;
 /// macOS anti-throttling for the headless full-app E2E test bridge (#2480).
 #[cfg(target_os = "macos")]
 pub mod macos_unthrottle;
+pub mod panic_hook;
 pub mod portable;
 pub mod remote_exec;
 pub mod shell_detect;

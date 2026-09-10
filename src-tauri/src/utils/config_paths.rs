@@ -14,6 +14,7 @@
 //!    otherwise fall back to the OS per-user config directory joined with
 //!    [`APP_IDENTIFIER`] — equivalent to what `app_config_dir()` would return.
 
+use std::io;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -77,6 +78,48 @@ fn standalone_config_dir(
     Ok(base.join(APP_IDENTIFIER))
 }
 
+/// Outcome of [`create_dir_with_fallback`].
+///
+/// Startup must never panic just because a directory could not be created
+/// (ERR-004 / WA-RS-003): read-only portable media, a locked-down profile, a
+/// full disk, or a config path that exists as a file are all realistic. This
+/// reports what happened so the caller can log it and keep going.
+#[derive(Debug)]
+pub enum DirOutcome {
+    /// The preferred directory was created (or already existed).
+    Preferred(PathBuf),
+    /// The preferred directory could not be created, so the fallback is in use.
+    /// Carries the fallback path and the error that forced it, for logging.
+    Fallback { dir: PathBuf, error: io::Error },
+    /// Neither directory could be created. The caller must degrade further
+    /// (e.g. keep the preferred path best-effort) but must not panic.
+    Failed {
+        preferred_error: io::Error,
+        fallback_error: io::Error,
+    },
+}
+
+/// Create `preferred`, falling back to `fallback` when it cannot be created.
+///
+/// Returns a [`DirOutcome`] describing which directory (if any) now exists. This
+/// is what lets startup degrade gracefully instead of `.expect()`-panicking on an
+/// unwritable config/data location.
+pub fn create_dir_with_fallback(preferred: &Path, fallback: &Path) -> DirOutcome {
+    match std::fs::create_dir_all(preferred) {
+        Ok(()) => DirOutcome::Preferred(preferred.to_path_buf()),
+        Err(preferred_error) => match std::fs::create_dir_all(fallback) {
+            Ok(()) => DirOutcome::Fallback {
+                dir: fallback.to_path_buf(),
+                error: preferred_error,
+            },
+            Err(fallback_error) => DirOutcome::Failed {
+                preferred_error,
+                fallback_error,
+            },
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +168,58 @@ mod tests {
     fn standalone_errors_without_portable_or_base() {
         let result = standalone_config_dir(None, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn fallback_creates_the_preferred_dir_when_possible() {
+        let tmp = tempfile::tempdir().unwrap();
+        let preferred = tmp.path().join("config");
+        let fallback = tmp.path().join("temp-config");
+
+        match create_dir_with_fallback(&preferred, &fallback) {
+            DirOutcome::Preferred(dir) => {
+                assert_eq!(dir, preferred);
+                assert!(preferred.exists());
+                assert!(
+                    !fallback.exists(),
+                    "fallback must not be touched on success"
+                );
+            }
+            other => panic!("expected Preferred, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fallback_degrades_when_preferred_cannot_be_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A regular file where the preferred dir's parent should be makes
+        // `create_dir_all(preferred)` fail on every platform.
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        let preferred = blocker.join("config");
+        let fallback = tmp.path().join("temp-config");
+
+        match create_dir_with_fallback(&preferred, &fallback) {
+            DirOutcome::Fallback { dir, .. } => {
+                assert_eq!(dir, fallback);
+                assert!(fallback.exists(), "fallback dir must be created");
+            }
+            other => panic!("expected Fallback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fallback_reports_failure_when_neither_can_be_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        std::fs::write(&blocker, b"not a directory").unwrap();
+        // Both paths sit under the blocking file, so both creations fail.
+        let preferred = blocker.join("config");
+        let fallback = blocker.join("temp-config");
+
+        match create_dir_with_fallback(&preferred, &fallback) {
+            DirOutcome::Failed { .. } => {}
+            other => panic!("expected Failed, got {other:?}"),
+        }
     }
 }
