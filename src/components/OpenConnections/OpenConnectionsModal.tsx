@@ -67,7 +67,7 @@ import {
   networkHttpMonitorStopAll,
   networkHttpMonitorList,
 } from "@/services/networkApi";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { XServerStatusReport } from "@/types/xserver";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
@@ -292,12 +292,31 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     (showXServer ? 1 : 0);
 
   const handleCancelConnecting = async (tabId: string, panelId: string) => {
-    await cancelConnecting(tabId).catch(() => {});
+    // Surface a failed cancel: the in-flight handshake may still be running
+    // backend-side even though we close the tab (UX-033 / FEC-009).
+    try {
+      await cancelConnecting(tabId);
+    } catch (err) {
+      frontendError("open_connections", `Failed to cancel connecting tab ${tabId}: ${err}`);
+      toast.error(`Failed to cancel connection: ${err}`);
+    }
     closeTab(tabId, panelId);
   };
 
   const handleCancelAllConnecting = async () => {
-    await Promise.all(connectingTabs.map((t) => cancelConnecting(t.id).catch(() => {})));
+    const results = await Promise.allSettled(connectingTabs.map((t) => cancelConnecting(t.id)));
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      results.forEach((r, i) => {
+        if (r.status === "rejected") {
+          frontendError(
+            "open_connections",
+            `Failed to cancel connecting tab ${connectingTabs[i].id}: ${r.reason}`
+          );
+        }
+      });
+      toast.error(`Failed to cancel ${failed} connection${failed === 1 ? "" : "s"}`);
+    }
     connectingTabs.forEach((t) => closeTab(t.id, t.panelId));
   };
 
@@ -324,13 +343,23 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   };
 
   const handleCancelAllEstablishingAgents = async () => {
-    await Promise.all(
+    const results = await Promise.allSettled(
       establishingAgents.map((a) =>
-        a.connectionState === "connecting"
-          ? cancelConnectAgent(a.id).catch(() => {})
-          : disconnectRemoteAgent(a.id).catch(() => {})
+        a.connectionState === "connecting" ? cancelConnectAgent(a.id) : disconnectRemoteAgent(a.id)
       )
     );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      results.forEach((r, i) => {
+        if (r.status === "rejected") {
+          frontendError(
+            "open_connections",
+            `Failed to cancel establishing agent ${establishingAgents[i].id}: ${r.reason}`
+          );
+        }
+      });
+      toast.error(`Failed to cancel ${failed} agent${failed === 1 ? "" : "s"}`);
+    }
   };
 
   // Resolve a session's owning window into a display name (#1926). Returns null
@@ -359,18 +388,38 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     // Tag the kill as intentional so the terminal-exit handler suppresses the
     // "unexpected disconnect" overlay for the owning tab (#1121).
     markSessionKilled(id);
-    await closeTerminal(id, true).catch(() => {});
-    setLocalSessions((prev) => prev.filter((s) => s.id !== id));
+    try {
+      await closeTerminal(id, true);
+      setLocalSessions((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      // The session is still live — surface the failure and keep the row so the
+      // user is not misled into believing a leaked session is gone (UX-033).
+      frontendError("open_connections", `Failed to kill local session ${id}: ${err}`);
+      toast.error(`Failed to kill session: ${err}`);
+    }
   };
 
   // Kill a set of backend-local sessions at once, marking each kill intentional
-  // (#1121) and dropping the killed rows from the cache. Shared by the "Local
-  // Sessions" and "Spawned Containers" bulk actions (#1446).
+  // (#1121). Only rows whose kill actually succeeded are dropped — a failed kill
+  // left the session live, so its row stays visible and killable (UX-033).
   const killSessions = async (sessions: LocalSessionInfo[]) => {
-    const ids = new Set(sessions.map((s) => s.id));
     sessions.forEach((s) => markSessionKilled(s.id));
-    await Promise.all(sessions.map((s) => closeTerminal(s.id, true).catch(() => {})));
-    setLocalSessions((prev) => prev.filter((s) => !ids.has(s.id)));
+    const results = await Promise.allSettled(sessions.map((s) => closeTerminal(s.id, true)));
+    const failedIds = new Set<string>();
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        failedIds.add(sessions[i].id);
+        frontendError(
+          "open_connections",
+          `Failed to kill local session ${sessions[i].id}: ${r.reason}`
+        );
+      }
+    });
+    const removed = new Set(sessions.filter((s) => !failedIds.has(s.id)).map((s) => s.id));
+    setLocalSessions((prev) => prev.filter((s) => !removed.has(s.id)));
+    if (failedIds.size > 0) {
+      toast.error(`Failed to kill ${failedIds.size} session${failedIds.size === 1 ? "" : "s"}`);
+    }
   };
 
   const handleKillAllLocal = () => killSessions(plainLocalSessions);
@@ -436,32 +485,84 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
 
   const handleKillProxy = async (agentId: string, id: string) => {
     markSessionKilled(id);
-    await closeTerminal(id, true).catch(() => {});
-    setProxySessions((prev) => ({
-      ...prev,
-      [agentId]: (prev[agentId] ?? []).filter((s) => s.id !== id),
-    }));
+    try {
+      await closeTerminal(id, true);
+      setProxySessions((prev) => ({
+        ...prev,
+        [agentId]: (prev[agentId] ?? []).filter((s) => s.id !== id),
+      }));
+    } catch (err) {
+      frontendError(
+        "open_connections",
+        `Failed to kill session ${id} via agent ${agentId}: ${err}`
+      );
+      toast.error(`Failed to kill session: ${err}`);
+    }
   };
 
   const handleKillAllProxy = async (agentId: string) => {
     const sessions = proxySessions[agentId] ?? [];
     sessions.forEach((s) => markSessionKilled(s.id));
-    await Promise.all(sessions.map((s) => closeTerminal(s.id, true).catch(() => {})));
-    setProxySessions((prev) => ({ ...prev, [agentId]: [] }));
+    const results = await Promise.allSettled(sessions.map((s) => closeTerminal(s.id, true)));
+    const failedIds = new Set<string>();
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        failedIds.add(sessions[i].id);
+        frontendError(
+          "open_connections",
+          `Failed to kill session ${sessions[i].id} via agent ${agentId}: ${r.reason}`
+        );
+      }
+    });
+    // Keep only the rows whose kill failed; the successful ones are gone (UX-033).
+    setProxySessions((prev) => ({
+      ...prev,
+      [agentId]: (prev[agentId] ?? []).filter((s) => failedIds.has(s.id)),
+    }));
+    if (failedIds.size > 0) {
+      toast.error(`Failed to kill ${failedIds.size} session${failedIds.size === 1 ? "" : "s"}`);
+    }
   };
 
   const handleKillAgentSession = async (agentId: string, sessionId: string) => {
-    await closeAgentSession(agentId, sessionId).catch(() => {});
-    setAgentSessions((prev) => ({
-      ...prev,
-      [agentId]: (prev[agentId] ?? []).filter((s) => s.sessionId !== sessionId),
-    }));
+    try {
+      await closeAgentSession(agentId, sessionId);
+      setAgentSessions((prev) => ({
+        ...prev,
+        [agentId]: (prev[agentId] ?? []).filter((s) => s.sessionId !== sessionId),
+      }));
+    } catch (err) {
+      frontendError(
+        "open_connections",
+        `Failed to kill session ${sessionId} on agent ${agentId}: ${err}`
+      );
+      toast.error(`Failed to kill session: ${err}`);
+    }
   };
 
   const handleKillAllAgentSessions = async (agentId: string) => {
     const sessions = agentSessions[agentId] ?? [];
-    await Promise.all(sessions.map((s) => closeAgentSession(agentId, s.sessionId).catch(() => {})));
-    setAgentSessions((prev) => ({ ...prev, [agentId]: [] }));
+    const results = await Promise.allSettled(
+      sessions.map((s) => closeAgentSession(agentId, s.sessionId))
+    );
+    const failedIds = new Set<string>();
+    results.forEach((r, i) => {
+      if (r.status === "rejected") {
+        failedIds.add(sessions[i].sessionId);
+        frontendError(
+          "open_connections",
+          `Failed to kill session ${sessions[i].sessionId} on agent ${agentId}: ${r.reason}`
+        );
+      }
+    });
+    // Keep only the rows whose kill failed; the successful ones are gone (UX-033).
+    setAgentSessions((prev) => ({
+      ...prev,
+      [agentId]: (prev[agentId] ?? []).filter((s) => failedIds.has(s.sessionId)),
+    }));
+    if (failedIds.size > 0) {
+      toast.error(`Failed to kill ${failedIds.size} session${failedIds.size === 1 ? "" : "s"}`);
+    }
   };
 
   // stopTunnel updates the store's live tunnelStates (via tunnel events), which
@@ -495,8 +596,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   };
 
   const handleStopXServer = async () => {
-    await xServerStop().catch(() => {});
-    setXServer(null);
+    try {
+      await xServerStop();
+      setXServer(null);
+    } catch (err) {
+      // Keep the X server row: a failed stop means it is still running (UX-033).
+      frontendError("open_connections", `Failed to stop X server: ${err}`);
+      toast.error(`Failed to stop X server: ${err}`);
+    }
   };
 
   // Refresh the store's live monitor list after a stop so the section reflects
