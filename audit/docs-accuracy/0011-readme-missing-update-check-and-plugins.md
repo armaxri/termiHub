@@ -13,7 +13,8 @@ evidence:
   - core/src/plugin/host.rs:41
   - src-tauri/src/lib.rs:548
   - docs/plugin-authoring.md:189
-status: open
+status: fixed
+resolution: "#2723"
 ---
 
 ## What

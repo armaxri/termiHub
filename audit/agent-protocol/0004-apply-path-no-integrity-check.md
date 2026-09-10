@@ -10,7 +10,8 @@ evidence:
   - agent/src/session/manager.rs:1048
   - agent/src/update/apply.rs:207
   - agent/src/update/download.rs:47
-status: open
+status: deferred
+resolution: "maintainer-decision — signed-update design"
 ---
 
 ## What

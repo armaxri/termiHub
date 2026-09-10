@@ -9,7 +9,8 @@ subsystem: core/src/monitoring
 evidence:
   - core/src/monitoring/http_monitor.rs:585
   - core/src/monitoring/http_monitor.rs:521
-status: open
+status: in-progress
+resolution: "#2728"
 ---
 
 ## What

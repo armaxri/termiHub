@@ -13,7 +13,8 @@ evidence:
   - src-tauri/Cargo.toml:18
   - src-tauri/src/session/registry.rs:96
   - src/utils/experimentalTypes.ts:11
-status: open
+status: fixed
+resolution: "#2723"
 ---
 
 ## What

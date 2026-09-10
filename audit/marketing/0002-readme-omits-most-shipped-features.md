@@ -10,7 +10,8 @@ evidence:
   - README.md:73
   - docs/concepts/README.md:42
   - audit/product-completeness/_summary.md
-status: open
+status: fixed
+resolution: "#2723"
 ---
 
 ## What

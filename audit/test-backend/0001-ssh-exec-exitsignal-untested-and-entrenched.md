@@ -11,7 +11,8 @@ evidence:
   - core/src/backends/ssh/exec.rs:149
   - core/src/backends/ssh/exec.rs:85
   - core/src/backends/ssh/exec.rs:333
-status: open
+status: fixed
+resolution: "#2722"
 ---
 
 ## What

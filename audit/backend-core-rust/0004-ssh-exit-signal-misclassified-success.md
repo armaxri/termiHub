@@ -9,7 +9,8 @@ subsystem: core/backends/ssh
 evidence:
   - core/src/backends/ssh/exec.rs:143
   - core/src/backends/ssh/exec.rs:149
-status: open
+status: fixed
+resolution: "#2722"
 ---
 
 ## What

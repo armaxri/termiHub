@@ -9,7 +9,8 @@ subsystem: core/backends/vnc
 evidence:
   - core/src/backends/vnc/mod.rs:377
   - core/src/backends/vnc/mod.rs:397
-status: open
+status: in-progress
+resolution: "#2725"
 ---
 
 ## What

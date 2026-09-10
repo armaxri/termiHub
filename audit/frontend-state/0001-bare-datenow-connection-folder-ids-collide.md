@@ -10,7 +10,8 @@ evidence:
   - src/hooks/useConnections.ts:20
   - src/hooks/useConnections.ts:28
   - src/store/appStore.ts:5447
-status: open
+status: fixed
+resolution: "#2724"
 ---
 
 ## What

@@ -24,7 +24,8 @@ evidence:
   - src/services/customHighlightRules.ts:28
   - src/themes/customThemes.ts:55
   - src/services/transport/ids.ts:9
-status: open
+status: in-progress
+resolution: "#2724 — collision fix merged; secondary helper-dedup deferred"
 ---
 
 ## What

@@ -11,7 +11,8 @@ evidence:
   - core/src/plugin/security.rs:329
   - src/components/Settings/FrontendPluginGateSettings.tsx:22
   - core/src/plugin/host.rs:258
-status: open
+status: deferred
+resolution: "maintainer-decision — plugin trust model"
 ---
 
 ## What

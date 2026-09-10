@@ -11,7 +11,8 @@ evidence:
   - src/components/LogViewer/LogViewer.tsx:63
   - src-tauri/src/utils/log_capture.rs:20
   - src-tauri/src/utils/file_log.rs:81
-status: open
+status: in-progress
+resolution: "#2727 — frontend channel done; durable backend forwarding deferred"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: core/ipc/ndjson
 evidence:
   - core/src/ipc/ndjson.rs:35
   - core/Cargo.toml:85
-status: open
+status: in-progress
+resolution: "#2725"
 ---
 
 ## What

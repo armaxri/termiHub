@@ -9,7 +9,8 @@ subsystem: README.md / core/backends/docker
 evidence:
   - README.md:81
   - audit/product-completeness/0016-docker-no-exec-into-existing-container.md
-status: open
+status: fixed
+resolution: "#2723"
 ---
 
 ## What

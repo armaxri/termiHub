@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/release.yml:60
   - .github/workflows/release.yml:213
   - docs/release-plan-0.1.0.md:516
-status: open
+status: deferred
+resolution: "maintainer-decision — code signing / notarization"
 ---
 
 ## What

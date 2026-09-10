@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/ssh
 evidence:
   - core/src/backends/ssh/exec.rs:161
-status: open
+status: fixed
+resolution: "#2722"
 ---
 
 ## What

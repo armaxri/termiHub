@@ -11,7 +11,8 @@ evidence:
   - CHANGELOG.md:20
   - docs/concepts/implemented/remote-desktop-sessions.html
   - audit/product-completeness/_summary.md
-status: open
+status: fixed
+resolution: "#2723 — readme feature list; screenshots (MKT-003) still open"
 ---
 
 ## What

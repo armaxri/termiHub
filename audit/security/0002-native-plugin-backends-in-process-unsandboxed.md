@@ -11,7 +11,8 @@ evidence:
   - core/src/plugin/security.rs:11
   - core/src/plugin/capabilities.rs:15
   - src/plugins/frontendPlugins.ts:107
-status: open
+status: deferred
+resolution: "maintainer-decision — plugin trust model: sandbox vs hard-off"
 ---
 
 ## What

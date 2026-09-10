@@ -18,7 +18,8 @@ evidence:
   - src-tauri/src/layout/mod.rs:11
   - src-tauri/src/workflow_projection/mod.rs:1
   - src-tauri/src/broadcast_projection/mod.rs:1
-status: open
+status: fixed
+resolution: "#2723"
 ---
 
 ## What

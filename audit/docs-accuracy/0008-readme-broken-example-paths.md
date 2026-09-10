@@ -9,7 +9,8 @@ subsystem: README/examples
 evidence:
   - README.md:491
   - README.md:388
-status: open
+status: fixed
+resolution: "#2723"
 ---
 
 ## What

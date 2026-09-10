@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/ipc/ndjson
 evidence:
   - core/src/ipc/ndjson.rs:35
-status: open
+status: in-progress
+resolution: "#2725"
 ---
 
 ## What

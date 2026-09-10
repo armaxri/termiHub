@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/restore_cohort_projection/mod.rs:31
   - src-tauri/src/system_monitor_projection/store.rs:24
   - src-tauri/src/lib.rs:1
-status: open
+status: fixed
+resolution: "#2723"
 ---
 
 ## What

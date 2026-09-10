@@ -11,7 +11,8 @@ evidence:
   - docs/keyboard-shortcuts.md:34
   - src/services/keybindings.ts:87
   - src/services/keybindings.test.ts:168
-status: open
+status: fixed
+resolution: "#2723"
 ---
 
 ## What

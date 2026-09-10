@@ -10,7 +10,8 @@ evidence:
   - src/components/ui/ErrorBoundary.tsx:44
   - src/components/FileEditor/FileEditor.tsx:1020
   - src/components/ActivityBar/ActivityBar.tsx:116
-status: open
+status: in-progress
+resolution: "#2727"
 ---
 
 ## What

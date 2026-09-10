@@ -9,7 +9,8 @@ subsystem: .github/workflows/system-integration
 evidence:
   - .github/workflows/system-integration.yml:278
   - .github/workflows/system-integration.yml:288
-status: open
+status: fixed
+resolution: "#2723"
 ---
 
 ## What

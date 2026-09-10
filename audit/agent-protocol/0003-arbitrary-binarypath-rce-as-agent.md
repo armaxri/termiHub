@@ -10,7 +10,8 @@ evidence:
   - agent/src/handler/dispatch.rs:1816
   - agent/src/session/manager.rs:975
   - agent/src/update/apply.rs:207
-status: open
+status: deferred
+resolution: "maintainer-decision — agent-update RCE full redesign (mitigation grindable)"
 ---
 
 ## What
