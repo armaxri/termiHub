@@ -48,7 +48,10 @@ immediately from the queue. Status: `queued` → `running` → `done` (or `block
 
 ## Status
 
-(coordinator updates this as rounds complete)
+**COMPLETE — all 38 angles done.** 668 findings (7 critical, 139 high, 316 medium,
+184 low, 22 info); 154 flagged `is_workaround: true`.
 
-- Round policy: 4 concurrent, refill on completion.
-- All angles start `queued`.
+- See `FINDINGS-INDEX.md` for the full per-angle table + complete critical/high list.
+- See `RELEASE-BLOCKERS.md` for the ranked release-gating synthesis.
+- Run notes: executed 4-at-a-time then 2-at-a-time after usage-limit events; failed
+  agents were resumed (context preserved), no angle dropped.
