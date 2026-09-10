@@ -135,6 +135,20 @@ fn parse_mlsx_time(value: &str) -> String {
 ///
 /// Returns `None` for unparseable lines, `total …` summary lines and
 /// `.` / `..` entries.
+///
+/// **Locale limitation (I18N-006):** the Unix `ls -l` date column uses
+/// abbreviated month names rendered in the *FTP server's* locale. Unlike the
+/// SSH/Docker parsers, this text is produced by the remote server's `LIST`
+/// implementation, not by a shell command this client runs, so there is no
+/// `LC_ALL=C` to force here — the client cannot pin the server's locale. A
+/// non-English month name (`mars`, `Mär`, `十月`) makes `suppaftp`'s POSIX
+/// parser reject the *whole line*, so the DOS parser is tried next and also
+/// fails, and the entry is skipped entirely (this function returns `None`) —
+/// the file simply does not appear in a `LIST`-only listing. This is why the
+/// file browser prefers **MLSD/MLST** (RFC 3659), whose `modify` fact is a
+/// locale-invariant `YYYYMMDDHHMMSS` timestamp and lists every entry regardless
+/// of server locale; `LIST` is only a fallback for servers that advertise no
+/// MLSD support.
 pub(crate) fn parse_list_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
     let decoded = decode_bytes(raw);
     let line = decoded.trim_end_matches(['\r', '\n']);
@@ -531,6 +545,43 @@ mod tests {
         for case in &cases {
             check(parse_mlsd_line(case.line, DIR), case);
         }
+    }
+
+    /// I18N-006: a `LIST` line with a localized (non-English) month name cannot
+    /// be locale-forced — the text comes from the FTP server, not a shell this
+    /// client runs — so `suppaftp` rejects the line and the entry is skipped.
+    /// The English form of the same line parses, and MLSD (the preferred path)
+    /// lists it regardless of locale. This documents the graceful degradation
+    /// and the reason MLSD is preferred.
+    #[test]
+    fn localized_month_list_line_is_skipped_but_mlsd_is_locale_invariant() {
+        // English month → parses with a real timestamp.
+        let en = parse_list_line(b"-rw-r--r-- 1 0 0 12 Mar 18 2018 rapport.txt", DIR)
+            .expect("english month must parse");
+        assert_eq!(en.modified, "2018-03-18T00:00:00Z");
+
+        // French ("mars") and German ("Mär") months → whole line rejected, entry
+        // dropped from a LIST-only listing (no locale control over the server).
+        assert!(
+            parse_list_line(
+                "-rw-r--r-- 1 0 0 12 mars 18 2018 rapport.txt".as_bytes(),
+                DIR
+            )
+            .is_none(),
+            "a localized `ls -l` month name is not parseable and the entry is skipped"
+        );
+        assert!(parse_list_line(
+            "-rw-r--r-- 1 0 0 12 Mär 18 2018 rapport.txt".as_bytes(),
+            DIR
+        )
+        .is_none());
+
+        // The MLSD form of the same file always lists with a locale-invariant
+        // timestamp — the reason the browser prefers MLSD over LIST.
+        let mlsd = parse_mlsd_line(b"type=file;size=12;modify=20180318000000; rapport.txt", DIR)
+            .expect("mlsd must parse");
+        assert_eq!(mlsd.name, "rapport.txt");
+        assert_eq!(mlsd.modified, "2018-03-18T00:00:00Z");
     }
 
     #[test]
