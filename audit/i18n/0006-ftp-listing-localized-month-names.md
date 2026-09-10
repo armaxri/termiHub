@@ -9,7 +9,8 @@ subsystem: core/backends/ftp/listing_parser
 evidence:
   - core/src/backends/ftp/listing_parser.rs:143
   - core/src/backends/ftp/listing_parser.rs:199
-status: open
+status: in-progress
+resolution: "#2731"
 ---
 
 ## What

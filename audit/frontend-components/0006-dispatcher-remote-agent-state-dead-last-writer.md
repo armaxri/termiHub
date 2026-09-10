@@ -11,7 +11,8 @@ evidence:
   - src/services/events.ts:291
   - src/services/events.ts:384
   - src/services/events.ts:392
-status: open
+status: fixed
+resolution: "#2730"
 ---
 
 ## What

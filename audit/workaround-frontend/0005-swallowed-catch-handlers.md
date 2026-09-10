@@ -14,7 +14,8 @@ evidence:
   - src/components/Terminal/Terminal.tsx:1051
   - src/hooks/useConnectSavedConnection.ts:172
   - src/components/Sidebar/AgentNode.tsx:873
-status: open
+status: in-progress
+resolution: "#2732 — critical catches fixed; low-impact remainder #2733"
 ---
 
 ## What

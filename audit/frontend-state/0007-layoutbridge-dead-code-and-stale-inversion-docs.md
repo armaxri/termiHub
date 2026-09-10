@@ -11,7 +11,8 @@ evidence:
   - src/store/layoutBridge.ts:793
   - src/store/layoutBridge.ts:407
   - src/store/layoutBridge.ts:18
-status: open
+status: fixed
+resolution: "#2730"
 ---
 
 ## What

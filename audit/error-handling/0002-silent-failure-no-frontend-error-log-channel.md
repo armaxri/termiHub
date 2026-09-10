@@ -11,7 +11,7 @@ evidence:
   - src/components/ui/ErrorBoundary.tsx:44
   - src/components/FileEditor/FileEditor.tsx:1020
   - src/components/ActivityBar/ActivityBar.tsx:116
-status: in-progress
+status: fixed
 resolution: "#2727"
 ---
 

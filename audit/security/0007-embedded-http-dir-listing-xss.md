@@ -12,7 +12,7 @@ evidence:
   - core/src/embedded_servers/http_server.rs:102
   - core/src/embedded_servers/http_server.rs:77
 status: in-progress
-resolution: "#2728"
+resolution: "#2728 — CI failed; fixer pending"
 ---
 
 ## What

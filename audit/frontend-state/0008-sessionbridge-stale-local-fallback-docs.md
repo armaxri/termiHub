@@ -11,7 +11,8 @@ evidence:
   - src/store/sessionBridge.ts:922
   - src/store/sessionBridge.ts:1053
   - src/store/sessionBridge.ts:675
-status: open
+status: fixed
+resolution: "#2730"
 ---
 
 ## What

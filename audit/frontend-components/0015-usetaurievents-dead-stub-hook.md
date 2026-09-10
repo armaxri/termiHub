@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src/hooks
 evidence:
   - src/hooks/useTauriEvents.ts:5
-status: open
+status: fixed
+resolution: "#2730"
 ---
 
 ## What

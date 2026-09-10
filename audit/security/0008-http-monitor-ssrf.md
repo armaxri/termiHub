@@ -10,7 +10,7 @@ evidence:
   - core/src/monitoring/http_monitor.rs:585
   - core/src/monitoring/http_monitor.rs:521
 status: in-progress
-resolution: "#2728"
+resolution: "#2728 — CI failed; fixer pending"
 ---
 
 ## What

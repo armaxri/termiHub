@@ -12,7 +12,8 @@ evidence:
   - src/components/Terminal/TerminalView.tsx:78
   - src/components/Terminal/TerminalView.tsx:133
   - src/utils/tabStatus.ts:4
-status: open
+status: fixed
+resolution: "#2730"
 ---
 
 ## What

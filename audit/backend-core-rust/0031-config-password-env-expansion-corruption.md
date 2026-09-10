@@ -9,7 +9,7 @@ subsystem: core/config
 evidence:
   - core/src/config/mod.rs:637
   - core/src/config/mod.rs:625
-status: in-progress
+status: fixed
 resolution: "#2729"
 ---
 

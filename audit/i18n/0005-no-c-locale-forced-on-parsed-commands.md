@@ -11,7 +11,8 @@ evidence:
   - core/src/backends/ssh/monitoring.rs:114
   - agent/src/monitoring/collector.rs:214
   - core/src/backends/ssh/exec.rs
-status: open
+status: in-progress
+resolution: "#2731"
 ---
 
 ## What

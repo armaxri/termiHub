@@ -10,7 +10,8 @@ evidence:
   - src/components/OpenConnections/OpenConnectionsModal.tsx:362
   - src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx:124
   - src/components/Terminal/Terminal.tsx:1051
-status: open
+status: in-progress
+resolution: "#2732 — critical action paths fixed; remainder #2733"
 ---
 
 ## What

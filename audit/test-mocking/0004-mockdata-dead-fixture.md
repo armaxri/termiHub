@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src/store
 evidence:
   - src/store/mockData.ts:1
-status: open
+status: fixed
+resolution: "#2730"
 ---
 
 ## What

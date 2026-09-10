@@ -12,7 +12,8 @@ evidence:
   - src/components/Terminal/Terminal.tsx:1051
   - src/components/Terminal/FileBrowserTab.tsx:73
   - src/hooks/useRemoteDesktopSession.ts:153
-status: open
+status: in-progress
+resolution: "#2732 — swallowed-error facet fixed on action paths; remainder #2733"
 ---
 
 ## What

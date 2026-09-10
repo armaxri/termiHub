@@ -9,7 +9,8 @@ subsystem: src/store/layoutBridge.ts
 evidence:
   - src/store/layoutBridge.ts:614
   - src/store/layoutBridge.ts:14
-status: open
+status: fixed
+resolution: "#2730"
 ---
 
 ## What

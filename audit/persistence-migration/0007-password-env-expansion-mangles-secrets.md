@@ -12,8 +12,8 @@ evidence:
   - core/src/config/mod.rs:625
   - core/src/config/mod.rs:637
   - src-tauri/src/terminal/backend.rs:211
-status: in-progress
-resolution: "#2729 — secret env-expansion facet; other PER-007 facets remain"
+status: fixed
+resolution: "#2729 — secret env-expansion fixed (+4th site in src-tauri backend.rs)"
 ---
 
 ## What

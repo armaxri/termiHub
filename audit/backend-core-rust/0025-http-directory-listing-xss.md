@@ -9,7 +9,7 @@ subsystem: core/embedded_servers/http
 evidence:
   - core/src/embedded_servers/http_server.rs:89
 status: in-progress
-resolution: "#2728"
+resolution: "#2728 — CI failed; fixer pending"
 ---
 
 ## What
