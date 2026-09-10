@@ -225,16 +225,14 @@ describe("events service", () => {
       dispatcher = new TerminalOutputDispatcher();
     });
 
-    it("init registers four global listeners", async () => {
+    it("init registers the global listeners", async () => {
       mockedListen.mockResolvedValue(vi.fn());
 
       await dispatcher.init();
 
-      expect(mockedListen).toHaveBeenCalledTimes(4);
+      expect(mockedListen).toHaveBeenCalledTimes(2);
       expect(mockedListen).toHaveBeenCalledWith("terminal-output", expect.any(Function));
       expect(mockedListen).toHaveBeenCalledWith("terminal-exit", expect.any(Function));
-      expect(mockedListen).toHaveBeenCalledWith("remote-state-change", expect.any(Function));
-      expect(mockedListen).toHaveBeenCalledWith("agent-state-change", expect.any(Function));
     });
 
     it("init is idempotent — second call does nothing", async () => {
@@ -243,7 +241,7 @@ describe("events service", () => {
       await dispatcher.init();
       await dispatcher.init();
 
-      expect(mockedListen).toHaveBeenCalledTimes(4);
+      expect(mockedListen).toHaveBeenCalledTimes(2);
     });
 
     it("routes output events to the correct session callback", async () => {
@@ -288,25 +286,6 @@ describe("events service", () => {
       });
 
       expect(cb).toHaveBeenCalledWith(0);
-    });
-
-    it("routes remote state events to the correct session callback", async () => {
-      const handlers: Record<string, (event: unknown) => void> = {};
-      mockedListen.mockImplementation((eventName, handler) => {
-        handlers[eventName as string] = handler as (event: unknown) => void;
-        return Promise.resolve(vi.fn());
-      });
-
-      await dispatcher.init();
-
-      const cb = vi.fn();
-      dispatcher.subscribeRemoteState("sess-1", cb);
-
-      handlers["remote-state-change"]({
-        payload: { session_id: "sess-1", state: "connected" },
-      });
-
-      expect(cb).toHaveBeenCalledWith("connected");
     });
 
     it("unsubscribe stops delivery", async () => {
@@ -592,13 +571,11 @@ describe("events service", () => {
     it("destroy calls unlisten and clears callbacks", async () => {
       const unlistenOutput = vi.fn();
       const unlistenExit = vi.fn();
-      const unlistenRemoteState = vi.fn();
       let callCount = 0;
       mockedListen.mockImplementation(() => {
         callCount++;
         if (callCount === 1) return Promise.resolve(unlistenOutput);
-        if (callCount === 2) return Promise.resolve(unlistenExit);
-        return Promise.resolve(unlistenRemoteState);
+        return Promise.resolve(unlistenExit);
       });
 
       await dispatcher.init();
@@ -610,7 +587,6 @@ describe("events service", () => {
 
       expect(unlistenOutput).toHaveBeenCalled();
       expect(unlistenExit).toHaveBeenCalled();
-      expect(unlistenRemoteState).toHaveBeenCalled();
     });
 
     it("can be re-initialized after destroy", async () => {
@@ -624,13 +600,13 @@ describe("events service", () => {
 
       await dispatcher.init();
 
-      expect(mockedListen).toHaveBeenCalledTimes(4);
+      expect(mockedListen).toHaveBeenCalledTimes(2);
     });
 
     it("handles StrictMode race: destroy during pending init cleans up leaked listeners", async () => {
       // Simulate React StrictMode: mount → unmount → remount.
       // The first init()'s listen() promises are still pending when destroy() runs,
-      // so unlistenOutput/Exit/RemoteState are null and destroy() can't clean them.
+      // so unlistenOutput/Exit are null and destroy() can't clean them.
       // Without the generation counter fix, the pending listeners would leak as
       // duplicates alongside the second init()'s listeners.
 

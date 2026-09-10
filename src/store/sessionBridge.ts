@@ -526,7 +526,7 @@ function sessionRegionClient(): ProjectionClient {
  * Ensure the `session-lifecycle` region client is subscribed so projected diffs
  * are received and fanned out to the {@link onSessionView} listeners. Idempotent
  * and de-duplicated across concurrent callers; a transport/subscribe failure is
- * logged and rethrown so the caller can fall back to the local path.
+ * logged and rethrown so the caller can handle it as a resilience event.
  */
 export function ensureSessionSubscribed(): Promise<ProjectionClient> {
   if (regionClient) return Promise.resolve(regionClient);
@@ -578,11 +578,10 @@ function awaitVersion(client: ProjectionClient, version: number, timeoutMs = 400
 /**
  * Dispatch a `session.*` intent and resolve with the resulting projected
  * lifecycle for that session — the authoritative status after the transition.
- * Mirrors {@link import("./layoutBridge").runLayoutIntent}: it subscribes, awaits
- * the produced version, and reads the reconciled view. Used by parity tests to
- * assert the intent path reproduces the local transition.
+ * Subscribes, awaits the produced version, and reads the reconciled view. Used by
+ * parity tests to assert the intent path reproduces the expected transition.
  *
- * @throws on a rejected intent (the caller falls back to the local path)
+ * @throws on a rejected intent (surfaced to the caller as a resilience event)
  */
 export async function runSessionIntent(
   kind: SessionIntentKind,
@@ -672,23 +671,16 @@ export function effectiveAutoReconnect(
   return projectedToAutoReconnect(projected, now, onReconnectCommand) ?? undefined;
 }
 
-// ── Render cut: status / disconnect-error fields (#2205 PR-A) ───────────────────
+// ── Status / disconnect-error fields (#2205) ────────────────────────────────────
 //
-// Phase 4 step 4 (#2205) flips the terminal lifecycle *readers* — the overlays,
-// the tab-strip status dot, the split-panel overlay gates and Open Connections —
-// off the `appStore` status slices (`terminalConnecting`,
-// `terminalReconnectingTabs`, `terminalDisconnectErrors`) and onto the projected
-// `session-lifecycle` region. PR-A is the render cut only: the readers consult the
-// region, `appStore` keeps its slices + the `driveAutoReconnect` engine + the
-// client `session.*` dispatch, and the reducer / authority removal is PR-B.
-//
-// Each field uses the same faithful-mirror gate as {@link effectiveAutoReconnect}:
-// the region sources the render only when its status agrees with `appStore`'s
-// slice; otherwise the reader falls back to `appStore` verbatim. Because the gate
-// guarantees agreement, the rendered value is byte-identical to the pre-cut path,
-// independent of the deferred server-side folds (#2439) — a region that has not
-// (yet) observed a drop / disconnect / connect-failure simply falls back to
-// `appStore`.
+// The terminal lifecycle *readers* — the overlays, the tab-strip status dot, the
+// split-panel overlay gates and Open Connections — source their status
+// (connecting / reconnecting / failed) and disconnect error **purely** from the
+// projected `session-lifecycle` region. The per-client `appStore` status slices
+// (`terminalConnecting`, `terminalReconnectingTabs`, `terminalDisconnectErrors`)
+// and the `driveAutoReconnect` engine were removed once the region became the sole
+// authority (#2205 PR-B); the backend folds every lifecycle edge at the source, so
+// each `effective*` reader below is a thin projection of the region view.
 
 /** The last-known reconciled `session-lifecycle` view (the `sessions` map), for a
  * consumer seeding before its first diff arrives. */
@@ -897,8 +889,7 @@ export function effectiveConnecting(projected: ProjectedSessionLifecycle | undef
 
 /**
  * Effective `terminalReconnectingTabs[tabId]` for rendering: `true` when the
- * projected status is `reconnecting` and it mirrors the local bool, otherwise the
- * local bool verbatim.
+ * projected status is `reconnecting` (the region is the sole authority, #2205 PR-B).
  */
 export function effectiveReconnecting(projected: ProjectedSessionLifecycle | undefined): boolean {
   return projected?.status === "reconnecting";
@@ -921,15 +912,14 @@ export function effectiveDisconnectError(
 
 /**
  * Effective `terminalReconnectTriggerErrors[tabId]` for rendering (#2442): the
- * projected `reconnectError` when it mirrors the local trigger error exactly,
- * otherwise the local value verbatim (`undefined` ⇒ no error).
+ * projected `reconnectError`, sourced purely from the region (`undefined` ⇒ no
+ * error). The region is the sole authority (#2205 PR-B).
  *
- * Unlike the status-keyed gates above, this reads the region's `reconnectError`
+ * Unlike the status-keyed readers above, this reads the region's `reconnectError`
  * field directly rather than off a status: the reconnect-trigger cause is written
  * by its own `session.reconnectTrigger` intent and is meaningful alongside the
  * agent-managed reconnecting phase (which the region does not itself model as a
- * status). The disconnect overlay only surfaces it inside the reconnecting
- * variant, so the value is byte-identical to the pre-cut `appStore` read.
+ * status). The disconnect overlay only surfaces it inside the reconnecting variant.
  */
 export function effectiveReconnectTriggerError(
   projected: ProjectedSessionLifecycle | undefined
@@ -1047,8 +1037,8 @@ export function effectiveDisconnectErrorMap(
   return out;
 }
 
-/** Log a bridge fallback so the local-path recovery is visible in the LogViewer. */
+/** Log a session-region write failure so the resilience recovery is visible in the LogViewer. */
 export function logSessionBridgeFallback(kind: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
-  frontendLog("session_bridge", `${kind} fell back to local lifecycle: ${message}`);
+  frontendLog("session_bridge", `${kind} region write failed: ${message}`);
 }

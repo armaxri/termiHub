@@ -223,7 +223,7 @@ import {
   registerAdditionalLanguagePackages,
   registerCustomGrammars,
 } from "@/utils/monacoCustomLanguages";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
 import {
@@ -1213,10 +1213,6 @@ export interface AppState
    * shows no active reconnect for the tab.
    */
   cancelAutoReconnect: (tabId: string, error?: string) => void;
-
-  // Remote connection states
-  remoteStates: Record<string, string>;
-  setRemoteState: (sessionId: string, state: string) => void;
 
   // Remote agents — the ordered agent list plus each agent's live sessions, saved
   // definitions and folders are region-authoritative (#2409): they live only in the
@@ -6038,11 +6034,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
     },
 
-    // Remote connection states
-    remoteStates: {},
-    setRemoteState: (sessionId, state) =>
-      set((s) => ({ remoteStates: { ...s.remoteStates, [sessionId]: state } })),
-
     // Remote agents — the ordered agent list plus each agent's sessions /
     // definitions / folders are region-authoritative (#2409); no `appStore` slice.
     // See the `agents` projection region (read via `useProjectedAgents()` /
@@ -6201,7 +6192,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Disconnect first if connected
       const agent = currentAgentsView().remoteAgents.find((a) => a.id === agentId);
       if (agent && agent.connectionState !== "disconnected") {
-        apiDisconnectAgent(agentId).catch(() => {});
+        // Best-effort transport teardown during delete — a failure leaks the
+        // connection, so log it to the LogViewer rather than swallowing it
+        // (WA-FE-005).
+        apiDisconnectAgent(agentId).catch((err) => {
+          frontendError(
+            "app_store",
+            `Failed to disconnect agent ${agentId} during delete: ${err instanceof Error ? err.message : String(err)}`
+          );
+        });
       }
       // Optimistic remove in the region — drops the agent and all of its sub-state
       // (the store's `remove` clears sessions/definitions/folders too, #2409);

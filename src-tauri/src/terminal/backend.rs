@@ -199,6 +199,15 @@ impl RemoteAgentConfig {
         format!("{resolved} --version 2>/dev/null")
     }
 
+    /// Return a copy with `${VAR}` placeholders and `~` expanded in the
+    /// non-secret fields (`host`, `username`, `key_path`).
+    ///
+    /// `password` is **deliberately left verbatim** — a password is opaque
+    /// secret material, not a template, and expanding it would silently corrupt
+    /// the secret and leak desktop-process environment values into the
+    /// credential sent to the remote host. `key_path` is a *path* to a key
+    /// file, not the key itself, so it still expands. (CORE-031 / SEC-001 /
+    /// PER-007.)
     #[allow(dead_code)]
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);
@@ -208,7 +217,6 @@ impl RemoteAgentConfig {
             let stripped = s.trim().trim_matches('"').trim_matches('\'');
             expand_config_value(stripped)
         });
-        self.password = self.password.map(|s| expand_config_value(&s));
         self
     }
 
@@ -447,6 +455,61 @@ mod tests {
         };
         let ssh = agent.to_ssh_config();
         assert_eq!(ssh.save_password, Some(true));
+    }
+
+    #[test]
+    fn remote_agent_config_expand_leaves_password_verbatim() {
+        // A password is opaque secret material: `$`, `${VAR}`, and a leading `~`
+        // are all valid password characters and must survive `expand()`
+        // byte-for-byte — no env/tilde expansion, no env-var value leaking into
+        // the credential (CORE-031 / SEC-001 / PER-007).
+        const SECRET: &str = "~p@$$${TERMIHUB_TEST_AGENT_SECRET_LEAK}w0rd";
+        temp_env::with_var(
+            "TERMIHUB_TEST_AGENT_SECRET_LEAK",
+            Some("leaked-env-value"),
+            || {
+                let cfg = RemoteAgentConfig {
+                    host: "pi.local".to_string(),
+                    port: 22,
+                    username: "pi".to_string(),
+                    auth_method: "password".to_string(),
+                    password: Some(SECRET.to_string()),
+                    key_path: None,
+                    save_password: Some(true),
+                    agent_path: None,
+                    external_connection_files: vec![],
+                    ..Default::default()
+                }
+                .expand();
+                assert_eq!(
+                    cfg.password.as_deref(),
+                    Some(SECRET),
+                    "agent password must be preserved verbatim (no expansion, no env leak)"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn remote_agent_config_expand_still_expands_key_path() {
+        // Guard against over-correcting: the SSH key *path* is a path, not a
+        // secret, and must still expand.
+        temp_env::with_var("TERMIHUB_TEST_AGENT_KEYDIR", Some("/opt/keys"), || {
+            let cfg = RemoteAgentConfig {
+                host: "pi.local".to_string(),
+                port: 22,
+                username: "pi".to_string(),
+                auth_method: "key".to_string(),
+                password: None,
+                key_path: Some("${TERMIHUB_TEST_AGENT_KEYDIR}/id_ed25519".to_string()),
+                save_password: None,
+                agent_path: None,
+                external_connection_files: vec![],
+                ..Default::default()
+            }
+            .expand();
+            assert_eq!(cfg.key_path.as_deref(), Some("/opt/keys/id_ed25519"));
+        });
     }
 
     #[test]

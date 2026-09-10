@@ -84,13 +84,6 @@ vi.mock("@/services/tunnelApi", () => ({
 
 import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
-import {
-  composeLayoutState,
-  composeRenderTree,
-  currentLayoutView,
-  toMinimalNode,
-  type LayoutView,
-} from "./layoutBridge";
 import { extractTabContent, useAppStore } from "./appStore";
 import { layoutState } from "@/test/layoutState";
 
@@ -99,16 +92,6 @@ const LOCAL_CONFIG: ConnectionConfig = { type: "local", config: { shell: "zsh" }
 /** Every tab currently in the active panel tree, flattened. */
 function allTabs(): TerminalTab[] {
   return getAllLeaves(layoutState().rootPanel).flatMap((l) => l.tabs);
-}
-
-/** The projected (multi-group) view of the current tree — a single active group
- * holding the current panel tree (#2283 slice C). */
-function currentView(): LayoutView {
-  const { rootPanel, activePanelId } = layoutState();
-  return {
-    groups: [{ id: "g", name: "Main", root: toMinimalNode(rootPanel), activePanelId }],
-    activeGroupId: "g",
-  };
 }
 
 describe("appStore — tabContent by-id map (#2283)", () => {
@@ -170,34 +153,27 @@ describe("appStore — tabContent by-id map (#2283)", () => {
     expect(useAppStore.getState().tabContent[id]).toBeUndefined();
   });
 
-  it("render parity: composing from the map equals composing from the in-tree tab", () => {
+  it("content map mirrors a mix of terminal and editor tabs", () => {
     // A mix of a terminal tab and an editor tab — both mapped since slice C.
     useAppStore.getState().addTab("Shell", "local", LOCAL_CONFIG);
     useAppStore.getState().openScratchEditorTab("Notes", "notes.md", "hello");
     useAppStore.getState().addTab("Shell 2", "local", LOCAL_CONFIG);
 
-    const { rootPanel, tabContent } = layoutState();
-    const view = currentView();
-
-    const fromTree = composeRenderTree(view, rootPanel);
-    const fromMap = composeRenderTree(view, rootPanel, tabContent);
-    // Sourcing content from the map is byte-identical to sourcing it from the tree.
-    expect(fromMap).toEqual(fromTree);
-    // ...and identical to the authoritative tree itself (structure + content).
-    expect(fromMap).toEqual(rootPanel);
+    // Every tab in the tree has a content-identical map entry.
+    for (const t of allTabs()) {
+      expect(useAppStore.getState().tabContent[t.id]).toEqual(extractTabContent(t));
+    }
   });
 
-  it("render parity holds after rename + session update", () => {
+  it("content map stays in sync after rename + session update", () => {
     const id = layoutState().addTab("Shell", "local", LOCAL_CONFIG);
     useAppStore.getState().renameTab(id, "Renamed");
     useAppStore.getState().setTabSessionId(id, "sess-7");
 
-    const { rootPanel, tabContent } = layoutState();
-    const view = currentView();
-    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(
-      composeRenderTree(view, rootPanel)
-    );
-    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(rootPanel);
+    const tab = allTabs().find((t) => t.id === id)!;
+    expect(useAppStore.getState().tabContent[id]).toEqual(extractTabContent(tab));
+    expect(useAppStore.getState().tabContent[id].title).toBe("Renamed");
+    expect(useAppStore.getState().tabContent[id].sessionId).toBe("sess-7");
   });
 });
 
@@ -232,14 +208,6 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
         expect(tabContent[t.id]).toEqual(extractTabContent(t));
       }
     }
-
-    // Composing from the map is byte-identical to the in-tree fallback and to the
-    // authoritative tree — so the in-tree fallback is now belt-and-suspenders.
-    const view = currentView();
-    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(
-      composeRenderTree(view, rootPanel)
-    );
-    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(rootPanel);
   });
 
   it.each([
@@ -277,7 +245,7 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
     expect(useAppStore.getState().tabContent[reused.id]).toEqual(extractTabContent(reused));
   });
 
-  it("openScratchEditorTab tracks editorMeta; render parity holds", () => {
+  it("openScratchEditorTab tracks editorMeta in the content map", () => {
     useAppStore.getState().openScratchEditorTab("Notes", "notes.md", "content");
     const tab = allTabs().find((t) => t.contentType === "editor")!;
     // The editorMeta rides in the map entry (content, not structure).
@@ -286,63 +254,12 @@ describe("appStore — comprehensive tabContent map for every tab type (#2283 sl
       (useAppStore.getState().tabContent[tab.id] as { editorMeta?: { scratch?: boolean } })
         .editorMeta?.scratch
     ).toBe(true);
-
-    const { rootPanel, tabContent } = layoutState();
-    const view = currentView();
-    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(rootPanel);
   });
 });
 
 describe("appStore — region→appStore layout mirror (#2283 slice E1)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
-  });
-
-  /** The appStore layout fields the mirror owns. */
-  function layoutOf() {
-    const s = layoutState();
-    return {
-      rootPanel: s.rootPanel,
-      activePanelId: s.activePanelId,
-      tabGroups: s.tabGroups,
-      activeTabGroupId: s.activeTabGroupId,
-    };
-  }
-
-  it("drives appStore layout from the region view after a structural op", () => {
-    const s = layoutState();
-    s.addTab("Shell", "local", LOCAL_CONFIG);
-    s.splitPanel("horizontal");
-
-    // appStore's layout equals what the mirror composes from the live region view —
-    // i.e. the region is the producer of the rendered layout, not just a shadow.
-    const state = layoutState();
-    const composed = composeLayoutState(
-      currentLayoutView(),
-      state.rootPanel,
-      state.tabGroups,
-      state.tabContent
-    );
-    expect(composed).not.toBeNull();
-    expect(composed).toEqual(layoutOf());
-  });
-
-  it("mirror composes a multi-group layout identically", () => {
-    const s = layoutState();
-    s.addTab("Shell", "local", LOCAL_CONFIG);
-    s.addTabGroup("Second");
-    s.addTab("Shell 2", "local", LOCAL_CONFIG);
-    s.splitPanel("vertical");
-
-    const state = layoutState();
-    const composed = composeLayoutState(
-      currentLayoutView(),
-      state.rootPanel,
-      state.tabGroups,
-      state.tabContent
-    );
-    expect(composed).toEqual(layoutOf());
-    expect(state.tabGroups).toHaveLength(2);
   });
 
   it("does not strand a tab opened without a layout intent (open mid-flight)", () => {
