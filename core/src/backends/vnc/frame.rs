@@ -11,6 +11,20 @@
 //! [`vnc::PixelFormat::rgba`] decodes into and what the shared canvas blits
 //! directly — no channel swap needed.
 
+/// Upper bound on either framebuffer dimension, in pixels.
+///
+/// Server-advertised dimensions are **untrusted** — the RFB peer is remote and
+/// possibly hostile. `resize` allocates `width * height * 4` bytes straight from
+/// these values, so without a cap a single crafted `SetResolution(65535, 65535)`
+/// forces a ~17 GB zeroed allocation, and Rust aborts the whole process on
+/// allocation failure (no catchable error) — a trivial denial of service.
+///
+/// 8192 comfortably covers 4K/5K panels and multi-monitor spans while bounding a
+/// single framebuffer to `8192 * 8192 * 4` = 256 MiB. Dimensions above the cap
+/// are clamped before any allocation. (The mock backend caps far lower at 1920,
+/// which is fine for synthetic test frames but would reject real 4K desktops.)
+pub const MAX_DIMENSION: u32 = 8192;
+
 /// A local RGBA copy of the remote framebuffer, kept in lockstep with what the
 /// frontend canvas shows so CopyRect regions can be resolved to real pixels.
 #[derive(Debug, Default)]
@@ -41,7 +55,16 @@ impl FrameShadow {
     ///
     /// A resolution change repaints the whole surface on the wire, so discarding
     /// the old contents is correct and avoids stale pixels bleeding through.
+    ///
+    /// Both dimensions are clamped to [`MAX_DIMENSION`] **before** the allocation
+    /// so untrusted, server-supplied sizes can never drive an unbounded (and
+    /// process-aborting) allocation. This is the single allocation choke point —
+    /// every RFB path that grows the framebuffer (`SetResolution`, a full
+    /// `RawImage`/tight-JPEG arriving before any resolution) funnels through
+    /// here, so clamping once bounds them all.
     pub fn resize(&mut self, width: u32, height: u32) {
+        let width = width.min(MAX_DIMENSION);
+        let height = height.min(MAX_DIMENSION);
         self.width = width;
         self.height = height;
         self.data = vec![0u8; (width as usize) * (height as usize) * 4];
@@ -144,6 +167,33 @@ mod tests {
         assert_eq!(s.width(), 4);
         assert_eq!(s.height(), 3);
         assert_eq!(s.extract(0, 0, 4, 3).unwrap(), vec![0u8; 4 * 3 * 4]);
+    }
+
+    #[test]
+    fn resize_clamps_hostile_dimensions_before_allocating() {
+        // A hostile RFB peer advertising 65535×65535 would, unclamped, force a
+        // ~17 GB allocation and abort the process. The clamp must bound both
+        // dimensions to MAX_DIMENSION so only a sane buffer is ever allocated.
+        // (Without the fix this test aborts/OOMs rather than failing cleanly.)
+        let mut s = FrameShadow::new();
+        s.resize(65535, 65535);
+        assert_eq!(s.width(), MAX_DIMENSION);
+        assert_eq!(s.height(), MAX_DIMENSION);
+        // The backing buffer matches the clamped dimensions, not the requested.
+        let expected = (MAX_DIMENSION as usize) * (MAX_DIMENSION as usize) * 4;
+        assert_eq!(
+            s.extract(0, 0, MAX_DIMENSION, MAX_DIMENSION)
+                .map(|v| v.len()),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn resize_leaves_in_bounds_dimensions_untouched() {
+        let mut s = FrameShadow::new();
+        s.resize(1920, 1080);
+        assert_eq!(s.width(), 1920);
+        assert_eq!(s.height(), 1080);
     }
 
     #[test]

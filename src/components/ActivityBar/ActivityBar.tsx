@@ -25,6 +25,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { open } from "@tauri-apps/plugin-dialog";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore, SidebarView } from "@/store/appStore";
+import { frontendError } from "@/utils/frontendLog";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import { OpenConnectionsModal } from "@/components/OpenConnections/OpenConnectionsModal";
@@ -113,7 +114,12 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
       const json = await readTextFile(filePath);
       setImportDialog(true, json);
     } catch (err) {
-      console.error("Failed to read import file:", err);
+      // Record the read failure in the user-openable LogViewer instead of the
+      // unreachable DevTools console (OBS-005).
+      frontendError(
+        "activity_bar",
+        `failed to read import file: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
   }, [setImportDialog]);
 
