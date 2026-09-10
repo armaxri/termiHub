@@ -75,4 +75,19 @@ describe("SidebarListItem", () => {
     expect(dot.classList.contains("sidebar-list-item__status")).toBe(true);
     expect(dot.classList.contains("sidebar-list-item__status--error")).toBe(true);
   });
+
+  it("exposes a non-colour accessible name when a label is given", () => {
+    act(() => root.render(<SidebarStatusDot tone="success" label="Running" testId="dot" />));
+    const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
+    // role=img + aria-label make the status perceivable without colour (A11Y-003).
+    expect(dot.getAttribute("role")).toBe("img");
+    expect(dot.getAttribute("aria-label")).toBe("Running");
+  });
+
+  it("stays a bare decorative span when no label is given", () => {
+    act(() => root.render(<SidebarStatusDot tone="neutral" testId="dot" />));
+    const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
+    expect(dot.getAttribute("role")).toBeNull();
+    expect(dot.getAttribute("aria-label")).toBeNull();
+  });
 });

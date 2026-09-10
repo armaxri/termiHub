@@ -98,6 +98,9 @@ describe("TunnelListItem — errored resting state (#1240)", () => {
 
     const dot = container.querySelector('[data-testid="tunnel-status-tun-1"]');
     expect(dot?.className).toContain("sidebar-list-item__status--error");
+    // The dot carries a non-colour accessible name for the state (A11Y-003).
+    expect(dot?.getAttribute("role")).toBe("img");
+    expect(dot?.getAttribute("aria-label")).toBe("Error");
     expect(container.textContent).toContain("SSH session closed by peer (bastion.corp)");
   });
 

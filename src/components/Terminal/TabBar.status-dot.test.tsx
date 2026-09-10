@@ -123,6 +123,36 @@ describe("TabBar — per-tab connection status dot", () => {
     expect(dotFor("t1")?.className).toContain("tab__state-dot--failed");
   });
 
+  it("exposes a non-colour accessible name for the connected state", () => {
+    render([makeTerminalTab("t1", true)]);
+    const dot = dotFor("t1");
+    // role=img + aria-label surface the status to AT without hover/colour (A11Y-004).
+    expect(dot?.getAttribute("role")).toBe("img");
+    expect(dot?.getAttribute("aria-label")).toBe("Connected");
+  });
+
+  it("exposes a non-colour accessible name for the failed state", () => {
+    render([makeTerminalTab("t1", true)]);
+    act(() => {
+      useAppStore.setState({ terminalSpawnErrors: { t1: "boom" } });
+    });
+    expect(dotFor("t1")?.getAttribute("aria-label")).toBe("Connection failed");
+  });
+
+  it("exposes a non-colour accessible name for the connecting state", async () => {
+    harness.transport.setSession("t1", connecting());
+    render([makeTerminalTab("t1", true)]);
+    await flushSessionRegion();
+    expect(dotFor("t1")?.getAttribute("aria-label")).toBe("Connecting");
+  });
+
+  it("exposes a non-colour accessible name for the disconnected state", async () => {
+    harness.transport.setSession("t1", disconnected());
+    render([makeTerminalTab("t1", true)]);
+    await flushSessionRegion();
+    expect(dotFor("t1")?.getAttribute("aria-label")).toBe("Disconnected");
+  });
+
   it("renders a 'disconnected' dot when the terminal session has exited", async () => {
     harness.transport.setSession("t1", disconnected());
     render([makeTerminalTab("t1", true)]);
