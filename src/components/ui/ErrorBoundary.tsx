@@ -1,5 +1,6 @@
 import { Component } from "react";
 import type { ErrorInfo, ReactNode } from "react";
+import { frontendError } from "@/utils/frontendLog";
 
 export interface ErrorBoundaryProps {
   children: ReactNode;
@@ -41,7 +42,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
     const scope = this.props.label ? ` (${this.props.label})` : "";
-    console.error(`React render error${scope}:`, error, info.componentStack);
+    // Route the caught render crash into the user-openable LogViewer (never the
+    // DevTools console, which users cannot reach). The component stack pinpoints
+    // the failing subtree (OBS-005).
+    const stack = error.stack ? `\n${error.stack}` : "";
+    const componentStack = info.componentStack ? `\n${info.componentStack}` : "";
+    frontendError("react", `render error${scope}: ${error.message}${stack}${componentStack}`);
   }
 
   /** Clear the caught error so the subtree is attempted again. */

@@ -9,12 +9,19 @@ import App from "./App";
 import "./styles/global.css";
 import { registerCustomMonacoLanguages } from "./utils/monacoCustomLanguages";
 import { installCspViolationReporter } from "./security/cspViolationReporter";
+import { installGlobalErrorHandlers } from "./utils/globalErrorHandlers";
 
 // Surface any Content-Security-Policy violation (LogViewer + a bridge-readable
 // DOM sink) so a real-build boot/render check can assert the shipped CSP does
 // not block anything the app needs (#2059). Inert unless the browser blocks a
 // resource; installed before React mounts so early violations are captured.
 installCspViolationReporter();
+
+// Route unhandled promise rejections and uncaught errors into the frontend
+// ERROR channel (the user-openable LogViewer) so the whole fire-and-forget
+// failure class stops vanishing into the unreachable DevTools console. Wired
+// before React mounts so early failures are captured (ERR-002).
+installGlobalErrorHandlers();
 
 // Start loading TextMate grammars via Shiki in the background.
 // Editors show uncoloured text briefly until the grammars are ready.
