@@ -9,7 +9,8 @@ subsystem: src-tauri, core, agent, Cargo.toml
 evidence:
   - Cargo.toml:36
   - src-tauri/src/lib.rs:329
-status: open
+status: fixed
+resolution: "#2734 — panic hook (src-tauri); agent init_tracing left as follow-up"
 ---
 
 ## What

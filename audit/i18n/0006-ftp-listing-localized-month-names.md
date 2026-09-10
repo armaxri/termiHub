@@ -10,7 +10,7 @@ evidence:
   - core/src/backends/ftp/listing_parser.rs:143
   - core/src/backends/ftp/listing_parser.rs:199
 status: in-progress
-resolution: "#2731"
+resolution: "#2731 — FTP LIST is protocol-locale; robust-parse + documented, MLSD preferred"
 ---
 
 ## What

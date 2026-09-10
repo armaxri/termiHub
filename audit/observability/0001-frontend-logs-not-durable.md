@@ -11,8 +11,8 @@ evidence:
   - src/components/LogViewer/LogViewer.tsx:63
   - src-tauri/src/utils/log_capture.rs:20
   - src-tauri/src/utils/file_log.rs:81
-status: in-progress
-resolution: "#2727 — channel merged; durable backend forwarding in #2731-era B19"
+status: fixed
+resolution: "#2734 — frontend channel #2727 + durable backend forwarding #2734"
 ---
 
 ## What

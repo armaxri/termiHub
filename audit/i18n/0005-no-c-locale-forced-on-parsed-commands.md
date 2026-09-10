@@ -11,7 +11,7 @@ evidence:
   - core/src/backends/ssh/monitoring.rs:114
   - agent/src/monitoring/collector.rs:214
   - core/src/backends/ssh/exec.rs
-status: in-progress
+status: fixed
 resolution: "#2731"
 ---
 

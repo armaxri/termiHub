@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/lib.rs:488
   - src-tauri/src/lib.rs:505
   - src-tauri/src/lib.rs:506
-status: open
+status: fixed
+resolution: "#2734"
 ---
 
 ## What

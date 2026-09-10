@@ -9,7 +9,8 @@ subsystem: src/components/DynamicForm
 evidence:
   - src/components/DynamicForm/DynamicField.tsx:57
   - src/components/DynamicForm/ConnectionSettingsForm.tsx:268
-status: open
+status: fixed
+resolution: "#2735"
 ---
 
 ## What

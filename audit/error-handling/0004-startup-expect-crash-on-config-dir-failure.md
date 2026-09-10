@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/lib.rs:505
   - src-tauri/src/lib.rs:506
   - src-tauri/src/lib.rs:1646
-status: open
+status: fixed
+resolution: "#2734"
 ---
 
 ## What

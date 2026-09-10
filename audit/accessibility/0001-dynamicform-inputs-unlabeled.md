@@ -11,7 +11,8 @@ evidence:
   - src/components/DynamicForm/DynamicField.tsx:169
   - src/components/DynamicForm/DynamicField.tsx:186
   - src/components/DynamicForm/DynamicField.tsx:200
-status: open
+status: fixed
+resolution: "#2735"
 ---
 
 ## What

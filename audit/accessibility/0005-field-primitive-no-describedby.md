@@ -9,7 +9,8 @@ subsystem: src/components/ui/Field
 evidence:
   - src/components/ui/Field.tsx:42
   - src/components/ui/Field.tsx:51
-status: open
+status: fixed
+resolution: "#2735 — Field primitive fix cascaded to ~94 form fields"
 ---
 
 ## What

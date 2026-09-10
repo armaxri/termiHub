@@ -11,7 +11,7 @@ evidence:
   - core/src/backends/docker/file_browser.rs:343
   - core/src/backends/docker/file_browser.rs:359
   - core/src/backends/docker/file_browser.rs:367
-status: in-progress
+status: fixed
 resolution: "#2731"
 ---
 
