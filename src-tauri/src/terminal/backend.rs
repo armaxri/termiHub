@@ -199,6 +199,15 @@ impl RemoteAgentConfig {
         format!("{resolved} --version 2>/dev/null")
     }
 
+    /// Return a copy with `${VAR}` placeholders and `~` expanded in the
+    /// non-secret fields (`host`, `username`, `key_path`).
+    ///
+    /// `password` is **deliberately left verbatim** — a password is opaque
+    /// secret material, not a template, and expanding it would silently corrupt
+    /// the secret and leak desktop-process environment values into the
+    /// credential sent to the remote host. `key_path` is a *path* to a key
+    /// file, not the key itself, so it still expands. (CORE-031 / SEC-001 /
+    /// PER-007.)
     #[allow(dead_code)]
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);
@@ -208,7 +217,6 @@ impl RemoteAgentConfig {
             let stripped = s.trim().trim_matches('"').trim_matches('\'');
             expand_config_value(stripped)
         });
-        self.password = self.password.map(|s| expand_config_value(&s));
         self
     }
 

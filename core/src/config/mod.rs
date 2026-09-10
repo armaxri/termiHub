@@ -305,11 +305,13 @@ impl JumpHostConfig {
 
     /// Return a copy with all `${VAR}` placeholders and `~` expanded in the
     /// inline connection fields.
+    ///
+    /// `password` is a secret and is deliberately left verbatim — see
+    /// [`SshConfig::expand`] for the rationale.
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);
         self.username = expand_config_value(&self.username);
         self.key_path = expand_key_path(self.key_path);
-        self.password = self.password.map(|s| expand_config_value(&s));
         self
     }
 }
@@ -618,23 +620,38 @@ impl SerialConfig {
 }
 
 impl FtpConfig {
-    /// Return a copy with all `${VAR}` placeholders and `~` expanded.
+    /// Return a copy with `${VAR}` placeholders and `~` expanded in the
+    /// non-secret fields (`host`, `username`, `initial_directory`).
+    ///
+    /// `password` is a secret and is deliberately left verbatim — see
+    /// [`SshConfig::expand`] for the rationale.
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);
         self.username = expand_config_value(&self.username);
-        self.password = self.password.map(|s| expand_config_value(&s));
         self.initial_directory = self.initial_directory.map(|s| expand_config_value(&s));
         self
     }
 }
 
 impl SshConfig {
-    /// Return a copy with all `${VAR}` placeholders and `~` expanded.
+    /// Return a copy with `${VAR}` placeholders and `~` expanded in the
+    /// non-secret fields (`host`, `username`, `key_path`, and each `proxy_jump`
+    /// hop's non-secret fields).
+    ///
+    /// `password` is **deliberately left verbatim**. A password is opaque
+    /// secret material, not a template: `$`, `${VAR}`, and a leading `~` are all
+    /// valid password characters. Running it through [`expand_config_value`]
+    /// would (a) silently corrupt the stored secret (an unknown var expands to
+    /// the empty string, deleting characters; a leading `~` becomes a home
+    /// path) and (b) expand an embedded `${VAR}` to the desktop process's
+    /// environment value, leaking it into the credential sent to the remote
+    /// host — an env-var exfiltration channel against a malicious server.
+    /// `key_path` is a *path* to a key file, not the key itself, so it still
+    /// expands. (CORE-031 / SEC-001 / PER-007.)
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);
         self.username = expand_config_value(&self.username);
         self.key_path = expand_key_path(self.key_path);
-        self.password = self.password.map(|s| expand_config_value(&s));
         self.proxy_jump = self.proxy_jump.into_iter().map(|h| h.expand()).collect();
         self
     }
@@ -1458,80 +1475,99 @@ mod tests {
 
     #[test]
     fn ssh_config_expand_leaves_password_verbatim() {
-        temp_env::with_var("TERMIHUB_TEST_SECRET_LEAK", Some("leaked-env-value"), || {
-            let cfg = SshConfig {
-                host: "example.com".into(),
-                username: "admin".into(),
-                auth_method: "password".into(),
-                password: Some(SECRET_WITH_METACHARS.into()),
-                ..SshConfig::default()
-            }
-            .expand();
-            assert_eq!(
-                cfg.password.as_deref(),
-                Some(SECRET_WITH_METACHARS),
-                "SSH password must be preserved verbatim (no expansion, no env leak)"
-            );
-        });
+        temp_env::with_var(
+            "TERMIHUB_TEST_SECRET_LEAK",
+            Some("leaked-env-value"),
+            || {
+                let cfg = SshConfig {
+                    host: "example.com".into(),
+                    username: "admin".into(),
+                    auth_method: "password".into(),
+                    password: Some(SECRET_WITH_METACHARS.into()),
+                    ..SshConfig::default()
+                }
+                .expand();
+                assert_eq!(
+                    cfg.password.as_deref(),
+                    Some(SECRET_WITH_METACHARS),
+                    "SSH password must be preserved verbatim (no expansion, no env leak)"
+                );
+            },
+        );
     }
 
     #[test]
     fn ftp_config_expand_leaves_password_verbatim() {
-        temp_env::with_var("TERMIHUB_TEST_SECRET_LEAK", Some("leaked-env-value"), || {
-            let cfg = FtpConfig {
-                host: "ftp.example.com".into(),
-                username: "admin".into(),
-                password: Some(SECRET_WITH_METACHARS.into()),
-                ..FtpConfig::default()
-            }
-            .expand();
-            assert_eq!(
-                cfg.password.as_deref(),
-                Some(SECRET_WITH_METACHARS),
-                "FTP password must be preserved verbatim (no expansion, no env leak)"
-            );
-        });
+        temp_env::with_var(
+            "TERMIHUB_TEST_SECRET_LEAK",
+            Some("leaked-env-value"),
+            || {
+                let cfg = FtpConfig {
+                    host: "ftp.example.com".into(),
+                    username: "admin".into(),
+                    password: Some(SECRET_WITH_METACHARS.into()),
+                    ..FtpConfig::default()
+                }
+                .expand();
+                assert_eq!(
+                    cfg.password.as_deref(),
+                    Some(SECRET_WITH_METACHARS),
+                    "FTP password must be preserved verbatim (no expansion, no env leak)"
+                );
+            },
+        );
     }
 
     #[test]
     fn jump_host_config_expand_leaves_password_verbatim() {
-        temp_env::with_var("TERMIHUB_TEST_SECRET_LEAK", Some("leaked-env-value"), || {
-            let hop = JumpHostConfig {
-                host: "bastion".into(),
-                username: "admin".into(),
-                auth_method: "password".into(),
-                password: Some(SECRET_WITH_METACHARS.into()),
-                ..JumpHostConfig::default()
-            }
-            .expand();
-            assert_eq!(
-                hop.password.as_deref(),
-                Some(SECRET_WITH_METACHARS),
-                "jump-host password must be preserved verbatim (no expansion, no env leak)"
-            );
-        });
+        temp_env::with_var(
+            "TERMIHUB_TEST_SECRET_LEAK",
+            Some("leaked-env-value"),
+            || {
+                let hop = JumpHostConfig {
+                    host: "bastion".into(),
+                    username: "admin".into(),
+                    auth_method: "password".into(),
+                    password: Some(SECRET_WITH_METACHARS.into()),
+                    ..JumpHostConfig::default()
+                }
+                .expand();
+                assert_eq!(
+                    hop.password.as_deref(),
+                    Some(SECRET_WITH_METACHARS),
+                    "jump-host password must be preserved verbatim (no expansion, no env leak)"
+                );
+            },
+        );
     }
 
     #[test]
     fn ssh_config_expand_via_proxy_jump_leaves_hop_password_verbatim() {
         // The nested-hop path also runs through `JumpHostConfig::expand`.
-        temp_env::with_var("TERMIHUB_TEST_SECRET_LEAK", Some("leaked-env-value"), || {
-            let cfg = SshConfig {
-                host: "target".into(),
-                username: "u".into(),
-                auth_method: "key".into(),
-                proxy_jump: vec![JumpHostConfig {
-                    host: "bastion".into(),
-                    username: "admin".into(),
-                    auth_method: "password".into(),
-                    password: Some(SECRET_WITH_METACHARS.into()),
-                    ..Default::default()
-                }],
-                ..SshConfig::default()
-            }
-            .expand();
-            assert_eq!(cfg.proxy_jump[0].password.as_deref(), Some(SECRET_WITH_METACHARS));
-        });
+        temp_env::with_var(
+            "TERMIHUB_TEST_SECRET_LEAK",
+            Some("leaked-env-value"),
+            || {
+                let cfg = SshConfig {
+                    host: "target".into(),
+                    username: "u".into(),
+                    auth_method: "key".into(),
+                    proxy_jump: vec![JumpHostConfig {
+                        host: "bastion".into(),
+                        username: "admin".into(),
+                        auth_method: "password".into(),
+                        password: Some(SECRET_WITH_METACHARS.into()),
+                        ..Default::default()
+                    }],
+                    ..SshConfig::default()
+                }
+                .expand();
+                assert_eq!(
+                    cfg.proxy_jump[0].password.as_deref(),
+                    Some(SECRET_WITH_METACHARS)
+                );
+            },
+        );
     }
 
     /// Guard against over-correcting: non-secret path fields must STILL expand.
