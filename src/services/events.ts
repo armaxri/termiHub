@@ -57,7 +57,6 @@ interface TerminalExitPayload {
   exit_code: number | null;
 }
 
-
 /** Subscribe to terminal output events */
 export async function onTerminalOutput(
   callback: (sessionId: string, data: Uint8Array) => void
