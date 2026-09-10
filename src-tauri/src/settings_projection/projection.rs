@@ -37,14 +37,13 @@
 //! `patch` mirrors the targeted `{ ...current.settings, <field> }` spreads
 //! (`updateShellIntegration`, the layout persists); `reset` resets to defaults.
 //!
-//! # Shadow mode
+//! # Authoritative
 //!
-//! Registered and fully served, but **not** driving the live UI: no frontend
-//! subscribes to `settings` or dispatches `settings.*` yet, so these intents
-//! mutate only the shadow store and project to a region nobody renders. The
-//! `appStore` `settings` slice remains authoritative. Per the substrate contract
-//! the result of an intent is never returned inline — it always arrives as a
-//! projection diff on the `settings` region.
+//! Registered, fully served, and driving the live UI: the frontend subscribes to
+//! `settings` and dispatches `settings.*` (the former `appStore` `settings`
+//! reducers were removed, #2283). Per the substrate contract the result of an
+//! intent is never returned inline — it always arrives as a projection diff on
+//! the `settings` region.
 
 use std::sync::Arc;
 

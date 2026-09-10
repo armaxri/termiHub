@@ -1,4 +1,4 @@
-//! Shadow system-monitor authority — Phase 5 of the stateless-UI migration
+//! System-monitor authority — Phase 5 of the stateless-UI migration
 //! (#2224, part of #2139).
 //!
 //! Moves the per-host/session monitoring slice the frontend drives in `appStore`
@@ -8,18 +8,15 @@
 //! `system-monitors` projection region (Open Design Decision #4: infrastructure
 //! domains are shared) and serves the `monitor.*` intents through the projection
 //! substrate ([`crate::projection`]), mirroring the SSH-tunnels pilot
-//! ([`crate::tunnel::projection`]) and the session-lifecycle shadow
+//! ([`crate::tunnel::projection`]) and the session-lifecycle region
 //! ([`crate::session_projection`]).
 //!
-//! # Render cut — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! The store is **not yet authoritative**: the status bar and Open Connections now
-//! render from the `system-monitors` region, but `appStore` still owns the state
-//! and the frontend keeps the region a faithful mirror of it via `monitor.replace`
-//! (rendering from the region only when it deep-equals `appStore`, else falling
-//! back to `appStore`). The granular `monitor.*` transitions stay served for the
-//! later mutation cut, which makes the store authoritative before the `appStore`
-//! state is finally removed. Parity-safe at every step.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The status bar and Open Connections render from the `system-monitors` region
+//! and frontend code dispatches the `monitor.*` transitions; the former `appStore`
+//! monitoring reducers were removed.
 
 pub mod projection;
 pub mod store;

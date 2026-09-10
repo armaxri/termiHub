@@ -41,14 +41,13 @@
 //! `connection.reorder` intent is the standalone reorder transition (drag-reorder a
 //! connection among its siblings, #2594) — the twin of `agent.reorder`.
 //!
-//! # Shadow mode
+//! # Authoritative
 //!
-//! Registered and fully served, but **not** driving the live UI: no frontend
-//! subscribes to `connections` or dispatches `connection.*` yet, so these intents
-//! mutate only the shadow store and project to a region nobody renders. The
-//! `appStore` connections slice remains authoritative. Per the substrate contract
-//! the result of an intent is never returned inline — it always arrives as a
-//! projection diff on the `connections` region.
+//! Registered, fully served, and driving the live UI: the frontend subscribes to
+//! `connections` and dispatches `connection.*` (the former `appStore` connections
+//! reducers were removed, #2283). Per the substrate contract the result of an
+//! intent is never returned inline — it always arrives as a projection diff on
+//! the `connections` region.
 
 use std::sync::Arc;
 

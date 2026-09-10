@@ -22,14 +22,12 @@
 //! frontend concern under partial projection — so it is deliberately not modelled
 //! here.
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! This step is deliberately **not** authoritative. The store exists, accepts
-//! `connection.*` intents, and projects diffs, but nothing in the live UI
-//! subscribes to or renders the `connections` region, and no frontend code
-//! dispatches `connection.*` intents yet. The existing `appStore` connections
-//! slice remains authoritative. Later steps cut rendering, then mutation, over to
-//! the region, then remove the `appStore` state.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The live UI subscribes to and renders the `connections` region, and frontend
+//! code dispatches `connection.*` intents; the former `appStore` connections
+//! reducers were removed.
 
 use std::sync::{Mutex, MutexGuard};
 

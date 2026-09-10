@@ -654,7 +654,7 @@ impl ConnectionManager {
     /// saved (`None` in storage).
     ///
     /// This is the exact shape the frontend receives from the `get_settings`
-    /// command and, therefore, the shape reflected into the shadow
+    /// command and, therefore, the shape reflected into the
     /// [`SettingsStore`](crate::settings_projection::SettingsStore) at startup
     /// and on every persisted save (#2386). Keeping the resolution in one place
     /// keeps the command return value and the projection fold from drifting.

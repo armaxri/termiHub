@@ -1,4 +1,4 @@
-//! Shadow file-browser view authority — Phase 5 of the stateless-UI migration
+//! File-browser view authority — Phase 5 of the stateless-UI migration
 //! (#2228, part of #2153 / #2139).
 //!
 //! Moves the file-browser **UI state** the frontend drives in `appStore.ts` —
@@ -26,14 +26,12 @@
 //! `session-lifecycle` region — the region is **client-scoped**
 //! (`file-browser@<clientId>`).
 //!
-//! # Shadow only (#2228)
+//! # Authoritative — drives the live UI (#2228)
 //!
-//! Landed as a pure shadow foundation: managed authoritative state that serves
-//! the `fileBrowser.*` intents, but nothing in the live UI subscribes to or
-//! dispatches them yet — `appStore` stays authoritative and nothing user-facing
-//! changes. Later steps cut rendering (the panels read the projected region),
-//! then the mutations (browser actions dispatch `fileBrowser.*`), then remove the
-//! `appStore` reducers, keeping them as the parity-safe fallback until then.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The browser panels render from the projected region and browser actions
+//! dispatch `fileBrowser.*` intents; the former `appStore` file-browser reducers
+//! were removed.
 
 pub mod projection;
 pub mod store;

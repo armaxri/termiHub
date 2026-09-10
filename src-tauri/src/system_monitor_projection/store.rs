@@ -19,14 +19,12 @@
 //! monitor the status bar renders (the active tab) is layout/presentation and
 //! stays a frontend concern under partial projection.
 //!
-//! # Render cut — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! The store is **not yet authoritative**: the status bar and Open Connections now
-//! render from the `system-monitors` region, but `appStore` still owns the state
-//! and the frontend keeps the region a faithful mirror of it via the whole-map
-//! [`SystemMonitorStore::replace`] (`monitor.replace`) seed, rendering from the
-//! region only when it deep-equals `appStore`. Later steps cut mutation over to
-//! the region, then remove the `appStore` state.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The status bar and Open Connections render from the `system-monitors` region
+//! and frontend code dispatches the `monitor.*` transitions; the former `appStore`
+//! monitoring reducers were removed.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};

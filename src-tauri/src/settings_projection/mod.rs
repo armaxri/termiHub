@@ -1,4 +1,4 @@
-//! Shadow app-settings authority — Phase 5 of the stateless-UI migration
+//! App-settings authority — Phase 5 of the stateless-UI migration
 //! (#2227, part of #2153 / #2139).
 //!
 //! Moves the app-settings slice the frontend drives in `appStore` (the
@@ -35,15 +35,12 @@
 //! one ever carved out) would become a client-scoped presentation region instead
 //! — none exists today, so the whole `AppSettings` document is shared here.
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! This step is deliberately **not** authoritative. The store exists, accepts
-//! `settings.*` intents, and projects diffs, but nothing in the live UI
-//! subscribes to or renders the `settings` region, and no frontend code
-//! dispatches `settings.*` intents yet. The existing `appStore` `settings` slice
-//! and its `updateSettings` / `saveSettings` persistence remain authoritative.
-//! Later steps cut rendering, then mutation, over to the region, then remove the
-//! `appStore` state.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The live UI renders from the `settings` region and frontend code dispatches
+//! `settings.*` intents (persistence flows through the region); the former
+//! `appStore` `settings` reducers were removed.
 
 pub mod projection;
 pub mod store;

@@ -39,14 +39,13 @@
 //! intent: `agent_io_task` folds it at the backend source via
 //! [`fold_agent_transport_reconnecting`] / [`fold_agent_session_recovered`] (#2556).
 //!
-//! # Shadow mode
+//! # Authoritative
 //!
-//! Registered and fully served, but **not** driving the live UI: no frontend
-//! subscribes to `session-lifecycle` or dispatches `session.*` yet, so these
-//! intents mutate only the shadow store and project to a region nobody renders.
-//! The `appStore` lifecycle reducers and terminal overlays remain authoritative.
-//! Per the substrate contract the result of an intent is never returned inline —
-//! it always arrives as a projection diff on the `session-lifecycle` region.
+//! Registered, fully served, and driving the live UI: the frontend subscribes to
+//! `session-lifecycle` and dispatches `session.*` (the former `appStore`
+//! lifecycle reducers were removed, #2283). Per the substrate contract the result
+//! of an intent is never returned inline — it always arrives as a projection diff
+//! on the `session-lifecycle` region.
 
 use std::sync::Arc;
 

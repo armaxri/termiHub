@@ -37,14 +37,13 @@
 //! `reconcile` / `remove` / `clearCompleted` / `setMinimized` transitions drive
 //! the store for the (later) mutation cut.
 //!
-//! # Shadow only (#2229)
+//! # Authoritative (#2229)
 //!
-//! Registered and fully served, but nothing in the live UI subscribes to or
-//! dispatches these intents yet — a pure shadow foundation. Later steps cut
-//! rendering, then the mutations, over to it, keeping the `appStore` reducers as
-//! the parity-safe fallback. Per the substrate contract the result of an intent
-//! is never returned inline — it always arrives as a projection diff on the
-//! `transfers` region.
+//! Registered, fully served, and driving the live UI: the frontend subscribes to
+//! and dispatches these intents (the former `appStore` transfer reducers were
+//! removed, #2283). Per the substrate contract the result of an intent is never
+//! returned inline — it always arrives as a projection diff on the `transfers`
+//! region.
 
 use std::collections::HashMap;
 use std::sync::Arc;
