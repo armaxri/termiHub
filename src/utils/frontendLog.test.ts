@@ -1,5 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { LogEntry } from "@/types/terminal";
+import { invoke } from "@tauri-apps/api/core";
+
+vi.mock("@tauri-apps/api/core", () => ({
+  invoke: vi.fn(() => Promise.resolve()),
+}));
+
+const invokeMock = vi.mocked(invoke);
 
 // Each test that exercises the startup buffer uses vi.resetModules() + dynamic
 // import so the module-level `startupBuffer` and `listeners` arrays start fresh.
@@ -196,6 +203,63 @@ describe("frontendLog", () => {
       expect(received[0].message).toBe("buffered error");
       unsub();
     });
+  });
+});
+
+describe("durable-log forwarding (OBS-001)", () => {
+  // Emulate the Tauri webview so the durability forward is active.
+  beforeEach(() => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    invokeMock.mockClear();
+  });
+  afterEach(() => {
+    delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+  });
+
+  it("forwards ERROR entries to record_frontend_log with the prefix stripped", async () => {
+    vi.resetModules();
+    const { frontendError } = await import("./frontendLog");
+
+    frontendError("store", "save failed");
+
+    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledWith("record_frontend_log", {
+      level: "ERROR",
+      target: "store",
+      message: "save failed",
+    });
+  });
+
+  it("forwards WARN entries", async () => {
+    vi.resetModules();
+    const { frontendWarn } = await import("./frontendLog");
+
+    frontendWarn("net", "slow response");
+
+    expect(invokeMock).toHaveBeenCalledWith("record_frontend_log", {
+      level: "WARN",
+      target: "net",
+      message: "slow response",
+    });
+  });
+
+  it("does NOT forward DEBUG or INFO entries", async () => {
+    vi.resetModules();
+    const { frontendLog, frontendInfo } = await import("./frontendLog");
+
+    frontendLog("mod", "debug detail");
+    frontendInfo("mod", "informational");
+
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when the backend invoke rejects", async () => {
+    vi.resetModules();
+    invokeMock.mockRejectedValueOnce(new Error("ipc down"));
+    const { frontendError } = await import("./frontendLog");
+
+    expect(() => frontendError("mod", "boom")).not.toThrow();
+    expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 });
 

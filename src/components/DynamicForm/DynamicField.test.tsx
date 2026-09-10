@@ -627,6 +627,83 @@ describe("DynamicField", () => {
     });
   });
 
+  describe("accessibility: labels and error association (A11Y-001/002)", () => {
+    /**
+     * `getByLabelText` equivalent for the raw-DOM harness: find a `<label>`
+     * whose text contains `text`, then resolve its `htmlFor` to the control.
+     * Proves the label is programmatically associated with an input.
+     */
+    function getByLabelText(text: string): HTMLElement {
+      const label = Array.from(container.querySelectorAll("label")).find((l) =>
+        l.textContent?.includes(text)
+      );
+      if (!label) throw new Error(`no <label> containing "${text}"`);
+      const forId = label.getAttribute("for");
+      const control = forId ? document.getElementById(forId) : null;
+      if (!control) throw new Error(`label "${text}" is not associated with a control`);
+      return control;
+    }
+
+    it("associates a real <label> with the text input (retrievable by label)", () => {
+      renderField(textField("host"), "example.com", vi.fn());
+      const input = getByLabelText("Host") as HTMLInputElement;
+      expect(input.tagName).toBe("INPUT");
+      expect(input.type).toBe("text");
+      expect(input.value).toBe("example.com");
+    });
+
+    it("labels the password input", () => {
+      renderField(passwordField("password"), "", vi.fn());
+      const input = getByLabelText("Password") as HTMLInputElement;
+      expect(input.type).toBe("password");
+    });
+
+    it("labels the number input", () => {
+      const numberField: SettingsField = {
+        key: "timeout",
+        label: "Timeout",
+        fieldType: { type: "number", min: 0, max: 300 },
+        required: false,
+      };
+      renderField(numberField, 30, vi.fn());
+      const input = getByLabelText("Timeout") as HTMLInputElement;
+      expect(input.type).toBe("number");
+    });
+
+    it("marks an errored field aria-invalid and points aria-describedby at the message", () => {
+      renderField(textField("host"), "", vi.fn(), { error: "Host is required" });
+      const input = getByLabelText("Host");
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+
+      const errorNode = query("field-host-error")!;
+      expect(errorNode).toBeTruthy();
+      expect(errorNode.getAttribute("role")).toBe("alert");
+      expect(errorNode.textContent).toContain("Host is required");
+
+      // aria-describedby names the error node, so focusing the field reads it.
+      const describedBy = input.getAttribute("aria-describedby") ?? "";
+      expect(describedBy.split(" ")).toContain(errorNode.id);
+      expect(errorNode.id).toBeTruthy();
+    });
+
+    it("does not mark a valid field invalid", () => {
+      renderField(textField("host"), "ok", vi.fn());
+      const input = getByLabelText("Host");
+      expect(input.getAttribute("aria-invalid")).toBeNull();
+    });
+
+    it("includes the description hint in aria-describedby", () => {
+      renderField(textField("host", { description: "Server address" }), "ok", vi.fn());
+      const input = getByLabelText("Host");
+      const describedBy = input.getAttribute("aria-describedby") ?? "";
+      const descNode = describedBy
+        .split(" ")
+        .map((id) => document.getElementById(id))
+        .find((n) => n?.textContent?.includes("Server address"));
+      expect(descNode).toBeTruthy();
+    });
+  });
+
   describe("required-field markers", () => {
     it("renders a required marker and aria-required for a required field", () => {
       renderField(textField("host", { required: true }), "", vi.fn());

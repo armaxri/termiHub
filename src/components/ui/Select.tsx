@@ -36,8 +36,14 @@ export interface SelectProps {
   placeholder?: string;
   /** Disable the whole control. */
   disabled?: boolean;
+  /** `id` of the trigger, so an external `<label htmlFor>` can point at it. */
+  id?: string;
   /** Accessible label for the trigger. */
   "aria-label"?: string;
+  /** Space-separated ids of elements describing the control (e.g. an error message). */
+  "aria-describedby"?: string;
+  /** Marks the control invalid for assistive tech when validation fails. */
+  "aria-invalid"?: boolean;
   /** Test hook forwarded to the trigger. */
   "data-testid"?: string;
 }
@@ -93,6 +99,7 @@ export function Select({
   children,
   placeholder,
   disabled,
+  id,
   ...rest
 }: SelectProps): React.ReactElement {
   const testid = rest["data-testid"];
@@ -104,7 +111,10 @@ export function Select({
     <RadixSelect.Root value={value} onValueChange={onChange} disabled={disabled}>
       <RadixSelect.Trigger
         className="ui-select__trigger"
+        id={id}
         aria-label={rest["aria-label"]}
+        aria-describedby={rest["aria-describedby"]}
+        aria-invalid={rest["aria-invalid"] || undefined}
         data-testid={testid}
         data-value={value ?? ""}
       >

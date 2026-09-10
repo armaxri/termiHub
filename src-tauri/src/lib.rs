@@ -353,6 +353,12 @@ pub fn run() {
         (Ok(()), None) => unreachable!("the writer opened, so a log path resolves"),
     }
 
+    // Durable panic reporting (OBS-002). Installed right after the subscriber is
+    // live so a crash lands in the ring buffer and the synchronous file sink
+    // before the process unwinds — the highest-value post-mortem event, which
+    // otherwise leaves no trace in `termihub.log`.
+    utils::panic_hook::install();
+
     // Shared X server manager (#1049), held as an `Arc` so the provisioner
     // (#1052) and the Tauri commands can both reference the same instance.
     let x_server_manager = Arc::new(build_xserver_manager());
@@ -485,11 +491,44 @@ pub fn run() {
             // so all storage modules (which check TERMIHUB_CONFIG_DIR) use the portable path.
             if app_mode.is_portable() && std::env::var("TERMIHUB_CONFIG_DIR").is_err() {
                 if let Some(data_dir) = app_mode.data_dir() {
-                    std::fs::create_dir_all(data_dir).expect("Failed to create portable data directory");
-                    // Safety: called before any threads that read env vars are spawned.
-                    #[allow(unused_unsafe)]
-                    unsafe {
-                        std::env::set_var("TERMIHUB_CONFIG_DIR", data_dir);
+                    // Degrade instead of panicking (ERR-004 / WA-RS-003): a
+                    // read-only portable medium is exactly where creating the
+                    // portable `data/` dir fails. Fall back to a temp directory
+                    // so the app still starts; log what happened.
+                    let temp_fallback = std::env::temp_dir().join("termihub-portable-data");
+                    let storage_dir = match utils::config_paths::create_dir_with_fallback(
+                        data_dir,
+                        &temp_fallback,
+                    ) {
+                        utils::config_paths::DirOutcome::Preferred(dir) => Some(dir),
+                        utils::config_paths::DirOutcome::Fallback { dir, error } => {
+                            warn!(
+                                "could not create portable data directory {} ({error}); \
+                                 using temporary storage at {}",
+                                data_dir.display(),
+                                dir.display()
+                            );
+                            Some(dir)
+                        }
+                        utils::config_paths::DirOutcome::Failed {
+                            preferred_error,
+                            fallback_error,
+                        } => {
+                            tracing::error!(
+                                "could not create portable data directory {} ({preferred_error}) \
+                                 or temporary fallback ({fallback_error}); continuing with the OS \
+                                 default config location — portable data may not persist",
+                                data_dir.display()
+                            );
+                            None
+                        }
+                    };
+                    if let Some(dir) = storage_dir {
+                        // Safety: called before any threads that read env vars are spawned.
+                        #[allow(unused_unsafe)]
+                        unsafe {
+                            std::env::set_var("TERMIHUB_CONFIG_DIR", &dir);
+                        }
                     }
                 }
             }
@@ -501,9 +540,56 @@ pub fn run() {
             // On failure, fall back to defaults so the app can still start.
             // Portable mode already exported `TERMIHUB_CONFIG_DIR` above, so the
             // shared resolver's handle branch yields the correct directory.
-            let config_dir = utils::config_paths::resolve_config_dir(Some(app.handle()))
-                .expect("Failed to resolve app config directory");
-            std::fs::create_dir_all(&config_dir).expect("Failed to create config directory");
+            // Resolve + create the config dir, degrading to temp storage instead
+            // of panicking (ERR-004 / WA-RS-003). A locked-down profile, a full
+            // disk, or a config path that exists as a file must not kill launch.
+            let temp_config_fallback = std::env::temp_dir().join("termihub-config");
+            let resolved_config_dir =
+                match utils::config_paths::resolve_config_dir(Some(app.handle())) {
+                    Ok(dir) => dir,
+                    Err(e) => {
+                        warn!(
+                            "could not resolve app config directory ({e}); using temporary \
+                             storage at {}",
+                            temp_config_fallback.display()
+                        );
+                        temp_config_fallback.clone()
+                    }
+                };
+            let config_dir = match utils::config_paths::create_dir_with_fallback(
+                &resolved_config_dir,
+                &temp_config_fallback,
+            ) {
+                utils::config_paths::DirOutcome::Preferred(dir) => dir,
+                utils::config_paths::DirOutcome::Fallback { dir, error } => {
+                    warn!(
+                        "could not create config directory {} ({error}); using temporary storage \
+                         at {}",
+                        resolved_config_dir.display(),
+                        dir.display()
+                    );
+                    // Keep the rest of the app coherent: point storage modules
+                    // (which re-resolve via TERMIHUB_CONFIG_DIR) at the same dir.
+                    // Safety: still on the setup thread, before storage threads start.
+                    #[allow(unused_unsafe)]
+                    unsafe {
+                        std::env::set_var("TERMIHUB_CONFIG_DIR", &dir);
+                    }
+                    dir
+                }
+                utils::config_paths::DirOutcome::Failed {
+                    preferred_error,
+                    fallback_error,
+                } => {
+                    tracing::error!(
+                        "could not create config directory {} ({preferred_error}) or temporary \
+                         fallback ({fallback_error}); continuing best-effort — some settings may \
+                         not persist",
+                        resolved_config_dir.display()
+                    );
+                    resolved_config_dir
+                }
+            };
 
             // Plugin management layer (#1992) + native host loader (#1995): owns
             // <app-data>/plugins/, created lazily. The host loads a plugin's
@@ -1504,6 +1590,7 @@ pub fn run() {
             // Logs
             commands::logs::get_logs,
             commands::logs::clear_logs,
+            commands::logs::record_frontend_log,
             // Tunnels
             commands::tunnel::get_tunnels,
             commands::tunnel::save_tunnel,
