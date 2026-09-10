@@ -57,15 +57,6 @@ interface TerminalExitPayload {
   exit_code: number | null;
 }
 
-interface RemoteStateChangePayload {
-  session_id: string;
-  state: string;
-}
-
-interface AgentStateChangePayload {
-  session_id: string;
-  state: string;
-}
 
 /** Subscribe to terminal output events */
 export async function onTerminalOutput(
@@ -176,8 +167,6 @@ export async function onSessionOwnershipChanged(callback: () => void): Promise<U
 export class TerminalOutputDispatcher {
   private outputCallbacks = new Map<string, Set<(data: Uint8Array) => void>>();
   private exitCallbacks = new Map<string, Set<(exitCode: number | null) => void>>();
-  private remoteStateCallbacks = new Map<string, (state: string) => void>();
-  private agentStateCallbacks = new Map<string, (state: string) => void>();
   /** Buffer output for sessions whose subscriber hasn't registered yet. */
   private pendingOutput = new Map<string, Uint8Array[]>();
   /**
@@ -191,8 +180,6 @@ export class TerminalOutputDispatcher {
   private pendingExit = new Map<string, number | null>();
   private unlistenOutput: UnlistenFn | null = null;
   private unlistenExit: UnlistenFn | null = null;
-  private unlistenRemoteState: UnlistenFn | null = null;
-  private unlistenAgentState: UnlistenFn | null = null;
   private initPromise: Promise<void> | null = null;
   private initGeneration = 0;
 
@@ -268,44 +255,6 @@ export class TerminalOutputDispatcher {
       return;
     }
     this.unlistenExit = unlistenExit;
-
-    const unlistenRemoteState = await listen<RemoteStateChangePayload>(
-      "remote-state-change",
-      (event) => {
-        const { session_id, state } = event.payload;
-        const cb = this.remoteStateCallbacks.get(session_id);
-        if (cb) {
-          cb(state);
-        }
-      }
-    );
-
-    if (gen !== this.initGeneration) {
-      // See the note above: destroy() already cleaned up the earlier listeners;
-      // unlisten only the one this invocation just registered.
-      unlistenRemoteState();
-      return;
-    }
-    this.unlistenRemoteState = unlistenRemoteState;
-
-    const unlistenAgentState = await listen<AgentStateChangePayload>(
-      "agent-state-change",
-      (event) => {
-        const { session_id, state } = event.payload;
-        const cb = this.agentStateCallbacks.get(session_id);
-        if (cb) {
-          cb(state);
-        }
-      }
-    );
-
-    if (gen !== this.initGeneration) {
-      // See the note above: destroy() already cleaned up the earlier listeners;
-      // unlisten only the one this invocation just registered.
-      unlistenAgentState();
-      return;
-    }
-    this.unlistenAgentState = unlistenAgentState;
   }
 
   /** Subscribe to output events for a specific session. Returns an unsubscribe function. */
@@ -380,22 +329,6 @@ export class TerminalOutputDispatcher {
     }
   }
 
-  /** Subscribe to remote state change events for a specific session. Returns an unsubscribe function. */
-  subscribeRemoteState(sessionId: string, callback: (state: string) => void): () => void {
-    this.remoteStateCallbacks.set(sessionId, callback);
-    return () => {
-      this.remoteStateCallbacks.delete(sessionId);
-    };
-  }
-
-  /** Subscribe to agent state change events for a specific agent. Returns an unsubscribe function. */
-  subscribeAgentState(agentId: string, callback: (state: string) => void): () => void {
-    this.agentStateCallbacks.set(agentId, callback);
-    return () => {
-      this.agentStateCallbacks.delete(agentId);
-    };
-  }
-
   /** Tear down global listeners and clear all callbacks. */
   destroy(): void {
     this.initGeneration++;
@@ -407,18 +340,8 @@ export class TerminalOutputDispatcher {
       this.unlistenExit();
       this.unlistenExit = null;
     }
-    if (this.unlistenRemoteState) {
-      this.unlistenRemoteState();
-      this.unlistenRemoteState = null;
-    }
-    if (this.unlistenAgentState) {
-      this.unlistenAgentState();
-      this.unlistenAgentState = null;
-    }
     this.outputCallbacks.clear();
     this.exitCallbacks.clear();
-    this.remoteStateCallbacks.clear();
-    this.agentStateCallbacks.clear();
     this.pendingOutput.clear();
     this.pendingExit.clear();
     this.initPromise = null;

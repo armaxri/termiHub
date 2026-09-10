@@ -290,25 +290,6 @@ describe("events service", () => {
       expect(cb).toHaveBeenCalledWith(0);
     });
 
-    it("routes remote state events to the correct session callback", async () => {
-      const handlers: Record<string, (event: unknown) => void> = {};
-      mockedListen.mockImplementation((eventName, handler) => {
-        handlers[eventName as string] = handler as (event: unknown) => void;
-        return Promise.resolve(vi.fn());
-      });
-
-      await dispatcher.init();
-
-      const cb = vi.fn();
-      dispatcher.subscribeRemoteState("sess-1", cb);
-
-      handlers["remote-state-change"]({
-        payload: { session_id: "sess-1", state: "connected" },
-      });
-
-      expect(cb).toHaveBeenCalledWith("connected");
-    });
-
     it("unsubscribe stops delivery", async () => {
       const handlers: Record<string, (event: unknown) => void> = {};
       mockedListen.mockImplementation((eventName, handler) => {
