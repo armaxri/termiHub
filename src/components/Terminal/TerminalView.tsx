@@ -75,7 +75,6 @@ export function TerminalView() {
     listen<{ session_id: string; state: string }>("remote-state-change", (event) => {
       const { session_id, state } = event.payload;
       frontendLog("disconnect", `remote-state-change session=${session_id} state=${state}`);
-      useAppStore.getState().setRemoteState(session_id, state);
       if (state === "disconnected") {
         // Find the tab that owns this session and show the disconnect overlay.
         const store = useAppStore.getState();
@@ -124,14 +123,6 @@ export function TerminalView() {
           const cfg = tab.config.config as { agentId?: string };
           return cfg.agentId === session_id;
         });
-
-        // G5 (#1236): mirror the agent state into the session-id-keyed
-        // `remoteStates` map for every active-session tab so the compact
-        // tab-strip dot agrees with the terminal overlay. The agent path used
-        // to skip this, leaving the dot stale-green through a drop/reconnect.
-        for (const tab of agentTerminalTabs) {
-          if (tab.sessionId) store.setRemoteState(tab.sessionId, state);
-        }
 
         if (state === "connected") {
           // Query the agent for sessions it actually recovered. Daemons that

@@ -1214,10 +1214,6 @@ export interface AppState
    */
   cancelAutoReconnect: (tabId: string, error?: string) => void;
 
-  // Remote connection states
-  remoteStates: Record<string, string>;
-  setRemoteState: (sessionId: string, state: string) => void;
-
   // Remote agents — the ordered agent list plus each agent's live sessions, saved
   // definitions and folders are region-authoritative (#2409): they live only in the
   // shared `agents` projection region, read via `useProjectedAgents()` /
@@ -6037,11 +6033,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
         get().setTerminalDisconnectWithError(tabId, error);
       }
     },
-
-    // Remote connection states
-    remoteStates: {},
-    setRemoteState: (sessionId, state) =>
-      set((s) => ({ remoteStates: { ...s.remoteStates, [sessionId]: state } })),
 
     // Remote agents — the ordered agent list plus each agent's sessions /
     // definitions / folders are region-authoritative (#2409); no `appStore` slice.

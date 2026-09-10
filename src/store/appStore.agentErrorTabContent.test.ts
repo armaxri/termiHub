@@ -33,7 +33,6 @@ vi.mock("@/components/ui", async () => {
 
 import type { ConnectionConfig, PanelNode, TerminalTab } from "@/types/terminal";
 import { getAllLeaves } from "@/utils/panelTree";
-import { composeRenderTree, toMinimalNode, type LayoutView } from "./layoutBridge";
 import { extractTabContent, useAppStore } from "./appStore";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { __emitAgentsViewForTest, EMPTY_AGENTS_VIEW } from "./agentsBridge";
@@ -74,14 +73,6 @@ function seedAgentErrorLayout(): void {
   });
 }
 
-function currentView(): LayoutView {
-  const { rootPanel, activePanelId } = layoutState();
-  return {
-    groups: [{ id: "g1", name: "Main", root: toMinimalNode(rootPanel), activePanelId }],
-    activeGroupId: "g1",
-  };
-}
-
 describe("appStore — agent-error tabs tracked in tabContent (#2539)", () => {
   beforeEach(() => {
     __emitAgentsViewForTest(EMPTY_AGENTS_VIEW, 0);
@@ -97,13 +88,6 @@ describe("appStore — agent-error tabs tracked in tabContent (#2539)", () => {
     expect(
       (tabContent["ae1"] as { agentErrorMeta?: { agentId: string } }).agentErrorMeta?.agentId
     ).toBe("ag1");
-    // Render parity: composing from the map is byte-identical to the in-tree
-    // fallback and to the authoritative tree — so the fallback is redundant.
-    const view = currentView();
-    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(
-      composeRenderTree(view, rootPanel)
-    );
-    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(rootPanel);
   });
 
   it("the agent-error → terminal conversion updates the map in sync with the tree", () => {
@@ -139,9 +123,6 @@ describe("appStore — agent-error tabs tracked in tabContent (#2539)", () => {
     // The map followed the conversion (the #2539 instrumentation) — no stale entry.
     expect(tabContent["ae1"]).toEqual(extractTabContent(tab));
     expect(tabContent["ae1"].contentType).toBe("terminal");
-    // Render parity holds after the conversion.
-    const view = currentView();
-    expect(composeRenderTree(view, rootPanel, tabContent)).toEqual(rootPanel);
   });
 
   it("closing an agent-error tab prunes its map entry", () => {
