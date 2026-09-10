@@ -51,7 +51,7 @@ import { SudoPromptDialog, type SudoAuthorizeOptions } from "./SudoPromptDialog"
 import { SaveCopyDialog } from "./SaveCopyDialog";
 import { tagMonacoInput, testInputEditorOptions, moveEditorCursor } from "./editorInput";
 import { isTestBridgeEnabled } from "@/testbridge/testMode";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendLog, frontendError } from "@/utils/frontendLog";
 import "./FileEditor.css";
 
 /** Maximum number of sudo-password attempts before falling back to the error banner. */
@@ -1017,7 +1017,11 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     } catch (err) {
       // Surface the failure: `savedContent` is left untouched, so the buffer
       // stays marked dirty/unsaved and the user can fix permissions and retry.
-      console.error("Save failed:", err);
+      // Also record it in the LogViewer so the failure is diagnosable later.
+      frontendError(
+        "file_editor",
+        `save failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`
+      );
       setSaveError(formatSaveError(err));
     } finally {
       setSaving(false);
