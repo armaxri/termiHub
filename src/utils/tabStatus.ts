@@ -1,10 +1,9 @@
 /**
  * Per-tab connection status derived from the real terminal-lifecycle maps.
  *
- * All of these maps are keyed by `tab.id` (unlike the legacy `remoteStates`
- * map, which is keyed by `session_id` and fed by a never-firing event), so the
- * derived status stays correct for every tab — including background/inactive
- * ones — without needing the tab to be focused.
+ * All of these maps are keyed by `tab.id`, so the derived status stays correct
+ * for every tab — including background/inactive ones — without needing the tab
+ * to be focused.
  */
 export type TabStatus = "connecting" | "connected" | "failed" | "disconnected";
 
