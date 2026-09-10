@@ -7,11 +7,25 @@
 //! open an exec channel at all, or (later) piping content into `sudo tee` for
 //! privilege-elevated writes.
 
+use std::time::Duration;
+
 use russh::ChannelMsg;
 
 use crate::errors::CoreError;
 
 use super::handler::SshSession;
+
+/// Default upper bound on how long a single SSH exec may run before it is
+/// abandoned with a timeout error.
+///
+/// A half-dead server that opens the exec channel but never sends EOF/Close
+/// would otherwise hang the caller forever (there is no cancellation token
+/// plumbed into the drain). Direct callers — the exec-capability probe, the
+/// `sudo`-elevated write path — get this bound; the monitoring loop wraps its
+/// own (shorter) [`COLLECT_TIMEOUT`](super::monitoring). Kept generous so a
+/// legitimately large elevated write is never cut off, while still bounding a
+/// genuinely stalled connection.
+pub const DEFAULT_EXEC_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Captured result of running a command over an SSH exec channel.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -123,6 +137,26 @@ async fn run_exec<C: ExecChannel>(
         exit_status,
         terminated_by_signal,
     })
+}
+
+/// Run [`run_exec`] with an upper time bound.
+///
+/// A stalled server that opens the channel but never sends EOF/Close would
+/// otherwise leave the drain looping forever. On timeout the exec is abandoned
+/// and a [`CoreError::Other`] is returned instead of hanging the caller.
+async fn run_exec_bounded<C: ExecChannel>(
+    channel: &mut C,
+    command: &str,
+    stdin: &str,
+    timeout: Duration,
+) -> Result<SshExecOutput, CoreError> {
+    match tokio::time::timeout(timeout, run_exec(channel, command, stdin)).await {
+        Ok(result) => result,
+        Err(_) => Err(CoreError::Other(format!(
+            "SSH exec timed out after {}s",
+            timeout.as_secs()
+        ))),
+    }
 }
 
 /// Conventional POSIX signal number for a signal name, as used by SSH
@@ -242,17 +276,32 @@ impl ExecChannel for RusshExecChannel {
 ///
 /// Pass an empty `stdin` for commands that read no input. This generalizes the
 /// stdout-only exec used internally by the monitoring provider.
+///
+/// The exec is bounded by [`DEFAULT_EXEC_TIMEOUT`] so a stalled server cannot
+/// hang the caller forever; use [`ssh_exec_with_stdin_timeout`] to override it.
 pub async fn ssh_exec_with_stdin(
     session: &SshSession,
     command: &str,
     stdin: &str,
+) -> Result<SshExecOutput, CoreError> {
+    ssh_exec_with_stdin_timeout(session, command, stdin, DEFAULT_EXEC_TIMEOUT).await
+}
+
+/// Like [`ssh_exec_with_stdin`], but with an explicit upper time bound on the
+/// exec. On timeout the operation returns a [`CoreError::Other`] rather than
+/// hanging indefinitely on a server that never closes the channel.
+pub async fn ssh_exec_with_stdin_timeout(
+    session: &SshSession,
+    command: &str,
+    stdin: &str,
+    timeout: Duration,
 ) -> Result<SshExecOutput, CoreError> {
     let channel = session
         .channel_open_session()
         .await
         .map_err(|e| CoreError::Other(format!("Channel open failed: {e}")))?;
     let mut channel = RusshExecChannel(channel);
-    run_exec(&mut channel, command, stdin).await
+    run_exec_bounded(&mut channel, command, stdin, timeout).await
 }
 
 /// Marker string echoed by the exec-capability probe.
@@ -507,6 +556,36 @@ mod tests {
         assert_eq!(signal_exit_status("INT"), 130);
         // Unknown / custom signal names are still a non-zero failure.
         assert_ne!(signal_exit_status("SOMETHING_CUSTOM"), 0);
+    }
+
+    /// Regression for CORE-005: a server that opens the channel but never sends
+    /// EOF/Close must not hang the exec forever — the bound returns an error.
+    #[tokio::test]
+    async fn bounded_exec_times_out_on_a_stalled_channel() {
+        let mut ch = MockChannel::hanging();
+
+        let err = run_exec_bounded(&mut ch, "sleep forever", "", Duration::from_millis(50))
+            .await
+            .expect_err("a stalled channel must time out, not hang");
+
+        assert!(matches!(err, CoreError::Other(_)));
+    }
+
+    /// A command that completes within the bound returns its result normally.
+    #[tokio::test]
+    async fn bounded_exec_returns_result_when_within_timeout() {
+        let mut ch = MockChannel::with_events(vec![
+            ExecEvent::Stdout(bytes("ok")),
+            ExecEvent::Exit(0),
+            ExecEvent::Closed,
+        ]);
+
+        let out = run_exec_bounded(&mut ch, "echo ok", "", Duration::from_secs(30))
+            .await
+            .expect("should complete within the timeout");
+
+        assert_eq!(out.stdout, "ok");
+        assert_eq!(out.exit_status, 0);
     }
 
     #[tokio::test]
