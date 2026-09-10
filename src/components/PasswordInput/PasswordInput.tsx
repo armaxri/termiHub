@@ -11,6 +11,10 @@ interface PasswordInputProps {
   className?: string;
   id?: string;
   disabled?: boolean;
+  /** Space-separated ids of elements describing this input (e.g. an error message). */
+  "aria-describedby"?: string;
+  /** Marks the input invalid for assistive tech when validation fails. */
+  "aria-invalid"?: boolean;
   "data-testid"?: string;
 }
 
@@ -34,6 +38,8 @@ export function PasswordInput({
   className,
   id,
   disabled,
+  "aria-describedby": ariaDescribedBy,
+  "aria-invalid": ariaInvalid,
   "data-testid": dataTestId,
 }: PasswordInputProps) {
   const [visible, setVisible] = useState(false);
@@ -64,6 +70,8 @@ export function PasswordInput({
         placeholder={placeholder}
         autoFocus={autoFocus}
         disabled={disabled}
+        aria-describedby={ariaDescribedBy}
+        aria-invalid={ariaInvalid || undefined}
         data-testid={dataTestId}
       />
       <button
