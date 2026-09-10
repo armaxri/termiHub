@@ -8,6 +8,13 @@ export type SidebarStatusTone = "neutral" | "success" | "warning" | "error";
 export interface SidebarStatusDotProps {
   /** Colour tone of the dot. */
   tone: SidebarStatusTone;
+  /**
+   * Accessible name describing the status the dot conveys (e.g. "Running",
+   * "Stopped", "Error"). Rendered as the dot's `aria-label` so screen-reader
+   * and colourblind users perceive the state without relying on colour alone
+   * (WCAG 1.4.1 / 1.1.1). Strongly encouraged for every caller.
+   */
+  label?: string;
   /** Test hook forwarded to the dot element. */
   testId?: string;
 }
@@ -15,11 +22,20 @@ export interface SidebarStatusDotProps {
 /**
  * A small coloured status dot for sidebar rows. Colours come from design tokens
  * via the `--tone` modifier so every sidebar renders the same status affordance.
+ *
+ * When `label` is supplied the dot becomes an `img`-role graphic named by that
+ * label, so its meaning survives without colour (WCAG 1.4.1 / 1.1.1).
  */
-export function SidebarStatusDot({ tone, testId }: SidebarStatusDotProps): React.ReactElement {
+export function SidebarStatusDot({
+  tone,
+  label,
+  testId,
+}: SidebarStatusDotProps): React.ReactElement {
   return (
     <span
       className={`sidebar-list-item__status sidebar-list-item__status--${tone}`}
+      role={label ? "img" : undefined}
+      aria-label={label}
       data-testid={testId}
     />
   );

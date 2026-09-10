@@ -51,6 +51,7 @@ import {
   cancelConnectAgent,
 } from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
+import { connectionStateLabel } from "@/utils/statusLabel";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { AgentVersionBadge } from "@/components/AgentVersionBadge/AgentVersionBadge";
@@ -1222,7 +1223,9 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
               <Chevron size={16} className="connection-tree__chevron" />
               <span
                 className={`agent-node__state-dot ${STATE_DOT_CLASSES[agent.connectionState] ?? "agent-node__state-dot--disconnected"}`}
-                title={agent.connectionState}
+                role="img"
+                aria-label={connectionStateLabel(agent.connectionState)}
+                title={connectionStateLabel(agent.connectionState)}
                 data-testid={`agent-state-${agent.id}`}
               />
               <Server size={14} />

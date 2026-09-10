@@ -4,6 +4,7 @@ import {
   persistentAttachedTabTitles,
   formatAttachedTabsTooltip,
 } from "@/utils/persistentTabTitles";
+import { persistentRunStateLabel } from "@/utils/statusLabel";
 
 interface PersistentStateDotProps {
   /** Live run-state of the session, or `null` when it has never started. */
@@ -54,6 +55,8 @@ export function PersistentStateDot({
     <span className="connection-tree__state-dot-wrap">
       <span
         className={`connection-tree__state-dot ${stateDotClass}`}
+        role="img"
+        aria-label={persistentRunStateLabel(runState)}
         title={tooltip}
         data-testid={dotTestId}
       />

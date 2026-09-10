@@ -7,6 +7,7 @@ import { Button, toast, Tooltip } from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
+import { serverStatusLabel } from "@/utils/statusLabel";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import {
@@ -138,7 +139,11 @@ export function EmbeddedServerItem({
           error={status === "error"}
           onDoubleClick={() => onEdit(config.id)}
           status={
-            <SidebarStatusDot tone={statusTone(status)} testId={`server-status-${config.id}`} />
+            <SidebarStatusDot
+              tone={statusTone(status)}
+              label={serverStatusLabel(status)}
+              testId={`server-status-${config.id}`}
+            />
           }
           badge={PROTOCOL_LABELS[config.serverType]}
           badgeTestId={`server-type-${config.id}`}
