@@ -35,12 +35,12 @@
 //! `session-lifecycle` region — the store keys everything by `clientId` and
 //! projects one `file-browser@<clientId>` region per client.
 //!
-//! # Shadow only (#2228)
+//! # Authoritative — drives the live UI (#2228)
 //!
-//! Managed authoritative state that serves the `fileBrowser.*` intents, but
-//! nothing in the live UI subscribes to or renders the region yet: `appStore`
-//! stays authoritative. Later steps cut rendering, then the mutations, over to
-//! it, keeping the `appStore` reducers as the parity-safe fallback.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The live UI subscribes to and renders the region and dispatches
+//! `fileBrowser.*` intents; the former `appStore` file-browser reducers were
+//! removed.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard};

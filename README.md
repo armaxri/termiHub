@@ -64,9 +64,11 @@ sudo dpkg -i termiHub-0.1.0-linux-arm64.deb
 ### Known limitations (beta)
 
 - **Unsigned binaries** — macOS shows a Gatekeeper prompt (right-click → Open) and Windows shows a SmartScreen warning (More info → Run anyway); see the per-platform steps above.
-- **No auto-update** — download new versions manually from the [Releases page](https://github.com/armaxri/termiHub/releases).
+- **No auto-update** — termiHub does not self-install updates; download new versions manually from the [Releases page](https://github.com/armaxri/termiHub/releases). It does, however, **check for updates** on startup (see the privacy note below).
 - **Serial port support** requires platform-specific drivers — see [Serial Port Setup](#serial-port-setup).
 - **Telnet connections are unencrypted** by protocol design; avoid them over untrusted networks.
+
+> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases. That is the only network call termiHub makes on its own — there is no telemetry or analytics. It never installs anything automatically; it only notifies and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
 
 Prefer to build it yourself? See [Development](#development) below.
 
@@ -75,11 +77,13 @@ Prefer to build it yourself? See [Development](#development) below.
 ### Connection Types
 
 - **Local shells** — zsh, bash, PowerShell, cmd, Git Bash with automatic shell detection
-- **SSH** — Remote terminal sessions with key-based and password authentication
+- **SSH** — Remote terminal sessions with key-based and password authentication, plus jump host / `ProxyJump` chains, X11 forwarding, tunneling, and SFTP
 - **Serial** — Direct serial port connections for hardware debugging and IoT devices
 - **Telnet** — Classic telnet connections with IAC protocol support
-- **Docker** — Connect to running containers or start new ones
+- **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported)
 - **WSL** — Windows Subsystem for Linux distribution sessions (Windows only)
+- **FTP / FTPS** — File-transfer connections with a managed transfer queue (browse, upload, download, edit)
+- **Remote Desktop (RDP / VNC)** — Graphical remote-desktop sessions with a shared framebuffer layer and clipboard integration. **Experimental** — hidden until you enable **Settings → General → Allow Experimental Features**. RDP runs via a bundled `termihub-rdp-helper` sidecar.
 - **Remote agent** — Persistent sessions on headless servers via auto-deployed `termihub-agent`
 
 ### Terminal Management
@@ -92,8 +96,23 @@ Prefer to build it yourself? See [Development](#development) below.
 
 - **File browser** — Browse, upload, download, and edit remote files via SFTP
 - **SSH tunneling** — Local, remote, and dynamic (SOCKS5) port forwarding with session pooling
+- **Jump hosts** — Connect through one or more bastion hosts (`ProxyJump`-style chains)
 - **X11 forwarding** — Forward remote GUI applications to your local X server
 - **System monitoring** — Real-time CPU, memory, disk, and network stats for remote hosts
+
+### Power Tools
+
+- **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar. Includes **native (cdylib) backends** loaded over a C ABI with an Ed25519 signature / trust model — see the plugin trust warning under [Security](#security)
+- **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN
+- **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning
+- **Macros** — Record and replay terminal input sequences
+
+### Workspace and Windows
+
+- **Multi-window** — Tear tabs out into separate native windows
+- **Workspaces / tab groups** — Save and restore named layouts of connections and splits
+- **Session auto-save and restore** — Reopen your previous sessions on launch, with a Recent Sessions list
+- **Broadcast input** — Type once and mirror input across a group of terminals
 
 ### UI and Customization
 
@@ -105,8 +124,10 @@ Prefer to build it yourself? See [Development](#development) below.
 
 ### Security
 
-- **Credential storage** — Optional credential encryption via platform keychain, master password, or prompt-only mode
+- **Credential storage** — Optional credential encryption via platform keychain (OS keychain), master password, or prompt-only mode
 - **Auto-lock** — Configurable timeout for credential store locking
+
+> ⚠️ **Plugin trust warning.** termiHub's plugin system can load **native plugins that run arbitrary code with your full user privileges** (native cdylib backends over a C ABI). Plugins carry an Ed25519 signature / trust status (`Untrusted` / `Tampered` / `Signed` / `Verified`), but installing a plugin is a trust decision: **only install plugins from publishers you trust.** An untrusted native plugin can do anything your user account can.
 
 ### Workflow Automation (experimental)
 
@@ -152,7 +173,7 @@ termiHub uses a VS Code-inspired three-column layout:
 ### Managing Connections
 
 1. Click **Connections** in the Activity Bar, then **+** to create a new connection
-2. Fill in Name, Folder, Type (Local Shell / SSH / Serial / Telnet), and type-specific settings
+2. Fill in Name, Folder, Type (Local Shell / SSH / Serial / Telnet / Docker / WSL / FTP / remote agent, plus RDP / VNC when experimental features are enabled), and type-specific settings
 3. Click **Save**
 
 **Right-click** a connection for: Connect, Ping Host (SSH/Telnet), Edit, Duplicate, Delete. **Double-click** to connect immediately.
@@ -168,9 +189,14 @@ termiHub uses a VS Code-inspired three-column layout:
 ### Connection Types
 
 - **Local Shell** — Opens a local terminal using an auto-detected shell (zsh, bash, sh on macOS/Linux; PowerShell, cmd, Git Bash on Windows). Select the shell in the connection editor.
-- **SSH** — Remote terminal via SSH. See [SSH Configuration](#ssh-configuration) below for authentication, X11 forwarding, and SFTP details.
+- **SSH** — Remote terminal via SSH. See [SSH Configuration](#ssh-configuration) below for authentication, jump hosts, X11 forwarding, and SFTP details.
 - **Telnet** — Remote terminal via Telnet protocol. Configure host and port (default: 23).
 - **Serial** — Connect to serial devices (USB-to-serial adapters, IoT, networking equipment). Configure port, baud rate, data/stop bits, parity, and flow control. See [Serial Port Setup](#serial-port-setup) below for platform-specific instructions.
+- **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported).
+- **WSL** — Open a session in a Windows Subsystem for Linux distribution (Windows only).
+- **FTP / FTPS** — File-transfer connection with a managed transfer queue.
+- **Remote Desktop (RDP / VNC)** — Graphical remote-desktop session. Experimental; enable **Settings → General → Allow Experimental Features** to use it.
+- **Remote agent** — Attach to a `termihub-agent` for persistent sessions on a headless server.
 
 ### Terminal Tabs
 
@@ -222,7 +248,7 @@ Double-click a file in the file browser (or right-click > Edit) to open it in a 
 | Shortcut                 | Action                |
 | ------------------------ | --------------------- |
 | `Ctrl+Shift+`` (`` ` ``) | New local terminal    |
-| `Ctrl+W` / `Cmd+W`       | Close active tab      |
+| `Ctrl+Shift+W` / `Cmd+W` | Close active tab      |
 | `Ctrl+Tab`               | Next tab              |
 | `Ctrl+Shift+Tab`         | Previous tab          |
 | `Ctrl+S` / `Cmd+S`       | Save file (in editor) |
@@ -388,8 +414,8 @@ For testing without physical hardware, use the virtual serial port setup in `exa
 ```bash
 # Install socat (macOS: brew install socat, Linux: sudo apt install socat)
 cd examples/serial
-./setup-virtual-serial.sh        # Creates /tmp/termihub-serial-a and /tmp/termihub-serial-b
-python3 serial-echo-server.py    # Echo server on port B
+../scripts/setup-virtual-serial.sh   # Creates /tmp/termihub-serial-a and /tmp/termihub-serial-b
+python3 serial-echo-server.py        # Echo server on port B
 ```
 
 Connect termiHub to `/tmp/termihub-serial-a` to test.
@@ -490,8 +516,8 @@ pnpm tauri build
 
 ```bash
 cd examples
-./start-test-environment.sh   # Start SSH (port 2214) + Telnet (port 2323) servers
-./stop-test-environment.sh    # Stop servers
+./scripts/start-test-environment.sh   # Start SSH (port 2214) + Telnet (port 2323) servers
+./scripts/stop-test-environment.sh    # Stop servers
 ```
 
 **Comprehensive testing** — The `tests/docker/` directory provides 13 Docker containers for system testing (SSH variants, telnet, serial, SFTP stress, network fault injection). See [tests/docker/README.md](tests/docker/README.md).

@@ -46,14 +46,13 @@
 //! | `agent.deleteFolder`      | `{ id, folderId }`                           | remove a folder + reparent defs      |
 //! | `agent.replace`           | `{ agents, sessions, definitions, folders }` | overwrite the whole slice (mirror)   |
 //!
-//! # Shadow mode
+//! # Authoritative
 //!
-//! Registered and fully served, but **not** driving the live UI: no frontend
-//! subscribes to `agents` or dispatches `agent.*` yet, so these intents mutate
-//! only the shadow store and project to a region nobody renders. The `appStore`
-//! agents slice remains authoritative. Per the substrate contract the result of
-//! an intent is never returned inline — it always arrives as a projection diff on
-//! the `agents` region.
+//! Registered, fully served, and driving the live UI: the frontend subscribes to
+//! `agents` and dispatches `agent.*` (the former `appStore` agents reducers were
+//! removed, #2283). Per the substrate contract the result of an intent is never
+//! returned inline — it always arrives as a projection diff on the `agents`
+//! region.
 
 use std::collections::HashMap;
 use std::sync::Arc;

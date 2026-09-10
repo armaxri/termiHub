@@ -8,15 +8,18 @@
 //! structure) through the projection substrate ([`crate::projection`]),
 //! mirroring the SSH-tunnels pilot ([`crate::tunnel::projection`]).
 //!
-//! # Shadow mode — zero user-facing change
+//! # Shadow mode — the remaining migration outlier (#2562)
 //!
-//! This step is deliberately **not authoritative**. The store exists, accepts
-//! intents, and projects diffs, but nothing in the live UI subscribes to or
-//! renders the `layout@<clientId>` region, and no frontend code dispatches
-//! `layout.*` intents yet. The existing `appStore` panel-tree reducers and
-//! `SplitView` rendering are untouched. Later steps (2–5) cut structural
-//! mutations over, then rendering, then remove the `appStore` reducers, then
-//! add multi-window / restore.
+//! Unlike the other projection domains — which completed the stateless-UI
+//! inversion and are now authoritative (#2283) — layout is still **not
+//! authoritative**. The store exists, accepts intents, and projects diffs, but
+//! nothing in the live UI subscribes to or renders the `layout@<clientId>`
+//! region, and no frontend code dispatches `layout.*` intents yet. The existing
+//! `appStore` panel-tree reducers and `SplitView` rendering are untouched. The
+//! deferred hot-path layout reducer removal is tracked as #2562; until it lands,
+//! layout is the one domain where this "shadow / not authoritative" wording is
+//! still accurate. Later steps cut structural mutations over, then rendering,
+//! then remove the `appStore` reducers, then add multi-window / restore.
 //!
 //! Because layout is per-window/per-client view arrangement, each attached
 //! client gets its own `layout@<clientId>` region (Open Design Decision #1/#6:

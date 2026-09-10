@@ -17,12 +17,11 @@
 //! is no per-client keying here (contrast the client-scoped `layout` /
 //! `workflow-run` stores): a settings edit projects to all subscribers.
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! Not yet authoritative: the store accepts `settings.*` intents and projects
-//! diffs, but nothing in the live UI subscribes to or renders the `settings`
-//! region, and no frontend code dispatches `settings.*` intents yet. The
-//! `appStore` `settings` slice remains authoritative.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The live UI subscribes to and renders the `settings` region and dispatches
+//! `settings.*` intents; the former `appStore` `settings` reducers were removed.
 
 use std::sync::{Mutex, MutexGuard};
 

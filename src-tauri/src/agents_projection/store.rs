@@ -1,4 +1,4 @@
-//! The authoritative, shared agents state behind the shadow `agents` projection
+//! The authoritative, shared agents state behind the `agents` projection
 //! region (#2226, Phase 5 of #2139).
 //!
 //! Models the agents slice the frontend currently drives in `appStore`: the
@@ -19,14 +19,12 @@
 //! Any per-client presentation (which agent a client has focused, banner
 //! dismissal) stays a frontend concern under partial projection.
 //!
-//! # Shadow mode — zero user-facing change
+//! # Authoritative — drives the live UI
 //!
-//! This step is deliberately **not** authoritative. The store exists, accepts
-//! `agent.*` intents, and projects diffs, but nothing in the live UI subscribes
-//! to or renders the `agents` region, and no frontend code dispatches `agent.*`
-//! intents yet. The existing `appStore` agents slice remains authoritative. Later
-//! steps cut rendering, then mutation, over to the region, then remove the
-//! `appStore` state.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The live UI subscribes to and renders the `agents` region, and frontend code
+//! dispatches `agent.*` intents; the former `appStore` agents reducers were
+//! removed.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, MutexGuard};

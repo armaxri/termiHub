@@ -36,15 +36,13 @@
 //! them with its live terminal tabs, and dispatches a fresh `restore.beginCohort`
 //! (which supersedes the prior retry set) before re-driving each reconnect.
 //!
-//! # Shadow mode
+//! # Authoritative
 //!
-//! Registered and fully served, but **not** driving the live UI: no frontend
-//! subscribes to `restore-cohort@<clientId>` or dispatches `restore.*` yet, so
-//! these intents mutate only the shadow store and project to regions nobody
-//! renders. The `appStore` cohort reducers and the toast feedback remain
-//! authoritative. Per the substrate contract the result of an intent is never
-//! returned inline — it always arrives as a projection diff on the client's
-//! region.
+//! Registered, fully served, and driving the live UI: the frontend subscribes to
+//! `restore-cohort@<clientId>` and dispatches `restore.*` (the former `appStore`
+//! cohort reducers were removed, #2283). Per the substrate contract the result of
+//! an intent is never returned inline — it always arrives as a projection diff on
+//! the client's region.
 
 use std::sync::Arc;
 
