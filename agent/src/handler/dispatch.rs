@@ -4023,7 +4023,10 @@ mod tests {
                     "intervalMs": 1_000,
                     "method": "GET",
                     "expectedStatus": 200,
-                    "timeoutMs": 5_000
+                    "timeoutMs": 5_000,
+                    // Loopback sink: opt in past the default-deny SSRF guard,
+                    // mirroring a real user monitoring an internal/local host.
+                    "allowPrivateNetwork": true
                 }
             }),
             2,
