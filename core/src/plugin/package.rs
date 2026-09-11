@@ -43,6 +43,18 @@ pub const MAX_DECOMPRESSED_ENTRY_BYTES: u64 = 128 * 1024 * 1024;
 /// after it has already been fully materialized.
 pub const MAX_DECOMPRESSED_TOTAL_BYTES: u64 = 256 * 1024 * 1024;
 
+/// Maximum accepted number of entries in a package: 8192.
+///
+/// A `.termihub-plugin` is a manifest plus the `backend/`, `frontend/` and
+/// `themes/` subtrees — at most a few hundred files in practice. Capping the
+/// entry count bounds the work the extractor does (it performs one filesystem
+/// create per entry) and defends against an archive with an absurd number of
+/// entries — a resource-exhaustion vector that is independent of each entry's
+/// decompressed size, since even zero-byte entries each cost a directory walk and
+/// a `create`. Checked once, right after the archive is opened, before any entry
+/// is read or written (see [`check_entry_count`]).
+pub const MAX_PACKAGE_ENTRIES: usize = 8192;
+
 /// Compile-time sanity on the decompression caps: the per-entry cap must not
 /// exceed the whole-package budget, and the package can legitimately expand past
 /// its compressed-size cap, so the decompressed budget is the larger of the two.
@@ -50,6 +62,21 @@ const _: () = {
     assert!(MAX_DECOMPRESSED_ENTRY_BYTES <= MAX_DECOMPRESSED_TOTAL_BYTES);
     assert!(MAX_DECOMPRESSED_TOTAL_BYTES >= MAX_PACKAGE_SIZE_BYTES);
 };
+
+/// Reject a package whose entry count exceeds `max`.
+///
+/// A cheap gate meant to run **immediately after the archive is opened** and
+/// before the extractor (or any read loop) iterates its entries, so an archive
+/// declaring an absurd number of entries is refused before any are materialized.
+/// Factored out with an explicit `max` so the cap can be exercised in tests
+/// without authoring thousands of entries; production callers pass
+/// [`MAX_PACKAGE_ENTRIES`].
+pub(crate) fn check_entry_count(actual: usize, max: usize) -> Result<(), PluginPackageError> {
+    if actual > max {
+        return Err(PluginPackageError::TooManyEntries { actual, max });
+    }
+    Ok(())
+}
 
 /// Read `reader` fully into `buf`, enforcing a per-entry decompression cap and
 /// decrementing a shared whole-package budget.
@@ -134,6 +161,15 @@ pub enum PluginPackageError {
         max: u64,
     },
 
+    /// The archive declares more entries than [`MAX_PACKAGE_ENTRIES`].
+    #[error("plugin package has {actual} entries, exceeding the {max}-entry limit")]
+    TooManyEntries {
+        /// The number of entries the archive declares.
+        actual: usize,
+        /// The enforced maximum entry count.
+        max: usize,
+    },
+
     /// The file is not a readable ZIP archive.
     #[error("plugin package is not a valid ZIP archive: {0}")]
     InvalidArchive(String),
@@ -177,11 +213,25 @@ fn validate_package_with_limit(
     path: &Path,
     max_bytes: u64,
 ) -> Result<PluginManifest, PluginPackageError> {
+    validate_package_with_limits(path, max_bytes, MAX_PACKAGE_ENTRIES)
+}
+
+/// [`validate_package`] with explicit size *and* entry-count limits. Factored out
+/// so both caps can be exercised in tests with tiny fixtures.
+fn validate_package_with_limits(
+    path: &Path,
+    max_bytes: u64,
+    max_entries: usize,
+) -> Result<PluginManifest, PluginPackageError> {
     check_size_with_limit(path, max_bytes)?;
 
     let file = std::fs::File::open(path)?;
     let mut archive =
         ZipArchive::new(file).map_err(|e| PluginPackageError::InvalidArchive(e.to_string()))?;
+
+    // Reject an absurd entry count before reading anything — a many-entry archive
+    // is a resource-exhaustion vector independent of each entry's decompressed size.
+    check_entry_count(archive.len(), max_entries)?;
 
     let manifest_json = {
         let mut entry = match archive.by_name(MANIFEST_FILE_NAME) {
@@ -420,6 +470,41 @@ mod tests {
         let err = read_entry_bounded(Cursor::new(vec![0u8; 4096]), 64, &mut remaining, &mut buf)
             .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn check_entry_count_accepts_within_cap_and_rejects_over() {
+        check_entry_count(10, 8192).expect("10 entries is under the cap");
+        check_entry_count(8192, 8192).expect("exactly at the cap is accepted");
+        let err = check_entry_count(8193, 8192).unwrap_err();
+        match err {
+            PluginPackageError::TooManyEntries { actual, max } => {
+                assert_eq!(actual, 8193);
+                assert_eq!(max, 8192);
+            }
+            other => panic!("expected TooManyEntries, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_package_over_entry_count_cap() {
+        // A well-formed package with a manifest plus one extra entry (2 total),
+        // rejected purely on a tiny injected entry-count cap of 1 — proving the
+        // cap is enforced on the validate/read path before the manifest is parsed.
+        let pkg = make_package(Some(&good_manifest_json()), &[("README.md", b"# hi")]);
+        let err = validate_package_with_limits(pkg.path(), MAX_PACKAGE_SIZE_BYTES, 1).unwrap_err();
+        match err {
+            PluginPackageError::TooManyEntries { actual, max } => {
+                assert_eq!(actual, 2);
+                assert_eq!(max, 1);
+            }
+            other => panic!("expected TooManyEntries, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn entry_count_cap_constant_is_8192() {
+        assert_eq!(MAX_PACKAGE_ENTRIES, 8192);
     }
 
     #[test]
