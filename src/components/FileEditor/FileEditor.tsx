@@ -302,6 +302,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // on it — the confirm handler bumps `loadNonce` to re-run the load.
   const largeFileConfirmedRef = useRef(false);
   const loadIdentityRef = useRef("");
+  // Path+transport of the file whose content currently lives in the buffer, and
+  // the buffer's live dirty state — both read by the load effect to guard
+  // against clobbering unsaved edits when it re-runs for an identity churn
+  // (FEC-011). Refs (not effect deps) so the guard sees the current values
+  // without re-running the load on every keystroke.
+  const loadedFileKeyRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
   // In-memory session password cache ("Remember for this session"). Held in a
   // ref — never React/store state and never {@link EditorTabMeta} — so it is
   // impossible for it to be serialized into persisted tab/workspace state.
@@ -386,13 +393,16 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     }
   }, [meta.isRemote, meta.sessionBrowser, effectivePath]);
 
+  // Stable primitive session identity for the load effect (FEC-011). Keying the
+  // effect on this string rather than the `meta.sessionBrowser` OBJECT means a
+  // mere identity-object churn for the same session (e.g. the projection /
+  // agent-reconnect lifecycle handing back a fresh `sessionBrowser` ref for the
+  // same file) does NOT re-trigger a disk reload that would clobber the buffer.
+  const sessionIdentity = meta.sessionBrowser?.sessionId;
+
   // Load file content on mount
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setPendingLargeFile(null);
-    setLargeReloadSize(null);
 
     // Scratch buffers are seeded from in-memory content and never read from
     // disk. Content equals savedContent so it is not "modified", but the buffer
@@ -406,12 +416,32 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       return;
     }
 
+    // Dirty guard (FEC-011): if the buffer already holds THIS file and has
+    // unsaved edits, do not re-read from disk over the top of them. The effect
+    // re-ran for the same file (e.g. the `sessionBrowser` identity churned on an
+    // agent-reconnect / projection cycle), and silently loading disk content
+    // here would destroy the user's in-progress work. Preserve the buffer
+    // instead; the existing conflict/reload affordances still let the user pull
+    // disk content deliberately. A genuinely different file has a different
+    // `fileKey` and still loads normally below.
+    const fileKey = `${meta.isRemote ? 1 : 0}|${meta.filePath}`;
+    if (loadedFileKeyRef.current === fileKey && dirtyRef.current) {
+      frontendLog(
+        "file_editor",
+        `skipped reload for ${meta.filePath}: buffer has unsaved edits (identity churn)`
+      );
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setPendingLargeFile(null);
+    setLargeReloadSize(null);
+
     // Re-arm the large-file guard whenever the tab points at a different file; a
     // bare `loadNonce` bump (the user's "Open anyway") keeps the same identity so
     // the confirmation is preserved and the load proceeds.
-    const identity = `${meta.isRemote ? 1 : 0}|${meta.filePath}|${
-      meta.sessionBrowser?.sessionId ?? ""
-    }`;
+    const identity = `${fileKey}|${meta.sessionBrowser?.sessionId ?? ""}`;
     if (loadIdentityRef.current !== identity) {
       loadIdentityRef.current = identity;
       largeFileConfirmedRef.current = false;
@@ -444,6 +474,10 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
           setContent(text);
           setSavedContent(text);
           setLoading(false);
+          // Record which file the buffer now holds so a later identity-churn
+          // re-run can tell "same file, keep dirty edits" from "different file,
+          // load it" (FEC-011).
+          loadedFileKeyRef.current = fileKey;
         }
       } catch (err) {
         if (!cancelled) {
@@ -458,14 +492,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    meta.filePath,
-    meta.isRemote,
-    meta.sessionBrowser,
-    meta.scratch,
-    meta.scratchContent,
-    loadNonce,
-  ]);
+  }, [meta.filePath, meta.isRemote, sessionIdentity, meta.scratch, meta.scratchContent, loadNonce]);
 
   // "Open anyway" from the large-file guard: bypass the guard for this file and
   // re-run the load. The nonce bump keeps the file identity, so the confirmation
@@ -590,6 +617,10 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // dirty (closing it would lose the captured content) until saved via Save As.
   const isDirty =
     content !== null && savedContent !== null && (isUnsavedScratch || content !== savedContent);
+  // Mirror the live dirty state into a ref the load effect can read without
+  // depending on it (FEC-011 dirty guard). Assigned every render so the effect,
+  // which runs after commit, always sees the current value.
+  dirtyRef.current = isDirty;
 
   // Whether the primary toolbar action should be "Edit with sudo" instead of
   // "Save": a remote file the probe reported read-only, on an exec-capable
