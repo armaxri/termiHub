@@ -48,10 +48,9 @@ describe("OpenSavedFileDialog", () => {
 
   it("reflects askAgain in the checkbox", () => {
     render(<OpenSavedFileDialog {...baseProps} askAgain={false} />);
-    const checkbox = document.querySelector(
-      '[data-testid="open-saved-file-ask-again"]'
-    ) as HTMLInputElement;
-    expect(checkbox.checked).toBe(false);
+    const checkbox = document.querySelector('[data-testid="open-saved-file-ask-again"]');
+    // Migrated to the shared Checkbox primitive (Radix): aria-checked, not .checked.
+    expect(checkbox?.getAttribute("aria-checked")).toBe("false");
   });
 
   it("toggling the checkbox fires onAskAgainChange with the new value", () => {

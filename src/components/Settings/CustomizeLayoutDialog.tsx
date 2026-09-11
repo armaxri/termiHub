@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { Modal, Button } from "@/components/ui";
+import { Modal, Button, Checkbox, RadioGroup, RadioGroupItem } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import {
   LayoutConfig,
@@ -170,37 +170,36 @@ export function CustomizeLayoutDialog() {
           <span className="customize-layout-dialog__section-title">Activity Bar</span>
           <div className="customize-layout-dialog__control-row">
             <label className="customize-layout-dialog__label">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={!abHidden}
-                onChange={(e) => handleActivityBarVisibilityChange(e.target.checked)}
+                onCheckedChange={handleActivityBarVisibilityChange}
+                aria-label="Activity Bar visible"
                 data-testid="layout-ab-visible"
               />
-              Visible
+              <span>Visible</span>
             </label>
-            <div className="customize-layout-dialog__radio-group">
+            <RadioGroup
+              className="customize-layout-dialog__radio-group"
+              orientation="horizontal"
+              value={abHidden ? lastNonHiddenPos.current : layoutConfig.activityBarPosition}
+              onValueChange={(v) => handleActivityBarPosition(v as ActivityBarPosition)}
+              disabled={abHidden}
+              aria-label="Activity Bar position"
+            >
               {(["left", "right", "top"] as ActivityBarPosition[]).map((pos) => (
                 <label
                   key={pos}
                   className={`customize-layout-dialog__radio-label${abHidden ? " customize-layout-dialog__radio-label--disabled" : ""}`}
                 >
-                  <input
-                    type="radio"
-                    name="ab-position"
+                  <RadioGroupItem
                     value={pos}
-                    checked={
-                      abHidden
-                        ? lastNonHiddenPos.current === pos
-                        : layoutConfig.activityBarPosition === pos
-                    }
-                    disabled={abHidden}
-                    onChange={() => handleActivityBarPosition(pos)}
+                    aria-label={pos.charAt(0).toUpperCase() + pos.slice(1)}
                     data-testid={`layout-ab-${pos}`}
                   />
-                  {pos.charAt(0).toUpperCase() + pos.slice(1)}
+                  <span>{pos.charAt(0).toUpperCase() + pos.slice(1)}</span>
                 </label>
               ))}
-            </div>
+            </RadioGroup>
           </div>
         </div>
 
@@ -209,33 +208,36 @@ export function CustomizeLayoutDialog() {
           <span className="customize-layout-dialog__section-title">Sidebar</span>
           <div className="customize-layout-dialog__control-row">
             <label className="customize-layout-dialog__label">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={layoutConfig.sidebarVisible}
-                onChange={(e) => handleSidebarVisible(e.target.checked)}
+                onCheckedChange={handleSidebarVisible}
+                aria-label="Sidebar visible"
                 data-testid="layout-sidebar-visible"
               />
-              Visible
+              <span>Visible</span>
             </label>
-            <div className="customize-layout-dialog__radio-group">
+            <RadioGroup
+              className="customize-layout-dialog__radio-group"
+              orientation="horizontal"
+              value={layoutConfig.sidebarPosition}
+              onValueChange={(v) => handleSidebarPosition(v as SidebarPosition)}
+              disabled={!layoutConfig.sidebarVisible}
+              aria-label="Sidebar position"
+            >
               {(["left", "right"] as SidebarPosition[]).map((pos) => (
                 <label
                   key={pos}
                   className={`customize-layout-dialog__radio-label${!layoutConfig.sidebarVisible ? " customize-layout-dialog__radio-label--disabled" : ""}`}
                 >
-                  <input
-                    type="radio"
-                    name="sb-position"
+                  <RadioGroupItem
                     value={pos}
-                    checked={layoutConfig.sidebarPosition === pos}
-                    disabled={!layoutConfig.sidebarVisible}
-                    onChange={() => handleSidebarPosition(pos)}
+                    aria-label={pos.charAt(0).toUpperCase() + pos.slice(1)}
                     data-testid={`layout-sidebar-${pos}`}
                   />
-                  {pos.charAt(0).toUpperCase() + pos.slice(1)}
+                  <span>{pos.charAt(0).toUpperCase() + pos.slice(1)}</span>
                 </label>
               ))}
-            </div>
+            </RadioGroup>
           </div>
         </div>
 
@@ -244,13 +246,13 @@ export function CustomizeLayoutDialog() {
           <span className="customize-layout-dialog__section-title">Status Bar</span>
           <div className="customize-layout-dialog__control-row">
             <label className="customize-layout-dialog__label">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={layoutConfig.statusBarVisible}
-                onChange={(e) => handleStatusBarVisible(e.target.checked)}
+                onCheckedChange={handleStatusBarVisible}
+                aria-label="Status Bar visible"
                 data-testid="layout-statusbar-visible"
               />
-              Visible
+              <span>Visible</span>
             </label>
           </div>
         </div>

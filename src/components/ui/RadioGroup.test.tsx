@@ -53,7 +53,9 @@ describe("RadioGroup", () => {
   });
 
   it("renders each option as a radio with aria-checked reflecting the selection", () => {
-    render(<RadioGroup value="b" onValueChange={() => {}} options={OPTIONS} aria-label="Pick one" />);
+    render(
+      <RadioGroup value="b" onValueChange={() => {}} options={OPTIONS} aria-label="Pick one" />
+    );
     expect(byTestId("opt-a").getAttribute("role")).toBe("radio");
     expect(byTestId("opt-a").getAttribute("aria-checked")).toBe("false");
     expect(byTestId("opt-b").getAttribute("aria-checked")).toBe("true");
@@ -70,7 +72,9 @@ describe("RadioGroup", () => {
   });
 
   it("wires roving tabindex on every radio so the group is a single Tab stop", () => {
-    render(<RadioGroup value="b" onValueChange={() => {}} options={OPTIONS} aria-label="Pick one" />);
+    render(
+      <RadioGroup value="b" onValueChange={() => {}} options={OPTIONS} aria-label="Pick one" />
+    );
     // Radix roving-focus makes the group one Tab stop: each radio is managed with
     // a roving tabindex (0 for the active stop, -1 for the rest) rather than every
     // radio being independently tabbable. Arrow keys — not Tab — then move within.
@@ -82,7 +86,9 @@ describe("RadioGroup", () => {
   });
 
   it("radios are focusable type=button controls (keyboard operable)", () => {
-    render(<RadioGroup value="a" onValueChange={() => {}} options={OPTIONS} aria-label="Pick one" />);
+    render(
+      <RadioGroup value="a" onValueChange={() => {}} options={OPTIONS} aria-label="Pick one" />
+    );
     const first = byTestId("opt-a");
     // type=button keeps a radio from submitting a surrounding form; being a real
     // focusable button is what lets Radix's roving Arrow-key navigation drive it.

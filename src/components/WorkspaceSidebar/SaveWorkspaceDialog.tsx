@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Modal, Button, Input } from "@/components/ui";
+import { Modal, Button, Input, RadioGroup } from "@/components/ui";
 
 /** id linking the footer submit Button to the body <form> (they render in separate Modal regions). */
 const FORM_ID = "save-workspace-form";
@@ -86,29 +86,25 @@ export function SaveWorkspaceDialog({
 
         {showScopeSelector && (
           <div className="save-workspace-dialog__field" data-testid="save-workspace-scope">
-            <label>Capture</label>
-            <div className="save-workspace-dialog__radio-group">
-              <label className="save-workspace-dialog__radio-label">
-                <input
-                  type="radio"
-                  value="all"
-                  checked={scope === "all"}
-                  onChange={() => setScope("all")}
-                  data-testid="save-workspace-scope-all"
-                />
-                All tab groups ({tabGroupCount})
-              </label>
-              <label className="save-workspace-dialog__radio-label">
-                <input
-                  type="radio"
-                  value="active"
-                  checked={scope === "active"}
-                  onChange={() => setScope("active")}
-                  data-testid="save-workspace-scope-active"
-                />
-                Active group only ({activeGroupName})
-              </label>
-            </div>
+            <label id="ws-save-scope-label">Capture</label>
+            <RadioGroup
+              className="save-workspace-dialog__radio-group"
+              value={scope}
+              onValueChange={(v) => setScope(v as SaveWorkspaceScope)}
+              aria-labelledby="ws-save-scope-label"
+              options={[
+                {
+                  value: "all",
+                  label: `All tab groups (${tabGroupCount})`,
+                  "data-testid": "save-workspace-scope-all",
+                },
+                {
+                  value: "active",
+                  label: `Active group only (${activeGroupName})`,
+                  "data-testid": "save-workspace-scope-active",
+                },
+              ]}
+            />
           </div>
         )}
       </form>

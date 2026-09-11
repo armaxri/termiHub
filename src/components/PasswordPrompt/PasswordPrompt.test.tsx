@@ -69,9 +69,11 @@ describe("PasswordPrompt", () => {
     });
     render();
 
-    const checkbox = query("password-prompt-save-checkbox") as HTMLInputElement;
+    const checkbox = query("password-prompt-save-checkbox");
     expect(checkbox).not.toBeNull();
-    expect(checkbox.checked).toBe(true);
+    // Migrated to the shared Checkbox primitive (Radix): role=checkbox button
+    // exposing aria-checked rather than a native input .checked.
+    expect(checkbox?.getAttribute("aria-checked")).toBe("true");
   });
 
   it("shows save checkbox pre-checked for master_password mode", async () => {
@@ -83,9 +85,11 @@ describe("PasswordPrompt", () => {
     });
     render();
 
-    const checkbox = query("password-prompt-save-checkbox") as HTMLInputElement;
+    const checkbox = query("password-prompt-save-checkbox");
     expect(checkbox).not.toBeNull();
-    expect(checkbox.checked).toBe(true);
+    // Migrated to the shared Checkbox primitive (Radix): role=checkbox button
+    // exposing aria-checked rather than a native input .checked.
+    expect(checkbox?.getAttribute("aria-checked")).toBe("true");
   });
 
   it("sets passwordPromptShouldSave=true when submitting with checkbox checked", async () => {

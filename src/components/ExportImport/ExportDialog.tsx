@@ -4,7 +4,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { exportConnectionsEncrypted } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Modal, Button } from "@/components/ui";
+import { Modal, Button, RadioGroup } from "@/components/ui";
 import "./ExportDialog.css";
 
 type ExportMode = "plain" | "encrypted";
@@ -86,28 +86,24 @@ export function ExportDialog() {
         </>
       }
     >
-      <fieldset className="export-dialog__fieldset">
-        <label className="export-dialog__radio-label">
-          <input
-            type="radio"
-            name="export-mode"
-            checked={mode === "plain"}
-            onChange={() => setMode("plain")}
-            data-testid="export-mode-plain"
-          />
-          Without credentials
-        </label>
-        <label className="export-dialog__radio-label">
-          <input
-            type="radio"
-            name="export-mode"
-            checked={mode === "encrypted"}
-            onChange={() => setMode("encrypted")}
-            data-testid="export-mode-encrypted"
-          />
-          With credentials (encrypted)
-        </label>
-      </fieldset>
+      <RadioGroup
+        className="export-dialog__fieldset"
+        value={mode}
+        onValueChange={(v) => setMode(v as ExportMode)}
+        aria-label="Export mode"
+        options={[
+          {
+            value: "plain",
+            label: "Without credentials",
+            "data-testid": "export-mode-plain",
+          },
+          {
+            value: "encrypted",
+            label: "With credentials (encrypted)",
+            "data-testid": "export-mode-encrypted",
+          },
+        ]}
+      />
 
       {mode === "encrypted" && (
         <div className="export-dialog__password-section">

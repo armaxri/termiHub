@@ -1,4 +1,4 @@
-import { Modal, Button } from "@/components/ui";
+import { Modal, Button, Checkbox } from "@/components/ui";
 import "./OpenSavedFileDialog.css";
 
 interface OpenSavedFileDialogProps {
@@ -50,13 +50,13 @@ export function OpenSavedFileDialog({
         Saved to <strong>{fileName}</strong>. Open it in an editor tab?
       </p>
       <label className="open-saved-file__ask-again">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={askAgain}
-          onChange={(e) => onAskAgainChange(e.target.checked)}
+          onCheckedChange={onAskAgainChange}
+          aria-label="Ask again"
           data-testid="open-saved-file-ask-again"
         />
-        Ask again
+        <span>Ask again</span>
       </label>
     </Modal>
   );

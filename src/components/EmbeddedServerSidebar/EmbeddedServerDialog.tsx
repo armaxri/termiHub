@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import "./EmbeddedServerSidebar.css";
 import { AlertTriangle } from "lucide-react";
-import { Modal, Button, Input, NumberInput, Select } from "@/components/ui";
+import { Modal, Button, Input, NumberInput, Select, Checkbox, RadioGroup } from "@/components/ui";
 import {
   EmbeddedServerConfig,
   NetworkInterface,
@@ -181,24 +181,21 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
           </label>
 
           {/* Protocol */}
-          <label className="server-dialog__label">
-            Protocol
-            <div className="server-dialog__radio-group">
-              {(["http", "ftp", "tftp"] as ServerType[]).map((type) => (
-                <label key={type} className="server-dialog__radio">
-                  <input
-                    type="radio"
-                    name="protocol"
-                    value={type}
-                    checked={form.serverType === type}
-                    onChange={() => handleProtocolChange(type)}
-                    data-testid={`server-dialog-proto-${type}`}
-                  />
-                  {type.toUpperCase()}
-                </label>
-              ))}
-            </div>
-          </label>
+          <div className="server-dialog__label">
+            <span id="server-dialog-protocol-label">Protocol</span>
+            <RadioGroup
+              className="server-dialog__radio-group"
+              orientation="horizontal"
+              value={form.serverType}
+              onValueChange={(v) => handleProtocolChange(v as ServerType)}
+              aria-labelledby="server-dialog-protocol-label"
+              options={(["http", "ftp", "tftp"] as ServerType[]).map((type) => ({
+                value: type,
+                label: type.toUpperCase(),
+                "data-testid": `server-dialog-proto-${type}`,
+              }))}
+            />
+          </div>
 
           {/* Root directory */}
           <label className="server-dialog__label">
@@ -249,32 +246,32 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
           <fieldset className="server-dialog__fieldset">
             <legend className="server-dialog__legend">Options</legend>
             <label className="server-dialog__check">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={form.autoStart}
-                onChange={(e) => set("autoStart", e.target.checked)}
+                onCheckedChange={(checked) => set("autoStart", checked)}
+                aria-label="Auto-start when termiHub launches"
                 data-testid="server-dialog-autostart"
               />
-              Auto-start when termiHub launches
+              <span>Auto-start when termiHub launches</span>
             </label>
             <label className="server-dialog__check">
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={form.readOnly}
-                onChange={(e) => set("readOnly", e.target.checked)}
+                onCheckedChange={(checked) => set("readOnly", checked)}
+                aria-label="Read-only (disable uploads / writes)"
                 data-testid="server-dialog-readonly"
               />
-              Read-only (disable uploads / writes)
+              <span>Read-only (disable uploads / writes)</span>
             </label>
             {form.serverType === "http" && (
               <label className="server-dialog__check">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={form.directoryListing ?? false}
-                  onChange={(e) => set("directoryListing", e.target.checked)}
+                  onCheckedChange={(checked) => set("directoryListing", checked)}
+                  aria-label="Allow directory listing"
                   data-testid="server-dialog-dirlisting"
                 />
-                Allow directory listing
+                <span>Allow directory listing</span>
               </label>
             )}
           </fieldset>
@@ -283,32 +280,34 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
           {form.serverType === "ftp" && (
             <fieldset className="server-dialog__fieldset">
               <legend className="server-dialog__legend">Authentication</legend>
-              <label className="server-dialog__radio">
-                <input
-                  type="radio"
-                  name="ftp-auth"
-                  checked={ftpAnon}
-                  onChange={() => set("ftpAuth", { type: "anonymous" })}
-                  data-testid="server-dialog-ftp-anon"
-                />
-                Anonymous access
-              </label>
-              <label className="server-dialog__radio">
-                <input
-                  type="radio"
-                  name="ftp-auth"
-                  checked={!ftpAnon}
-                  onChange={() =>
-                    set("ftpAuth", {
-                      type: "credentials",
-                      username: ftpCreds.username,
-                      password: ftpCreds.password,
-                    })
-                  }
-                  data-testid="server-dialog-ftp-creds"
-                />
-                Username / Password
-              </label>
+              <RadioGroup
+                value={ftpAnon ? "anonymous" : "credentials"}
+                onValueChange={(v) =>
+                  set(
+                    "ftpAuth",
+                    v === "anonymous"
+                      ? { type: "anonymous" }
+                      : {
+                          type: "credentials",
+                          username: ftpCreds.username,
+                          password: ftpCreds.password,
+                        }
+                  )
+                }
+                aria-label="FTP authentication"
+                options={[
+                  {
+                    value: "anonymous",
+                    label: "Anonymous access",
+                    "data-testid": "server-dialog-ftp-anon",
+                  },
+                  {
+                    value: "credentials",
+                    label: "Username / Password",
+                    "data-testid": "server-dialog-ftp-creds",
+                  },
+                ]}
+              />
               {!ftpAnon && (
                 <div className="server-dialog__creds">
                   <label className="server-dialog__label">

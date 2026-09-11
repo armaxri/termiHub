@@ -82,12 +82,13 @@ function clickTestId(testId: string) {
 }
 
 function isChecked(testId: string): boolean {
-  const el = query(testId) as HTMLInputElement | null;
-  return el?.checked ?? false;
+  // Migrated to the shared Checkbox/RadioGroup primitives (Radix): these render
+  // as role=checkbox/radio buttons exposing aria-checked, not a native .checked.
+  return query(testId)?.getAttribute("aria-checked") === "true";
 }
 
 function isDisabled(testId: string): boolean {
-  const el = query(testId) as HTMLInputElement | null;
+  const el = query(testId) as HTMLButtonElement | null;
   return el?.disabled ?? false;
 }
 
