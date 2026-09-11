@@ -189,7 +189,7 @@ impl ConnectionManager {
     /// Reloading on every read ensures that a second instance's changes (adds,
     /// deletes, renames) are immediately visible without requiring a restart.
     pub fn get_all(&self) -> Result<FlatConnectionStore> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         Ok(FlatConnectionStore {
             connections: store.connections.clone(),
@@ -256,7 +256,7 @@ impl ConnectionManager {
     /// Save (add or update) a remote agent. Passwords are stripped before persisting.
     pub fn save_agent(&self, agent: SavedRemoteAgent) -> Result<()> {
         let agent = prepare_agent_for_storage(agent, &*self.credential_store)?;
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
 
         if let Some(existing) = store.agents.iter_mut().find(|a| a.id == agent.id) {
@@ -272,7 +272,7 @@ impl ConnectionManager {
 
     /// Reorder remote agents by providing a list of agent IDs in the desired order.
     pub fn reorder_agents(&self, agent_ids: &[String]) -> Result<()> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
 
         // Build the reordered list: place agents in the order given by agent_ids,
@@ -304,7 +304,7 @@ impl ConnectionManager {
     /// array position, so this is what makes an intra-folder drag-reorder persist
     /// across a reload (#2594).
     pub fn reorder_connections(&self, connection_ids: &[String]) -> Result<()> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
 
         let mut reordered: Vec<SavedConnection> = Vec::with_capacity(store.connections.len());
@@ -327,7 +327,7 @@ impl ConnectionManager {
 
     /// Update only the agent runtime settings for an existing agent.
     pub fn update_agent_settings(&self, agent_id: &str, settings: AgentSettings) -> Result<()> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         if let Some(agent) = store.agents.iter_mut().find(|a| a.id == agent_id) {
             agent.agent_settings = settings;
@@ -351,7 +351,7 @@ impl ConnectionManager {
                 "Failed to remove credentials for agent (best-effort, proceeding with delete): {e}"
             );
         }
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         store.agents.retain(|a| a.id != id);
         self.storage
@@ -373,7 +373,7 @@ impl ConnectionManager {
     pub fn save_connection(&self, connection: SavedConnection) -> Result<String> {
         let connection = prepare_for_storage(connection, &*self.credential_store)?;
         let old_id = connection.id.clone();
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         let FlatConnectionStore {
             connections,
@@ -436,7 +436,7 @@ impl ConnectionManager {
                 "Failed to remove credentials for connection (best-effort, proceeding with delete): {e}"
             );
         }
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
         store.connections.retain(|c| c.id != id);
         self.storage
@@ -449,7 +449,7 @@ impl ConnectionManager {
     /// If a folder is renamed, recomputes path-based IDs for all descendant
     /// connections and folders, migrating credentials as needed.
     pub fn save_folder(&self, folder: ConnectionFolder) -> Result<()> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
 
         // Check if this is a rename (collect info before mutating)
@@ -507,7 +507,7 @@ impl ConnectionManager {
     /// and reparents child folders, recomputing path-based IDs and migrating
     /// credentials.
     pub fn delete_folder(&self, id: &str) -> Result<()> {
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
 
         let parent_id = store
@@ -583,7 +583,7 @@ impl ConnectionManager {
 
     /// Export all connections and folders as a JSON string. Passwords are stripped.
     pub fn export_json(&self) -> Result<String> {
-        let store = self.store.lock().unwrap();
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         let mut export_conns = store.connections.clone();
         export_conns = export_conns
             .into_iter()
@@ -609,7 +609,7 @@ impl ConnectionManager {
         let (imported_conns, imported_folders) = flatten_tree(&imported.children, None);
         let count = imported_conns.len();
 
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
 
         // Merge: add imported folders that don't already exist (by name path)
@@ -646,7 +646,7 @@ impl ConnectionManager {
 
     /// Get the current application settings.
     pub fn get_settings(&self) -> AppSettings {
-        self.settings.lock().unwrap().clone()
+        self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Get the current application settings with the serial-port-scan prefixes
@@ -671,15 +671,15 @@ impl ConnectionManager {
         self.settings_storage
             .save(&new_settings)
             .context("Failed to persist settings")?;
-        *self.settings.lock().unwrap() = new_settings;
+        *self.settings.lock().unwrap_or_else(|e| e.into_inner()) = new_settings;
         Ok(())
     }
 
     /// Load all enabled external connection files and return flattened connections.
     pub fn load_external_sources(&self) -> Vec<ExternalSource> {
-        let settings = self.settings.lock().unwrap().clone();
+        let settings = self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let main_folder_ids: HashSet<String> = {
-            let store = self.store.lock().unwrap();
+            let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
             store.folders.iter().map(|f| f.id.clone()).collect()
         };
         let ids_ref: HashSet<&str> = main_folder_ids.iter().map(|s| s.as_str()).collect();
@@ -771,7 +771,7 @@ impl ConnectionManager {
         password: Option<&str>,
         connection_ids: Option<&[String]>,
     ) -> Result<String> {
-        let store = self.store.lock().unwrap();
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
 
         // Select connections to export (all or filtered by IDs)
         let connections: Vec<SavedConnection> = match connection_ids {
@@ -882,7 +882,7 @@ impl ConnectionManager {
         let connections_imported = imported_conns.len();
 
         // Merge connections, folders, and agents
-        let mut store = self.store.lock().unwrap();
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
 
         for folder in imported_folders {
@@ -935,7 +935,7 @@ impl ConnectionManager {
         // 1. Find and remove the connection from its current location
         let mut connection = match current_source {
             None => {
-                let mut store = self.store.lock().unwrap();
+                let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
                 self.sync_from_disk(&mut store);
                 let idx = store
                     .connections
@@ -958,7 +958,7 @@ impl ConnectionManager {
                 let mut disk_conn =
                     prepare_for_storage(connection.clone(), &*self.credential_store)?;
                 disk_conn.source_file = None;
-                let mut store = self.store.lock().unwrap();
+                let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
                 self.sync_from_disk(&mut store);
                 store.connections.push(disk_conn);
                 self.storage

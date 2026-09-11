@@ -50,7 +50,7 @@ impl CredentialManager {
 
     /// Return the current storage mode.
     pub fn get_mode(&self) -> StorageMode {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match *inner {
             StoreBackend::Null(_) => StorageMode::None,
             StoreBackend::MasterPassword(_) => StorageMode::MasterPassword,
@@ -86,7 +86,7 @@ impl CredentialManager {
     where
         F: FnOnce(&MasterPasswordStore) -> R,
     {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match *inner {
             StoreBackend::MasterPassword(ref store) => Some(f(store)),
             _ => None,
@@ -131,7 +131,7 @@ impl CredentialManager {
 
     /// Set the app handle used for emitting events.
     pub fn set_app_handle(&self, handle: AppHandle) {
-        let mut guard = self.app_handle.write().expect("app_handle lock poisoned");
+        let mut guard = self.app_handle.write().unwrap_or_else(|e| e.into_inner());
         *guard = Some(handle);
     }
 
@@ -170,7 +170,7 @@ impl CredentialManager {
 
 impl CredentialStore for CredentialManager {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let is_master_password_mode = matches!(*inner, StoreBackend::MasterPassword(_));
         let result = match *inner {
             StoreBackend::Null(ref s) => s.get(key),
@@ -189,7 +189,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let result = match *inner {
             StoreBackend::Null(ref s) => s.set(key, value),
             StoreBackend::MasterPassword(ref s) => s.set(key, value),
@@ -201,7 +201,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn remove(&self, key: &CredentialKey) -> Result<()> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let result = match *inner {
             StoreBackend::Null(ref s) => s.remove(key),
             StoreBackend::MasterPassword(ref s) => s.remove(key),
@@ -213,7 +213,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let result = match *inner {
             StoreBackend::Null(ref s) => s.remove_all_for_connection(connection_id),
             StoreBackend::MasterPassword(ref s) => s.remove_all_for_connection(connection_id),
@@ -225,7 +225,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn list_keys(&self) -> Result<Vec<CredentialKey>> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let result = match *inner {
             StoreBackend::Null(ref s) => s.list_keys(),
             StoreBackend::MasterPassword(ref s) => s.list_keys(),
@@ -237,7 +237,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn status(&self) -> CredentialStoreStatus {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match *inner {
             StoreBackend::Null(ref s) => s.status(),
             StoreBackend::MasterPassword(ref s) => s.status(),

@@ -97,19 +97,19 @@ impl MasterPasswordStore {
         let key = derive_key(password, &salt)?;
 
         {
-            let mut salt_guard = self.salt.write().expect("salt lock poisoned");
+            let mut salt_guard = self.salt.write().unwrap_or_else(|e| e.into_inner());
             *salt_guard = Some(salt);
         }
         {
-            let mut key_guard = self.derived_key.write().expect("derived_key lock poisoned");
+            let mut key_guard = self.derived_key.write().unwrap_or_else(|e| e.into_inner());
             *key_guard = Some(key.to_vec());
         }
         {
-            let mut cost_guard = self.kdf_cost.write().expect("kdf_cost lock poisoned");
+            let mut cost_guard = self.kdf_cost.write().unwrap_or_else(|e| e.into_inner());
             *cost_guard = Some(Argon2Cost::current());
         }
         {
-            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
             *creds_guard = Some(HashMap::new());
         }
 
@@ -199,19 +199,19 @@ impl MasterPasswordStore {
         plaintext.zeroize();
 
         {
-            let mut salt_guard = self.salt.write().expect("salt lock poisoned");
+            let mut salt_guard = self.salt.write().unwrap_or_else(|e| e.into_inner());
             *salt_guard = Some(salt);
         }
         {
-            let mut key_guard = self.derived_key.write().expect("derived_key lock poisoned");
+            let mut key_guard = self.derived_key.write().unwrap_or_else(|e| e.into_inner());
             *key_guard = Some(key.to_vec());
         }
         {
-            let mut cost_guard = self.kdf_cost.write().expect("kdf_cost lock poisoned");
+            let mut cost_guard = self.kdf_cost.write().unwrap_or_else(|e| e.into_inner());
             *cost_guard = Some(cost);
         }
         {
-            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
             *creds_guard = Some(credentials);
         }
 
@@ -266,7 +266,7 @@ impl MasterPasswordStore {
     pub fn change_password(&self, current_password: &str, new_password: &str) -> Result<()> {
         // Verify the current password by re-deriving the key and comparing.
         let current_salt = {
-            let salt_guard = self.salt.read().expect("salt lock poisoned");
+            let salt_guard = self.salt.read().unwrap_or_else(|e| e.into_inner());
             salt_guard
                 .clone()
                 .context("Store is locked — cannot change password")?
@@ -275,12 +275,12 @@ impl MasterPasswordStore {
         // vault may carry non-default params — so the verification compares
         // like with like (#2362).
         let current_cost = {
-            let cost_guard = self.kdf_cost.read().expect("kdf_cost lock poisoned");
+            let cost_guard = self.kdf_cost.read().unwrap_or_else(|e| e.into_inner());
             cost_guard.context("Store is locked — cannot change password")?
         };
         let current_key = derive_key_with_cost(current_password, &current_salt, &current_cost)?;
         {
-            let key_guard = self.derived_key.read().expect("derived_key lock poisoned");
+            let key_guard = self.derived_key.read().unwrap_or_else(|e| e.into_inner());
             let stored_key = key_guard
                 .as_ref()
                 .context("Store is locked — cannot change password")?;
@@ -297,18 +297,18 @@ impl MasterPasswordStore {
         let new_key = derive_key(new_password, &new_salt)?;
 
         {
-            let mut salt_guard = self.salt.write().expect("salt lock poisoned");
+            let mut salt_guard = self.salt.write().unwrap_or_else(|e| e.into_inner());
             *salt_guard = Some(new_salt);
         }
         {
-            let mut key_guard = self.derived_key.write().expect("derived_key lock poisoned");
+            let mut key_guard = self.derived_key.write().unwrap_or_else(|e| e.into_inner());
             if let Some(ref mut old_key) = *key_guard {
                 old_key.zeroize();
             }
             *key_guard = Some(new_key.to_vec());
         }
         {
-            let mut cost_guard = self.kdf_cost.write().expect("kdf_cost lock poisoned");
+            let mut cost_guard = self.kdf_cost.write().unwrap_or_else(|e| e.into_inner());
             *cost_guard = Some(Argon2Cost::current());
         }
 
@@ -324,21 +324,21 @@ impl MasterPasswordStore {
     /// Encrypt the in-memory credential map and write it to disk atomically.
     fn save_to_disk(&self) -> Result<()> {
         let salt = {
-            let salt_guard = self.salt.read().expect("salt lock poisoned");
+            let salt_guard = self.salt.read().unwrap_or_else(|e| e.into_inner());
             salt_guard
                 .clone()
                 .context("Cannot save — store is locked")?
         };
         let key = {
-            let key_guard = self.derived_key.read().expect("derived_key lock poisoned");
+            let key_guard = self.derived_key.read().unwrap_or_else(|e| e.into_inner());
             key_guard.clone().context("Cannot save — store is locked")?
         };
         let cost = {
-            let cost_guard = self.kdf_cost.read().expect("kdf_cost lock poisoned");
+            let cost_guard = self.kdf_cost.read().unwrap_or_else(|e| e.into_inner());
             cost_guard.context("Cannot save — store is locked")?
         };
         let creds = {
-            let creds_guard = self.credentials.read().expect("credentials lock poisoned");
+            let creds_guard = self.credentials.read().unwrap_or_else(|e| e.into_inner());
             creds_guard
                 .clone()
                 .context("Cannot save — store is locked")?
@@ -395,7 +395,7 @@ impl MasterPasswordStore {
 
 impl CredentialStore for MasterPasswordStore {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
-        let creds_guard = self.credentials.read().expect("credentials lock poisoned");
+        let creds_guard = self.credentials.read().unwrap_or_else(|e| e.into_inner());
         let map = creds_guard
             .as_ref()
             .context("Store is locked — unlock before accessing credentials")?;
@@ -405,7 +405,7 @@ impl CredentialStore for MasterPasswordStore {
 
     fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
         {
-            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
             let map = creds_guard
                 .as_mut()
                 .context("Store is locked — unlock before accessing credentials")?;
@@ -416,7 +416,7 @@ impl CredentialStore for MasterPasswordStore {
 
     fn remove(&self, key: &CredentialKey) -> Result<()> {
         let changed = {
-            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
             let map = creds_guard
                 .as_mut()
                 .context("Store is locked — unlock before accessing credentials")?;
@@ -430,7 +430,7 @@ impl CredentialStore for MasterPasswordStore {
 
     fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
         let changed = {
-            let mut creds_guard = self.credentials.write().expect("credentials lock poisoned");
+            let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
             let map = creds_guard
                 .as_mut()
                 .context("Store is locked — unlock before accessing credentials")?;
@@ -453,7 +453,7 @@ impl CredentialStore for MasterPasswordStore {
     }
 
     fn list_keys(&self) -> Result<Vec<CredentialKey>> {
-        let creds_guard = self.credentials.read().expect("credentials lock poisoned");
+        let creds_guard = self.credentials.read().unwrap_or_else(|e| e.into_inner());
         let map = creds_guard
             .as_ref()
             .context("Store is locked — unlock before accessing credentials")?;
