@@ -39,6 +39,7 @@ import {
   isShellReservedKey,
 } from "@/services/keybindings";
 import { frontendLog } from "@/utils/frontendLog";
+import { backendErrorMessage } from "@/utils/backendErrorCode";
 import {
   sandboxHasParsers,
   sandboxSessionPending,
@@ -698,7 +699,7 @@ export function Terminal({
                         s.setTerminalWaitingForAgent(tabId, null);
                         s.setTerminalDisconnectWithError(
                           tabId,
-                          `Could not reconnect to agent: ${e instanceof Error ? e.message : String(e)}`
+                          `Could not reconnect to agent: ${backendErrorMessage(e)}`
                         );
                       }
                     });
@@ -712,7 +713,9 @@ export function Terminal({
                 if (attempt > MAX_AGENT_SPAWN_ATTEMPTS) {
                   useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
                   useAppStore.getState().setTerminalSpawnError(tabId, null);
-                  useAppStore.getState().setTerminalDisconnectWithError(tabId, String(err));
+                  useAppStore
+                    .getState()
+                    .setTerminalDisconnectWithError(tabId, backendErrorMessage(err));
                   return;
                 }
 
@@ -721,7 +724,7 @@ export function Terminal({
                 // counter first so the failure state is not hidden by the
                 // "Connecting… (attempt N)" overlay (which has higher priority).
                 useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
-                useAppStore.getState().setTerminalSpawnError(tabId, String(err));
+                useAppStore.getState().setTerminalSpawnError(tabId, backendErrorMessage(err));
 
                 // 3 s visible failure display (cancellable via isCanceled or user retry).
                 const failDeadline = Date.now() + 3000;
@@ -743,7 +746,9 @@ export function Terminal({
                 }
               } else {
                 // Direct connection (SSH, Telnet, serial, local) — show error.
-                useAppStore.getState().setTerminalSpawnError(tabId, String(err));
+                // Strip any backend code marker so a machine token
+                // (e.g. an auth-failure signal) never leaks into the overlay.
+                useAppStore.getState().setTerminalSpawnError(tabId, backendErrorMessage(err));
                 return;
               }
             }

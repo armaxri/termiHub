@@ -7,7 +7,7 @@
   border: 1px solid var(--border-primary);
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-  z-index: 9000;
+  z-index: var(--z-banner);
   font-size: 13px;
   color: var(--text-primary);
 }

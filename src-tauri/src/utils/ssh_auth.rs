@@ -67,7 +67,11 @@ pub fn connect_and_authenticate_cancellable(
         tokio::runtime::Handle::current().block_on(core_connect_cancellable(config, Some(cancel)))
     })
     .map(|(session, _registry)| session)
-    .map_err(|e| TerminalError::SshError(e.to_string()))
+    // Preserve a genuine auth rejection as the typed `AuthFailed` (carrying the
+    // locale-independent code) so the agent connect path's destructive
+    // stale-credential discard can gate on it structurally (I18N-001). Non-auth
+    // failures keep the previous `SSH error: …` string, unchanged.
+    .map_err(TerminalError::from_session_ssh)
 }
 
 /// Check whether the SSH agent is running or stopped.

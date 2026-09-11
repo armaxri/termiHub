@@ -220,7 +220,11 @@ describe("useConnectSavedConnection", () => {
 
   it("clears a stale credential and prompts when the pre-connect auth fails", async () => {
     mockedResolveCredential.mockResolvedValue("stale-secret");
-    mockedCreateTerminal.mockRejectedValue(new Error("Authentication failed"));
+    // The backend marks a genuine auth rejection with the typed, locale-
+    // independent code (I18N-001) — the discard gates on it, not on English text.
+    mockedCreateTerminal.mockRejectedValue(
+      new Error("[thub-code:auth_failed] Authentication failed")
+    );
     const { connect } = await renderHook();
     await act(async () => {
       void connect(makeSshConn("pw-stale", "password"));
@@ -229,6 +233,45 @@ describe("useConnectSavedConnection", () => {
     });
     expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-stale", "password");
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  it("clears a stale credential on a non-English auth failure (typed signal, I18N-001)", async () => {
+    mockedResolveCredential.mockResolvedValue("stale-secret");
+    // A localized/reworded remote message that no English substring test would
+    // match — the typed code still drives the destructive discard. This would
+    // FAIL against the old `raw.includes("auth failed")` gate.
+    mockedCreateTerminal.mockRejectedValue(
+      new Error("[thub-code:auth_failed] Authentifizierung fehlgeschlagen")
+    );
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("pw-i18n", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-i18n", "password");
+    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  it("never discards a valid credential for a non-auth error mentioning 'auth failed'", async () => {
+    mockedResolveCredential.mockResolvedValue("good-secret");
+    // A transport error whose text happens to contain "auth failed" but carries
+    // NO typed code — it must not delete the credential (the inverse mis-fire
+    // I18N-001 warns about). This would FAIL against the old substring gate,
+    // which discards on the text alone.
+    mockedCreateTerminal.mockRejectedValue(
+      new Error("SSH error: ssh-agent auth failed: broken pipe")
+    );
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("pw-transport", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockedRemoveCredential).not.toHaveBeenCalled();
+    // Non-auth failure: the tab is opened to surface the error, no re-prompt.
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+    expect(addTabSpy).toHaveBeenCalledOnce();
   });
 
   it("opens a terminal-less type (FTP) into a browser-only file-browser tab (#1335)", async () => {
