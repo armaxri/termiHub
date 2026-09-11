@@ -9,6 +9,7 @@ import {
   sessionDeleteFile,
   sessionRenameFile,
   sessionMkdir,
+  sessionSetPermissions,
   sessionDownload,
   sessionUpload,
   sessionVscodeOpenRemote,
@@ -247,6 +248,15 @@ export function useSessionFileSystem() {
     [sessionFileBrowserId, refreshSession]
   );
 
+  const setPermissions = useCallback(
+    async (path: string, mode: number) => {
+      if (!sessionFileBrowserId) return;
+      await sessionSetPermissions(sessionFileBrowserId, path, mode);
+      refreshSession();
+    },
+    [sessionFileBrowserId, refreshSession]
+  );
+
   const openInVscode = useCallback(
     async (remotePath: string) => {
       // Only an SFTP-backed session can drive VS Code remote open (download →
@@ -395,6 +405,10 @@ export function useSessionFileSystem() {
     createFile,
     deleteEntry,
     renameEntry,
+    setPermissions,
+    // chmod maps to an SFTP `setstat`, so only an SFTP-backed (SSH) session
+    // supports it; byte-based backends (Docker / FTP / remote-agent) do not.
+    supportsPermissions: sftpCapable,
     openInVscode,
     copyEntry,
     cutEntry,
