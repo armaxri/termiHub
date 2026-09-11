@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useRunLocationStore } from "@/store/runLocationStore";
 import { Button, ConfirmDialog, toast } from "@/components/ui";
+import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { setEmbeddedServerRunLocation } from "@/services/embeddedServerApi";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
@@ -141,6 +142,22 @@ export function EmbeddedServerSidebar() {
     }
   }, [pendingServer, deleteEmbeddedServer]);
 
+  // Activating a row (Enter / double-click) opens the server for editing,
+  // matching the sibling management sidebars (workspaces, tunnels).
+  const handleActivate = useCallback(
+    (server: EmbeddedServerConfig) => handleEdit(server.id),
+    [handleEdit]
+  );
+  // Roving-tabindex keyboard navigation + list semantics for the Services list,
+  // consistent with the other management sidebars (A11Y-008): the container is a
+  // `tree`, each row a `treeitem`, and Arrow/Home/End move between rows so a
+  // keyboard user no longer tab-steps through every hidden action button.
+  const nav = useFlatRovingNav<EmbeddedServerConfig, HTMLDivElement>(
+    servers,
+    (server) => server.name,
+    handleActivate
+  );
+
   return (
     <div className="server-sidebar" data-testid="server-sidebar">
       <div className="server-sidebar__actions">
@@ -161,22 +178,33 @@ export function EmbeddedServerSidebar() {
           <span>Click &quot;+ New Service&quot; to add one.</span>
         </div>
       ) : (
-        <div className="server-sidebar__list" data-testid="server-list">
-          {servers.map((cfg) => (
-            <EmbeddedServerItem
-              key={cfg.id}
-              config={cfg}
-              state={serverStates[cfg.id]}
-              agents={agents}
-              runLocation={serverLocations[cfg.id] ?? THIS_COMPUTER}
-              onRunLocationChange={(location) => handleRunLocationChange(cfg.id, location)}
-              onStart={startEmbeddedServer}
-              onStop={stopEmbeddedServer}
-              onEdit={handleEdit}
-              onDuplicate={handleDuplicate}
-              onDelete={handleDelete}
-            />
-          ))}
+        <div
+          className="server-sidebar__list"
+          data-testid="server-list"
+          role="tree"
+          aria-label="Services"
+          onKeyDown={nav.onKeyDown}
+        >
+          {servers.map((cfg, index) => {
+            const { ref, ...rowProps } = nav.getItemProps(index);
+            return (
+              <EmbeddedServerItem
+                key={cfg.id}
+                config={cfg}
+                state={serverStates[cfg.id]}
+                agents={agents}
+                runLocation={serverLocations[cfg.id] ?? THIS_COMPUTER}
+                onRunLocationChange={(location) => handleRunLocationChange(cfg.id, location)}
+                onStart={startEmbeddedServer}
+                onStop={stopEmbeddedServer}
+                onEdit={handleEdit}
+                onDuplicate={handleDuplicate}
+                onDelete={handleDelete}
+                rowRef={ref}
+                rowProps={rowProps}
+              />
+            );
+          })}
         </div>
       )}
 

@@ -1,3 +1,4 @@
+import type React from "react";
 import { useCallback } from "react";
 import { Play, Square, Pencil, Copy, Trash2, ExternalLink, Clipboard } from "lucide-react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
@@ -33,6 +34,10 @@ interface Props {
   onEdit: (id: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Roving-tabindex ref wiring the row into the sidebar's keyboard navigation. */
+  rowRef?: (el: HTMLDivElement | null) => void;
+  /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
+  rowProps?: React.HTMLAttributes<HTMLDivElement>;
 }
 
 /** Extract a human-readable message from an unknown rejection value. */
@@ -85,6 +90,8 @@ export function EmbeddedServerItem({
   onEdit,
   onDuplicate,
   onDelete,
+  rowRef,
+  rowProps,
 }: Props) {
   const status = state?.status;
   const active = isActive(status);
@@ -134,6 +141,8 @@ export function EmbeddedServerItem({
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
         <SidebarListItem
+          ref={rowRef}
+          {...rowProps}
           testId={`server-item-${config.id}`}
           nameTestId={`server-name-${config.id}`}
           name={config.name}
