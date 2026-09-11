@@ -215,12 +215,20 @@ pub fn update_plugin_settings(
 
 /// Read a file from inside an installed plugin's directory (theme JSON, JS
 /// entry point, …). `path` is relative to `plugins/<id>/`; traversal is
-/// refused. Returns the raw bytes; text consumers decode as UTF-8.
+/// refused.
+///
+/// Returns the file bytes base64-encoded (standard alphabet, padded) rather than
+/// serde's default JSON number-array for `Vec<u8>` (~4x wire bloat plus a
+/// per-byte JS array allocation); the frontend decodes them in
+/// `src/services/api.ts`. Byte-for-byte faithful; empty input → empty string
+/// (PERF-002).
 #[tauri::command]
 pub fn read_plugin_file(
     id: String,
     path: String,
     manager: State<'_, PluginManager>,
-) -> Result<Vec<u8>, String> {
-    manager.read_file(&id, &path).map_err(|e| e.to_string())
+) -> Result<String, String> {
+    use base64::Engine;
+    let bytes = manager.read_file(&id, &path).map_err(|e| e.to_string())?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }

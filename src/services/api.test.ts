@@ -56,6 +56,9 @@ import {
   sessionRealpath,
   sessionCheckWritable,
   sessionWriteFileElevated,
+  sessionReadFile,
+  sessionWriteFile,
+  readPluginFile,
   sessionHasExecCapability,
   sessionDownload,
   sessionUpload,
@@ -1174,6 +1177,84 @@ describe("api service", () => {
         intervalMs: 5000,
         runLocation: undefined,
       });
+    });
+  });
+
+  // File bytes cross IPC as a compact base64 string rather than a JSON
+  // number-array (~4x wire bloat + per-byte array allocation). The wrappers
+  // encode/decode at the boundary so callers still deal in raw bytes; the
+  // round-trip must be byte-exact for arbitrary bytes, including high bytes
+  // (>127) and non-UTF8 sequences (PERF-002).
+  describe("file bytes base64 IPC (PERF-002)", () => {
+    beforeEach(() => {
+      mockedInvoke.mockReset();
+    });
+
+    // Includes 0x00, boundary 0x7f, high bytes 0x80/0xfe/0xff, and 0xc0 (an
+    // invalid UTF-8 lead byte) — base64 must carry them all untouched.
+    const bytes = new Uint8Array([0x00, 0x41, 0x7f, 0x80, 0xc0, 0xfe, 0xff]);
+    const b64 = btoa(String.fromCharCode(...bytes));
+
+    it("sessionReadFile decodes the backend base64 string to the exact bytes", async () => {
+      mockedInvoke.mockResolvedValue(b64);
+
+      const result = await sessionReadFile("docker-1", "/remote/file.bin");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_read_file", {
+        sessionId: "docker-1",
+        path: "/remote/file.bin",
+      });
+      expect(result).toBeInstanceOf(Uint8Array);
+      expect(Array.from(result)).toEqual(Array.from(bytes));
+    });
+
+    it("sessionReadFile decodes an empty file (empty string) to zero bytes", async () => {
+      mockedInvoke.mockResolvedValue("");
+
+      const result = await sessionReadFile("docker-1", "/remote/empty");
+
+      expect(result).toBeInstanceOf(Uint8Array);
+      expect(result.length).toBe(0);
+    });
+
+    it("sessionWriteFile encodes bytes to base64 (byte-exact round trip)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await sessionWriteFile("docker-1", "/remote/file.bin", bytes);
+
+      const call = mockedInvoke.mock.calls.find((c) => c[0] === "session_write_file");
+      expect(call).toBeDefined();
+      const arg = call![1] as { sessionId: string; path: string; data: string };
+      expect(arg.sessionId).toBe("docker-1");
+      expect(arg.path).toBe("/remote/file.bin");
+      // Wire form is a compact base64 string, not a JSON number-array.
+      expect(typeof arg.data).toBe("string");
+      expect(arg.data).toBe(b64);
+      // Decoding the wire string yields the original bytes.
+      const decoded = Uint8Array.from(atob(arg.data), (ch) => ch.charCodeAt(0));
+      expect(Array.from(decoded)).toEqual(Array.from(bytes));
+    });
+
+    it("sessionWriteFile also accepts a plain number[] and round-trips it", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await sessionWriteFile("docker-1", "/remote/file.bin", Array.from(bytes));
+
+      const call = mockedInvoke.mock.calls.find((c) => c[0] === "session_write_file");
+      const arg = call![1] as { data: string };
+      expect(arg.data).toBe(b64);
+    });
+
+    it("readPluginFile decodes the backend base64 string to the exact bytes", async () => {
+      mockedInvoke.mockResolvedValue(b64);
+
+      const result = await readPluginFile("theme-x", "theme.json");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("read_plugin_file", {
+        id: "theme-x",
+        path: "theme.json",
+      });
+      expect(Array.from(result)).toEqual(Array.from(bytes));
     });
   });
 });

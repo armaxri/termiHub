@@ -377,15 +377,44 @@ pub async fn session_list_files(
     manager.list_files(&session_id, &path).await
 }
 
+/// Encode raw file bytes as a base64 (standard alphabet, padded) string for the
+/// IPC boundary.
+///
+/// Remote file bytes used to cross IPC as serde's default JSON number-array for
+/// `Vec<u8>` (one array element per byte, ~4x wire bloat plus a per-byte JS
+/// array allocation), which worsened memory/CPU and the large-file OOM risk on
+/// [`session_read_file`] / [`session_write_file`]. base64 mirrors the terminal
+/// output hot path (#2072). Byte-for-byte faithful for all values 0x00–0xFF;
+/// empty input encodes to the empty string. Paired with `base64ToBytes` in
+/// `src/services/events.ts` (PERF-002).
+fn encode_file_bytes(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Decode a base64 (standard alphabet, padded) file-bytes string received over
+/// IPC back to the exact raw bytes. Exact inverse of [`encode_file_bytes`] and
+/// of `bytesToBase64` in `src/services/events.ts` (PERF-002).
+fn decode_file_bytes(data: &str) -> Result<Vec<u8>, TerminalError> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|e| TerminalError::EditorError(format!("invalid base64 file data: {e}")))
+}
+
 /// Read a file via a session's file browser capability.
+///
+/// Returns the file bytes base64-encoded (see [`encode_file_bytes`]); the
+/// frontend decodes them in `src/services/api.ts` (PERF-002).
 #[tauri::command]
 pub async fn session_read_file(
     session_id: String,
     path: String,
     manager: State<'_, SessionManager>,
-) -> Result<Vec<u8>, TerminalError> {
+) -> Result<String, TerminalError> {
     debug!(session_id, path, "Session file read");
-    manager.read_file(&session_id, &path).await
+    let bytes = manager.read_file(&session_id, &path).await?;
+    Ok(encode_file_bytes(&bytes))
 }
 
 /// Get metadata for a single file via a session's file browser capability.
@@ -403,15 +432,19 @@ pub async fn session_stat(
 }
 
 /// Write a file via a session's file browser capability.
+///
+/// `data` is the file bytes base64-encoded by the frontend (PERF-002); it is
+/// decoded back to raw bytes before the write (see [`decode_file_bytes`]).
 #[tauri::command]
 pub async fn session_write_file(
     session_id: String,
     path: String,
-    data: Vec<u8>,
+    data: String,
     manager: State<'_, SessionManager>,
 ) -> Result<(), TerminalError> {
     debug!(session_id, path, "Session file write");
-    manager.write_file(&session_id, &path, &data).await
+    let bytes = decode_file_bytes(&data)?;
+    manager.write_file(&session_id, &path, &bytes).await
 }
 
 /// Delete a file via a session's file browser capability.
@@ -985,7 +1018,43 @@ pub async fn get_agent_session_buffer(
 
 #[cfg(test)]
 mod tests {
-    use super::{initial_connect_tab_id, killed_disconnect_tab_id};
+    use super::{
+        decode_file_bytes, encode_file_bytes, initial_connect_tab_id, killed_disconnect_tab_id,
+    };
+
+    /// File bytes cross IPC as base64 (PERF-002): `session_read_file` returns
+    /// base64 and `session_write_file` accepts base64. The encode/decode pair
+    /// must round-trip arbitrary bytes — including high bytes (>127) and
+    /// non-UTF8 sequences — byte-for-byte, or file contents corrupt on save.
+    #[test]
+    fn file_bytes_base64_round_trip_is_byte_exact() {
+        let cases: Vec<Vec<u8>> = vec![
+            Vec::new(),                              // empty file → ""
+            b"hello world".to_vec(),                 // plain ASCII
+            "héllo — 日本語 🎉".as_bytes().to_vec(), // UTF-8 multi-byte
+            vec![0x00, 0x7f, 0x80, 0xfe, 0xff],      // boundary + high bytes
+            vec![0xff, 0xfe, 0xc0, 0xc1, 0x80],      // invalid-as-UTF8 bytes
+            (0u16..=255).map(|b| b as u8).collect(), // every byte value
+        ];
+
+        for bytes in cases {
+            let encoded = encode_file_bytes(&bytes);
+            // Wire form is a compact base64 string, not a JSON number-array.
+            assert!(encoded.is_ascii(), "base64 must be ASCII");
+            let decoded = decode_file_bytes(&encoded).expect("valid base64 must decode");
+            assert_eq!(
+                decoded, bytes,
+                "file-bytes base64 round-trip must be byte-exact"
+            );
+        }
+    }
+
+    /// Malformed base64 on the write path is surfaced as an error, never a panic
+    /// or a silently truncated write (PERF-002).
+    #[test]
+    fn decode_file_bytes_rejects_invalid_base64() {
+        assert!(decode_file_bytes("not valid base64!!!").is_err());
+    }
 
     #[test]
     fn killed_disconnect_folds_only_for_an_intentional_kill_with_a_tab() {

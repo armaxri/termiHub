@@ -10,6 +10,7 @@ import {
   onCredentialStoreUnlocked,
   onCredentialStoreStatusChanged,
   base64ToBytes,
+  bytesToBase64,
 } from "./events";
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -81,6 +82,31 @@ describe("events service", () => {
       const utf8 = Array.from(new TextEncoder().encode("é🎉"));
       const bytes = [0x00, 0x7f, 0x80, 0xfe, 0xff, ...utf8];
       expect(Array.from(base64ToBytes(b64(bytes)))).toEqual(bytes);
+    });
+  });
+
+  // File bytes cross IPC as base64 on the write path (PERF-002); the encoder
+  // must be the exact inverse of base64ToBytes for arbitrary bytes.
+  describe("bytesToBase64 (file-write encode, PERF-002)", () => {
+    it("encodes a zero-length array to the empty string", () => {
+      expect(bytesToBase64(new Uint8Array(0))).toBe("");
+      expect(bytesToBase64([])).toBe("");
+    });
+
+    it("is the exact inverse of base64ToBytes for every byte value 0x00–0xFF", () => {
+      const all = Array.from({ length: 256 }, (_, i) => i);
+      expect(bytesToBase64(all)).toBe(b64(all));
+      expect(Array.from(base64ToBytes(bytesToBase64(Uint8Array.from(all))))).toEqual(all);
+    });
+
+    it("round-trips high bytes and non-UTF8 sequences byte-for-byte", () => {
+      const bytes = new Uint8Array([0xff, 0xfe, 0xc0, 0xc1, 0x80, 0x00, 0x41]);
+      expect(Array.from(base64ToBytes(bytesToBase64(bytes)))).toEqual(Array.from(bytes));
+    });
+
+    it("accepts both Uint8Array and number[] identically", () => {
+      const nums = [1, 2, 3, 200, 255];
+      expect(bytesToBase64(nums)).toBe(bytesToBase64(Uint8Array.from(nums)));
     });
   });
 

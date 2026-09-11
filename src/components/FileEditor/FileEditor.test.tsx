@@ -40,9 +40,24 @@ globalThis.ResizeObserver = class {
 
 const mockedInvoke = vi.mocked(invoke);
 
-/** Encode text the way session_read_file returns it: a plain byte array. */
-function toBytes(text: string): number[] {
-  return Array.from(new TextEncoder().encode(text));
+/**
+ * Encode text the way `session_read_file` returns it over IPC: base64 of the
+ * file's raw bytes (PERF-002 — file bytes cross IPC as a compact base64 string,
+ * not a JSON number-array).
+ */
+function toB64(text: string): string {
+  const bytes = new TextEncoder().encode(text);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+
+/** Decode a base64 `session_write_file` `data` payload back to text. Inverse of {@link toB64}. */
+function fromB64(b64: string): string {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
 }
 
 const TAB_ID = "tab-fe-1";
@@ -106,7 +121,7 @@ describe("FileEditor — save error handling (#969)", () => {
 
   it("surfaces a permission-denied save failure and keeps the buffer dirty", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("127.0.0.1 localhost\n"));
       if (cmd === "session_write_file")
         return Promise.reject(new Error("create remote file: permission denied"));
       return Promise.resolve(undefined);
@@ -142,7 +157,7 @@ describe("FileEditor — save error handling (#969)", () => {
 
   it("shows a generic save-failed message for non-permission errors", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("data\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("data\n"));
       if (cmd === "session_write_file") return Promise.reject(new Error("disk quota exceeded"));
       return Promise.resolve(undefined);
     });
@@ -164,7 +179,7 @@ describe("FileEditor — save error handling (#969)", () => {
   it("clears a prior save error when a later save succeeds", async () => {
     let failNext = true;
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("v1\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("v1\n"));
       if (cmd === "session_write_file") {
         if (failNext) return Promise.reject(new Error("permission denied"));
         return Promise.resolve(undefined);
@@ -278,7 +293,7 @@ describe("FileEditor — read-only badge + banner (#1325)", () => {
 
   function mockWritability(result: "writable" | "readOnly" | "unknown"): void {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("127.0.0.1 localhost\n"));
       if (cmd === "local_read_file") return Promise.resolve("local body\n");
       // A resolved exec-capability probe marks the session SFTP-backed, unlocking
       // the writability probe (#2420). Detection only here — no exec channel.
@@ -400,7 +415,7 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
     const elevatedCalls: Array<Record<string, unknown>> = [];
     const queue = [...elevatedResults];
     mockedInvoke.mockImplementation((cmd, args) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("127.0.0.1 localhost\n"));
       if (cmd === "session_has_exec_capability") return Promise.resolve(execCapable);
       if (cmd === "session_check_writable")
         return Promise.resolve(readOnly ? "readOnly" : "writable");
@@ -565,7 +580,7 @@ describe("FileEditor — elevated (sudo) edit mode (#1329)", () => {
   it("adds a 'Retry with sudo' action to the #969 banner after a failed direct save", async () => {
     // Writability unknown → direct save attempted → permission denied → banner.
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("body\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("body\n"));
       if (cmd === "session_has_exec_capability") return Promise.resolve(true);
       if (cmd === "session_check_writable") return Promise.resolve("unknown");
       if (cmd === "session_write_file") return Promise.reject(new Error("permission denied"));
@@ -673,7 +688,7 @@ describe("FileEditor — sudo host label from the session (#2424 / #2426)", () =
     const elevatedCalls: Array<Record<string, unknown>> = [];
     const credentialCalls: Array<{ cmd: string; args: Record<string, unknown> }> = [];
     mockedInvoke.mockImplementation((cmd, args) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("127.0.0.1 localhost\n"));
       if (cmd === "session_has_exec_capability") return Promise.resolve(true);
       if (cmd === "session_check_writable") return Promise.resolve("readOnly");
       if (cmd === "session_write_file_elevated") {
@@ -844,7 +859,7 @@ describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
 
   it("renders the Save action as a shared Button primitive", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("data\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("data\n"));
       return Promise.resolve(undefined);
     });
     render();
@@ -857,7 +872,7 @@ describe("FileEditor — toolbar composes shared UI primitives (#1358)", () => {
 
   it("renders the save-error dismiss as a shared Button primitive", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("data\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("data\n"));
       if (cmd === "session_write_file") return Promise.reject(new Error("permission denied"));
       return Promise.resolve(undefined);
     });
@@ -927,7 +942,7 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
     const writeCalls: Array<Record<string, unknown>> = [];
     const downloadCalls: Array<Record<string, unknown>> = [];
     mockedInvoke.mockImplementation((cmd, args) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("127.0.0.1 localhost\n"));
       if (cmd === "session_has_exec_capability") return Promise.resolve(false);
       if (cmd === "session_check_writable") return Promise.resolve("readOnly");
       if (cmd === "session_realpath") {
@@ -1025,9 +1040,7 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
 
     expect(writeCalls).toHaveLength(1);
     expect(writeCalls[0].path).toBe("/home/user/hosts.copy");
-    expect(new TextDecoder().decode(new Uint8Array(writeCalls[0].data as number[]))).toBe(
-      "127.0.0.1 localhost\nmy edit\n"
-    );
+    expect(fromB64(writeCalls[0].data as string)).toBe("127.0.0.1 localhost\nmy edit\n");
   });
 
   it("downloads the file to a chosen local path via Download", async () => {
@@ -1049,7 +1062,7 @@ describe("FileEditor — SFTP-only read-only fallback (#1330)", () => {
 
   it("keeps the exec-capable Edit-with-sudo path (no fallback) when a shell exists", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(toBytes("body\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("body\n"));
       if (cmd === "session_has_exec_capability") return Promise.resolve(true);
       if (cmd === "session_check_writable") return Promise.resolve("readOnly");
       return Promise.resolve(undefined);
@@ -1087,16 +1100,11 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
   });
 
-  /** Encode text the way session_read_file returns it: a plain byte array. */
-  function bytes(text: string): number[] {
-    return Array.from(new TextEncoder().encode(text));
-  }
-
   it("reads the file through session_read_file and never touches the SFTP path", async () => {
     mockedInvoke.mockImplementation((cmd, args) => {
       if (cmd === "session_read_file") {
         expect(args).toMatchObject({ sessionId: "sess-ftp-1", path: "/srv/app/config.yml" });
-        return Promise.resolve(bytes("port: 8080\n"));
+        return Promise.resolve(toB64("port: 8080\n"));
       }
       return Promise.resolve(undefined);
     });
@@ -1112,7 +1120,7 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
 
   it("decodes non-ASCII content returned as bytes", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(bytes("gruß: 🌍\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("gruß: 🌍\n"));
       return Promise.resolve(undefined);
     });
 
@@ -1123,11 +1131,11 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
   });
 
   it("saves the buffer back through session_write_file", async () => {
-    const writes: { sessionId: string; path: string; data: number[] }[] = [];
+    const writes: { sessionId: string; path: string; data: string }[] = [];
     mockedInvoke.mockImplementation((cmd, args) => {
-      if (cmd === "session_read_file") return Promise.resolve(bytes("port: 8080\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("port: 8080\n"));
       if (cmd === "session_write_file") {
-        writes.push(args as unknown as { sessionId: string; path: string; data: number[] });
+        writes.push(args as unknown as { sessionId: string; path: string; data: string });
         return Promise.resolve(undefined);
       }
       return Promise.resolve(undefined);
@@ -1149,7 +1157,7 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
     expect(writes).toHaveLength(1);
     expect(writes[0].sessionId).toBe("sess-ftp-1");
     expect(writes[0].path).toBe("/srv/app/config.yml");
-    expect(new TextDecoder().decode(new Uint8Array(writes[0].data))).toBe("port: 9090\n");
+    expect(fromB64(writes[0].data)).toBe("port: 9090\n");
     // A successful save clears the dirty flag and raises no error banner.
     expect(useAppStore.getState().editorDirtyTabs[TAB_ID]).toBe(false);
     expect(query("file-editor-save-error")).toBeNull();
@@ -1157,7 +1165,7 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
 
   it("surfaces a failed session save and keeps the buffer dirty", async () => {
     mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "session_read_file") return Promise.resolve(bytes("port: 8080\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("port: 8080\n"));
       if (cmd === "session_write_file")
         return Promise.reject(new Error("write config.yml: permission denied"));
       return Promise.resolve(undefined);
@@ -1187,7 +1195,7 @@ describe("FileEditor — session-layer backed tabs (#1557)", () => {
     const calls: string[] = [];
     mockedInvoke.mockImplementation((cmd) => {
       calls.push(String(cmd));
-      if (cmd === "session_read_file") return Promise.resolve(bytes("body\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("body\n"));
       if (cmd === "session_has_exec_capability")
         return Promise.reject(
           new Error("Session file browser does not support SFTP advanced operations")
@@ -1272,11 +1280,6 @@ describe("FileEditor — SFTP-backed session tab reaches SFTP parity (#2420)", (
     });
   }
 
-  /** Encode text the way session_read_file returns it: a plain byte array. */
-  function bytes(text: string): number[] {
-    return Array.from(new TextEncoder().encode(text));
-  }
-
   /**
    * Mock a session-backed SFTP connection through the `session_*` twins, so the
    * advanced ops resolve exactly as they would for an SSH-backed session.
@@ -1300,7 +1303,7 @@ describe("FileEditor — SFTP-backed session tab reaches SFTP parity (#2420)", (
     const queue = [...elevatedResults];
     mockedInvoke.mockImplementation((cmd, args) => {
       calls.push(String(cmd));
-      if (cmd === "session_read_file") return Promise.resolve(bytes("127.0.0.1 localhost\n"));
+      if (cmd === "session_read_file") return Promise.resolve(toB64("127.0.0.1 localhost\n"));
       // The probe resolves (does not reject) → the session is SFTP-backed.
       if (cmd === "session_has_exec_capability") return Promise.resolve(execCapable);
       if (cmd === "session_check_writable") return Promise.resolve(writable);
@@ -1419,9 +1422,7 @@ describe("FileEditor — SFTP-backed session tab reaches SFTP parity (#2420)", (
     expect(writeCalls).toHaveLength(1);
     expect(writeCalls[0].sessionId).toBe("sess-ssh-1");
     expect(writeCalls[0].path).toBe("/home/user/hosts.copy");
-    expect(new TextDecoder().decode(new Uint8Array(writeCalls[0].data as number[]))).toBe(
-      "127.0.0.1 localhost\nmy edit\n"
-    );
+    expect(fromB64(writeCalls[0].data as string)).toBe("127.0.0.1 localhost\nmy edit\n");
   });
 
   it("pre-fills Save a copy under the session realpath home", async () => {
