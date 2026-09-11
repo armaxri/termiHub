@@ -284,10 +284,14 @@ mod tests {
     use super::super::config::LocalForwardConfig;
     use super::*;
 
-    /// Poll `pred` until it holds or a 3s deadline passes (then panic). Used to
-    /// wait on a relay actually opening its channel without a fixed sleep.
+    /// Poll `pred` until it holds or a 10s deadline passes (then panic). Used to
+    /// wait on a relay actually opening its channel without a fixed sleep. The
+    /// deadline is deliberately generous: on a heavily-loaded CI runner (the
+    /// Windows leg runs the whole workspace) accept scheduling and loopback
+    /// setup can take well over a second, and a false "condition not met" panic
+    /// here is worse than a slightly longer wait on a genuine hang.
     async fn wait_until(pred: impl Fn() -> bool) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {
             if pred() {
                 return;
@@ -425,7 +429,7 @@ mod tests {
 
         // First connection is accepted; its relay opens (and holds) a channel,
         // so the single permit is now taken.
-        let client1 = TcpStream::connect(addr).await.expect("connect client1");
+        let mut client1 = TcpStream::connect(addr).await.expect("connect client1");
         wait_until(|| opens.load(Ordering::SeqCst) == 1).await;
 
         // Second connection arrives at capacity: the forwarder drops it without
@@ -443,12 +447,29 @@ mod tests {
             "no second channel is opened while at capacity"
         );
 
-        // End the first relay: dropping the client (client->channel EOF) and the
-        // parked channel far-end (channel->client EOF) lets `copy_bidirectional`
-        // complete in both directions, so the relay task finishes and its owned
-        // permit is released.
-        drop(client1);
+        // End the first relay so its owned permit frees. `copy_bidirectional`
+        // completes only once *both* directions reach EOF and shut down:
+        // half-closing client1's write side gives the client->channel EOF, and
+        // clearing the parked channel far-end gives the channel->client EOF.
+        //
+        // Crucially we do NOT `drop(client1)` here. The relay shuts down its own
+        // write half *toward* client1 as it finishes; on Windows, shutting down
+        // toward an already-dropped peer left that copy pending, so the relay
+        // never ended, its permit never freed, and this test hung until the
+        // deadline on the Windows CI leg. Keeping client1's socket alive (read
+        // half open, drained to EOF below) makes the relay's shutdown a clean
+        // FIN on every platform, so the permit is reliably released.
+        client1
+            .shutdown()
+            .await
+            .expect("half-close client1 write side");
         fars.lock().expect("fars mutex poisoned").clear();
+        let mut drained = Vec::new();
+        client1
+            .read_to_end(&mut drained)
+            .await
+            .expect("drain client1 to EOF once the relay closes its write half");
+        assert!(drained.is_empty(), "the held relay never relayed any bytes");
 
         // With the permit freed, a third connection is now accepted and its
         // relay opens a channel — proving the permit was released, not leaked.
