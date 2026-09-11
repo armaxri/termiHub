@@ -93,8 +93,8 @@ pub struct NetworkManager {
     /// Per-monitor run-location preference — which machine hosts each monitor
     /// (#2592). Keyed by monitor id. In-memory today (like the embedded-server
     /// preference, #2214); an absent entry means [`RunLocation::ThisComputer`],
-    /// the desktop default and today's behaviour. Persisted configs auto-start
-    /// on this computer after a relaunch, exactly as before.
+    /// the desktop default and today's behaviour. Persisted configs load stopped
+    /// on this computer after a relaunch (PERF-008); a resume runs them locally.
     monitor_run_locations: Mutex<HashMap<String, RunLocation>>,
     /// Handle to the single periodic agent `service.status` poller task (#2592).
     /// `Some` while at least one agent-hosted monitor exists; the task self-reaps
@@ -333,8 +333,9 @@ impl NetworkManager {
     /// `run_location` records where the monitor should run (default:
     /// [`RunLocation::ThisComputer`]); an agent choice hosts the monitor on that
     /// agent (#2592). The config is written to disk (see [`http_monitor_storage`])
-    /// so the monitor is auto-restarted on the next launch. Runtime state (last
-    /// result, running flag) and the run-location choice are never persisted.
+    /// so the monitor survives a relaunch — where it loads *stopped* and is
+    /// resumed on demand (PERF-008), rather than auto-starting. Runtime state
+    /// (last result, running flag) and the run-location choice are never persisted.
     pub fn start_http_monitor(
         &self,
         config: HttpMonitorConfig,
@@ -349,9 +350,10 @@ impl NetworkManager {
     }
 
     /// Spawn the poll loop for a config and track its service, **without**
-    /// touching disk. Used both by [`start_http_monitor`](Self::start_http_monitor)
-    /// (after persisting) and by [`init`](Self::init) when auto-starting the
-    /// persisted monitors on launch.
+    /// touching disk. Used by [`start_http_monitor`](Self::start_http_monitor)
+    /// (after persisting) and on resume. On launch, [`init`](Self::init) instead
+    /// loads persisted monitors *stopped* via
+    /// [`load_http_monitor_stopped`](Self::load_http_monitor_stopped) (PERF-008).
     ///
     /// The monitor's run-location is resolved through the [`RunLocationResolver`]
     /// from its recorded preference (default: local). A monitor resolving to an
