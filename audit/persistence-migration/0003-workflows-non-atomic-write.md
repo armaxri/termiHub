@@ -9,7 +9,7 @@ subsystem: src-tauri/src/workflows
 evidence:
   - src-tauri/src/workflows/storage.rs:85
   - src-tauri/src/utils/fs.rs:23
-status: in-progress
+status: fixed
 resolution: "#2737 — +4 more stores incl ssh/rdp trust also made atomic"
 ---
 

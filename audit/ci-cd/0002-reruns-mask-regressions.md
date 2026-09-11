@@ -11,7 +11,7 @@ evidence:
   - .github/workflows/system-integration.yml:352
   - .github/workflows/system-integration.yml:503
   - .github/workflows/system-integration.yml:517
-status: in-progress
+status: fixed
 resolution: "#2741"
 ---
 

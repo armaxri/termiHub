@@ -10,7 +10,7 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:2
   - src-tauri/src/commands/files.rs:83
   - core/src/backends/ssh/file_browser.rs:237
-status: in-progress
+status: fixed
 resolution: "#2740"
 ---
 

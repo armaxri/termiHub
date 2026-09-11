@@ -12,7 +12,7 @@ evidence:
   - .github/workflows/system-integration.yml:503
   - .github/workflows/system-integration.yml:517
   - tests/system/pyproject.toml:20
-status: in-progress
+status: fixed
 resolution: "#2741"
 ---
 

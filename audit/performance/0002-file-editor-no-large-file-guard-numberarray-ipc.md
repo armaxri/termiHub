@@ -13,7 +13,7 @@ evidence:
   - src/services/api.ts:1475
   - src/services/api.ts:1490
 status: in-progress
-resolution: "#2740 — size-guard done; number[] IPC re-encode deferred"
+resolution: "#2740 — crash size-guard merged; number[] IPC re-encode still open"
 ---
 
 ## What
