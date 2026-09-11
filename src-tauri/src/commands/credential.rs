@@ -28,6 +28,52 @@ pub struct SwitchResult {
     pub warnings: Vec<String>,
 }
 
+/// Build the user-facing error shown when the source store cannot be read in
+/// full during a store switch. The switch is aborted, so the source data is
+/// left untouched and the user can recover it.
+fn unreadable_source_error(current_mode: &StorageMode, detail: &str) -> String {
+    format!(
+        "Cannot switch credential store: the current store ({}) could not be read ({detail}). \
+         Your saved credentials are still intact — unlock or repair the current store, \
+         then try switching again.",
+        current_mode.to_settings_str()
+    )
+}
+
+/// Collect every credential from the current store for migration to the new one.
+///
+/// This is the data-safety gate for [`switch_credential_store`] (TAURI-011). The
+/// source store must be readable **in full** before the backend is switched:
+///
+/// - If enumerating keys (`list_keys`) fails, or reading any individual
+///   credential (`get`) returns `Err` — e.g. a locked, corrupt, or transiently
+///   erroring master-password store — the switch is **aborted** with a clear
+///   error rather than silently proceeding to an empty new store (which would
+///   look like total credential loss while the data still sits in the old store).
+/// - A genuinely empty source (0 keys) yields an empty vec — a legitimate switch.
+/// - A key that lists but reads back as `None` (a benign list/get race) is skipped.
+fn collect_credentials_for_migration(
+    manager: &CredentialManager,
+    current_mode: &StorageMode,
+) -> Result<Vec<(CredentialKey, String)>, String> {
+    let keys_to_migrate = manager
+        .list_keys()
+        .map_err(|e| unreadable_source_error(current_mode, &e.to_string()))?;
+
+    let mut credentials_to_migrate = Vec::new();
+    for key in &keys_to_migrate {
+        match manager.get(key) {
+            Ok(Some(value)) => credentials_to_migrate.push((key.clone(), value)),
+            Ok(None) => {
+                // Key vanished between list and get — nothing to migrate for it.
+            }
+            Err(e) => return Err(unreadable_source_error(current_mode, &e.to_string())),
+        }
+    }
+
+    Ok(credentials_to_migrate)
+}
+
 fn emit_status_changed(app_handle: &AppHandle, manager: &CredentialManager) {
     let info = build_status_info(manager);
     if let Err(e) = app_handle.emit(EVENT_STORE_STATUS_CHANGED, &info) {
@@ -249,14 +295,11 @@ pub async fn switch_credential_store(
         });
     }
 
-    // Collect credentials from the current store for migration
-    let keys_to_migrate = manager.list_keys().unwrap_or_default();
-    let mut credentials_to_migrate = Vec::new();
-    for key in &keys_to_migrate {
-        if let Ok(Some(value)) = manager.get(key) {
-            credentials_to_migrate.push((key.clone(), value));
-        }
-    }
+    // Collect credentials from the current store for migration. Aborts the
+    // switch (leaving the source untouched) if the source cannot be read in
+    // full, so an unreadable store never silently becomes an empty new store
+    // that looks like total credential loss (TAURI-011).
+    let credentials_to_migrate = collect_credentials_for_migration(&manager, &current_mode)?;
 
     // Notify auto-lock timer when leaving master password mode
     if current_mode == StorageMode::MasterPassword {
@@ -305,11 +348,16 @@ pub async fn switch_credential_store(
         }
     }
 
-    if migrated_count > 0 {
-        debug!(
-            migrated_count,
+    info!(
+        migrated_count,
+        source_count = credentials_to_migrate.len(),
+        warning_count = warnings.len(),
+        "Credential migration complete"
+    );
+    if !warnings.is_empty() {
+        warn!(
             warning_count = warnings.len(),
-            "Credential migration complete"
+            "Some credentials failed to migrate to the new store; source store left intact"
         );
     }
 
@@ -423,7 +471,83 @@ pub fn remove_credential(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::credential::MasterPasswordStore;
+    use crate::credential::{CredentialStore, CredentialType, MasterPasswordStore};
+
+    // --- TAURI-011: switch must abort (not silently switch to empty) when the
+    // source store is unreadable, but succeed for a readable source. ---
+
+    /// A locked master-password source must ABORT the migration collection with
+    /// an error instead of yielding an empty credential set — otherwise the
+    /// switch would "succeed" with 0 credentials while the data still exists,
+    /// which looks like total credential loss. This is the regression guard for
+    /// the old `list_keys().unwrap_or_default()` / `if let Ok(Some(..))` behavior.
+    #[test]
+    fn collect_migration_aborts_when_source_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
+
+        // Set up and store a credential, then lock the store.
+        mgr.with_master_password_store(|s| s.setup("test-pw"))
+            .unwrap()
+            .unwrap();
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        mgr.set(&key, "my-secret").unwrap();
+        mgr.with_master_password_store(|s| s.lock()).unwrap();
+
+        // Locked source: collection must error, NOT return an empty vec.
+        let result = collect_credentials_for_migration(&mgr, &StorageMode::MasterPassword);
+        assert!(
+            result.is_err(),
+            "a locked/unreadable source must abort migration, got {result:?}"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("could not be read") && msg.contains("still intact"),
+            "abort error should be actionable, got: {msg}"
+        );
+
+        // The source is untouched: unlocking recovers the credential.
+        mgr.with_master_password_store(|s| s.unlock("test-pw"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(mgr.get(&key).unwrap(), Some("my-secret".to_string()));
+    }
+
+    /// A readable master-password source returns every credential so the switch
+    /// can migrate them and report the count.
+    #[test]
+    fn collect_migration_succeeds_for_readable_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
+        mgr.with_master_password_store(|s| s.setup("test-pw"))
+            .unwrap()
+            .unwrap();
+
+        let pw = CredentialKey::new("conn-1", CredentialType::Password);
+        let kp = CredentialKey::new("conn-2", CredentialType::KeyPassphrase);
+        mgr.set(&pw, "secret-1").unwrap();
+        mgr.set(&kp, "secret-2").unwrap();
+
+        let collected =
+            collect_credentials_for_migration(&mgr, &StorageMode::MasterPassword).unwrap();
+        assert_eq!(collected.len(), 2, "both credentials must be collected");
+        assert!(collected.iter().any(|(k, v)| *k == pw && v == "secret-1"));
+        assert!(collected.iter().any(|(k, v)| *k == kp && v == "secret-2"));
+    }
+
+    /// A genuinely empty source (0 credentials) is a legitimate switch: it must
+    /// succeed with an empty set, NOT be treated as unreadable.
+    #[test]
+    fn collect_migration_empty_source_is_ok() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::None, dir.path().to_path_buf());
+
+        let collected = collect_credentials_for_migration(&mgr, &StorageMode::None).unwrap();
+        assert!(
+            collected.is_empty(),
+            "an empty source must yield an empty migration set, not an error"
+        );
+    }
 
     #[test]
     fn parse_credential_type_password() {
