@@ -8,6 +8,7 @@ import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem"
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
 import { serverStatusLabel } from "@/utils/statusLabel";
+import { fireAndForget } from "@/utils/frontendLog";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import {
@@ -122,7 +123,7 @@ export function EmbeddedServerItem({
 
   const handleOpenBrowser = () => {
     if (config.serverType === "http") {
-      openUrl(url).catch(() => {});
+      fireAndForget(openUrl(url), `open server url ${url} in browser`);
     }
   };
 
@@ -261,7 +262,12 @@ export function EmbeddedServerItem({
           {active ? (
             <ContextMenu.Item
               className="context-menu__item"
-              onSelect={() => void handleStop().catch(() => {})}
+              onSelect={() =>
+                // handleStop already toasts on failure and re-throws for the
+                // Button lifecycle; from the context menu there is no Button, so
+                // swallow-with-audit the already-surfaced rejection.
+                fireAndForget(handleStop(), `stop server ${config.id} from context menu`)
+              }
               data-testid={`ctx-stop-${config.id}`}
             >
               <Square size={14} /> Stop
@@ -269,7 +275,12 @@ export function EmbeddedServerItem({
           ) : (
             <ContextMenu.Item
               className="context-menu__item"
-              onSelect={() => void handleStart().catch(() => {})}
+              onSelect={() =>
+                // handleStart already toasts on failure and re-throws for the
+                // Button lifecycle; from the context menu there is no Button, so
+                // swallow-with-audit the already-surfaced rejection.
+                fireAndForget(handleStart(), `start server ${config.id} from context menu`)
+              }
               data-testid={`ctx-start-${config.id}`}
             >
               <Play size={14} /> Start

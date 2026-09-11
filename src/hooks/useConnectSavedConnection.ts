@@ -8,7 +8,7 @@ import {
   storeCredential,
   isSshKeyEncrypted,
 } from "@/services/api";
-import { frontendLog } from "@/utils/frontendLog";
+import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { isAuthFailure } from "@/utils/backendErrorCode";
@@ -171,7 +171,16 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
               // message text, means a localized/reworded backend or remote
               // message can neither destroy a valid credential nor trap the user
               // by failing to clear a genuinely stale one.
-              await removeCredential(connection.id, resolution.credentialType).catch(() => {});
+              // Log (WA-FE-005) rather than swallow: if clearing the stale
+              // credential fails it lingers in the store, so the failure must be
+              // auditable. No toast — the flow falls through to re-prompt the
+              // user, so a mid-connect error toast would be noise.
+              await removeCredential(connection.id, resolution.credentialType).catch((err) => {
+                frontendError(
+                  "connection_list",
+                  `Failed to remove stale ${resolution.credentialType} credential for ${connection.id}: ${err}`
+                );
+              });
             } else {
               // Non-auth failure — let the Terminal component handle the error
               openTab(config, {

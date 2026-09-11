@@ -40,6 +40,12 @@ vi.mock("@/services/api", () => ({
   detachPersistentTab: (...args: unknown[]) => detachPersistentTab(...args),
 }));
 
+const frontendError = vi.fn();
+vi.mock("@/utils/frontendLog", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/utils/frontendLog")>();
+  return { ...actual, frontendError: (...args: unknown[]) => frontendError(...args) };
+});
+
 import { useAppStore } from "./appStore";
 import type { WindowInfo } from "@/types/window";
 
@@ -65,6 +71,7 @@ describe("appStore — close-with-live-tabs decision (#1903)", () => {
     sendHandoffToWindow.mockReset().mockResolvedValue(undefined);
     closeTerminal.mockReset().mockResolvedValue(undefined);
     detachPersistentTab.mockReset().mockResolvedValue(undefined);
+    frontendError.mockReset();
   });
 
   describe("prepareWindowClose", () => {
@@ -129,6 +136,20 @@ describe("appStore — close-with-live-tabs decision (#1903)", () => {
 
       expect(detachPersistentTab).toHaveBeenCalledWith("s1", expect.any(String));
       expect(closeTerminal).toHaveBeenCalledWith("s2");
+    });
+
+    it("surfaces a failed teardown to the LogViewer instead of swallowing it (UX-033)", async () => {
+      seedLiveTab({ title: "build", connectionType: "local", sessionId: "s2" });
+      // The backend close rejects — previously `.catch(() => {})` hid this, so a
+      // leaked session vanished with no trace. It must now hit frontendError.
+      closeTerminal.mockReset().mockRejectedValue(new Error("session still live"));
+
+      await useAppStore.getState().endWindowSessions();
+
+      expect(frontendError).toHaveBeenCalledWith(
+        "workspace",
+        expect.stringContaining("Failed to tear down session s2 on window close")
+      );
     });
   });
 
