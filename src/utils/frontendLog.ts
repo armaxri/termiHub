@@ -133,3 +133,33 @@ export function frontendWarn(target: string, message: string): void {
 export function frontendError(target: string, message: string): void {
   emitFrontendLog("ERROR", target, message);
 }
+
+/**
+ * Run a genuinely best-effort async operation without awaiting it, while keeping
+ * its failure AUDITABLE. Attaches a `.catch` that logs any rejection to the
+ * LogViewer — `WARN` by default, or `ERROR` for leak-risk teardown paths — tagged
+ * with the caller-supplied `reason`, so a fire-and-forget cleanup / telemetry /
+ * advisory call is never an untraceable `.catch(() => {})`.
+ *
+ * Use this ONLY when a failure does not change what the user believes happened
+ * (best-effort cleanup, advisory signals, optional bookkeeping). If a failure
+ * means a user-initiated action silently did not take effect, surface it with
+ * `frontendError` (and usually a toast) instead — do not hide it here.
+ *
+ * The call is deliberately fire-and-forget: it returns `void`, so nothing awaits
+ * it and a rejection can never surface as an unhandled promise rejection.
+ *
+ * @param promise the in-flight best-effort operation
+ * @param reason  short phrase identifying the call site (e.g. "detach persistent tab on teardown")
+ * @param level   log level for a rejection — `"warn"` (default) or `"error"`
+ */
+export function fireAndForget(
+  promise: Promise<unknown>,
+  reason: string,
+  level: "warn" | "error" = "warn"
+): void {
+  void Promise.resolve(promise).catch((err: unknown) => {
+    const log = level === "error" ? frontendError : frontendWarn;
+    log("fire_and_forget", `${reason}: ${String(err)}`);
+  });
+}

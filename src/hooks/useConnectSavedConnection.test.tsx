@@ -20,6 +20,7 @@ import {
   storeCredential,
   isSshKeyEncrypted,
 } from "@/services/api";
+import { frontendError } from "@/utils/frontendLog";
 
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("session-1")),
@@ -32,6 +33,7 @@ vi.mock("@/services/api", () => ({
 
 vi.mock("@/utils/frontendLog", () => ({
   frontendLog: vi.fn(),
+  frontendError: vi.fn(),
 }));
 
 const mockedResolveCredential = vi.mocked(resolveCredential);
@@ -232,6 +234,30 @@ describe("useConnectSavedConnection", () => {
       await Promise.resolve();
     });
     expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-stale", "password");
+    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  it("surfaces (not swallows) a failed stale-credential removal to the LogViewer (WA-FE-005)", async () => {
+    mockedResolveCredential.mockResolvedValue("stale-secret");
+    mockedCreateTerminal.mockRejectedValue(
+      new Error("[thub-code:auth_failed] Authentication failed")
+    );
+    // The stale-credential clear itself fails — previously this was
+    // `.catch(() => {})` and vanished. It must now land in the LogViewer.
+    mockedRemoveCredential.mockRejectedValueOnce(new Error("keychain locked"));
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("pw-clearfail", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-clearfail", "password");
+    expect(vi.mocked(frontendError)).toHaveBeenCalledWith(
+      "connection_list",
+      expect.stringContaining("Failed to remove stale password credential for pw-clearfail")
+    );
+    // The connect flow still re-prompts despite the clear failure.
     expect(useAppStore.getState().passwordPromptOpen).toBe(true);
   });
 

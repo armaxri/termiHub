@@ -1,5 +1,17 @@
 # HTTP Monitor State Machine — Audit
 
+> **Historical — point-in-time audit snapshot. Superseded; no longer current.**
+>
+> This document was captured during the #1130–#1137 state-machine audit series and describes the
+> code as it stood at that time. The stateless-UI / reducer-inversion migration has since made the
+> backend projection regions authoritative and removed the frontend `appStore` reducers and
+> optimistic-writers referenced below, so the `file:line` citations and the
+> "frontend-authoritative, backend-shadow" narrative no longer match the current code. Treat this
+> as a historical snapshot, not a current specification — verify against the code and current docs
+> (e.g. `docs/architecture.md`) before relying on any detail here.
+
+<!-- -->
+
 > **Issue:** #1136 — Audit + fix the HTTP monitor state machine (network tools)
 > **Scope:** HTTP monitor lifecycle (stopped → polling → up/down → paused → error)
 > **Deliverable:** Audit findings only — analysis, diagrams, and prioritized gaps. No production code changes.

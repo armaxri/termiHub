@@ -224,7 +224,7 @@ import {
   registerAdditionalLanguagePackages,
   registerCustomGrammars,
 } from "@/utils/monacoCustomLanguages";
-import { frontendError, frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendError, frontendLog } from "@/utils/frontendLog";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
@@ -1892,7 +1892,7 @@ function collectWindowTabs(state: LayoutViewState): TerminalTab[] {
  */
 function bestEffortOwnership(op: () => Promise<unknown>): void {
   try {
-    void op().catch(() => {});
+    fireAndForget(op(), "advisory multi-window session ownership");
   } catch {
     // api layer unavailable (unit tests stub @/services/api).
   }
@@ -1907,9 +1907,19 @@ function teardownAllSessions(state: LayoutViewState): void {
     closed++;
     if (tab.persistentConnectionId) {
       // Persistent session — detach so the background process keeps running.
-      apiDetachPersistentTab(sessionId, tab.id).catch(() => {});
+      // A failed detach may leak the backend session, so surface it at ERROR
+      // (bulk teardown — LogViewer visibility, no per-item toast) (UX-033).
+      fireAndForget(
+        apiDetachPersistentTab(sessionId, tab.id),
+        `detach persistent session ${sessionId} during workspace teardown`,
+        "error"
+      );
     } else {
-      apiCloseTerminal(sessionId).catch(() => {});
+      fireAndForget(
+        apiCloseTerminal(sessionId),
+        `close session ${sessionId} during workspace teardown`,
+        "error"
+      );
     }
     // This window stops rendering the session, so relinquish its ownership
     // (#1939) — the window is not being destroyed here (a restore/launch is
@@ -3432,9 +3442,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
       await Promise.all(
         tabs.map((tab) => {
           const sessionId = tab.sessionId as string;
-          return tab.persistentConnectionId
-            ? apiDetachPersistentTab(sessionId, tab.id).catch(() => {})
-            : apiCloseTerminal(sessionId).catch(() => {});
+          // Bulk window-session teardown: surface a failed detach/close at ERROR
+          // (a leaked session), LogViewer-only with no per-item toast (UX-033).
+          const teardown = tab.persistentConnectionId
+            ? apiDetachPersistentTab(sessionId, tab.id)
+            : apiCloseTerminal(sessionId);
+          return teardown.catch((err: unknown) => {
+            frontendError(
+              "workspace",
+              `Failed to tear down session ${sessionId} on window close: ${String(err)}`
+            );
+          });
         })
       );
     },
@@ -3866,9 +3884,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // For remote-session tabs gaining a session ID, fetch capabilities so
       // monitoring knows whether this session supports stats collection.
       if (sessionId && existingTab?.connectionType === "remote-session") {
-        sessionGetCapabilities(sessionId)
-          .then((caps) => get().setSessionCapabilities(sessionId, caps))
-          .catch(() => {});
+        fireAndForget(
+          sessionGetCapabilities(sessionId).then((caps) =>
+            get().setSessionCapabilities(sessionId, caps)
+          ),
+          `fetch capabilities for remote session ${sessionId}`
+        );
       }
       set((raw) => {
         // Content-only mutation (#2562): the session id is sourced from

@@ -38,7 +38,7 @@ import {
   isChordPending,
   isShellReservedKey,
 } from "@/services/keybindings";
-import { frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import {
   sandboxHasParsers,
@@ -1053,7 +1053,10 @@ export function Terminal({
             if (persistentConnectionId) {
               // Detach from persistent session — backend process keeps running.
               pendingCloseTimerRef.current = setTimeout(() => {
-                detachPersistentTab(sid, tabId).catch(() => {});
+                fireAndForget(
+                  detachPersistentTab(sid, tabId),
+                  `detach persistent tab ${tabId} on teardown`
+                );
               }, 50);
             } else {
               pendingCloseTimerRef.current = setTimeout(() => {
@@ -1507,7 +1510,10 @@ export function Terminal({
       // connect id — never the bare tabId — so an overlapping newer attempt is
       // not aborted by this stale cleanup (#1125).
       if (inFlightConnects.has(connectId)) {
-        void cancelConnecting(connectId).catch(() => {});
+        fireAndForget(
+          cancelConnecting(connectId),
+          `abort in-flight connect ${connectId} on tab teardown`
+        );
       }
       resizeObserver.disconnect();
       el.removeEventListener("wheel", handleGapWheel);

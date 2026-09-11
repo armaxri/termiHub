@@ -13,6 +13,7 @@ import type { SessionHistoryEntry } from "@/types/sessionHistory";
 import { QuickConnectBar } from "./QuickConnectBar";
 import { RecentSessionItem } from "./RecentSessionItem";
 import { SaveAsConnectionDialog } from "./SaveAsConnectionDialog";
+import { fireAndForget } from "@/utils/frontendLog";
 import { connectionString } from "./connectionString";
 import "./RecentSessionsSidebar.css";
 
@@ -117,7 +118,9 @@ export function RecentSessionsSidebar() {
   const handleSaveConnection = useCallback(
     async (connection: SavedConnection, dedupKey: string) => {
       addConnection(connection);
-      await markHistoryPromoted(dedupKey).catch(() => {});
+      // Best-effort bookkeeping: the connection is already saved, so a failed
+      // promote-mark only affects the history badge — log it rather than swallow.
+      fireAndForget(markHistoryPromoted(dedupKey), `mark history entry ${dedupKey} promoted`);
     },
     [addConnection, markHistoryPromoted]
   );

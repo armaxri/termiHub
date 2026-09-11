@@ -19,7 +19,12 @@ vi.mock("@/services/api", () => ({
   closeTerminal: vi.fn(() => Promise.resolve()),
 }));
 
-vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
+// Preserve the real module (incl. fireAndForget) and stub only the DEBUG logger,
+// so the component's fireAndForget teardown calls remain real functions.
+vi.mock("@/utils/frontendLog", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/frontendLog")>()),
+  frontendLog: vi.fn(),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn() } }));
 
 const mockedCreateTerminal = vi.mocked(createTerminal);
