@@ -1,6 +1,6 @@
 import type React from "react";
-import { Play, Loader2, Pencil, Copy, Trash2 } from "lucide-react";
-import { Button, Tooltip } from "@/components/ui";
+import { Play, Pencil, Copy, Trash2 } from "lucide-react";
+import { Button, Tooltip, Spinner } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { WorkspaceSummary } from "@/types/workspace";
 
@@ -54,7 +54,7 @@ export function WorkspaceListItem({
               disabled={launchDisabled}
               icon={
                 launchDisabled ? (
-                  <Loader2 size={12} className="workspace-item__spinner motion-essential-spinner" />
+                  <Spinner size="xs" label={null} />
                 ) : (
                   <Play size={12} />
                 )

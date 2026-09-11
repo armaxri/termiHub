@@ -4,7 +4,6 @@ import {
   Activity,
   AlertTriangle,
   Unplug,
-  Loader2,
   Server,
   Route,
   RotateCw,
@@ -41,7 +40,7 @@ import {
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
 import { TransferQueueIndicator } from "@/components/TransferQueue";
-import { Tooltip, toast } from "@/components/ui";
+import { Tooltip, Spinner, EmptyState, toast } from "@/components/ui";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
@@ -715,7 +714,7 @@ function MonitoringStatus() {
               className="status-bar__item monitoring-status__loading"
               data-testid="monitoring-loading"
             >
-              <Loader2 size={12} className="monitoring-status__spinner motion-essential-spinner" />
+              <Spinner size="xs" label={null} />
               Connecting...
             </span>
             {/*
@@ -931,7 +930,7 @@ function MonitoringDetailDropdown({
           data-testid="monitoring-host"
         >
           {loading ? (
-            <Loader2 size={12} className="monitoring-status__spinner motion-essential-spinner" />
+            <Spinner size="xs" label={null} />
           ) : (
             <Activity size={12} />
           )}
@@ -1130,7 +1129,7 @@ function LanguageSelector({
                 )}
               </DropdownMenu.Item>
             ))}
-            {filtered.length === 0 && <div className="lang-menu__empty">No matching languages</div>}
+            {filtered.length === 0 && <EmptyState title="No matching languages" />}
           </div>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>

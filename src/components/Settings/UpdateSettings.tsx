@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RefreshCw, Loader2 } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
@@ -7,7 +7,7 @@ import { setUpdateAutoCheck } from "@/services/api";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveUiLocale } from "@/utils/locale";
-import { Button } from "@/components/ui";
+import { Button, Spinner } from "@/components/ui";
 import "./UpdateSettings.css";
 
 interface UpdateSettingsProps {
@@ -138,7 +138,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
               size="sm"
               icon={
                 isChecking ? (
-                  <Loader2 size={12} className="settings-panel__spin motion-essential-spinner" />
+                  <Spinner size="xs" label={null} />
                 ) : (
                   <RefreshCw size={12} />
                 )

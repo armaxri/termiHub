@@ -3,7 +3,6 @@ import Editor, { loader } from "@monaco-editor/react";
 import * as monaco from "monaco-editor";
 import {
   Save,
-  Loader2,
   AlertCircle,
   Globe,
   FileEdit,
@@ -15,7 +14,7 @@ import {
   X,
   FileWarning,
 } from "lucide-react";
-import { Button, toast } from "@/components/ui";
+import { Button, Spinner, toast } from "@/components/ui";
 import { save } from "@tauri-apps/plugin-dialog";
 import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
@@ -1332,7 +1331,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     return (
       <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
         <div className="file-editor__loading">
-          <Loader2 size={20} className="file-editor__spinner motion-essential-spinner" />
+          <Spinner size="md" label={null} />
           <span>Loading {fileName}...</span>
         </div>
       </div>

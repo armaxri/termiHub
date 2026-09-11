@@ -152,10 +152,6 @@
   min-width: 0;
 }
 
-.file-editor__spinner {
-  animation: th-spin 0.8s linear infinite;
-}
-
 /*
  * Large-file guard screen (#PROD-014 / #PERF-002): shown in place of the editor
  * when an over-threshold file's contents were deliberately not loaded. Mirrors
