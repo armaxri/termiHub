@@ -5,10 +5,11 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
-use super::recovery::{RecoveryResult, RecoveryWarning};
+use super::recovery::RecoveryResult;
 use super::shell_integration::ShellIntegrationSettings;
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, VersionedStore};
 
 const FILE_NAME: &str = "settings.json";
 
@@ -395,6 +396,11 @@ impl Default for AppSettings {
     }
 }
 
+impl crate::utils::migrate::VersionedStore for AppSettings {
+    const STORE_NAME: &'static str = "settings.json";
+    const CURRENT_VERSION: u32 = 1;
+}
+
 /// Handles reading/writing the settings JSON file.
 pub struct SettingsStorage {
     file_path: PathBuf,
@@ -437,59 +443,28 @@ impl SettingsStorage {
         Self { file_path }
     }
 
-    /// Load with recovery: on parse failure, backs up the corrupt file and resets to defaults.
+    /// Load with recovery via the shared schema-migration layer.
     ///
-    /// Since `AppSettings` uses `#[serde(default)]`, partial field corruption is handled
-    /// by serde itself. Only completely unparseable files need recovery here.
+    /// A current/older file is used as-is (or migrated forward), a **newer** file
+    /// is left untouched and reported as a warning (never reset — PER-004), and
+    /// only a genuinely unparseable file is backed up to `.bak` and reset.
+    /// Partial field corruption is still absorbed by `#[serde(default)]`, and
+    /// unknown keys round-trip through the `extra` catch-all (#2311 / PER-010).
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<AppSettings>> {
-        if !self.file_path.exists() {
-            return Ok(RecoveryResult {
-                data: AppSettings::default(),
-                warnings: Vec::new(),
-            });
-        }
-
-        let data = fs::read_to_string(&self.file_path).context("Failed to read settings file")?;
-
-        // Fast path: normal parse succeeds
-        if let Ok(settings) = serde_json::from_str::<AppSettings>(&data) {
-            return Ok(RecoveryResult {
-                data: settings,
-                warnings: Vec::new(),
-            });
-        }
-
-        // Parse failed — back up and reset to defaults
-        let backup_path = self.file_path.with_extension("json.bak");
-        let _ = fs::copy(&self.file_path, &backup_path);
-        tracing::warn!(
-            "Settings file is corrupt, backed up to {}",
-            backup_path.display()
-        );
-
-        let parse_error = serde_json::from_str::<AppSettings>(&data)
-            .err()
-            .map(|e| e.to_string());
-
-        let warning = RecoveryWarning {
-            file_name: FILE_NAME.to_string(),
-            message: "Settings file was corrupt and has been reset to defaults.".to_string(),
-            details: parse_error,
-        };
-        tracing::error!("Settings file corrupt, resetting to defaults");
-
-        let defaults = AppSettings::default();
-        self.save(&defaults)
-            .context("Failed to save default settings after recovery")?;
-
-        Ok(RecoveryResult {
-            data: defaults,
-            warnings: vec![warning],
-        })
+        load_store_with_recovery::<AppSettings>(&self.file_path, FILE_NAME)
     }
 
     /// Save settings to disk (pretty-printed JSON).
+    ///
+    /// Before writing, [`guard_not_newer`] refuses to overwrite a file written by
+    /// a newer schema version (PER-004).
     pub fn save(&self, settings: &AppSettings) -> Result<()> {
+        guard_not_newer(
+            &self.file_path,
+            AppSettings::STORE_NAME,
+            AppSettings::CURRENT_VERSION,
+        )?;
+
         let data =
             serde_json::to_string_pretty(settings).context("Failed to serialize settings")?;
 

@@ -5,8 +5,10 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::config::SessionHistoryStore;
-use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
+use crate::connection::recovery::RecoveryResult;
 use crate::utils::config_paths::resolve_config_dir;
+use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, VersionedStore};
 
 const FILE_NAME: &str = "session-history.json";
 
@@ -33,61 +35,32 @@ impl SessionHistoryStorage {
         })
     }
 
-    /// Load with recovery: on parse failure, backs up the corrupt file and resets to defaults.
+    /// Load with recovery via the shared schema-migration layer.
+    ///
+    /// A current/older file is used as-is (or migrated forward), a **newer** file
+    /// is left untouched and reported as a warning (never reset — PER-004), and
+    /// only a genuinely unparseable file is backed up to `.bak` and reset.
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<SessionHistoryStore>> {
-        if !self.file_path.exists() {
-            return Ok(RecoveryResult {
-                data: SessionHistoryStore::default(),
-                warnings: Vec::new(),
-            });
-        }
-
-        let data =
-            fs::read_to_string(&self.file_path).context("Failed to read session-history file")?;
-
-        // Fast path: normal parse succeeds.
-        if let Ok(store) = serde_json::from_str::<SessionHistoryStore>(&data) {
-            return Ok(RecoveryResult {
-                data: store,
-                warnings: Vec::new(),
-            });
-        }
-
-        // Parse failed — back up and reset to defaults.
-        let backup_path = self.file_path.with_extension("json.bak");
-        let _ = fs::copy(&self.file_path, &backup_path);
-        tracing::warn!(
-            "Session-history file is corrupt, backed up to {}",
-            backup_path.display()
-        );
-
-        let parse_error = serde_json::from_str::<SessionHistoryStore>(&data)
-            .err()
-            .map(|e| e.to_string());
-
-        let warning = RecoveryWarning {
-            file_name: FILE_NAME.to_string(),
-            message: "Session-history file was corrupt and has been reset.".to_string(),
-            details: parse_error,
-        };
-        tracing::error!("Session-history file corrupt, resetting to defaults");
-
-        let defaults = SessionHistoryStore::default();
-        self.save(&defaults)
-            .context("Failed to save default session history after recovery")?;
-
-        Ok(RecoveryResult {
-            data: defaults,
-            warnings: vec![warning],
-        })
+        load_store_with_recovery::<SessionHistoryStore>(&self.file_path, FILE_NAME)
     }
 
     /// Save the session-history store to disk (pretty-printed JSON).
+    ///
+    /// The write is atomic (temp file + rename) so an interrupted save cannot
+    /// truncate the file into invalid JSON that the recovery path would then
+    /// discard (PER-002 torn-write class). Before writing, [`guard_not_newer`]
+    /// refuses to overwrite a file written by a newer schema version (PER-004).
     pub fn save(&self, store: &SessionHistoryStore) -> Result<()> {
+        guard_not_newer(
+            &self.file_path,
+            SessionHistoryStore::STORE_NAME,
+            SessionHistoryStore::CURRENT_VERSION,
+        )?;
+
         let data =
             serde_json::to_string_pretty(store).context("Failed to serialize session history")?;
 
-        fs::write(&self.file_path, data).context("Failed to write session-history file")?;
+        write_atomic(&self.file_path, &data).context("Failed to write session-history file")?;
 
         Ok(())
     }
@@ -117,6 +90,7 @@ mod tests {
     fn sample_store() -> SessionHistoryStore {
         SessionHistoryStore {
             version: "1".to_string(),
+            extra: Default::default(),
             entries: vec![SessionHistoryEntry {
                 dedup_key: "ssh:admin@host:22".to_string(),
                 title: "admin@host".to_string(),

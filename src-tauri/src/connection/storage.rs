@@ -9,6 +9,7 @@ use super::recovery::{RecoveryResult, RecoveryWarning};
 use super::tree::flatten_tree;
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{guard_not_newer, load_versioned, LoadOutcome, VersionedStore};
 
 const FILE_NAME: &str = "connections.json";
 
@@ -53,17 +54,46 @@ impl ConnectionStorage {
         let data =
             fs::read_to_string(&self.file_path).context("Failed to read connections file")?;
 
-        // Fast path: normal parse succeeds
-        if let Ok(store) = serde_json::from_str::<ConnectionStore>(&data) {
-            let (connections, folders) = flatten_tree(&store.children, None);
-            return Ok(RecoveryResult {
-                data: FlatConnectionStore {
-                    connections,
-                    folders,
-                    agents: store.agents,
-                },
-                warnings: Vec::new(),
-            });
+        // Version gate first (PER-001/PER-004): read the on-disk `version` before
+        // the typed parse. A current/older file loads (or migrates) as usual; a
+        // NEWER file is left completely intact and reported — never treated as
+        // corrupt and reset. Only a genuinely-unparseable file falls through to
+        // the granular per-node recovery below.
+        match load_versioned::<ConnectionStore>(&data) {
+            LoadOutcome::Loaded { data: store, .. } => {
+                let (connections, folders) = flatten_tree(&store.children, None);
+                return Ok(RecoveryResult {
+                    data: FlatConnectionStore {
+                        connections,
+                        folders,
+                        agents: store.agents,
+                    },
+                    warnings: Vec::new(),
+                });
+            }
+            LoadOutcome::Newer(err) => {
+                tracing::error!("{err}");
+                return Ok(RecoveryResult {
+                    data: FlatConnectionStore {
+                        connections: Vec::new(),
+                        folders: Vec::new(),
+                        agents: Vec::new(),
+                    },
+                    warnings: vec![RecoveryWarning {
+                        file_name: FILE_NAME.to_string(),
+                        message: format!(
+                            "This connections file was written by a newer version of termiHub \
+                             (schema v{}). It was left unchanged to avoid data loss; changes made \
+                             now will not be saved over it. Update termiHub to use this data.",
+                            err.found
+                        ),
+                        details: Some(err.to_string()),
+                    }],
+                });
+            }
+            // Genuinely unparseable at/below the current version — fall through to
+            // the granular per-node recovery, which salvages what it can.
+            LoadOutcome::Corrupt(_) => {}
         }
 
         // Parse failed — back up the corrupt file
@@ -164,8 +194,17 @@ impl ConnectionStorage {
 
     /// Save the connection store to disk (pretty-printed JSON).
     ///
-    /// Takes the on-disk `ConnectionStore` (nested tree format).
+    /// Takes the on-disk `ConnectionStore` (nested tree format). Before writing,
+    /// [`guard_not_newer`] refuses to overwrite a file written by a newer schema
+    /// version (PER-004), so an older build can never clobber a newer one's
+    /// connections. (`save_flat` routes through here, so it is guarded too.)
     pub fn save_store(&self, store: &ConnectionStore) -> Result<()> {
+        guard_not_newer(
+            &self.file_path,
+            ConnectionStore::STORE_NAME,
+            ConnectionStore::CURRENT_VERSION,
+        )?;
+
         let data =
             serde_json::to_string_pretty(store).context("Failed to serialize connections")?;
 

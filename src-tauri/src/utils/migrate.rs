@@ -393,6 +393,21 @@ mod tests {
         }
     }
 
+    /// The crux of PER-004: the version gate runs BEFORE the typed parse, so a
+    /// newer file whose *shape* this build cannot deserialize is still refused
+    /// (Newer) rather than mis-classified as Corrupt — which is what would let
+    /// the recovery path wipe it.
+    #[test]
+    fn newer_version_with_unknown_shape_is_refused_not_corrupt() {
+        // `items` is an object here, not the array V1Store models.
+        let raw = r#"{"version":"42","items":{"restructured":true}}"#;
+        match load_versioned::<V1Store>(raw) {
+            LoadOutcome::Newer(err) => assert_eq!(err.found, 42),
+            LoadOutcome::Corrupt(_) => panic!("newer file must NOT be classified as corrupt"),
+            _ => panic!("expected Newer"),
+        }
+    }
+
     #[test]
     fn unparseable_is_corrupt() {
         match load_versioned::<V1Store>("not json {{{") {

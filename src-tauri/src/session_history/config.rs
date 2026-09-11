@@ -41,10 +41,14 @@ pub struct SessionHistoryEntry {
 /// Top-level schema for the `session-history.json` file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionHistoryStore {
-    /// Schema version, for forward-compatible migrations.
+    /// Schema version, read on load and gated by the migration layer.
     pub version: String,
     /// All recorded history entries (unordered on disk; sorted for display).
     pub entries: Vec<SessionHistoryEntry>,
+    /// Unknown top-level keys, captured verbatim so an older app preserves
+    /// fields a newer version added rather than dropping them on save (PER-010).
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 impl Default for SessionHistoryStore {
@@ -52,8 +56,14 @@ impl Default for SessionHistoryStore {
         Self {
             version: "1".to_string(),
             entries: Vec::new(),
+            extra: serde_json::Map::new(),
         }
     }
+}
+
+impl crate::utils::migrate::VersionedStore for SessionHistoryStore {
+    const STORE_NAME: &'static str = "session-history.json";
+    const CURRENT_VERSION: u32 = 1;
 }
 
 /// Read a config field as a display string, accepting either a JSON string or a
