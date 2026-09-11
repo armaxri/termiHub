@@ -47,7 +47,7 @@
 .shortcuts-overlay__scope {
   display: block;
   margin-top: 2px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   opacity: 0.8;
 }

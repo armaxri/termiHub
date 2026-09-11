@@ -201,7 +201,7 @@
 
 .connection-tree__type {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-secondary);
   text-transform: uppercase;
   opacity: 0;
@@ -221,7 +221,7 @@
 }
 
 .connection-tree__jump-count {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   line-height: 1;
   margin-left: 1px;
   color: var(--text-secondary);
@@ -526,7 +526,7 @@
 /* ── Persistent connection session styles ─────────────────────────────────── */
 
 .connection-tree__persistent-badge {
-  font-size: 20px;
+  font-size: var(--font-size-2xl);
   line-height: 1;
   flex-shrink: 0;
   margin-left: 3px;
@@ -568,7 +568,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 8px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   line-height: 1;
   border-radius: var(--radius-full);

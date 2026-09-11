@@ -111,10 +111,19 @@
   /* Font */
   --font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Cascadia Code", "Fira Code", Menlo, Monaco, "Courier New", monospace;
+  /* Type scale (UI-005). Covers the caption/badge and display tiers the app
+     actually uses; near-duplicate raw sizes collapse onto the nearest tier
+     (former 8/9px → 2xs 10px, former 15px → xl 16px) to give the scale a
+     rhythm. tokenDiscipline.test.ts forbids new raw `font-size: Npx` in
+     component CSS — add or reuse a tier here instead. */
+  --font-size-2xs: 10px; /* caption / badge / count — smallest tier */
   --font-size-xs: 11px;
   --font-size-sm: 12px;
   --font-size-md: 13px;
   --font-size-lg: 14px;
+  --font-size-xl: 16px; /* small heading */
+  --font-size-2xl: 20px; /* display */
+  --font-size-3xl: 22px; /* app title / large display */
 
   /* Font weights */
   --font-weight-normal: 400;
@@ -155,6 +164,16 @@
      four current themes) */
   --overlay-bg: rgba(6, 7, 10, 0.66);
   --overlay-blur: blur(8px) saturate(120%);
+  /* Content-overlay backdrop (UI-008): the single backdrop language for
+     status/action panels drawn over a terminal or remote-desktop surface
+     (connecting / reconnecting / disconnected / error). Translucent so the
+     content stays faintly visible, paired with the lighter --overlay-blur-sm.
+     Derived from --terminal-bg (== --bg-primary in every current theme, so it
+     reads correctly over the remote-desktop surface too). */
+  --overlay-content-bg: color-mix(in srgb, var(--terminal-bg) 88%, transparent);
+  /* Subtler blur than the modal --overlay-blur, for content overlays that keep
+     the underlying terminal/desktop legible rather than fully obscuring it. */
+  --overlay-blur-sm: blur(2px);
 
   /* Foreground on the accent-colored (primary) surface. Static: the accent is
      blue in every current theme, so white-on-accent reads correctly across all

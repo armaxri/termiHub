@@ -68,7 +68,7 @@
 
 .command-palette__type {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   color: var(--text-secondary);
   text-transform: uppercase;
 }

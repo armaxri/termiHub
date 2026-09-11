@@ -73,7 +73,7 @@
 
 /* Labels */
 .layout-preview__label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;

@@ -8,7 +8,7 @@
   border-radius: 6px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
   z-index: var(--z-banner);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
 }
 
@@ -33,7 +33,7 @@
 
 .update-notification__title {
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -80,7 +80,7 @@
 .update-notification__message {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   line-height: 1.5;
 }
 
@@ -96,7 +96,7 @@
 .update-notification__notes-body {
   margin: 0;
   padding: 8px;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-family: var(--font-mono, monospace);
   white-space: pre-wrap;
   word-break: break-word;

@@ -2,7 +2,10 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background-color: var(--terminal-bg);
+  /* Unified content-overlay backdrop (UI-008): consistent across all
+     terminal-covering states (connecting / disconnected / error). */
+  background-color: var(--overlay-content-bg);
+  backdrop-filter: var(--overlay-blur-sm);
   color: var(--text-primary);
   font-family: var(--font-mono, monospace);
   font-size: var(--font-size-sm);

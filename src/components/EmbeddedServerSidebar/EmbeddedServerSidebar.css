@@ -26,7 +26,7 @@
   height: 100%;
   padding: 24px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: center;
   gap: 8px;
 }
@@ -57,7 +57,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
@@ -71,7 +71,7 @@
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .server-dialog__input--port {
@@ -93,7 +93,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;
 }
@@ -108,7 +108,7 @@
 }
 
 .server-dialog__legend {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   padding: 0 4px;
 }
@@ -122,7 +122,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;
 }

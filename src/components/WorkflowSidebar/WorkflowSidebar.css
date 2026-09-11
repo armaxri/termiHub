@@ -46,7 +46,7 @@
   flex: 1;
   padding: 24px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   text-align: center;
   gap: 8px;
 }
@@ -77,7 +77,7 @@
   display: block;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -96,7 +96,7 @@
   align-items: center;
   gap: 3px;
   color: var(--accent-color);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
 }
 
 .workflow-item__tags {
@@ -110,6 +110,6 @@
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   line-height: 16px;
 }
