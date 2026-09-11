@@ -171,6 +171,8 @@ export function Tab({
       {status && (
         <span
           className={`tab__state-dot tab__state-dot--${status}`}
+          role="img"
+          aria-label={STATUS_LABELS[status]}
           title={STATUS_LABELS[status]}
           data-testid={`tab-state-dot-${tab.id}`}
         />
