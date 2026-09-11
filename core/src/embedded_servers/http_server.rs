@@ -81,6 +81,21 @@ fn html_escape(input: &str) -> String {
     out
 }
 
+/// Render a single directory-listing `<li>` entry for a filesystem name.
+///
+/// The name is HTML-escaped before it is interpolated into both the `href`
+/// attribute and the anchor text, so a hostile filename (e.g. one literally
+/// named `<img src=x onerror=alert(1)>`, a legal name on Unix) cannot inject
+/// HTML into the generated listing (SEC-007 / CORE-025). Directories get a
+/// trailing `/`. Kept as a pure `&str` -> `String` function so the escaping
+/// can be exercised in tests without creating real (and, on Windows, illegal)
+/// files on disk.
+fn render_listing_entry(name: &str, is_dir: bool) -> String {
+    let suffix = if is_dir { "/" } else { "" };
+    let name = html_escape(name);
+    format!(r#"<li><a href="{name}{suffix}">{name}{suffix}</a></li>"#)
+}
+
 /// Build a simple HTML directory listing page for the given path.
 fn directory_listing_html(
     dir_path: &std::path::Path,
@@ -111,13 +126,7 @@ fn directory_listing_html(
     });
 
     for (is_dir, name) in names {
-        let suffix = if is_dir { "/" } else { "" };
-        // Escape the filename before interpolating it into both the `href`
-        // attribute and the anchor text so a hostile filename cannot inject HTML.
-        let name = html_escape(&name);
-        items.push(format!(
-            r#"<li><a href="{name}{suffix}">{name}{suffix}</a></li>"#
-        ));
+        items.push(render_listing_entry(&name, is_dir));
     }
 
     let listing = items.join("\n        ");
@@ -358,26 +367,37 @@ mod tests {
 
     /// SEC-007 / CORE-025 regression: a hostile filename must be HTML-escaped in
     /// the generated directory listing so it cannot inject a live tag.
-    #[tokio::test]
-    async fn listing_escapes_hostile_filename() {
-        let dir = tempfile::tempdir().expect("create temp dir");
+    ///
+    /// This exercises the listing-entry renderer directly with a synthetic name
+    /// instead of writing a real file, so it runs identically on every platform.
+    /// (A real file named `<img …>` cannot be created on Windows — `< > "` are
+    /// illegal in Windows filenames — which is why the on-disk form was not
+    /// portable.)
+    #[test]
+    fn listing_escapes_hostile_filename() {
         let hostile = r#"<img src=x onerror=alert(1)>.txt"#;
-        std::fs::write(dir.path().join(hostile), "x").expect("write file");
-        let tracking_state = TrackingState {
-            stats: AtomicServerStats::new(),
-        };
-        let router = build_router(dir.path().to_path_buf(), true, tracking_state);
-        let (status, body) = get(router, "/").await;
-        assert_eq!(status, StatusCode::OK);
+        let entry = render_listing_entry(hostile, false);
         // The raw, unescaped tag must NOT appear anywhere in the output.
         assert!(
-            !body.contains("<img src=x onerror=alert(1)>"),
-            "hostile filename must not be emitted as a live tag: {body}"
+            !entry.contains("<img src=x onerror=alert(1)>"),
+            "hostile filename must not be emitted as a live tag: {entry}"
         );
-        // The escaped form must be present instead.
+        // The escaped form must be present instead, in both the href attribute
+        // and the anchor text.
         assert!(
-            body.contains("&lt;img src=x onerror=alert(1)&gt;"),
-            "escaped filename should appear in the listing: {body}"
+            entry.contains("&lt;img src=x onerror=alert(1)&gt;.txt"),
+            "escaped filename should appear in the listing: {entry}"
+        );
+
+        // A hostile directory name is escaped and still gets its trailing slash.
+        let hostile_dir = render_listing_entry(r#""><script>"#, true);
+        assert!(
+            !hostile_dir.contains("<script>"),
+            "hostile dir name must not be emitted raw: {hostile_dir}"
+        );
+        assert!(
+            hostile_dir.contains("&quot;&gt;&lt;script&gt;/"),
+            "escaped dir name should keep its trailing slash: {hostile_dir}"
         );
     }
 
