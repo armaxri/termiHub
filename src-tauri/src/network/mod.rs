@@ -408,7 +408,7 @@ impl NetworkManager {
     /// path is needed here.
     fn load_http_monitor_stopped(&self, config: HttpMonitorConfig) {
         let id = config.id.clone();
-        let mut service = HttpMonitorService::stopped_with(config);
+        let service = HttpMonitorService::stopped_with(config);
         // Wire the bridge now so a later resume forwards events without a
         // re-subscribe; skipped only when there is no app handle (e.g. in unit
         // tests), where the stopped monitor emits nothing anyway.
