@@ -136,13 +136,7 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
             <Button
               variant="secondary"
               size="sm"
-              icon={
-                isChecking ? (
-                  <Spinner size="xs" label={null} />
-                ) : (
-                  <RefreshCw size={12} />
-                )
-              }
+              icon={isChecking ? <Spinner size="xs" label={null} /> : <RefreshCw size={12} />}
               onClick={() => checkForUpdates(true)}
               disabled={isChecking}
               data-testid="update-check-now"

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { Modal, Button, Input } from "@/components/ui";
+import { Modal, Button, Input, EmptyState } from "@/components/ui";
 import { getIconCatalog, IconByName } from "@/utils/connectionIcons";
 import "./IconPickerDialog.css";
 
@@ -89,9 +89,7 @@ export function IconPickerDialog({
             <IconByName name={entry.name} size={20} />
           </button>
         ))}
-        {filtered.length === 0 && (
-          <div className="icon-picker__empty">No icons match your search.</div>
-        )}
+        {filtered.length === 0 && <EmptyState title="No icons match your search." />}
         {filtered.length > 200 && (
           <div className="icon-picker__hint">
             Showing 200 of {filtered.length} results. Refine your search.

@@ -929,11 +929,7 @@ function MonitoringDetailDropdown({
           title={loading ? `Reconnecting to ${host ?? "monitor"}…` : undefined}
           data-testid="monitoring-host"
         >
-          {loading ? (
-            <Spinner size="xs" label={null} />
-          ) : (
-            <Activity size={12} />
-          )}
+          {loading ? <Spinner size="xs" label={null} /> : <Activity size={12} />}
           {host}
         </button>
       </DropdownMenu.Trigger>

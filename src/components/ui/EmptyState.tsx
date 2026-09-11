@@ -33,9 +33,10 @@ export interface EmptyStateProps {
   /**
    * ARIA role for the wrapper. Defaults to `"status"` so the message is
    * announced when it appears (matches the existing hand-rolled empties). Pass
-   * a different role or `undefined` to opt out.
+   * a different role string to override, or `null` to render no role (e.g. a
+   * persistent call-to-action that should not be a live region).
    */
-  role?: string;
+  role?: string | null;
   /** Extra class for layout tweaks at the call site. */
   className?: string;
   /** Test hook forwarded to the wrapper element. */
@@ -58,11 +59,12 @@ export function EmptyState({
   action,
   loading = false,
   variant = "inline",
-  role = "status",
+  role,
   className,
   "data-testid": dataTestId,
 }: EmptyStateProps): React.ReactElement {
   const resolvedTitle = title ?? (loading ? "Loading…" : null);
+  const resolvedRole = role === null ? undefined : (role ?? "status");
   const classes = ["ui-empty", `ui-empty--${variant}`, className ?? ""].filter(Boolean).join(" ");
 
   const leading = loading ? (
@@ -72,7 +74,7 @@ export function EmptyState({
   );
 
   return (
-    <div className={classes} role={role} data-testid={dataTestId}>
+    <div className={classes} role={resolvedRole} data-testid={dataTestId}>
       {leading != null && <div className="ui-empty__icon">{leading}</div>}
       {resolvedTitle != null && <p className="ui-empty__title">{resolvedTitle}</p>}
       {description != null && <p className="ui-empty__description">{description}</p>}

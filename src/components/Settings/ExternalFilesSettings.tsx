@@ -5,7 +5,7 @@ import { FilePlus2, Plus, Trash2, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { ExternalFileConfig } from "@/types/connection";
-import { Button, Toggle, Tooltip } from "@/components/ui";
+import { Button, Toggle, Tooltip, EmptyState } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { SettingsField } from "./SettingsField";
 
@@ -175,7 +175,7 @@ export function ExternalFilesSettings() {
           </div>
         )}
         {settings.externalConnectionFiles.length === 0 ? (
-          <div className="settings-panel__empty">No external connection files configured.</div>
+          <EmptyState variant="panel" title="No external connection files configured." />
         ) : (
           <ul className="settings-panel__file-list">
             {settings.externalConnectionFiles.map((file) => (

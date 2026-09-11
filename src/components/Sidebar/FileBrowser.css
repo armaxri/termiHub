@@ -441,15 +441,6 @@
   flex-shrink: 0;
 }
 
-/* Empty / no-match placeholder inside the list */
-.file-browser__empty {
-  padding: var(--spacing-md) var(--spacing-sm);
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  font-style: italic;
-  text-align: center;
-}
-
 /* Bottom status bar: drop hint (local) + N-selected indicator */
 .file-browser__statusbar {
   flex-shrink: 0;

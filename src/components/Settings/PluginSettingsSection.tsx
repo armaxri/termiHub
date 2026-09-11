@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Puzzle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import type { InstalledPlugin, JsonValue } from "@/types/plugin";
+import { EmptyState } from "@/components/ui";
 import { ConnectionSettingsForm } from "@/components/DynamicForm";
 import { hasSettings, pluginTypeIcon } from "@/components/Plugins/pluginPresentation";
 import { pluginSettingsDefaults, pluginSettingsToSchema } from "./pluginSettingsSchema";
@@ -204,12 +205,11 @@ function PluginSettingsGroup({
       {values ? (
         <ConnectionSettingsForm schema={schema} settings={values} onChange={onChange} />
       ) : (
-        <div
-          className="settings-panel__empty"
+        <EmptyState
+          variant="panel"
+          loading
           data-testid={`plugin-settings-loading-${manifest.id}`}
-        >
-          Loading…
-        </div>
+        />
       )}
     </div>
   );

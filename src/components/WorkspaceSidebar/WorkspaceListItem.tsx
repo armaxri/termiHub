@@ -52,13 +52,7 @@ export function WorkspaceListItem({
               aria-label="Launch"
               data-testid={`workspace-launch-${workspace.id}`}
               disabled={launchDisabled}
-              icon={
-                launchDisabled ? (
-                  <Spinner size="xs" label={null} />
-                ) : (
-                  <Play size={12} />
-                )
-              }
+              icon={launchDisabled ? <Spinner size="xs" label={null} /> : <Play size={12} />}
               onClick={(e) => {
                 e.stopPropagation();
                 onLaunch(workspace.id);

@@ -4,7 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { ALL_LANGUAGE_PACKAGES, BUILTIN_PACKAGE_IDS } from "@/utils/monacoLanguagePackages";
 import { registerAdditionalLanguagePackages } from "@/utils/monacoCustomLanguages";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Tooltip, EmptyState } from "@/components/ui";
 
 interface LanguagePackagesSettingsProps {
   visibleFields?: Set<string>;
@@ -129,7 +129,7 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
               ))}
 
               {installedPackages.length === 0 && (
-                <div className="settings-panel__empty">No additional packages installed.</div>
+                <EmptyState variant="panel" title="No additional packages installed." />
               )}
             </ul>
           </div>
@@ -209,7 +209,7 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
                 );
               })}
               {filteredPackages.length === 0 && (
-                <div className="settings-panel__empty">No packages match your search.</div>
+                <EmptyState variant="panel" title="No packages match your search." />
               )}
             </ul>
           </div>

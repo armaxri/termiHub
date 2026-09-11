@@ -68,6 +68,12 @@ describe("EmptyState", () => {
     expect(container.querySelector(".ui-empty--panel")).toBeTruthy();
   });
 
+  it("renders no role when role is null", () => {
+    render(<EmptyState title="cta" role={null} data-testid="empty" />);
+    const el = container.querySelector('[data-testid="empty"]') as HTMLElement;
+    expect(el.hasAttribute("role")).toBe(false);
+  });
+
   it("forwards className and data-testid and honours a custom role", () => {
     render(<EmptyState title="x" className="mine" data-testid="empty" role="note" />);
     const el = container.querySelector('[data-testid="empty"]') as HTMLElement;

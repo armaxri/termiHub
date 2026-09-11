@@ -17,13 +17,6 @@
   gap: var(--spacing-lg);
 }
 
-.open-connections__empty {
-  text-align: center;
-  color: var(--text-muted);
-  font-size: var(--font-size-sm);
-  padding: var(--spacing-xl) 0;
-}
-
 /* Section */
 .oc-section__header {
   display: flex;

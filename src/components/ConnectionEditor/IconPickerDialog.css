@@ -37,7 +37,6 @@
   background: color-mix(in srgb, var(--accent-color) 12%, transparent);
 }
 
-.icon-picker__empty,
 .icon-picker__hint {
   grid-column: 1 / -1;
   text-align: center;

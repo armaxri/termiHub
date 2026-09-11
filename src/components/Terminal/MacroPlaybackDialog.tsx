@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Button, Field, Select } from "@/components/ui";
+import { Modal, Button, Field, Select, EmptyState } from "@/components/ui";
 import type { Macro } from "@/types/macro";
 import type { MacroTimingMode } from "@/services/macroPlayback";
 import "./MacroPlaybackDialog.css";
@@ -88,9 +88,7 @@ export function MacroPlaybackDialog({
       }
     >
       {macros.length === 0 ? (
-        <p className="macro-playback-dialog__empty" role="status">
-          No macros saved yet. Record one with the terminal toolbar's record button first.
-        </p>
+        <EmptyState title="No macros saved yet. Record one with the terminal toolbar's record button first." />
       ) : (
         <>
           <Field label="Macro" htmlFor="macro-playback-select">

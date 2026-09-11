@@ -6,7 +6,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { registerCustomGrammars } from "@/utils/monacoCustomLanguages";
 import type { CustomLanguageGrammar } from "@/types/connection";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Tooltip, EmptyState } from "@/components/ui";
 
 interface CustomGrammarsSettingsProps {
   visibleFields?: Set<string>;
@@ -260,7 +260,7 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
             )}
 
             {existing.length === 0 && !draft ? (
-              <div className="settings-panel__empty">No custom grammars imported.</div>
+              <EmptyState variant="panel" title="No custom grammars imported." />
             ) : (
               <ul className="settings-panel__file-list">
                 {existing.map((g) => (

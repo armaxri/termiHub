@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Button, Field, Select, Checkbox } from "@/components/ui";
+import { Modal, Button, Field, Select, Checkbox, EmptyState } from "@/components/ui";
 import { useAppStore, resolveBroadcastTargetTabIds } from "@/store/appStore";
 import {
   useActiveTabGroupId,
@@ -198,9 +198,7 @@ export function BroadcastScopeDialog({
             </Button>
           </div>
           {terminalTabs.length === 0 ? (
-            <p className="broadcast-scope-dialog__empty" role="status">
-              No terminal sessions to broadcast to.
-            </p>
+            <EmptyState title="No terminal sessions to broadcast to." />
           ) : (
             <ul className="broadcast-scope-dialog__list">
               {terminalTabs.map((tab) => {
