@@ -32,7 +32,7 @@
   background: var(--resize-handle-color);
   position: relative;
   flex-shrink: 0;
-  z-index: 1;
+  z-index: var(--z-base);
   transition: background var(--transition-fast);
 }
 

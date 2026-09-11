@@ -63,7 +63,7 @@
   box-shadow: var(--shadow-overlay);
   color: var(--text-secondary);
   font-size: 12px;
-  z-index: 3;
+  z-index: var(--z-raised);
   opacity: 0;
   pointer-events: none;
   transition:
@@ -113,7 +113,7 @@
   gap: 10px;
   background: var(--overlay-bg);
   color: var(--text-primary);
-  z-index: 4;
+  z-index: var(--z-elevated);
   text-align: center;
   padding: 16px;
 }
@@ -172,7 +172,7 @@
   background: var(--bg-secondary);
   border-left: 1px solid var(--border-primary);
   box-shadow: var(--shadow-overlay);
-  z-index: 5;
+  z-index: var(--z-layer);
 }
 
 .rd-clipboard__header {

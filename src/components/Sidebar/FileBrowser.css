@@ -19,7 +19,7 @@
   font-size: var(--font-size-sm);
   font-weight: 500;
   pointer-events: none;
-  z-index: 100;
+  z-index: var(--z-sticky);
 }
 
 .file-browser__toolbar {
