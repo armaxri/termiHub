@@ -19,7 +19,8 @@ evidence:
   - src/components/Settings/ExternalFilesSettings.tsx:115
   - src/components/Sidebar/AgentSetupDialog.tsx:360
   - src/components/Sidebar/ConnectionPathDialog.tsx:188
-status: open
+status: fixed
+resolution: "#2748"
 ---
 
 ## What

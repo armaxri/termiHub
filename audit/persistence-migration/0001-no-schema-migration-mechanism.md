@@ -13,8 +13,8 @@ evidence:
   - src-tauri/src/workflows/config.rs:132
   - src-tauri/src/connection/settings.rs:125
   - agent/src/state/persistence.rs:13
-status: in-progress
-resolution: "#2746 — framework + 6 stores; rest #2744/#2745"
+status: fixed
+resolution: "#2746 — framework + 6 stores; remaining stores #2744/#2745"
 ---
 
 ## What

@@ -24,7 +24,8 @@ evidence:
   - src/components/Terminal/MacroPlaybackDialog.tsx:91
   - src/components/WorkflowSidebar/WorkflowTriggersEditor.tsx:102
   - src/components/ConnectionEditor/IconPickerDialog.tsx:93
-status: open
+status: fixed
+resolution: "#2748"
 ---
 
 ## What

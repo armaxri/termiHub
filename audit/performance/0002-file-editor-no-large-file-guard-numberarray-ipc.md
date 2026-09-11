@@ -12,8 +12,8 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:97
   - src/services/api.ts:1475
   - src/services/api.ts:1490
-status: in-progress
-resolution: "#2740 — crash size-guard merged; number[] IPC re-encode still open"
+status: fixed
+resolution: "#2740 — size-guard #2740 + base64 IPC #2749"
 ---
 
 ## What
