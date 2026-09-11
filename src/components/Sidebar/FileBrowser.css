@@ -147,17 +147,19 @@
   background-color: var(--bg-active);
 }
 
+/* Two-line row: the icon is vertically centred against a stacked body (name line
+   on top, muted meta line below). The fixed height MUST equal ROW_HEIGHT in
+   FileBrowser.tsx — the virtualizer sizes the scroll range from that constant. */
 .file-browser__row {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
   flex: 1;
-  height: 24px;
+  height: 40px;
   padding: 0 var(--spacing-sm);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   text-align: left;
-  white-space: nowrap;
   min-width: 0;
 }
 
@@ -181,9 +183,10 @@
   color: var(--text-accent);
 }
 
-/* Inline link target shown after a symlink's name (the "→ target" hint). */
+/* Inline link target shown after a symlink's name (the "→ target" hint), on the
+   same line as the name. */
 .file-browser__symlink-target {
-  flex-shrink: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -193,17 +196,60 @@
   font-style: italic;
 }
 
+/* Stacked body: name line on top, muted meta line below. `min-width: 0` lets its
+   children truncate instead of forcing the row to overflow. */
+.file-browser__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+}
+
+/* Line 1: the filename (dominant) plus any symlink-target hint. */
+.file-browser__name-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-xs);
+  min-width: 0;
+}
+
+/* The filename is the dominant element: it takes the full row width and
+   truncates with an ellipsis. `min-width: 0` is essential — without it a flex
+   item refuses to shrink below its content width, so a long name would overflow
+   the row and get clipped (#2798). */
 .file-browser__name {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+/* Line 2: a smaller, muted meta line — Modified · Size · permissions — that
+   flows with middot separators and never competes with the name for width. */
+.file-browser__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--font-size-2xs);
+  color: var(--text-secondary);
+}
+
+.file-browser__meta-sep {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  opacity: 0.6;
 }
 
 .file-browser__size,
 .file-browser__modified {
   flex-shrink: 0;
-  font-size: var(--font-size-2xs);
-  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -215,9 +261,7 @@
 
 .file-browser__permissions {
   flex-shrink: 0;
-  font-size: var(--font-size-2xs);
-  color: var(--text-secondary);
-  font-family: monospace;
+  font-family: var(--font-mono, monospace);
 }
 
 /* Connection picker */
@@ -425,9 +469,9 @@
   transition: color var(--transition-fast);
 }
 
-.file-browser__col--name {
-  flex: 1;
-}
+/* Rows are two-line now, so the sort buttons no longer align to on-screen
+   columns — they cluster on the left as a compact sort-toggle group rather than
+   stretching Name to full width and reading as (misaligned) column headers. */
 
 .file-browser__col:hover {
   color: var(--text-primary);

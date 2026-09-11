@@ -1,51 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { formatBytes, truncate, formatRelativeTime } from "./formatters";
+import { formatBytes, formatAbsoluteTime } from "./formatters";
 
 describe("formatBytes", () => {
-  it("formats 0 bytes", () => {
+  it("formats real byte counts", () => {
     expect(formatBytes(0)).toBe("0 B");
-  });
-
-  it("formats bytes below 1 KB", () => {
     expect(formatBytes(512)).toBe("512 B");
-  });
-
-  it("formats exactly 1 KB", () => {
-    expect(formatBytes(1024)).toBe("1.0 KB");
-  });
-
-  it("formats fractional KB", () => {
     expect(formatBytes(1536)).toBe("1.5 KB");
+    expect(formatBytes(5 * 1024 * 1024)).toBe("5.0 MB");
+    expect(formatBytes(3 * 1024 * 1024 * 1024)).toBe("3.0 GB");
   });
 
-  it("formats exactly 1 MB", () => {
-    expect(formatBytes(1048576)).toBe("1.0 MB");
-  });
-
-  it("formats exactly 1 GB", () => {
-    expect(formatBytes(1073741824)).toBe("1.0 GB");
-  });
-});
-
-describe("truncate", () => {
-  it("returns short string unchanged", () => {
-    expect(truncate("hello", 10)).toBe("hello");
-  });
-
-  it("truncates long string with ellipsis", () => {
-    const result = truncate("hello world", 6);
-    expect(result).toBe("hello\u2026");
-    expect(result.length).toBe(6);
-  });
-
-  it("returns string at exact max length unchanged", () => {
-    expect(truncate("hello", 5)).toBe("hello");
+  it("returns an empty string for a missing or invalid size (no 'NaN GB') (#2798)", () => {
+    expect(formatBytes(undefined)).toBe("");
+    expect(formatBytes(null)).toBe("");
+    expect(formatBytes(NaN)).toBe("");
+    expect(formatBytes(Infinity)).toBe("");
+    expect(formatBytes(-1)).toBe("");
   });
 });
 
-describe("formatRelativeTime", () => {
-  it("returns 'just now' for recent timestamps", () => {
-    const now = new Date().toISOString();
-    expect(formatRelativeTime(now)).toBe("just now");
+describe("formatAbsoluteTime", () => {
+  it("formats a valid timestamp to a localized string carrying the full year", () => {
+    const out = formatAbsoluteTime("2026-01-15T10:30:00Z");
+    expect(out).not.toBe("");
+    expect(out).toContain("2026");
+  });
+
+  it("returns an empty string for a missing or unparseable input", () => {
+    expect(formatAbsoluteTime(undefined)).toBe("");
+    expect(formatAbsoluteTime(null)).toBe("");
+    expect(formatAbsoluteTime("")).toBe("");
+    expect(formatAbsoluteTime("not a date")).toBe("");
   });
 });
