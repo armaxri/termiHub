@@ -823,8 +823,9 @@ mod tests {
                 // it would close the output channel and make `daemon_loop` exit.
                 let _out_tx = out_tx;
                 let conn: Box<dyn ConnectionType> = Box::new(FakeConnection);
-                let _ = super::super::daemon_loop("test-session", conn, out_rx, &mut listener, 4096)
-                    .await;
+                let _ =
+                    super::super::daemon_loop("test-session", conn, out_rx, &mut listener, 4096)
+                        .await;
                 listener.cleanup();
             })
         }

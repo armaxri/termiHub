@@ -108,9 +108,7 @@ pub fn reap_detached_child(
         }) {
         Ok(handle) => Some(handle),
         Err(e) => {
-            tracing::warn!(
-                "could not spawn daemon reaper thread ({e}); dropping child unreaped"
-            );
+            tracing::warn!("could not spawn daemon reaper thread ({e}); dropping child unreaped");
             None
         }
     }

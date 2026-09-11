@@ -465,11 +465,7 @@ impl SessionManager {
             // freshly read on-disk copy so a peer worker's concurrent write is
             // merged rather than clobbered (AGT-016).
             state = AgentState::mutate_locked(&state_path, |s| {
-                prune_applied_pending_update(
-                    s,
-                    env!("CARGO_PKG_VERSION"),
-                    current_exe.as_deref(),
-                );
+                prune_applied_pending_update(s, env!("CARGO_PKG_VERSION"), current_exe.as_deref());
             });
         }
         let agent_forward = AgentForwardRelay::new(notification_tx.clone());

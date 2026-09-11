@@ -766,9 +766,10 @@ mod tests {
         let path = tmp.path().join("state.json");
 
         let mut seeded = AgentState::default();
-        seeded
-            .sessions
-            .insert("keep".to_string(), make_session("local", Some("/tmp/k.sock")));
+        seeded.sessions.insert(
+            "keep".to_string(),
+            make_session("local", Some("/tmp/k.sock")),
+        );
         seeded
             .sessions
             .insert("drop".to_string(), make_session("serial", None));
