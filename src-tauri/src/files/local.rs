@@ -31,6 +31,26 @@ pub fn rename(old_path: &str, new_path: &str) -> Result<(), TerminalError> {
     Ok(())
 }
 
+/// Change the permission bits (chmod) of a local file or directory.
+///
+/// `mode` is the low 12 bits of a Unix mode (e.g. `0o755`); higher (file-type)
+/// bits are masked off. Unix only — on other platforms there is no `rwx`
+/// permission model, so it returns an unsupported error.
+#[cfg(unix)]
+pub fn set_permissions(path: &str, mode: u32) -> Result<(), TerminalError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode & 0o7777))?;
+    Ok(())
+}
+
+/// Non-Unix stub: no `rwx` permission model to change.
+#[cfg(not(unix))]
+pub fn set_permissions(_path: &str, _mode: u32) -> Result<(), TerminalError> {
+    Err(TerminalError::EditorError(
+        "Changing permissions is not supported on this platform".to_string(),
+    ))
+}
+
 /// Copy a file or directory to a new location.
 ///
 /// For files, uses `std::fs::copy`. For directories, performs a recursive copy
@@ -229,6 +249,22 @@ mod tests {
         assert!(!old.exists());
         assert!(new_path.exists());
         assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "content");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_permissions_changes_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("run.sh");
+        std::fs::write(&file, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        set_permissions(file.to_str().unwrap(), 0o755).unwrap();
+
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o755);
     }
 
     #[test]

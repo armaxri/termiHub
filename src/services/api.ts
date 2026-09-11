@@ -1407,6 +1407,16 @@ export async function localRename(oldPath: string, newPath: string): Promise<voi
   await invoke("local_rename", { oldPath, newPath });
 }
 
+/**
+ * Change the permission bits (chmod) of a local file or directory.
+ *
+ * `mode` is the low 12 bits of a Unix mode (e.g. `0o755`). Unix hosts only —
+ * on other platforms the backend returns a "not supported" error.
+ */
+export async function localSetPermissions(path: string, mode: number): Promise<void> {
+  await invoke("local_set_permissions", { path, mode });
+}
+
 /** Read a local file's contents as a UTF-8 string. */
 export async function localReadFile(path: string): Promise<string> {
   return await invoke<string>("local_read_file", { path });
@@ -1537,6 +1547,22 @@ export async function sessionRenameFile(
 /** Create a directory via a session's file browser capability. */
 export async function sessionMkdir(sessionId: string, path: string): Promise<void> {
   await invoke("session_mkdir", { sessionId, path });
+}
+
+/**
+ * Change the permission bits (chmod) of a file via a session's file browser
+ * capability.
+ *
+ * `mode` is the low 12 bits of a Unix mode (e.g. `0o755`). Only SFTP-backed
+ * (SSH) and local sessions support this; byte-based backends (FTP, Docker)
+ * reject it with a "not supported" error.
+ */
+export async function sessionSetPermissions(
+  sessionId: string,
+  path: string,
+  mode: number
+): Promise<void> {
+  await invoke("session_set_permissions", { sessionId, path, mode });
 }
 
 // --- Session-scoped SFTP advanced operations & transfers (#2312, #2313) ---

@@ -61,6 +61,8 @@ export function useFileBrowser() {
     createFile: async () => {},
     deleteEntry: async () => {},
     renameEntry: async () => {},
+    setPermissions: async () => {},
+    supportsPermissions: false,
     openInVscode: async () => {},
     copyEntry: () => {},
     cutEntry: () => {},

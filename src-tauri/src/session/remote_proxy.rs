@@ -587,6 +587,12 @@ mod files_params {
     pub(super) fn mkdir(connection_id: &str, path: &str) -> Value {
         json!({ "connection_id": connection_id, "path": path })
     }
+
+    /// `FilesSetPermissionsParams` requires snake_case `connection_id`/`path`
+    /// plus the numeric `mode` (the low 12 mode bits).
+    pub(super) fn set_permissions(connection_id: &str, path: &str, mode: u32) -> Value {
+        json!({ "connection_id": connection_id, "path": path, "mode": mode })
+    }
 }
 
 #[async_trait::async_trait]
@@ -662,6 +668,15 @@ impl FileBrowser for RemoteFileBrowserProxy {
         self.rpc(
             "connection.files.mkdir",
             files_params::mkdir(&self.remote_session_id, path),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError> {
+        self.rpc(
+            "connection.files.set_permissions",
+            files_params::set_permissions(&self.remote_session_id, path, mode),
         )
         .await?;
         Ok(())
@@ -2003,6 +2018,18 @@ mod tests {
                 .expect("stat params must match agent FilesStatParams");
             serde_json::from_value::<agent::FilesMkdirParams>(files_params::mkdir(CONN, PATH))
                 .expect("mkdir params must match agent FilesMkdirParams");
+        }
+
+        #[test]
+        fn set_permissions_params_deserialize_into_agent_struct() {
+            let params = files_params::set_permissions(CONN, PATH, 0o755);
+            let parsed: agent::FilesSetPermissionsParams = serde_json::from_value(params).expect(
+                "desktop set_permissions params must match the agent's \
+                 FilesSetPermissionsParams contract",
+            );
+            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
+            assert_eq!(parsed.path, PATH);
+            assert_eq!(parsed.mode, 0o755);
         }
     }
 }

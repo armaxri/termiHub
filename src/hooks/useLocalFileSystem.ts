@@ -7,6 +7,7 @@ import {
   localMkdir,
   localDelete,
   localRename,
+  localSetPermissions,
   localWriteFile,
   localCopyFile,
   vscodeOpenLocal,
@@ -91,6 +92,14 @@ export function useLocalFileSystem() {
       const parentDir = oldPath.split("/").slice(0, -1).join("/") || "/";
       const newPath = parentDir === "/" ? `/${newName}` : `${parentDir}/${newName}`;
       await localRename(oldPath, newPath);
+      refreshLocal();
+    },
+    [refreshLocal]
+  );
+
+  const setPermissions = useCallback(
+    async (path: string, mode: number) => {
+      await localSetPermissions(path, mode);
       refreshLocal();
     },
     [refreshLocal]
@@ -194,6 +203,11 @@ export function useLocalFileSystem() {
     createFile,
     deleteEntry,
     renameEntry,
+    setPermissions,
+    // A local desktop host is the machine the user runs on; chmod is meaningful
+    // there (the backend still rejects it on non-Unix, and the row only offers
+    // the action when it carries a permission string — i.e. on Unix).
+    supportsPermissions: true,
     openInVscode,
     copyEntry,
     cutEntry,

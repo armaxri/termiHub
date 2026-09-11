@@ -464,3 +464,61 @@
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
+
+/* --- Permissions (chmod) editor dialog --- */
+.permissions-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.permissions-dialog__target {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.permissions-dialog__grid {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.permissions-dialog__grid th,
+.permissions-dialog__grid td {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  text-align: center;
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+.permissions-dialog__grid th[scope="row"] {
+  text-align: left;
+  color: var(--text-primary);
+}
+
+.permissions-dialog__octal {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.permissions-dialog__octal label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.permissions-dialog__octal .ui-input {
+  width: 5ch;
+  text-align: center;
+  font-family: var(--font-mono);
+}
+
+.permissions-dialog__preview {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}

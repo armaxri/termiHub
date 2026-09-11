@@ -34,17 +34,17 @@ use crate::protocol::methods::{
     Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
     ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
     FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult,
-    FilesRenameParams, FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams,
-    FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
-    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
-    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
-    ServicePauseParams, ServicePauseResult, ServiceResumeParams, ServiceResumeResult,
-    ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
-    ServiceStopParams, ServiceStopResult, SessionAttachParams, SessionCloseParams,
-    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionGetBufferParams,
-    SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
-    SessionResizeParams, TunnelForwardSpec, TunnelStartParams, TunnelStartResult,
-    TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
+    FilesRenameParams, FilesSetPermissionsParams, FilesStatParams, FilesWriteParams,
+    FolderCreateParams, FolderDeleteParams, FolderUpdateParams, HealthCheckResult,
+    InitializeParams, InitializeResult, MonitoringSubscribeParams, MonitoringUnsubscribeParams,
+    NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams,
+    NetworkWolParams, ServicePauseParams, ServicePauseResult, ServiceResumeParams,
+    ServiceResumeResult, ServiceStartParams, ServiceStartResult, ServiceStatusParams,
+    ServiceStatusResult, ServiceStopParams, ServiceStopResult, SessionAttachParams,
+    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
+    SessionGetBufferParams, SessionGetBufferResult, SessionInputParams, SessionListEntry,
+    SessionListResult, SessionResizeParams, TunnelForwardSpec, TunnelStartParams,
+    TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
     UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 use crate::registry_daemon::client::RegistryClient;
@@ -453,6 +453,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_files_rename(module)?;
     register_files_stat(module)?;
     register_files_mkdir(module)?;
+    register_files_set_permissions(module)?;
     register_monitoring_subscribe(module)?;
     register_monitoring_unsubscribe(module)?;
     register_network_port_scan(module)?;
@@ -1286,6 +1287,31 @@ fn register_files_mkdir(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
         browser.mkdir(&p.path).await.map_err(map_file_error)?;
         Ok::<_, ErrorObjectOwned>(json!({}))
     })?;
+    Ok(())
+}
+
+fn register_files_set_permissions(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        "connection.files.set_permissions",
+        |params, ctx, _ext| async move {
+            let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+            let p: FilesSetPermissionsParams = params
+                .parse()
+                .map_err(|e| invalid_params("connection.files.set_permissions", e))?;
+
+            let browser =
+                resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
+
+            browser
+                .set_permissions(&p.path, p.mode)
+                .await
+                .map_err(map_file_error)?;
+            Ok::<_, ErrorObjectOwned>(json!({}))
+        },
+    )?;
     Ok(())
 }
 

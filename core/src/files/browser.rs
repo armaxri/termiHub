@@ -46,6 +46,21 @@ pub trait FileBrowser: Send {
     /// Create a directory (and any missing parent directories) at the given path.
     async fn mkdir(&self, path: &str) -> Result<(), FileError>;
 
+    /// Change the permission bits (chmod) of a file or directory.
+    ///
+    /// `mode` carries the low 12 bits of a Unix mode — the nine `rwxrwxrwx`
+    /// permission bits plus the setuid/setgid/sticky bits (e.g. `0o755`). Any
+    /// higher bits (the file-type bits) are ignored by implementations.
+    ///
+    /// Backends that can change permissions implement it — the SFTP browser (an
+    /// SFTP `setstat`) and the local filesystem on Unix (`std::fs::set_permissions`).
+    /// A backend that cannot (FTP, Docker, WSL, or a non-Unix local filesystem)
+    /// returns [`FileError::NotSupported`] so the caller fails cleanly rather than
+    /// silently. It is a required method (not a defaulted one) because
+    /// `#[async_trait]` would otherwise add a `Self: Sync` bound that the
+    /// `Send`-only `dyn FileBrowser` cannot satisfy.
+    async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError>;
+
     /// Optional downcast hook to the concrete browser type behind this
     /// `&dyn FileBrowser`.
     ///

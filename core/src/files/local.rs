@@ -245,6 +245,31 @@ impl super::browser::FileBrowser for LocalFileBrowser {
         .await
         .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
+
+    async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError> {
+        set_permissions_impl(&expand_tilde_only(path), mode).await
+    }
+}
+
+/// Apply Unix permission bits to a local path (Unix only).
+#[cfg(unix)]
+async fn set_permissions_impl(path: &str, mode: u32) -> Result<(), FileError> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = path.to_string();
+    tokio::task::spawn_blocking(move || {
+        // Only the low 12 mode bits (permissions + setuid/setgid/sticky) are
+        // meaningful for `chmod`; higher (file-type) bits are masked off.
+        let perms = std::fs::Permissions::from_mode(mode & 0o7777);
+        std::fs::set_permissions(&path, perms).map_err(|e| map_io_error(e, &path))
+    })
+    .await
+    .map_err(|e| FileError::OperationFailed(e.to_string()))?
+}
+
+/// On non-Unix platforms there is no `rwx` permission model to set.
+#[cfg(not(unix))]
+async fn set_permissions_impl(_path: &str, _mode: u32) -> Result<(), FileError> {
+    Err(FileError::NotSupported)
 }
 
 #[cfg(test)]
@@ -256,6 +281,50 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let entries = list_dir_sync(dir.path().to_str().unwrap()).unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn set_permissions_changes_local_mode() {
+        use super::super::browser::FileBrowser;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("script.sh");
+        std::fs::write(&file, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let browser = LocalFileBrowser::new();
+        browser
+            .set_permissions(file.to_str().unwrap(), 0o755)
+            .await
+            .unwrap();
+
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        // Only the low 12 bits are the chmod payload; the file-type bits vary.
+        assert_eq!(mode & 0o7777, 0o755);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn set_permissions_masks_high_bits() {
+        use super::super::browser::FileBrowser;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f.txt");
+        std::fs::write(&file, "x").unwrap();
+
+        let browser = LocalFileBrowser::new();
+        // Pass a full stat-style mode (0o100600): the S_IFREG type bits must be
+        // masked off, leaving just 0o600.
+        browser
+            .set_permissions(file.to_str().unwrap(), 0o100600)
+            .await
+            .unwrap();
+
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o600);
     }
 
     #[test]

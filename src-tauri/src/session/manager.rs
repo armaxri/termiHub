@@ -1309,6 +1309,19 @@ impl SessionManager {
         self.file_ops().mkdir(session_id, path).await
     }
 
+    /// Change the permission bits (chmod) of a file via a session's file browser
+    /// capability. `mode` is the low 12 bits of a Unix mode (e.g. `0o755`).
+    pub async fn set_file_permissions(
+        &self,
+        session_id: &str,
+        path: &str,
+        mode: u32,
+    ) -> Result<(), TerminalError> {
+        self.file_ops()
+            .set_permissions(session_id, path, mode)
+            .await
+    }
+
     // --- Session-scoped SFTP advanced operations & transfers (#2312) ---
     //
     // These reach the SSH-specific SFTP capabilities that do not fit on the shared
@@ -4533,6 +4546,13 @@ mod tests {
             })
         }
         async fn mkdir(&self, _path: &str) -> Result<(), termihub_core::errors::FileError> {
+            Ok(())
+        }
+        async fn set_permissions(
+            &self,
+            _path: &str,
+            _mode: u32,
+        ) -> Result<(), termihub_core::errors::FileError> {
             Ok(())
         }
     }

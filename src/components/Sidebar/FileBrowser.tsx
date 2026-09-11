@@ -17,6 +17,7 @@ import {
   Download,
   Pencil,
   Trash2,
+  KeyRound,
   MoreHorizontal,
   FolderOpen,
   MonitorOff,
@@ -65,6 +66,7 @@ import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import { useLocalDirWatch } from "@/hooks/useLocalDirWatch";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
+import { PermissionsDialog } from "./PermissionsDialog";
 import { FileBrowserPathBar } from "./FileBrowserPathBar";
 import "./FileBrowser.css";
 
@@ -81,6 +83,8 @@ const ROW_OVERSCAN = 8;
 interface FileRowProps {
   entry: FileEntry;
   vscodeAvailable: boolean;
+  /** Whether this backend can chmod the entry (SFTP-backed or local Unix). */
+  canChangePermissions: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
   onPaste: () => void;
@@ -110,6 +114,7 @@ interface FileRowProps {
 export function FileMenuItems({
   entry,
   vscodeAvailable,
+  canChangePermissions = false,
   onNavigate,
   onContextAction,
   onPaste,
@@ -121,6 +126,8 @@ export function FileMenuItems({
 }: {
   entry: FileEntry;
   vscodeAvailable: boolean;
+  /** Whether this backend can chmod the entry (SFTP-backed or local Unix). */
+  canChangePermissions?: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
   onPaste: () => void;
@@ -262,6 +269,15 @@ export function FileMenuItems({
       >
         <Pencil size={14} /> Rename
       </Item>
+      {canChangePermissions && (
+        <Item
+          className="context-menu__item"
+          onSelect={() => onContextAction(entry, "permissions")}
+          data-testid={`${testIdPrefix}-permissions`}
+        >
+          <KeyRound size={14} /> Change Permissions
+        </Item>
+      )}
       <Item
         className="context-menu__item context-menu__item--danger"
         onSelect={() => onContextAction(entry, "delete")}
@@ -433,6 +449,7 @@ function RenameRow({
 function FileRow({
   entry,
   vscodeAvailable,
+  canChangePermissions,
   onNavigate,
   onContextAction,
   onPaste,
@@ -451,6 +468,7 @@ function FileRow({
   const menuItemProps = {
     entry,
     vscodeAvailable,
+    canChangePermissions,
     onNavigate,
     onContextAction,
     onPaste,
@@ -838,6 +856,8 @@ export function FileBrowser() {
     createFile,
     deleteEntry,
     renameEntry,
+    setPermissions,
+    supportsPermissions,
     openInVscode,
     copyEntry,
     cutEntry,
@@ -883,6 +903,7 @@ export function FileBrowser() {
     message: string;
     onConfirm: () => void;
   } | null>(null);
+  const [permissionsTarget, setPermissionsTarget] = useState<FileEntry | null>(null);
   const [sort, setSort] = useState<{ key: FileSortKey; dir: SortDirection }>({
     key: "name",
     dir: "asc",
@@ -1074,6 +1095,11 @@ export function FileBrowser() {
           setRenamingPath(entry.path);
           break;
         }
+        case "permissions": {
+          // Opens the chmod editor dialog, pre-filled from the row's mode.
+          setPermissionsTarget(entry);
+          break;
+        }
         case "delete": {
           setDeleteConfirm({
             message: `Delete ${entry.isDirectory ? "directory" : "file"} "${entry.name}"?`,
@@ -1115,6 +1141,21 @@ export function FileBrowser() {
   );
 
   const handleRenameCancel = useCallback(() => setRenamingPath(null), []);
+
+  const handleApplyPermissions = useCallback(
+    async (entry: FileEntry, newMode: number) => {
+      try {
+        await setPermissions(entry.path, newMode);
+        toast.success(`Permissions updated for "${entry.name}"`);
+      } catch (err) {
+        frontendLog("file_browser", `chmod failed for ${entry.path}: ${err}`);
+        toast.error(`Failed to change permissions for "${entry.name}": ${err}`);
+        // Re-throw so the dialog stays open and its Apply button resets.
+        throw err;
+      }
+    },
+    [setPermissions]
+  );
 
   const handleShareVia = useCallback(
     (path: string, protocol: "http" | "ftp" | "tftp") => {
@@ -1651,6 +1692,7 @@ export function FileBrowser() {
                         <FileRow
                           entry={entry}
                           vscodeAvailable={vscodeAvailable}
+                          canChangePermissions={supportsPermissions && !!entry.permissions}
                           onNavigate={handleNavigate}
                           onContextAction={handleContextAction}
                           onPaste={handlePaste}
@@ -1727,6 +1769,11 @@ export function FileBrowser() {
           setDeleteConfirm(null);
         }}
         onCancel={() => setDeleteConfirm(null)}
+      />
+      <PermissionsDialog
+        entry={permissionsTarget}
+        onApply={handleApplyPermissions}
+        onClose={() => setPermissionsTarget(null)}
       />
       {activeTransfers.length > 0 && (
         <div className="file-browser__transfers" data-testid="file-browser-transfers">

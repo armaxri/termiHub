@@ -350,6 +350,29 @@ impl FileBrowser for SftpFileBrowser {
             .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))
     }
 
+    async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+
+        // Send an SFTP `setstat` carrying only the permission attribute (the low
+        // 12 mode bits); every other field stays `None` so the server changes
+        // nothing but the mode, matching `chmod` semantics.
+        let attrs = russh_sftp::protocol::FileAttributes {
+            permissions: Some(mode & 0o7777),
+            ..Default::default()
+        };
+        state
+            .sftp
+            .set_metadata(path, attrs)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("chmod failed: {e}")))?;
+
+        Ok(())
+    }
+
     /// Expose the concrete browser so a session-scoped caller holding only a
     /// `&dyn FileBrowser` can `downcast_ref::<SftpFileBrowser>()` and reach the
     /// SFTP advanced ops ([`SftpAdvancedOps`]), the exec-capability probe, and the

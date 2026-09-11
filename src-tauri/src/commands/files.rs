@@ -79,6 +79,15 @@ pub fn local_rename(old_path: String, new_path: String) -> Result<(), TerminalEr
     crate::files::local::rename(&old_path, &new_path)
 }
 
+/// Change the permission bits (chmod) of a local file or directory.
+///
+/// `mode` is the low 12 bits of a Unix mode (e.g. `0o755`). Unix only; other
+/// platforms return a "not supported" error.
+#[tauri::command]
+pub fn local_set_permissions(path: String, mode: u32) -> Result<(), TerminalError> {
+    crate::files::local::set_permissions(&path, mode)
+}
+
 /// Read a local file's contents as a UTF-8 string.
 #[tauri::command]
 pub fn local_read_file(path: String) -> Result<String, TerminalError> {

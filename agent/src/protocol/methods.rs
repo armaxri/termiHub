@@ -416,6 +416,14 @@ pub struct FilesMkdirParams {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesSetPermissionsParams {
+    pub connection_id: Option<String>,
+    pub path: String,
+    /// The low 12 bits of a Unix mode (e.g. `0o755`).
+    pub mode: u32,
+}
+
 /// Type alias for backward compatibility — stat results use the same shape
 /// as [`FileEntry`] from the core crate.
 pub type FilesStatResult = FileEntry;
@@ -1816,6 +1824,16 @@ mod tests {
         let params: FilesStatParams = serde_json::from_value(json).unwrap();
         assert_eq!(params.connection_id, Some("conn-42".to_string()));
         assert_eq!(params.path, "/var/log");
+    }
+
+    #[test]
+    fn files_set_permissions_params_serde() {
+        let json = json!({"connection_id": "conn-1", "path": "/a.sh", "mode": 493});
+        let params: FilesSetPermissionsParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.connection_id, Some("conn-1".to_string()));
+        assert_eq!(params.path, "/a.sh");
+        // 493 == 0o755
+        assert_eq!(params.mode, 0o755);
     }
 
     #[test]
