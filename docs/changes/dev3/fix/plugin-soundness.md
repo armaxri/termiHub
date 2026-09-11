@@ -2,7 +2,7 @@
 
 - The plugin filesystem-scope guard now resolves symlinks before authorizing a
   path. Previously the check was purely lexical (`starts_with` after collapsing
-  `..`), so a symlink *inside* a granted root that pointed outside it — e.g.
+  `..`), so a symlink _inside_ a granted root that pointed outside it — e.g.
   `<root>/link -> /etc` — passed the check and the subsequent read/write followed
   the link out of the sandbox. The guard now canonicalizes the requested path's
   existing prefix and the declared roots, re-checks containment against the
