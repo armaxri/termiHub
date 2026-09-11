@@ -6,7 +6,7 @@
 //! (Unix domain socket on unix, named pipe on windows — see
 //! [`crate::daemon::transport`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -343,6 +343,17 @@ const DEFAULT_PERSISTENT_BUFFER_SIZE: usize = 1_048_576;
 /// so it can be shared across async tasks.
 pub struct SessionManager {
     sessions: Mutex<HashMap<String, SessionInfo>>,
+    /// IDs of in-flight [`create`](SessionManager::create) calls that have
+    /// reserved a slot but not yet finished their (possibly slow) backend
+    /// bring-up.
+    ///
+    /// The expensive daemon-spawn / SSH-connect in `create` runs **without**
+    /// holding the `sessions` lock (CONC-004), so it can't freeze I/O for other
+    /// live sessions. To keep [`MAX_SESSIONS`] honest while a connect is in
+    /// flight, each create reserves its id here (checked against `sessions.len()`
+    /// under the `sessions` lock) and removes it once the session is registered
+    /// or the create fails. Lock order is always `sessions → pending_creates`.
+    pending_creates: Mutex<HashSet<String>>,
     notification_tx: NotificationSender,
     registry: Arc<ConnectionTypeRegistry>,
     launcher: Arc<dyn DaemonLauncher>,
@@ -444,6 +455,7 @@ impl SessionManager {
         let agent_forward = AgentForwardRelay::new(notification_tx.clone());
         Self {
             sessions: Mutex::new(HashMap::new()),
+            pending_creates: Mutex::new(HashSet::new()),
             notification_tx,
             registry,
             launcher,
@@ -482,16 +494,8 @@ impl SessionManager {
         settings: serde_json::Value,
         definition_id: Option<String>,
     ) -> Result<SessionSnapshot, SessionCreateError> {
-        let mut sessions = self.sessions.lock().await;
-
-        if sessions.len() >= MAX_SESSIONS as usize {
-            return Err(SessionCreateError::LimitReached);
-        }
-
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Utc::now();
-
-        // Check the type exists and get capabilities.
+        // Check the type exists and get capabilities up front — cheap, in-memory,
+        // and done before any lock so an invalid type never reserves a slot.
         let capabilities = {
             let instance = self
                 .registry
@@ -500,45 +504,83 @@ impl SessionManager {
             instance.capabilities()
         };
 
-        let backend = self
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+
+        // Reserve a slot: enforce MAX_SESSIONS across live sessions *and* in-flight
+        // creates, then release the lock. The reservation counts toward the cap so
+        // concurrent creates can't overshoot it, and holding the lock only for this
+        // O(1) check means the slow backend bring-up below runs without gating I/O
+        // for every other session (CONC-004). Lock order: `sessions → pending_creates`.
+        {
+            let sessions = self.sessions.lock().await;
+            let mut pending = self.pending_creates.lock().await;
+            if sessions.len() + pending.len() >= MAX_SESSIONS as usize {
+                return Err(SessionCreateError::LimitReached);
+            }
+            pending.insert(id.clone());
+        }
+
+        // Run the (possibly multi-second) daemon spawn + connect / SSH handshake
+        // WITHOUT holding `sessions`, so one slow or hung connect can't freeze
+        // write_input/resize/list/close for every other live session (CONC-004).
+        let backend = match self
             .create_backend(&id, type_id, &settings, capabilities.persistent)
             .await
-            .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
-
-        // Persist daemon-backed sessions for recovery after an agent restart.
-        if capabilities.persistent {
-            if let SessionBackend::Daemon(ref client) = backend {
-                let mut state = self.state.lock().await;
-                state.sessions.insert(
-                    id.clone(),
-                    PersistedSession {
-                        type_id: type_id.to_string(),
-                        title: title.clone(),
-                        created_at: now.to_rfc3339(),
-                        daemon_socket: Some(client.endpoint().to_string()),
-                        settings: settings.clone(),
-                        definition_id: definition_id.clone(),
-                    },
-                );
-                state.save_to(&self.state_path);
+        {
+            Ok(backend) => backend,
+            Err(e) => {
+                // Release the reservation so a failed create never leaks a slot
+                // or blocks a retry.
+                self.pending_creates.lock().await.remove(&id);
+                return Err(SessionCreateError::BackendFailed(e.to_string()));
             }
-        }
+        };
 
         let info = SessionInfo {
             id: id.clone(),
-            title,
+            title: title.clone(),
             type_id: type_id.to_string(),
             status: SessionStatus::Running,
-            settings,
+            settings: settings.clone(),
             created_at: now,
             last_activity: now,
             attached: false,
             backend,
-            definition_id,
+            definition_id: definition_id.clone(),
         };
 
         let snapshot = info.snapshot();
-        sessions.insert(id, info);
+
+        // Re-acquire `sessions` briefly to register the finished session, persist
+        // daemon-backed sessions for recovery, and drop the reservation. Keeping the
+        // state-persist nested under the `sessions` lock preserves the original
+        // atomicity vs. `recover_sessions` (which inserts under the same lock).
+        {
+            let mut sessions = self.sessions.lock().await;
+
+            if capabilities.persistent {
+                if let SessionBackend::Daemon(ref client) = info.backend {
+                    let mut state = self.state.lock().await;
+                    state.sessions.insert(
+                        id.clone(),
+                        PersistedSession {
+                            type_id: type_id.to_string(),
+                            title,
+                            created_at: now.to_rfc3339(),
+                            daemon_socket: Some(client.endpoint().to_string()),
+                            settings,
+                            definition_id,
+                        },
+                    );
+                    state.save_to(&self.state_path);
+                }
+            }
+
+            self.pending_creates.lock().await.remove(&id);
+            sessions.insert(id, info);
+        }
+
         Ok(snapshot)
     }
 
@@ -1491,6 +1533,13 @@ mod tests {
         ) -> Option<crate::state::persistence::PendingUpdate> {
             self.state.lock().await.update.pending_update.clone()
         }
+
+        /// Number of in-flight create reservations (test-only), so tests can
+        /// assert a failed or finished create leaves no leaked slot reservation.
+        #[cfg(test)]
+        pub async fn pending_creates_len_for_test(&self) -> usize {
+            self.pending_creates.lock().await.len()
+        }
     }
 
     // ── Deferred update (issue #1352) ────────────────────────────────
@@ -2368,6 +2417,201 @@ mod tests {
                 mgr.list().await.is_empty(),
                 "close_all() must remove sessions from the in-memory list"
             );
+        }
+
+        // ── CONC-004: create must not hold `sessions` across the connect ──
+
+        /// A launcher whose `launch` blocks until released, signalling on entry.
+        ///
+        /// Lets a test drive `create` to the exact point where the (formerly
+        /// lock-holding) backend connect would run, and hold it there while
+        /// exercising I/O on other sessions.
+        struct BlockingLauncher {
+            entered_tx: tokio::sync::mpsc::UnboundedSender<()>,
+            release: Arc<tokio::sync::Notify>,
+        }
+
+        #[async_trait::async_trait]
+        impl DaemonLauncher for BlockingLauncher {
+            async fn launch(
+                &self,
+                _session_id: &str,
+                _type_id: &str,
+                _settings: &serde_json::Value,
+                _notification_tx: NotificationSender,
+                _buffer_size_bytes: usize,
+                _ssh_auth_sock: Option<String>,
+            ) -> Result<SessionBackend, anyhow::Error> {
+                let _ = self.entered_tx.send(());
+                self.release.notified().await;
+                Ok(SessionBackend::Stub {
+                    alive: Arc::new(AtomicBool::new(true)),
+                })
+            }
+        }
+
+        const SSH_SETTINGS: fn() -> serde_json::Value = || {
+            serde_json::json!({
+                "host": "example.com",
+                "username": "user",
+                "authMethod": "password",
+            })
+        };
+
+        /// A slow/blocked backend connect in one `create` must NOT delay
+        /// `write_input`/`list`/`resize` on an already-existing session — the
+        /// whole point of CONC-004. Without the fix these ops would block on the
+        /// `sessions` lock the slow create is holding.
+        #[tokio::test]
+        async fn slow_create_does_not_block_other_session_io() {
+            let release = Arc::new(tokio::sync::Notify::new());
+            let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mgr = Arc::new(SessionManager::with_launcher(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(BlockingLauncher {
+                    entered_tx,
+                    release: release.clone(),
+                }),
+            ));
+
+            // An existing, already-connected session.
+            let existing = mgr
+                .create_stub_session("stub", "existing".to_string(), json!({}))
+                .await
+                .unwrap();
+            let existing_id = existing.id.clone();
+
+            // Kick off a create that will block inside the launcher's connect.
+            let mgr2 = mgr.clone();
+            let create_task = tokio::spawn(async move {
+                mgr2.create("ssh", "slow".to_string(), SSH_SETTINGS(), None)
+                    .await
+            });
+
+            // Wait until the create is actually inside `launch` — i.e. it has
+            // released `sessions` and is stuck on the (blocked) connect.
+            entered_rx
+                .recv()
+                .await
+                .expect("create never reached launch");
+
+            // I/O on the existing session must complete promptly, not wait for
+            // the blocked connect. A tight timeout is the assertion: with the old
+            // lock-held-across-connect code these would hang until `release`.
+            let d = std::time::Duration::from_secs(2);
+            tokio::time::timeout(d, mgr.write_input(&existing_id, b"x"))
+                .await
+                .expect("write_input blocked behind slow create")
+                .expect("write_input failed");
+            tokio::time::timeout(d, mgr.resize(&existing_id, 80, 24))
+                .await
+                .expect("resize blocked behind slow create")
+                .expect("resize failed");
+            tokio::time::timeout(d, mgr.list())
+                .await
+                .expect("list blocked behind slow create");
+
+            // Let the create finish and confirm it lands normally.
+            release.notify_one();
+            let snapshot = create_task
+                .await
+                .expect("create task panicked")
+                .expect("create failed");
+            assert_eq!(snapshot.title, "slow");
+            assert_eq!(mgr.active_count().await, 2);
+            assert_eq!(
+                mgr.pending_creates_len_for_test().await,
+                0,
+                "reservation must be dropped after a successful create"
+            );
+        }
+
+        /// A failed connect must release the reserved slot, so a run of failing
+        /// creates never exhausts MAX_SESSIONS with phantom reservations.
+        #[tokio::test]
+        async fn failed_create_releases_reserved_slot() {
+            let (mgr, _) = make_manager_with_mock(MockDaemonLauncher::failing());
+
+            // Far more failing creates than the cap: if a failed create leaked its
+            // reservation, we'd start seeing LimitReached instead of BackendFailed.
+            for _ in 0..(MAX_SESSIONS as usize + 5) {
+                let result = mgr
+                    .create("ssh", "fail".to_string(), SSH_SETTINGS(), None)
+                    .await;
+                assert!(
+                    matches!(result, Err(SessionCreateError::BackendFailed(_))),
+                    "expected BackendFailed (no leaked reservation), got: {result:?}"
+                );
+            }
+            assert_eq!(
+                mgr.pending_creates_len_for_test().await,
+                0,
+                "a failed create must not leak its slot reservation"
+            );
+            assert_eq!(mgr.list().await.len(), 0);
+        }
+
+        /// MAX_SESSIONS must stay enforced even when several creates race with
+        /// their connects still in flight: a reservation counts toward the cap, so
+        /// concurrent creates can't overshoot it.
+        #[tokio::test]
+        async fn concurrent_creates_respect_max_sessions_via_reservations() {
+            let release = Arc::new(tokio::sync::Notify::new());
+            let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mgr = Arc::new(SessionManager::with_launcher(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(BlockingLauncher {
+                    entered_tx,
+                    release: release.clone(),
+                }),
+            ));
+
+            // Fill to one below the cap with already-live sessions.
+            for i in 0..(MAX_SESSIONS as usize - 1) {
+                mgr.create_stub_session("stub", format!("s{i}"), json!({}))
+                    .await
+                    .unwrap();
+            }
+
+            // Three creates race for the single remaining slot. Only one can
+            // reserve it; the other two must fail fast with LimitReached (before
+            // ever reaching the blocking launcher).
+            let mut tasks = Vec::new();
+            for _ in 0..3 {
+                let m = mgr.clone();
+                tasks.push(tokio::spawn(async move {
+                    m.create("ssh", "race".to_string(), SSH_SETTINGS(), None)
+                        .await
+                }));
+            }
+
+            // Exactly one create wins the reservation and blocks in the launcher;
+            // the other two fail their reservation and return LimitReached without
+            // ever reaching `launch`, so this recv sees exactly one signal.
+            entered_rx
+                .recv()
+                .await
+                .expect("no create won the last slot");
+
+            // Release the winner; the losers have already returned (their
+            // reservation failed synchronously, before any await point).
+            release.notify_one();
+
+            let mut ok = 0;
+            let mut limit_reached = 0;
+            for t in tasks {
+                match t.await.expect("create task panicked") {
+                    Ok(_) => ok += 1,
+                    Err(SessionCreateError::LimitReached) => limit_reached += 1,
+                    Err(other) => panic!("unexpected create error: {other:?}"),
+                }
+            }
+            assert_eq!(ok, 1, "exactly one create should take the last slot");
+            assert_eq!(limit_reached, 2, "the other two must hit LimitReached");
+            assert_eq!(mgr.active_count().await, MAX_SESSIONS);
+            assert_eq!(mgr.pending_creates_len_for_test().await, 0);
         }
     }
 }
