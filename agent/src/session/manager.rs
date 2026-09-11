@@ -24,7 +24,9 @@ use crate::transport::JsonRpcOutputSink;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
 use termihub_core::session::traits::OutputSink;
 
-use crate::daemon::client::{DaemonClient, DaemonWriterHandle, ExitHook, ExitHookFuture};
+use crate::daemon::client::{
+    DaemonClient, DaemonWriterHandle, ExitHook, ExitHookFuture, OwnedByLivePeer,
+};
 use crate::daemon::transport::{endpoint_alive, session_endpoint};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
@@ -963,6 +965,18 @@ impl SessionManager {
                     sessions.insert(id.clone(), info);
                     recovered.push(id.clone());
                     info!("Recovered session {id} (type={})", session.type_id);
+                }
+                Err(e) if e.downcast_ref::<OwnedByLivePeer>().is_some() => {
+                    // AGT-015: another live worker (another attached desktop) still
+                    // owns this session. Skip it and — crucially — leave it in the
+                    // shared `state.json` so its live owner is undisturbed and can
+                    // still recover it later. Removing it here would corrupt the
+                    // shared recovery map for the peer.
+                    info!(
+                        "Session {id} is held by a live connection on this host; \
+                         leaving it for its owner (AGT-015)"
+                    );
+                    continue;
                 }
                 Err(e) => {
                     warn!("Failed to recover session {id}: {e}");

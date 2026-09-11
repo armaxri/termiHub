@@ -26,6 +26,19 @@ use crate::protocol::messages::JsonRpcNotification;
 /// finish startup and send `MSG_READY` under CI load is not dropped prematurely.
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Returned by [`DaemonClient::connect_for_recovery`] when the daemon refuses
+/// the connect because a live writer — another attached desktop's worker — is
+/// already holding the session (AGT-015).
+///
+/// [`recover_sessions`] treats this as "owned by a live peer": it skips the
+/// session and, unlike a genuine connect failure, leaves it in the shared
+/// `state.json` so its live owner is undisturbed.
+///
+/// [`recover_sessions`]: crate::session::manager::SessionManager::recover_sessions
+#[derive(Debug, thiserror::Error)]
+#[error("session daemon refused recovery: a live connection is already attached")]
+pub struct OwnedByLivePeer;
+
 /// Future returned by an [`ExitHook`].
 pub type ExitHookFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -394,11 +407,24 @@ async fn connect_and_start_reader(
 ) -> Result<(BoxedWriter, tokio::task::JoinHandle<()>, Arc<AtomicBool>), anyhow::Error> {
     // Recovery targets an already-bound daemon and must fast-fail a dead-but-
     // lingering socket rather than pay the long spawn-path connect timeout (#2476).
-    let (mut reader, writer) = if for_recovery {
+    let (mut reader, mut writer) = if for_recovery {
         transport::connect_for_recovery(endpoint).await?
     } else {
         transport::connect(endpoint).await?
     };
+
+    // AGT-015: declare our attach intent as the very first frame. A recovery
+    // connect asks the daemon to refuse (rather than evict) a live writer that
+    // another attached desktop's worker still holds; every other path takes over
+    // as before. A pre-AGT-015 daemon ignores this frame, so recovery of a
+    // session hosted by an older daemon still works (the guard just does not
+    // apply there).
+    let intent = if for_recovery {
+        INTENT_RECOVERY
+    } else {
+        INTENT_TAKEOVER
+    };
+    protocol::write_frame_async(&mut writer, MSG_ATTACH_INTENT, &[intent]).await?;
 
     let alive = Arc::new(AtomicBool::new(true));
 
@@ -428,6 +454,13 @@ async fn connect_and_start_reader(
                 MSG_EXITED => {
                     let code = protocol::decode_exit_code(&frame.payload).unwrap_or(-1);
                     return Err(anyhow::anyhow!("Shell already exited with code {code}"));
+                }
+                // AGT-015: the daemon refused a recovery connect because a live
+                // writer (another attached desktop) still owns the session. Surface
+                // it as a typed error so recovery skips the session without tearing
+                // it down; any other daemon error keeps the historical handling.
+                MSG_ERROR if frame.payload == ERR_OWNED_BY_LIVE_PEER => {
+                    return Err(OwnedByLivePeer.into());
                 }
                 _ => {
                     debug!(

@@ -10,6 +10,8 @@
 //! process. When the agent disconnects and reconnects, the daemon
 //! replays the ring buffer to bring the agent up to date.
 
+use std::time::Duration;
+
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -193,8 +195,39 @@ async fn daemon_loop(
             // New agent connection
             conn = listener.accept() => {
                 match conn {
-                    Ok((read_half, mut write_half)) => {
+                    Ok((mut read_half, mut write_half)) => {
                         info!("Agent connected");
+
+                        // AGT-015: `state.json` is shared per-user across every
+                        // `--stdio` worker (one per attached desktop, ADR-11). A
+                        // worker recovering sessions on startup must never evict a
+                        // session another *live* worker is actively attached to —
+                        // otherwise opening a second desktop steals the first
+                        // desktop's live terminals. When a writer is already
+                        // attached, consult the newcomer's declared intent: a
+                        // recovery connect is refused (its live owner keeps the
+                        // session); a takeover connect evicts as before.
+                        if agent_writer.is_some() {
+                            let intent = read_attach_intent(&mut read_half).await;
+                            if intent == INTENT_RECOVERY {
+                                info!(
+                                    "Refusing recovery connect: a live writer is still \
+                                     attached (AGT-015)"
+                                );
+                                let _ = protocol::write_frame_async(
+                                    &mut write_half,
+                                    MSG_ERROR,
+                                    ERR_OWNED_BY_LIVE_PEER,
+                                )
+                                .await;
+                                // Keep the existing writer and do NOT bump the
+                                // generation; the refused connection is dropped
+                                // here at end of scope.
+                                continue;
+                            }
+                            // Takeover (or an absent/malformed intent, which
+                            // defaults to takeover) → fall through and evict.
+                        }
 
                         // Bump the generation so any in-flight Disconnected from
                         // the previous connection is treated as stale.
@@ -327,6 +360,10 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                     MSG_DETACH => AgentCommand::Detach,
                     MSG_KILL => AgentCommand::Kill,
                     MSG_QUERY_BUFFER => AgentCommand::QueryBuffer,
+                    // AGT-015: an attach-intent hint is only meaningful at accept
+                    // time. On the fast path (no writer was attached) it is read
+                    // here as the first frame instead — ignore it.
+                    MSG_ATTACH_INTENT => continue,
                     other => {
                         debug!("Unknown frame type from agent: 0x{other:02x}");
                         continue;
@@ -347,6 +384,24 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                 return;
             }
         }
+    }
+}
+
+/// Read a newly-connected worker's [`MSG_ATTACH_INTENT`] to learn whether it is
+/// a recovery connect (refuse if a live writer is attached) or a takeover.
+///
+/// The current worker always sends this frame first, so the read returns
+/// immediately. Defaults to [`INTENT_TAKEOVER`] — preserving the historical
+/// evict-on-accept behavior — if the frame is absent, malformed, or does not
+/// arrive within a short window (a pre-AGT-015 worker never sends it). The short
+/// timeout also bounds how long the daemon's event loop can stall here.
+async fn read_attach_intent(reader: &mut BoxedReader) -> u8 {
+    const INTENT_TIMEOUT: Duration = Duration::from_secs(2);
+    match tokio::time::timeout(INTENT_TIMEOUT, protocol::read_frame_async(reader)).await {
+        Ok(Ok(Some(frame))) if frame.msg_type == MSG_ATTACH_INTENT => {
+            frame.payload.first().copied().unwrap_or(INTENT_TAKEOVER)
+        }
+        _ => INTENT_TAKEOVER,
     }
 }
 
