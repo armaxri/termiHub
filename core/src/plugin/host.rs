@@ -222,6 +222,47 @@ impl Drop for LoadedLibrary {
     }
 }
 
+#[cfg(test)]
+impl LoadedLibrary {
+    /// Build a `LoadedLibrary` for teardown-ordering tests (CORE-029) without a
+    /// real plugin dylib.
+    ///
+    /// The `library` handle is obtained from the already-loaded process image
+    /// (`dlopen(NULL)` / the current module handle), which loads nothing new and
+    /// runs no initializers, so it is safe to construct and drop. The only
+    /// observable effect on drop is the `shutdown` callback, which a test uses as
+    /// a drop-order probe. `create_backend` is never invoked by such tests.
+    pub(crate) fn for_drop_order_test(shutdown: PluginShutdownFn) -> Self {
+        unsafe extern "C" fn unused_create_backend(
+            _config: *const PluginSessionConfig,
+            _output: PluginOutputSender,
+            _bridge: PluginHostBridge,
+            _out_backend: *mut PluginBackend,
+        ) -> termihub_plugin_api::PluginStatus {
+            termihub_plugin_api::PluginStatus::Other
+        }
+
+        #[cfg(unix)]
+        let library: Library = libloading::os::unix::Library::this().into();
+        #[cfg(windows)]
+        let library: Library = libloading::os::windows::Library::this()
+            .expect("handle to the current module")
+            .into();
+
+        Self {
+            info: LoadedPluginInfo {
+                id: "drop-order-test".to_owned(),
+                name: "Drop Order Test".to_owned(),
+                version: "0.0.0".to_owned(),
+                api_version: CURRENT_PLUGIN_API_VERSION,
+            },
+            create_backend: unused_create_backend,
+            shutdown,
+            library,
+        }
+    }
+}
+
 /// Locate the backend dynamic library inside a plugin directory.
 ///
 /// Looks in `<plugin_dir>/backend/` for the first file whose extension matches

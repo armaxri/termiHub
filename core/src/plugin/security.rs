@@ -209,26 +209,85 @@ impl FilesystemScope {
         &self.roots
     }
 
-    /// Authorize access to `requested`, returning the normalized path on success.
+    /// Authorize access to `requested`, returning the **canonical** (symlink-
+    /// resolved) path on success — the path callers must then use for the actual
+    /// I/O.
     ///
     /// Fails with [`PermissionError::Denied`] if the plugin lacks the
     /// `filesystem` permission, or [`PermissionError::PathOutsideScope`] if the
-    /// (lexically normalized) path is not contained in any declared root. `..`
-    /// components are collapsed before the containment check, so traversal that
-    /// escapes a root is rejected.
+    /// resolved path is not contained in any declared root.
+    ///
+    /// The path is first collapsed lexically (so a purely textual `..` traversal
+    /// is rejected even where the filesystem cannot be consulted), then its
+    /// existing prefix is **canonicalized** so a symlink *inside* a root that
+    /// points outside it cannot smuggle access out of scope (CORE-030 / SEC-003):
+    /// a lexical `starts_with` alone follows such a link. The declared roots are
+    /// canonicalized the same way, so the containment test compares
+    /// symlink-for-symlink. For a not-yet-existing write target the trailing,
+    /// absent components are appended to the canonical existing prefix; a dangling
+    /// symlink is refused, since its target cannot be proven in-scope.
     pub fn check(&self, requested: &Path) -> Result<PathBuf, PermissionError> {
         if !self.granted {
             return Err(PermissionError::Denied(PluginPermission::Filesystem));
         }
-        let normalized = normalize_lexical(requested);
+        // Collapse `.`/`..` first: this is sound on its own and also removes
+        // traversal before any filesystem lookup.
+        let lexical = normalize_lexical(requested);
+        let outside = || PermissionError::PathOutsideScope {
+            path: requested.to_path_buf(),
+        };
+        let resolved = resolve_existing_prefix(&lexical).ok_or_else(outside)?;
         for root in &self.roots {
-            if normalized == *root || normalized.starts_with(root) {
-                return Ok(normalized);
+            // Canonicalize the declared root the same way, so a symlinked root
+            // component (e.g. macOS `/var` → `/private/var`) matches the equally
+            // resolved requested path. A root that cannot be resolved (does not
+            // exist on disk) falls back to its lexical form — nothing can be read
+            // or written under a missing root anyway.
+            let canonical_root = resolve_existing_prefix(root).unwrap_or_else(|| root.clone());
+            if resolved == canonical_root || resolved.starts_with(&canonical_root) {
+                return Ok(resolved);
             }
         }
-        Err(PermissionError::PathOutsideScope {
-            path: requested.to_path_buf(),
-        })
+        Err(outside())
+    }
+}
+
+/// Resolve the longest existing prefix of an (already lexically normalized) path
+/// with [`std::fs::canonicalize`], re-appending any trailing components that do
+/// not yet exist.
+///
+/// This resolves every symlink in the parts of the path that exist, so the result
+/// can be compared against a canonical scope root without a symlink smuggling the
+/// path out of the sandbox. A trailing not-yet-existing component (a write
+/// target) cannot itself be a symlink, so appending its literal name is safe. A
+/// component that *exists as a symlink* but fails to canonicalize is a dangling
+/// symlink whose target cannot be proven in-scope, so the whole path is refused
+/// (`None`).
+fn resolve_existing_prefix(path: &Path) -> Option<PathBuf> {
+    if let Ok(canonical) = std::fs::canonicalize(path) {
+        return Some(canonical);
+    }
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    let mut current = path;
+    loop {
+        // A component that exists as a symlink but did not canonicalize above is a
+        // dangling symlink; treating its name as an in-scope literal would let a
+        // following create/open follow it out of scope, so refuse it outright.
+        if let Ok(meta) = std::fs::symlink_metadata(current) {
+            if meta.file_type().is_symlink() {
+                return None;
+            }
+        }
+        let parent = current.parent()?;
+        let name = current.file_name()?;
+        tail.push(name.to_os_string());
+        if let Ok(mut base) = std::fs::canonicalize(parent) {
+            for component in tail.iter().rev() {
+                base.push(component);
+            }
+            return Some(base);
+        }
+        current = parent;
     }
 }
 
@@ -622,7 +681,13 @@ mod tests {
         );
     }
 
+    // Uses POSIX-absolute path literals and asserts exact canonical-path
+    // equality. On Windows `std::fs::canonicalize` resolves a leading `/` against
+    // the current drive and returns a `\\?\D:\…` verbatim path, so the literal
+    // comparison only holds on Unix. Cross-platform containment/canonicalize
+    // coverage lives in `filesystem_scope_contains_and_rejects_with_real_paths`.
     #[test]
+    #[cfg(unix)]
     fn filesystem_scope_allows_declared_paths_only() {
         let m = manifest_with(
             r#"["terminal", "filesystem"]"#,
@@ -655,7 +720,10 @@ mod tests {
         ));
     }
 
+    // POSIX-absolute path literals with exact canonical-path equality — Unix-only
+    // for the same reason as `filesystem_scope_allows_declared_paths_only`.
     #[test]
+    #[cfg(unix)]
     fn filesystem_scope_rejects_traversal_escape() {
         let m = manifest_with(r#"["terminal", "filesystem"]"#, r#"["/data/plugin"]"#);
         let perms = PermissionSet::from_manifest(&m);
@@ -682,6 +750,108 @@ mod tests {
                 .unwrap(),
             PathBuf::from("/data/plugin/file.txt")
         );
+    }
+
+    // Cross-platform coverage of containment, `..` handling, and the canonical
+    // return path, using a real on-disk root so it runs on Windows too (where
+    // POSIX-literal path assertions cannot). Complements the Unix-only tests
+    // above and the symlink test below.
+    #[test]
+    fn filesystem_scope_contains_and_rejects_with_real_paths() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub").join("file.txt"), b"hello").unwrap();
+        // A sibling directory that merely shares a path prefix string.
+        let sibling = tmp.path().join("root-evil");
+        std::fs::create_dir_all(&sibling).unwrap();
+        std::fs::write(sibling.join("secret"), b"private").unwrap();
+
+        let canonical_root = std::fs::canonicalize(&root).unwrap();
+        let perms = PermissionSet::from_parts(
+            [PluginPermission::Filesystem, PluginPermission::Terminal],
+            &[root.to_string_lossy().into_owned()],
+        );
+
+        // The root itself and a descendant are authorized; the returned path is
+        // canonical and stays under the canonical root.
+        let inside = perms
+            .check_path(&root.join("sub").join("file.txt"))
+            .unwrap();
+        assert!(inside.starts_with(&canonical_root));
+        assert!(perms.check_path(&root).is_ok());
+
+        // A not-yet-existing in-root write target is accepted (parent canonicalized).
+        let new_target = perms.check_path(&root.join("new-file.txt")).unwrap();
+        assert!(new_target.starts_with(&canonical_root));
+
+        // `..` that stays inside the root is normalized and remains contained.
+        let normalized = perms
+            .check_path(&root.join("sub").join("..").join("file2.txt"))
+            .unwrap();
+        assert!(normalized.starts_with(&canonical_root));
+        assert!(!normalized.to_string_lossy().contains(".."));
+
+        // A sibling sharing a prefix string is not contained.
+        assert!(matches!(
+            perms.check_path(&sibling.join("secret")),
+            Err(PermissionError::PathOutsideScope { .. })
+        ));
+
+        // `..` that climbs out of the declared root is rejected.
+        assert!(matches!(
+            perms.check_path(&root.join("..").join("root-evil").join("secret")),
+            Err(PermissionError::PathOutsideScope { .. })
+        ));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn filesystem_scope_rejects_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        // A real granted root with a symlink inside it pointing OUT of the root.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret"), b"private key").unwrap();
+        // The symlink and a legitimate in-root file are both created in-scope.
+        symlink(&outside, root.join("escape")).unwrap();
+        std::fs::write(root.join("ok.txt"), b"hello").unwrap();
+
+        let perms = PermissionSet::from_parts(
+            [PluginPermission::Filesystem, PluginPermission::Terminal],
+            &[root.to_string_lossy().into_owned()],
+        );
+
+        // A path that traverses the in-scope symlink resolves outside the root and
+        // must be rejected — the lexical `starts_with` check would have allowed it.
+        assert!(
+            matches!(
+                perms.check_path(&root.join("escape").join("secret")),
+                Err(PermissionError::PathOutsideScope { .. })
+            ),
+            "reading through an in-scope symlink must not escape the sandbox"
+        );
+
+        // A legitimate in-root file is still accepted, and its returned path stays
+        // within the (canonical) root.
+        let ok = perms.check_path(&root.join("ok.txt")).unwrap();
+        let canonical_root = std::fs::canonicalize(&root).unwrap();
+        assert!(ok.starts_with(&canonical_root));
+
+        // A not-yet-existing in-root write target is accepted (parent canonicalized).
+        let new_target = perms.check_path(&root.join("new-file.txt")).unwrap();
+        assert!(new_target.starts_with(&canonical_root));
+
+        // A dangling in-scope symlink cannot be proven in-scope, so it is refused.
+        symlink(outside.join("missing"), root.join("dangling")).unwrap();
+        assert!(matches!(
+            perms.check_path(&root.join("dangling")),
+            Err(PermissionError::PathOutsideScope { .. })
+        ));
     }
 
     #[test]
