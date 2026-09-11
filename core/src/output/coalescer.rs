@@ -1,18 +1,29 @@
 /// Coalesces output chunks into larger batches for efficient delivery.
 ///
 /// Terminal backends produce many small output chunks. Sending each one individually
-/// causes excessive IPC overhead. `OutputCoalescer` accumulates chunks and yields
-/// batches up to a configurable maximum size.
+/// causes excessive IPC overhead. `OutputCoalescer` accumulates chunks in a pending
+/// buffer that the caller drains with [`flush`](Self::flush).
+///
+/// Note on batch size: this type does **not** enforce a maximum batch size.
+/// [`flush`](Self::flush) drains the *entire* pending buffer in one shot and never
+/// splits it, so a single emitted batch can exceed any nominal batch cap. Callers that
+/// want to bound accumulation must do so themselves by checking
+/// [`pending_len`](Self::pending_len) before pushing more (this is what the session
+/// output reader does with its `MAX_COALESCE_BYTES` guard).
 pub struct OutputCoalescer {
-    max_batch_bytes: usize,
     pending: Vec<u8>,
 }
 
+impl Default for OutputCoalescer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OutputCoalescer {
-    /// Create a new coalescer with the given maximum batch size in bytes.
-    pub fn new(max_batch_bytes: usize) -> Self {
+    /// Create a new, empty coalescer.
+    pub fn new() -> Self {
         Self {
-            max_batch_bytes,
             pending: Vec::new(),
         }
     }
@@ -31,18 +42,6 @@ impl OutputCoalescer {
         Some(std::mem::take(&mut self.pending))
     }
 
-    /// If the pending buffer has reached or exceeded the max batch size,
-    /// drain up to `max_batch_bytes` and return it. Any remainder stays pending.
-    /// Returns `None` if the buffer is below the threshold.
-    pub fn try_coalesce(&mut self) -> Option<Vec<u8>> {
-        if self.pending.len() < self.max_batch_bytes {
-            return None;
-        }
-        let batch = self.pending[..self.max_batch_bytes].to_vec();
-        self.pending = self.pending[self.max_batch_bytes..].to_vec();
-        Some(batch)
-    }
-
     /// Number of bytes currently buffered.
     pub fn pending_len(&self) -> usize {
         self.pending.len()
@@ -55,14 +54,14 @@ mod tests {
 
     #[test]
     fn empty_flush_returns_none() {
-        let mut c = OutputCoalescer::new(1024);
+        let mut c = OutputCoalescer::new();
         assert!(c.flush().is_none());
         assert_eq!(c.pending_len(), 0);
     }
 
     #[test]
     fn push_and_flush() {
-        let mut c = OutputCoalescer::new(1024);
+        let mut c = OutputCoalescer::new();
         c.push(b"hello");
         c.push(b" world");
         assert_eq!(c.pending_len(), 11);
@@ -74,63 +73,18 @@ mod tests {
     }
 
     #[test]
-    fn try_coalesce_below_threshold_returns_none() {
-        let mut c = OutputCoalescer::new(100);
-        c.push(b"small");
-        assert!(c.try_coalesce().is_none());
-        assert_eq!(c.pending_len(), 5);
-    }
-
-    #[test]
-    fn try_coalesce_exact_max() {
-        let mut c = OutputCoalescer::new(4);
-        c.push(b"abcd");
-        let batch = c.try_coalesce().unwrap();
-        assert_eq!(batch, b"abcd");
-        assert_eq!(c.pending_len(), 0);
-    }
-
-    #[test]
-    fn try_coalesce_overflow_keeps_remainder() {
-        let mut c = OutputCoalescer::new(4);
-        c.push(b"abcdef");
-        let batch = c.try_coalesce().unwrap();
-        assert_eq!(batch, b"abcd");
-        assert_eq!(c.pending_len(), 2);
-
-        // Second call: below threshold again
-        assert!(c.try_coalesce().is_none());
-
-        // Flush gets the remainder
-        let rest = c.flush().unwrap();
-        assert_eq!(rest, b"ef");
-    }
-
-    #[test]
-    fn multiple_coalesces() {
-        let mut c = OutputCoalescer::new(3);
-        c.push(b"abcdefghi"); // 9 bytes = 3 batches
-
-        let b1 = c.try_coalesce().unwrap();
-        assert_eq!(b1, b"abc");
-
-        let b2 = c.try_coalesce().unwrap();
-        assert_eq!(b2, b"def");
-
-        let b3 = c.try_coalesce().unwrap();
-        assert_eq!(b3, b"ghi");
-
-        assert!(c.try_coalesce().is_none());
-        assert_eq!(c.pending_len(), 0);
-    }
-
-    #[test]
-    fn flush_after_partial_coalesce() {
-        let mut c = OutputCoalescer::new(10);
-        c.push(b"hello"); // 5 bytes, below 10
-        assert!(c.try_coalesce().is_none());
+    fn flush_drains_everything_without_splitting() {
+        // flush() never splits at any batch cap: a single flush returns the whole
+        // accumulated buffer even when it is large.
+        let mut c = OutputCoalescer::new();
+        let big = vec![b'x'; 100 * 1024];
+        c.push(&big);
+        c.push(b"tail");
+        assert_eq!(c.pending_len(), big.len() + 4);
 
         let data = c.flush().unwrap();
-        assert_eq!(data, b"hello");
+        assert_eq!(data.len(), big.len() + 4);
+        assert_eq!(c.pending_len(), 0);
+        assert!(c.flush().is_none());
     }
 }
