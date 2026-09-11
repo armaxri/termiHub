@@ -87,7 +87,7 @@ impl SshTrustStore {
 
     /// Classify a presented `fingerprint` for `host` against what is remembered.
     pub fn lookup(&self, host: &str, fingerprint: &str) -> TrustLookup {
-        let entries = self.entries.lock().expect("trust store mutex poisoned");
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         match entries.get(host) {
             Some(fps) if fps.iter().any(|f| f == fingerprint) => TrustLookup::Trusted,
             Some(fps) if !fps.is_empty() => TrustLookup::Changed,
@@ -102,7 +102,7 @@ impl SshTrustStore {
     /// the session.
     pub fn remember(&self, host: &str, fingerprint: &str) {
         {
-            let mut entries = self.entries.lock().expect("trust store mutex poisoned");
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             let fps = entries.entry(host.to_string()).or_default();
             if fps.iter().any(|f| f == fingerprint) {
                 return;
@@ -118,7 +118,7 @@ impl SshTrustStore {
     pub fn entries(&self) -> BTreeMap<String, Vec<String>> {
         self.entries
             .lock()
-            .expect("trust store mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
 
@@ -129,7 +129,7 @@ impl SshTrustStore {
     /// rather than a changed key. Returns `true` when something was removed.
     pub fn forget_fingerprint(&self, host: &str, fingerprint: &str) -> bool {
         let removed = {
-            let mut entries = self.entries.lock().expect("trust store mutex poisoned");
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             let Some(fps) = entries.get_mut(host) else {
                 return false;
             };
@@ -151,7 +151,7 @@ impl SshTrustStore {
     /// Returns `true` when the host had remembered entries.
     pub fn forget_host(&self, host: &str) -> bool {
         let removed = {
-            let mut entries = self.entries.lock().expect("trust store mutex poisoned");
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             entries.remove(host).is_some()
         };
         if removed {
@@ -163,7 +163,7 @@ impl SshTrustStore {
     /// Write the current entries to disk (no-op for an in-memory store).
     fn persist(&self) {
         let Some(path) = &self.path else { return };
-        let entries = self.entries.lock().expect("trust store mutex poisoned");
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let write = || -> std::io::Result<()> {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -205,6 +205,48 @@ mod tests {
     #[test]
     fn unknown_host_prompts() {
         let store = SshTrustStore::in_memory();
+        assert_eq!(store.lookup("host:22", FP_A), TrustLookup::Unknown);
+    }
+
+    /// Regression (ERR-001 / TAURI-004): a thread that panics while holding the
+    /// entries mutex poisons it, but the store must keep serving by recovering
+    /// the inner guard rather than panicking on every subsequent operation —
+    /// otherwise one localized panic cascades into a permanently unusable
+    /// host-key trust path.
+    #[test]
+    fn poisoned_lock_recovers_instead_of_cascading() {
+        use std::sync::Arc;
+
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("host:22", FP_A);
+
+        // Poison the entries mutex by panicking while its guard is held.
+        let poisoner = Arc::clone(&store);
+        let joined = std::thread::spawn(move || {
+            let _guard = poisoner.entries.lock().unwrap();
+            panic!("intentional panic while holding the entries lock");
+        })
+        .join();
+        assert!(joined.is_err(), "poisoning thread should have panicked");
+        assert!(
+            store.entries.is_poisoned(),
+            "entries mutex should now be poisoned"
+        );
+
+        // Every public operation must still work via the recovered guard.
+        assert_eq!(store.lookup("host:22", FP_A), TrustLookup::Trusted);
+        assert_eq!(store.lookup("host:22", FP_B), TrustLookup::Changed);
+        store.remember("host:22", FP_B);
+        assert_eq!(store.lookup("host:22", FP_B), TrustLookup::Trusted);
+        assert_eq!(store.entries(), {
+            let mut expected = BTreeMap::new();
+            expected.insert(
+                "host:22".to_string(),
+                vec![FP_A.to_string(), FP_B.to_string()],
+            );
+            expected
+        });
+        assert!(store.forget_host("host:22"));
         assert_eq!(store.lookup("host:22", FP_A), TrustLookup::Unknown);
     }
 
