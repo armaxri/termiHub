@@ -46,6 +46,7 @@ const ERR_NOT_DEFINED: u16 = 0;
 const ERR_ACCESS: u16 = 2;
 const ERR_DISK_FULL: u16 = 3;
 const ERR_ILLEGAL_OP: u16 = 4;
+const ERR_UNKNOWN_TID: u16 = 5;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -230,11 +231,38 @@ fn handle_rrq(
     }
 
     let mut reader = std::io::BufReader::new(file);
-    let mut block_num: u16 = 1;
+    stream_file(&socket, peer, &mut reader, 1, stats, shutdown)
+}
+
+/// Stream `reader` to `peer` as TFTP DATA packets, starting at block number
+/// `start_block` and waiting for each block's ACK before sending the next.
+///
+/// Two RFC 1350 correctness properties this guarantees (CORE-023):
+///
+/// * **Block-number rollover.** The `u16` block counter is advanced with
+///   [`u16::wrapping_add`], so it wraps `65535 → 0` instead of overflowing.
+///   A transfer larger than `65535 × 512` (~32 MiB) therefore keeps
+///   progressing rather than corrupting or stalling. `start_block` exists so
+///   the wrap boundary can be exercised deterministically in tests without
+///   moving 32 MiB over the socket; production always starts at block 1.
+/// * **Terminating block for exact multiples.** The DATA packet is sent
+///   *before* the "is this the last block?" check, so a file whose size is an
+///   exact multiple of [`BLOCK_SIZE`] (including a zero-length file) still
+///   emits an explicit final empty DATA block. Without it the client would
+///   wait forever for EOF.
+fn stream_file<R: Read>(
+    socket: &UdpSocket,
+    peer: SocketAddr,
+    reader: &mut R,
+    start_block: u16,
+    stats: &AtomicServerStats,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<()> {
+    let mut block_num = start_block;
 
     loop {
         let mut block = [0u8; BLOCK_SIZE];
-        let n = read_block(&mut reader, &mut block).context("Cannot read file block")?;
+        let n = read_block(reader, &mut block).context("Cannot read file block")?;
         let block_data = &block[..n];
 
         // Send DATA packet.
@@ -247,19 +275,21 @@ fn handle_rrq(
             .bytes_sent
             .fetch_add(block_data.len() as u64, Ordering::Relaxed);
 
-        match wait_for_ack(&socket, peer, &packet, block_num, MAX_RETRIES, shutdown)? {
+        match wait_for_ack(socket, peer, &packet, block_num, MAX_RETRIES, shutdown)? {
             AckOutcome::Acked => {}
             // Server was stopped mid-transfer: abort promptly instead of
             // burning the remaining retry budget (up to ~25s). (#1145 / G1)
             AckOutcome::Aborted => return Ok(()),
         }
 
-        // A short block (including the empty block for a zero-length file) is
+        // A short block (including the empty block for a zero-length file, and
+        // the explicit empty terminator after an exact-multiple-of-512 file) is
         // the last one per RFC 1350.
         if n < BLOCK_SIZE {
             break;
         }
 
+        // Wrap at u16::MAX per RFC 1350 so transfers > ~32 MiB do not stall.
         block_num = block_num.wrapping_add(1);
     }
 
@@ -333,7 +363,16 @@ fn wait_for_ack(
         // Wait for ACK.
         let mut ack_buf = [0u8; 4];
         match socket.recv_from(&mut ack_buf) {
-            Ok((4, _)) => {
+            Ok((4, src)) => {
+                // Enforce the transfer's TID (RFC 1350 §4, CORE-024): only the
+                // peer that started the transfer may ACK it. A datagram from any
+                // other source is a stray/spoofed packet — reply with ERROR
+                // "unknown transfer ID" to that sender and ignore it, without
+                // disturbing the in-flight transfer with the legitimate peer.
+                if src != peer {
+                    let _ = send_error(socket, src, ERR_UNKNOWN_TID, "Unknown transfer ID");
+                    continue;
+                }
                 let ack_op = u16::from_be_bytes([ack_buf[0], ack_buf[1]]);
                 let ack_block = u16::from_be_bytes([ack_buf[2], ack_buf[3]]);
                 if ack_op == OP_ACK && ack_block == block_num {
@@ -399,7 +438,7 @@ fn handle_wrq(
             return Ok(());
         }
 
-        let (len, _) = match socket.recv_from(&mut buf) {
+        let (len, src) = match socket.recv_from(&mut buf) {
             Ok(r) => r,
             // The read timeout lets us re-check the shutdown flag instead of
             // blocking indefinitely on a stalled client.
@@ -414,6 +453,15 @@ fn handle_wrq(
                 return Err(anyhow::Error::new(e).context("Receive DATA failed"));
             }
         };
+        // Enforce the transfer's TID (RFC 1350 §4, CORE-024): only the peer that
+        // issued the WRQ may send DATA for it. A datagram from any other source
+        // is a stray/spoofed packet — reply with ERROR "unknown transfer ID" to
+        // that sender and drop it, so it can neither be written to disk nor
+        // advance/corrupt the legitimate transfer's state.
+        if src != peer {
+            let _ = send_error(&socket, src, ERR_UNKNOWN_TID, "Unknown transfer ID");
+            continue;
+        }
         if len < 4 {
             continue;
         }
@@ -820,6 +868,230 @@ mod tests {
             OP_ERROR,
             "oversize download should be rejected with ERROR"
         );
+
+        let result = handle.join().expect("server thread");
+        assert!(result.is_ok(), "handle_rrq errored: {result:?}");
+    }
+
+    // ── CORE-023: block-number rollover + exact-multiple EOF ───────────────────
+
+    #[test]
+    fn rrq_exact_multiple_file_sends_empty_terminating_block() {
+        // Regression for CORE-023: a file whose size is an exact multiple of
+        // BLOCK_SIZE must be followed by an explicit empty DATA block so the
+        // client sees EOF instead of waiting forever.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let content = vec![0x5Au8; BLOCK_SIZE]; // exactly one full block
+        std::fs::write(dir.path().join("exact.bin"), &content).expect("write served file");
+
+        let client = UdpSocket::bind("127.0.0.1:0").expect("bind client");
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("set client timeout");
+        let peer = client.local_addr().expect("client addr");
+
+        let root = dir.path().to_path_buf();
+        let stats = AtomicServerStats::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let handle = std::thread::spawn(move || {
+            handle_rrq(
+                &root,
+                "exact.bin",
+                peer,
+                "127.0.0.1",
+                1024,
+                &stats,
+                &shutdown,
+            )
+        });
+
+        // Block 1: the full 512-byte block.
+        let mut buf = [0u8; 516];
+        let (n, server_addr) = client.recv_from(&mut buf).expect("recv DATA 1");
+        assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), OP_DATA);
+        assert_eq!(u16::from_be_bytes([buf[2], buf[3]]), 1, "first block is #1");
+        assert_eq!(n - 4, BLOCK_SIZE, "block 1 should be a full block");
+        assert_eq!(&buf[4..n], &content[..], "block 1 contents should match");
+        client
+            .send_to(&make_ack(1), server_addr)
+            .expect("send ACK 1");
+
+        // Block 2: the explicit empty terminating block.
+        let (n2, _) = client.recv_from(&mut buf).expect("recv terminating DATA 2");
+        assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), OP_DATA);
+        assert_eq!(
+            u16::from_be_bytes([buf[2], buf[3]]),
+            2,
+            "terminator is block #2"
+        );
+        assert_eq!(n2, 4, "terminating block must carry zero data bytes");
+        client
+            .send_to(&make_ack(2), server_addr)
+            .expect("send ACK 2");
+
+        let result = handle.join().expect("server thread");
+        assert!(result.is_ok(), "handle_rrq errored: {result:?}");
+    }
+
+    #[test]
+    fn stream_file_wraps_block_number_past_u16_max() {
+        // Regression for CORE-023: the u16 block counter must wrap 65535 -> 0
+        // so a transfer larger than 65535 x 512 (~32 MiB) keeps progressing.
+        // Rather than move 32 MiB over the socket, start the counter near the
+        // boundary via stream_file's injectable start block and verify the
+        // sequence wraps and the payload arrives intact.
+        use std::io::Cursor;
+
+        let server = UdpSocket::bind("127.0.0.1:0").expect("bind server");
+        server
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("set server timeout");
+
+        let client = UdpSocket::bind("127.0.0.1:0").expect("bind client");
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("set client timeout");
+        let peer = client.local_addr().expect("client addr");
+
+        // 3 full blocks + a short final block => 4 DATA packets crossing the wrap.
+        let mut payload = vec![0u8; BLOCK_SIZE * 3 + 50];
+        for (i, b) in payload.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let payload_for_thread = payload.clone();
+
+        let stats = AtomicServerStats::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let handle = std::thread::spawn(move || {
+            let mut reader = Cursor::new(payload_for_thread);
+            stream_file(&server, peer, &mut reader, 65534, &stats, &shutdown)
+        });
+
+        // Block numbers must wrap 65534, 65535, 0, 1 (not overflow/stall).
+        let expected_blocks = [65534u16, 65535, 0, 1];
+        let mut received = Vec::new();
+        let mut buf = [0u8; 516];
+        for &expected in &expected_blocks {
+            let (n, from) = client.recv_from(&mut buf).expect("recv DATA");
+            assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), OP_DATA);
+            assert_eq!(
+                u16::from_be_bytes([buf[2], buf[3]]),
+                expected,
+                "block number sequence must wrap at u16::MAX"
+            );
+            received.extend_from_slice(&buf[4..n]);
+            client.send_to(&make_ack(expected), from).expect("send ACK");
+        }
+
+        assert_eq!(
+            received, payload,
+            "payload must survive the block-number wrap"
+        );
+        let result = handle.join().expect("server thread");
+        assert!(result.is_ok(), "stream_file errored: {result:?}");
+    }
+
+    // ── CORE-024: peer TID validation ──────────────────────────────────────────
+
+    #[test]
+    fn wrq_data_from_wrong_tid_is_rejected() {
+        // Regression for CORE-024: a DATA datagram from a source other than the
+        // transfer's peer must be answered with ERROR and dropped, never written
+        // or ACKed, while the legitimate peer's upload still completes.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (client, server_addr, handle) = start_wrq(dir.path().to_path_buf(), "up.bin", 1024);
+
+        // A stray sender (different TID) injects DATA for block 1.
+        let attacker = UdpSocket::bind("127.0.0.1:0").expect("bind attacker");
+        attacker
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("set attacker timeout");
+        attacker
+            .send_to(&data_packet(1, b"evil payload"), server_addr)
+            .expect("send stray DATA");
+
+        // The stray sender must get an ERROR "unknown transfer ID"; the server
+        // must not ACK it. (recv blocks until the reply arrives, so this also
+        // orders the stray strictly before the legitimate DATA below.)
+        let mut abuf = [0u8; 516];
+        let (an, _) = attacker
+            .recv_from(&mut abuf)
+            .expect("stray sender should get a reply");
+        assert!(an >= 4, "reply too short");
+        assert_eq!(u16::from_be_bytes([abuf[0], abuf[1]]), OP_ERROR);
+        assert_eq!(u16::from_be_bytes([abuf[2], abuf[3]]), ERR_UNKNOWN_TID);
+
+        // The legitimate client's transfer still completes normally.
+        let payload = b"good payload"; // < BLOCK_SIZE => single final block
+        client
+            .send_to(&data_packet(1, payload), server_addr)
+            .expect("send legit DATA 1");
+        let mut buf = [0u8; 516];
+        let (n, _) = client.recv_from(&mut buf).expect("recv ACK 1");
+        assert_eq!(&buf[..n], &make_ack(1), "legit peer should be ACKed");
+
+        let result = handle.join().expect("server thread");
+        assert!(result.is_ok(), "handle_wrq errored: {result:?}");
+
+        let written = std::fs::read(dir.path().join("up.bin")).expect("read uploaded file");
+        assert_eq!(
+            written, payload,
+            "only the legitimate peer's bytes may be written"
+        );
+    }
+
+    #[test]
+    fn rrq_ack_from_wrong_tid_is_rejected() {
+        // Regression for CORE-024: an ACK from a source other than the transfer's
+        // peer must be answered with ERROR and ignored — it must not complete or
+        // advance the transfer — while the legitimate peer's download still
+        // completes.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let content = b"single block payload"; // < BLOCK_SIZE => one final block
+        std::fs::write(dir.path().join("dl.bin"), content).expect("write served file");
+
+        let client = UdpSocket::bind("127.0.0.1:0").expect("bind client");
+        client
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("set client timeout");
+        let peer = client.local_addr().expect("client addr");
+
+        let root = dir.path().to_path_buf();
+        let stats = AtomicServerStats::new();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let handle = std::thread::spawn(move || {
+            handle_rrq(&root, "dl.bin", peer, "127.0.0.1", 1024, &stats, &shutdown)
+        });
+
+        // Server sends DATA block 1; client learns the transfer address.
+        let mut buf = [0u8; 516];
+        let (n, server_addr) = client.recv_from(&mut buf).expect("recv DATA 1");
+        assert_eq!(u16::from_be_bytes([buf[2], buf[3]]), 1);
+        assert_eq!(&buf[4..n], content, "block 1 contents should match");
+
+        // A stray sender ACKs block 1; it must be rejected with ERROR, not taken
+        // as the transfer's ACK.
+        let attacker = UdpSocket::bind("127.0.0.1:0").expect("bind attacker");
+        attacker
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .expect("set attacker timeout");
+        attacker
+            .send_to(&make_ack(1), server_addr)
+            .expect("send stray ACK");
+        let mut abuf = [0u8; 516];
+        let (an, _) = attacker
+            .recv_from(&mut abuf)
+            .expect("stray sender should get a reply");
+        assert!(an >= 4, "reply too short");
+        assert_eq!(u16::from_be_bytes([abuf[0], abuf[1]]), OP_ERROR);
+        assert_eq!(u16::from_be_bytes([abuf[2], abuf[3]]), ERR_UNKNOWN_TID);
+
+        // Only the legitimate peer's ACK completes the transfer. (The server
+        // resent DATA 1 after rejecting the stray; the duplicate sitting in the
+        // client's buffer is harmless and left undrained.)
+        client
+            .send_to(&make_ack(1), server_addr)
+            .expect("send legit ACK 1");
 
         let result = handle.join().expect("server thread");
         assert!(result.is_ok(), "handle_rrq errored: {result:?}");
