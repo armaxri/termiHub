@@ -192,6 +192,13 @@ impl Default for ConnectionStore {
     }
 }
 
+impl crate::utils::migrate::VersionedStore for ConnectionStore {
+    const STORE_NAME: &'static str = "connections.json";
+    /// The connections file has shipped a v2 nested format for some time; v2 is
+    /// the current baseline. (Legacy v1 flat files predate the versioned layer.)
+    const CURRENT_VERSION: u32 = 2;
+}
+
 /// Schema for external connection files. Same nested format with an optional `name`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExternalConnectionStore {

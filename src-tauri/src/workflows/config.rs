@@ -128,10 +128,14 @@ pub struct Workflow {
 /// Top-level schema for the workflows JSON file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowStore {
-    /// Schema version, for forward-compatible migrations.
+    /// Schema version, read on load and gated by the migration layer.
     pub version: String,
     /// All stored workflows.
     pub workflows: Vec<Workflow>,
+    /// Unknown top-level keys, captured verbatim so an older app preserves
+    /// fields a newer version added rather than dropping them on save (PER-010).
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for WorkflowStore {
@@ -139,8 +143,14 @@ impl Default for WorkflowStore {
         Self {
             version: "1".to_string(),
             workflows: Vec::new(),
+            extra: serde_json::Map::new(),
         }
     }
+}
+
+impl crate::utils::migrate::VersionedStore for WorkflowStore {
+    const STORE_NAME: &'static str = "workflows.json";
+    const CURRENT_VERSION: u32 = 1;
 }
 
 #[cfg(test)]

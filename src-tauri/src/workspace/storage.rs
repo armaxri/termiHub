@@ -5,9 +5,10 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::config::WorkspaceStore;
-use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
+use crate::connection::recovery::RecoveryResult;
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{guard_not_newer, load_store_with_recovery, VersionedStore};
 
 const FILE_NAME: &str = "workspaces.json";
 
@@ -30,60 +31,29 @@ impl WorkspaceStorage {
         })
     }
 
-    /// Load with recovery: on parse failure, backs up the corrupt file and resets to defaults.
+    /// Load with recovery via the shared schema-migration layer.
+    ///
+    /// Reads the on-disk `version` first: a current/older file is used as-is (or
+    /// migrated forward), a **newer** file is left untouched and reported as a
+    /// warning (never reset — PER-004), and only a genuinely unparseable file is
+    /// backed up to `.bak` and reset to defaults.
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<WorkspaceStore>> {
-        if !self.file_path.exists() {
-            return Ok(RecoveryResult {
-                data: WorkspaceStore::default(),
-                warnings: Vec::new(),
-            });
-        }
-
-        let data = fs::read_to_string(&self.file_path).context("Failed to read workspaces file")?;
-
-        // Fast path: normal parse succeeds
-        if let Ok(store) = serde_json::from_str::<WorkspaceStore>(&data) {
-            return Ok(RecoveryResult {
-                data: store,
-                warnings: Vec::new(),
-            });
-        }
-
-        // Parse failed — back up and reset to defaults
-        let backup_path = self.file_path.with_extension("json.bak");
-        let _ = fs::copy(&self.file_path, &backup_path);
-        tracing::warn!(
-            "Workspaces file is corrupt, backed up to {}",
-            backup_path.display()
-        );
-
-        let parse_error = serde_json::from_str::<WorkspaceStore>(&data)
-            .err()
-            .map(|e| e.to_string());
-
-        let warning = RecoveryWarning {
-            file_name: FILE_NAME.to_string(),
-            message: "Workspaces file was corrupt and has been reset.".to_string(),
-            details: parse_error,
-        };
-        tracing::error!("Workspaces file corrupt, resetting to defaults");
-
-        let defaults = WorkspaceStore::default();
-        self.save(&defaults)
-            .context("Failed to save default workspaces after recovery")?;
-
-        Ok(RecoveryResult {
-            data: defaults,
-            warnings: vec![warning],
-        })
+        load_store_with_recovery::<WorkspaceStore>(&self.file_path, FILE_NAME)
     }
 
     /// Save the workspace store to disk (pretty-printed JSON).
     ///
     /// The write is atomic (temp file in the same directory + rename), so an
     /// interrupted save can never truncate the existing store and lose every
-    /// saved workspace (#2318).
+    /// saved workspace (#2318). Before writing, [`guard_not_newer`] refuses to
+    /// overwrite a file written by a newer schema version (PER-004).
     pub fn save(&self, store: &WorkspaceStore) -> Result<()> {
+        guard_not_newer(
+            &self.file_path,
+            WorkspaceStore::STORE_NAME,
+            WorkspaceStore::CURRENT_VERSION,
+        )?;
+
         let data = serde_json::to_string_pretty(store).context("Failed to serialize workspaces")?;
 
         write_atomic(&self.file_path, &data).context("Failed to write workspaces file")?;
@@ -149,6 +119,77 @@ mod tests {
         assert!(backup.exists());
     }
 
+    /// PER-004 (the real downgrade hazard): a workspaces file written by a NEWER
+    /// schema version whose *structure* an older build cannot parse must never be
+    /// wiped. Here `workspaces` is no longer an array — the old fast-path typed
+    /// parse fails, and the pre-fix code would treat that as corruption, back it
+    /// up to `.bak`, and overwrite the live file with empty defaults (silent total
+    /// data loss on a rollback). The version gate now catches `version > current`
+    /// *before* the typed parse, so the file is left byte-for-byte intact with no
+    /// `.bak`, the load runs on defaults in memory, and a warning is surfaced.
+    #[test]
+    fn newer_version_file_is_not_wiped_on_load() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        // version newer than current AND a shape this build can't deserialize.
+        let newer = r#"{"version":"99","workspaces":{"v100":"restructured"}}"#;
+        fs::write(&storage.file_path, newer).unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.warnings.len(), 1, "a newer file surfaces a warning");
+        assert!(result.data.workspaces.is_empty(), "runs on defaults");
+
+        let after = fs::read_to_string(&storage.file_path).unwrap();
+        assert_eq!(after, newer, "the newer file must be left intact");
+        assert!(
+            !storage.file_path.with_extension("json.bak").exists(),
+            "a newer file must never be backed up/reset"
+        );
+    }
+
+    /// PER-004 (write side): a save must refuse to overwrite a newer file and
+    /// leave it intact, so an in-version change can't clobber future data.
+    #[test]
+    fn save_refuses_to_overwrite_newer_file() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let newer = r#"{"version":"99","workspaces":[]}"#;
+        fs::write(&storage.file_path, newer).unwrap();
+
+        let result = storage.save(&WorkspaceStore::default());
+        assert!(result.is_err(), "saving over a newer file must fail");
+        assert_eq!(
+            fs::read_to_string(&storage.file_path).unwrap(),
+            newer,
+            "the newer file must be untouched"
+        );
+    }
+
+    /// PER-010: an unknown top-level field survives a load -> save round-trip
+    /// instead of being silently dropped by the typed struct.
+    #[test]
+    fn unknown_field_survives_load_save_round_trip() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        // Same current version, but with an extra field a newer build added.
+        fs::write(
+            &storage.file_path,
+            r#"{"version":"1","workspaces":[],"experimentalFlag":{"on":true}}"#,
+        )
+        .unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap().data;
+        storage.save(&loaded).unwrap();
+
+        let after: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(
+            after.get("experimentalFlag"),
+            Some(&serde_json::json!({"on": true})),
+            "unknown field must survive the round-trip"
+        );
+    }
+
     /// A successful atomic save must leave only the target file behind — no
     /// leftover temporary write artifacts in the config directory.
     #[test]
@@ -204,6 +245,7 @@ mod tests {
         let updated = WorkspaceStore {
             version: "2".to_string(),
             workspaces: Vec::new(),
+            extra: Default::default(),
         };
         let result = storage.save(&updated);
 

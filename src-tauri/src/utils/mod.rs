@@ -11,6 +11,9 @@ pub mod log_capture;
 /// macOS anti-throttling for the headless full-app E2E test bridge (#2480).
 #[cfg(target_os = "macos")]
 pub mod macos_unthrottle;
+/// Schema-version migration + downgrade data-safety for the JSON config stores
+/// (PER-001 / PER-004 / PER-010).
+pub mod migrate;
 pub mod panic_hook;
 pub mod portable;
 pub mod remote_exec;

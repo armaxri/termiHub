@@ -161,6 +161,15 @@ pub fn count_tabs(node: &WorkspaceLayoutNode) -> usize {
 pub struct WorkspaceStore {
     pub version: String,
     pub workspaces: Vec<WorkspaceDefinition>,
+    /// Unknown top-level keys, captured verbatim so an older app preserves
+    /// fields a newer version added rather than dropping them on save (PER-010).
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl crate::utils::migrate::VersionedStore for WorkspaceStore {
+    const STORE_NAME: &'static str = "workspaces.json";
+    const CURRENT_VERSION: u32 = 1;
 }
 
 /// Export format for portable workspace definitions.
@@ -199,6 +208,7 @@ impl Default for WorkspaceStore {
         Self {
             version: "1".to_string(),
             workspaces: Vec::new(),
+            extra: serde_json::Map::new(),
         }
     }
 }
@@ -461,6 +471,7 @@ mod tests {
         let store = WorkspaceStore {
             version: "1".to_string(),
             workspaces: vec![sample_workspace()],
+            extra: Default::default(),
         };
         let json = serde_json::to_string_pretty(&store).unwrap();
         let deserialized: WorkspaceStore = serde_json::from_str(&json).unwrap();

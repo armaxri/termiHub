@@ -8,6 +8,7 @@ use tauri::AppHandle;
 use super::config::{WorkspaceTabGroupDef, WorkspaceWindowDef};
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{guard_not_newer, load_versioned, LoadOutcome, VersionedStore};
 
 const FILE_NAME: &str = "last-session.json";
 
@@ -33,6 +34,15 @@ pub struct LastSession {
     /// which restores entirely into the main window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub windows: Option<Vec<WorkspaceWindowDef>>,
+    /// Unknown top-level keys, captured verbatim so an older app preserves
+    /// fields a newer version added rather than dropping them on save (PER-010).
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl crate::utils::migrate::VersionedStore for LastSession {
+    const STORE_NAME: &'static str = "last-session.json";
+    const CURRENT_VERSION: u32 = 1;
 }
 
 impl LastSession {
@@ -63,9 +73,11 @@ impl LastSessionStorage {
 
     /// Load the persisted last session, if any.
     ///
-    /// Returns `Ok(None)` when the file is missing or cannot be parsed — a corrupt
-    /// or stale last-session file should never block startup, so it is treated as
-    /// "no session to restore" rather than an error.
+    /// Returns `Ok(None)` when the file is missing, unparseable, or written by a
+    /// **newer** schema version — a corrupt, stale, or too-new last-session file
+    /// should never block startup, so it is treated as "no session to restore".
+    /// Crucially, a newer file is only *ignored*, never overwritten: the save
+    /// path guards against clobbering it (PER-004).
     pub fn load(&self) -> Result<Option<LastSession>> {
         if !self.file_path.exists() {
             return Ok(None);
@@ -74,9 +86,13 @@ impl LastSessionStorage {
         let data =
             fs::read_to_string(&self.file_path).context("Failed to read last-session file")?;
 
-        match serde_json::from_str::<LastSession>(&data) {
-            Ok(session) => Ok(Some(session)),
-            Err(e) => {
+        match load_versioned::<LastSession>(&data) {
+            LoadOutcome::Loaded { data, .. } => Ok(Some(data)),
+            LoadOutcome::Newer(err) => {
+                tracing::warn!("Last-session file written by a newer version, ignoring it: {err}");
+                Ok(None)
+            }
+            LoadOutcome::Corrupt(e) => {
                 tracing::warn!("Last-session file is corrupt, ignoring it: {e}");
                 Ok(None)
             }
@@ -88,8 +104,16 @@ impl LastSessionStorage {
     /// The write is atomic (temp file in the same directory + rename). This file
     /// is rewritten on every layout change, so a torn write is especially likely;
     /// an atomic replace guarantees the previous session survives an interrupted
-    /// save instead of being silently discarded on next startup (#2318).
+    /// save instead of being silently discarded on next startup (#2318). Before
+    /// writing, [`guard_not_newer`] refuses to overwrite a file written by a newer
+    /// schema version (PER-004).
     pub fn save(&self, session: &LastSession) -> Result<()> {
+        guard_not_newer(
+            &self.file_path,
+            LastSession::STORE_NAME,
+            LastSession::CURRENT_VERSION,
+        )?;
+
         let data =
             serde_json::to_string_pretty(session).context("Failed to serialize last session")?;
 
@@ -163,6 +187,7 @@ mod tests {
             }],
             active_group_index: 0,
             windows: None,
+            extra: Default::default(),
         }
     }
 
@@ -331,6 +356,7 @@ mod tests {
                 tab_groups: vec![],
                 active_group_index: 0,
                 windows: None,
+                extra: Default::default(),
             })
             .unwrap();
 
