@@ -27,6 +27,14 @@ interface DynamicFieldProps {
    * Use this to pass ports from a remote agent's capabilities.
    */
   availablePorts?: string[];
+  /**
+   * Overrides the base `data-testid` for this field's control and its derived
+   * ids (error, browse, list items, …). Defaults to `field-<key>`, so the same
+   * schema field renders with a stable, unique test id even when the field is
+   * reused across several instances (e.g. one per jump-host hop). Purely a test
+   * hook — it has no user-visible or behavioural effect.
+   */
+  testId?: string;
 }
 
 /**
@@ -44,13 +52,21 @@ export function DynamicField({
   error,
   credentialSaved,
   availablePorts,
+  testId,
 }: DynamicFieldProps) {
   const reactId = useId();
+
+  // Base data-testid token for this field. Defaults to `field-<key>`; callers
+  // that render the same field many times (per jump-host hop) pass a unique
+  // value so the ids stay addressable and never collide.
+  const testIdBase = testId ?? `field-${field.key}`;
 
   // Display-only callout: render the standalone banner without the label /
   // hint / error scaffolding used by input fields.
   if (field.fieldType.type === "notice") {
-    return <NoticeField field={field} severity={field.fieldType.severity} />;
+    return (
+      <NoticeField field={field} severity={field.fieldType.severity} testIdBase={testIdBase} />
+    );
   }
 
   // Stable, unique ids so the visible label, the control, and the inline error
@@ -66,14 +82,23 @@ export function DynamicField({
   const a11y: FieldA11y = { id: controlId, describedBy, invalid: hasError };
 
   return (
-    <div className="settings-form__field" data-testid={`dynamic-field-${field.key}`}>
-      {renderFieldInput(field, field.fieldType, value, onChange, a11y, availablePorts, onBlur)}
+    <div className="settings-form__field" data-testid={`dynamic-${testIdBase}`}>
+      {renderFieldInput(
+        field,
+        field.fieldType,
+        value,
+        onChange,
+        a11y,
+        testIdBase,
+        availablePorts,
+        onBlur
+      )}
       {error && (
         <p
           id={errorId}
           role="alert"
           className="settings-form__hint settings-form__hint--error"
-          data-testid={`field-${field.key}-error`}
+          data-testid={`${testIdBase}-error`}
         >
           {error}
         </p>
@@ -86,7 +111,7 @@ export function DynamicField({
       {credentialSaved && (
         <p
           className="settings-form__hint settings-form__hint--success"
-          data-testid={`field-${field.key}-credential-saved`}
+          data-testid={`${testIdBase}-credential-saved`}
         >
           Password saved in credential store
         </p>
@@ -101,16 +126,32 @@ function renderFieldInput(
   value: unknown,
   onChange: (v: unknown) => void,
   a11y: FieldA11y,
+  testIdBase: string,
   availablePorts?: string[],
   onBlur?: () => void
 ): React.ReactNode {
   switch (fieldType.type) {
     case "text":
       return (
-        <TextField field={field} value={value} onChange={onChange} onBlur={onBlur} a11y={a11y} />
+        <TextField
+          field={field}
+          value={value}
+          onChange={onChange}
+          onBlur={onBlur}
+          a11y={a11y}
+          testIdBase={testIdBase}
+        />
       );
     case "password":
-      return <PasswordField field={field} value={value} onChange={onChange} a11y={a11y} />;
+      return (
+        <PasswordField
+          field={field}
+          value={value}
+          onChange={onChange}
+          a11y={a11y}
+          testIdBase={testIdBase}
+        />
+      );
     case "number":
       return (
         <NumberField
@@ -119,10 +160,19 @@ function renderFieldInput(
           onChange={onChange}
           fieldType={fieldType}
           a11y={a11y}
+          testIdBase={testIdBase}
         />
       );
     case "boolean":
-      return <BooleanField field={field} value={value} onChange={onChange} a11y={a11y} />;
+      return (
+        <BooleanField
+          field={field}
+          value={value}
+          onChange={onChange}
+          a11y={a11y}
+          testIdBase={testIdBase}
+        />
+      );
     case "select":
       return (
         <SelectField
@@ -131,10 +181,19 @@ function renderFieldInput(
           onChange={onChange}
           fieldType={fieldType}
           a11y={a11y}
+          testIdBase={testIdBase}
         />
       );
     case "port":
-      return <PortField field={field} value={value} onChange={onChange} a11y={a11y} />;
+      return (
+        <PortField
+          field={field}
+          value={value}
+          onChange={onChange}
+          a11y={a11y}
+          testIdBase={testIdBase}
+        />
+      );
     case "serialPort":
       return (
         <SerialPortField
@@ -143,6 +202,7 @@ function renderFieldInput(
           onChange={onChange}
           availablePorts={availablePorts}
           a11y={a11y}
+          testIdBase={testIdBase}
         />
       );
     case "filePath":
@@ -153,13 +213,27 @@ function renderFieldInput(
           onChange={onChange}
           fieldType={fieldType}
           a11y={a11y}
+          testIdBase={testIdBase}
         />
       );
     case "keyValueList":
-      return <KeyValueListField field={field} value={value} onChange={onChange} />;
+      return (
+        <KeyValueListField
+          field={field}
+          value={value}
+          onChange={onChange}
+          testIdBase={testIdBase}
+        />
+      );
     case "objectList":
       return (
-        <ObjectListField field={field} value={value} onChange={onChange} fieldType={fieldType} />
+        <ObjectListField
+          field={field}
+          value={value}
+          onChange={onChange}
+          fieldType={fieldType}
+          testIdBase={testIdBase}
+        />
       );
     case "notice":
       // Notice fields are handled up-front in DynamicField and never reach here.
@@ -172,13 +246,21 @@ function renderFieldInput(
  * `description`. Used e.g. for the plain-FTP insecure-connection warning, which
  * the schema shows only while `tlsMode === "none"` via `visibleWhen`.
  */
-function NoticeField({ field, severity }: { field: SettingsField; severity: "info" | "warning" }) {
+function NoticeField({
+  field,
+  severity,
+  testIdBase,
+}: {
+  field: SettingsField;
+  severity: "info" | "warning";
+  testIdBase: string;
+}) {
   const Icon = severity === "warning" ? TriangleAlert : Info;
   return (
     <div
       className={`settings-form__notice settings-form__notice--${severity}`}
       role="note"
-      data-testid={`field-${field.key}`}
+      data-testid={testIdBase}
     >
       <Icon size={14} aria-hidden="true" />
       <span>{field.description}</span>
@@ -236,7 +318,8 @@ function TextField({
   onChange,
   onBlur,
   a11y,
-}: FieldProps & { onBlur?: () => void; a11y: FieldA11y }) {
+  testIdBase,
+}: FieldProps & { onBlur?: () => void; a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
       <FieldLabel field={field} htmlFor={a11y.id} />
@@ -250,13 +333,19 @@ function TextField({
         aria-required={field.required || undefined}
         aria-describedby={a11y.describedBy}
         error={a11y.invalid}
-        data-testid={`field-${field.key}`}
+        data-testid={testIdBase}
       />
     </>
   );
 }
 
-function PasswordField({ field, value, onChange, a11y }: FieldProps & { a11y: FieldA11y }) {
+function PasswordField({
+  field,
+  value,
+  onChange,
+  a11y,
+  testIdBase,
+}: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
       <FieldLabel field={field} htmlFor={a11y.id} />
@@ -267,7 +356,7 @@ function PasswordField({ field, value, onChange, a11y }: FieldProps & { a11y: Fi
         placeholder={field.placeholder}
         aria-describedby={a11y.describedBy}
         aria-invalid={a11y.invalid}
-        data-testid={`field-${field.key}`}
+        data-testid={testIdBase}
       />
     </>
   );
@@ -279,7 +368,12 @@ function NumberField({
   onChange,
   fieldType,
   a11y,
-}: FieldProps & { fieldType: { type: "number"; min?: number; max?: number }; a11y: FieldA11y }) {
+  testIdBase,
+}: FieldProps & {
+  fieldType: { type: "number"; min?: number; max?: number };
+  a11y: FieldA11y;
+  testIdBase: string;
+}) {
   return (
     <>
       <FieldLabel field={field} htmlFor={a11y.id} />
@@ -293,13 +387,19 @@ function NumberField({
         aria-required={field.required || undefined}
         aria-describedby={a11y.describedBy}
         error={a11y.invalid}
-        data-testid={`field-${field.key}`}
+        data-testid={testIdBase}
       />
     </>
   );
 }
 
-function BooleanField({ field, value, onChange, a11y }: FieldProps & { a11y: FieldA11y }) {
+function BooleanField({
+  field,
+  value,
+  onChange,
+  a11y,
+  testIdBase,
+}: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   return (
@@ -318,7 +418,7 @@ function BooleanField({ field, value, onChange, a11y }: FieldProps & { a11y: Fie
               setDialogOpen(true);
             }}
             title="Learn more"
-            data-testid={`field-${field.key}-help`}
+            data-testid={`${testIdBase}-help`}
           />
         )}
       </span>
@@ -328,14 +428,14 @@ function BooleanField({ field, value, onChange, a11y }: FieldProps & { a11y: Fie
         onCheckedChange={(checked) => onChange(checked)}
         aria-label={field.label}
         aria-describedby={a11y.describedBy}
-        data-testid={`field-${field.key}`}
+        data-testid={testIdBase}
       />
       {field.helpText && (
         <Modal
           open={dialogOpen}
           onOpenChange={setDialogOpen}
           title={field.label}
-          data-testid={`field-${field.key}-help-dialog`}
+          data-testid={`${testIdBase}-help-dialog`}
         >
           {field.helpText.split("\n\n").map((paragraph, i) => (
             <p key={i}>{paragraph}</p>
@@ -352,9 +452,11 @@ function SelectField({
   onChange,
   fieldType,
   a11y,
+  testIdBase,
 }: FieldProps & {
   fieldType: { type: "select"; options: { value: string; label: string }[] };
   a11y: FieldA11y;
+  testIdBase: string;
 }) {
   const isLocked = fieldType.options.length <= 1;
   return (
@@ -370,13 +472,19 @@ function SelectField({
         aria-describedby={a11y.describedBy}
         aria-invalid={a11y.invalid}
         placeholder={field.placeholder}
-        data-testid={`field-${field.key}`}
+        data-testid={testIdBase}
       />
     </>
   );
 }
 
-function PortField({ field, value, onChange, a11y }: FieldProps & { a11y: FieldA11y }) {
+function PortField({
+  field,
+  value,
+  onChange,
+  a11y,
+  testIdBase,
+}: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
       <FieldLabel field={field} htmlFor={a11y.id} />
@@ -390,7 +498,7 @@ function PortField({ field, value, onChange, a11y }: FieldProps & { a11y: FieldA
         max={65535}
         placeholder={field.placeholder}
         aria-required={field.required || undefined}
-        data-testid={`field-${field.key}`}
+        data-testid={testIdBase}
       />
     </>
   );
@@ -402,7 +510,8 @@ function SerialPortField({
   onChange,
   availablePorts: propPorts,
   a11y,
-}: FieldProps & { availablePorts?: string[]; a11y: FieldA11y }) {
+  testIdBase,
+}: FieldProps & { availablePorts?: string[]; a11y: FieldA11y; testIdBase: string }) {
   const [detectedPorts, setDetectedPorts] = useState<string[]>([]);
   const currentValue = (value as string) ?? "";
 
@@ -419,7 +528,7 @@ function SerialPortField({
   // detected ports are offered as suggestions, but the user can still type any
   // device path the OS doesn't enumerate (a virtual/socat PTY, an uncommon
   // /dev path) — matching the field's "or type a device path directly" intent.
-  const listId = `field-${field.key}-list`;
+  const listId = `${testIdBase}-list`;
 
   return (
     <>
@@ -436,7 +545,7 @@ function SerialPortField({
         aria-required={field.required || undefined}
         aria-describedby={a11y.describedBy}
         error={a11y.invalid}
-        data-testid={`field-${field.key}`}
+        data-testid={testIdBase}
       />
       <datalist id={listId}>
         {availablePorts.map((port) => (
@@ -444,7 +553,7 @@ function SerialPortField({
         ))}
       </datalist>
       {isDisconnected && (
-        <p className="settings-form__hint" data-testid={`field-${field.key}-disconnected`}>
+        <p className="settings-form__hint" data-testid={`${testIdBase}-disconnected`}>
           {currentValue} (not connected)
         </p>
       )}
@@ -458,7 +567,12 @@ function FilePathField({
   onChange,
   fieldType,
   a11y,
-}: FieldProps & { fieldType: { type: "filePath"; kind: string }; a11y: FieldA11y }) {
+  testIdBase,
+}: FieldProps & {
+  fieldType: { type: "filePath"; kind: string };
+  a11y: FieldA11y;
+  testIdBase: string;
+}) {
   if (field.key === "keyPath") {
     return (
       <>
@@ -468,7 +582,7 @@ function FilePathField({
           value={(value as string) ?? ""}
           onChange={(v) => onChange(v || undefined)}
           placeholder={field.placeholder}
-          testIdPrefix={`field-${field.key}`}
+          testIdPrefix={testIdBase}
           aria-describedby={a11y.describedBy}
           aria-invalid={a11y.invalid}
         />
@@ -500,14 +614,14 @@ function FilePathField({
           aria-required={field.required || undefined}
           aria-describedby={a11y.describedBy}
           error={a11y.invalid}
-          data-testid={`field-${field.key}`}
+          data-testid={testIdBase}
         />
         <Button
           variant="secondary"
           size="sm"
           onClick={handleBrowse}
           title="Browse"
-          data-testid={`field-${field.key}-browse`}
+          data-testid={`${testIdBase}-browse`}
         >
           ...
         </Button>
@@ -521,7 +635,12 @@ interface KeyValuePair {
   value: string;
 }
 
-function KeyValueListField({ field, value, onChange }: FieldProps) {
+function KeyValueListField({
+  field,
+  value,
+  onChange,
+  testIdBase,
+}: FieldProps & { testIdBase: string }) {
   const items = (value as KeyValuePair[]) ?? [];
 
   const handleAdd = () => {
@@ -549,7 +668,7 @@ function KeyValueListField({ field, value, onChange }: FieldProps) {
             onChange={(e) => handleUpdate(index, "key", e.target.value)}
             placeholder="KEY"
             className="settings-form__list-input"
-            data-testid={`field-${field.key}-key-${index}`}
+            data-testid={`${testIdBase}-key-${index}`}
           />
           <Input
             type="text"
@@ -557,7 +676,7 @@ function KeyValueListField({ field, value, onChange }: FieldProps) {
             onChange={(e) => handleUpdate(index, "value", e.target.value)}
             placeholder="value"
             className="settings-form__list-input"
-            data-testid={`field-${field.key}-value-${index}`}
+            data-testid={`${testIdBase}-value-${index}`}
           />
           <Button
             variant="ghost"
@@ -566,7 +685,7 @@ function KeyValueListField({ field, value, onChange }: FieldProps) {
             onClick={() => handleRemove(index)}
             title="Remove"
             aria-label="Remove"
-            data-testid={`field-${field.key}-remove-${index}`}
+            data-testid={`${testIdBase}-remove-${index}`}
           >
             <X size={14} />
           </Button>
@@ -577,7 +696,7 @@ function KeyValueListField({ field, value, onChange }: FieldProps) {
         size="sm"
         icon={<Plus size={14} />}
         onClick={handleAdd}
-        data-testid={`field-${field.key}-add`}
+        data-testid={`${testIdBase}-add`}
       >
         Add
       </Button>
@@ -590,7 +709,11 @@ function ObjectListField({
   value,
   onChange,
   fieldType,
-}: FieldProps & { fieldType: { type: "objectList"; fields: SettingsField[] } }) {
+  testIdBase,
+}: FieldProps & {
+  fieldType: { type: "objectList"; fields: SettingsField[] };
+  testIdBase: string;
+}) {
   const items = (value as Record<string, unknown>[]) ?? [];
 
   const handleAdd = () => {
@@ -641,7 +764,7 @@ function ObjectListField({
                     checked={(item[subField.key] as boolean) ?? false}
                     onCheckedChange={(checked) => handleUpdate(index, subField.key, checked)}
                     aria-label={subField.label}
-                    data-testid={`field-${field.key}-${subField.key}-${index}`}
+                    data-testid={`${testIdBase}-${subField.key}-${index}`}
                   />
                   {subField.label.length <= 3 ? subField.label : subField.label.slice(0, 2)}
                 </label>
@@ -656,14 +779,14 @@ function ObjectListField({
                     onChange={(e) => handleUpdate(index, subField.key, e.target.value)}
                     placeholder={subField.placeholder ?? subField.label}
                     className="settings-form__list-input"
-                    data-testid={`field-${field.key}-${subField.key}-${index}`}
+                    data-testid={`${testIdBase}-${subField.key}-${index}`}
                   />
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => handleBrowseDir(index, subField.key)}
                     title="Browse"
-                    data-testid={`field-${field.key}-${subField.key}-browse-${index}`}
+                    data-testid={`${testIdBase}-${subField.key}-browse-${index}`}
                   >
                     ...
                   </Button>
@@ -678,7 +801,7 @@ function ObjectListField({
                 onChange={(e) => handleUpdate(index, subField.key, e.target.value)}
                 placeholder={subField.placeholder ?? subField.label}
                 className="settings-form__list-input"
-                data-testid={`field-${field.key}-${subField.key}-${index}`}
+                data-testid={`${testIdBase}-${subField.key}-${index}`}
               />
             );
           })}
@@ -689,7 +812,7 @@ function ObjectListField({
             onClick={() => handleRemove(index)}
             title="Remove"
             aria-label="Remove"
-            data-testid={`field-${field.key}-remove-${index}`}
+            data-testid={`${testIdBase}-remove-${index}`}
           >
             <X size={14} />
           </Button>
@@ -700,7 +823,7 @@ function ObjectListField({
         size="sm"
         icon={<Plus size={14} />}
         onClick={handleAdd}
-        data-testid={`field-${field.key}-add`}
+        data-testid={`${testIdBase}-add`}
       >
         Add
       </Button>

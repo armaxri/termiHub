@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
 import { ArrowLeftRight, Plus, Trash2, AlertTriangle, FileDown } from "lucide-react";
 import type { JumpHostConfig } from "@/types/connection";
-import type { SavedConnectionOption } from "@/utils/jumpHost";
+import type { SettingsSchema } from "@/types/schema";
+import { jumpHostInlineFields, type SavedConnectionOption } from "@/utils/jumpHost";
 import { JumpHostEntry } from "./JumpHostEntry";
 import { JumpHostPathDisplay } from "./JumpHostPathDisplay";
 import { SshConfigImportDialog } from "./SshConfigImportDialog";
@@ -15,6 +16,11 @@ interface JumpHostSectionProps {
   onChange: (hops: JumpHostConfig[] | undefined) => void;
   /** SSH connections selectable as a saved-connection hop (#940). */
   savedConnections?: SavedConnectionOption[];
+  /**
+   * The SSH connection schema, used to drive each hop's inline fields through
+   * the same schema-driven renderer as the primary connection form (UISF-014).
+   */
+  sshSchema?: SettingsSchema;
   /** Blocking validation messages (save is prevented while present). */
   errors?: string[];
   /** Non-blocking advisories. */
@@ -46,12 +52,15 @@ export function JumpHostSection({
   targetHost,
   onChange,
   savedConnections = [],
+  sshSchema,
   errors = [],
   warnings = [],
 }: JumpHostSectionProps) {
   const hops = useMemo(() => value ?? [], [value]);
   const enabled = hops.length > 0;
   const [importOpen, setImportOpen] = useState(false);
+  // Inline-hop fields sourced from the SSH connection schema (UISF-014).
+  const inlineFields = useMemo(() => jumpHostInlineFields(sshSchema), [sshSchema]);
 
   /** Replace the chain with an imported one (enables the section if it was off). */
   const importChain = useCallback(
@@ -141,6 +150,7 @@ export function JumpHostSection({
                 key={i}
                 hop={hop}
                 index={i}
+                fields={inlineFields}
                 onChange={(patch) => updateHop(i, patch)}
                 savedConnections={savedConnections}
               />
