@@ -175,7 +175,7 @@ impl<'a> MonitoringController<'a> {
         };
 
         let sid = session_id.to_string();
-        let join_handle = tokio::spawn(async move {
+        let push_task = async move {
             let mut stats_rx = subscription.stats;
             // `Option` so a closed status channel stops being polled instead of
             // spinning the select loop hot on repeated `None` (the agent path
@@ -234,14 +234,35 @@ impl<'a> MonitoringController<'a> {
                 }
             }
             info!(session_id = %sid, "Session monitoring push task ended");
-        });
+        };
 
-        let abort_handle = join_handle.abort_handle();
-        self.monitoring_tasks
-            .lock()
-            .await
-            .insert(session_id.to_string(), abort_handle);
+        self.spawn_and_register(session_id, push_task).await;
         Ok(())
+    }
+
+    /// Spawn the monitoring push task and register its [`AbortHandle`]
+    /// atomically (CONC-006).
+    ///
+    /// Holds the `monitoring_tasks` lock across the spawn **and** the insert so a
+    /// concurrent [`stop_session_monitoring`](Self::stop_session_monitoring)
+    /// cannot slip into the gap between spawning the task and registering its
+    /// handle — a stop that arrives during startup now always finds the handle
+    /// and aborts the task. The lock is held with no `.await` inside the critical
+    /// section (`tokio::spawn` is synchronous), so it is released immediately.
+    ///
+    /// The swap is also abort-then-replace: if a task was already registered for
+    /// this session (a double start from a re-subscribe or a run-location
+    /// change), the previous task is aborted before being replaced, so the old
+    /// collector cannot leak and race the new one on the same region.
+    async fn spawn_and_register<F>(&self, session_id: &str, task: F)
+    where
+        F: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let mut tasks = self.monitoring_tasks.lock().await;
+        let handle = tokio::spawn(task);
+        if let Some(previous) = tasks.insert(session_id.to_string(), handle.abort_handle()) {
+            previous.abort();
+        }
     }
 
     /// Stop session-based monitoring: abort the push task and unsubscribe.
@@ -456,6 +477,93 @@ mod tests {
         assert!(
             overrides.lock().await.get("sess1").is_none(),
             "override removed after stop"
+        );
+    }
+
+    /// A push-task stand-in that runs until aborted. It parks on `pending()`,
+    /// so it never completes on its own; the returned receiver resolves (with
+    /// `Err`, the sender having been dropped) exactly when the task is dropped —
+    /// i.e. when its abort handle is fired — giving a deterministic abort signal
+    /// with no sleeps.
+    fn pending_task() -> (
+        impl std::future::Future<Output = ()> + Send + 'static,
+        tokio::sync::oneshot::Receiver<()>,
+    ) {
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        let task = async move {
+            let _tx = tx;
+            std::future::pending::<()>().await;
+        };
+        (task, rx)
+    }
+
+    /// Starting monitoring twice for one session (re-subscribe / run-location
+    /// change) must abort the previous push task rather than silently orphaning
+    /// it, and leave exactly one handle registered (CONC-006, problem 1).
+    #[tokio::test]
+    async fn double_start_aborts_the_previous_push_task() {
+        use std::time::Duration;
+
+        let (sessions, tasks, overrides) = empty_maps();
+        let controller = MonitoringController::new(&sessions, &tasks, &overrides);
+
+        let (task1, rx1) = pending_task();
+        controller.spawn_and_register("sess", task1).await;
+
+        let (task2, mut rx2) = pending_task();
+        controller.spawn_and_register("sess", task2).await;
+
+        // The first task was aborted: its future is dropped, dropping the sender,
+        // so the receiver resolves with `Err` (nothing was ever sent).
+        tokio::time::timeout(Duration::from_secs(3), rx1)
+            .await
+            .expect("first task should be aborted promptly")
+            .expect_err("an aborted task drops its sender without sending");
+
+        // Exactly one handle survives for the session.
+        assert_eq!(tasks.lock().await.len(), 1, "only one task registered");
+
+        // The second task is still running (its channel is open, not closed).
+        assert!(
+            matches!(
+                rx2.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ),
+            "the replacement task must still be alive"
+        );
+
+        controller
+            .stop_session_monitoring("sess")
+            .await
+            .expect("cleanup stop");
+    }
+
+    /// A stop arriving right after start still aborts the push task — the handle
+    /// is registered atomically with the spawn, so there is no spawn→register
+    /// window in which a stop returns without aborting (CONC-006, problem 2).
+    #[tokio::test]
+    async fn stop_right_after_start_aborts_the_push_task() {
+        use std::time::Duration;
+
+        let (sessions, tasks, overrides) = empty_maps();
+        let controller = MonitoringController::new(&sessions, &tasks, &overrides);
+
+        let (task, rx) = pending_task();
+        controller.spawn_and_register("sess", task).await;
+
+        controller
+            .stop_session_monitoring("sess")
+            .await
+            .expect("stop should abort the registered task");
+
+        tokio::time::timeout(Duration::from_secs(3), rx)
+            .await
+            .expect("task should be aborted promptly")
+            .expect_err("an aborted task drops its sender without sending");
+
+        assert!(
+            tasks.lock().await.is_empty(),
+            "the handle is removed on stop"
         );
     }
 

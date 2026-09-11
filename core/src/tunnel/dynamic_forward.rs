@@ -20,6 +20,7 @@ use crate::backends::ssh::handler::SshSession;
 use super::channel::{ChannelOpener, SshChannelOpener};
 use super::config::{DynamicForwardConfig, TunnelStats};
 use super::local_forward::ForwarderStats;
+use super::MAX_CONCURRENT_FORWARDED_CONNECTIONS;
 
 /// Manages a dynamic (SOCKS5) forwarding tunnel.
 ///
@@ -129,13 +130,35 @@ impl DynamicForwarder {
         opener: Arc<O>,
         stats: Arc<ForwarderStats>,
     ) {
+        // Bound the number of concurrently-relayed connections (CORE-027). A
+        // permit is acquired before spawning the relay and held inside the task
+        // via an owned permit, so it frees automatically when the relay ends.
+        let limiter = Arc::new(tokio::sync::Semaphore::new(
+            MAX_CONCURRENT_FORWARDED_CONNECTIONS,
+        ));
         loop {
             match listener.accept().await {
                 Ok((stream, _addr)) => {
+                    // At capacity: drop (close) the excess connection instead of
+                    // spawning an unbounded task. `try_acquire_owned` never
+                    // blocks the accept loop.
+                    let permit = match Arc::clone(&limiter).try_acquire_owned() {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            tracing::warn!(
+                                "SOCKS5 forward at capacity ({} concurrent connections); \
+                                 dropping incoming connection",
+                                MAX_CONCURRENT_FORWARDED_CONNECTIONS
+                            );
+                            drop(stream);
+                            continue;
+                        }
+                    };
                     stats.increment_active();
                     let opener = Arc::clone(&opener);
                     let stats = Arc::clone(&stats);
                     tokio::spawn(async move {
+                        let _permit = permit;
                         Self::handle_socks5(stream, opener, &stats, SOCKS5_HANDSHAKE_TIMEOUT).await;
                         stats.decrement_active();
                     });

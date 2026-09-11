@@ -149,4 +149,54 @@ pub(crate) mod test_support {
             Ok(near)
         }
     }
+
+    /// A [`ChannelOpener`] that opens a channel and then **holds it open**: the
+    /// returned `near` stream is the relay's channel side, and the far end is
+    /// parked in a shared list so it never EOFs. This keeps the relay's
+    /// `copy_bidirectional` pending — and therefore its concurrency permit held
+    /// — until the test explicitly ends it by clearing the far-ends handle,
+    /// which lets a test drive the concurrency cap deterministically (CORE-027).
+    pub(crate) struct HoldingChannelOpener {
+        opens: Arc<std::sync::atomic::AtomicUsize>,
+        fars: Arc<Mutex<Vec<DuplexStream>>>,
+    }
+
+    impl HoldingChannelOpener {
+        pub(crate) fn new() -> Self {
+            Self {
+                opens: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                fars: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        /// A cloneable handle to the count of channels opened so far, so a test
+        /// can wait until a relay has actually opened its channel (i.e. holds a
+        /// permit) before probing the cap.
+        pub(crate) fn opens(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+            Arc::clone(&self.opens)
+        }
+
+        /// A cloneable handle to the parked far ends. Clearing it (`.lock()…
+        /// .clear()`) drops every held far end, sending EOF into each relay's
+        /// channel side so the relays can finish and release their permits —
+        /// usable after the opener itself has been moved into a forwarder.
+        pub(crate) fn fars_handle(&self) -> Arc<Mutex<Vec<DuplexStream>>> {
+            Arc::clone(&self.fars)
+        }
+    }
+
+    impl ChannelOpener for HoldingChannelOpener {
+        type Stream = DuplexStream;
+
+        async fn open_direct_tcpip(
+            &self,
+            _host: String,
+            _port: u16,
+        ) -> std::io::Result<Self::Stream> {
+            let (near, far) = tokio::io::duplex(64 * 1024);
+            self.fars.lock().expect("fars mutex poisoned").push(far);
+            self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(near)
+        }
+    }
 }

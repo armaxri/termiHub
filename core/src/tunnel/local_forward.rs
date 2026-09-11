@@ -14,6 +14,7 @@ use crate::backends::ssh::handler::SshSession;
 
 use super::channel::{ChannelOpener, SshChannelOpener};
 use super::config::{LocalForwardConfig, TunnelStats};
+use super::MAX_CONCURRENT_FORWARDED_CONNECTIONS;
 
 /// Manages a local port forwarding tunnel.
 ///
@@ -107,6 +108,20 @@ impl LocalForwarder {
         config: &LocalForwardConfig,
         opener: O,
     ) -> Result<Self, std::io::Error> {
+        Self::start_with_opener_capped(config, opener, MAX_CONCURRENT_FORWARDED_CONNECTIONS)
+    }
+
+    /// Like [`start_with_opener`](Self::start_with_opener) but with an explicit
+    /// cap on concurrently-relayed connections (CORE-027).
+    ///
+    /// The public entry points use [`MAX_CONCURRENT_FORWARDED_CONNECTIONS`];
+    /// tests inject a low cap to exercise the at-capacity drop and the
+    /// permit-freed-after-relay-ends path deterministically.
+    pub(crate) fn start_with_opener_capped<O: ChannelOpener>(
+        config: &LocalForwardConfig,
+        opener: O,
+        max_concurrent: usize,
+    ) -> Result<Self, std::io::Error> {
         let addr = format!("{}:{}", config.local_host, config.local_port);
         let std_listener = std::net::TcpListener::bind(&addr)?;
         std_listener.set_nonblocking(true)?;
@@ -126,7 +141,15 @@ impl LocalForwarder {
         let (death_tx, death_rx) = tokio::sync::oneshot::channel();
         let task_handle = tokio::spawn(async move {
             let _death = death_tx;
-            Self::accept_loop(listener, opener, remote_host, remote_port, stats_clone).await;
+            Self::accept_loop(
+                listener,
+                opener,
+                remote_host,
+                remote_port,
+                stats_clone,
+                max_concurrent,
+            )
+            .await;
         });
 
         Ok(Self {
@@ -169,15 +192,36 @@ impl LocalForwarder {
         remote_host: String,
         remote_port: u16,
         stats: Arc<ForwarderStats>,
+        max_concurrent: usize,
     ) {
+        // Bound the number of concurrently-relayed connections (CORE-027). A
+        // permit is acquired before spawning the relay and held inside the task
+        // via an owned permit, so it frees automatically when the relay ends.
+        let limiter = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
         loop {
             match listener.accept().await {
                 Ok((stream, _addr)) => {
+                    // At capacity: drop (close) the excess connection instead of
+                    // spawning an unbounded task. `try_acquire_owned` never
+                    // blocks the accept loop.
+                    let permit = match Arc::clone(&limiter).try_acquire_owned() {
+                        Ok(permit) => permit,
+                        Err(_) => {
+                            tracing::warn!(
+                                "Local forward at capacity ({} concurrent connections); \
+                                 dropping incoming connection",
+                                max_concurrent
+                            );
+                            drop(stream);
+                            continue;
+                        }
+                    };
                     stats.increment_active();
                     let opener = Arc::clone(&opener);
                     let remote_host = remote_host.clone();
                     let stats = Arc::clone(&stats);
                     tokio::spawn(async move {
+                        let _permit = permit;
                         Self::relay_connection(stream, opener, remote_host, remote_port, &stats)
                             .await;
                         stats.decrement_active();
@@ -234,9 +278,30 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
-    use super::super::channel::test_support::EchoChannelOpener;
+    use std::sync::atomic::Ordering;
+
+    use super::super::channel::test_support::{EchoChannelOpener, HoldingChannelOpener};
     use super::super::config::LocalForwardConfig;
     use super::*;
+
+    /// Poll `pred` until it holds or a 10s deadline passes (then panic). Used to
+    /// wait on a relay actually opening its channel without a fixed sleep. The
+    /// deadline is deliberately generous: on a heavily-loaded CI runner (the
+    /// Windows leg runs the whole workspace) accept scheduling and loopback
+    /// setup can take well over a second, and a false "condition not met" panic
+    /// here is worse than a slightly longer wait on a genuine hang.
+    async fn wait_until(pred: impl Fn() -> bool) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if pred() {
+                return;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                panic!("condition not met within deadline");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
 
     /// A config that binds an ephemeral loopback port. Passing port `0` lets the
     /// OS assign a free port the forwarder keeps, so the test reads the real port
@@ -347,6 +412,71 @@ mod tests {
         assert_eq!(stats.total_connections, 1);
         assert_eq!(stats.bytes_sent, 0);
         assert_eq!(stats.bytes_received, 0);
+    }
+
+    #[tokio::test]
+    async fn caps_concurrent_relays_and_frees_permit_after_relay_ends() {
+        // Regression for CORE-027: the forwarder must bound in-flight relays.
+        // With a cap of 1, a second connection arriving while one relay is in
+        // flight is dropped (closed) without opening another channel; once the
+        // first relay ends its permit frees and a later connection proceeds.
+        let opener = HoldingChannelOpener::new();
+        let opens = opener.opens();
+        let fars = opener.fars_handle();
+        let forwarder = LocalForwarder::start_with_opener_capped(&ephemeral_config(), opener, 1)
+            .expect("start forwarder");
+        let addr = forwarder.local_addr();
+
+        // First connection is accepted; its relay opens (and holds) a channel,
+        // so the single permit is now taken.
+        let mut client1 = TcpStream::connect(addr).await.expect("connect client1");
+        wait_until(|| opens.load(Ordering::SeqCst) == 1).await;
+
+        // Second connection arrives at capacity: the forwarder drops it without
+        // opening another channel, so the client sees a prompt EOF.
+        let mut client2 = TcpStream::connect(addr).await.expect("connect client2");
+        let mut buf = Vec::new();
+        tokio::time::timeout(Duration::from_secs(3), client2.read_to_end(&mut buf))
+            .await
+            .expect("dropped connection should close promptly")
+            .expect("read client2 to EOF");
+        assert!(buf.is_empty(), "a dropped connection relays no bytes");
+        assert_eq!(
+            opens.load(Ordering::SeqCst),
+            1,
+            "no second channel is opened while at capacity"
+        );
+
+        // End the first relay so its owned permit frees. `copy_bidirectional`
+        // completes only once *both* directions reach EOF and shut down:
+        // half-closing client1's write side gives the client->channel EOF, and
+        // clearing the parked channel far-end gives the channel->client EOF.
+        //
+        // Crucially we do NOT `drop(client1)` here. The relay shuts down its own
+        // write half *toward* client1 as it finishes; on Windows, shutting down
+        // toward an already-dropped peer left that copy pending, so the relay
+        // never ended, its permit never freed, and this test hung until the
+        // deadline on the Windows CI leg. Keeping client1's socket alive (read
+        // half open, drained to EOF below) makes the relay's shutdown a clean
+        // FIN on every platform, so the permit is reliably released.
+        client1
+            .shutdown()
+            .await
+            .expect("half-close client1 write side");
+        fars.lock().expect("fars mutex poisoned").clear();
+        let mut drained = Vec::new();
+        client1
+            .read_to_end(&mut drained)
+            .await
+            .expect("drain client1 to EOF once the relay closes its write half");
+        assert!(drained.is_empty(), "the held relay never relayed any bytes");
+
+        // With the permit freed, a third connection is now accepted and its
+        // relay opens a channel — proving the permit was released, not leaked.
+        let _client3 = TcpStream::connect(addr).await.expect("connect client3");
+        wait_until(|| opens.load(Ordering::SeqCst) == 2).await;
+
+        drop(forwarder);
     }
 
     #[test]

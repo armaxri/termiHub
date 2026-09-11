@@ -15,6 +15,7 @@ use crate::backends::ssh::handler::{ForwardedChannelRegistry, IncomingChannel, S
 
 use super::config::{RemoteForwardConfig, TunnelStats};
 use super::local_forward::ForwarderStats;
+use super::MAX_CONCURRENT_FORWARDED_CONNECTIONS;
 
 /// Manages a remote port forwarding tunnel.
 ///
@@ -133,11 +134,33 @@ impl RemoteForwarder {
         local_port: u16,
         stats: Arc<ForwarderStats>,
     ) {
+        // Bound the number of concurrently-relayed channels (CORE-027). A permit
+        // is acquired before spawning the relay and held inside the task via an
+        // owned permit, so it frees automatically when the relay ends.
+        let limiter = Arc::new(tokio::sync::Semaphore::new(
+            MAX_CONCURRENT_FORWARDED_CONNECTIONS,
+        ));
         while let Some(incoming) = rx.recv().await {
+            // At capacity: drop (close) the excess incoming channel instead of
+            // spawning an unbounded task. `try_acquire_owned` never blocks the
+            // forward loop.
+            let permit = match Arc::clone(&limiter).try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    tracing::warn!(
+                        "Remote forward at capacity ({} concurrent connections); \
+                         dropping incoming channel",
+                        MAX_CONCURRENT_FORWARDED_CONNECTIONS
+                    );
+                    drop(incoming);
+                    continue;
+                }
+            };
             stats.increment_active();
             let local_addr = format!("{}:{}", local_host, local_port);
             let stats = Arc::clone(&stats);
             tokio::spawn(async move {
+                let _permit = permit;
                 relay_to_local(incoming.channel.into_stream(), &local_addr, &stats).await;
                 stats.decrement_active();
             });

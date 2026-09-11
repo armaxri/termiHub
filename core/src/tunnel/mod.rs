@@ -27,6 +27,23 @@ pub use remote_forward::RemoteForwarder;
 
 use serde::{Deserialize, Serialize};
 
+/// Upper bound on the number of forwarded connections a single tunnel forwarder
+/// relays concurrently (CORE-027).
+///
+/// Each accepted connection ties up an SSH `direct-tcpip` channel, a relay task,
+/// and per-connection buffers. A local listener (a `-L` forward or a `-D` SOCKS
+/// proxy) is reachable by any local process, so without a cap an aggressive or
+/// buggy client can open unbounded forwarded channels — exhausting the SSH
+/// connection's channel budget and host memory. Connections that arrive while
+/// this many relays are already in flight are dropped (their socket/channel is
+/// closed) rather than spawning another unbounded task; a permit frees the
+/// moment a relay ends. Mirrors the embedded TFTP server's
+/// `MAX_CONCURRENT_TRANSFERS` cap.
+///
+/// The default is deliberately generous — a browser driving a SOCKS proxy opens
+/// many parallel connections — while still bounding the worst case.
+pub(crate) const MAX_CONCURRENT_FORWARDED_CONNECTIONS: usize = 256;
+
 /// Who can reach an agent-hosted tunnel's listen socket.
 ///
 /// Per the endpoint-semantics concept, the listen socket's home depends on the
