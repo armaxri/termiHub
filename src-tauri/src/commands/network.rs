@@ -47,7 +47,7 @@ fn agent_client_for(
 pub fn set_network_tool_run_location(
     tool: String,
     run_location: RunLocation,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.set_run_location(&tool, run_location)
 }
@@ -68,7 +68,7 @@ pub async fn network_port_scan(
     ports: String,
     timeout_ms: Option<u64>,
     concurrency: Option<usize>,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
     app: AppHandle,
 ) -> Result<String, TerminalError> {
     let port_list = port_scan::parse_port_spec(&ports)
@@ -86,7 +86,7 @@ pub async fn network_port_scan(
 
     let app_clone = app.clone();
     let task_id_clone = task_id.clone();
-    let manager_ref = manager.inner() as *const NetworkManager as usize;
+    let manager = Arc::clone(manager.inner());
 
     tokio::spawn(async move {
         let app = app_clone;
@@ -148,9 +148,9 @@ pub async fn network_port_scan(
         }
 
         // Clean up the task entry.
-        // SAFETY: manager is Tauri managed state which outlives all tasks.
-        let mgr = unsafe { &*(manager_ref as *const NetworkManager) };
-        mgr.complete_task(&tid);
+        // The owned `Arc<NetworkManager>` clone keeps the manager alive for
+        // exactly as long as this task needs it.
+        manager.complete_task(&tid);
     });
 
     Ok(task_id)
@@ -160,7 +160,7 @@ pub async fn network_port_scan(
 #[tauri::command]
 pub fn network_port_scan_cancel(
     task_id: String,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.cancel_task(&task_id)
 }
@@ -203,7 +203,7 @@ pub async fn network_ping_start(
     host: String,
     interval_ms: Option<u64>,
     count: Option<u32>,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
     app: AppHandle,
 ) -> Result<String, TerminalError> {
     // Route by run-location (#2190): a recorded agent preference proxies the ping
@@ -216,7 +216,7 @@ pub async fn network_ping_start(
 
     let app_clone = app.clone();
     let task_id_clone = task_id.clone();
-    let manager_ref = manager.inner() as *const NetworkManager as usize;
+    let manager = Arc::clone(manager.inner());
     let cancel_clone = cancel.clone();
 
     tokio::spawn(async move {
@@ -270,8 +270,7 @@ pub async fn network_ping_start(
             }
         }
 
-        let mgr = unsafe { &*(manager_ref as *const NetworkManager) };
-        mgr.complete_task(&tid);
+        manager.complete_task(&tid);
     });
 
     Ok(task_id)
@@ -281,7 +280,7 @@ pub async fn network_ping_start(
 #[tauri::command]
 pub fn network_ping_stop(
     task_id: String,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.cancel_task(&task_id)
 }
@@ -305,7 +304,7 @@ pub async fn network_ping_sweep(
     timeout_ms: Option<u64>,
     concurrency: Option<usize>,
     resolve_hostnames: Option<bool>,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
     app: AppHandle,
 ) -> Result<String, TerminalError> {
     let targets = port_scan::parse_target_spec(&host)
@@ -315,7 +314,7 @@ pub async fn network_ping_sweep(
 
     let app_clone = app.clone();
     let task_id_clone = task_id.clone();
-    let manager_ref = manager.inner() as *const NetworkManager as usize;
+    let manager = Arc::clone(manager.inner());
     let cancel_clone = cancel.clone();
 
     tokio::spawn(async move {
@@ -367,9 +366,9 @@ pub async fn network_ping_sweep(
             }
         }
 
-        // SAFETY: manager is Tauri managed state which outlives all tasks.
-        let mgr = unsafe { &*(manager_ref as *const NetworkManager) };
-        mgr.complete_task(&tid);
+        // The owned `Arc<NetworkManager>` clone keeps the manager alive for
+        // exactly as long as this task needs it.
+        manager.complete_task(&tid);
     });
 
     Ok(task_id)
@@ -379,7 +378,7 @@ pub async fn network_ping_sweep(
 #[tauri::command]
 pub fn network_ping_sweep_cancel(
     task_id: String,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.cancel_task(&task_id)
 }
@@ -449,7 +448,7 @@ pub async fn network_dns_lookup(
     hostname: String,
     record_type: String,
     server: Option<String>,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<serde_json::Value, TerminalError> {
     // Validate the record type locally so the error is identical regardless of
     // where the lookup runs.
@@ -497,7 +496,7 @@ pub fn network_open_ports() -> Result<serde_json::Value, TerminalError> {
 pub async fn network_traceroute(
     host: String,
     max_hops: Option<u8>,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
     app: AppHandle,
 ) -> Result<String, TerminalError> {
     // Route by run-location (#2190): a recorded agent preference proxies the
@@ -511,7 +510,7 @@ pub async fn network_traceroute(
 
     let app_clone = app.clone();
     let task_id_clone = task_id.clone();
-    let manager_ref = manager.inner() as *const NetworkManager as usize;
+    let manager = Arc::clone(manager.inner());
 
     tokio::spawn(async move {
         let app = app_clone;
@@ -559,8 +558,7 @@ pub async fn network_traceroute(
             }
         }
 
-        let mgr = unsafe { &*(manager_ref as *const NetworkManager) };
-        mgr.complete_task(&tid);
+        manager.complete_task(&tid);
     });
 
     Ok(task_id)
@@ -570,7 +568,7 @@ pub async fn network_traceroute(
 #[tauri::command]
 pub fn network_traceroute_cancel(
     task_id: String,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.cancel_task(&task_id)
 }
@@ -587,7 +585,7 @@ pub fn network_wol_send(
     mac: String,
     broadcast: String,
     port: u16,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     match manager.resolve_tool_location(agent_tools::tool::WOL)? {
         ResolvedLocation::Agent(agent_id) => {
@@ -607,7 +605,7 @@ pub fn network_wol_send(
 /// List saved WoL devices.
 #[tauri::command]
 pub fn network_wol_devices_list(
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<Vec<WolDevice>, TerminalError> {
     Ok(manager.list_wol_devices())
 }
@@ -616,7 +614,7 @@ pub fn network_wol_devices_list(
 #[tauri::command]
 pub fn network_wol_device_save(
     device: WolDevice,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.save_wol_device(device)
 }
@@ -625,7 +623,7 @@ pub fn network_wol_device_save(
 #[tauri::command]
 pub fn network_wol_device_delete(
     device_id: String,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.delete_wol_device(&device_id)
 }
@@ -646,7 +644,7 @@ pub fn network_http_monitor_start(
     expected_status: Option<u16>,
     timeout_ms: Option<u64>,
     run_location: Option<RunLocation>,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<String, TerminalError> {
     let config = HttpMonitorConfig::new(
         url,
@@ -667,7 +665,7 @@ pub fn network_http_monitor_start(
 pub fn set_http_monitor_run_location(
     monitor_id: String,
     run_location: RunLocation,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.set_http_monitor_run_location(&monitor_id, run_location)
 }
@@ -677,7 +675,7 @@ pub fn set_http_monitor_run_location(
 #[tauri::command]
 pub fn network_http_monitor_stop(
     monitor_id: String,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.stop_http_monitor(&monitor_id)
 }
@@ -687,7 +685,7 @@ pub fn network_http_monitor_stop(
 #[tauri::command]
 pub fn network_http_monitor_remove(
     monitor_id: String,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.remove_http_monitor(&monitor_id)
 }
@@ -696,7 +694,7 @@ pub fn network_http_monitor_remove(
 #[tauri::command]
 pub fn network_http_monitor_pause(
     monitor_id: String,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.pause_http_monitor(&monitor_id)
 }
@@ -705,7 +703,7 @@ pub fn network_http_monitor_pause(
 #[tauri::command]
 pub fn network_http_monitor_resume(
     monitor_id: String,
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.resume_http_monitor(&monitor_id)
 }
@@ -716,7 +714,7 @@ pub fn network_http_monitor_resume(
 /// group (#1147). Reuses the same teardown as app shutdown.
 #[tauri::command]
 pub fn network_http_monitor_stop_all(
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<(), TerminalError> {
     manager.stop_all_http_monitors();
     Ok(())
@@ -725,7 +723,7 @@ pub fn network_http_monitor_stop_all(
 /// List all HTTP monitors and their current state.
 #[tauri::command]
 pub fn network_http_monitor_list(
-    manager: State<'_, NetworkManager>,
+    manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<Vec<HttpMonitorState>, TerminalError> {
     Ok(manager.list_http_monitors())
 }
@@ -737,7 +735,7 @@ pub fn network_http_monitor_list(
 /// the core `Service` trait — so it appears here with its schema and
 /// capabilities.
 #[tauri::command]
-pub fn network_services_list(manager: State<'_, NetworkManager>) -> Vec<ServiceInfo> {
+pub fn network_services_list(manager: State<'_, Arc<NetworkManager>>) -> Vec<ServiceInfo> {
     manager.available_services()
 }
 

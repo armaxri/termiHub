@@ -1453,4 +1453,30 @@ mod tests {
         assert!(mgr.pause_http_monitor("does-not-exist").is_err());
         assert!(mgr.resume_http_monitor("does-not-exist").is_err());
     }
+
+    /// Regression for TAURI-002: background tasks must reach the manager through
+    /// an owned `Arc<NetworkManager>` clone moved into the task — not a `State`
+    /// reference laundered through a `usize` pointer. This exercises that exact
+    /// pattern (clone the `Arc`, `move` it into a spawned task, complete the
+    /// task from inside) and asserts the bookkeeping still works.
+    #[tokio::test]
+    async fn owned_arc_clone_completes_task_from_spawned_task() {
+        let manager = Arc::new(NetworkManager::new());
+        let (task_id, _cancel) = manager.register_task();
+
+        // The clone is what the network commands now move into `tokio::spawn`.
+        let task_manager = Arc::clone(&manager);
+        let tid = task_id.clone();
+        tokio::spawn(async move {
+            task_manager.complete_task(&tid);
+        })
+        .await
+        .expect("spawned task joins");
+
+        // The task removed itself, so cancelling the same id now reports it gone.
+        assert!(
+            manager.cancel_task(&task_id).is_err(),
+            "completed task must no longer be registered"
+        );
+    }
 }
