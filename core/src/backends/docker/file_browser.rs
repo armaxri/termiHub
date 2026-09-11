@@ -236,6 +236,13 @@ impl FileBrowser for DockerFileBrowser {
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
+        // Reject an oversized file before streaming its base64 into memory
+        // (CORE-013): the `base64` exec accumulates the whole (~1.33x) stream plus
+        // the decoded buffer, so a multi-GB / hostile file would OOM the app.
+        // `stat` first and reject cleanly above the shared cap.
+        let meta = self.stat(path).await?;
+        crate::files::check_read_size(meta.size)?;
+
         let output = exec_command(&self.client, &self.container_id, vec!["base64", path]).await?;
 
         // base64 decode

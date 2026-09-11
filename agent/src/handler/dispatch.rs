@@ -329,6 +329,9 @@ fn map_file_error(e: FileError) -> ErrorObjectOwned {
         FileError::NotFound(msg) => rpc_err(errors::FILE_NOT_FOUND, msg),
         FileError::PermissionDenied(msg) => rpc_err(errors::PERMISSION_DENIED, msg),
         FileError::OperationFailed(msg) => rpc_err(errors::FILE_OPERATION_FAILED, msg),
+        // A rejected oversized read (CORE-013) surfaces as an operation failure
+        // carrying the clean "file too large" message rather than a crash.
+        FileError::TooLarge { .. } => rpc_err(errors::FILE_OPERATION_FAILED, e.to_string()),
         FileError::NotSupported => rpc_err(errors::FILE_BROWSING_NOT_SUPPORTED, e.to_string()),
         FileError::Io(e) => rpc_err(errors::FILE_OPERATION_FAILED, e.to_string()),
     }

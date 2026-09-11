@@ -241,16 +241,37 @@ impl FileBrowser for SftpFileBrowser {
             .as_ref()
             .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
 
-        let mut file = state
+        // Reject an oversized file up front so a multi-GB / hostile file is never
+        // streamed into memory (CORE-013). `stat` may not report a size (returns
+        // `None`), in which case the bounded read below is the backstop.
+        if let Ok(meta) = state.sftp.metadata(path).await {
+            if let Some(size) = meta.size {
+                crate::files::check_read_size(size)?;
+            }
+        }
+
+        let file = state
             .sftp
             .open(path)
             .await
             .map_err(|e| FileError::OperationFailed(format!("open failed: {e}")))?;
 
+        // Defense-in-depth: cap the streaming read at the limit regardless of what
+        // `stat` advertised, so a server that under-reports its size cannot slip a
+        // huge file past the up-front check. Read at most `limit + 1` bytes; going
+        // past the limit means the file exceeds the cap.
+        let limit = crate::files::MAX_REMOTE_READ_BYTES;
         let mut data = Vec::new();
-        file.read_to_end(&mut data)
+        file.take(limit + 1)
+            .read_to_end(&mut data)
             .await
             .map_err(|e| FileError::OperationFailed(format!("read failed: {e}")))?;
+        if data.len() as u64 > limit {
+            return Err(FileError::TooLarge {
+                size: data.len() as u64,
+                limit,
+            });
+        }
 
         Ok(data)
     }
