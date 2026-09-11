@@ -410,6 +410,44 @@ pub(crate) fn build_volume_binds(volumes: &[VolumeMount]) -> Vec<String> {
         .collect()
 }
 
+/// Best-effort teardown of a container started during a failed `connect`
+/// (CORE-009).
+///
+/// `connect` starts the container before wiring up the interactive exec; a
+/// failure in a later step returns early without storing a `ConnectedState`, so
+/// `disconnect` — the only other teardown path — never runs. Without this the
+/// started container leaks on the host, and repeated failed connects pile them
+/// up. Stop and force-remove are both best-effort: errors are logged, never
+/// propagated, so the caller still sees the original connect failure. `t: 5`
+/// mirrors the stop timeout used by `disconnect`.
+async fn cleanup_container(client: &bollard::Docker, container_id: &str) {
+    if let Err(e) = client
+        .stop_container(container_id, Some(StopContainerOptions { t: 5 }))
+        .await
+    {
+        warn!(
+            container_id = %container_id,
+            "Failed to stop container during failed-connect cleanup: {e}"
+        );
+    }
+
+    if let Err(e) = client
+        .remove_container(
+            container_id,
+            Some(RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            }),
+        )
+        .await
+    {
+        warn!(
+            container_id = %container_id,
+            "Failed to remove container during failed-connect cleanup: {e}"
+        );
+    }
+}
+
 #[async_trait::async_trait]
 impl ConnectionType for Docker {
     fn type_id(&self) -> &str {
@@ -709,115 +747,136 @@ impl ConnectionType for Docker {
 
         info!(container_id = %container_id, "Container started");
 
-        // Create an interactive exec instance with the shell. When a working
-        // directory is configured, start the exec there so the shell opens
-        // `cd`'d into it — this is how a directory-mount container spawn (#1372)
-        // lands the user in the bind-mounted directory without echoing a `cd`.
-        let exec_config = CreateExecOptions {
-            attach_stdin: Some(true),
-            attach_stdout: Some(true),
-            attach_stderr: Some(true),
-            tty: Some(true),
-            cmd: Some(vec![shell]),
-            working_dir: config.working_directory.clone(),
-            ..Default::default()
-        };
+        // The container is now running. Every step below can fail, and until a
+        // `ConnectedState` is stored `disconnect` will not run — so any error
+        // from here on must tear the started container down first, or a failed
+        // connect leaks a running container on the host (CORE-009). The exec
+        // setup is run in a helper block whose error path calls `cleanup_container`.
+        let setup: Result<ConnectedState, SessionError> = async {
+            // Create an interactive exec instance with the shell. When a working
+            // directory is configured, start the exec there so the shell opens
+            // `cd`'d into it — this is how a directory-mount container spawn (#1372)
+            // lands the user in the bind-mounted directory without echoing a `cd`.
+            let exec_config = CreateExecOptions {
+                attach_stdin: Some(true),
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                tty: Some(true),
+                cmd: Some(vec![shell]),
+                working_dir: config.working_directory.clone(),
+                ..Default::default()
+            };
 
-        let exec_response = client
-            .create_exec(&container_id, exec_config)
-            .await
-            .map_err(|e| SessionError::SpawnFailed(format!("Failed to create exec: {e}")))?;
+            let exec_response = client
+                .create_exec(&container_id, exec_config)
+                .await
+                .map_err(|e| SessionError::SpawnFailed(format!("Failed to create exec: {e}")))?;
 
-        let exec_id = exec_response.id;
-        debug!(exec_id = %exec_id, "Exec instance created");
+            let exec_id = exec_response.id;
+            debug!(exec_id = %exec_id, "Exec instance created");
 
-        // Start the exec instance.
-        let start_config = StartExecOptions {
-            detach: false,
-            ..Default::default()
-        };
+            // Start the exec instance.
+            let start_config = StartExecOptions {
+                detach: false,
+                ..Default::default()
+            };
 
-        let exec_result = client
-            .start_exec(&exec_id, Some(start_config))
-            .await
-            .map_err(|e| SessionError::SpawnFailed(format!("Failed to start exec: {e}")))?;
+            let exec_result = client
+                .start_exec(&exec_id, Some(start_config))
+                .await
+                .map_err(|e| SessionError::SpawnFailed(format!("Failed to start exec: {e}")))?;
 
-        let alive = Arc::new(AtomicBool::new(true));
+            let alive = Arc::new(AtomicBool::new(true));
 
-        // Set up stdin channel.
-        let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+            // Set up stdin channel.
+            let (stdin_tx, mut stdin_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
 
-        match exec_result {
-            StartExecResults::Attached { mut output, input } => {
-                // Spawn reader task: forwards exec output to the output channel.
-                let alive_clone = alive.clone();
-                let output_tx_clone = self.output_tx.clone();
-                tokio::spawn(async move {
-                    while alive_clone.load(Ordering::SeqCst) {
-                        match output.next().await {
-                            Some(Ok(log_output)) => {
-                                let bytes = log_output.into_bytes();
-                                if bytes.is_empty() {
-                                    continue;
+            match exec_result {
+                StartExecResults::Attached { mut output, input } => {
+                    // Spawn reader task: forwards exec output to the output channel.
+                    let alive_clone = alive.clone();
+                    let output_tx_clone = self.output_tx.clone();
+                    tokio::spawn(async move {
+                        while alive_clone.load(Ordering::SeqCst) {
+                            match output.next().await {
+                                Some(Ok(log_output)) => {
+                                    let bytes = log_output.into_bytes();
+                                    if bytes.is_empty() {
+                                        continue;
+                                    }
+                                    // Clone the sender out of the lock before awaiting.
+                                    let sender =
+                                        output_tx_clone.lock().ok().and_then(|guard| guard.clone());
+                                    if let Some(sender) = sender {
+                                        if sender.send(bytes.to_vec()).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                    // No subscriber yet — discard output and keep reading.
                                 }
-                                // Clone the sender out of the lock before awaiting.
-                                let sender =
-                                    output_tx_clone.lock().ok().and_then(|guard| guard.clone());
-                                if let Some(sender) = sender {
-                                    if sender.send(bytes.to_vec()).await.is_err() {
+                                Some(Err(e)) => {
+                                    warn!("Docker exec output error: {e}");
+                                    break;
+                                }
+                                None => break,
+                            }
+                        }
+                        alive_clone.store(false, Ordering::SeqCst);
+                    });
+
+                    // Spawn stdin writer task: forwards stdin channel to exec input.
+                    let alive_clone = alive.clone();
+                    tokio::spawn(async move {
+                        let mut input = input;
+                        while alive_clone.load(Ordering::SeqCst) {
+                            match stdin_rx.recv().await {
+                                Some(data) => {
+                                    if input.write_all(&data).await.is_err() {
+                                        break;
+                                    }
+                                    if input.flush().await.is_err() {
                                         break;
                                     }
                                 }
-                                // No subscriber yet — discard output and keep reading.
+                                None => break,
                             }
-                            Some(Err(e)) => {
-                                warn!("Docker exec output error: {e}");
-                                break;
-                            }
-                            None => break,
                         }
-                    }
-                    alive_clone.store(false, Ordering::SeqCst);
-                });
+                    });
+                }
+                StartExecResults::Detached => {
+                    return Err(SessionError::SpawnFailed(
+                        "Exec started in detached mode unexpectedly".to_string(),
+                    ));
+                }
+            }
 
-                // Spawn stdin writer task: forwards stdin channel to exec input.
-                let alive_clone = alive.clone();
-                tokio::spawn(async move {
-                    let mut input = input;
-                    while alive_clone.load(Ordering::SeqCst) {
-                        match stdin_rx.recv().await {
-                            Some(data) => {
-                                if input.write_all(&data).await.is_err() {
-                                    break;
-                                }
-                                if input.flush().await.is_err() {
-                                    break;
-                                }
-                            }
-                            None => break,
-                        }
-                    }
-                });
-            }
-            StartExecResults::Detached => {
-                return Err(SessionError::SpawnFailed(
-                    "Exec started in detached mode unexpectedly".to_string(),
-                ));
-            }
+            Ok(ConnectedState {
+                client: client.clone(),
+                container_id: container_id.clone(),
+                exec_id,
+                remove_on_exit: config.remove_on_exit,
+                alive,
+                stdin_tx,
+            })
         }
+        .await;
+
+        // If any step after `start_container` failed, tear down the started
+        // container before surfacing the error so a partial connect never leaks
+        // a running container on the host (CORE-009).
+        let state = match setup {
+            Ok(state) => state,
+            Err(e) => {
+                cleanup_container(&client, &container_id).await;
+                return Err(e);
+            }
+        };
 
         // Create file browser provider.
         self.file_browser_provider =
             Some(DockerFileBrowser::new(client.clone(), container_id.clone()));
 
-        self.state = Some(ConnectedState {
-            client,
-            container_id,
-            exec_id,
-            remove_on_exit: config.remove_on_exit,
-            alive,
-            stdin_tx,
-        });
+        self.state = Some(state);
 
         Ok(())
     }
