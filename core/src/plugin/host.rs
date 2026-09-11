@@ -34,8 +34,8 @@
 //!
 //! [`PluginConnectionType`]: super::connection::PluginConnectionType
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use libloading::{Library, Symbol};
@@ -63,6 +63,40 @@ pub enum HostError {
     /// under the plugin's `backend/` directory.
     #[error("no backend library found in `{0}`")]
     LibraryNotFound(PathBuf),
+
+    /// More than one file under `backend/` matches the current platform's
+    /// dynamic-library extension, so which one to load is ambiguous. A directory
+    /// scan has no defined order, so silently picking one is nondeterministic and
+    /// a swap vector; the package must ship exactly one library per platform.
+    #[error("ambiguous backend library in `{dir}`: {names} both match `.{ext}`; ship exactly one")]
+    AmbiguousLibrary {
+        /// The `backend/` directory scanned.
+        dir: PathBuf,
+        /// The current platform's dynamic-library extension.
+        ext: String,
+        /// The colliding candidate file names, sorted, comma-joined.
+        names: String,
+    },
+
+    /// The backend library on disk did not match the signed digest it was
+    /// verified against, re-checked immediately before load — its bytes changed
+    /// between verification and load (a verify-then-load TOCTOU). Refused rather
+    /// than loaded.
+    #[error("backend library `{path}` failed its pre-load integrity check")]
+    LibraryDigestMismatch {
+        /// The library path whose bytes did not match.
+        path: PathBuf,
+        /// The signed digest expected.
+        expected: String,
+        /// The digest actually computed from the on-disk file.
+        actual: String,
+    },
+
+    /// The extracted plugin carries a `signature.json`, but re-verifying it over
+    /// the extracted files at load time failed (tampered content or a broken
+    /// signature). The plugin is refused rather than loaded.
+    #[error("plugin signature re-verification failed before load: {0}")]
+    SignatureReverifyFailed(String),
 
     /// The dynamic library could not be opened (missing dependency, wrong
     /// architecture, corrupt file, …).
@@ -265,22 +299,46 @@ impl LoadedLibrary {
 
 /// Locate the backend dynamic library inside a plugin directory.
 ///
-/// Looks in `<plugin_dir>/backend/` for the first file whose extension matches
-/// the current platform's dynamic-library extension
+/// Looks in `<plugin_dir>/backend/` for the file whose extension matches the
+/// current platform's dynamic-library extension
 /// ([`std::env::consts::DLL_EXTENSION`] — `dll` / `so` / `dylib`). A package may
 /// ship all three; this picks the one this OS can load.
+///
+/// Selection is **deterministic** and **ambiguity-rejecting** (CORE-034): a
+/// `read_dir` scan has no defined order, so returning the *first* match made
+/// which library loaded unpredictable when more than one matched — both a
+/// reproducibility problem and a swap vector. Candidates are collected and
+/// sorted; exactly one match is returned, and two-or-more matches for the same
+/// platform extension are refused as [`HostError::AmbiguousLibrary`] rather than
+/// guessed.
 pub fn find_backend_library(plugin_dir: &Path) -> Result<PathBuf, HostError> {
     let backend_dir = plugin_dir.join("backend");
     let ext = std::env::consts::DLL_EXTENSION;
     let entries = std::fs::read_dir(&backend_dir)
         .map_err(|_| HostError::LibraryNotFound(backend_dir.clone()))?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some(ext) {
-            return Ok(path);
-        }
+    let mut candidates: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some(ext))
+        .collect();
+    // Deterministic order regardless of the filesystem's scan order.
+    candidates.sort();
+    if candidates.len() > 1 {
+        let names = candidates
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(HostError::AmbiguousLibrary {
+            dir: backend_dir,
+            ext: ext.to_owned(),
+            names,
+        });
     }
-    Err(HostError::LibraryNotFound(backend_dir))
+    candidates
+        .into_iter()
+        .next()
+        .ok_or(HostError::LibraryNotFound(backend_dir))
 }
 
 /// Open a plugin backend library, validate its ABI version, and resolve its
@@ -296,7 +354,42 @@ pub fn find_backend_library(plugin_dir: &Path) -> Result<PathBuf, HostError> {
 ///
 /// On any failure the (partially) opened library is dropped, so a rejected
 /// plugin leaves nothing loaded.
-pub fn load_backend_library(library_path: &Path) -> Result<Arc<LoadedLibrary>, HostError> {
+///
+/// # Verify-then-load TOCTOU (CORE-034)
+///
+/// When `expected_digest` is `Some`, the file at `library_path` is re-hashed and
+/// compared against that signed digest **immediately before** `Library::new`,
+/// refusing with [`HostError::LibraryDigestMismatch`] if the bytes on disk are
+/// not the ones that were verified. This narrows the window in which a file
+/// swapped in after the install-time verification could be loaded.
+///
+/// It does **not** fully close it: `libloading` re-opens the library **by path**,
+/// so a swap racing the sub-instruction gap between this hash and the `dlopen` is
+/// an irreducible residual (portably loading from an already-verified file handle
+/// or from memory is not available). `expected_digest = None` (an unsigned,
+/// accepted-risk plugin) performs no binding, exactly as before.
+pub fn load_backend_library(
+    library_path: &Path,
+    expected_digest: Option<&str>,
+) -> Result<Arc<LoadedLibrary>, HostError> {
+    // Re-check the exact bytes about to be loaded against the digest they were
+    // signature-verified with, as late as possible before the open. This is the
+    // verify-then-load TOCTOU guard (CORE-034); the residual check→open race is
+    // documented above.
+    if let Some(expected) = expected_digest {
+        // Fail closed: if the file about to be loaded cannot even be read to hash
+        // it, the integrity check cannot be honored, so refuse rather than load.
+        let actual = super::signature::sha256_file(library_path)
+            .unwrap_or_else(|source| format!("<unreadable: {source}>"));
+        if actual != expected {
+            return Err(HostError::LibraryDigestMismatch {
+                path: library_path.to_owned(),
+                expected: expected.to_owned(),
+                actual,
+            });
+        }
+    }
+
     // SAFETY: opening an arbitrary library runs its initializers; this is the
     // irreducible unsafety of a plugin host. Failures are returned, not panicked.
     let library = unsafe { Library::new(library_path) }.map_err(|source| HostError::Open {
@@ -380,6 +473,98 @@ pub fn load_backend_library(library_path: &Path) -> Result<Arc<LoadedLibrary>, H
         shutdown,
         library,
     }))
+}
+
+/// Determine the signed digest the backend library must match at load time, by
+/// re-verifying the *extracted* plugin against its co-located `signature.json`
+/// (CORE-034).
+///
+/// Returns `Ok(None)` when the plugin is unsigned (no `signature.json`), so there
+/// is nothing to bind — the load proceeds unbound, exactly as before. For a
+/// signed plugin it recomputes the digest of every extracted file, re-runs the
+/// full Ed25519 verification over that map (so a tampered file, an altered digest
+/// map, or a broken signature is caught), and returns the signed digest of the
+/// library about to be loaded.
+///
+/// This is a best-effort integrity re-check, not a complete TOCTOU close: it
+/// proves the extracted tree is internally consistent with a valid signature over
+/// these exact bytes, but does **not** re-check the signing key against the trust
+/// store, so an attacker who can rewrite the plugin directory *and* re-sign with a
+/// key the store would accept is not stopped here (the install-time trust gate is
+/// the anchor for that). Tracked for a fuller fix (persisting the install-verified
+/// digest / an immutable trust anchor / loading from verified bytes).
+fn signed_backend_digest(plugin_dir: &Path, lib_path: &Path) -> Result<Option<String>, HostError> {
+    let sig_path = plugin_dir.join(super::signature::SIGNATURE_FILE_NAME);
+    let raw = match std::fs::read(&sig_path) {
+        Ok(bytes) => bytes,
+        // No signature entry → unsigned plugin, nothing to bind.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(HostError::SignatureReverifyFailed(e.to_string())),
+    };
+    let sig: super::signature::PackageSignature = serde_json::from_slice(&raw)
+        .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+
+    let actual = digest_extracted_dir(plugin_dir)?;
+    super::signature::verify(&sig, &actual)
+        .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+
+    let rel = lib_path
+        .strip_prefix(plugin_dir)
+        .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+    let key = rel_to_slash(rel);
+    sig.files.get(&key).cloned().map(Some).ok_or_else(|| {
+        HostError::SignatureReverifyFailed(format!(
+            "backend library `{key}` is not covered by the signature"
+        ))
+    })
+}
+
+/// Recursively digest every file under `plugin_dir` except the signature entry,
+/// keyed by its `/`-joined path relative to `plugin_dir` — the exact key shape
+/// the signed `files` map uses — so the result can be fed to
+/// [`super::signature::verify`].
+fn digest_extracted_dir(plugin_dir: &Path) -> Result<BTreeMap<String, String>, HostError> {
+    let mut out = BTreeMap::new();
+    let mut stack = vec![plugin_dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = std::fs::read_dir(&dir)
+            .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+            let path = entry.path();
+            if file_type.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let rel = path
+                .strip_prefix(plugin_dir)
+                .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+            let key = rel_to_slash(rel);
+            // The signature entry itself is not part of the signed set.
+            if key == super::signature::SIGNATURE_FILE_NAME {
+                continue;
+            }
+            let digest = super::signature::sha256_file(&path)
+                .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+            out.insert(key, digest);
+        }
+    }
+    Ok(out)
+}
+
+/// Join a relative path's normal components with `/`, matching the archive-entry
+/// key form used by the signature's `files` map (which always uses `/`).
+fn rel_to_slash(rel: &Path) -> String {
+    rel.components()
+        .filter_map(|c| match c {
+            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Render a NUL-terminated symbol constant as a printable name for errors.
@@ -549,7 +734,12 @@ impl PluginHost {
 
         let plugin_dir = self.root.join(&id);
         let lib_path = find_backend_library(&plugin_dir)?;
-        let library = load_backend_library(&lib_path)?;
+        // Bind the exact library bytes about to be loaded to the signed digest
+        // (CORE-034): re-verify the extracted plugin against its co-located
+        // signature and re-check the library file immediately before `dlopen`. An
+        // unsigned plugin yields `None` — nothing to bind — as before.
+        let expected_digest = signed_backend_digest(&plugin_dir, &lib_path)?;
+        let library = load_backend_library(&lib_path, expected_digest.as_deref())?;
 
         // Translate the plugin's declared `configSchema` into the form schema the
         // dynamic connection editor renders (#1999). Derived once here and cloned
@@ -951,10 +1141,125 @@ mod tests {
     }
 
     #[test]
+    fn find_backend_library_rejects_ambiguous_candidates() {
+        // Two files matching the current platform's extension make the pick
+        // ambiguous: rather than load a nondeterministically-chosen one, the
+        // loader refuses (CORE-034).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let backend = tmp.path().join("backend");
+        std::fs::create_dir_all(&backend).unwrap();
+        let ext = std::env::consts::DLL_EXTENSION;
+        std::fs::write(backend.join(format!("liba.{ext}")), b"").unwrap();
+        std::fs::write(backend.join(format!("libb.{ext}")), b"").unwrap();
+
+        match find_backend_library(tmp.path()) {
+            Err(HostError::AmbiguousLibrary { names, .. }) => {
+                // Deterministically sorted, so both names appear in a stable order.
+                assert!(names.contains(&format!("liba.{ext}")));
+                assert!(names.contains(&format!("libb.{ext}")));
+            }
+            other => panic!("expected AmbiguousLibrary, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn find_backend_library_single_match_is_deterministic() {
+        // Exactly one candidate for this platform is returned unambiguously,
+        // regardless of any non-matching siblings.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let backend = tmp.path().join("backend");
+        std::fs::create_dir_all(&backend).unwrap();
+        let ext = std::env::consts::DLL_EXTENSION;
+        std::fs::write(backend.join(format!("libonly.{ext}")), b"").unwrap();
+        std::fs::write(backend.join("notes.txt"), b"").unwrap();
+
+        let found = find_backend_library(tmp.path()).unwrap();
+        assert_eq!(
+            found.file_name().unwrap(),
+            format!("libonly.{ext}").as_str()
+        );
+    }
+
+    #[test]
+    fn load_rejects_a_library_swapped_after_verification() {
+        // Regression for the CORE-034 verify-then-load TOCTOU: the bytes on disk
+        // are re-hashed immediately before load and must match the signed digest.
+        // A file swapped in after verification is caught before `dlopen`. (No real
+        // dylib is needed — the mismatch is detected before the open is attempted.)
+        let tmp = tempfile::TempDir::new().unwrap();
+        let lib = tmp.path().join("libfoo.so");
+        std::fs::write(&lib, b"original verified bytes").unwrap();
+        let expected = super::super::signature::sha256_digest(b"original verified bytes");
+
+        // An attacker replaces the file between verification and load.
+        std::fs::write(&lib, b"evil swapped bytes").unwrap();
+
+        match load_backend_library(&lib, Some(&expected)) {
+            Err(HostError::LibraryDigestMismatch { expected: e, .. }) => {
+                assert_eq!(e, expected);
+            }
+            Err(other) => panic!("expected LibraryDigestMismatch, got {other:?}"),
+            Ok(_) => panic!("a swapped library must not load"),
+        }
+    }
+
+    #[test]
+    fn signed_backend_digest_none_for_unsigned_plugin() {
+        // No signature.json → unsigned → nothing to bind (Ok(None)), so the load
+        // path is unchanged for unsigned plugins.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plugin_dir = tmp.path();
+        let lib = plugin_dir.join("backend").join("libfoo.so");
+        std::fs::create_dir_all(lib.parent().unwrap()).unwrap();
+        std::fs::write(&lib, b"bytes").unwrap();
+        assert_eq!(signed_backend_digest(plugin_dir, &lib).unwrap(), None);
+    }
+
+    #[test]
+    fn signed_backend_digest_returns_signed_lib_digest_and_detects_tampering() {
+        use super::super::signature::{sha256_digest, sign_digests, SIGNATURE_FILE_NAME};
+        use ed25519_dalek::SigningKey;
+        use std::collections::BTreeMap;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let plugin_dir = tmp.path();
+        let backend = plugin_dir.join("backend");
+        std::fs::create_dir_all(&backend).unwrap();
+        let manifest = b"{\"id\":\"p\"}";
+        let lib_bytes = b"\x7fELF real library bytes";
+        std::fs::write(plugin_dir.join("manifest.json"), manifest).unwrap();
+        let lib = backend.join("libp.so");
+        std::fs::write(&lib, lib_bytes).unwrap();
+
+        // Sign the exact extracted set (keys use `/`).
+        let mut files = BTreeMap::new();
+        files.insert("manifest.json".to_owned(), sha256_digest(manifest));
+        files.insert("backend/libp.so".to_owned(), sha256_digest(lib_bytes));
+        let key = SigningKey::from_bytes(&[9u8; 32]);
+        let sig = sign_digests(&key, files, "t".to_owned());
+        std::fs::write(
+            plugin_dir.join(SIGNATURE_FILE_NAME),
+            serde_json::to_vec(&sig).unwrap(),
+        )
+        .unwrap();
+
+        // The signed digest of the library is returned.
+        let digest = signed_backend_digest(plugin_dir, &lib).unwrap().unwrap();
+        assert_eq!(digest, sha256_digest(lib_bytes));
+
+        // Tamper with an extracted file: re-verification now fails.
+        std::fs::write(&lib, b"tampered").unwrap();
+        assert!(matches!(
+            signed_backend_digest(plugin_dir, &lib),
+            Err(HostError::SignatureReverifyFailed(_))
+        ));
+    }
+
+    #[test]
     fn open_nonexistent_library_is_open_error() {
         let missing = Path::new("/definitely/not/a/real/plugin.so");
         // `LoadedLibrary` is not `Debug`, so match rather than `unwrap_err`.
-        match load_backend_library(missing) {
+        match load_backend_library(missing, None) {
             Err(err @ HostError::Open { .. }) => assert!(!err.is_incompatible()),
             Err(other) => panic!("expected Open error, got {other:?}"),
             Ok(_) => panic!("expected loading a nonexistent library to fail"),

@@ -76,7 +76,7 @@ async fn plugin_host_round_trip() {
     std::fs::copy(&built, &noinit).expect("copy init-less artifact");
 
     // --- 1. Successful load + metadata read from plugin_init. ---
-    let lib = load_backend_library(&good).expect("the good plugin should load");
+    let lib = load_backend_library(&good, None).expect("the good plugin should load");
     assert_eq!(lib.info().id, "test-echo");
     assert_eq!(lib.info().name, "Test Echo");
     assert_eq!(lib.info().version, "0.1.0");
@@ -116,7 +116,7 @@ async fn plugin_host_round_trip() {
     // SAFETY (env): single-threaded within this test; no other code reads the
     // variable, and it is removed immediately after the load.
     std::env::set_var("TERMIHUB_TEST_PLUGIN_ABI", "99");
-    let result = load_backend_library(&good);
+    let result = load_backend_library(&good, None);
     std::env::remove_var("TERMIHUB_TEST_PLUGIN_ABI");
     match result {
         Err(HostError::IncompatibleAbi { expected, found }) => {
@@ -128,7 +128,7 @@ async fn plugin_host_round_trip() {
     }
 
     // --- 4. Missing required symbol is a clean error. ---
-    match load_backend_library(&noinit) {
+    match load_backend_library(&noinit, None) {
         Err(HostError::MissingSymbol(name)) => assert_eq!(name, "termihub_plugin_init"),
         Err(other) => panic!("expected MissingSymbol, got {other:?}"),
         Ok(_) => panic!("expected MissingSymbol, got a successful load"),
