@@ -7,11 +7,26 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
+
+/// Current schema version stamped into every freshly written `state.json`.
+///
+/// A file written before this field existed deserializes with `version == 0`
+/// (`#[serde(default)]` → `u32::default()`), which lets a future migration hook
+/// tell a pre-versioning file apart from a current one. The full migration
+/// framework is tracked in #2744; today the read is deliberately tolerant (any
+/// version loads) and [`AgentState::save_to`] always re-stamps this value.
+pub const CURRENT_STATE_VERSION: u32 = 1;
 
 /// Persisted agent state written to `state.json`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentState {
+    /// Schema version of the on-disk file (see [`CURRENT_STATE_VERSION`]).
+    ///
+    /// `#[serde(default)]` so a pre-versioning `state.json` still loads (it reads
+    /// back as `0`); [`AgentState::save_to`] always writes the current version.
+    #[serde(default)]
+    pub version: u32,
     pub sessions: HashMap<String, PersistedSession>,
     /// Self-update bookkeeping (last GitHub poll time, staged pending update).
     ///
@@ -19,6 +34,16 @@ pub struct AgentState {
     /// the self-update feature still loads (the field defaults to empty).
     #[serde(default)]
     pub update: UpdateState,
+}
+
+impl Default for AgentState {
+    fn default() -> Self {
+        Self {
+            version: CURRENT_STATE_VERSION,
+            sessions: HashMap::new(),
+            update: UpdateState::default(),
+        }
+    }
 }
 
 /// Self-update state persisted across agent restarts (#1355).
@@ -76,25 +101,58 @@ pub struct PersistedSession {
 impl AgentState {
     /// Load state from a specific path.
     ///
-    /// Returns an empty state if the file is missing or corrupt.
+    /// A **missing** file is normal → returns empty state quietly. A file that
+    /// is **present but unparseable** is never silently discarded: its bytes are
+    /// quarantined to a `state.json.corrupt-<n>` sibling (preserving every
+    /// recoverable session for a human/tool to salvage) and a loud `error!` names
+    /// the backup path, before continuing with empty state. This upholds the
+    /// "persistent sessions survive an agent restart" guarantee — a single bad
+    /// byte must not vaporize the whole recovery map (AGT-017, PER-006).
     pub fn load_from(path: &PathBuf) -> Self {
         match std::fs::read_to_string(path) {
             Ok(contents) => match serde_json::from_str::<AgentState>(&contents) {
                 Ok(state) => {
                     debug!(
-                        "Loaded agent state with {} sessions from {}",
+                        "Loaded agent state (version {}) with {} sessions from {}",
+                        state.version,
                         state.sessions.len(),
                         path.display()
                     );
                     state
                 }
                 Err(e) => {
-                    warn!("Failed to parse agent state from {}: {}", path.display(), e);
+                    // Present-but-corrupt: quarantine the bytes rather than drop
+                    // every recoverable session on the floor.
+                    match backup_corrupt_state(path) {
+                        Some(backup) => error!(
+                            "Agent state at {} is corrupt ({}); backed up to {} and started with \
+                             empty state — recoverable sessions are preserved in the backup",
+                            path.display(),
+                            e,
+                            backup.display()
+                        ),
+                        None => error!(
+                            "Agent state at {} is corrupt ({}) and could NOT be backed up; \
+                             starting with empty state",
+                            path.display(),
+                            e
+                        ),
+                    }
                     Self::default()
                 }
             },
-            Err(_) => {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 debug!("No agent state file at {}", path.display());
+                Self::default()
+            }
+            Err(e) => {
+                // The file exists but could not be read (e.g. permissions). Do
+                // not silently pretend there were no sessions — surface it.
+                warn!(
+                    "Failed to read agent state from {}: {}; starting with empty state",
+                    path.display(),
+                    e
+                );
                 Self::default()
             }
         }
@@ -112,7 +170,13 @@ impl AgentState {
                 return;
             }
         }
-        match serde_json::to_string_pretty(self) {
+        // Always re-stamp the current schema version on write: the in-memory
+        // state is by definition the current shape, so a re-saved legacy file
+        // (which loaded as version 0) is transparently upgraded to the current
+        // version. Full migration handling is tracked in #2744.
+        let mut to_write = self.clone();
+        to_write.version = CURRENT_STATE_VERSION;
+        match serde_json::to_string_pretty(&to_write) {
             Ok(json) => {
                 // Atomic write (temp + rename) so a crash mid-write can never
                 // truncate state.json and lose the persisted session state (#2366).
@@ -139,6 +203,40 @@ impl AgentState {
     pub fn config_dir() -> PathBuf {
         config_dir()
     }
+}
+
+/// Quarantine a corrupt `state.json` by renaming it aside, preserving its bytes.
+///
+/// Picks the lowest free `state.json.corrupt-<n>` sibling (starting at 1) so
+/// repeated corruptions never clobber an earlier backup, and uses a plain
+/// rename — no timestamp — so the operation is deterministic and needs no clock.
+/// The rename also clears the live path, letting the next [`AgentState::save_to`]
+/// write a fresh file. Returns the backup path on success, or `None` if no free
+/// slot was found or the rename failed (the caller then logs and proceeds with
+/// empty state).
+fn backup_corrupt_state(path: &Path) -> Option<PathBuf> {
+    let file_name = path.file_name()?.to_string_lossy().into_owned();
+    // Cap the search so a directory already littered with backups cannot loop
+    // unboundedly; 1000 quarantined copies is far past any realistic case.
+    for n in 1..=1000u32 {
+        let candidate = path.with_file_name(format!("{file_name}.corrupt-{n}"));
+        if candidate.exists() {
+            continue;
+        }
+        match std::fs::rename(path, &candidate) {
+            Ok(()) => return Some(candidate),
+            Err(e) => {
+                warn!(
+                    "Failed to quarantine corrupt agent state {} to {}: {}",
+                    path.display(),
+                    candidate.display(),
+                    e
+                );
+                return None;
+            }
+        }
+    }
+    None
 }
 
 /// Platform config directory for the agent.
@@ -218,6 +316,111 @@ mod tests {
 
         let state = AgentState::load_from(&path);
         assert!(state.sessions.is_empty());
+    }
+
+    #[test]
+    fn corrupt_file_is_backed_up_not_discarded() {
+        // A corrupt state.json must never be silently dropped: its bytes are
+        // quarantined to a `.corrupt-<n>` sibling so recoverable sessions can be
+        // salvaged (AGT-017, PER-006). Regression test — without the backup this
+        // fails (no sibling file, original gone).
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        let bad = r#"{ "sessions": { truncated..."#;
+        std::fs::write(&path, bad).unwrap();
+
+        let state = AgentState::load_from(&path);
+        assert!(state.sessions.is_empty(), "corrupt load must be empty");
+
+        // The bytes were preserved verbatim in the backup, not lost.
+        let backup = tmp.path().join("state.json.corrupt-1");
+        assert!(
+            backup.exists(),
+            "corrupt file must be backed up, not discarded"
+        );
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), bad);
+    }
+
+    #[test]
+    fn repeated_corruption_keeps_earlier_backups() {
+        // A second corruption must not clobber the first quarantined copy — the
+        // counter advances so both sets of bytes survive.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        std::fs::write(&path, "first-corrupt").unwrap();
+        AgentState::load_from(&path);
+        std::fs::write(&path, "second-corrupt").unwrap();
+        AgentState::load_from(&path);
+
+        let b1 = tmp.path().join("state.json.corrupt-1");
+        let b2 = tmp.path().join("state.json.corrupt-2");
+        assert_eq!(std::fs::read_to_string(&b1).unwrap(), "first-corrupt");
+        assert_eq!(std::fs::read_to_string(&b2).unwrap(), "second-corrupt");
+    }
+
+    #[test]
+    fn save_writes_version_and_leaves_no_temp_file() {
+        // A save round-trips, stamps the current schema version into the file,
+        // and leaves no partial/temp artifact behind (atomic write, #2366).
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        let mut state = AgentState::default();
+        state
+            .sessions
+            .insert("s".to_string(), make_session("local", Some("/tmp/s.sock")));
+        state.save_to(&path);
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(json["version"], CURRENT_STATE_VERSION);
+
+        let loaded = AgentState::load_from(&path);
+        assert_eq!(loaded.version, CURRENT_STATE_VERSION);
+        assert_eq!(loaded.sessions.len(), 1);
+
+        // No leftover temp/partial files — only state.json remains.
+        let names: Vec<String> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["state.json".to_string()], "got {names:?}");
+    }
+
+    #[test]
+    fn legacy_versionless_state_loads_as_version_zero_and_upgrades_on_save() {
+        // A pre-versioning state.json (no `version` key) still loads: it reads
+        // back as version 0 so a future migration hook (#2744) can spot it, and a
+        // re-save transparently upgrades it to the current version.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "sessions": {
+                "sess-1": {
+                  "type_id": "shell",
+                  "title": "Legacy",
+                  "created_at": "2026-02-20T10:00:00Z",
+                  "daemon_socket": "/tmp/legacy.sock",
+                  "settings": {}
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = AgentState::load_from(&path);
+        assert_eq!(loaded.version, 0, "versionless file must read back as 0");
+        assert_eq!(loaded.sessions.len(), 1);
+
+        // Re-saving stamps the current version without losing sessions.
+        loaded.save_to(&path);
+        let reloaded = AgentState::load_from(&path);
+        assert_eq!(reloaded.version, CURRENT_STATE_VERSION);
+        assert_eq!(reloaded.sessions.len(), 1);
     }
 
     #[test]
