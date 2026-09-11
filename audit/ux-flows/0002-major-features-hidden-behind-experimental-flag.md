@@ -9,7 +9,8 @@ subsystem: src/components/ActivityBar
 evidence:
   - src/components/ActivityBar/ActivityBar.tsx:64
   - src/components/ActivityBar/ActivityBar.tsx:120
-status: open
+status: fixed
+resolution: "#2762"
 ---
 
 ## What

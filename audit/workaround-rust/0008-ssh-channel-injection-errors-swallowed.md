@@ -12,7 +12,8 @@ evidence:
   - core/src/backends/ssh/connector.rs:293
   - core/src/backends/wsl.rs:465
   - core/src/backends/wsl.rs:466
-status: open
+status: fixed
+resolution: "#2763 — ssh env/x11/wsl errors logged (secret-safe)"
 ---
 
 ## What

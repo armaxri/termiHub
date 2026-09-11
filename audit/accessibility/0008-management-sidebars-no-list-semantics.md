@@ -9,7 +9,8 @@ subsystem: src/components/EmbeddedServerSidebar, src/components/SidebarListItem
 evidence:
   - src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.tsx:163
   - src/components/SidebarListItem/SidebarListItem.tsx:84
-status: open
+status: fixed
+resolution: "#2764 — sidebar tree/roving semantics"
 ---
 
 ## What

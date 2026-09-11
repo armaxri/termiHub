@@ -9,7 +9,8 @@ subsystem: src/components/ActivityBar
 evidence:
   - src/components/ActivityBar/ActivityBar.tsx:160
   - README.md:423
-status: open
+status: fixed
+resolution: "#2762 — experimental-features signpost"
 ---
 
 ## What

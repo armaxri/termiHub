@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/local_shell
 evidence:
   - core/src/backends/local_shell.rs:549
-status: open
+status: in-progress
+resolution: "#2765 — lock released before blocking send (in CI)"
 ---
 
 ## What

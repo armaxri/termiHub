@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/telnet
 evidence:
   - core/src/backends/telnet.rs:286
-status: open
+status: fixed
+resolution: "#2767 — telnet DNS resolution"
 ---
 
 ## What

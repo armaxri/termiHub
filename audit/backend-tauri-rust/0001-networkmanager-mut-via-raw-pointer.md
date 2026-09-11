@@ -10,7 +10,7 @@ evidence:
   - src-tauri/src/lib.rs:576
   - src-tauri/src/network/mod.rs:218
   - src-tauri/src/network/mod.rs:119
-status: in-progress
+status: fixed
 resolution: "#2761 — construct-then-manage; unsafe cast removed"
 ---
 

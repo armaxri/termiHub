@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/commands/network.rs:273
   - src-tauri/src/commands/network.rs:371
   - src-tauri/src/commands/network.rs:562
-status: open
+status: fixed
+resolution: "#2766 — Arc-managed; usize pointer laundering removed"
 ---
 
 ## What

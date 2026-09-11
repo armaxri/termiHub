@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:1179
-status: open
+status: fixed
+resolution: "#2764 — terminal screen-reader toggle"
 ---
 
 ## What

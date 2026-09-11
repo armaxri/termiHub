@@ -11,7 +11,8 @@ evidence:
   - src/components/Sidebar/ConnectionList.tsx:1681
   - src/store/appStore.ts:2817
   - src/components/Sidebar/ConnectionList.tsx:1299
-status: open
+status: fixed
+resolution: "#2762 — connections empty-state + CTA"
 ---
 
 ## What

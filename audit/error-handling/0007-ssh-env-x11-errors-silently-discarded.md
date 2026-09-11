@@ -10,7 +10,8 @@ evidence:
   - core/src/backends/ssh/connector.rs:256
   - core/src/backends/ssh/x11.rs:348
   - core/src/backends/ssh/x11.rs:357
-status: open
+status: fixed
+resolution: "#2763"
 ---
 
 ## What

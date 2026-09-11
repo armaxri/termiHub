@@ -10,7 +10,8 @@ evidence:
   - src/styles/variables.css:138
   - src/components/ui/ui.css:35
   - src/styles/global.css:91
-status: open
+status: fixed
+resolution: "#2764 — stronger focus ring"
 ---
 
 ## What
