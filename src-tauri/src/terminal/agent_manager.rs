@@ -16,6 +16,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, Runtime, Wry};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::sync::oneshot;
+use tokio::task::AbortHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -228,6 +229,21 @@ pub(crate) enum AgentIoCommand {
 struct AgentConnection {
     command_tx: UnboundedSender<AgentIoCommand>,
     alive: Arc<AtomicBool>,
+    /// True while the I/O task is inside its reconnect path (transport down).
+    /// Shared with the task so the send-side (`send_session_input`) can drop
+    /// terminal input at the source during an outage instead of queuing it for a
+    /// post-reconnect replay (CONC-014) — bounding the otherwise-unbounded input
+    /// backlog and keeping stale keystrokes out of the recovered session.
+    reconnecting: Arc<AtomicBool>,
+    /// Force-stop handle for the per-agent I/O task (CONC-009). The normal
+    /// shutdown remains the cooperative `Disconnect` command; this is the
+    /// guaranteed fallback so `disconnect_agent`, connect-time eviction, and prune
+    /// can abort a task that is wedged (e.g. parked in a blocking reconnect) and
+    /// could never observe `Disconnect`. Only ever fired on teardown/replacement —
+    /// never during normal operation — so it cannot interrupt live protocol
+    /// framing on a healthy agent. Dropping the handle (self-reap) does not abort
+    /// the task, so the task's own self-termination paths are unaffected.
+    io_task: AbortHandle,
     capabilities: AgentCapabilities,
     /// Agent-assigned id for this desktop's own client connection (from the
     /// `initialize` result). Lets [`list_connections`](AgentConnectionManager::list_connections)
@@ -554,6 +570,10 @@ fn prune_dead_agents_from_map(agents: &Mutex<HashMap<String, AgentConnection>>) 
         guard.retain(|id, conn| {
             let alive = conn.alive.load(Ordering::SeqCst);
             if !alive {
+                // CONC-009: force-stop as a fallback. A dead entry's task has
+                // usually already returned (abort is a no-op), but a wedged task
+                // that flipped `alive` false without exiting is force-stopped here.
+                conn.io_task.abort();
                 removed.push(id.clone());
             }
             alive
@@ -645,7 +665,13 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     agent_id
                 )));
             }
-            agents.remove(agent_id);
+            // CONC-009: force-stop the outgoing task as a fallback. A "dead" entry
+            // usually means the task already returned (abort is then a harmless
+            // no-op), but a task wedged in a blocking op would otherwise leak its
+            // SSH session behind the fresh connection replacing it here.
+            if let Some(old) = agents.remove(agent_id) {
+                old.io_task.abort();
+            }
         }
 
         // Register a cancellation token so a Cancel while connecting can abort
@@ -854,9 +880,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
 
             // 4. Spawn the async I/O task
             let alive = Arc::new(AtomicBool::new(true));
+            let reconnecting = Arc::new(AtomicBool::new(false));
             let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
 
             let alive_clone = alive.clone();
+            let reconnecting_clone = reconnecting.clone();
             let app_handle_task = app_handle_clone.clone();
             let agent_id_task = agent_id_str.clone();
             let config_task = config_clone.clone();
@@ -867,13 +895,18 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // send reply chunks back through it (#1727). Teardown is driven by an
             // explicit `Disconnect`, so a task-held clone does not mask it.
             let command_tx_task = command_tx.clone();
-            tokio::spawn(async move {
+            // Retain the task's abort handle (CONC-009): the self-held `command_tx`
+            // clone means an all-external-senders-dropped condition can never close
+            // the loop, so a guaranteed force-stop is the only escape hatch for a
+            // wedged task. Kept in the `AgentConnection` and fired only on teardown.
+            let io_task = tokio::spawn(async move {
                 agent_io_task(
                     session,
                     channel,
                     command_rx,
                     command_tx_task,
                     alive_clone,
+                    reconnecting_clone,
                     app_handle_task,
                     agent_id_task,
                     config_task,
@@ -883,7 +916,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     pending_notifications,
                 )
                 .await;
-            });
+            })
+            .abort_handle();
 
             Ok::<_, TerminalError>((
                 capabilities,
@@ -892,6 +926,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 client_id,
                 command_tx,
                 alive,
+                reconnecting,
+                io_task,
             ))
         }));
 
@@ -899,16 +935,24 @@ impl<R: Runtime> AgentConnectionManager<R> {
         // spawned, so no backend `disconnected` is emitted from there — emit it
         // here so the agent returns to `disconnected` (single writer, G1 #1235).
         // Other error paths already emit `disconnected` inline before returning.
-        let (capabilities, agent_version, protocol_version, client_id, command_tx, alive) =
-            match result {
-                Ok(v) => v,
-                Err(e) => {
-                    if cancel_token.is_cancelled() {
-                        emit_agent_state(&self.app_handle, agent_id, "disconnected");
-                    }
-                    return Err(e);
+        let (
+            capabilities,
+            agent_version,
+            protocol_version,
+            client_id,
+            command_tx,
+            alive,
+            reconnecting,
+            io_task,
+        ) = match result {
+            Ok(v) => v,
+            Err(e) => {
+                if cancel_token.is_cancelled() {
+                    emit_agent_state(&self.app_handle, agent_id, "disconnected");
                 }
-            };
+                return Err(e);
+            }
+        };
 
         emit_agent_state(&self.app_handle, agent_id, "connected");
 
@@ -923,6 +967,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
             AgentConnection {
                 command_tx,
                 alive,
+                reconnecting,
+                io_task,
                 capabilities,
                 client_id,
             },
@@ -948,8 +994,17 @@ impl<R: Runtime> AgentConnectionManager<R> {
         self.agent_configs.clear(agent_id);
 
         if let Some(conn) = live {
+            // Cooperative shutdown first: a live task processes `Disconnect` and
+            // returns, dropping its russh session/channel.
             let _ = conn.command_tx.send(AgentIoCommand::Disconnect);
             conn.alive.store(false, Ordering::SeqCst);
+            // CONC-009: guaranteed force-stop fallback. A task parked in a blocking
+            // reconnect can never observe `Disconnect` (it holds its own
+            // `command_tx` clone, so the channel never closes either); the abort is
+            // the only escape hatch. Safe here because the agent is being torn down
+            // for good, so interrupting an in-flight write cannot corrupt any
+            // framing we still care about. A no-op if the task already exited.
+            conn.io_task.abort();
             emit_agent_state(&self.app_handle, agent_id, "disconnected");
             Ok(())
         } else {
@@ -1530,6 +1585,17 @@ impl<R: Runtime> AgentConnectionManager<R> {
             TerminalError::WriteFailed(format!("Agent {} not connected", agent_id))
         })?;
 
+        // CONC-014: drop terminal input while the transport is down. The I/O task
+        // is not draining `command_rx` during a reconnect, so anything queued now
+        // would (a) grow the unbounded channel without bound for the whole outage
+        // and (b) replay stale keystrokes into the recovered remote session once it
+        // reconnects. The tab already shows a reconnecting overlay; discarding input
+        // is the safe behavior. Fire-and-forget, so reporting success is correct —
+        // the keystroke is intentionally not delivered.
+        if conn.reconnecting.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+
         conn.command_tx
             .send(AgentIoCommand::SessionInput {
                 session_id: remote_session_id.to_string(),
@@ -2014,6 +2080,54 @@ fn test_sever_desktop_transport(
     drop(session);
 }
 
+/// Decide which queued I/O commands survive an agent reconnect (CONC-014).
+///
+/// While the transport is down the I/O task cannot drain its command channel, so
+/// input/resize/control commands issued during the outage buffer up. Replaying
+/// buffered terminal **input** into the freshly recovered session is a
+/// correctness/safety hazard — stale keystrokes would land in a remote shell the
+/// user saw as disconnected — so `SessionInput` is dropped outright. `SessionResize`
+/// is coalesced to the latest dimensions per session so the recovered PTY is sized
+/// correctly without replaying every intermediate drag. Every other command
+/// (registrations, requests, agent-forward, disconnect) is control and is preserved
+/// in its original order. The send-side gate (`send_session_input` while
+/// `reconnecting`) already drops the bulk of the input; this handles the residue
+/// that slipped in before the flag was set and enforces the resize policy.
+fn filter_reconnect_backlog(drained: Vec<AgentIoCommand>) -> Vec<AgentIoCommand> {
+    let mut kept: Vec<AgentIoCommand> = Vec::new();
+    // Latest resize per session, tracked in first-seen order for determinism.
+    let mut resize_order: Vec<String> = Vec::new();
+    let mut latest_resize: HashMap<String, (u16, u16)> = HashMap::new();
+    for cmd in drained {
+        match cmd {
+            AgentIoCommand::SessionInput { .. } => {
+                // Stale keystrokes — never replay into the recovered session.
+            }
+            AgentIoCommand::SessionResize {
+                session_id,
+                cols,
+                rows,
+            } => {
+                if !latest_resize.contains_key(&session_id) {
+                    resize_order.push(session_id.clone());
+                }
+                latest_resize.insert(session_id, (cols, rows));
+            }
+            other => kept.push(other),
+        }
+    }
+    for session_id in resize_order {
+        if let Some((cols, rows)) = latest_resize.remove(&session_id) {
+            kept.push(AgentIoCommand::SessionResize {
+                session_id,
+                cols,
+                rows,
+            });
+        }
+    }
+    kept
+}
+
 /// Owns the russh `SshSession` and `Channel` exclusively. Concurrently polls
 /// incoming SSH data and outgoing commands using `tokio::select!`. Routes
 /// JSON-RPC responses to waiting callers and notifications to registered
@@ -2025,6 +2139,7 @@ async fn agent_io_task<R: Runtime>(
     mut command_rx: UnboundedReceiver<AgentIoCommand>,
     command_tx: UnboundedSender<AgentIoCommand>,
     alive: Arc<AtomicBool>,
+    reconnecting: Arc<AtomicBool>,
     app_handle: AppHandle<R>,
     agent_id: String,
     config: RemoteAgentConfig,
@@ -2274,6 +2389,14 @@ async fn agent_io_task<R: Runtime>(
             break;
         }
 
+        // CONC-014: the transport is down and this task will not drain `command_rx`
+        // again until the reconnect resolves. Flag it so `send_session_input` drops
+        // terminal input at the source for the duration of the outage rather than
+        // letting it pile up unbounded and replay stale keystrokes into the
+        // recovered session. Cleared after the post-reconnect backlog is filtered
+        // below (or left set on the failure path, where the entry is reaped anyway).
+        reconnecting.store(true, Ordering::SeqCst);
+
         // TEST-ONLY (#2573): a synthetic in-process sever breaks the inner loop
         // without the socket having died, so release the desktop russh transport
         // eagerly — the peer's sshd handler then sees the abrupt EOF at once,
@@ -2385,6 +2508,25 @@ async fn agent_io_task<R: Runtime>(
                     )
                     .await;
                 }
+
+                // CONC-014: filter the command backlog that accumulated in the
+                // narrow window between the transport dying and `reconnecting` being
+                // set (the send-side gate drops the bulk of it, but a few frames can
+                // slip in). Terminal `SessionInput` is dropped so stale keystrokes
+                // are never replayed into the recovered session; `SessionResize` is
+                // coalesced to the latest per session so the recovered PTY still gets
+                // correct dimensions; all control commands are preserved in order.
+                // Survivors are re-queued through `command_tx` and processed normally
+                // by the resumed loop. Clear the flag only after this drain so no new
+                // input races in ahead of it.
+                let mut drained = Vec::new();
+                while let Ok(cmd) = command_rx.try_recv() {
+                    drained.push(cmd);
+                }
+                for cmd in filter_reconnect_backlog(drained) {
+                    let _ = command_tx.send(cmd);
+                }
+                reconnecting.store(false, Ordering::SeqCst);
 
                 emit_agent_state(&app_handle, &agent_id, "connected");
                 info!("Agent {}: reconnected successfully", agent_id);
@@ -3552,7 +3694,8 @@ mod tests {
         let settings = AgentSettings::default();
         let params = build_initialize_params(&settings, &[]);
         assert_eq!(
-            params["clientVersion"], env!("CARGO_PKG_VERSION"),
+            params["clientVersion"],
+            env!("CARGO_PKG_VERSION"),
             "clientVersion must track the desktop crate version, not a literal"
         );
         // The protocol/client identity fields stay as declared.
@@ -3577,12 +3720,28 @@ mod tests {
     ///
     /// Used by tests that need to keep the command *receiver* alive (e.g. the
     /// CONC-003 timeout test, which sends a request the receiver never answers).
+    /// A valid but inert [`AbortHandle`] for map-manipulation tests that never
+    /// drive the task. Spawned on a process-wide throwaway runtime that is never
+    /// polled, so the task never runs and aborting the handle is a harmless no-op.
+    fn dummy_abort_handle() -> AbortHandle {
+        use std::sync::OnceLock;
+        static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+        let rt = RT.get_or_init(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("build throwaway test runtime")
+        });
+        rt.spawn(std::future::pending::<()>()).abort_handle()
+    }
+
     fn make_agent_connection_with_tx(
         command_tx: UnboundedSender<AgentIoCommand>,
     ) -> AgentConnection {
         AgentConnection {
             command_tx,
             alive: Arc::new(AtomicBool::new(true)),
+            reconnecting: Arc::new(AtomicBool::new(false)),
+            io_task: dummy_abort_handle(),
             capabilities: AgentCapabilities {
                 connection_types: vec![],
                 max_sessions: 0,
@@ -3693,6 +3852,215 @@ mod tests {
         assert!(!session_outputs.contains_key("gone"));
         assert!(monitoring_outputs.contains_key("survivor"));
         assert!(!monitoring_outputs.contains_key("gone"));
+    }
+
+    // ── I/O-task force-stop (CONC-009) ───────────────────────────────────
+
+    /// Build an [`AgentConnection`] whose I/O task is a real spawned future that
+    /// ignores its command channel and never returns — a stand-in for a task
+    /// wedged in a blocking op that can only be stopped by an abort. Returns the
+    /// connection plus the task's `JoinHandle` so the test can observe the abort.
+    fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<()>) {
+        let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+        let command_tx_conn = command_tx.clone();
+        // The task holds its own command sender (mirroring the real io_task's
+        // `command_tx_task`) and parks forever, so neither a dropped external
+        // sender nor a `Disconnect` can ever end it — only an abort can.
+        let join = tokio::spawn(async move {
+            let _held_rx = command_rx;
+            let _held_tx = command_tx;
+            std::future::pending::<()>().await;
+        });
+        let conn = AgentConnection {
+            command_tx: command_tx_conn,
+            alive: Arc::new(AtomicBool::new(true)),
+            reconnecting: Arc::new(AtomicBool::new(false)),
+            io_task: join.abort_handle(),
+            capabilities: AgentCapabilities {
+                connection_types: vec![],
+                max_sessions: 0,
+                available_shells: vec![],
+                available_serial_ports: vec![],
+                docker_available: false,
+                available_docker_images: vec![],
+                monitoring_supported: false,
+                agent_version: String::new(),
+            },
+            client_id: String::new(),
+        };
+        (conn, join)
+    }
+
+    /// CONC-009: `disconnect_agent` force-stops a wedged I/O task via the retained
+    /// abort handle. The cooperative `Disconnect` can never reach a task parked in
+    /// a blocking reconnect (it also holds its own `command_tx` clone, so the
+    /// channel never closes), so without the abort the task and its SSH session
+    /// would leak. The abort is the guaranteed fallback.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disconnect_agent_aborts_wedged_io_task() {
+        let app = tauri::test::mock_app();
+        let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+
+        let (conn, join) = make_wedged_agent_connection();
+        {
+            let mut agents = manager.agents.lock().unwrap();
+            agents.insert("agent-1".to_string(), conn);
+        }
+
+        manager
+            .disconnect_agent("agent-1")
+            .expect("disconnect must succeed for a connected agent");
+
+        // The task must actually stop — awaiting its handle resolves with a
+        // cancellation, not by hanging for the timeout.
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(2), join)
+            .await
+            .expect("wedged io_task must be aborted, not left running");
+        assert!(
+            joined.expect_err("task was aborted").is_cancelled(),
+            "the io_task must be stopped via abort"
+        );
+    }
+
+    /// CONC-009: pruning a dead-but-wedged entry also force-stops its task. A task
+    /// that flipped `alive` false without exiting would otherwise linger; the
+    /// prune sweep aborts it as it removes the map entry.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn prune_dead_agents_aborts_wedged_task() {
+        let agents: AgentMap = Arc::new(Mutex::new(HashMap::new()));
+        let (conn, join) = make_wedged_agent_connection();
+        conn.alive.store(false, Ordering::SeqCst); // mark dead so prune sweeps it
+        {
+            let mut guard = agents.lock().unwrap();
+            guard.insert("dead-1".to_string(), conn);
+        }
+
+        let removed = prune_dead_agents_from_map(&agents);
+        assert_eq!(removed, vec!["dead-1".to_string()]);
+
+        let joined = tokio::time::timeout(std::time::Duration::from_secs(2), join)
+            .await
+            .expect("pruned wedged io_task must be aborted, not left running");
+        assert!(
+            joined.expect_err("task was aborted").is_cancelled(),
+            "the io_task must be stopped via abort on prune"
+        );
+    }
+
+    // ── Reconnect input handling (CONC-014) ──────────────────────────────
+
+    /// CONC-014: the command backlog that accumulates during an outage is filtered
+    /// on reconnect — terminal `SessionInput` is dropped (never replayed into the
+    /// recovered session), `SessionResize` is coalesced to the latest per session,
+    /// and control commands are preserved in order.
+    #[test]
+    fn filter_reconnect_backlog_drops_input_and_coalesces_resize() {
+        let backlog = vec![
+            AgentIoCommand::SessionInput {
+                session_id: "s1".to_string(),
+                data: b"stale-keystroke".to_vec(),
+            },
+            AgentIoCommand::SessionResize {
+                session_id: "s1".to_string(),
+                cols: 80,
+                rows: 24,
+            },
+            AgentIoCommand::UnregisterSession {
+                session_id: "s1".to_string(),
+            },
+            AgentIoCommand::SessionInput {
+                session_id: "s1".to_string(),
+                data: b"more-stale".to_vec(),
+            },
+            AgentIoCommand::SessionResize {
+                session_id: "s1".to_string(),
+                cols: 120,
+                rows: 40,
+            },
+            AgentIoCommand::SessionResize {
+                session_id: "s2".to_string(),
+                cols: 10,
+                rows: 10,
+            },
+        ];
+
+        let kept = filter_reconnect_backlog(backlog);
+
+        // No stale input survives.
+        assert!(
+            !kept
+                .iter()
+                .any(|c| matches!(c, AgentIoCommand::SessionInput { .. })),
+            "buffered SessionInput must never be replayed after reconnect"
+        );
+        // The control command is preserved.
+        assert_eq!(
+            kept.iter()
+                .filter(|c| matches!(c, AgentIoCommand::UnregisterSession { .. }))
+                .count(),
+            1,
+            "control commands must survive the reconnect filter"
+        );
+        // Resize is coalesced to the latest per session (s1 → 120x40, s2 → 10x10).
+        let mut resizes: Vec<(String, u16, u16)> = kept
+            .iter()
+            .filter_map(|c| match c {
+                AgentIoCommand::SessionResize {
+                    session_id,
+                    cols,
+                    rows,
+                } => Some((session_id.clone(), *cols, *rows)),
+                _ => None,
+            })
+            .collect();
+        resizes.sort();
+        assert_eq!(
+            resizes,
+            vec![("s1".to_string(), 120, 40), ("s2".to_string(), 10, 10),],
+            "only the latest resize per session must be kept"
+        );
+    }
+
+    /// CONC-014: `send_session_input` drops terminal input at the source while the
+    /// agent is reconnecting, so it never enters the unbounded queue nor replays
+    /// into the recovered session. Once reconnected, input flows normally again.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn send_session_input_dropped_while_reconnecting() {
+        let app = tauri::test::mock_app();
+        let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+
+        let (command_tx, mut command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+        let reconnecting = Arc::new(AtomicBool::new(true));
+        {
+            let mut conn = make_agent_connection_with_tx(command_tx);
+            conn.reconnecting = reconnecting.clone();
+            let mut agents = manager.agents.lock().unwrap();
+            agents.insert("agent-1".to_string(), conn);
+        }
+
+        // While reconnecting: the call succeeds (fire-and-forget) but enqueues
+        // nothing — the keystroke is intentionally discarded.
+        manager
+            .send_session_input("agent-1", "sess", b"typed-during-outage")
+            .expect("send must not error while reconnecting");
+        assert!(
+            command_rx.try_recv().is_err(),
+            "input typed during a reconnect must be dropped, not queued for replay"
+        );
+
+        // Once reconnected the normal input path is exercised exactly as before.
+        reconnecting.store(false, Ordering::SeqCst);
+        manager
+            .send_session_input("agent-1", "sess", b"live-input")
+            .expect("send must succeed once reconnected");
+        match command_rx.try_recv() {
+            Ok(AgentIoCommand::SessionInput { session_id, data }) => {
+                assert_eq!(session_id, "sess");
+                assert_eq!(data, b"live-input");
+            }
+            Ok(_) => panic!("expected a SessionInput command, got a different variant"),
+            Err(e) => panic!("expected input to be queued once reconnected, got {e:?}"),
+        }
     }
 
     // ── Cancellable connect (G1, #1235) ──────────────────────────────────
