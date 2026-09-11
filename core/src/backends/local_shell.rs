@@ -546,17 +546,24 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                     Ok(0) => break,
                     Ok(n) => {
                         let data = buf[..n].to_vec();
-                        let guard = output_tx_clone.lock().ok();
-                        if let Some(ref guard) = guard {
-                            if let Some(ref sender) = **guard {
-                                // blocking_send blocks if channel full (backpressure).
-                                let _ = sender.blocking_send(data);
-                            } else {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
+                        // Clone the sender out of the guard and DROP the lock
+                        // BEFORE the blocking send. `blocking_send` parks this
+                        // thread under backpressure (full channel), so holding
+                        // `output_tx` across it would stall any path that needs
+                        // the same lock (teardown clearing the sender, or a
+                        // disconnect) behind a reader that is itself blocked —
+                        // a lockup where the session can neither drain nor be
+                        // torn down (CORE-016). Senders are cheap to clone.
+                        let sender = match output_tx_clone.lock() {
+                            Ok(guard) => match guard.as_ref() {
+                                Some(sender) => sender.clone(),
+                                None => break,
+                            },
+                            Err(_) => break,
+                        };
+                        // Lock released above; the blocking send below can no
+                        // longer stall other holders of `output_tx`.
+                        let _ = sender.blocking_send(data);
                     }
                     Err(_) => break,
                 }
@@ -1347,6 +1354,80 @@ mod tests {
         );
 
         shell.disconnect().await.ok();
+    }
+
+    /// Regression for CORE-016. The PTY reader thread must NOT hold the
+    /// `output_tx` mutex while parked in `blocking_send` under backpressure
+    /// (a full output channel with a slow/absent consumer). If it did, any
+    /// other path needing that lock — teardown clearing the sender, or a
+    /// `disconnect()` — would stall forever behind the blocked reader, a
+    /// lockup where the session can neither drain nor be torn down.
+    ///
+    /// This drives the mock reader into exactly that state: it subscribes but
+    /// never drains, feeds more chunks than the channel holds so the reader
+    /// parks in `blocking_send`, then asserts the `output_tx` lock is still
+    /// acquirable. With the pre-fix code (guard held across the send) the lock
+    /// is held permanently and this assertion never succeeds; with the fix
+    /// (clone the sender out, drop the guard, then send) it is free.
+    #[tokio::test]
+    async fn reader_releases_output_lock_across_blocking_send() {
+        let mock = MockLocalShellSpawner::new();
+        let reader_tx = mock.reader_tx.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+
+        // Subscribe but deliberately NEVER drain: the output channel
+        // (capacity OUTPUT_CHANNEL_CAPACITY) fills and stays full.
+        let rx = shell.subscribe_output();
+
+        // Feed more chunks than the channel can hold from a background thread.
+        // The reader forwards the first OUTPUT_CHANNEL_CAPACITY successfully,
+        // then parks in `blocking_send` on the full channel. The feeder ends up
+        // parked on the rendezvous send once the reader stops receiving — that
+        // is expected; teardown below drains it out.
+        let feeder = std::thread::spawn(move || {
+            for _ in 0..(OUTPUT_CHANNEL_CAPACITY + 4) {
+                let sender = reader_tx.lock().unwrap().clone();
+                match sender {
+                    Some(tx) => {
+                        if tx.send(vec![b'x']).is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+        });
+
+        // Give the reader time to fill the channel and park in `blocking_send`.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        // The reader is now parked on a full channel. `output_tx` must still be
+        // acquirable — poll `try_lock` for a bounded window. Pre-fix, the reader
+        // holds the guard for the duration of the (never-returning) send, so
+        // this never succeeds and the test fails at the deadline.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut acquired = false;
+        while std::time::Instant::now() < deadline {
+            if shell.output_tx.try_lock().is_ok() {
+                acquired = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            acquired,
+            "output_tx must be acquirable while the reader is parked in \
+             blocking_send — the lock must not be held across the send (CORE-016)"
+        );
+
+        // Teardown: dropping the receiver unblocks the parked send, and
+        // disconnect clears the sender so the reader observes None and exits;
+        // the feeder then drains out. Keeps the test from leaking parked threads.
+        drop(rx);
+        shell.disconnect().await.ok();
+        let _ = feeder.join();
     }
 
     // ── Integration tests (spawn real shells, require PTY) ───────────
