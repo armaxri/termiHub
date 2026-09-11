@@ -809,7 +809,12 @@ impl SessionManager {
                             emitter.fold_connect_failed(&tab_id, &e.to_string());
                         }
                     }
-                    return Err(TerminalError::SpawnFailed(e.to_string()));
+                    // Preserve a genuine auth rejection as the typed `AuthFailed`
+                    // (carrying the locale-independent code) so the frontend's
+                    // destructive stale-credential discard gates on it
+                    // structurally rather than on English message text
+                    // (I18N-001). Non-auth failures keep `SpawnFailed`, unchanged.
+                    return Err(TerminalError::from_session_spawn(e));
                 }
                 (conn, None)
             };

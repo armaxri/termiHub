@@ -45,6 +45,18 @@ pub enum SessionError {
     #[error("Spawn failed: {0}")]
     SpawnFailed(String),
 
+    /// Authentication was genuinely rejected by the remote (wrong password,
+    /// wrong passphrase, or a refused public key).
+    ///
+    /// This is a **typed, locale-independent** discriminant: it is returned only
+    /// when the credentials were rejected, never for a transport/protocol error
+    /// that merely occurred during the authentication exchange. Consumers must
+    /// classify auth failures by matching this variant — never by parsing the
+    /// human-readable message text, which is English today and one localization
+    /// or rewording away from silently misclassifying (I18N-001).
+    #[error("Authentication failed")]
+    AuthFailed,
+
     /// The session configuration is invalid.
     #[error("Invalid config: {0}")]
     InvalidConfig(String),
@@ -100,6 +112,22 @@ mod tests {
 
         let err = SessionError::NotRunning("xyz".into());
         assert_eq!(err.to_string(), "Session not running: xyz");
+    }
+
+    /// The typed auth-failure variant renders a stable human message and is a
+    /// distinct discriminant that callers can match on without parsing text
+    /// (I18N-001).
+    #[test]
+    fn auth_failed_is_a_distinct_typed_variant() {
+        let err = SessionError::AuthFailed;
+        assert_eq!(err.to_string(), "Authentication failed");
+        assert!(matches!(err, SessionError::AuthFailed));
+        // It must NOT collapse into SpawnFailed — a transport failure during the
+        // auth exchange stays SpawnFailed, only a genuine rejection is AuthFailed.
+        assert!(!matches!(
+            SessionError::SpawnFailed("Password auth failed: timeout".into()),
+            SessionError::AuthFailed
+        ));
     }
 
     #[test]
