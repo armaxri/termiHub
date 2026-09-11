@@ -82,9 +82,9 @@ pub struct ListenerOptions {
 }
 
 #[cfg(unix)]
-pub use unix_impl::{connect, LocalSocketListener};
+pub use unix_impl::{connect, ensure_private_dir, LocalSocketListener};
 #[cfg(windows)]
-pub use windows_impl::{connect, LocalSocketListener};
+pub use windows_impl::{connect, current_user_sid_string, LocalSocketListener};
 
 #[cfg(unix)]
 use unix_impl::is_retryable;
@@ -126,7 +126,7 @@ pub async fn connect_with_retry(
 mod unix_impl {
     use super::{BoxedReader, BoxedWriter, ListenerOptions, ListenerSecurity, StaleReclaim};
     use std::io;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use tokio::net::{UnixListener, UnixStream};
 
@@ -161,12 +161,13 @@ mod unix_impl {
         ) -> io::Result<Self> {
             let path = PathBuf::from(address);
 
-            // Security (pre-bind): ensure the socket's parent directory exists
-            // and is restricted to the current user, so the endpoint is only
-            // reachable by its owner.
+            // Security (pre-bind): ensure the socket's parent directory exists,
+            // is restricted to the current user, and is genuinely owned by us
+            // (not a squatted/symlinked directory), so the endpoint is only
+            // reachable by — and bound inside a tree controlled by — its owner.
             if options.security == ListenerSecurity::CurrentUserOnly {
                 if let Some(parent) = path.parent() {
-                    ensure_current_user_dir(parent)?;
+                    ensure_private_dir(parent)?;
                 }
             }
 
@@ -206,9 +207,98 @@ mod unix_impl {
         }
     }
 
-    /// Ensure `dir` exists with mode `0o700`.
-    fn ensure_current_user_dir(dir: &Path) -> io::Result<()> {
+    /// The current process's real user id.
+    fn current_uid() -> u32 {
+        // SAFETY: `getuid` has no preconditions, never fails, and simply returns
+        // the real uid of the calling process.
+        unsafe { libc::getuid() }
+    }
+
+    /// Build a "refusing to use directory" permission error (AGT-020).
+    fn unsafe_dir_error(dir: &Path, reason: String) -> io::Error {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("refusing to use IPC directory {}: {reason}", dir.display()),
+        )
+    }
+
+    /// Assert the per-user endpoint dir's *parent* is not an attacker-squattable
+    /// directory (AGT-020).
+    ///
+    /// The parent (e.g. `/tmp/termihub`) is a shared location. It is safe only
+    /// if we own it, or it is a sticky-bit directory (the `/tmp` model, where a
+    /// non-owner can neither rename nor delete our subdirectory). A plain
+    /// directory owned by another local user is a swap/rename vector, so refuse
+    /// it rather than trusting a leaf created inside it. Uses
+    /// [`symlink_metadata`](std::fs::symlink_metadata) so a symlinked parent is
+    /// rejected, not followed.
+    fn assert_safe_parent(parent: &Path) -> io::Result<()> {
+        let meta = match std::fs::symlink_metadata(parent) {
+            Ok(m) => m,
+            // Nothing we created (e.g. the filesystem root); leave it be.
+            Err(_) => return Ok(()),
+        };
+        if !meta.file_type().is_dir() {
+            return Err(unsafe_dir_error(
+                parent,
+                "parent path is not a directory (possible symlink attack)".to_string(),
+            ));
+        }
+        let sticky = meta.mode() & 0o1000 != 0;
+        if meta.uid() != current_uid() && !sticky {
+            return Err(unsafe_dir_error(
+                parent,
+                format!(
+                    "shared parent is owned by uid {} and is not sticky — refusing a squattable parent",
+                    meta.uid()
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Ensure `dir` exists, is restricted to the current user (`0o700`), and is
+    /// genuinely a private directory **we own** — failing closed on a
+    /// pre-existing directory that another local user squatted or symlinked
+    /// (AGT-020).
+    ///
+    /// Ownership and the not-a-symlink check are verified with
+    /// [`symlink_metadata`](std::fs::symlink_metadata) *before* the directory is
+    /// chmod'd, so a planted symlink is rejected rather than followed (which
+    /// would otherwise chmod the attacker's target) and a foreign-owned
+    /// directory is never trusted. The mode is only checked after we tighten it,
+    /// so a freshly `create_dir_all`'d directory left group-readable by the
+    /// umask is corrected rather than rejected. The shared parent is checked with
+    /// [`assert_safe_parent`].
+    ///
+    /// Shared so the same fail-closed hardening applies both here (listener bind)
+    /// and to the agent's ssh-agent relay directory creation.
+    pub fn ensure_private_dir(dir: &Path) -> io::Result<()> {
         std::fs::create_dir_all(dir)?;
+
+        // Verify ownership + not-a-symlink BEFORE chmod (see doc comment).
+        let meta = std::fs::symlink_metadata(dir)?;
+        if !meta.file_type().is_dir() {
+            return Err(unsafe_dir_error(
+                dir,
+                "path is not a directory (possible symlink attack)".to_string(),
+            ));
+        }
+        if meta.uid() != current_uid() {
+            return Err(unsafe_dir_error(
+                dir,
+                format!(
+                    "owned by uid {} not the current user (uid {})",
+                    meta.uid(),
+                    current_uid()
+                ),
+            ));
+        }
+        if let Some(parent) = dir.parent() {
+            assert_safe_parent(parent)?;
+        }
+
+        // Now safe to tighten to 0o700: we own it and it is a real directory.
         std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
         Ok(())
     }
@@ -366,6 +456,16 @@ mod windows_impl {
         Ok((Box::new(reader), Box::new(writer)))
     }
 
+    /// The current process user's SID in string form (e.g. `S-1-5-21-…`).
+    ///
+    /// Exposed so a caller naming a machine-global resource (a `\\.\pipe\` name)
+    /// can scope it by the real user identity instead of a spoofable env var
+    /// (AGT-020). The pipe's per-user DACL still enforces access; this only makes
+    /// the *name* itself collision-free across users.
+    pub fn current_user_sid_string() -> io::Result<String> {
+        security::current_user_sid_string()
+    }
+
     /// Whether a failed [`connect`] means "endpoint not ready yet" (worth a
     /// retry) rather than a fatal error: the pipe is not yet created
     /// (`ERROR_FILE_NOT_FOUND`) or every instance is momentarily busy
@@ -457,7 +557,7 @@ mod windows_impl {
         }
 
         /// Resolve the current process user's SID into its string form.
-        fn current_user_sid_string() -> io::Result<String> {
+        pub(super) fn current_user_sid_string() -> io::Result<String> {
             // SAFETY: standard token-query FFI sequence; every handle and
             // allocation is released before returning.
             unsafe {
@@ -766,6 +866,71 @@ mod tests {
         );
 
         listener.cleanup();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// AGT-020: a `CurrentUserOnly` bind must refuse to bind inside a directory
+    /// reached through a symlink (an attacker could plant it to redirect the
+    /// endpoint into a directory they control), rather than following it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn current_user_only_rejects_symlinked_dir() {
+        use std::os::unix::fs::symlink;
+
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::temp_dir().join(format!(
+            "termihub-core-ipc-symlink-{}-{n}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&base);
+        let real = base.join("real");
+        let link = base.join("link");
+        std::fs::create_dir_all(&real).expect("create real dir");
+        symlink(&real, &link).expect("create symlink to real dir");
+
+        // The socket's parent directory is the symlink → the ownership check must
+        // reject it before binding.
+        let address = link.join("s.sock").to_string_lossy().into_owned();
+        let result = LocalSocketListener::bind_with_options(
+            &address,
+            ListenerOptions {
+                security: ListenerSecurity::CurrentUserOnly,
+                stale_reclaim: StaleReclaim::Unconditional,
+            },
+        )
+        .await;
+        assert!(
+            result.is_err(),
+            "bind must refuse a symlinked endpoint directory (AGT-020)"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// AGT-020: `ensure_private_dir` creates a fresh directory as `0o700` and
+    /// accepts it (a directory we own with private perms is the normal path).
+    #[cfg(unix)]
+    #[test]
+    fn ensure_private_dir_creates_and_accepts_owned_dir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir =
+            std::env::temp_dir().join(format!("termihub-core-ipc-priv-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        ensure_private_dir(&dir).expect("owned fresh dir must be accepted");
+
+        let mode = std::fs::metadata(&dir)
+            .expect("dir metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o700, "dir must be tightened to 0o700, got {mode:o}");
+
+        // Idempotent: a second call on the now-existing owned dir still succeeds.
+        ensure_private_dir(&dir).expect("second call on owned dir must succeed");
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

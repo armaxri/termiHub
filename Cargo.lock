@@ -7720,6 +7720,7 @@ dependencies = [
  "hex",
  "hickory-resolver",
  "ipnet",
+ "libc",
  "libloading",
  "libunftp",
  "md5",

@@ -151,6 +151,12 @@ reqwest = { version = "0.12", default-features = false, features = [
     "blocking",
 ], optional = true }
 
+[target.'cfg(unix)'.dependencies]
+# Read the real uid (`getuid`) to verify a local-IPC directory is owned by the
+# current user before binding into it, rather than trusting a squattable
+# `/tmp/termihub` — see `ipc::ensure_private_dir` (AGT-020).
+libc = "0.2"
+
 [target.'cfg(windows)'.dependencies]
 # Used to build a per-user DACL for a security-hardened local-IPC listener
 # (the security analog of the Unix socket's 0o700 permissions) — see
