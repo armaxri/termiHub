@@ -116,10 +116,21 @@ impl ConnectionPolicy {
     }
 }
 
+/// Magic tag stamped into every [`BridgeContext`] as a best-effort sanity check
+/// that a raw `ctx` handed back across the ABI really points at one of ours
+/// (CORE-036). It cannot make an arbitrary/wild pointer safe to dereference — the
+/// ABI contract still requires the plugin to pass the exact `ctx` the host gave
+/// it — but it catches a *readable but wrong-type* pointer before the callbacks
+/// interpret its fields. ASCII "thubBRDG".
+const BRIDGE_CONTEXT_MAGIC: u64 = 0x746875_6242524447;
+
 /// Owned context behind a [`PluginHostBridge`]: the session's granted
 /// permissions, its [`ConnectionPolicy`], and the live count of mediated
 /// connections it currently holds open.
 struct BridgeContext {
+    /// Sanity tag; see [`BRIDGE_CONTEXT_MAGIC`]. Kept first so it sits at a fixed
+    /// offset that [`context`] can check before trusting the rest.
+    magic: u64,
     /// The session's granted permissions, checked on every mediated operation.
     permissions: PermissionSet,
     /// The session's connection policy (concurrency ceiling + connect timeout).
@@ -193,6 +204,7 @@ pub fn build_host_bridge_with_policy(
     // and this session's live connection counter. Leaked as a raw pointer to
     // cross the ABI; `bridge_destroy` reclaims it.
     let ctx = Box::into_raw(Box::new(BridgeContext {
+        magic: BRIDGE_CONTEXT_MAGIC,
         permissions,
         policy,
         active_connections: Arc::new(AtomicUsize::new(0)),
@@ -254,17 +266,42 @@ fn scope_error_status(err: &PermissionError) -> PluginStatus {
     }
 }
 
-/// Borrow the boxed [`BridgeContext`] behind a bridge `ctx`.
+/// Borrow the boxed [`BridgeContext`] behind a bridge `ctx`, for the duration of
+/// the current call only.
+///
+/// The borrow argument is a reference to the caller's `ctx` **pointer binding**,
+/// which ties the returned reference's lifetime `'a` to that binding's scope
+/// (CORE-036). The previous signature returned `&'a BridgeContext` with a
+/// caller-chosen, effectively unbounded `'a`, so the borrow checker could not
+/// stop a returned reference from being stored past the FFI call and outliving a
+/// concurrent `bridge_destroy` (a use-after-free). Because every `extern "C"`
+/// callback passes `&ctx` — a borrow of its own stack-local pointer — the
+/// reference this returns cannot escape the callback body.
+///
+/// Returns `None` for a null pointer (checked before any dereference) or one that
+/// fails the [`BRIDGE_CONTEXT_MAGIC`] sanity tag, so a null/wrong-type pointer
+/// from a buggy or malicious plugin is refused rather than dereferenced blindly.
 ///
 /// # Safety
 ///
-/// `ctx` must be a live `*mut BridgeContext` produced by
-/// [`build_host_bridge_with_policy`].
-unsafe fn context<'a>(ctx: *mut core::ffi::c_void) -> &'a BridgeContext {
-    // SAFETY: caller guarantees `ctx` is the leaked `Box<BridgeContext>`; borrowing
-    // it shared is sound because every callback only reads it (the connection
-    // count it holds is an atomic).
-    unsafe { &*ctx.cast::<BridgeContext>() }
+/// A non-null `ctx` must be a live `*mut BridgeContext` produced by
+/// [`build_host_bridge_with_policy`] and must remain valid for the borrow. A wild
+/// (non-null, non-ours) pointer is still undefined behaviour to read — the magic
+/// tag only catches the readable-but-wrong-type case; the ABI contract requires
+/// the plugin to pass back exactly the `ctx` the host gave it.
+unsafe fn context<'a>(ctx: &'a *mut core::ffi::c_void) -> Option<&'a BridgeContext> {
+    if ctx.is_null() {
+        return None;
+    }
+    // SAFETY: caller guarantees a non-null `ctx` is the leaked `Box<BridgeContext>`;
+    // borrowing it shared is sound because every callback only reads it (the
+    // connection count it holds is an atomic). The returned reference is bounded
+    // by `'a` — the borrow of the caller's pointer binding.
+    let cx = unsafe { &*ctx.cast::<BridgeContext>() };
+    if cx.magic != BRIDGE_CONTEXT_MAGIC {
+        return None;
+    }
+    Some(cx)
 }
 
 /// `open_connection` callback: enforce the `network` permission and the session's
@@ -288,8 +325,11 @@ unsafe extern "C" fn bridge_open_connection(
     out_stream: *mut PluginTcpStream,
 ) -> PluginStatus {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract.
-        let cx = unsafe { context(ctx) };
+        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx` is
+        // refused rather than dereferenced; the borrow cannot escape this call.
+        let Some(cx) = (unsafe { context(&ctx) }) else {
+            return PluginStatus::Other;
+        };
         // Runtime enforcement: refuse before touching the network if the plugin
         // never requested `network`.
         if cx.permissions.require(PluginPermission::Network).is_err() {
@@ -335,8 +375,12 @@ unsafe extern "C" fn bridge_read_file(
     out_bytes: *mut FfiOwnedBytes,
 ) -> PluginStatus {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract.
-        let perms = unsafe { &context(ctx).permissions };
+        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx`
+        // is refused rather than dereferenced; the borrow cannot escape this call.
+        let Some(cx) = (unsafe { context(&ctx) }) else {
+            return PluginStatus::Other;
+        };
+        let perms = &cx.permissions;
         // SAFETY: `path` is a valid borrowed `&str` for the call.
         let requested = unsafe { path.as_str() };
         // Runtime enforcement: reject a missing `filesystem` permission or a path
@@ -374,8 +418,12 @@ unsafe extern "C" fn bridge_write_file(
     mode: PluginWriteMode,
 ) -> PluginStatus {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract.
-        let perms = unsafe { &context(ctx).permissions };
+        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx`
+        // is refused rather than dereferenced; the borrow cannot escape this call.
+        let Some(cx) = (unsafe { context(&ctx) }) else {
+            return PluginStatus::Other;
+        };
+        let perms = &cx.permissions;
         // SAFETY: `path`/`data` are valid borrowed views for the call.
         let requested = unsafe { path.as_str() };
         let bytes = unsafe { data.as_slice() };
@@ -414,8 +462,12 @@ unsafe extern "C" fn bridge_stat_path(
     out_meta: *mut PluginFileMetadata,
 ) -> PluginStatus {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract.
-        let perms = unsafe { &context(ctx).permissions };
+        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx`
+        // is refused rather than dereferenced; the borrow cannot escape this call.
+        let Some(cx) = (unsafe { context(&ctx) }) else {
+            return PluginStatus::Other;
+        };
+        let perms = &cx.permissions;
         // SAFETY: `path` is a valid borrowed `&str` for the call.
         let requested = unsafe { path.as_str() };
         let resolved = match perms.check_path(Path::new(requested)) {
@@ -469,8 +521,12 @@ unsafe extern "C" fn bridge_list_dir(
     out_entries: *mut FfiOwnedBytes,
 ) -> PluginStatus {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        // SAFETY: upheld by this function's contract.
-        let perms = unsafe { &context(ctx).permissions };
+        // SAFETY: upheld by this function's contract. A null/wrong-type `ctx`
+        // is refused rather than dereferenced; the borrow cannot escape this call.
+        let Some(cx) = (unsafe { context(&ctx) }) else {
+            return PluginStatus::Other;
+        };
+        let perms = &cx.permissions;
         // SAFETY: `path` is a valid borrowed `&str` for the call.
         let requested = unsafe { path.as_str() };
         let resolved = match perms.check_path(Path::new(requested)) {
@@ -968,6 +1024,45 @@ mod tests {
         entries.sort();
         // Exactly two entries — the newline did not inject a spurious third.
         assert_eq!(entries, vec!["plain.txt".to_owned(), weird.to_owned()]);
+    }
+
+    #[test]
+    fn context_rejects_a_null_pointer() {
+        // Regression for CORE-036: a null `ctx` must be refused before any
+        // dereference, not blindly turned into a reference.
+        let null: *mut core::ffi::c_void = std::ptr::null_mut();
+        // SAFETY: null is explicitly handled by the guard under test.
+        assert!(unsafe { context(&null) }.is_none());
+    }
+
+    #[test]
+    fn context_rejects_a_wrong_type_pointer() {
+        // A readable-but-wrong-type pointer fails the magic sanity tag rather
+        // than being interpreted as a BridgeContext.
+        let mut not_ours: u64 = 0xdead_beef_dead_beef;
+        let ptr: *mut core::ffi::c_void = (&mut not_ours as *mut u64).cast();
+        // SAFETY: the pointer is non-null and readable; the magic check rejects it.
+        assert!(unsafe { context(&ptr) }.is_none());
+    }
+
+    #[test]
+    fn context_borrows_a_live_pointer() {
+        // A genuine leaked BridgeContext is accepted and its permissions read back.
+        let ctx = Box::into_raw(Box::new(BridgeContext {
+            magic: BRIDGE_CONTEXT_MAGIC,
+            permissions: perms(&[PluginPermission::Terminal], &[]),
+            policy: ConnectionPolicy::default(),
+            active_connections: Arc::new(AtomicUsize::new(0)),
+        }))
+        .cast::<core::ffi::c_void>();
+
+        // SAFETY: freshly leaked, non-null, correct type.
+        let borrowed = unsafe { context(&ctx) };
+        assert!(borrowed.is_some());
+
+        // Reclaim the box so the test does not leak.
+        // SAFETY: `ctx` is the box leaked just above, freed exactly once here.
+        drop(unsafe { Box::from_raw(ctx.cast::<BridgeContext>()) });
     }
 
     #[test]
