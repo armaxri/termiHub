@@ -208,6 +208,48 @@ mod tests {
         assert_eq!(store.lookup("host:22", FP_A), TrustLookup::Unknown);
     }
 
+    /// Regression (ERR-001 / TAURI-004): a thread that panics while holding the
+    /// entries mutex poisons it, but the store must keep serving by recovering
+    /// the inner guard rather than panicking on every subsequent operation —
+    /// otherwise one localized panic cascades into a permanently unusable
+    /// host-key trust path.
+    #[test]
+    fn poisoned_lock_recovers_instead_of_cascading() {
+        use std::sync::Arc;
+
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("host:22", FP_A);
+
+        // Poison the entries mutex by panicking while its guard is held.
+        let poisoner = Arc::clone(&store);
+        let joined = std::thread::spawn(move || {
+            let _guard = poisoner.entries.lock().unwrap();
+            panic!("intentional panic while holding the entries lock");
+        })
+        .join();
+        assert!(joined.is_err(), "poisoning thread should have panicked");
+        assert!(
+            store.entries.is_poisoned(),
+            "entries mutex should now be poisoned"
+        );
+
+        // Every public operation must still work via the recovered guard.
+        assert_eq!(store.lookup("host:22", FP_A), TrustLookup::Trusted);
+        assert_eq!(store.lookup("host:22", FP_B), TrustLookup::Changed);
+        store.remember("host:22", FP_B);
+        assert_eq!(store.lookup("host:22", FP_B), TrustLookup::Trusted);
+        assert_eq!(store.entries(), {
+            let mut expected = BTreeMap::new();
+            expected.insert(
+                "host:22".to_string(),
+                vec![FP_A.to_string(), FP_B.to_string()],
+            );
+            expected
+        });
+        assert!(store.forget_host("host:22"));
+        assert_eq!(store.lookup("host:22", FP_A), TrustLookup::Unknown);
+    }
+
     #[test]
     fn remembered_fingerprint_is_trusted_silently() {
         let store = SshTrustStore::in_memory();
