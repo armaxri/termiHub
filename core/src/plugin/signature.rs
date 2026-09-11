@@ -39,7 +39,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -351,13 +351,23 @@ pub fn verify(
     }
 
     // Finally the cryptographic check over the canonical payload.
+    //
+    // `verify_strict` is used deliberately over plain `verify`: this is a
+    // code-signing trust boundary (it decides whether native plugin code is
+    // loaded), so signatures must be *strongly* unforgeable and non-malleable.
+    // Plain `verify` uses the cofactored group equation and accepts a small-order
+    // (weak) public key or `R` value, which lets one (key, message) pair have
+    // multiple accepted signatures and enables weak-key universal forgeries.
+    // `verify_strict` performs the cofactorless check and rejects small-order
+    // `A`/`R` and non-canonical encodings, giving the canonical
+    // "signed exactly once by this publisher" guarantee the trust store relies on.
     let verifying_key = VerifyingKey::from_bytes(&public_bytes)
         .map_err(|e| SignatureError::MalformedEncoding(format!("publicKey: {e}")))?;
     let sig_bytes = decode_fixed::<64>(&sig.signature, "signature")?;
     let ed_sig = Signature::from_bytes(&sig_bytes);
     let payload = signing_payload(&sig.key_id, &sig.files);
     verifying_key
-        .verify(&payload, &ed_sig)
+        .verify_strict(&payload, &ed_sig)
         .map_err(|_| SignatureError::BadSignature)?;
 
     Ok(VerifiedIdentity {
@@ -722,6 +732,46 @@ mod tests {
         sig.signature = BASE64.encode([0u8; 64]);
         let err = verify(&sig, &digests_of(&[("a", b"x")])).unwrap_err();
         assert!(matches!(err, SignatureError::BadSignature));
+    }
+
+    #[test]
+    fn weak_key_forgery_is_rejected_by_strict_verification() {
+        // Regression for CORE-033: package verification must use
+        // `verify_strict`, not plain `verify`.
+        //
+        // Plain ed25519 `verify` uses the cofactored group equation, which accepts
+        // a *small-order* (weak) public key together with a signature that is valid
+        // for essentially any message — a universal forgery. The identity point
+        // (`01 00…00`) is such a weak key: with `R` = identity and `s` = 0 the
+        // cofactored equation `[8][s]B = [8]R + [8][k]A` holds trivially (every term
+        // is the identity), so plain `verify` accepts. `verify_strict` rejects it
+        // because both `A` and `R` are small-order. This forgery threads through our
+        // exact-set digest check (an empty archive) and would be accepted if the
+        // code regressed to plain `verify`.
+        let mut identity = [0u8; 32];
+        identity[0] = 1; // canonical encoding of the identity point.
+        let public_key = BASE64.encode(identity);
+        let key_id = key_id_from_public_key(&identity);
+
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[0] = 1; // R = identity point; s (bytes 32..64) stays zero.
+
+        let sig = PackageSignature {
+            format_version: SIGNATURE_FORMAT_VERSION,
+            algorithm: SIGNATURE_ALGORITHM.to_owned(),
+            digest_algorithm: DIGEST_ALGORITHM.to_owned(),
+            signed_at: "t".to_owned(),
+            public_key,
+            key_id,
+            files: BTreeMap::new(),
+            signature: BASE64.encode(sig_bytes),
+        };
+
+        let err = verify(&sig, &BTreeMap::new()).unwrap_err();
+        assert!(
+            matches!(err, SignatureError::BadSignature),
+            "a weak-key forgery must be rejected by strict verification, got {err:?}"
+        );
     }
 
     #[test]
