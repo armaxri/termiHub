@@ -27,7 +27,7 @@ use termihub_core::session::traits::OutputSink;
 use crate::daemon::client::{
     DaemonClient, DaemonWriterHandle, ExitHook, ExitHookFuture, OwnedByLivePeer,
 };
-use crate::daemon::transport::{endpoint_alive, session_endpoint};
+use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
     prune_applied_pending_update, should_apply_deferred_update, SystemUpdateApplier, UpdateApplier,
@@ -925,6 +925,9 @@ impl SessionManager {
                 Some(p) => p.clone(),
                 None => {
                     warn!("Session {id} has no daemon endpoint, removing");
+                    // AGT-019: reclaim any stray log left under this id as well,
+                    // not just the state entry.
+                    remove_session_files(id);
                     self.persist_state_delta(|s| {
                         s.sessions.remove(id);
                     })
@@ -935,6 +938,9 @@ impl SessionManager {
 
             if !endpoint_alive(&endpoint) {
                 info!("Daemon endpoint gone for session {id}, removing from state");
+                // AGT-019: the socket is already gone; sweep any lingering
+                // sibling files (e.g. the daemon log) rather than orphaning them.
+                remove_session_files(id);
                 self.persist_state_delta(|s| {
                     s.sessions.remove(id);
                 })
@@ -998,6 +1004,11 @@ impl SessionManager {
                 }
                 Err(e) => {
                     warn!("Failed to recover session {id}: {e}");
+                    // AGT-019: a recovery-intent connect failed, so this is a
+                    // dead daemon whose socket file merely lingers (the classic
+                    // SIGKILL leak) — reclaim its socket/relay/log files instead
+                    // of removing only the state entry and orphaning them.
+                    remove_session_files(id);
                     self.persist_state_delta(|s| {
                         s.sessions.remove(id);
                     })
@@ -1464,6 +1475,167 @@ mod tests {
 
     fn test_registry() -> Arc<ConnectionTypeRegistry> {
         Arc::new(crate::registry::build_registry())
+    }
+
+    // ── AGT-019: dead-session socket/log reclaim during recovery ─────────
+    //
+    // A daemon killed with SIGKILL never runs `cleanup()`, so its `.sock`/`.log`
+    // files linger. Recovery used to remove only the `state.json` entry, leaking
+    // the on-disk files forever. These drive the real `recover_sessions` and
+    // prove a *dead* session's files are reclaimed while a *live* one's are not.
+    #[cfg(unix)]
+    mod recovery_file_reclaim {
+        use super::*;
+        use crate::daemon::protocol;
+        use crate::daemon::transport::{
+            agent_forward_endpoint, ensure_agent_forward_dir, session_endpoint,
+        };
+        use std::io::Write;
+        use std::path::Path;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct NoopApplier;
+        impl UpdateApplier for NoopApplier {
+            fn apply(&self, _pending: &PendingUpdate) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+
+        fn unique(tag: &str) -> String {
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            format!(
+                "agt019-{tag}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            )
+        }
+
+        fn persisted(endpoint: &str) -> PersistedSession {
+            PersistedSession {
+                type_id: "local".to_string(),
+                title: "t".to_string(),
+                created_at: Utc::now().to_rfc3339(),
+                daemon_socket: Some(endpoint.to_string()),
+                settings: serde_json::json!({}),
+                definition_id: None,
+            }
+        }
+
+        fn touch(path: &str) {
+            std::fs::File::create(path)
+                .expect("create session file")
+                .write_all(b"x")
+                .expect("write session file");
+        }
+
+        /// A minimal live daemon: binds the endpoint, completes the recovery
+        /// handshake (read the client's attach-intent frame, send `MSG_READY`),
+        /// and keeps the connection open so the session reads as alive. Loops so
+        /// a stray probe can never starve the real recovery connect.
+        async fn spawn_min_live_daemon(endpoint: &str) -> tokio::task::JoinHandle<()> {
+            let mut listener = crate::daemon::transport::DaemonListener::bind(endpoint)
+                .await
+                .expect("bind live daemon");
+            tokio::spawn(async move {
+                while let Ok((mut r, mut w)) = listener.accept().await {
+                    let _ = protocol::read_frame_async(&mut r).await;
+                    if protocol::write_frame_async(&mut w, protocol::MSG_READY, &[])
+                        .await
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    tokio::spawn(async move {
+                        let _ = protocol::read_frame_async(&mut r).await;
+                        let _ = &mut w;
+                    });
+                }
+            })
+        }
+
+        #[tokio::test]
+        async fn recover_reclaims_dead_session_files_but_keeps_live() {
+            ensure_agent_forward_dir().expect("ensure socket dir");
+
+            let live_id = unique("live");
+            let dead_id = unique("dead");
+            let live_ep = session_endpoint(&live_id);
+            let dead_ep = session_endpoint(&dead_id);
+            let live_log = live_ep.replace(".sock", ".log");
+            let dead_log = dead_ep.replace(".sock", ".log");
+            let dead_relay = agent_forward_endpoint(&dead_id);
+
+            // Live session: a real (minimal) daemon owns the endpoint; give it a
+            // sibling log too.
+            let _live = spawn_min_live_daemon(&live_ep).await;
+            touch(&live_log);
+
+            // Dead session: a lingering *regular file* at the socket path (a
+            // connect fails fast and deterministically, unlike a just-closed
+            // in-process socket which stays transiently connectable on macOS),
+            // plus its relay socket and log — exactly what a SIGKILL leaves.
+            touch(&dead_ep);
+            touch(&dead_relay);
+            touch(&dead_log);
+
+            let tmp = tempfile::tempdir().unwrap();
+            let state_path = tmp.path().join("state.json");
+            let mut seeded = AgentState::default();
+            seeded.sessions.insert(live_id.clone(), persisted(&live_ep));
+            seeded.sessions.insert(dead_id.clone(), persisted(&dead_ep));
+            seeded.save_to(&state_path);
+
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                state_path.clone(),
+                Arc::new(NoopApplier),
+            );
+
+            let recovered = mgr.recover_sessions().await;
+
+            // Live: recovered, files untouched.
+            assert!(
+                recovered.contains(&live_id),
+                "live session must be recovered, got {recovered:?}"
+            );
+            assert!(Path::new(&live_ep).exists(), "live socket must survive");
+            assert!(Path::new(&live_log).exists(), "live log must survive");
+
+            // Dead: not recovered; socket, relay and log all reclaimed (AGT-019).
+            assert!(
+                !recovered.contains(&dead_id),
+                "dead session must not be recovered"
+            );
+            assert!(
+                !Path::new(&dead_ep).exists(),
+                "dead socket must be reclaimed (AGT-019)"
+            );
+            assert!(
+                !Path::new(&dead_relay).exists(),
+                "dead relay socket must be reclaimed (AGT-019)"
+            );
+            assert!(
+                !Path::new(&dead_log).exists(),
+                "dead log must be reclaimed (AGT-019)"
+            );
+
+            // State reflects the same: dead entry gone, live entry kept.
+            let remaining = AgentState::load_from(&state_path);
+            assert!(
+                !remaining.sessions.contains_key(&dead_id),
+                "dead entry must be removed from state"
+            );
+            assert!(
+                remaining.sessions.contains_key(&live_id),
+                "live entry must remain in state"
+            );
+
+            // Cleanup the live files we created (the daemon task is detached).
+            let _ = std::fs::remove_file(&live_ep);
+            let _ = std::fs::remove_file(&live_log);
+        }
     }
 
     // The daemon-detachment test (#995) moved to `daemon::spawn` along with the

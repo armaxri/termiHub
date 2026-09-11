@@ -159,13 +159,13 @@ pub async fn connect_for_recovery(endpoint: &str) -> io::Result<(BoxedReader, Bo
 #[allow(unused_imports)]
 pub use unix_impl::{
     agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, open_daemon_log,
-    open_registry_log, registry_endpoint, session_endpoint,
+    open_registry_log, registry_endpoint, remove_session_files, session_endpoint,
 };
 #[cfg(windows)]
 #[allow(unused_imports)]
 pub use windows_impl::{
     agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, registry_endpoint,
-    session_endpoint,
+    remove_session_files, session_endpoint,
 };
 
 // ── Unix session-path helpers ───────────────────────────────────────
@@ -173,7 +173,6 @@ pub use windows_impl::{
 #[cfg(unix)]
 mod unix_impl {
     use std::io;
-    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
 
     /// Compute the default endpoint (socket path) for a session.
@@ -225,25 +224,58 @@ mod unix_impl {
         Path::new(endpoint).exists()
     }
 
-    /// Get the per-user socket directory (`/tmp/termihub/{user}`).
-    fn socket_dir() -> PathBuf {
-        let user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
-        PathBuf::from("/tmp/termihub").join(user)
+    /// Path to a session's daemon log file, a sibling of its socket.
+    fn session_log_path(session_id: &str) -> PathBuf {
+        socket_dir().join(format!("session-{session_id}.log"))
     }
 
-    /// Ensure the per-user socket directory exists (mode `0700`) so the
-    /// ssh-agent relay can bind its listener there before spawning the daemon
-    /// (#1727). The daemon's own socket dir is created lazily on first log/bind;
-    /// the relay binds first, so it must create it explicitly.
+    /// Reclaim the on-disk files a dead session daemon leaves behind (AGT-019).
+    ///
+    /// A daemon killed with `SIGKILL` (or that crashed) never runs
+    /// [`DaemonListener::cleanup`](super::DaemonListener::cleanup), so its
+    /// per-session socket (`session-<id>.sock`), ssh-agent relay socket
+    /// (`session-<id>-agent.sock`), and truncating log (`session-<id>.log`)
+    /// linger in the per-user socket dir indefinitely — nothing but the owner
+    /// rebinding its *own* path would ever remove them. Session recovery calls
+    /// this once it has positively determined a session is **dead** (its
+    /// endpoint is gone, or a recovery-intent connect failed) — never for a live
+    /// session or one a live peer still owns — so a dead daemon's files are no
+    /// longer leaked. Best-effort: a missing file is not an error.
+    pub fn remove_session_files(session_id: &str) {
+        let _ = std::fs::remove_file(session_endpoint(session_id));
+        let _ = std::fs::remove_file(agent_forward_endpoint(session_id));
+        let _ = std::fs::remove_file(session_log_path(session_id));
+    }
+
+    /// Get the per-user socket directory (`/tmp/termihub/uid-<uid>`).
+    ///
+    /// Scoped by the real user id (AGT-020), never the spoofable `USER` env var:
+    /// a hostile `USER` can no longer redirect the path, and two users with
+    /// `USER` unset no longer collide on a shared `/tmp/termihub/unknown` bucket.
+    /// The shared [`ListenerSecurity::CurrentUserOnly`](termihub_core::ipc::ListenerSecurity)
+    /// bind additionally verifies this directory is owned by us with `0o700`
+    /// perms before binding into it.
+    fn socket_dir() -> PathBuf {
+        // SAFETY: `getuid` has no preconditions and never fails; it returns the
+        // real uid of the calling process.
+        let uid = unsafe { libc::getuid() };
+        PathBuf::from("/tmp/termihub").join(format!("uid-{uid}"))
+    }
+
+    /// Ensure the per-user socket directory exists (mode `0700`, owned by us) so
+    /// the ssh-agent relay can bind its listener there before spawning the
+    /// daemon (#1727). The daemon's own socket dir is created lazily on first
+    /// log/bind; the relay binds first, so it must create it explicitly.
     pub fn ensure_agent_forward_dir() -> io::Result<()> {
         ensure_socket_dir(&socket_dir())
     }
 
-    /// Ensure the socket directory exists with mode `0700`.
+    /// Ensure the socket directory exists with mode `0700` and is genuinely
+    /// owned by the current user, refusing a squatted/symlinked directory
+    /// (AGT-020). Delegates to the shared core helper so the ownership check is
+    /// applied identically here and on the listener bind path.
     fn ensure_socket_dir(dir: &Path) -> io::Result<()> {
-        std::fs::create_dir_all(dir)?;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-        Ok(())
+        termihub_core::ipc::ensure_private_dir(dir)
     }
 
     /// Open (truncating) the daemon's per-session log file in the socket dir.
@@ -323,9 +355,23 @@ mod windows_impl {
                 return endpoint;
             }
         }
-        let user = std::env::var("USERNAME").unwrap_or_else(|_| "unknown".to_string());
-        format!(r"\\.\pipe\termihub-registry-{user}")
+        // AGT-020: scope the machine-global pipe *name* by the current user's
+        // real SID, not the spoofable `USERNAME` env var. The pipe's per-user
+        // DACL already enforces access; deriving the name from the SID removes
+        // the cross-user name collision when `USERNAME` is unset/spoofed. The SID
+        // lookup for our own process token does not fail in practice; only on the
+        // theoretical error do we fall back to the previous `USERNAME` scoping,
+        // never to a shared fixed "unknown" bucket by choice.
+        let ident = termihub_core::ipc::current_user_sid_string().unwrap_or_else(|_| {
+            std::env::var("USERNAME").unwrap_or_else(|_| "unknown".to_string())
+        });
+        format!(r"\\.\pipe\termihub-registry-{ident}")
     }
+
+    /// No-op on windows: named pipes and their instances vanish with the daemon
+    /// process, so a crashed daemon leaves no socket/log files to reclaim
+    /// (AGT-019 is unix-only).
+    pub fn remove_session_files(_session_id: &str) {}
 
     /// Cheap liveness pre-check: whether a named-pipe instance exists.
     ///
@@ -376,6 +422,61 @@ mod tests {
         let endpoint = session_endpoint("xyz");
         assert!(endpoint.starts_with("/tmp/termihub/"), "got {endpoint}");
         assert!(endpoint.ends_with("session-xyz.sock"), "got {endpoint}");
+    }
+
+    /// AGT-020: the per-user socket dir must be scoped by the real uid, never
+    /// the spoofable `USER` env var, so a hostile `USER` cannot redirect the path
+    /// and two `USER`-unset users cannot collide on a shared `unknown` bucket.
+    #[cfg(unix)]
+    #[test]
+    fn session_endpoint_scopes_by_uid_not_user_env() {
+        // SAFETY: `getuid` never fails and has no preconditions.
+        let uid = unsafe { libc::getuid() };
+        let endpoint = session_endpoint("agt020");
+        assert!(
+            endpoint.contains(&format!("/uid-{uid}/")),
+            "endpoint must be scoped by uid, got {endpoint}"
+        );
+        // Whatever `USER` currently is, it must not appear as the scoping segment
+        // (the fix ignores the env var entirely).
+        if let Ok(user) = std::env::var("USER") {
+            if !user.is_empty() {
+                assert!(
+                    !endpoint.contains(&format!("/{user}/")),
+                    "endpoint must not be scoped by the USER env var, got {endpoint}"
+                );
+            }
+        }
+    }
+
+    /// AGT-019: a dead daemon's lingering socket, ssh-agent relay socket, and log
+    /// files are all reclaimed by `remove_session_files`.
+    #[cfg(unix)]
+    #[test]
+    fn remove_session_files_reclaims_sock_relay_and_log() {
+        use std::io::Write;
+
+        let session = unique_session("reclaim");
+        ensure_agent_forward_dir().expect("ensure socket dir");
+
+        // Materialize exactly the three files a SIGKILLed daemon leaves behind.
+        let sock = session_endpoint(&session);
+        let relay = agent_forward_endpoint(&session);
+        let log = session_endpoint(&session).replace(".sock", ".log");
+        for path in [&sock, &relay, &log] {
+            let mut f = std::fs::File::create(path).expect("create session file");
+            f.write_all(b"x").expect("write session file");
+            assert!(std::path::Path::new(path).exists(), "precondition: {path}");
+        }
+
+        remove_session_files(&session);
+
+        for path in [&sock, &relay, &log] {
+            assert!(
+                !std::path::Path::new(path).exists(),
+                "remove_session_files must reclaim {path}"
+            );
+        }
     }
 
     #[cfg(unix)]
