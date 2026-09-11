@@ -653,15 +653,18 @@ mod tests {
         // must use the POSIX `!` negation rather than GNU `-not`.
         let argv = list_dir_argv("/project");
         assert!(
-            !argv.iter().any(|a| *a == "-printf"),
+            !argv.contains(&"-printf"),
             "must not use the GNU-only -printf: {argv:?}"
         );
         assert!(
-            !argv.iter().any(|a| *a == "-not"),
+            !argv.contains(&"-not"),
             "must use POSIX `!`, not GNU `-not`: {argv:?}"
         );
         assert!(argv.contains(&"!"), "expected POSIX negation operator");
-        assert!(argv.contains(&"-maxdepth"), "expected -maxdepth enumeration");
+        assert!(
+            argv.contains(&"-maxdepth"),
+            "expected -maxdepth enumeration"
+        );
         // Metadata is derived with tools BusyBox and coreutils both provide.
         assert!(argv.contains(&LIST_DIR_SCRIPT));
         assert!(LIST_DIR_SCRIPT.contains("stat -c"));
@@ -858,7 +861,10 @@ mod tests {
 
     #[test]
     fn base64_decode_known_vector() {
-        assert_eq!(b64_decode("SGVsbG8sIFdvcmxkIQ==").unwrap(), b"Hello, World!");
+        assert_eq!(
+            b64_decode("SGVsbG8sIFdvcmxkIQ==").unwrap(),
+            b"Hello, World!"
+        );
     }
 
     #[test]
@@ -882,7 +888,11 @@ mod tests {
         // 1/2/3-byte inputs cover the `==`, `=`, and no-padding tail cases.
         for data in [b"f".as_slice(), b"fo", b"foo", b"foob", b"fooba", b"foobar"] {
             let encoded = b64_encode(data);
-            assert_eq!(b64_decode(&encoded).unwrap(), data, "roundtrip for {data:?}");
+            assert_eq!(
+                b64_decode(&encoded).unwrap(),
+                data,
+                "roundtrip for {data:?}"
+            );
         }
     }
 
