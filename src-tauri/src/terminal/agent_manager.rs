@@ -30,6 +30,7 @@ use crate::session_projection::projection::{
     fold_agent_reconnect_failed, fold_agent_session_lost, fold_agent_session_recovered,
     fold_agent_session_unconfirmed, fold_agent_transport_reconnecting,
 };
+use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
 use crate::terminal::agent_config_store::{decide_reattach, AgentConfigStore, ReattachDecision};
 use crate::terminal::agent_deploy::ConnectedHost;
 use crate::terminal::agent_forward::DesktopAgentForward;
@@ -2373,7 +2374,8 @@ async fn agent_io_task<R: Runtime>(
                         &app_handle,
                         &hosted,
                         live_ids.as_ref(),
-                    );
+                    )
+                    .await;
                 }
 
                 emit_agent_state(&app_handle, &agent_id, "connected");
@@ -2488,18 +2490,44 @@ async fn hosted_sessions_for_agent<R: tauri::Runtime>(
 /// local terminal **view-state** (`terminalExitedTabs` / `terminalViewMode` /
 /// `terminalExitInfo`), which mounts the overlay and has no server-side home until the
 /// stateless-UI view-state migration (#2139); a precise follow-up carries it.
-pub(crate) fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
+pub(crate) async fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
     app_handle: &AppHandle<R>,
     hosted: &[AgentHostedSession],
     live_ids: &std::collections::HashSet<String>,
 ) {
     for h in hosted {
         if live_ids.contains(&h.remote_session_id) {
-            fold_agent_session_recovered(app_handle, &h.tab_id);
+            // Guard the user-cancel race (SM-002). The agent recovered this session
+            // in place, but if the user hit Stop while the transport was
+            // re-establishing, `cancel_reconnect` (store.rs) has already folded the
+            // tab to `Disconnected(User)` — or the tab was removed. Silently folding
+            // `Connected` here would resurrect a tab the user explicitly Stopped and
+            // re-adopt a session they asked to abandon. So only fold when the tab is
+            // still `Reconnecting`; otherwise tear the recovered agent session down
+            // instead of adopting it, mirroring the redrive create/re-attach guard
+            // (`redrive.rs` `still_connecting`), so nothing outlives the cancelled tab.
+            if still_reconnecting(app_handle, &h.tab_id) {
+                fold_agent_session_recovered(app_handle, &h.tab_id);
+            } else if let Some(manager) = app_handle.try_state::<SessionManager>() {
+                let _ = manager.close_session(&h.session_id).await;
+            }
         } else {
             fold_agent_session_lost(app_handle, &h.tab_id);
         }
     }
+}
+
+/// Whether the tab is still in the `Reconnecting` status — the guard the agent-task
+/// recover resolve uses to avoid flipping a user-Stopped tab back to `Connected`
+/// (SM-002). The agent transport reconnect leaves the reconnect engine `Idle` with
+/// the status `Reconnecting` (unlike the redrive's `Connecting` sub-phase), so the
+/// guard keys on the status, not the engine phase. A cancelled tab has folded to
+/// `Disconnected(User)` and a removed tab has no entry — both fail the check and take
+/// the teardown path.
+fn still_reconnecting<R: Runtime>(app: &AppHandle<R>, tab_id: &str) -> bool {
+    app.try_state::<Arc<SessionLifecycleStore>>()
+        .and_then(|store| store.status(tab_id))
+        == Some(SessionStatus::Reconnecting)
 }
 
 /// Resolve every hosted session's region entry after the agent's in-task transport
@@ -2517,13 +2545,13 @@ pub(crate) fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
 ///    timer arms only on `Waiting`, and no other task drives the machine — so nothing
 ///    would ever move the tab again except a manual Stop. Settling instead surfaces an
 ///    honest, actionable failure (the "session lost" overlay with a manual restart).
-pub(crate) fn resolve_hosted_sessions_after_reconnect<R: tauri::Runtime>(
+pub(crate) async fn resolve_hosted_sessions_after_reconnect<R: tauri::Runtime>(
     app_handle: &AppHandle<R>,
     hosted: &[AgentHostedSession],
     live_ids: Option<&std::collections::HashSet<String>>,
 ) {
     match live_ids {
-        Some(live_ids) => resolve_agent_hosted_sessions(app_handle, hosted, live_ids),
+        Some(live_ids) => resolve_agent_hosted_sessions(app_handle, hosted, live_ids).await,
         None => {
             for h in hosted {
                 fold_agent_session_unconfirmed(app_handle, &h.tab_id);
