@@ -646,7 +646,10 @@ impl ConnectionManager {
 
     /// Get the current application settings.
     pub fn get_settings(&self) -> AppSettings {
-        self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Get the current application settings with the serial-port-scan prefixes
@@ -677,7 +680,11 @@ impl ConnectionManager {
 
     /// Load all enabled external connection files and return flattened connections.
     pub fn load_external_sources(&self) -> Vec<ExternalSource> {
-        let settings = self.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let settings = self
+            .settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         let main_folder_ids: HashSet<String> = {
             let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
             store.folders.iter().map(|f| f.id.clone()).collect()

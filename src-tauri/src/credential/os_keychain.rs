@@ -49,10 +49,7 @@ impl OsKeychainStore {
     /// the key, so it round-trips through [`CredentialKey::from_map_key`].
     fn entry(&self, key: &CredentialKey) -> Result<Arc<Entry>> {
         let account = key.to_string();
-        let mut entries = self
-            .entries
-            .lock()
-            .expect("OS keychain entry cache lock poisoned");
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = entries.get(&account) {
             return Ok(entry.clone());
         }

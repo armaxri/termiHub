@@ -64,10 +64,7 @@ impl CredentialManager {
     /// Callers are responsible for migrating credentials before switching.
     pub fn switch_store(&self, new_mode: StorageMode) -> Result<()> {
         let new_backend = Self::create_backend(&new_mode, &self.config_dir);
-        let mut inner = self
-            .inner
-            .write()
-            .expect("credential manager lock poisoned");
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
 
         // Lock the old master password store if applicable
         if let StoreBackend::MasterPassword(ref old_store) = *inner {
@@ -98,7 +95,7 @@ impl CredentialManager {
         let mut guard = self
             .auto_lock_timer
             .write()
-            .expect("auto_lock_timer lock poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         *guard = Some(timer);
     }
 

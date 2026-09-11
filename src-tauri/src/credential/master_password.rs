@@ -257,7 +257,7 @@ impl MasterPasswordStore {
     pub fn is_unlocked(&self) -> bool {
         self.derived_key
             .read()
-            .expect("derived_key lock poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .is_some()
     }
 
