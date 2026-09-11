@@ -291,6 +291,12 @@ impl FileBrowser for DockerFileBrowser {
         exec_command(&self.client, &self.container_id, vec!["mkdir", "-p", path]).await?;
         Ok(())
     }
+
+    /// Docker file browsing is byte-based (no SFTP `setstat`), so chmod is not
+    /// exposed here; the UI hides the action for byte-based sessions.
+    async fn set_permissions(&self, _path: &str, _mode: u32) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
 }
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---

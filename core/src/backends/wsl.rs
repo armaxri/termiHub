@@ -300,6 +300,12 @@ impl FileBrowser for WslFileBrowser {
         .await
         .map_err(|e| FileError::OperationFailed(e.to_string()))?
     }
+
+    /// WSL is browsed through the Windows `\\wsl$` UNC path, which has no faithful
+    /// Unix-mode setter, so chmod is not supported here.
+    async fn set_permissions(&self, _path: &str, _mode: u32) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
 }
 
 /// Convert a Windows absolute path to its WSL `/mnt/` equivalent.

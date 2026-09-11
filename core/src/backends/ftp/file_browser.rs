@@ -296,6 +296,12 @@ impl FileBrowser for FtpFileBrowser {
         })
         .await
     }
+
+    /// FTP has no portable chmod (`SITE CHMOD` is optional and non-standard), so
+    /// changing permissions is unsupported.
+    async fn set_permissions(&self, _path: &str, _mode: u32) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
 }
 
 #[cfg(test)]
