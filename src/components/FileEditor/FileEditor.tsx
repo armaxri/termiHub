@@ -177,6 +177,19 @@ interface FileEditorProps {
 }
 
 /**
+ * Outcome of a save attempt, used to gate "Save & Close" so the tab is only
+ * destroyed once the file was actually written (FEC-010):
+ * - `saved` — the write completed; it is safe to close the tab.
+ * - `failed` — the save did not happen (a permission/IO error, or a cancelled
+ *   Save-As on a scratch buffer); the buffer is kept and any error banner is
+ *   shown. Do NOT close the tab.
+ * - `prompting` — an elevated (sudo) write needs the password dialog, which is
+ *   now open; the close (if any) is deferred until that write actually resolves.
+ *   Do NOT close the tab synchronously.
+ */
+type SaveOutcome = "saved" | "failed" | "prompting";
+
+/**
  * Built-in file editor using Monaco Editor.
  * Supports both local and remote (SFTP) files.
  */
@@ -313,6 +326,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // ref — never React/store state and never {@link EditorTabMeta} — so it is
   // impossible for it to be serialized into persisted tab/workspace state.
   const sudoPasswordRef = useRef<string | null>(null);
+  // A close request that must fire only once a deferred elevated (sudo) write
+  // actually succeeds (FEC-010). "Save & Close" on the sudo path opens the
+  // password dialog and returns before the write happens, so the close cannot
+  // run synchronously without discarding the buffer. It is stashed here and
+  // fired from the sudo completion handler on success; cancelling or failing the
+  // prompt clears it and leaves the tab open.
+  const pendingSudoCloseRef = useRef<{ tabId: string; panelId: string } | null>(null);
 
   // A scratch buffer has no on-disk counterpart until the user saves it.
   const isUnsavedScratch = meta.scratch === true && scratchSavedPath === null;
@@ -1038,8 +1058,8 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // in-memory session cache first, then an opt-in persisted credential (when the
   // store is unlocked); a hit saves silently, a miss or a stale/rejected
   // password opens the interactive prompt.
-  const saveElevated = useCallback(async () => {
-    if (content === null || saving) return;
+  const saveElevated = useCallback(async (): Promise<SaveOutcome> => {
+    if (content === null || saving) return "failed";
     const bufferContent = content;
     setSaving(true);
     setSaveError(null);
@@ -1058,9 +1078,9 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         const outcome = await attemptElevatedWrite(password, bufferContent);
         if (outcome === "success") {
           applyElevatedSuccess(bufferContent, password, true);
-          return;
+          return "saved";
         }
-        if (outcome === "error") return;
+        if (outcome === "error") return "failed";
         // Stale cache / rejected stored password — discard it and prompt.
         sudoPasswordRef.current = null;
         if (fromStore && hostLabel) {
@@ -1074,8 +1094,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     } finally {
       setSaving(false);
     }
+    // No usable cached/stored password — the interactive prompt is opened here
+    // and the write only happens when the user authorizes it. The confirmed
+    // success (and any deferred "Save & Close") is therefore handled in
+    // handleSudoSubmit, not here (FEC-010).
     setSudoAttempt(1);
     setSudoDialogOpen(true);
+    return "prompting";
   }, [
     content,
     saving,
@@ -1110,18 +1135,27 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         }
         setSudoDialogOpen(false);
         setSudoAttempt(1);
+        // The elevated write actually landed — only now honour a deferred
+        // "Save & Close" that opened this prompt (FEC-010).
+        const closeReq = pendingSudoCloseRef.current;
+        pendingSudoCloseRef.current = null;
+        if (closeReq) closeTab(closeReq.tabId, closeReq.panelId);
         return;
       }
       if (outcome === "error") {
         // Non-password failure: dismiss the prompt, keep the buffer, show banner.
+        // The save did not happen, so drop any deferred close and keep the tab.
         setSudoDialogOpen(false);
         setSudoAttempt(1);
+        pendingSudoCloseRef.current = null;
         return;
       }
       // Wrong password: re-prompt until the attempt limit, then fall to #969.
       if (sudoAttempt >= MAX_SUDO_ATTEMPTS) {
         setSudoDialogOpen(false);
         setSudoAttempt(1);
+        // Give up without a write: keep the buffer and drop any deferred close.
+        pendingSudoCloseRef.current = null;
         setSaveError(
           `Incorrect sudo password — ${MAX_SUDO_ATTEMPTS} attempts failed. The file was not saved.`
         );
@@ -1136,12 +1170,16 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       credentialStoreUnlocked,
       hostLabel,
       sudoAttempt,
+      closeTab,
     ]
   );
 
   const handleSudoCancel = useCallback(() => {
     setSudoDialogOpen(false);
     setSudoAttempt(1);
+    // Cancelling the prompt means no write happened — abandon any deferred
+    // "Save & Close" so the tab (and its unsaved buffer) stays open (FEC-010).
+    pendingSudoCloseRef.current = null;
   }, []);
 
   // Write the current buffer to a user-chosen writable remote path (#1330). The
@@ -1193,23 +1231,30 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     }
   }, [advancedOps, meta.filePath, fileName]);
 
-  const handleSave = useCallback(async () => {
-    if (content === null || saving) return;
+  // Save the current buffer. Returns a {@link SaveOutcome} so callers — in
+  // particular "Save & Close" — can tell an actual write (`saved`) apart from a
+  // failure/cancel (`failed`) and from a deferred elevated write whose prompt is
+  // still open (`prompting`). This is what stops the tab being closed over a
+  // save that did not happen (FEC-010).
+  const handleSave = useCallback(async (): Promise<SaveOutcome> => {
+    if (content === null || saving) return "failed";
 
     // Read-only remote file that has a shell, or an already-elevated session:
     // route through the sudo path instead of the direct write. Applies to an
-    // SFTP-backed session transport (#2420).
+    // SFTP-backed session transport (#2420). The sudo path returns `prompting`
+    // when it opens the password dialog; the write (and any close) happens on
+    // authorization, not here.
     if (advancedOps && (elevated || (writable === false && execCapable))) {
-      await saveElevated();
-      return;
+      return await saveElevated();
     }
 
     // First save of a scratch buffer: ask the user where to write it (Save As).
-    // Until a destination is chosen there is nothing to write to disk.
+    // Until a destination is chosen there is nothing to write to disk — a
+    // cancelled dialog is a non-write, so the tab must not be closed over it.
     let targetPath = scratchSavedPath ?? meta.filePath;
     if (isUnsavedScratch) {
       const chosen = await save({ title: "Save terminal content", defaultPath: meta.filePath });
-      if (!chosen) return;
+      if (!chosen) return "failed";
       targetPath = chosen;
     }
 
@@ -1228,6 +1273,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         setScratchSavedPath(targetPath);
         renameTab(tabId, getBasename(targetPath));
       }
+      return "saved";
     } catch (err) {
       // Surface the failure: `savedContent` is left untouched, so the buffer
       // stays marked dirty/unsaved and the user can fix permissions and retry.
@@ -1237,6 +1283,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         `save failed: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`
       );
       setSaveError(formatSaveError(err));
+      return "failed";
     } finally {
       setSaving(false);
     }
@@ -1260,6 +1307,13 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // Keep saveRef up to date for Monaco keybinding
   saveRef.current = handleSave;
 
+  // Toolbar Save button handler. The shared Button primitive drives its pending
+  // ("Saving...") state off the returned promise, so this resolves to void; the
+  // richer SaveOutcome is only consumed by the close-gating dialog handler.
+  const handleSaveClick = useCallback(async (): Promise<void> => {
+    await handleSave();
+  }, [handleSave]);
+
   const handleDialogCancel = useCallback(() => {
     setPendingCloseRequest(null);
   }, [setPendingCloseRequest]);
@@ -1273,8 +1327,18 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const handleDialogSaveAndClose = useCallback(async () => {
     const req = pendingCloseRequest;
     setPendingCloseRequest(null);
-    await handleSave();
-    if (req) closeTab(req.tabId, req.panelId);
+    const outcome = await handleSave();
+    if (outcome === "saved") {
+      // The buffer was actually written — safe to close the tab.
+      if (req) closeTab(req.tabId, req.panelId);
+    } else if (outcome === "prompting") {
+      // A sudo write is pending on the password dialog: defer the close until
+      // that write succeeds (handleSudoSubmit). Cancelling the prompt clears
+      // this and leaves the tab open (FEC-010).
+      pendingSudoCloseRef.current = req;
+    }
+    // `failed`: the save did not happen (error / cancelled Save-As) — keep the
+    // tab open with its unsaved buffer and any error banner (FEC-010).
   }, [pendingCloseRequest, setPendingCloseRequest, handleSave, closeTab]);
 
   const handleEditorMount = useCallback(
@@ -1491,7 +1555,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             variant="secondary"
             size="sm"
             icon={<ShieldCheck size={14} />}
-            onClick={handleSave}
+            onClick={handleSaveClick}
             disabled={!isDirty}
             pendingLabel="Saving..."
             errorToast={false}
@@ -1505,7 +1569,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             variant="secondary"
             size="sm"
             icon={<Save size={14} />}
-            onClick={handleSave}
+            onClick={handleSaveClick}
             disabled={!isDirty || sftpOnlyReadonly}
             pendingLabel="Saving..."
             errorToast={false}
