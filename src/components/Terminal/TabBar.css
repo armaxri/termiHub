@@ -44,7 +44,7 @@
 .tab:focus-visible {
   outline: none;
   box-shadow: var(--shadow-focus);
-  z-index: 1;
+  z-index: var(--z-base);
 }
 
 .tab--active {

@@ -166,9 +166,45 @@
   --transition-normal: 220ms cubic-bezier(0.16, 1, 0.3, 1);
   --transition-slow: 380ms cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* Z-index layers */
-  --z-dropdown: 50;
-  --z-toast: 1000;
+  /* ── Z-index scale (UI-002) ─────────────────────────────────────────────
+     One coherent, strictly-increasing stack. Higher sits closer to the viewer.
+     Never introduce a raw z-index literal in a component — add or reuse a tier
+     here (tokenDiscipline.test.ts guards both the ordering and the no-raw rule).
+
+     Ordering contract (asserted):
+       base < raised < elevated < layer < float < float-top
+         < dropdown < sticky < overlay < banner < scrim < modal
+         < popover < toast < tooltip < max
+     The guarantee that fixes UI-002: modals sit ABOVE page banners and the
+     decorative/scrim overlay (they never cover an open dialog); the modal scrim
+     sits just below the modal surface; popovers, toasts and tooltips sit at or
+     above the modal so Select/menu content, feedback and hints opened inside a
+     modal form still render in front of it.
+
+     In-view layers (base…float-top) are component-LOCAL stacking: a view's own
+     children stacking against each other inside its positioned container. They
+     stay below every app-level surface and must not be used for cross-surface
+     layering. */
+
+  /* In-view (component-local) layers */
+  --z-base: 1; /* base positioned child: tab, resize handle, terminal body */
+  --z-raised: 3; /* raised in-view element: remote-desktop hint bar */
+  --z-elevated: 4; /* in-view cover overlay: remote-desktop connecting/error state */
+  --z-layer: 5; /* in-view side layer: terminal scroll gutter, remote-desktop clipboard */
+  --z-float: 10; /* in-view floating chrome: search bar, disconnect/view-mode banners, drop zone */
+  --z-float-top: 11; /* in-view floating chrome atop its siblings: reconnect prompt */
+
+  /* App-level surfaces */
+  --z-dropdown: 50; /* low, in-layout dropdown (recent-sessions sidebar) */
+  --z-sticky: 100; /* sticky/pinned in-layout chrome + in-panel popovers, menus & overlays */
+  --z-overlay: 400; /* full-viewport decorative/utility overlay below modals (noise texture) */
+  --z-banner: 500; /* app-level notification banners (update notification) */
+  --z-scrim: 900; /* modal backdrop/scrim — just below the modal surface */
+  --z-modal: 1000; /* modal dialog surfaces */
+  --z-popover: 1100; /* portaled Select/menu/popover content — above modals (works in modal forms) */
+  --z-toast: 1200; /* toasts — above modals */
+  --z-tooltip: 1300; /* tooltips — topmost interactive layer */
+  --z-max: 2147483647; /* reserved absolute top */
 
   /* Status bar */
   --status-bar-height: 22px;
