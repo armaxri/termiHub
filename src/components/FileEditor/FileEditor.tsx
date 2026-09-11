@@ -316,6 +316,11 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // (e.g. the zoom overlay, `keepModel`) gets its own watch and its own cleanup,
   // and never tears down the other instance's watcher.
   const watchId = useId();
+  // A monotonic per-effect-run counter. Combined with the stable `watchId` it
+  // gives every watch registration a unique id, so a slow-to-register watch
+  // from a superseded run only ever unwatches *its own* registration and never
+  // the current run's watch that reuses the base id (FEC-013).
+  const watchRunRef = useRef(0);
   const fileName = getBasename(effectivePath);
   const detectedLanguage = resolveLanguage(fileName, fileLanguageMappings);
   // Scratch buffers share the synthetic file name, so key the Monaco model on
@@ -787,13 +792,30 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   useEffect(() => {
     if (meta.isRemote || isUnsavedScratch) return;
     const filePath = effectivePath;
+    const runWatchId = `${watchId}:${watchRunRef.current++}`;
     let unlisten: (() => void) | undefined;
     let disposed = false;
+    let registered = false;
+    let watchClosed = false;
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Idempotently tear down the OS watch — but only once it has actually
+    // registered. Calling `unwatchLocalFile` before the matching
+    // `watchLocalFile` resolves would race ahead of it and leak the OS watcher
+    // (FEC-013). `closeWatch` is a no-op until registration completes; the
+    // start path calls it once registration lands if teardown got there first.
+    const closeWatch = () => {
+      if (watchClosed || !registered) return;
+      watchClosed = true;
+      void unwatchLocalFile(runWatchId).catch(() => {
+        // best-effort teardown
+      });
+    };
 
     const start = async () => {
       try {
-        await watchLocalFile(watchId, filePath);
+        await watchLocalFile(runWatchId, filePath);
+        registered = true;
       } catch (err) {
         frontendLog(
           "file_editor",
@@ -801,9 +823,16 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             err instanceof Error ? err.message : String(err)
           }`
         );
+        return;
+      }
+      // Torn down while the watch was registering: cleanup could not unwatch a
+      // watch that did not exist yet, so unwatch it now that it does.
+      if (disposed) {
+        closeWatch();
+        return;
       }
       const off = await onLocalFileChanged((changedWatchId) => {
-        if (changedWatchId !== watchId) return;
+        if (changedWatchId !== runWatchId) return;
         // Coalesce bursts on the frontend too — belt-and-braces over the
         // backend debounce.
         if (debounceTimer) clearTimeout(debounceTimer);
@@ -811,9 +840,11 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
           void reloadFromDiskRef.current();
         }, 150);
       });
-      // The effect may have been torn down while awaiting; drop the listener.
+      // The effect may have been torn down while awaiting the listener; drop it
+      // and tear the (now-registered) watch down.
       if (disposed) {
         off();
+        closeWatch();
       } else {
         unlisten = off;
       }
@@ -824,9 +855,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       disposed = true;
       if (debounceTimer) clearTimeout(debounceTimer);
       unlisten?.();
-      void unwatchLocalFile(watchId).catch(() => {
-        // best-effort teardown
-      });
+      closeWatch();
     };
   }, [meta.isRemote, isUnsavedScratch, effectivePath, watchId, tabId]);
 
