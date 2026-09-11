@@ -9,15 +9,15 @@ runs:
   using: 'composite'
   steps:
     - id: attempt-1
-      uses: pnpm/action-setup@v6
+      uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       continue-on-error: true
 
     - name: Retry pnpm install (attempt 2)
       id: attempt-2
       if: steps.attempt-1.outcome == 'failure'
-      uses: pnpm/action-setup@v6
+      uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
       continue-on-error: true
 
     - name: Retry pnpm install (final attempt)
       if: steps.attempt-1.outcome == 'failure' && steps.attempt-2.outcome == 'failure'
-      uses: pnpm/action-setup@v6
+      uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10

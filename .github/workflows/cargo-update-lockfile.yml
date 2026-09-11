@@ -46,19 +46,19 @@ jobs:
 
     steps:
       - name: Checkout develop
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: develop
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
 
       # Prebuilt binary download (~seconds) instead of compiling from source,
       # matching the Security Audit job. Used only for the advisory sanity
       # check below, so the opened PR is unlikely to red the very gate this
       # chore exists to keep green.
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
           tool: cargo-deny
 
