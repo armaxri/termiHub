@@ -152,8 +152,11 @@ pub type PluginStatPathFn = unsafe extern "C" fn(
 
 /// Signature of the host callback that lists a directory on the plugin's behalf.
 /// The host authorizes `path` against the plugin's declared scope, then writes
-/// the directory's entry names — one per line, `\n`-separated, UTF-8
-/// (lossily-encoded) — into `out_entries` as owned bytes.
+/// the directory's entry names into `out_entries` as owned bytes using a
+/// length-prefixed framing (a `u32_le` count, then each name as a `u32_le`
+/// length followed by its lossy-UTF-8 bytes). This is unambiguous for names
+/// containing any byte, including newlines (CORE-035); decode it with
+/// [`PluginHostBridge::list_dir`], which is the symmetric reader.
 pub type PluginListDirFn = unsafe extern "C" fn(
     ctx: *mut c_void,
     path: FfiStr,
@@ -321,15 +324,59 @@ impl PluginHostBridge {
     /// The host refuses with [`PluginError::PermissionDenied`] unless `path`
     /// resolves inside the plugin's declared scope. Entry names are the final
     /// path component only, in the host's directory order.
+    ///
+    /// The host frames the entries with an unambiguous length-prefixed encoding
+    /// (a `u32_le` count, then each name as a `u32_le` length followed by its
+    /// bytes) so a name that legally contains a newline is returned as a single
+    /// entry rather than being split (CORE-035). A truncated or malformed buffer
+    /// is decoded defensively — it yields the entries that parse cleanly and
+    /// stops, never panicking.
     pub fn list_dir(&self, path: &str) -> Result<Vec<String>, PluginError> {
         let mut entries = FfiOwnedBytes::empty();
         // SAFETY: `ctx`/`list_dir` were validated at construction; `path` outlives
         // the call; `&mut entries` is a valid out-parameter the host fills in on `Ok`.
         let status = unsafe { (self.list_dir)(self.ctx, FfiStr::new(path), &mut entries) };
         status.into_result()?;
-        let joined = String::from_utf8_lossy(&entries.into_vec()).into_owned();
-        Ok(joined.lines().map(str::to_owned).collect())
+        Ok(decode_dir_entries(&entries.into_vec()))
     }
+}
+
+/// Decode the length-prefixed directory listing produced by the host's
+/// `list_dir` callback (see [`PluginHostBridge::list_dir`]).
+///
+/// The framing is a `u32_le` count followed by, for each entry, a `u32_le` byte
+/// length and that many raw bytes (decoded as lossy UTF-8). Decoding is
+/// defensive: a short or malformed buffer stops at the first entry that does not
+/// fit rather than panicking, so a misbehaving host cannot crash the plugin.
+fn decode_dir_entries(raw: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some((count, mut rest)) = split_u32(raw) else {
+        return out;
+    };
+    for _ in 0..count {
+        let Some((len, tail)) = split_u32(rest) else {
+            break;
+        };
+        let len = len as usize;
+        if tail.len() < len {
+            break;
+        }
+        let (name, tail) = tail.split_at(len);
+        out.push(String::from_utf8_lossy(name).into_owned());
+        rest = tail;
+    }
+    out
+}
+
+/// Split a little-endian `u32` off the front of `bytes`, returning the value and
+/// the remainder, or `None` if fewer than four bytes remain.
+fn split_u32(bytes: &[u8]) -> Option<(u32, &[u8])> {
+    if bytes.len() < 4 {
+        return None;
+    }
+    let (head, tail) = bytes.split_at(4);
+    let arr: [u8; 4] = head.try_into().ok()?;
+    Some((u32::from_le_bytes(arr), tail))
 }
 
 impl Drop for PluginHostBridge {
@@ -602,5 +649,71 @@ impl Drop for HostTcpStream {
         }
         // SAFETY: `state` is owned and valid; `destroy` is called exactly once.
         unsafe { (self.vtable().destroy)(self.inner.state) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_dir_entries, split_u32};
+
+    /// Encode names with the host's length-prefixed framing, mirroring
+    /// `core::plugin::capabilities::encode_dir_entries`, so the decoder can be
+    /// tested against the exact wire format the host emits.
+    fn encode(names: &[&[u8]]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&(names.len() as u32).to_le_bytes());
+        for name in names {
+            buf.extend_from_slice(&(name.len() as u32).to_le_bytes());
+            buf.extend_from_slice(name);
+        }
+        buf
+    }
+
+    #[test]
+    fn name_with_newline_round_trips_as_one_entry() {
+        // The whole point of CORE-035: a filename containing a newline must come
+        // back as a single entry, not split into two.
+        let encoded = encode(&[b"normal.txt", b"weird\nname.txt", b"another"]);
+        let decoded = decode_dir_entries(&encoded);
+        assert_eq!(
+            decoded,
+            vec![
+                "normal.txt".to_owned(),
+                "weird\nname.txt".to_owned(),
+                "another".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_listing_decodes_to_no_entries() {
+        let encoded = encode(&[]);
+        assert!(decode_dir_entries(&encoded).is_empty());
+        // A completely empty buffer is also handled (no count present).
+        assert!(decode_dir_entries(&[]).is_empty());
+    }
+
+    #[test]
+    fn truncated_buffer_is_decoded_defensively() {
+        // A count claiming three entries but a body carrying only one must not
+        // panic — it yields the entries that parse and stops.
+        let mut encoded = encode(&[b"first"]);
+        // Overwrite the count with 3.
+        encoded[0..4].copy_from_slice(&3u32.to_le_bytes());
+        let decoded = decode_dir_entries(&encoded);
+        assert_eq!(decoded, vec!["first".to_owned()]);
+
+        // A length prefix that overruns the remaining bytes stops cleanly.
+        let mut overrun = Vec::new();
+        overrun.extend_from_slice(&1u32.to_le_bytes()); // count = 1
+        overrun.extend_from_slice(&99u32.to_le_bytes()); // name_len = 99
+        overrun.extend_from_slice(b"short"); // only 5 bytes follow
+        assert!(decode_dir_entries(&overrun).is_empty());
+    }
+
+    #[test]
+    fn split_u32_needs_four_bytes() {
+        assert_eq!(split_u32(&[1, 0, 0, 0, 7]), Some((1, &[7u8][..])));
+        assert!(split_u32(&[1, 0, 0]).is_none());
     }
 }

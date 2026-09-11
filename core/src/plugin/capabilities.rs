@@ -439,7 +439,25 @@ unsafe extern "C" fn bridge_stat_path(
 }
 
 /// `list_dir` callback: resolve the path against the plugin's declared scope,
-/// then list its entries as `\n`-separated (lossy-UTF-8) owned bytes.
+/// then list its entries with an unambiguous **length-prefixed** framing.
+///
+/// # Wire format (CORE-035)
+///
+/// Directory entries were previously joined with `\n`, which corrupts any name
+/// that legally contains a newline (Unix filenames may contain any byte except
+/// `/` and NUL): such a name split into spurious entries, and a crafted name
+/// could inject extra "entries" the plugin then parsed. The framing is now
+/// self-describing and lossless for any byte sequence:
+///
+/// ```text
+/// u32_le count
+/// repeated `count` times:
+///     u32_le name_len
+///     name_len bytes of the entry name (lossy-UTF-8)
+/// ```
+///
+/// The plugin SDK ([`termihub_plugin_api::PluginHostBridge::list_dir`]) decodes
+/// this symmetrically; the two sides must be kept in lockstep.
 ///
 /// # Safety
 ///
@@ -463,16 +481,30 @@ unsafe extern "C" fn bridge_list_dir(
             Ok(rd) => rd,
             Err(_) => return PluginStatus::Io,
         };
-        let mut names: Vec<String> = Vec::new();
+        let mut names: Vec<Vec<u8>> = Vec::new();
         for entry in read_dir.flatten() {
-            names.push(entry.file_name().to_string_lossy().into_owned());
+            names.push(entry.file_name().to_string_lossy().into_owned().into_bytes());
         }
-        let joined = names.join("\n");
+        let encoded = encode_dir_entries(&names);
         // SAFETY: `out_entries` is a valid, writable out-parameter.
-        unsafe { out_entries.write(FfiOwnedBytes::from_vec(joined.into_bytes())) };
+        unsafe { out_entries.write(FfiOwnedBytes::from_vec(encoded)) };
         PluginStatus::Ok
     }));
     result.unwrap_or(PluginStatus::Panic)
+}
+
+/// Encode directory entry names with the length-prefixed framing documented on
+/// [`bridge_list_dir`]: a `u32_le` count, then each name as a `u32_le` length
+/// followed by its raw bytes. Unambiguous for names containing any byte,
+/// including newlines (CORE-035).
+fn encode_dir_entries(names: &[Vec<u8>]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&(names.len() as u32).to_le_bytes());
+    for name in names {
+        buf.extend_from_slice(&(name.len() as u32).to_le_bytes());
+        buf.extend_from_slice(name);
+    }
+    buf
 }
 
 /// Destructor for the bridge context: reclaim the boxed [`BridgeContext`].
@@ -911,5 +943,43 @@ mod tests {
             err,
             termihub_plugin_api::PluginError::PermissionDenied
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_dir_name_with_newline_round_trips_as_one_entry() {
+        // Regression for CORE-035: a Unix filename may legally contain a newline.
+        // The old `\n`-join framing split such a name into two spurious entries;
+        // the length-prefixed framing must round-trip it, through the real host
+        // encoder and the SDK decoder, as a single entry.
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path().join("scoped");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("plain.txt"), b"x").unwrap();
+        let weird = "weird\nname.txt";
+        std::fs::write(root.join(weird), b"y").unwrap();
+
+        let bridge = build_host_bridge(perms(
+            &[PluginPermission::Filesystem],
+            &[root.to_str().unwrap()],
+        ));
+
+        let mut entries = bridge.list_dir(root.to_str().unwrap()).unwrap();
+        entries.sort();
+        // Exactly two entries — the newline did not inject a spurious third.
+        assert_eq!(entries, vec!["plain.txt".to_owned(), weird.to_owned()]);
+    }
+
+    #[test]
+    fn encode_dir_entries_is_length_prefixed() {
+        // The framing is `u32_le` count, then per entry a `u32_le` length + bytes.
+        let encoded = encode_dir_entries(&[b"ab".to_vec(), b"c".to_vec()]);
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&2u32.to_le_bytes());
+        expected.extend_from_slice(&2u32.to_le_bytes());
+        expected.extend_from_slice(b"ab");
+        expected.extend_from_slice(&1u32.to_le_bytes());
+        expected.extend_from_slice(b"c");
+        assert_eq!(encoded, expected);
     }
 }
