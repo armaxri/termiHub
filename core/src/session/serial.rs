@@ -134,6 +134,101 @@ fn serial_permission_hint() -> &'static str {
     }
 }
 
+/// Locale-independent classification of a serial-port open failure.
+///
+/// Buckets a failed [`SerialPort::open`] into an actionable category so the
+/// caller can render a helpful message. Deliberately does **not** carry the
+/// message text — the mapping to user-facing strings lives in
+/// [`open_serial_port`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SerialOpenError {
+    /// The port/device does not exist (unplugged, wrong name).
+    NotFound,
+    /// The caller lacks permission to open the port.
+    PermissionDenied,
+    /// The port exists but is held open by another application.
+    Busy,
+    /// Anything else — surfaced with the raw OS error for diagnosis.
+    Other,
+}
+
+/// Classify a serial-port open error **without relying on localized OS text**.
+///
+/// The OS error *message* is localized to the display language (on Windows it
+/// comes from `FormatMessage`; e.g. "Access is denied" → "Zugriff verweigert"
+/// on German Windows), so matching English substrings silently misclassifies on
+/// non-English systems (I18N-007). Instead this prefers locale-invariant
+/// signals, best first:
+///
+/// 1. [`std::io::ErrorKind`] — already normalized by the standard library.
+/// 2. The **raw OS error code** ([`std::io::Error::raw_os_error`]) — errno on
+///    Unix, `GetLastError` on Windows. Platform-gated because the numeric
+///    spaces differ (code `5` is `EIO` on Unix but `ERROR_ACCESS_DENIED` on
+///    Windows).
+/// 3. English-substring matching, kept **only** as a last-resort fallback for
+///    the "busy" case, which has no stable `ErrorKind` variant
+///    (`ResourceBusy` is not matched by name so the classifier compiles on
+///    every pinned toolchain — the raw `EBUSY`/`ERROR_SHARING_VIOLATION` code
+///    in step 2 is the primary "busy" signal).
+fn classify_open_error(err: &std::io::Error) -> SerialOpenError {
+    // 1. Locale-invariant ErrorKind. `serial2` surfaces the underlying
+    //    `io::Error`, so `NotFound`/`PermissionDenied` are already mapped by std
+    //    (including from the Windows error codes) on every platform.
+    match err.kind() {
+        std::io::ErrorKind::NotFound => return SerialOpenError::NotFound,
+        std::io::ErrorKind::PermissionDenied => return SerialOpenError::PermissionDenied,
+        _ => {}
+    }
+
+    // 2. Raw OS error code — locale-invariant. "Busy" in particular has no
+    //    stable `ErrorKind`, so the code is the only reliable non-text signal.
+    if let Some(code) = err.raw_os_error() {
+        #[cfg(unix)]
+        {
+            const ENOENT: i32 = 2; // No such file or directory
+            const ENXIO: i32 = 6; // No such device or address
+            const EACCES: i32 = 13; // Permission denied
+            const EBUSY: i32 = 16; // Device or resource busy
+            const ENODEV: i32 = 19; // No such device
+            match code {
+                EBUSY => return SerialOpenError::Busy,
+                EACCES => return SerialOpenError::PermissionDenied,
+                ENOENT | ENXIO | ENODEV => return SerialOpenError::NotFound,
+                _ => {}
+            }
+        }
+        #[cfg(windows)]
+        {
+            const ERROR_FILE_NOT_FOUND: i32 = 2;
+            const ERROR_PATH_NOT_FOUND: i32 = 3;
+            const ERROR_ACCESS_DENIED: i32 = 5;
+            const ERROR_SHARING_VIOLATION: i32 = 32; // held open by another app
+            const ERROR_BUSY: i32 = 170; // the requested resource is in use
+            match code {
+                ERROR_SHARING_VIOLATION | ERROR_BUSY => return SerialOpenError::Busy,
+                ERROR_ACCESS_DENIED => return SerialOpenError::PermissionDenied,
+                ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND => return SerialOpenError::NotFound,
+                _ => {}
+            }
+        }
+    }
+
+    // 3. Last-resort English-substring heuristic. Localized on non-English
+    //    systems, so it runs only after the locale-invariant checks above fail
+    //    to classify the error.
+    let desc = err.to_string();
+    if desc.contains("busy") || desc.contains("in use") || desc.contains("Access is denied") {
+        SerialOpenError::Busy
+    } else if desc.contains("not found")
+        || desc.contains("cannot find")
+        || desc.contains("No such file")
+    {
+        SerialOpenError::NotFound
+    } else {
+        SerialOpenError::Other
+    }
+}
+
 /// Open a serial port using a pre-parsed configuration.
 ///
 /// Returns a [`serial2_tokio::SerialPort`] ready for async I/O.
@@ -153,34 +248,24 @@ pub fn open_serial_port(config: &ParsedSerialConfig) -> Result<SerialPort, Sessi
         Ok(settings)
     })
     .map_err(|e| {
-        let msg = match e.kind() {
-            std::io::ErrorKind::NotFound => format!(
+        // Classify by locale-invariant signals (ErrorKind / raw OS code) rather
+        // than the localized OS message text (I18N-007).
+        let msg = match classify_open_error(&e) {
+            SerialOpenError::NotFound => format!(
                 "Serial port '{}' not found — check that the device is connected and the port name is correct",
                 config.port
             ),
-            std::io::ErrorKind::PermissionDenied => format!(
+            SerialOpenError::PermissionDenied => format!(
                 "Permission denied on '{}' — {}",
                 config.port,
                 serial_permission_hint()
             ),
-            _ => {
-                let desc = e.to_string();
-                if desc.contains("busy") || desc.contains("in use") || desc.contains("Access is denied") {
-                    format!(
-                        "Serial port '{}' is already in use by another application",
-                        config.port
-                    )
-                } else if desc.contains("not found")
-                    || desc.contains("cannot find")
-                    || desc.contains("No such file")
-                {
-                    format!(
-                        "Serial port '{}' not found — check that the device is connected and the port name is correct",
-                        config.port
-                    )
-                } else {
-                    format!("Failed to open serial port '{}': {}", config.port, e)
-                }
+            SerialOpenError::Busy => format!(
+                "Serial port '{}' is already in use by another application",
+                config.port
+            ),
+            SerialOpenError::Other => {
+                format!("Failed to open serial port '{}': {}", config.port, e)
             }
         };
         SessionError::SpawnFailed(msg)
@@ -736,6 +821,119 @@ mod tests {
             matches!(err, SessionError::SpawnFailed(_)),
             "expected SpawnFailed, got: {:?}",
             err
+        );
+    }
+
+    // --- classify_open_error tests ---------------------------------------
+    //
+    // The classifier must bucket a failed open by locale-invariant signals
+    // (io::ErrorKind + raw OS error code), NOT by the localized OS message text
+    // (I18N-007). Errors built via `from_raw_os_error` carry only the numeric
+    // code — their `Display` string is the OS's own (localized) strerror — so a
+    // correct classification of these proves the mapping does not depend on
+    // English text.
+
+    #[cfg(unix)]
+    #[test]
+    fn classify_unix_error_codes_by_errno() {
+        use std::io::Error;
+        // EBUSY (16): no stable ErrorKind — must be caught by the raw code.
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(16)),
+            SerialOpenError::Busy,
+            "EBUSY should classify as Busy without matching any English text"
+        );
+        // EACCES (13): permission.
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(13)),
+            SerialOpenError::PermissionDenied
+        );
+        // ENOENT (2) / ENXIO (6) / ENODEV (19): not found.
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(2)),
+            SerialOpenError::NotFound
+        );
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(6)),
+            SerialOpenError::NotFound
+        );
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(19)),
+            SerialOpenError::NotFound
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn classify_windows_error_codes_by_code() {
+        use std::io::Error;
+        // ERROR_SHARING_VIOLATION (32): the port is held by another app — the
+        // key non-English-text case for "busy" on Windows.
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(32)),
+            SerialOpenError::Busy,
+            "ERROR_SHARING_VIOLATION should classify as Busy on non-English Windows too"
+        );
+        // ERROR_BUSY (170): resource in use.
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(170)),
+            SerialOpenError::Busy
+        );
+        // ERROR_ACCESS_DENIED (5): permission.
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(5)),
+            SerialOpenError::PermissionDenied
+        );
+        // ERROR_FILE_NOT_FOUND (2) / ERROR_PATH_NOT_FOUND (3): not found.
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(2)),
+            SerialOpenError::NotFound
+        );
+        assert_eq!(
+            classify_open_error(&Error::from_raw_os_error(3)),
+            SerialOpenError::NotFound
+        );
+    }
+
+    #[test]
+    fn classify_uses_error_kind_when_present() {
+        use std::io::{Error, ErrorKind};
+        // A synthetic error with no OS code but a locale-invariant kind must
+        // still classify correctly (e.g. a message in another language).
+        assert_eq!(
+            classify_open_error(&Error::new(ErrorKind::NotFound, "Datei nicht gefunden")),
+            SerialOpenError::NotFound
+        );
+        assert_eq!(
+            classify_open_error(&Error::new(
+                ErrorKind::PermissionDenied,
+                "Zugriff verweigert"
+            )),
+            SerialOpenError::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn classify_falls_back_to_english_substring_for_busy() {
+        use std::io::Error;
+        // No OS code, no classifying kind — the last-resort English heuristic
+        // still catches an in-use message (the fallback path).
+        assert_eq!(
+            classify_open_error(&Error::other("device or resource busy")),
+            SerialOpenError::Busy
+        );
+        assert_eq!(
+            classify_open_error(&Error::other("port already in use")),
+            SerialOpenError::Busy
+        );
+    }
+
+    #[test]
+    fn classify_unknown_error_is_other() {
+        use std::io::Error;
+        assert_eq!(
+            classify_open_error(&Error::other("something unexpected")),
+            SerialOpenError::Other
         );
     }
 
