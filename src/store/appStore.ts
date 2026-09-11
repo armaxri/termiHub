@@ -224,6 +224,7 @@ import {
   registerCustomGrammars,
 } from "@/utils/monacoCustomLanguages";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
+import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
 import {
@@ -6259,10 +6260,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // (`setAgentConnectionState`), so it runs exactly once per connect and
         // also covers the reconnect path — do not refresh here (de-dup, G4).
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to connect agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to connect agent ${agentId}: ${backendErrorMessage(err)}`);
         // No optimistic "disconnected" write: the backend emits "disconnected"
         // on every connect-failure path, so the event will drive the state.
         throw err;
