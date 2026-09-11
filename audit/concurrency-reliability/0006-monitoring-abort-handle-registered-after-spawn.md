@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/session/monitoring_controller.rs:239
   - src-tauri/src/session/monitoring_controller.rs:243
   - src-tauri/src/session/monitoring_controller.rs:252
-status: open
+status: fixed
+resolution: "#2803 — monitoring spawn_and_register: abort-handle inserted atomically under one lock + abort-then-replace"
 ---
 
 ## What

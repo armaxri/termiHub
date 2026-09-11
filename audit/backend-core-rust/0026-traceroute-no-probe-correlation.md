@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/network/traceroute
 evidence:
   - core/src/network/traceroute.rs:139
-status: open
+status: fixed
+resolution: "#2804 — traceroute: unique dest port per probe + correlate ICMP via embedded UDP header (icmp_reply_matches_probe)"
 ---
 
 ## What

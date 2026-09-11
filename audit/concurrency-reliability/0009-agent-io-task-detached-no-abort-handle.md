@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:860
   - src-tauri/src/terminal/agent_manager.rs:944
   - src-tauri/src/terminal/agent_manager.rs:2029
-status: open
+status: fixed
+resolution: "#2809 — io_task AbortHandle retained in AgentConnection, fired on teardown/evict/prune (forced stop of wedged task)"
 ---
 
 ## What

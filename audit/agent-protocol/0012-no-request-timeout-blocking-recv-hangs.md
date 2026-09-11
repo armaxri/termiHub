@@ -9,7 +9,8 @@ subsystem: src-tauri/src/terminal/agent_manager.rs
 evidence:
   - src-tauri/src/terminal/agent_manager.rs:1184
   - src-tauri/src/terminal/agent_manager.rs:1172
-status: open
+status: fixed
+resolution: "already-on-develop — send_request now delegates to send_request_with_timeout(AGENT_REQUEST_TIMEOUT) via tokio::time::timeout — audit branch stale"
 ---
 
 ## What

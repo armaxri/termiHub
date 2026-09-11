@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:2052
   - src-tauri/src/terminal/agent_manager.rs:1487
   - src-tauri/src/terminal/agent_manager.rs:2250
-status: open
+status: fixed
+resolution: "#2809 — terminal input never replayed across reconnect (reconnecting flag + backlog filter); resize coalesced-to-latest; queue bounded"
 ---
 
 ## What

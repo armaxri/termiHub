@@ -10,7 +10,8 @@ evidence:
   - src/components/SplitView/SplitView.tsx:717
   - src/components/SplitView/SplitView.tsx:462
   - src/components/SplitView/SplitView.tsx:163
-status: open
+status: fixed
+resolution: "#2808 — clipboard await/catch+toast; zoom hidden copy dormant (skips watch/poll/status, avoids shared-model dispose); dnd casts guarded"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/SplitView
 evidence:
   - src/components/SplitView/SplitView.tsx:1022
-status: open
+status: fixed
+resolution: "#2808 — SplitView RAF-branch cleanup now parks xterm el back (shared teardown)"
 ---
 
 ## What

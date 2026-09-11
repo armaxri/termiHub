@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/rdp_sidecar
 evidence:
   - core/src/backends/rdp_sidecar/mod.rs:753
-status: open
+status: fixed
+resolution: "#2804 — rdp clipboard: plan_clipboard_chunk guard rejects zero-len non-final + bounds chunk count (no infinite loop)"
 ---
 
 ## What

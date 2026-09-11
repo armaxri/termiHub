@@ -10,7 +10,8 @@ evidence:
   - agent/src/daemon/process.rs:116
   - agent/src/session/manager.rs:875
   - agent/src/daemon/transport.rs:258
-status: open
+status: fixed
+resolution: "#2806 — remove_session_files sweeps dead-session sock/relay/log at every recovery-dead point (respects live-peer ownership); one-time orphan sweep deferred → #2807"
 ---
 
 ## What

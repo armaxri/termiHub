@@ -10,7 +10,8 @@ evidence:
   - agent/src/daemon/transport.rs:229
   - agent/src/daemon/transport.rs:230
   - core/src/ipc/local_socket.rs:211
-status: open
+status: fixed
+resolution: "#2806 — ensure_private_dir (symlink-reject + uid-owner fail-closed) + uid/SID identity not USER env; /tmp/termihub/uid-<uid>"
 ---
 
 ## What

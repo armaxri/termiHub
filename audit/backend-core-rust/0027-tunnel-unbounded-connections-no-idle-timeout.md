@@ -9,7 +9,8 @@ subsystem: core/tunnel
 evidence:
   - core/src/tunnel/local_forward.rs
   - core/src/tunnel/dynamic_forward.rs
-status: open
+status: fixed
+resolution: "#2803 — tunnel forwarders: Semaphore MAX_CONCURRENT_FORWARDED_CONNECTIONS=256 across all 3 forwarders"
 ---
 
 ## What

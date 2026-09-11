@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src-tauri/src/terminal/agent_manager.rs
 evidence:
   - src-tauri/src/terminal/agent_manager.rs:1752
-status: open
+status: fixed
+resolution: "#2809 — clientVersion from env!(CARGO_PKG_VERSION) not hardcoded 0.1.0"
 ---
 
 ## What
