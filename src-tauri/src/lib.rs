@@ -1551,6 +1551,7 @@ pub fn run() {
             commands::files::local_delete,
             commands::files::local_rename,
             commands::files::local_read_file,
+            commands::files::local_stat,
             commands::files::local_write_file,
             commands::files::watch_local_file,
             commands::files::unwatch_local_file,
