@@ -282,8 +282,12 @@ describe("FileEditor — remote external-change poll (#1627)", () => {
   it("does not poll a remote file that is not the visible tab", async () => {
     render(SFTP_META, /* isVisible */ false);
     await flush();
+    // A single load-time stat is expected: the large-file guard (#PROD-014 /
+    // #PERF-002) stats before reading, and content loads regardless of
+    // visibility. The assertion here is that the *poll* adds no further stats.
+    const statsAfterLoad = countInvokes("session_stat");
     await pollOnce();
-    expect(countInvokes("session_stat")).toBe(0);
+    expect(countInvokes("session_stat")).toBe(statsAfterLoad);
   });
 
   it("reflects an external change for a session-layer (Docker/FTP/agent) file", async () => {
