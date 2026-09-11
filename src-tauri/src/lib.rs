@@ -376,7 +376,10 @@ pub fn run() {
         .plugin(tauri_plugin_cli::init())
         .manage(TransferRegistry::new())
         .manage(files::watcher::FileWatchManager::new())
-        .manage(NetworkManager::new())
+        // NetworkManager needs the resolved config dir + AppHandle, neither of
+        // which exists here. It is therefore constructed fully-initialised inside
+        // `setup()` (below) and `manage`d there, like every other late-bound
+        // manager — avoiding a register-then-mutate step (TAURI-001 / ARCH-011).
         .manage(x_server_manager.clone())
         .manage(x_server_consent_registry.clone())
         .manage(spawn::handler::PendingSpawn::default())
@@ -658,12 +661,15 @@ pub fn run() {
             // Capture path for the connections file watcher before config_dir is moved.
             let connections_file = config_dir.join("connections.json");
 
-            // Initialise the network manager with the config dir and app handle.
-            if let Some(net_mgr) = app.try_state::<NetworkManager>() {
-                // SAFETY: NetworkManager is only initialised once at startup.
-                let mgr_ptr = net_mgr.inner() as *const NetworkManager as *mut NetworkManager;
-                unsafe { (*mgr_ptr).init(config_dir.clone(), app.handle().clone()) };
-            }
+            // Construct the network manager fully-initialised, then hand it to
+            // Tauri as shared managed state. Building it here (rather than in the
+            // builder chain, then mutating it through a `*const → *mut` cast on the
+            // shared `State` reference) removes the aliasing UB flagged by
+            // TAURI-001 / ARCH-011: `init` takes `&mut self` on this still-owned
+            // value, before any shared reference to it can exist.
+            let mut network_manager = NetworkManager::new();
+            network_manager.init(config_dir.clone(), app.handle().clone());
+            app.manage(network_manager);
 
             let settings = match SettingsStorage::new(app.handle()) {
                 Ok(storage) => match storage.load_with_recovery() {
