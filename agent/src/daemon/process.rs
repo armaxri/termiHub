@@ -112,7 +112,14 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
     let output_rx = connection.subscribe_output();
 
     // Run the main event loop
-    let result = daemon_loop(connection, output_rx, &mut listener, config.buffer_size).await;
+    let result = daemon_loop(
+        &config.session_id,
+        connection,
+        output_rx,
+        &mut listener,
+        config.buffer_size,
+    )
+    .await;
 
     // Cleanup the endpoint
     listener.cleanup();
@@ -146,6 +153,7 @@ enum AgentCommand {
 /// Multiplexes between connection output, new agent connections, and
 /// agent commands using `tokio::select!`.
 async fn daemon_loop(
+    session_id: &str,
     mut connection: Box<dyn ConnectionType>,
     mut output_rx: OutputReceiver,
     listener: &mut DaemonListener,
@@ -196,7 +204,7 @@ async fn daemon_loop(
             conn = listener.accept() => {
                 match conn {
                     Ok((mut read_half, mut write_half)) => {
-                        info!("Agent connected");
+                        info!(session_id, "Agent connected");
 
                         // AGT-015: `state.json` is shared per-user across every
                         // `--stdio` worker (one per attached desktop, ADR-11). A
@@ -207,12 +215,21 @@ async fn daemon_loop(
                         // attached, consult the newcomer's declared intent: a
                         // recovery connect is refused (its live owner keeps the
                         // session); a takeover connect evicts as before.
-                        if agent_writer.is_some() {
+                        let decision = if agent_writer.is_some() {
                             let intent = read_attach_intent(&mut read_half).await;
-                            if intent == INTENT_RECOVERY {
+                            decide_attach(true, intent)
+                        } else {
+                            AttachDecision::FreshAttach
+                        };
+                        match decision {
+                            AttachDecision::RefuseOwnedByLivePeer => {
+                                // OBS-012: log the ownership decision so a
+                                // "my session vanished" report is explicable —
+                                // here the incumbent live writer keeps it.
                                 info!(
+                                    session_id,
                                     "Refusing recovery connect: a live writer is still \
-                                     attached (AGT-015)"
+                                     attached, leaving the session with its owner (AGT-015)"
                                 );
                                 let _ = protocol::write_frame_async(
                                     &mut write_half,
@@ -225,8 +242,19 @@ async fn daemon_loop(
                                 // here at end of scope.
                                 continue;
                             }
-                            // Takeover (or an absent/malformed intent, which
-                            // defaults to takeover) → fall through and evict.
+                            AttachDecision::EvictAndTakeover => {
+                                // OBS-012: a takeover is about to displace the
+                                // current live writer (another desktop taking the
+                                // session over). Record it at WARN so the loser's
+                                // "session disappeared" is traceable to a
+                                // deliberate takeover, not a crash.
+                                warn!(
+                                    session_id,
+                                    "Takeover connect is evicting the current live writer \
+                                     for this session (OBS-012)"
+                                );
+                            }
+                            AttachDecision::FreshAttach => {}
                         }
 
                         // Bump the generation so any in-flight Disconnected from
@@ -387,6 +415,38 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
     }
 }
 
+/// What to do with a newly-accepted agent connection, given whether a live
+/// writer is already attached and the newcomer's declared attach intent.
+///
+/// Extracted so the AGT-015 / OBS-012 ownership decision — refuse a recovery
+/// connect vs. evict-and-take-over vs. plain fresh attach — is unit-testable and
+/// has a single, logged decision point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachDecision {
+    /// No live writer was attached; the newcomer simply attaches.
+    FreshAttach,
+    /// A live writer is attached and the newcomer is a recovery connect: refuse
+    /// it and leave the session with its current owner (AGT-015).
+    RefuseOwnedByLivePeer,
+    /// A live writer is attached and the newcomer is a takeover: evict the
+    /// incumbent and hand the session over (OBS-012 logs this).
+    EvictAndTakeover,
+}
+
+/// Decide how to handle a new connection from `writer_attached` (is a live
+/// writer already attached) and its declared `intent`.
+fn decide_attach(writer_attached: bool, intent: u8) -> AttachDecision {
+    if !writer_attached {
+        AttachDecision::FreshAttach
+    } else if intent == INTENT_RECOVERY {
+        AttachDecision::RefuseOwnedByLivePeer
+    } else {
+        // Takeover, or an absent/malformed intent which defaults to takeover,
+        // preserving the historical evict-on-accept behaviour.
+        AttachDecision::EvictAndTakeover
+    }
+}
+
 /// Read a newly-connected worker's [`MSG_ATTACH_INTENT`] to learn whether it is
 /// a recovery connect (refuse if a live writer is attached) or a takeover.
 ///
@@ -427,6 +487,45 @@ mod tests {
 
     /// Env var tests mutate the process environment and must run serially.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    // ── attach-ownership decision (AGT-015 / OBS-012) ─────────────────
+
+    #[test]
+    fn decide_attach_fresh_when_no_writer_attached() {
+        // With no live writer, intent is irrelevant — always a fresh attach.
+        assert_eq!(
+            decide_attach(false, INTENT_RECOVERY),
+            AttachDecision::FreshAttach
+        );
+        assert_eq!(
+            decide_attach(false, INTENT_TAKEOVER),
+            AttachDecision::FreshAttach
+        );
+    }
+
+    #[test]
+    fn decide_attach_refuses_recovery_when_writer_attached() {
+        // A recovery connect must not steal a live peer's session (AGT-015).
+        assert_eq!(
+            decide_attach(true, INTENT_RECOVERY),
+            AttachDecision::RefuseOwnedByLivePeer
+        );
+    }
+
+    #[test]
+    fn decide_attach_evicts_on_takeover_when_writer_attached() {
+        // A takeover (or an absent/unknown intent defaulting to takeover) evicts
+        // the incumbent — the OBS-012 eviction that must be logged.
+        assert_eq!(
+            decide_attach(true, INTENT_TAKEOVER),
+            AttachDecision::EvictAndTakeover
+        );
+        let unknown_intent = 0xEE;
+        assert_eq!(
+            decide_attach(true, unknown_intent),
+            AttachDecision::EvictAndTakeover
+        );
+    }
 
     #[test]
     fn daemon_config_requires_type_id() {
@@ -724,7 +823,8 @@ mod tests {
                 // it would close the output channel and make `daemon_loop` exit.
                 let _out_tx = out_tx;
                 let conn: Box<dyn ConnectionType> = Box::new(FakeConnection);
-                let _ = super::super::daemon_loop(conn, out_rx, &mut listener, 4096).await;
+                let _ = super::super::daemon_loop("test-session", conn, out_rx, &mut listener, 4096)
+                    .await;
                 listener.cleanup();
             })
         }

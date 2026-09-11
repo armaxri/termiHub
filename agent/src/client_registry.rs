@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
+use tracing::info;
 
 /// A single client currently connected to this agent process.
 ///
@@ -79,6 +80,23 @@ impl ConnectionRegistry {
             connected_since: Utc::now(),
         };
         let mut guard = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        // OBS-012: log ownership transitions so a "who is connected" change is
+        // never invisible. A re-register on the same id replaces the previous
+        // entry (a client taking the connection over).
+        if let Some(prev) = guard.get(&entry.client_id) {
+            info!(
+                client_id = %entry.client_id,
+                previous_client = %prev.client,
+                new_client = %entry.client,
+                "re-registering client: replacing the previous initialize on this connection"
+            );
+        } else {
+            info!(
+                client_id = %entry.client_id,
+                client = %entry.client,
+                "client connected and registered with the agent"
+            );
+        }
         guard.insert(entry.client_id.clone(), entry.clone());
         entry
     }
@@ -87,7 +105,16 @@ impl ConnectionRegistry {
     /// returning the removed entry if it was present.
     pub fn remove(&self, client_id: &str) -> Option<ConnectedClient> {
         let mut guard = self.clients.lock().unwrap_or_else(|e| e.into_inner());
-        guard.remove(client_id)
+        let removed = guard.remove(client_id);
+        // OBS-012: a client leaving the registry is an ownership transition too.
+        if let Some(ref client) = removed {
+            info!(
+                client_id = %client_id,
+                client = %client.client,
+                "client disconnected and was removed from the agent registry"
+            );
+        }
+        removed
     }
 
     /// Look up a single connected client by id.
@@ -192,6 +219,72 @@ mod tests {
         assert_eq!(
             reg.get("id-1").expect("client present").client_version,
             "1.1.0"
+        );
+    }
+
+    // ── OBS-012: ownership-transition logging ─────────────────────────
+
+    use std::io;
+    use std::sync::Arc;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    /// A `MakeWriter` that captures emitted log lines into a shared buffer so a
+    /// test can assert what was logged.
+    #[derive(Clone, Default)]
+    struct BufWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for BufWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for BufWriter {
+        type Writer = BufWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    fn capture_logs<F: FnOnce()>(f: F) -> String {
+        let buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(BufWriter(buf.clone()))
+            .with_ansi(false)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        tracing::subscriber::with_default(subscriber, f);
+        let bytes = buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        String::from_utf8(bytes).unwrap()
+    }
+
+    /// Every ownership transition — connect, takeover (re-register), and
+    /// disconnect (remove) — must emit a log line so a "my session vanished"
+    /// report is explicable (OBS-012). Asserted by capturing the tracing output.
+    #[test]
+    fn ownership_transitions_are_logged() {
+        let logs = capture_logs(|| {
+            let reg = ConnectionRegistry::new();
+            reg.register("id-1", "desktop-a", "1.0.0"); // fresh connect
+            reg.register("id-1", "desktop-b", "1.1.0"); // re-register / takeover
+            reg.remove("id-1"); // disconnect
+        });
+
+        assert!(
+            logs.contains("client connected and registered"),
+            "fresh connect must be logged, got: {logs}"
+        );
+        assert!(
+            logs.contains("replacing the previous initialize"),
+            "a re-register/takeover must be logged, got: {logs}"
+        );
+        assert!(
+            logs.contains("removed from the agent registry"),
+            "a disconnect must be logged, got: {logs}"
         );
     }
 }
