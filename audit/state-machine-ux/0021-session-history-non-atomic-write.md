@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/session_history/storage.rs:90
   - src-tauri/src/workspace/storage.rs:89
   - src-tauri/src/workspace/last_session.rs:96
-status: open
+status: fixed
+resolution: "#2318/#2366 — already on develop: session-history writes via write_atomic (audit branch stale)"
 ---
 
 ## What

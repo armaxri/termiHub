@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/plugin
 evidence:
   - core/src/plugin/capabilities.rs:472
-status: open
+status: fixed
+resolution: "#2797 — plugin list_dir length-prefixed framing (host+SDK); newline-safe"
 ---
 
 ## What

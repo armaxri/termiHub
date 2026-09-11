@@ -10,7 +10,8 @@ evidence:
   - agent/src/session/manager.rs:349
   - agent/src/session/manager.rs:523
   - agent/src/fs.rs:23
-status: open
+status: fixed
+resolution: "#2801 — cross-process FileLock + mutate_locked read-modify-write of shared state.json"
 ---
 
 ## What

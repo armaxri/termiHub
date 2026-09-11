@@ -9,7 +9,8 @@ subsystem: agent/src/session/manager.rs, agent/src/daemon/spawn.rs
 evidence:
   - agent/src/session/manager.rs:268
   - agent/src/daemon/spawn.rs:64
-status: open
+status: fixed
+resolution: "#2801 — reap detached daemon children (reaper thread); registry-daemon too; #2580"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: core/plugin
 evidence:
   - core/src/plugin/host.rs:261
   - core/src/plugin/manager.rs
-status: open
+status: in-progress
+resolution: "#2797 — deterministic lib pick + re-hash before load; full TOCTOU closure residual → #2796"
 ---
 
 ## What

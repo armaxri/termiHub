@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/docker
 evidence:
   - core/src/backends/docker/file_browser.rs:178
-status: open
+status: fixed
+resolution: "#2800 — docker dir listing portable (POSIX sh + stat/readlink) — busybox/alpine safe"
 ---
 
 ## What

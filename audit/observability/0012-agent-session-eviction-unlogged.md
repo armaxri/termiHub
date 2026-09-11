@@ -9,7 +9,8 @@ subsystem: agent/src/session/manager.rs, agent/src/client_registry.rs
 evidence:
   - agent/src/session/manager.rs
   - agent/src/client_registry.rs
-status: open
+status: fixed
+resolution: "#2801 — decide_attach WARN/INFO logging of eviction/takeover/refused-recovery + client registry"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/plugin
 evidence:
   - core/src/plugin/capabilities.rs:263
-status: open
+status: fixed
+resolution: "#2797 — FFI bridge ctx lifetime-bounded + null/magic-tag checked"
 ---
 
 ## What

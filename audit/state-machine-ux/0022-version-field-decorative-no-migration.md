@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/workspace/last_session.rs:25
   - src-tauri/src/workspace/config.rs:161
   - src-tauri/src/session_history/config.rs:45
-status: open
+status: fixed
+resolution: "#2746 — already on develop: VersionedStore/load_versioned wired to all 3 stores; newer=refused not reset (audit branch stale)"
 ---
 
 ## What

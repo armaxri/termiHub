@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/local_shell
 evidence:
   - core/src/backends/local_shell.rs
-status: open
+status: fixed
+resolution: "n/a — not-a-bug: initialCommand IS injected by src-tauri SessionManager (inject_initial_command, #792 test); core deliberately doesn't — audit missed the session-manager layer"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/plugin
 evidence:
   - core/src/plugin/signature.rs
-status: open
+status: fixed
+resolution: "#2797 — plugin sig verify_strict (rejects malleable/small-order)"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - core/src/backends/docker/file_browser.rs:381
   - core/src/backends/docker/file_browser.rs:412
   - core/src/backends/docker/file_browser.rs:478
-status: open
+status: fixed
+resolution: "#2800 — docker backend uses base64 crate (STANDARD) instead of hand-rolled ~100 lines"
 ---
 
 ## What

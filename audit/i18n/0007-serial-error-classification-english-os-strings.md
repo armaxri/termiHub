@@ -10,7 +10,8 @@ evidence:
   - core/src/session/serial.rs:166
   - core/src/session/serial.rs:168
   - core/src/session/serial.rs:173
-status: open
+status: fixed
+resolution: "#2802 — serial open errors classified by ErrorKind/raw_os_error (errno) not localized text; english fallback only for busy"
 ---
 
 ## What
