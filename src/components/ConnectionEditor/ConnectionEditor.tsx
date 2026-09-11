@@ -1300,6 +1300,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           targetHost={connSettings.host as string | undefined}
           onChange={handleJumpHostChange}
           savedConnections={jumpHostOptions}
+          sshSchema={currentTypeInfo?.schema}
           errors={jumpHostValidation.errors}
           warnings={jumpHostValidation.warnings}
         />

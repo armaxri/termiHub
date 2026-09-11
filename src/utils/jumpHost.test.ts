@@ -8,9 +8,11 @@ import {
   connectionPathLabel,
   sshJumpHostOptions,
   findJumpHostDependents,
+  jumpHostInlineFields,
 } from "./jumpHost";
 import { ConnectionFolder, JumpHostConfig, SavedConnection } from "@/types/connection";
 import { ConnectionConfig } from "@/types/terminal";
+import type { SettingsSchema } from "@/types/schema";
 
 function hop(host: string, username = "admin"): JumpHostConfig {
   return { host, port: 22, username, authMethod: "key" };
@@ -244,5 +246,101 @@ describe("findJumpHostDependents (#941)", () => {
       config: { type: "ssh", config: { jumpHosts: [ref("bastion")] } },
     };
     expect(findJumpHostDependents([legacy], ["bastion"]).map((d) => d.id)).toEqual(["L"]);
+  });
+});
+
+describe("jumpHostInlineFields", () => {
+  const schema: SettingsSchema = {
+    groups: [
+      {
+        key: "connection",
+        label: "Connection",
+        fields: [
+          { key: "host", label: "Host", fieldType: { type: "text" }, required: true },
+          { key: "port", label: "Port", fieldType: { type: "port" }, required: true },
+          { key: "username", label: "Username", fieldType: { type: "text" }, required: true },
+        ],
+      },
+      {
+        key: "authentication",
+        label: "Authentication",
+        fields: [
+          {
+            key: "authMethod",
+            label: "Method",
+            fieldType: {
+              type: "select",
+              options: [
+                { value: "key", label: "SSH Key" },
+                { value: "password", label: "Password" },
+                { value: "agent", label: "SSH Agent" },
+              ],
+            },
+            required: true,
+          },
+          {
+            key: "password",
+            label: "Password",
+            fieldType: { type: "password" },
+            required: false,
+            visibleWhen: { field: "authMethod", equals: "password" },
+          },
+          {
+            key: "keyPath",
+            label: "Key Path",
+            fieldType: { type: "filePath", kind: "file" },
+            required: false,
+            visibleWhen: { field: "authMethod", equals: "key" },
+          },
+          // A field the jump host must NOT adopt — proves it picks a subset.
+          { key: "savePassword", label: "Save", fieldType: { type: "boolean" }, required: false },
+        ],
+      },
+    ],
+  };
+
+  it("sources the inline hop fields from the SSH schema in order, plus the connect timeout", () => {
+    const fields = jumpHostInlineFields(schema);
+    expect(fields.map((f) => f.key)).toEqual([
+      "host",
+      "port",
+      "username",
+      "authMethod",
+      "keyPath",
+      "password",
+      "connectTimeoutSecs",
+    ]);
+  });
+
+  it("carries the exact schema field objects (auth options, conditional visibility)", () => {
+    const fields = jumpHostInlineFields(schema);
+    const auth = fields.find((f) => f.key === "authMethod");
+    // The auth options come straight from the schema — not a local copy.
+    expect(auth?.fieldType).toEqual({
+      type: "select",
+      options: [
+        { value: "key", label: "SSH Key" },
+        { value: "password", label: "Password" },
+        { value: "agent", label: "SSH Agent" },
+      ],
+    });
+    expect(fields.find((f) => f.key === "password")?.visibleWhen).toEqual({
+      field: "authMethod",
+      equals: "password",
+    });
+    expect(fields.find((f) => f.key === "keyPath")?.visibleWhen).toEqual({
+      field: "authMethod",
+      equals: "key",
+    });
+  });
+
+  it("does not adopt non-hop SSH fields such as savePassword", () => {
+    const keys = jumpHostInlineFields(schema).map((f) => f.key);
+    expect(keys).not.toContain("savePassword");
+  });
+
+  it("returns only the connect-timeout field when no SSH schema is available", () => {
+    const fields = jumpHostInlineFields(undefined);
+    expect(fields.map((f) => f.key)).toEqual(["connectTimeoutSecs"]);
   });
 });
