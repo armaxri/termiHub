@@ -533,16 +533,69 @@ impl RemoteFileBrowserProxy {
     }
 }
 
+/// Builders for the `connection.files.*` JSON-RPC request params.
+///
+/// These are factored out of the [`FileBrowser`] impl below as pure functions
+/// so a per-PR contract test can round-trip each one through the agent's real
+/// parameter structs (`agent/src/protocol/methods.rs`) — see the `tests`
+/// module. The desktop and the agent share no protocol DTO crate, so the field
+/// names here are hand-mirrored against the agent's structs and can silently
+/// drift; the round-trip test is the guard that keeps them aligned in per-PR CI
+/// (audit findings AGT-001, AGT-009, TBE-009).
+///
+/// The agent is the server contract: field names below match the agent's
+/// structs exactly, NOT necessarily each other. `delete` is the notable
+/// asymmetry — `FilesDeleteParams` is the only files DTO with
+/// `#[serde(rename_all = "camelCase")]`, so it uses `connectionId`/`isDirectory`
+/// while its five siblings use snake_case.
+mod files_params {
+    use serde_json::{json, Value};
+
+    pub(super) fn list(connection_id: &str, path: &str) -> Value {
+        json!({ "connection_id": connection_id, "path": path })
+    }
+
+    pub(super) fn read(connection_id: &str, path: &str) -> Value {
+        json!({ "connection_id": connection_id, "path": path })
+    }
+
+    pub(super) fn write(connection_id: &str, path: &str, data_b64: &str) -> Value {
+        json!({ "connection_id": connection_id, "path": path, "data": data_b64 })
+    }
+
+    /// `FilesDeleteParams` uses `#[serde(rename_all = "camelCase")]`, so the
+    /// agent requires `connectionId` and a required `isDirectory` bool.
+    /// `isDirectory` is advisory: the agent self-detects the entry kind via
+    /// `stat` and discards this hint (`agent/src/handler/dispatch.rs`), but the
+    /// field must be present for `params.parse()` to succeed. The
+    /// [`FileBrowser::delete`] trait carries no directory flag to forward here,
+    /// so a benign `false` is sent purely to satisfy the required field.
+    pub(super) fn delete(connection_id: &str, path: &str) -> Value {
+        json!({ "connectionId": connection_id, "path": path, "isDirectory": false })
+    }
+
+    /// `FilesRenameParams` requires snake_case `old_path`/`new_path` (no serde
+    /// alias), so the trait's `from`/`to` map onto those names here.
+    pub(super) fn rename(connection_id: &str, from: &str, to: &str) -> Value {
+        json!({ "connection_id": connection_id, "old_path": from, "new_path": to })
+    }
+
+    pub(super) fn stat(connection_id: &str, path: &str) -> Value {
+        json!({ "connection_id": connection_id, "path": path })
+    }
+
+    pub(super) fn mkdir(connection_id: &str, path: &str) -> Value {
+        json!({ "connection_id": connection_id, "path": path })
+    }
+}
+
 #[async_trait::async_trait]
 impl FileBrowser for RemoteFileBrowserProxy {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
         let result = self
             .rpc(
                 "connection.files.list",
-                serde_json::json!({
-                    "connection_id": self.remote_session_id,
-                    "path": path,
-                }),
+                files_params::list(&self.remote_session_id, path),
             )
             .await?;
 
@@ -557,10 +610,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
         let result = self
             .rpc(
                 "connection.files.read",
-                serde_json::json!({
-                    "connection_id": self.remote_session_id,
-                    "path": path,
-                }),
+                files_params::read(&self.remote_session_id, path),
             )
             .await?;
 
@@ -573,11 +623,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
         let encoded = base64::engine::general_purpose::STANDARD.encode(data);
         self.rpc(
             "connection.files.write",
-            serde_json::json!({
-                "connection_id": self.remote_session_id,
-                "path": path,
-                "data": encoded,
-            }),
+            files_params::write(&self.remote_session_id, path, &encoded),
         )
         .await?;
         Ok(())
@@ -586,10 +632,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
     async fn delete(&self, path: &str) -> Result<(), FileError> {
         self.rpc(
             "connection.files.delete",
-            serde_json::json!({
-                "connection_id": self.remote_session_id,
-                "path": path,
-            }),
+            files_params::delete(&self.remote_session_id, path),
         )
         .await?;
         Ok(())
@@ -598,11 +641,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
     async fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
         self.rpc(
             "connection.files.rename",
-            serde_json::json!({
-                "connection_id": self.remote_session_id,
-                "from": from,
-                "to": to,
-            }),
+            files_params::rename(&self.remote_session_id, from, to),
         )
         .await?;
         Ok(())
@@ -612,10 +651,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
         let result = self
             .rpc(
                 "connection.files.stat",
-                serde_json::json!({
-                    "connection_id": self.remote_session_id,
-                    "path": path,
-                }),
+                files_params::stat(&self.remote_session_id, path),
             )
             .await?;
 
@@ -625,10 +661,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
     async fn mkdir(&self, path: &str) -> Result<(), FileError> {
         self.rpc(
             "connection.files.mkdir",
-            serde_json::json!({
-                "connection_id": self.remote_session_id,
-                "path": path,
-            }),
+            files_params::mkdir(&self.remote_session_id, path),
         )
         .await?;
         Ok(())
@@ -1911,5 +1944,65 @@ mod tests {
             closed.iter().any(|s| s == "mock-session-1"),
             "the partially established remote session must be closed on cancel, got: {closed:?}"
         );
+    }
+
+    // ── connection.files.* wire-contract round-trip (AGT-001, AGT-009, TBE-009) ──
+    //
+    // The desktop hand-builds the `connection.files.*` request params in
+    // `files_params` with no compile-time link to the agent's parameter structs
+    // (`termihub_agent::protocol::methods`). These tests serialize each desktop
+    // request and deserialize it into the agent's real struct — a serde
+    // round-trip that fails to compile-or-parse the moment the two sides drift.
+    // They need no live agent and no Docker, so they gate every PR (the live
+    // agent path only runs in the dark nightly integration lane, TBE-009).
+    //
+    // Before the fix these fail: `rename` sent `{from,to}` (agent requires
+    // `old_path`/`new_path`) and `delete` omitted the required `isDirectory`
+    // and sent snake `connection_id` where the camelCase-only `FilesDeleteParams`
+    // expects `connectionId` (AGT-001, AGT-009).
+    mod wire_contract {
+        use super::super::files_params;
+        use termihub_agent::protocol::methods as agent;
+
+        const CONN: &str = "session-42";
+        const PATH: &str = "/home/user/file.txt";
+
+        #[test]
+        fn rename_params_deserialize_into_agent_struct() {
+            let params = files_params::rename(CONN, "/old/name.txt", "/new/name.txt");
+            let parsed: agent::FilesRenameParams = serde_json::from_value(params)
+                .expect("desktop rename params must match the agent's FilesRenameParams contract");
+            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
+            assert_eq!(parsed.old_path, "/old/name.txt");
+            assert_eq!(parsed.new_path, "/new/name.txt");
+        }
+
+        #[test]
+        fn delete_params_deserialize_into_agent_struct() {
+            let params = files_params::delete(CONN, PATH);
+            let parsed: agent::FilesDeleteParams = serde_json::from_value(params)
+                .expect("desktop delete params must match the agent's FilesDeleteParams contract");
+            // `connectionId` (camelCase) must reach the scope field, not fall to `None`.
+            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
+            assert_eq!(parsed.path, PATH);
+            // Required by the agent contract; advisory (discarded server-side).
+            let _ = parsed.is_directory;
+        }
+
+        #[test]
+        fn list_read_write_stat_mkdir_params_deserialize_into_agent_structs() {
+            serde_json::from_value::<agent::FilesListParams>(files_params::list(CONN, PATH))
+                .expect("list params must match agent FilesListParams");
+            serde_json::from_value::<agent::FilesReadParams>(files_params::read(CONN, PATH))
+                .expect("read params must match agent FilesReadParams");
+            serde_json::from_value::<agent::FilesWriteParams>(files_params::write(
+                CONN, PATH, "ZGF0YQ==",
+            ))
+            .expect("write params must match agent FilesWriteParams");
+            serde_json::from_value::<agent::FilesStatParams>(files_params::stat(CONN, PATH))
+                .expect("stat params must match agent FilesStatParams");
+            serde_json::from_value::<agent::FilesMkdirParams>(files_params::mkdir(CONN, PATH))
+                .expect("mkdir params must match agent FilesMkdirParams");
+        }
     }
 }

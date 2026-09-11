@@ -13,6 +13,13 @@ publish = false
 name = "termihub-agent"
 path = "src/main.rs"
 
+# A dependency-light library slice exposing the authoritative JSON-RPC wire
+# types (`protocol`) so other workspace crates can round-trip against them in
+# per-PR contract tests. See src/lib.rs (audit AGT-001, AGT-009, TBE-009).
+[lib]
+name = "termihub_agent"
+path = "src/lib.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 serde = { workspace = true }

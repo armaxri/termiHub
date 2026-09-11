@@ -229,3 +229,8 @@ temp-env = "0.3"
 # fixture file so they no longer clobber each other under parallel `cargo test`
 # (#2238). Same `#[serial(group)]` convention already used in `core/tests`.
 serial_test = "3"
+# The agent's authoritative JSON-RPC parameter structs, for the per-PR
+# `connection.files.*` wire-contract round-trip test in `session::remote_proxy`
+# (audit AGT-001, AGT-009, TBE-009). Only the agent's dependency-light
+# `protocol` lib slice is pulled in — no live agent or Docker required.
+termihub-agent = { path = "../agent" }
