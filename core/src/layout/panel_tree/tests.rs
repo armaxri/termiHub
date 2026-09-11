@@ -666,6 +666,86 @@ fn find_adjacent_leaf_uses_last_active_deeply_nested() {
     );
 }
 
+// ── empty-Split robustness (CORE-038) ────────────────────────────────────────
+
+#[test]
+fn find_adjacent_leaf_empty_split_sibling_does_not_panic() {
+    // A restored / hand-edited workspace file can carry a degenerate empty
+    // `Split`. Navigating toward it must not panic (CORE-038): before the guard,
+    // entering the empty split indexed `children[0]` on an empty vector.
+    let empty = split_node("empty", Direction::Vertical, vec![]);
+    let root = split_node(
+        "h",
+        Direction::Horizontal,
+        vec![leaf_node("leaf-1", &[]), empty],
+    );
+    // Moving right from leaf-1 tries to enter the empty split — no leaf there.
+    assert!(find_adjacent_leaf(&root, "leaf-1", FocusDirection::Right).is_none());
+    assert!(find_adjacent_leaf(&root, "leaf-1", FocusDirection::Left).is_none());
+    // get_all_leaves stays safe over the empty branch too.
+    assert_eq!(get_all_leaves(&root).len(), 1);
+}
+
+#[test]
+fn sanitize_tree_collapses_empty_split_to_leaf() {
+    let empty = split_node("empty", Direction::Vertical, vec![]);
+    match sanitize_tree(&empty) {
+        PanelNode::Leaf(_) => {}
+        _ => panic!("an empty split must collapse to a leaf"),
+    }
+}
+
+#[test]
+fn sanitize_tree_collapses_single_child_split() {
+    let leaf = leaf_node("leaf-1", &[]);
+    let split = split_node("s", Direction::Horizontal, vec![leaf.clone()]);
+    assert_eq!(sanitize_tree(&split), leaf);
+}
+
+#[test]
+fn sanitize_tree_collapses_nested_empty_split() {
+    // [Leaf, Split[]] → [Leaf, emptyLeaf]: the empty split becomes an empty leaf
+    // sibling, keeping the parent well-formed (≥2 children, no panic-prone split).
+    let root = split_node(
+        "h",
+        Direction::Horizontal,
+        vec![
+            leaf_node("leaf-1", &[]),
+            split_node("inner", Direction::Vertical, vec![]),
+        ],
+    );
+    let sanitized = sanitize_tree(&root);
+    assert_no_singleton_splits(&sanitized);
+    assert_eq!(get_all_leaves(&sanitized).len(), 2);
+}
+
+#[test]
+fn sanitize_tree_leaves_wellformed_tree_unchanged() {
+    let root = split_node(
+        "h",
+        Direction::Horizontal,
+        vec![leaf_node("leaf-1", &[]), leaf_node("leaf-2", &[])],
+    );
+    assert_eq!(sanitize_tree(&root), root);
+}
+
+#[test]
+fn sanitize_tree_drops_mismatched_sizes() {
+    // A hand-edited file may carry a sizes array that no longer matches children.
+    let root = PanelNode::Split(SplitContainer {
+        sizes: Some(vec![50.0, 30.0, 20.0]), // 3 sizes, 2 children
+        ..make_split(
+            "h",
+            Direction::Horizontal,
+            vec![leaf_node("leaf-1", &[]), leaf_node("leaf-2", &[])],
+        )
+    });
+    match sanitize_tree(&root) {
+        PanelNode::Split(s) => assert!(s.sizes.is_none(), "mismatched sizes must be dropped"),
+        _ => panic!("expected split"),
+    }
+}
+
 // ── markActiveLeaf ──────────────────────────────────────────────────────────
 
 #[test]
@@ -1082,6 +1162,60 @@ proptest! {
         prop_assert_eq!(normalized.len(), raw.len());
         let total: f64 = normalized.iter().sum();
         prop_assert!((total - 100.0).abs() < 1e-6);
+    }
+
+    /// Closing panels one at a time down to the last must never panic and must
+    /// keep the tree well-formed at every step (CORE-038: the close-sequence
+    /// vector into an empty/degenerate `Split`).
+    #[test]
+    fn prop_closing_all_panels_never_panics(tree in tree_strategy()) {
+        let mut current = tree;
+        loop {
+            let ids = leaf_ids(&current);
+            // Exercise navigation from every leaf in every direction — must not panic.
+            for id in &ids {
+                for dir in [
+                    FocusDirection::Left,
+                    FocusDirection::Right,
+                    FocusDirection::Up,
+                    FocusDirection::Down,
+                ] {
+                    let _ = find_adjacent_leaf(&current, id, dir);
+                }
+            }
+            assert_no_singleton_splits(&current);
+            // Close the first leaf; stop once the last (root) leaf is removed.
+            match remove_leaf(&current, &ids[0]) {
+                Some(next) => current = next,
+                None => break,
+            }
+        }
+    }
+
+    /// A tree corrupted with an injected empty `Split` (only a restored /
+    /// hand-edited file produces this) must survive navigation without panicking,
+    /// and `sanitize_tree` must yield a well-formed tree (CORE-038).
+    #[test]
+    fn prop_injected_empty_split_is_navigable_and_sanitizes(tree in tree_strategy()) {
+        let degenerate = PanelNode::Split(SplitContainer {
+            id: "corrupt-root".to_string(),
+            direction: Direction::Horizontal,
+            children: vec![tree, split_node("empty", Direction::Vertical, vec![])],
+            sizes: None,
+            last_active_leaf_id: None,
+        });
+        for id in leaf_ids(&degenerate) {
+            for dir in [
+                FocusDirection::Left,
+                FocusDirection::Right,
+                FocusDirection::Up,
+                FocusDirection::Down,
+            ] {
+                let _ = find_adjacent_leaf(&degenerate, &id, dir);
+            }
+        }
+        let sanitized = sanitize_tree(&degenerate);
+        assert_no_singleton_splits(&sanitized);
     }
 }
 
