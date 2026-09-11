@@ -914,10 +914,8 @@ mod tests {
     /// loop; here that shows up as running off the end of `chunks`.
     fn drive_fetch(chunks: &[(u64, u64, bool)], cap: Option<u64>) -> Result<u64, String> {
         let mut written: u64 = 0;
-        let mut chunk_index: u64 = 0;
-        for &(position, data_len, last) in chunks {
+        for (chunk_index, &(position, data_len, last)) in (0_u64..).zip(chunks.iter()) {
             let plan = plan_clipboard_chunk(position, data_len, last, written, chunk_index, cap)?;
-            chunk_index += 1;
             written += data_len;
             if plan == ChunkPlan::Finish {
                 return Ok(written);
