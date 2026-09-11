@@ -206,6 +206,62 @@ describe("frontendLog", () => {
   });
 });
 
+describe("fireAndForget", () => {
+  it("logs a rejection at WARN (default) tagged with the reason, without throwing", async () => {
+    vi.resetModules();
+    const { fireAndForget, onFrontendLog } = await import("./frontendLog");
+
+    const received: LogEntry[] = [];
+    const unsub = onFrontendLog((e) => received.push(e));
+
+    expect(() =>
+      fireAndForget(Promise.reject(new Error("boom")), "cleanup temp file")
+    ).not.toThrow();
+
+    // The rejection is handled on a microtask — let it settle.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].level).toBe("WARN");
+    expect(received[0].target).toBe("frontend::fire_and_forget");
+    expect(received[0].message).toBe("cleanup temp file: Error: boom");
+    unsub();
+  });
+
+  it("logs at ERROR when the level is 'error' (leak-risk teardown)", async () => {
+    vi.resetModules();
+    const { fireAndForget, onFrontendLog } = await import("./frontendLog");
+
+    const received: LogEntry[] = [];
+    const unsub = onFrontendLog((e) => received.push(e));
+
+    fireAndForget(Promise.reject(new Error("still live")), "close session on teardown", "error");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(received).toHaveLength(1);
+    expect(received[0].level).toBe("ERROR");
+    expect(received[0].message).toBe("close session on teardown: Error: still live");
+    unsub();
+  });
+
+  it("does not log when the promise resolves", async () => {
+    vi.resetModules();
+    const { fireAndForget, onFrontendLog } = await import("./frontendLog");
+
+    const received: LogEntry[] = [];
+    const unsub = onFrontendLog((e) => received.push(e));
+
+    fireAndForget(Promise.resolve("ok"), "should not log");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(received).toHaveLength(0);
+    unsub();
+  });
+});
+
 describe("durable-log forwarding (OBS-001)", () => {
   // Emulate the Tauri webview so the durability forward is active.
   beforeEach(() => {
