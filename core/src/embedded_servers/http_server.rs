@@ -423,6 +423,7 @@ mod tests {
             read_only: false,
             directory_listing: Some(false),
             ftp_auth: None,
+            max_transfer_bytes: None,
         };
 
         let shutdown = ShutdownSignal::new();

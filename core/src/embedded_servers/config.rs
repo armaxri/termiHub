@@ -48,6 +48,13 @@ pub struct EmbeddedServerConfig {
     /// Authentication for FTP servers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ftp_auth: Option<FtpAuth>,
+    /// Maximum size, in bytes, of a single file transfer.
+    ///
+    /// Currently enforced by the TFTP server (which is unauthenticated by
+    /// design) to bound the memory/disk an anonymous client can consume in one
+    /// transfer (CORE-021). `None` falls back to the server's built-in default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_transfer_bytes: Option<u64>,
 }
 
 /// Current status of an embedded server.
@@ -148,6 +155,7 @@ mod tests {
             read_only: true,
             directory_listing: Some(true),
             ftp_auth: None,
+            max_transfer_bytes: None,
         };
         let json = serde_json::to_string(&config).unwrap();
         let de: EmbeddedServerConfig = serde_json::from_str(&json).unwrap();
