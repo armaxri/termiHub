@@ -55,7 +55,15 @@ const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 /// Holds an [`Arc<LoadedLibrary>`] so the plugin's code stays mapped for as long
 /// as this session (and hence any [`LoadedBackend`] it created) is alive.
 pub struct PluginConnectionType {
-    library: Arc<LoadedLibrary>,
+    /// The active session backend, `None` until [`connect`](ConnectionType::connect).
+    ///
+    /// Declared **before** `library` so that, in the absence of the explicit
+    /// [`Drop`] below, field-drop order would still tear the backend down before
+    /// the library unloads. The explicit `Drop` makes that invariant robust
+    /// regardless of field order (CORE-029): the backend's `destroy` vtable and
+    /// state live *inside* the loaded library, so the library must stay mapped
+    /// until after the backend is gone.
+    backend: Option<LoadedBackend>,
     connection_type: String,
     display_name: String,
     /// The form schema the frontend renders for this type, derived from the
@@ -70,12 +78,29 @@ pub struct PluginConnectionType {
     /// (#2028). Defaults to [`ConnectionPolicy::default`]; the host derives it
     /// from the plugin's manifest via [`with_connection_policy`](Self::with_connection_policy).
     connection_policy: ConnectionPolicy,
-    /// The active session backend, `None` until [`connect`](ConnectionType::connect).
-    backend: Option<LoadedBackend>,
     /// Current output sink; swapped by
     /// [`subscribe_output`](ConnectionType::subscribe_output). The forwarding
     /// thread reads the latest value each iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
+    /// The loaded plugin library. Keeps the plugin's code mapped for as long as
+    /// this session (and hence any [`LoadedBackend`] it created) is alive.
+    /// Declared **last** and dropped after `backend` (see the `backend` field and
+    /// the explicit [`Drop`] impl) so the backend's FFI destructor never runs
+    /// against unmapped code (CORE-029).
+    library: Arc<LoadedLibrary>,
+}
+
+impl Drop for PluginConnectionType {
+    fn drop(&mut self) {
+        // Enforce the teardown invariant the struct documents: the plugin's
+        // `LoadedBackend` — whose `destroy` vtable and backing state live *inside*
+        // the loaded library — MUST be torn down while that library is still
+        // mapped. Dropping the backend here, before the `library` `Arc`'s own
+        // `Drop` runs `plugin_shutdown` + unmaps the library, guarantees that
+        // ordering regardless of field-declaration order, closing the
+        // use-after-free window (CORE-029).
+        drop(self.backend.take());
+    }
 }
 
 impl PluginConnectionType {
@@ -483,6 +508,85 @@ mod tests {
             }
             other => panic!("expected Select, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn teardown_drops_backend_before_library_unloads() {
+        use std::sync::Mutex;
+        use termihub_plugin_api::{FfiByteSlice, PluginBackend, PluginBackendVTable, PluginStatus};
+
+        // Records the teardown order of the instrumented backend and library.
+        static DROP_ORDER: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+
+        unsafe extern "C" fn rec_shutdown() {
+            DROP_ORDER.lock().unwrap().push("library");
+        }
+        unsafe extern "C" fn rec_destroy(_state: *mut core::ffi::c_void) {
+            DROP_ORDER.lock().unwrap().push("backend");
+        }
+        // The remaining vtable entries are never called during teardown.
+        unsafe extern "C" fn stub_write(
+            _state: *mut core::ffi::c_void,
+            _data: FfiByteSlice,
+        ) -> PluginStatus {
+            PluginStatus::Ok
+        }
+        unsafe extern "C" fn stub_resize(
+            _state: *mut core::ffi::c_void,
+            _cols: u16,
+            _rows: u16,
+        ) -> PluginStatus {
+            PluginStatus::Ok
+        }
+        unsafe extern "C" fn stub_close(_state: *mut core::ffi::c_void) -> PluginStatus {
+            PluginStatus::Ok
+        }
+        unsafe extern "C" fn stub_is_alive(_state: *mut core::ffi::c_void) -> bool {
+            false
+        }
+
+        DROP_ORDER.lock().unwrap().clear();
+
+        // An instrumented backend whose `destroy` records when it is torn down.
+        let vtable: &'static PluginBackendVTable = Box::leak(Box::new(PluginBackendVTable {
+            write_input: stub_write,
+            resize: stub_resize,
+            close: stub_close,
+            is_alive: stub_is_alive,
+            destroy: rec_destroy,
+        }));
+        let raw = PluginBackend {
+            // `destroy` never dereferences `state`, so a dangling pointer is fine.
+            state: std::ptr::NonNull::<core::ffi::c_void>::dangling().as_ptr(),
+            vtable,
+        };
+        // SAFETY: `vtable` is `'static` and valid; the recording `destroy` ignores
+        // `state`, so no real backend state is required for this drop-order probe.
+        let backend = unsafe { LoadedBackend::from_raw(raw) };
+
+        // A library whose `shutdown` records when it unloads.
+        let library = Arc::new(LoadedLibrary::for_drop_order_test(rec_shutdown));
+
+        let mut conn = PluginConnectionType::new(
+            library,
+            "probe".to_string(),
+            "Probe".to_string(),
+            SettingsSchema { groups: vec![] },
+            PermissionSet::from_parts([PluginPermission::Terminal], &[]),
+        );
+        conn.backend = Some(backend);
+
+        drop(conn);
+
+        // The backend's FFI destructor must run while the library is still mapped:
+        // backend first, then the library unloads. The buggy field order (library
+        // first, no explicit `Drop`) unmaps the library before the backend's
+        // destructor, a use-after-free (CORE-029).
+        assert_eq!(
+            *DROP_ORDER.lock().unwrap(),
+            vec!["backend", "library"],
+            "the plugin backend must be destroyed before the library unloads"
+        );
     }
 
     #[test]
