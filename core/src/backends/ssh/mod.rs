@@ -114,6 +114,24 @@ impl Default for Ssh {
     }
 }
 
+/// Parse the `port` setting into a `u16`, defaulting to `22`.
+///
+/// Accepts either a JSON number or a numeric string. An out-of-range value is
+/// **rejected** rather than silently rewritten: the numeric branch uses a
+/// checked [`u16::try_from`] instead of a wrapping `as` cast, so a numeric
+/// `70000` falls back to the default `22` exactly as the string `"70000"`
+/// already did — the two branches now agree (CORE-006). Previously `n as u16`
+/// truncated (`65536` → `0`, `70000` → `4464`), silently targeting the wrong
+/// port.
+fn parse_port_setting(port: Option<&serde_json::Value>) -> u16 {
+    port.and_then(|v| {
+        v.as_u64()
+            .and_then(|n| u16::try_from(n).ok())
+            .or_else(|| v.as_str().and_then(|s| s.parse::<u16>().ok()))
+    })
+    .unwrap_or(22)
+}
+
 /// Parse settings JSON into an `SshConfig`.
 pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
     let str_field = |key: &str| -> String {
@@ -144,14 +162,7 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         })
     };
 
-    let port: u16 = settings
-        .get("port")
-        .and_then(|v| {
-            v.as_u64()
-                .map(|n| n as u16)
-                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-        })
-        .unwrap_or(22);
+    let port: u16 = parse_port_setting(settings.get("port"));
 
     let env = settings
         .get("env")

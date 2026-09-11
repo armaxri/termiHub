@@ -81,6 +81,32 @@ enum ChannelCmd {
     Eof,
 }
 
+/// Decide whether the channel task should keep running after an outgoing
+/// `channel.data` / `window_change` result.
+///
+/// On error the interactive session must be **torn down** rather than silently
+/// swallowing the user's input (CORE-007): the caller breaks the task loop,
+/// which clears the shared `alive` flag after the loop, so the failure surfaces
+/// (the terminal stops looking live and input is no longer accepted) instead of
+/// keystrokes vanishing into a dead channel. Returns `true` to keep looping,
+/// `false` to break and tear down.
+fn should_continue_after_send<T, E: std::fmt::Display>(
+    result: Result<T, E>,
+    operation: &str,
+) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                operation,
+                "SSH shell channel send failed; tearing down session"
+            );
+            false
+        }
+    }
+}
+
 // ── RusshShellReader ───────────────────────────────────────────────
 
 /// Bridges async russh channel output to a synchronous `Read` impl.
@@ -342,10 +368,20 @@ impl SshConnector for RusshSshConnector {
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(ChannelCmd::Write(data)) => {
-                                let _ = channel.data(&data[..]).await;
+                                if !should_continue_after_send(
+                                    channel.data(&data[..]).await,
+                                    "write",
+                                ) {
+                                    break;
+                                }
                             }
                             Some(ChannelCmd::Resize(cols, rows)) => {
-                                let _ = channel.window_change(cols, rows, 0, 0).await;
+                                if !should_continue_after_send(
+                                    channel.window_change(cols, rows, 0, 0).await,
+                                    "resize",
+                                ) {
+                                    break;
+                                }
                             }
                             Some(ChannelCmd::Eof) | None => {
                                 let _ = channel.eof().await;
