@@ -89,6 +89,13 @@ pub enum FileError {
     #[error("Operation failed: {0}")]
     OperationFailed(String),
 
+    /// A read was rejected because the file exceeds the maximum in-memory size
+    /// allowed for a single read (CORE-013). Defense-in-depth against OOM: the
+    /// read path buffers the whole file, so a pathological/hostile multi-GB file
+    /// is rejected cleanly here instead of exhausting host memory.
+    #[error("file too large: {size} bytes exceeds the {limit} byte limit")]
+    TooLarge { size: u64, limit: u64 },
+
     /// File browsing is not supported for this connection type.
     #[error("File browsing not supported for this connection type")]
     NotSupported,
@@ -142,6 +149,15 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "File browsing not supported for this connection type"
+        );
+
+        let err = FileError::TooLarge {
+            size: 3_000_000_000,
+            limit: 268_435_456,
+        };
+        assert_eq!(
+            err.to_string(),
+            "file too large: 3000000000 bytes exceeds the 268435456 byte limit"
         );
     }
 

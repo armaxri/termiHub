@@ -7,6 +7,42 @@ pub use local::LocalFileBrowser;
 
 use serde::{Deserialize, Serialize};
 
+use crate::errors::FileError;
+
+/// Hard ceiling on the number of bytes a single in-memory remote file read may
+/// buffer (CORE-013).
+///
+/// The remote file readers (SFTP and Docker) pull the whole file into a `Vec`,
+/// so an unbounded read of a huge — or hostile — file can exhaust host memory
+/// and OOM the app. This cap is defense-in-depth *behind* the frontend
+/// large-file guard (which warns around ~10 MiB and lets the user "Open
+/// anyway"): it is set generously above that threshold so a legitimate
+/// "Open anyway" on a moderately large file (tens of MiB) still works, while a
+/// pathological multi-GB file is rejected with a clean [`FileError::TooLarge`]
+/// instead of a panic or an out-of-memory crash.
+///
+/// Shared by every remote backend so the size policy can never drift between
+/// the SFTP and Docker paths (the finding's "share one size policy" point).
+pub const MAX_REMOTE_READ_BYTES: u64 = 256 * 1024 * 1024;
+
+/// Reject an in-memory read whose size exceeds [`MAX_REMOTE_READ_BYTES`].
+///
+/// Callers `stat` the remote file first and pass the reported size here to fail
+/// fast before streaming anything; the streaming read then re-checks the bytes
+/// actually received, so a server that under-reports its size cannot slip past
+/// the cap. Returns [`FileError::TooLarge`] carrying the offending size and the
+/// limit, never a panic.
+pub fn check_read_size(size: u64) -> Result<(), FileError> {
+    if size > MAX_REMOTE_READ_BYTES {
+        Err(FileError::TooLarge {
+            size,
+            limit: MAX_REMOTE_READ_BYTES,
+        })
+    } else {
+        Ok(())
+    }
+}
+
 /// A file or directory entry returned by file browsing operations.
 ///
 /// This is the unified structure used by both the desktop and agent crates.
@@ -80,5 +116,47 @@ mod tests {
         assert_eq!(entry.name, "file.txt");
         assert!(!entry.is_symlink);
         assert_eq!(entry.symlink_target, None);
+    }
+
+    // --- read-size cap (CORE-013) ---
+
+    use super::{check_read_size, MAX_REMOTE_READ_BYTES};
+    use crate::errors::FileError;
+
+    #[test]
+    fn check_read_size_allows_under_and_at_the_cap() {
+        // A small file, a mid-size "Open anyway" file, and a file exactly at the
+        // cap must all pass — the guard only rejects what is strictly larger.
+        assert!(check_read_size(0).is_ok());
+        assert!(check_read_size(50 * 1024 * 1024).is_ok());
+        assert!(check_read_size(MAX_REMOTE_READ_BYTES).is_ok());
+    }
+
+    #[test]
+    fn check_read_size_rejects_over_the_cap_with_a_typed_error() {
+        // A pathological multi-GB file is rejected cleanly (never OOM/panic) with
+        // a typed error carrying both the offending size and the limit.
+        let size = MAX_REMOTE_READ_BYTES + 1;
+        match check_read_size(size) {
+            Err(FileError::TooLarge { size: got, limit }) => {
+                assert_eq!(got, size);
+                assert_eq!(limit, MAX_REMOTE_READ_BYTES);
+            }
+            other => panic!("expected TooLarge, got {other:?}"),
+        }
+
+        // A hostile multi-GB advertisement is likewise rejected, not attempted.
+        assert!(matches!(
+            check_read_size(8 * 1024 * 1024 * 1024),
+            Err(FileError::TooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn read_cap_is_generously_above_the_frontend_warn_threshold() {
+        // The frontend large-file guard warns around 10 MiB; the backend cap must
+        // sit well above it so a legitimate "Open anyway" on a tens-of-MiB file
+        // still succeeds while multi-GB files are stopped.
+        const _: () = assert!(MAX_REMOTE_READ_BYTES >= 128 * 1024 * 1024);
     }
 }
