@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/session_history/storage.rs:56
   - src-tauri/src/workspace/last_session.rs:77
   - src-tauri/src/connection/storage.rs:135
-status: open
+status: in-progress
+resolution: "#2746 — newer-file-not-wiped"
 ---
 
 ## What

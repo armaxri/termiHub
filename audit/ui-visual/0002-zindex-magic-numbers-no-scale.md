@@ -12,7 +12,8 @@ evidence:
   - src/styles/global.css:40
   - src/components/StatusBar/StatusBar.css:83
   - src/components/SplitView/SplitView.css:54
-status: open
+status: fixed
+resolution: "#2743 — coherent z-index scale; banners/overlays below modals"
 ---
 
 ## What

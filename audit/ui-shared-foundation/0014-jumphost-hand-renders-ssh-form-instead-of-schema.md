@@ -11,7 +11,8 @@ evidence:
   - src/components/ConnectionEditor/JumpHostEntry.tsx:19
   - src/components/ConnectionEditor/JumpHostEntry.tsx:146
   - src/components/DynamicForm/DynamicField.tsx
-status: open
+status: in-progress
+resolution: "#2747"
 ---
 
 ## What

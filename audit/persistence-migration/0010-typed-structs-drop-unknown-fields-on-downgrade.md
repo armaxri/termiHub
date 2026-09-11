@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/connection/settings.rs:122
   - src-tauri/src/workspace/config.rs:161
   - agent/src/state/persistence.rs:13
-status: open
+status: in-progress
+resolution: "#2746 — unknown-field round-trip"
 ---
 
 ## What
