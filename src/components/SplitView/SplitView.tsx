@@ -74,10 +74,78 @@ import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnect
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
+import { toast } from "@/components/ui";
 import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
 import "./SplitView.css";
+
+/**
+ * Normalize a dnd-kit id to a string. dnd-kit types ids as `string | number`;
+ * termiHub tab/panel ids are strings, so normalize defensively rather than
+ * asserting with an unchecked cast (FEC-018).
+ */
+export function dndId(id: string | number): string {
+  return String(id);
+}
+
+/**
+ * Safely read a string `panelId` from dnd-kit `data.current`, which is typed
+ * `unknown` (any draggable/droppable can attach arbitrary data). Returns
+ * `undefined` for any shape that does not carry a string `panelId` (FEC-018).
+ */
+export function readDndPanelId(data: unknown): string | undefined {
+  if (data && typeof data === "object") {
+    const panelId = (data as { panelId?: unknown }).panelId;
+    if (typeof panelId === "string") return panelId;
+  }
+  return undefined;
+}
+
+/**
+ * Narrow a dnd-kit `activatorEvent` to a `PointerEvent`, or `null` for any other
+ * input source (a keyboard/touch sensor). Callers only read pointer coordinates
+ * when this returns a real `PointerEvent`, instead of asserting the type
+ * (FEC-018).
+ */
+export function asPointerEvent(event: unknown): PointerEvent | null {
+  return typeof PointerEvent !== "undefined" && event instanceof PointerEvent ? event : null;
+}
+
+/**
+ * Safely read a string `sessionType` from a remote-session connection config,
+ * which is an untyped bag on the tab config. Returns `""` when absent or the
+ * wrong shape, instead of an unchecked cast (FEC-018).
+ */
+export function readSessionType(config: unknown): string {
+  if (config && typeof config === "object") {
+    const sessionType = (config as { sessionType?: unknown }).sessionType;
+    if (typeof sessionType === "string") return sessionType;
+  }
+  return "";
+}
+
+/**
+ * Copy a terminal selection to the OS clipboard, clearing the selection only
+ * once the write succeeds. A failed clipboard IPC must not silently drop the
+ * selection and let the user believe they copied (FEC-018) — it is surfaced via
+ * `reportError`, matching the other copy paths.
+ */
+export async function copyTerminalSelection(
+  selection: string,
+  deps: {
+    writeClipboard: (text: string) => Promise<void>;
+    clearSelection: () => void;
+    reportError: (message: string) => void;
+  }
+): Promise<void> {
+  try {
+    await deps.writeClipboard(selection);
+    deps.clearSelection();
+  } catch (err) {
+    deps.reportError(`Failed to copy selection: ${String(err)}`);
+  }
+}
 
 export function SplitView() {
   // Structure from the projected layout render-list (#2151 step 3); content is
@@ -160,7 +228,7 @@ export function SplitView() {
 
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
-      const tabId = event.active.id as string;
+      const tabId = dndId(event.active.id);
       const leaf = findLeafByTab(rootPanel, tabId);
       if (!leaf) return;
       const tab = leaf.tabs.find((t) => t.id === tabId);
@@ -178,8 +246,8 @@ export function SplitView() {
       setDraggingTabId(null);
       const { active, over } = event;
 
-      const tabId = active.id as string;
-      const fromPanelId = (active.data.current as { panelId?: string })?.panelId;
+      const tabId = dndId(active.id);
+      const fromPanelId = readDndPanelId(active.data.current);
       if (!fromPanelId) return;
 
       // If not dropped on any registered droppable, check for special drop targets
@@ -187,8 +255,8 @@ export function SplitView() {
       // Use elementsFromPoint (plural) to look through the DragOverlay which may be
       // rendered at the same coordinates and would block elementFromPoint.
       if (!over) {
-        const ae = event.activatorEvent as PointerEvent;
-        if (ae.clientX !== undefined) {
+        const ae = asPointerEvent(event.activatorEvent);
+        if (ae) {
           const finalX = ae.clientX + event.delta.x;
           const finalY = ae.clientY + event.delta.y;
           const elements = document.elementsFromPoint(finalX, finalY);
@@ -220,7 +288,7 @@ export function SplitView() {
         return;
       }
 
-      const overId = over.id as string;
+      const overId = dndId(over.id);
 
       // Edge drop: split panel with tab
       if (overId.startsWith("edge-")) {
@@ -241,8 +309,7 @@ export function SplitView() {
       }
 
       // Sortable tab drop — find which panel the over tab belongs to
-      const overData = over.data.current as { panelId?: string; type?: string } | undefined;
-      const overPanelId = overData?.panelId;
+      const overPanelId = readDndPanelId(over.data.current);
 
       if (overPanelId && overPanelId !== fromPanelId) {
         // Cross-panel tab drop: find index of the over tab in destination
@@ -440,7 +507,7 @@ export function SplitView() {
                     isVisible={true}
                     sessionType={
                       zoomedTab.config.type === "remote-session"
-                        ? ((zoomedTab.config.config as { sessionType?: string }).sessionType ?? "")
+                        ? readSessionType(zoomedTab.config.config)
                         : zoomedTab.config.type
                     }
                   />
@@ -715,8 +782,11 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
       const selection = preRightClickSelectionRef.current;
       preRightClickSelectionRef.current = null;
       if (selection) {
-        writeClipboard(selection);
-        clearTerminalSelection(tabId);
+        void copyTerminalSelection(selection, {
+          writeClipboard,
+          clearSelection: () => clearTerminalSelection(tabId),
+          reportError: (message) => toast.error(message),
+        });
       } else {
         clearTerminalSelection(tabId);
         pasteToTerminal(tabId);
@@ -764,6 +834,12 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               tabId={tab.id}
               meta={tab.editorMeta}
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              // While this tab is zoomed, the zoom overlay mounts the authoritative
+              // FileEditor for it (`keepModel`). This in-panel copy stays mounted to
+              // own the shared Monaco model's lifecycle, but goes dormant so it does
+              // not run a second OS file watch or fight the overlay for the global
+              // editor status bar (FEC-018).
+              supersededByZoom={zoomedTabId === tab.id}
             />
           ) : tab.contentType === "connection-editor" && tab.connectionEditorMeta ? (
             <ConnectionEditor
@@ -831,7 +907,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
               sessionType={
                 tab.config.type === "remote-session"
-                  ? ((tab.config.config as { sessionType?: string }).sessionType ?? "")
+                  ? readSessionType(tab.config.config)
                   : tab.config.type
               }
             />
@@ -981,7 +1057,7 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
  * When a tab moves between panels, the old slot parks the element and the new slot adopts it —
  * preserving the xterm instance, PTY session, and all terminal content.
  */
-function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean }) {
+export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean }) {
   const slotRef = useRef<HTMLDivElement>(null);
   const { getElement, focusTerminal, fitTerminal, parkingRef } = useTerminalRegistry();
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
@@ -1019,19 +1095,29 @@ function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean 
       return !!termEl;
     };
 
-    // Terminal may not be registered yet on initial render — retry once
-    if (!tryAdopt()) {
-      const rafId = requestAnimationFrame(() => tryAdopt());
-      return () => cancelAnimationFrame(rafId);
-    }
-
-    return () => {
-      // Park the element back so it's not orphaned
+    // Shared teardown for both adoption paths (FEC-012): cancel any pending RAF
+    // retry AND park the element back to the parking node if this slot currently
+    // holds it. The RAF-retry branch previously only cancelled the RAF and never
+    // parked the element back, so an element adopted inside the retry was left
+    // orphaned in a detached slot on unmount (a DOM/xterm-instance leak).
+    let rafId: number | undefined;
+    const teardown = () => {
+      if (rafId !== undefined) cancelAnimationFrame(rafId);
       const termEl = getElement(tabId);
       if (termEl && termEl.parentNode === slotEl) {
         parkingEl?.appendChild(termEl);
       }
     };
+
+    // Terminal may not be registered yet on initial render — retry once.
+    if (!tryAdopt()) {
+      rafId = requestAnimationFrame(() => {
+        rafId = undefined;
+        tryAdopt();
+      });
+    }
+
+    return teardown;
   }, [tabId, getElement, fitTerminal, parkingRef]);
 
   // Focus the terminal when it becomes visible (tab activation or initial creation)

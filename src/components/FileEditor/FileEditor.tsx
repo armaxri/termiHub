@@ -174,6 +174,15 @@ interface FileEditorProps {
   isVisible: boolean;
   /** When true, the Monaco model is preserved on unmount (used by zoom overlay instances). */
   keepModel?: boolean;
+  /**
+   * When true, another FileEditor instance (the zoom overlay) is authoritative
+   * for this tab. This instance stays mounted to keep owning the shared Monaco
+   * model's lifecycle, but suppresses its side effects — the OS file watch, the
+   * remote re-stat poll, and driving the global editor status bar — so the two
+   * mounted instances do not run duplicate watches or fight over the singleton
+   * status/actions (FEC-018).
+   */
+  supersededByZoom?: boolean;
 }
 
 /**
@@ -193,10 +202,20 @@ type SaveOutcome = "saved" | "failed" | "prompting";
  * Built-in file editor using Monaco Editor.
  * Supports both local and remote (SFTP) files.
  */
-export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEditorProps) {
+export function FileEditor({
+  tabId,
+  meta,
+  isVisible,
+  keepModel = false,
+  supersededByZoom = false,
+}: FileEditorProps) {
   const setEditorDirty = useAppStore((s) => s.setEditorDirty);
   const setEditorStatus = useAppStore((s) => s.setEditorStatus);
   const setEditorActions = useAppStore((s) => s.setEditorActions);
+  // Live mirror of `supersededByZoom` so the stable `handleEditorMount` callback
+  // and its long-lived cursor listener can read the current value (FEC-018).
+  const supersededRef = useRef(supersededByZoom);
+  supersededRef.current = supersededByZoom;
   const projectedSettings = useProjectedSettings();
   const fileLanguageMappings = projectedSettings.fileLanguageMappings;
   const pendingCloseRequest = useAppStore((s) => s.pendingCloseRequest);
@@ -841,7 +860,9 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // (#1620). Remote (SFTP / session) files use their own transports and are not
   // watched here; an unsaved scratch buffer has no on-disk file yet.
   useEffect(() => {
-    if (meta.isRemote || isUnsavedScratch) return;
+    // Superseded (zoomed) instances stay dormant: the zoom-overlay copy runs the
+    // watch, so a second one here would double-watch the same file (FEC-018).
+    if (meta.isRemote || isUnsavedScratch || supersededByZoom) return;
     const filePath = effectivePath;
     const runWatchId = `${watchId}:${watchRunRef.current++}`;
     let unlisten: (() => void) | undefined;
@@ -908,7 +929,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       unlisten?.();
       closeWatch();
     };
-  }, [meta.isRemote, isUnsavedScratch, effectivePath, watchId, tabId]);
+  }, [meta.isRemote, isUnsavedScratch, effectivePath, watchId, tabId, supersededByZoom]);
 
   // Poll a remote (SFTP / session) file for external on-disk changes (#1627).
   // Remote transports can't OS-watch, so we re-`stat` the open file on an
@@ -918,7 +939,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   // window is not focused, and a stat is a single metadata round-trip. A
   // detected change re-reads the full file (via `reloadFromDisk`) only then.
   useEffect(() => {
-    if (!meta.isRemote || isUnsavedScratch || !isVisible) return;
+    if (!meta.isRemote || isUnsavedScratch || !isVisible || supersededByZoom) return;
     const sessionId = meta.sessionBrowser?.sessionId;
     if (!sessionId) return;
     const filePath = effectivePath;
@@ -989,7 +1010,15 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       clearInterval(interval);
       window.removeEventListener("focus", onFocus);
     };
-  }, [meta.isRemote, meta.sessionBrowser, isUnsavedScratch, isVisible, effectivePath, tabId]);
+  }, [
+    meta.isRemote,
+    meta.sessionBrowser,
+    isUnsavedScratch,
+    isVisible,
+    effectivePath,
+    tabId,
+    supersededByZoom,
+  ]);
 
   // A file that failed to load (e.g. the connection dropped) shows the
   // error-only view, which doesn't render the UnsavedChangesDialog. If such a
@@ -1362,13 +1391,22 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
         },
       });
 
-      // Push initial status
-      setEditorStatus(readEditorStatus(editor));
+      // A dormant (zoom-superseded) instance never drives the global status bar —
+      // the authoritative zoom-overlay copy owns it (FEC-018). The cursor listener
+      // is still registered but reads `supersededRef` so it stays silent while
+      // this instance is superseded.
+      if (!supersededRef.current) {
+        // Push initial status
+        setEditorStatus(readEditorStatus(editor));
+      }
 
       // Update cursor position on change
       editor.onDidChangeCursorPosition(() => {
+        if (supersededRef.current) return;
         setEditorStatus(readEditorStatus(editor));
       });
+
+      if (supersededRef.current) return;
 
       // Register actions for status bar interactions
       setEditorActions({
@@ -1407,6 +1445,10 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
 
   // Push/clear status when visibility changes
   useEffect(() => {
+    // A superseded (zoomed) instance leaves the global status bar entirely to the
+    // authoritative zoom-overlay copy — it neither pushes nor clears, so it never
+    // nulls or cross-sets the status the overlay is driving (FEC-018).
+    if (supersededByZoom) return;
     if (isVisible && editorRef.current) {
       setEditorStatus(readEditorStatus(editorRef.current));
       setEditorActions({
@@ -1441,7 +1483,7 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       setEditorStatus(null);
       setEditorActions(null);
     }
-  }, [isVisible, setEditorStatus, setEditorActions]);
+  }, [isVisible, supersededByZoom, setEditorStatus, setEditorActions]);
 
   // Clear status on unmount
   useEffect(() => {
