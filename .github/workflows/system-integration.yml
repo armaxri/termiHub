@@ -275,17 +275,27 @@ jobs:
         # ("no app connected within 30s"). Running under a throwaway session bus
         # makes that call fail fast instead of hanging, so the bridge connects.
         #
-        # --reruns 4 --reruns-delay 1 (#2698): bounded auto-retries absorb the
-        # residual hosted-CI environmental flakiness on interaction-heavy tests
-        # (WKWebView occlusion / WebView2 contention / Xvfb render-timing) — the
-        # real bugs are already fixed. `--reruns` re-runs ONLY tests that FAILED,
-        # so a genuine regression still fails after its retries and surfaces as a
-        # red lane; a flaky one that passes on rerun no longer reds the nightly.
-        # Applied lane-wide (safe) rather than per-test. `-r aR` adds RERUN lines
-        # to the short summary so persistent flakes stay visible for tracking.
+        # --reruns 2 --reruns-delay 1 (#2698, lowered from 4 per CI-002): bounded
+        # auto-retries absorb the residual hosted-CI environmental flakiness on
+        # interaction-heavy tests (WKWebView occlusion / WebView2 contention / Xvfb
+        # render-timing) — the real bugs are already fixed. `--reruns` re-runs ONLY
+        # tests that FAILED, so a deterministic regression still fails after its
+        # retries; but an INTERMITTENT one can pass on rerun and never red the lane,
+        # so the retry budget is kept as low as the residual infra flake allows (2,
+        # the documented policy value) rather than the old 4.
+        #
+        # `-k "not (...)"` (CI-002): the display-critical grades
+        # (test_agent_reconnect_ui — the sole automated reconnect grade — and
+        # test_layout_scrollback_ui) are EXCLUDED from this retried bulk lane and
+        # run only in the dedicated `display-grades` job below at --reruns 0, so an
+        # intermittent reconnect regression reds that job on first failure instead
+        # of being retried away here. `display-grades` runs the same two grades on
+        # all three OSes with identical env, so nothing is lost by excluding them.
+        # `-r aR` adds RERUN lines to the short summary so persistent flakes stay
+        # visible for tracking.
         # Per-PR CI (code-quality.yml → Run Tests) deliberately does NOT get this.
         if: runner.os == 'Linux'
-        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -v --durations=25 --reruns 4 --reruns-delay 1 -r aR
+        run: xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
 
       - name: Run the integration lane (macOS/Windows, native display)
         # No Xvfb — the runner has a real (or headless-native) display and drives
@@ -343,13 +353,16 @@ jobs:
           TERMIHUB_XDIST_WORKERS: '2'
           TERMIHUB_WAIT_SCALE: '2'
         #
-        # --reruns 4 --reruns-delay 1 (#2698): same bounded auto-retries as the
-        # Linux step. rerunfailures composes with xdist — a failed test is
-        # re-scheduled on its worker up to 4 times — and with TERMIHUB_WAIT_SCALE
-        # above, so a contention-timeout flake gets both more per-op headroom and
-        # a retry, while a real regression still fails after all retries. `-r aR`
-        # surfaces RERUN lines in the summary. Not applied to per-PR CI.
-        run: ./tests/system/pytest.sh -m integration -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 4 --reruns-delay 1 -r aR
+        # --reruns 2 --reruns-delay 1 (#2698, lowered from 4 per CI-002): same
+        # bounded auto-retries as the Linux step. rerunfailures composes with xdist
+        # — a failed test is re-scheduled on its worker up to 2 times — and with
+        # TERMIHUB_WAIT_SCALE above, so a contention-timeout flake gets both more
+        # per-op headroom and a retry, while a deterministic regression still fails
+        # after all retries. The display-critical grades are likewise excluded here
+        # via `-k "not (...)"` and run only in the `display-grades` job at
+        # --reruns 0 (see the Linux step's comment). `-r aR` surfaces RERUN lines in
+        # the summary. Not applied to per-PR CI.
+        run: ./tests/system/pytest.sh -m integration -k "not (test_agent_reconnect_ui or test_layout_scrollback_ui)" -n "$TERMIHUB_XDIST_WORKERS" --dist loadscope -v --durations=25 --reruns 2 --reruns-delay 1 -r aR
 
       - name: Dump container logs on failure
         # Linux only — the other legs bring up no containers.
@@ -376,9 +389,13 @@ jobs:
   # from any grade that happened to run inside it, so only a separate job with its
   # own timeout guarantees these two always surface a green/red check. It runs
   # just the two grades (`-k`), needs no Docker fixtures, and so finishes well
-  # inside its own budget. (These grades also still run inside the bulk lane; this
-  # job is the guaranteed signal, not their only home. Both lanes now enable
-  # test_agent_reconnect_ui on Linux too — #2669, the intent of the closed #2634.)
+  # inside its own budget. As of CI-002 this job is the SOLE home of these two
+  # grades and runs them at --reruns 0: the bulk lane excludes them (`-k "not
+  # (...)"`) so an intermittent reconnect regression reds this job on first failure
+  # rather than being retried away. It grades test_agent_reconnect_ui on Linux too
+  # — #2669, the intent of the closed #2634. If a grade proves genuinely flaky here,
+  # quarantine that specific test with a deterministic-fix tracker (the repo's
+  # quarantine-not-retry rule), never re-add a blanket rerun.
   display-grades:
     needs: setup
     name: Display-critical grades (${{ matrix.os }} · ${{ matrix.branch }})
@@ -492,15 +509,19 @@ jobs:
         # — a throwaway session bus makes the startup xdg-desktop-portal call fail
         # fast instead of blocking ~25s and eating the bridge-connect budget.
         #
-        # --reruns 4 --reruns-delay 1 -r aR (#2698): same bounded auto-retries as
-        # the bulk lane. These display-critical grades are the most render-timing
-        # sensitive, so they benefit most; a real regression still fails through
-        # all retries. Not applied to per-PR CI.
+        # --reruns 0 -r aR (CI-002): these display-critical grades are the honest,
+        # first-failure gate — test_agent_reconnect_ui is the SOLE automated grade
+        # of the safety-critical reconnect path, made deterministic by the in-process
+        # sever (#2573/#2576), so it must not be retried: an intermittent regression
+        # (a reconnect race, a timing-dependent failure) has to red the lane, not be
+        # masked by a rerun. `-r aR` keeps the failure summary visible. If a grade
+        # proves genuinely flaky, quarantine that specific test + file a
+        # deterministic-fix tracker — never re-add a blanket rerun.
         if: runner.os == 'Linux'
         run: >-
           xvfb-run -a dbus-run-session -- ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
-          --reruns 4 --reruns-delay 1 -r aR
+          --reruns 0 -r aR
 
       - name: Run the display-critical grades (macOS/Windows, native display)
         # No fixtures needed, so no xdist — the two suites run quickly serially.
@@ -514,7 +535,7 @@ jobs:
         run: >-
           ./tests/system/pytest.sh -m integration
           -k "test_agent_reconnect_ui or test_layout_scrollback_ui" -v
-          --reruns 4 --reruns-delay 1 -r aR
+          --reruns 0 -r aR
 
       - name: Upload failure artifacts
         if: always()
