@@ -372,6 +372,21 @@ impl HttpMonitorService {
         svc
     }
 
+    /// Construct a service pre-loaded with `config` but **stopped** — no poll
+    /// loop is spawned and no network work happens.
+    ///
+    /// Used to list a persisted monitor on launch without auto-starting it
+    /// (PERF-008): the monitor appears as `running: false` and does zero network
+    /// work until the user resumes it (which re-spawns the loop with the same
+    /// config, via [`resume`](Self::resume)). The event channel is live, so a host
+    /// can subscribe a bridge up front and events flow the moment it is resumed.
+    pub fn stopped_with(config: HttpMonitorConfig) -> Self {
+        let mut svc = Self::new();
+        svc.config = Some(config);
+        // status stays ServiceStatus::Stopped
+        svc
+    }
+
     /// Snapshot this monitor as an [`HttpMonitorState`] for listing.
     ///
     /// Returns `None` for a service that was never started (no config).
@@ -1552,6 +1567,33 @@ mod tests {
         assert!(!svc.is_running());
         // No config yet → nothing to list.
         assert!(svc.state().is_none());
+    }
+
+    #[test]
+    fn stopped_with_lists_as_not_running_and_does_no_work() {
+        // PERF-008: a persisted monitor loaded on launch is listed but stopped —
+        // no poll loop, no network work — until the user resumes it.
+        let cfg = sample_config();
+        let id = cfg.id.clone();
+        let svc = HttpMonitorService::stopped_with(cfg);
+        assert_eq!(svc.status(), ServiceStatus::Stopped);
+        assert!(!svc.is_running());
+        let state = svc.state().expect("a config-loaded monitor is listed");
+        assert_eq!(state.config.id, id);
+        assert!(!state.running, "loaded monitor must not be running");
+        assert!(!state.paused);
+    }
+
+    #[test]
+    fn stopped_with_can_be_resumed_into_a_running_loop() {
+        // The user opting the monitor in re-spawns the loop with the same config
+        // (PERF-008: work is on-demand, not on launch).
+        let mut svc = HttpMonitorService::stopped_with(sample_config());
+        assert!(!svc.is_running());
+        svc.resume();
+        assert!(svc.is_running());
+        assert_eq!(svc.status(), ServiceStatus::Running);
+        svc.shutdown();
     }
 
     #[tokio::test]
