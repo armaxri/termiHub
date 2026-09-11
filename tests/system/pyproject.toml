@@ -15,9 +15,13 @@ dependencies = [
     # pytest-rerunfailures adds bounded auto-retries to the nightly integration
     # lanes only (see .github/workflows/system-integration.yml, #2698). The real
     # bugs are fixed; this absorbs irreducible hosted-CI environmental flakiness
-    # (WKWebView occlusion / WebView2 contention / Xvfb render-timing). `--reruns`
-    # re-runs only FAILED tests, so a genuine regression still fails after its
-    # retries. Not used by per-PR CI, which stays strict.
+    # (WKWebView occlusion / WebView2 contention / Xvfb render-timing). The bulk
+    # lane runs at `--reruns 2` (the documented policy value); the display-critical
+    # grades (test_agent_reconnect_ui, test_layout_scrollback_ui) run at
+    # `--reruns 0` so an intermittent regression on the reconnect path reds the lane
+    # on first failure rather than being retried away (CI-002). `--reruns` re-runs
+    # only FAILED tests, so a deterministic regression still fails after its retries.
+    # Not used by per-PR CI, which stays strict.
     "pytest-rerunfailures>=14.0",
     "websockets>=12.0",
     "psutil>=5.9",
