@@ -3,8 +3,12 @@ import { Plus, Save, Download, Upload } from "lucide-react";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
-import { useActiveTabGroupId, useLayoutTabGroups } from "@/store/layoutSelectors";
-import { Button, toast, Tooltip } from "@/components/ui";
+import {
+  getAllTabsAcrossGroupTrees,
+  useActiveTabGroupId,
+  useLayoutTabGroups,
+} from "@/store/layoutSelectors";
+import { Button, toast, Tooltip, ConfirmDialog } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -28,17 +32,46 @@ export function WorkspaceSidebar() {
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   // The workspace pending deletion once the user confirms the destructive action.
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+  // The workspace pending launch once the user confirms tearing down live
+  // sessions (UX-026). `count` is the number of open sessions that would be lost.
+  const [pendingLaunch, setPendingLaunch] = useState<{
+    id: string;
+    name: string;
+    count: number;
+  } | null>(null);
 
   const handleNew = useCallback(() => {
     openWorkspaceEditorTab(null);
   }, [openWorkspaceEditorTab]);
 
+  // Launching a workspace tears down every live session before swapping in the
+  // new layout (`teardownAllSessions`, appStore.ts). Delete is guarded but the
+  // more-destructive Launch was not (UX-026), so confirm first — but ONLY when
+  // there are live sessions to lose. When nothing is running, launch directly so
+  // the common case is not nagged.
   const handleLaunch = useCallback(
     (workspaceId: string) => {
+      const liveCount = getAllTabsAcrossGroupTrees().filter((t) => t.sessionId).length;
+      if (liveCount > 0) {
+        const workspace = workspaces.find((ws) => ws.id === workspaceId);
+        setPendingLaunch({
+          id: workspaceId,
+          name: workspace?.name ?? "this workspace",
+          count: liveCount,
+        });
+        return;
+      }
       launchWorkspace(workspaceId);
     },
-    [launchWorkspace]
+    [launchWorkspace, workspaces]
   );
+
+  const handleConfirmLaunch = useCallback(() => {
+    if (!pendingLaunch) return;
+    const { id } = pendingLaunch;
+    setPendingLaunch(null);
+    void launchWorkspace(id);
+  }, [pendingLaunch, launchWorkspace]);
 
   const handleEdit = useCallback(
     (workspaceId: string) => {
@@ -252,6 +285,24 @@ export function WorkspaceSidebar() {
         }
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+      <ConfirmDialog
+        open={pendingLaunch !== null}
+        variant="danger"
+        title="Close live sessions?"
+        message={
+          pendingLaunch
+            ? `Launching "${pendingLaunch.name}" will close ${pendingLaunch.count} open ` +
+              `session${pendingLaunch.count === 1 ? "" : "s"} and replace your current layout. ` +
+              `Continue?`
+            : ""
+        }
+        confirmLabel="Launch"
+        confirmVariant="danger"
+        testIdBase="confirm-launch-workspace"
+        data-testid="confirm-launch-workspace-dialog"
+        onConfirm={handleConfirmLaunch}
+        onCancel={() => setPendingLaunch(null)}
       />
     </div>
   );
