@@ -187,6 +187,35 @@ pub fn fold_agent_session_lost<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab
     sync_timer_generic(app_handle, tab_id);
 }
 
+/// The **unconfirmed-session** resolve of [`fold_agent_transport_reconnecting`], folded
+/// at the **backend source** (`agent_io_task`) when the agent re-established its transport
+/// on a transient break but the post-reconnect `connection.list` never answered within the
+/// bounded retry budget (SM-001) — so which hosted sessions survived cannot be confirmed.
+///
+/// Without this, the `connection.list == None` branch left every hosted tab stuck in
+/// `Reconnecting` with the reconnect loop `Idle`: the backend timer arms only on a
+/// `Waiting` phase, so nothing armed a timer and no task drove the machine — a genuine
+/// no-exit "Reconnecting… forever" state escapable only by a manual Stop. The transport is
+/// back but the session cannot be confirmed, so — like [`fold_agent_session_lost`] — the
+/// backend settles the terminal [`SessionStatus::SessionLost`](crate::session_projection::store::SessionStatus::SessionLost)
+/// state, giving the user an honest, actionable failure (the "session lost" overlay with a
+/// manual "start new shell") instead of a silent perpetual spinner.
+///
+/// A distinct message from [`fold_agent_session_lost`] so the two causes stay
+/// distinguishable in diagnostics: a confirmed-gone session vs one that could not be
+/// confirmed at all. Loop-idle (`session_lost` resets the reconnect engine to idle and
+/// clears the re-attach id), so the subsequent timer reconcile is a *cancel* — no redrive
+/// is armed for the settled session.
+pub fn fold_agent_session_unconfirmed<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab_id: &str) {
+    fold_session_transition(app_handle, |store| {
+        store.session_lost(
+            tab_id,
+            Some("the agent session could not be confirmed after reconnect".to_string()),
+        );
+    });
+    sync_timer_generic(app_handle, tab_id);
+}
+
 /// The fully-failed resolve of [`fold_agent_transport_reconnecting`], folded at the
 /// **backend source** (`agent_io_task`) when the agent's own in-task reconnect loop
 /// exhausted its budget and the transport could **not** be re-established — the agent
