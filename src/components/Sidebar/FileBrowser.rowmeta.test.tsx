@@ -139,12 +139,14 @@ describe("FileBrowser – row meta (size / tooltips) (#2798)", () => {
     await flushAsync();
   }
 
-  it("renders a real byte size for a file", async () => {
+  it("renders a real byte size on the meta line for a file", async () => {
     await renderLocalAt("/home");
     const size = container.querySelector(
       '[data-testid="file-row-bigfile.bin"] .file-browser__size'
     );
     expect(size?.textContent).toBe("1.5 KB");
+    // The size sits inside the second-line meta group, not loose in the row.
+    expect(size?.closest(".file-browser__meta")).toBeTruthy();
   });
 
   it("does not render a size (no NaN) for a file with an unknown size", async () => {
@@ -157,11 +159,27 @@ describe("FileBrowser – row meta (size / tooltips) (#2798)", () => {
     expect(container.textContent).not.toContain("NaN");
   });
 
-  it("renders no size cell for a directory", async () => {
+  it("renders no size cell and no dangling separator for a directory", async () => {
     await renderLocalAt("/home");
     const dirRow = container.querySelector('[data-testid="file-row-adir"]');
     expect(dirRow).toBeTruthy();
+    // Directory: Modified · permissions — no Size, and exactly one middot (never a
+    // dangling/leading "·" from the missing Size part) (#2798).
     expect(dirRow?.querySelector(".file-browser__size")).toBeNull();
+    const meta = dirRow?.querySelector(".file-browser__meta");
+    expect(meta?.querySelectorAll(".file-browser__meta-sep").length).toBe(1);
+    const metaText = (meta?.textContent ?? "").trim();
+    expect(metaText.startsWith("·")).toBe(false);
+    expect(metaText.endsWith("·")).toBe(false);
+  });
+
+  it("renders permissions on the meta line when present", async () => {
+    await renderLocalAt("/home");
+    const perms = container.querySelector(
+      '[data-testid="file-row-bigfile.bin"] .file-browser__permissions'
+    );
+    expect(perms?.textContent).toBe("-rw-r--r--");
+    expect(perms?.closest(".file-browser__meta")).toBeTruthy();
   });
 
   it("sets the full filename as the name tooltip", async () => {
@@ -170,6 +188,8 @@ describe("FileBrowser – row meta (size / tooltips) (#2798)", () => {
       '[data-testid="file-row-bigfile.bin"] .file-browser__name'
     );
     expect(name?.getAttribute("title")).toBe("bigfile.bin");
+    // The name is on the first line, above the meta line.
+    expect(name?.closest(".file-browser__name-line")).toBeTruthy();
   });
 
   it("sets an absolute timestamp as the Modified tooltip", async () => {

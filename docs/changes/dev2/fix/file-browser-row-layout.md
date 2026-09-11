@@ -1,9 +1,10 @@
 ### Fixed
 
-- Sidebar file browser rows: the filename is now the dominant element (it takes
-  priority width and truncates with an ellipsis) while Modified, Size and
-  permissions sit in an aligned right-hand meta group that no longer crowds or
-  covers the name. The Size column now shows a real value for files (a missing or
-  invalid size renders no size cell instead of `NaN GB`), and hovering a row
-  shows the full filename and the absolute modified date/time as tooltips
-  (#2798).
+- Sidebar file browser rows are now two lines so the filename gets the full
+  width of the narrow sidebar: the name sits on the first line (dominant,
+  truncated with an ellipsis, full name shown as a hover tooltip) with a smaller,
+  muted `Modified · Size · permissions` meta line below it. The Size now shows a
+  real value for files (a missing or invalid size is omitted instead of showing
+  `NaN GB`, and its separator is dropped so there is never a dangling middot),
+  directories show no size, and hovering the Modified value shows the absolute
+  date and time (#2798).

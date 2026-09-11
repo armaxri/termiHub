@@ -71,11 +71,14 @@ import { FileBrowserPathBar } from "./FileBrowserPathBar";
 import "./FileBrowser.css";
 
 /**
- * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. The
+ * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
+ * are two-line (name on top, a muted Modified · Size · permissions meta line
+ * below) so the filename gets the full width in the narrow sidebar (#2798). The
  * list is virtualized (@tanstack/react-virtual) so only the visible window of
- * rows is mounted; a uniform height keeps the windowing math exact and cheap.
+ * rows is mounted; a uniform height keeps the windowing math exact and cheap —
+ * this constant MUST stay in sync with `.file-browser__row`'s CSS height.
  */
-const ROW_HEIGHT = 24;
+const ROW_HEIGHT = 40;
 
 /** Extra rows rendered above/below the viewport so fast scrolls stay smooth. */
 const ROW_OVERSCAN = 8;
@@ -483,6 +486,48 @@ function FileRow({
   // populated `size` renders no size cell instead of the old "NaN GB" (#2798).
   const sizeLabel = entry.isDirectory ? "" : formatBytes(entry.size);
 
+  // The second row of each entry is a muted meta line — Modified · Size ·
+  // permissions — built from only the parts that are present, with a middot
+  // separator inserted *between* parts so a missing part never leaves a dangling
+  // or leading "·" (#2798).
+  const metaParts: React.ReactNode[] = [];
+  if (entry.modified) {
+    metaParts.push(
+      <span
+        key="modified"
+        className="file-browser__modified"
+        title={formatAbsoluteTime(entry.modified) || undefined}
+      >
+        {formatRelativeTime(entry.modified)}
+      </span>
+    );
+  }
+  if (sizeLabel) {
+    metaParts.push(
+      <span key="size" className="file-browser__size">
+        {sizeLabel}
+      </span>
+    );
+  }
+  if (entry.permissions) {
+    metaParts.push(
+      <span key="permissions" className="file-browser__permissions">
+        {entry.permissions}
+      </span>
+    );
+  }
+  const metaNodes: React.ReactNode[] = [];
+  metaParts.forEach((part, i) => {
+    if (i > 0) {
+      metaNodes.push(
+        <span key={`sep-${i}`} className="file-browser__meta-sep" aria-hidden="true">
+          ·
+        </span>
+      );
+    }
+    metaNodes.push(part);
+  });
+
   if (isRenaming) {
     return <RenameRow entry={entry} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />;
   }
@@ -509,41 +554,30 @@ function FileRow({
             }}
           >
             <FileEntryIcon entry={entry} />
-            <span
-              className="file-browser__name"
-              title={
-                entry.isSymlink
-                  ? entry.symlinkTarget
-                    ? `${entry.name} — symbolic link → ${entry.symlinkTarget}`
-                    : `${entry.name} — symbolic link`
-                  : entry.name
-              }
-            >
-              {entry.name}
-            </span>
-            {entry.isSymlink && entry.symlinkTarget && (
-              <span
-                className="file-browser__symlink-target"
-                title={`Symbolic link → ${entry.symlinkTarget}`}
-              >
-                → {entry.symlinkTarget}
-              </span>
-            )}
-            <span className="file-browser__meta">
-              {entry.modified && (
+            <span className="file-browser__body">
+              <span className="file-browser__name-line">
                 <span
-                  className="file-browser__modified"
-                  title={formatAbsoluteTime(entry.modified) || undefined}
+                  className="file-browser__name"
+                  title={
+                    entry.isSymlink
+                      ? entry.symlinkTarget
+                        ? `${entry.name} — symbolic link → ${entry.symlinkTarget}`
+                        : `${entry.name} — symbolic link`
+                      : entry.name
+                  }
                 >
-                  {formatRelativeTime(entry.modified)}
+                  {entry.name}
                 </span>
-              )}
-              {!entry.isDirectory && sizeLabel && (
-                <span className="file-browser__size">{sizeLabel}</span>
-              )}
-              {entry.permissions && (
-                <span className="file-browser__permissions">{entry.permissions}</span>
-              )}
+                {entry.isSymlink && entry.symlinkTarget && (
+                  <span
+                    className="file-browser__symlink-target"
+                    title={`Symbolic link → ${entry.symlinkTarget}`}
+                  >
+                    → {entry.symlinkTarget}
+                  </span>
+                )}
+              </span>
+              {metaNodes.length > 0 && <span className="file-browser__meta">{metaNodes}</span>}
             </span>
           </button>
           <div className="file-browser__row-menu">
