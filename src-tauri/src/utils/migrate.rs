@@ -450,7 +450,10 @@ mod tests {
         assert!(result.is_err(), "guard must refuse a newer file");
 
         let after = fs::read_to_string(&path).unwrap();
-        assert_eq!(after, newer, "the newer file must be left byte-for-byte intact");
+        assert_eq!(
+            after, newer,
+            "the newer file must be left byte-for-byte intact"
+        );
     }
 
     #[test]
