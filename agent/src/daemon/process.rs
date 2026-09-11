@@ -626,4 +626,180 @@ mod tests {
             "Disconnected(gen=3) must clear agent_writer when connection_gen=3"
         );
     }
+
+    // ── AGT-015: owner-scoped recovery guard ────────────────────────────
+    //
+    // These drive the real `daemon_loop` over a real endpoint with real
+    // `DaemonClient` connects, proving the daemon never evicts a live writer for
+    // a recovery connect (the second-desktop data-loss bug) while still allowing
+    // a fresh worker to recover a truly-orphaned session and a deliberate
+    // takeover to replace a live writer.
+    mod recovery_guard {
+        use crate::daemon::client::{DaemonClient, OwnedByLivePeer};
+        use crate::daemon::transport::{self, DaemonListener};
+        use crate::io::transport::NotificationSender;
+        use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
+        use termihub_core::errors::SessionError;
+
+        /// Minimal in-process connection type: the daemon loop only needs it to
+        /// exist and accept writes/resizes; it produces no output.
+        struct FakeConnection;
+
+        #[async_trait::async_trait]
+        impl ConnectionType for FakeConnection {
+            fn type_id(&self) -> &str {
+                "fake"
+            }
+            fn display_name(&self) -> &str {
+                "Fake"
+            }
+            fn settings_schema(&self) -> SettingsSchema {
+                SettingsSchema { groups: vec![] }
+            }
+            fn capabilities(&self) -> Capabilities {
+                Capabilities {
+                    monitoring: false,
+                    file_browser: false,
+                    graphical: false,
+                    resize: true,
+                    persistent: true,
+                    terminal: true,
+                }
+            }
+            async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+                Ok(())
+            }
+            async fn disconnect(&mut self) -> Result<(), SessionError> {
+                Ok(())
+            }
+            fn is_connected(&self) -> bool {
+                true
+            }
+            fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+                Ok(())
+            }
+            fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+                Ok(())
+            }
+            fn subscribe_output(&self) -> OutputReceiver {
+                let (_tx, rx) = tokio::sync::mpsc::channel(1);
+                rx
+            }
+            fn monitoring(&self) -> Option<&dyn termihub_core::monitoring::MonitoringProvider> {
+                None
+            }
+            fn file_browser(&self) -> Option<&dyn termihub_core::files::FileBrowser> {
+                None
+            }
+        }
+
+        fn make_notification_tx() -> NotificationSender {
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            tx
+        }
+
+        fn unique_endpoint(tag: &str) -> String {
+            let id = format!(
+                "itest-agt015-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            transport::session_endpoint(&id)
+        }
+
+        /// Bind an endpoint and run a real `daemon_loop` against it on a
+        /// background task. Returns the endpoint and the loop's join handle.
+        async fn spawn_daemon(endpoint: &str) -> tokio::task::JoinHandle<()> {
+            let mut listener = DaemonListener::bind(endpoint)
+                .await
+                .expect("bind daemon endpoint");
+            let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
+            tokio::spawn(async move {
+                // Keep the output sender alive for the life of the loop: dropping
+                // it would close the output channel and make `daemon_loop` exit.
+                let _out_tx = out_tx;
+                let conn: Box<dyn ConnectionType> = Box::new(FakeConnection);
+                let _ = super::super::daemon_loop(conn, out_rx, &mut listener, 4096).await;
+                listener.cleanup();
+            })
+        }
+
+        /// The core AGT-015 invariant: while a live writer is attached, a recovery
+        /// connect (a second desktop's worker) is REFUSED — the daemon keeps the
+        /// live writer instead of evicting it.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn recovery_connect_refused_while_live_writer_attached() {
+            let endpoint = unique_endpoint("refuse");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            // Worker A attaches (fresh spawn / takeover) and stays live.
+            let client_a =
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx())
+                    .await
+                    .expect("worker A attaches");
+            assert!(client_a.is_alive(), "worker A must be attached and alive");
+
+            // Worker B (second desktop) tries to RECOVER the same session.
+            let err = match DaemonClient::connect_for_recovery(
+                "s".into(),
+                endpoint.clone(),
+                make_notification_tx(),
+            )
+            .await
+            {
+                Ok(_) => panic!("recovery must be refused while a live writer is attached"),
+                Err(e) => e,
+            };
+            assert!(
+                err.downcast_ref::<OwnedByLivePeer>().is_some(),
+                "refusal must surface as OwnedByLivePeer, got: {err:#}"
+            );
+
+            // A must NOT have been evicted: it can still round-trip a request.
+            client_a
+                .query_buffer()
+                .await
+                .expect("worker A must still be attached after the refused recovery");
+        }
+
+        /// A worker restarting for the *same* desktop (its predecessor is gone, so
+        /// no writer is attached) still recovers a truly-orphaned session — the
+        /// flagship persistent-session feature is preserved.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn recovery_connect_succeeds_when_no_writer_attached() {
+            let endpoint = unique_endpoint("orphan");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let client = DaemonClient::connect_for_recovery(
+                "s".into(),
+                endpoint.clone(),
+                make_notification_tx(),
+            )
+            .await
+            .expect("an orphaned session (no live writer) must be recoverable");
+            assert!(client.is_alive(), "recovered session must be alive");
+        }
+
+        /// A deliberate re-attach (takeover) still replaces a live writer — the
+        /// guard only refuses *recovery* connects, never a takeover.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn takeover_connect_still_replaces_live_writer() {
+            let endpoint = unique_endpoint("takeover");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let _client_a =
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx())
+                    .await
+                    .expect("worker A attaches");
+
+            let client_b =
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx())
+                    .await
+                    .expect("a takeover connect must succeed even while A is attached");
+            assert!(client_b.is_alive(), "the taking-over writer must be alive");
+        }
+    }
 }

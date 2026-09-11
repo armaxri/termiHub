@@ -897,4 +897,98 @@ mod tests {
 
         server.await.expect("mock daemon task");
     }
+
+    /// AGT-015 (client half): a recovery connect declares [`INTENT_RECOVERY`] as
+    /// its first frame, and when the daemon refuses with the
+    /// [`ERR_OWNED_BY_LIVE_PEER`] marker the client surfaces it as the typed
+    /// [`OwnedByLivePeer`] error (so recovery can skip the session without
+    /// tearing it down).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recovery_refusal_maps_to_owned_by_live_peer() {
+        let session_id = format!(
+            "itest-agt015-refuse-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let endpoint = transport::session_endpoint(&session_id);
+        let mut listener = transport::DaemonListener::bind(&endpoint)
+            .await
+            .expect("bind mock daemon");
+
+        let server = tokio::spawn(async move {
+            let (mut reader, mut writer) = listener.accept().await.expect("accept");
+            // First frame must be the recovery attach-intent.
+            let frame = protocol::read_frame_async(&mut reader)
+                .await
+                .expect("read intent")
+                .expect("intent frame present");
+            assert_eq!(frame.msg_type, MSG_ATTACH_INTENT);
+            assert_eq!(frame.payload, vec![INTENT_RECOVERY]);
+            // Refuse: a live writer already owns the session.
+            protocol::write_frame_async(&mut writer, MSG_ERROR, ERR_OWNED_BY_LIVE_PEER)
+                .await
+                .expect("send refusal");
+            listener.cleanup();
+        });
+
+        let err =
+            match DaemonClient::connect_for_recovery(session_id, endpoint, make_notification_tx())
+                .await
+            {
+                Ok(_) => panic!("refused recovery must return an error"),
+                Err(e) => e,
+            };
+        assert!(
+            err.downcast_ref::<OwnedByLivePeer>().is_some(),
+            "refusal must map to OwnedByLivePeer, got: {err:#}"
+        );
+
+        server.await.expect("mock daemon task");
+    }
+
+    /// AGT-015 (client half): a normal (spawn / re-attach) connect declares
+    /// [`INTENT_TAKEOVER`] as its first frame, preserving evict-on-accept.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_connect_declares_takeover_intent_first() {
+        let session_id = format!(
+            "itest-agt015-takeover-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let endpoint = transport::session_endpoint(&session_id);
+        let mut listener = transport::DaemonListener::bind(&endpoint)
+            .await
+            .expect("bind mock daemon");
+
+        let server = tokio::spawn(async move {
+            let (mut reader, mut writer) = listener.accept().await.expect("accept");
+            let frame = protocol::read_frame_async(&mut reader)
+                .await
+                .expect("read intent")
+                .expect("intent frame present");
+            assert_eq!(frame.msg_type, MSG_ATTACH_INTENT);
+            assert_eq!(frame.payload, vec![INTENT_TAKEOVER]);
+            // Complete the handshake so the client connect succeeds.
+            protocol::write_frame_async(&mut writer, MSG_READY, &[])
+                .await
+                .expect("send ready");
+            // Keep the connection open briefly so the client's reader has a live
+            // socket after the handshake.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            listener.cleanup();
+        });
+
+        let client = DaemonClient::connect(session_id, endpoint, make_notification_tx())
+            .await
+            .expect("takeover connect must complete the handshake");
+        assert!(client.is_alive());
+
+        server.await.expect("mock daemon task");
+    }
 }
