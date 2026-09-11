@@ -700,11 +700,93 @@ fn failed_result(config: &HttpMonitorConfig, error: String, timestamp_ms: u64) -
     }
 }
 
+/// Maximum failure-backoff multiplier (SM-015).
+///
+/// A consecutively-failing monitor backs off geometrically up to this many times
+/// its base interval, so a dead host is probed at most once per
+/// `BACKOFF_MAX_MULTIPLIER × interval` instead of being hammered every interval.
+/// The delay resets to the base interval on the first success.
+const BACKOFF_MAX_MULTIPLIER: u32 = 30;
+
+/// Fixed-cadence scheduler with exponential failure backoff (SM-015).
+///
+/// Split out from the async loop so the cadence/backoff policy is unit-tested
+/// without real timers or network. `interval` is the configured base period; the
+/// delay before the next check is `interval` while healthy and grows
+/// geometrically (2×, 4×, 8×, …) with each consecutive failure, capped at
+/// `BACKOFF_MAX_MULTIPLIER × interval`, resetting to `interval` on the next
+/// success.
+#[derive(Debug)]
+struct PollSchedule {
+    interval: Duration,
+    consecutive_failures: u32,
+}
+
+impl PollSchedule {
+    fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            consecutive_failures: 0,
+        }
+    }
+
+    /// The base interval delay, ignoring failure state. Used for an idle tick
+    /// (paused / no subscribers) so idling never trips or resets the backoff.
+    fn base_delay(&self) -> Duration {
+        self.interval
+    }
+
+    /// Record a completed check's outcome and return the delay before the next
+    /// check: `interval` on success, or a capped exponential backoff while
+    /// failures persist.
+    fn record(&mut self, ok: bool) -> Duration {
+        self.consecutive_failures = if ok {
+            0
+        } else {
+            self.consecutive_failures.saturating_add(1)
+        };
+        self.interval.saturating_mul(self.backoff_multiplier())
+    }
+
+    /// Backoff multiplier: 1 while healthy, doubling per consecutive failure,
+    /// capped at [`BACKOFF_MAX_MULTIPLIER`].
+    fn backoff_multiplier(&self) -> u32 {
+        if self.consecutive_failures == 0 {
+            return 1;
+        }
+        let doubled = 1u32
+            .checked_shl(self.consecutive_failures)
+            .unwrap_or(u32::MAX);
+        doubled.min(BACKOFF_MAX_MULTIPLIER)
+    }
+}
+
+/// A single HTTP check, abstracted so the poll loop can be driven by a fake in
+/// tests (no network, scripted results, deterministic virtual time) while
+/// production uses the real `reqwest`-backed [`check_once`].
+#[async_trait]
+trait MonitorCheck: Send {
+    async fn check(&self) -> HttpCheckResult;
+}
+
+/// Production [`MonitorCheck`]: issues the real SSRF-guarded HTTP request.
+struct HttpChecker {
+    config: HttpMonitorConfig,
+    client: Client,
+}
+
+#[async_trait]
+impl MonitorCheck for HttpChecker {
+    async fn check(&self) -> HttpCheckResult {
+        check_once(&self.config, &self.client).await
+    }
+}
+
 /// The background poll loop for one monitor.
 ///
-/// Emits a [`CHECK_EVENT_KIND`] [`ServiceEvent`] (payload: [`HttpCheckResult`])
-/// on `events` after every check — the host bridges that channel to its own
-/// emitter — and caches the latest result in `last_result`.
+/// Builds the HTTP client, then drives [`poll_loop`]. Emitting the client-build
+/// failure keeps a broken monitor visibly errored rather than a stuck "checking…"
+/// zombie (audit gap #4).
 async fn run_monitor(
     config: HttpMonitorConfig,
     events: EventChannel,
@@ -731,34 +813,87 @@ async fn run_monitor(
         }
     };
 
+    let interval = Duration::from_millis(config.interval_ms);
+    let monitor_id = config.id.clone();
+    let checker = HttpChecker { config, client };
+    poll_loop(
+        monitor_id,
+        interval,
+        checker,
+        events,
+        cancel,
+        paused,
+        last_result,
+    )
+    .await;
+}
+
+/// The background poll loop, generic over the [`MonitorCheck`] seam so it is
+/// testable with a fake checker under deterministic virtual time.
+///
+/// Emits a [`CHECK_EVENT_KIND`] [`ServiceEvent`] (payload: [`HttpCheckResult`])
+/// on `events` after every performed check — the host bridges that channel to its
+/// own emitter — and caches the latest result in `last_result`.
+///
+/// # Scheduling (SM-015)
+///
+/// The next tick's deadline is derived from the previous deadline plus the delay,
+/// never from "now, after the check completes", so a slow check does not push the
+/// whole schedule later — the poll period does not drift by the check duration.
+/// On consecutive failures the delay backs off geometrically (see
+/// [`PollSchedule`]) so a dead host is not hammered every interval.
+async fn poll_loop<C: MonitorCheck>(
+    monitor_id: String,
+    interval: Duration,
+    checker: C,
+    events: EventChannel,
+    cancel: CancellationToken,
+    paused: Arc<AtomicBool>,
+    last_result: Arc<Mutex<Option<HttpCheckResult>>>,
+) {
+    let mut schedule = PollSchedule::new(interval);
+    // Start at "now" so the first check fires immediately, then advance by the
+    // scheduled delay each tick (fixed cadence — see the fn doc).
+    let mut deadline = tokio::time::Instant::now();
+
     loop {
         if cancel.is_cancelled() {
             break;
         }
 
-        // Pause suspends the poll body but keeps the loop alive so Resume is
-        // instant. The interval sleep still runs so the loop stays responsive to
-        // cancellation and re-checks the flag each tick.
-        if paused.load(Ordering::SeqCst) {
-            debug!(monitor_id = %config.id, "HTTP monitor paused — skipping check");
+        let delay = if paused.load(Ordering::SeqCst) {
+            // Pause suspends the poll body but keeps the loop alive so Resume is
+            // instant. Idle at the base interval without disturbing the backoff.
+            debug!(monitor_id = %monitor_id, "HTTP monitor paused — skipping check");
+            schedule.base_delay()
         } else {
-            let result = check_once(&config, &client).await;
+            let result = checker.check().await;
             debug!(
-                monitor_id = %config.id,
+                monitor_id = %monitor_id,
                 ok = result.ok,
                 latency_ms = ?result.latency_ms,
                 "HTTP monitor check complete"
             );
-
+            let delay = schedule.record(result.ok);
             events.emit(ServiceEvent::new(CHECK_EVENT_KIND, &result));
-
             if let Ok(mut guard) = last_result.lock() {
                 *guard = Some(result);
             }
+            delay
+        };
+
+        // Advance the deadline by the chosen delay. If the check overran the
+        // delay (deadline already in the past), resynchronize to now so a slow
+        // host yields spacing rather than a catch-up burst (mirrors
+        // tokio::time::MissedTickBehavior::Delay).
+        deadline += delay;
+        let now = tokio::time::Instant::now();
+        if deadline <= now {
+            deadline = now + delay;
         }
 
         tokio::select! {
-            _ = tokio::time::sleep(Duration::from_millis(config.interval_ms)) => {}
+            _ = tokio::time::sleep_until(deadline) => {}
             _ = cancel.cancelled() => break,
         }
     }
@@ -992,6 +1127,177 @@ mod tests {
             5_000,
         );
         assert_eq!(cfg.interval_ms, 5_000);
+    }
+
+    // ── Poll scheduling: fixed cadence + failure backoff (SM-015) ─────────────
+
+    #[test]
+    fn poll_schedule_healthy_delay_is_the_interval() {
+        let mut sched = PollSchedule::new(Duration::from_secs(5));
+        assert_eq!(sched.record(true), Duration::from_secs(5));
+        // A run of successes keeps the delay pinned at the interval.
+        assert_eq!(sched.record(true), Duration::from_secs(5));
+        assert_eq!(sched.base_delay(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn poll_schedule_backs_off_geometrically_on_consecutive_failures() {
+        let mut sched = PollSchedule::new(Duration::from_secs(5));
+        // Each consecutive failure doubles the delay: 2×, 4×, 8×, 16× …
+        assert_eq!(sched.record(false), Duration::from_secs(10));
+        assert_eq!(sched.record(false), Duration::from_secs(20));
+        assert_eq!(sched.record(false), Duration::from_secs(40));
+        assert_eq!(sched.record(false), Duration::from_secs(80));
+    }
+
+    #[test]
+    fn poll_schedule_backoff_is_capped() {
+        let mut sched = PollSchedule::new(Duration::from_secs(1));
+        // Drive many failures; the multiplier saturates at BACKOFF_MAX_MULTIPLIER
+        // rather than growing without bound (or overflowing the shift).
+        let mut last = Duration::ZERO;
+        for _ in 0..64 {
+            last = sched.record(false);
+        }
+        assert_eq!(
+            last,
+            Duration::from_secs(1) * BACKOFF_MAX_MULTIPLIER,
+            "backoff must cap at BACKOFF_MAX_MULTIPLIER × interval"
+        );
+    }
+
+    #[test]
+    fn poll_schedule_resets_to_interval_on_success() {
+        let mut sched = PollSchedule::new(Duration::from_secs(5));
+        sched.record(false);
+        sched.record(false);
+        assert_eq!(sched.record(false), Duration::from_secs(40));
+        // A single success clears the backoff immediately.
+        assert_eq!(sched.record(true), Duration::from_secs(5));
+    }
+
+    /// A fake [`MonitorCheck`] for driving [`poll_loop`] under deterministic
+    /// virtual time: records the (virtual) start instant of each check, returns a
+    /// scripted ok/fail outcome, optionally simulates request latency, and cancels
+    /// the loop once `stop_after` checks have run so the test terminates.
+    struct RecordingChecker {
+        outcomes: Vec<bool>,
+        latency: Duration,
+        stop_after: usize,
+        cancel: CancellationToken,
+        calls: Arc<Mutex<Vec<tokio::time::Instant>>>,
+    }
+
+    #[async_trait]
+    impl MonitorCheck for RecordingChecker {
+        async fn check(&self) -> HttpCheckResult {
+            let n = {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push(tokio::time::Instant::now());
+                calls.len()
+            };
+            if self.latency > Duration::ZERO {
+                tokio::time::sleep(self.latency).await;
+            }
+            let ok = self.outcomes.get(n - 1).copied().unwrap_or(true);
+            if n >= self.stop_after {
+                self.cancel.cancel();
+            }
+            HttpCheckResult {
+                monitor_id: "m".into(),
+                status_code: Some(if ok { 200 } else { 500 }),
+                latency_ms: Some(0),
+                ok,
+                error: None,
+                timestamp_ms: 0,
+            }
+        }
+    }
+
+    /// Drive `poll_loop` with the given checker under virtual time and return the
+    /// recorded per-check start instants and their consecutive gaps.
+    async fn run_recorded_loop(
+        interval: Duration,
+        outcomes: Vec<bool>,
+        latency: Duration,
+        stop_after: usize,
+    ) -> Vec<Duration> {
+        let cancel = CancellationToken::new();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let checker = RecordingChecker {
+            outcomes,
+            latency,
+            stop_after,
+            cancel: cancel.clone(),
+            calls: Arc::clone(&calls),
+        };
+        let events = EventChannel::new();
+        // Keep a live subscriber so the subscriber-gate (PERF-008) lets checks run.
+        let _rx = events.subscribe();
+        poll_loop(
+            "m".into(),
+            interval,
+            checker,
+            events,
+            cancel,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Mutex::new(None)),
+        )
+        .await;
+
+        let instants = calls.lock().unwrap().clone();
+        instants
+            .windows(2)
+            .map(|w| w[1].duration_since(w[0]))
+            .collect()
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn poll_loop_holds_fixed_cadence_despite_check_latency() {
+        // With a 1s interval and a 300ms-latency check, successive checks must
+        // start ~1s apart (fixed cadence), NOT 1.3s apart — the period must not
+        // drift by the request duration (SM-015).
+        let interval = Duration::from_secs(1);
+        let gaps = run_recorded_loop(interval, vec![true; 4], Duration::from_millis(300), 4).await;
+        assert_eq!(gaps.len(), 3);
+        for gap in gaps {
+            assert_eq!(gap, interval, "poll period must not drift by check latency");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn poll_loop_backs_off_while_the_host_keeps_failing() {
+        // A perpetually-failing host is probed at a growing interval, not hammered
+        // every interval (SM-015). Gaps after each failure: 2×, 4×, 8×.
+        let interval = Duration::from_secs(1);
+        let gaps = run_recorded_loop(interval, vec![false; 4], Duration::ZERO, 4).await;
+        assert_eq!(
+            gaps,
+            vec![
+                Duration::from_secs(2),
+                Duration::from_secs(4),
+                Duration::from_secs(8),
+            ]
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn poll_loop_resets_cadence_after_recovery() {
+        // Fail twice (backing off), then recover: the delay after the success
+        // snaps back to the base interval (SM-015).
+        let interval = Duration::from_secs(1);
+        // checks: fail, fail, ok, ok → gaps reflect the delay chosen AFTER each
+        // check: 2× (fail1), 4× (fail2), 1× (success resets), then stop.
+        let gaps =
+            run_recorded_loop(interval, vec![false, false, true, true], Duration::ZERO, 4).await;
+        assert_eq!(
+            gaps,
+            vec![
+                Duration::from_secs(2),
+                Duration::from_secs(4),
+                Duration::from_secs(1),
+            ]
+        );
     }
 
     /// Obtain a genuine `reqwest::Error` offline so the build-failure branch can
