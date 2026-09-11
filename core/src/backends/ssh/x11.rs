@@ -345,7 +345,11 @@ async fn proxy_x11_channel(
         #[cfg(unix)]
         LocalXConnection::UnixSocket(path) => match tokio::net::UnixStream::connect(path).await {
             Ok(mut unix_stream) => {
-                let _ = tokio::io::copy_bidirectional(&mut unix_stream, &mut channel_stream).await;
+                if let Err(e) =
+                    tokio::io::copy_bidirectional(&mut unix_stream, &mut channel_stream).await
+                {
+                    debug!("X11 proxy: Unix-socket forwarding stream ended with error: {e}");
+                }
             }
             Err(e) => {
                 error!("X11 proxy: failed to connect to Unix socket {path}: {e}");
@@ -354,8 +358,11 @@ async fn proxy_x11_channel(
         LocalXConnection::Tcp(host, port) => {
             match tokio::net::TcpStream::connect((host.as_str(), *port)).await {
                 Ok(mut tcp_stream) => {
-                    let _ =
-                        tokio::io::copy_bidirectional(&mut tcp_stream, &mut channel_stream).await;
+                    if let Err(e) =
+                        tokio::io::copy_bidirectional(&mut tcp_stream, &mut channel_stream).await
+                    {
+                        debug!("X11 proxy: TCP forwarding stream ended with error: {e}");
+                    }
                 }
                 Err(e) => {
                     error!("X11 proxy: failed to connect to {host}:{port}: {e}");
