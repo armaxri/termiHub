@@ -120,7 +120,7 @@ impl SshHostKeyVerifier {
         let sender = self
             .pending
             .lock()
-            .expect("ssh host-key pending mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .remove(prompt_id);
         match sender {
             Some(tx) => {
@@ -138,7 +138,7 @@ impl SshHostKeyVerifier {
         let (tx, rx) = oneshot::channel();
         self.pending
             .lock()
-            .expect("ssh host-key pending mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .insert(prompt_id.clone(), tx);
         // Guarantee the pending entry is removed on every exit path — including
         // when this future is dropped mid-await (connect timeout) — not just the

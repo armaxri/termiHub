@@ -83,7 +83,7 @@ impl RdpTrustStore {
 
     /// Classify a presented `fingerprint` for `host` against what is remembered.
     pub fn lookup(&self, host: &str, fingerprint: &str) -> TrustLookup {
-        let entries = self.entries.lock().expect("trust store mutex poisoned");
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         match entries.get(host) {
             Some(fps) if fps.iter().any(|f| f == fingerprint) => TrustLookup::Trusted,
             Some(fps) if !fps.is_empty() => TrustLookup::Changed,
@@ -98,7 +98,7 @@ impl RdpTrustStore {
     /// the session.
     pub fn remember(&self, host: &str, fingerprint: &str) {
         {
-            let mut entries = self.entries.lock().expect("trust store mutex poisoned");
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             let fps = entries.entry(host.to_string()).or_default();
             if fps.iter().any(|f| f == fingerprint) {
                 return;
@@ -114,7 +114,7 @@ impl RdpTrustStore {
     pub fn entries(&self) -> BTreeMap<String, Vec<String>> {
         self.entries
             .lock()
-            .expect("trust store mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
 
@@ -125,7 +125,7 @@ impl RdpTrustStore {
     /// rather than a changed key. Returns `true` when something was removed.
     pub fn forget_fingerprint(&self, host: &str, fingerprint: &str) -> bool {
         let removed = {
-            let mut entries = self.entries.lock().expect("trust store mutex poisoned");
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             let Some(fps) = entries.get_mut(host) else {
                 return false;
             };
@@ -147,7 +147,7 @@ impl RdpTrustStore {
     /// (#1784). Returns `true` when the host had remembered entries.
     pub fn forget_host(&self, host: &str) -> bool {
         let removed = {
-            let mut entries = self.entries.lock().expect("trust store mutex poisoned");
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             entries.remove(host).is_some()
         };
         if removed {
@@ -159,7 +159,7 @@ impl RdpTrustStore {
     /// Write the current entries to disk (no-op for an in-memory store).
     fn persist(&self) {
         let Some(path) = &self.path else { return };
-        let entries = self.entries.lock().expect("trust store mutex poisoned");
+        let entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let write = || -> std::io::Result<()> {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
