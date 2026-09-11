@@ -767,6 +767,123 @@ fn transient_agent_break_folds_region_server_side_without_arming_the_timer() {
     );
 }
 
+/// SM-002: a user Stop that races the agent-task in-place recovery must win — the
+/// recover resolve must NOT silently resurrect a tab the user explicitly Stopped,
+/// and it must tear the freshly recovered agent session down instead of adopting it.
+///
+/// Drives the production `SessionManager` + the enter fold + `cancel_reconnect`
+/// (the Stop button's intent) + `resolve_agent_hosted_sessions`. Without the guard
+/// the recover fold folds `Connected` unconditionally, resurrecting the Stopped tab
+/// and re-adopting the session the user asked to abandon.
+#[test]
+fn user_cancel_wins_over_agent_recover_fold_and_tears_the_session_down() {
+    use crate::terminal::agent_manager::{
+        fold_agent_hosted_reconnecting, resolve_agent_hosted_sessions,
+    };
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let agent = Arc::new(FakeAgent::new());
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        agent.clone() as Arc<dyn AgentRpcClient>,
+    );
+    handle.manage(manager);
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    handle.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector_seed = projection.projector.clone();
+    handle.manage(projection);
+
+    // Two live resilient agent-hosted sessions on `agent-1` (remote-0 → tab-1,
+    // remote-1 → tab-2), each settled Connected as after the initial connect.
+    let manager_ref = handle.state::<SessionManager>();
+    let settings = serde_json::json!({ "config": {} });
+    for (tab, connect) in [("tab-1", "tab-1:0"), ("tab-2", "tab-2:0")] {
+        tauri::async_runtime::block_on(manager_ref.create_connection(
+            "shell",
+            settings.clone(),
+            Some("agent-1"),
+            Some(connect),
+            false,
+            true, // resilient
+            handle.clone(),
+        ))
+        .expect("initial connect succeeds");
+        store.connect(tab);
+        store.connected(tab);
+    }
+    publish_sessions(&projector_seed, &store);
+
+    let hosted = tauri::async_runtime::block_on(manager_ref.agent_hosted_sessions("agent-1"));
+
+    // Transient break: both hosted tabs fold Reconnecting at the source.
+    tauri::async_runtime::block_on(fold_agent_hosted_reconnecting(
+        &handle,
+        "agent-1",
+        Some("connection reset"),
+    ));
+
+    // The user Stops tab-1 while the transport is still re-establishing: the Stop
+    // button dispatches `session.cancelReconnect`, forcing Disconnected(User). tab-2
+    // is left reconnecting (the control — the normal recovery path must be intact).
+    store.cancel_reconnect("tab-1");
+    assert_eq!(
+        store.get("tab-1").unwrap().status,
+        SessionStatus::Disconnected,
+        "the Stop button folds the tab to Disconnected before the recovery lands"
+    );
+
+    // The agent then reports BOTH sessions recovered in place. The resolve must
+    // honour the cancel for tab-1 (no resurrection + teardown) yet still fold tab-2
+    // back to Connected.
+    let live_ids: std::collections::HashSet<String> =
+        ["remote-0".to_string(), "remote-1".to_string()]
+            .into_iter()
+            .collect();
+    tauri::async_runtime::block_on(resolve_agent_hosted_sessions(&handle, &hosted, &live_ids));
+
+    // tab-1: the user's Stop wins — the tab stays Disconnected(User), NOT Connected.
+    let cancelled = store.get("tab-1").unwrap();
+    assert_eq!(
+        cancelled.status,
+        SessionStatus::Disconnected,
+        "a Stopped tab must NOT be silently resurrected to Connected by the recover fold (SM-002)"
+    );
+    assert_eq!(
+        cancelled.end_reason,
+        Some(EndReason::User),
+        "the tab keeps the user-cancel reason — the Stop intent is preserved"
+    );
+
+    // The freshly recovered agent session for tab-1 is torn down, not adopted — it
+    // no longer appears among the agent's hosted sessions.
+    let remaining = tauri::async_runtime::block_on(manager_ref.agent_hosted_sessions("agent-1"));
+    let tabs: Vec<&str> = remaining.iter().map(|h| h.tab_id.as_str()).collect();
+    assert!(
+        !tabs.contains(&"tab-1"),
+        "the recovered session for the cancelled tab is torn down, not left alive"
+    );
+
+    // tab-2 (the control): the normal, non-cancelled recovery still folds Connected.
+    assert_eq!(
+        store.get("tab-2").unwrap().status,
+        SessionStatus::Connected,
+        "a non-cancelled recovered-in-place session still folds back to Connected"
+    );
+    assert!(
+        tabs.contains(&"tab-2"),
+        "the non-cancelled tab's session stays alive"
+    );
+}
+
 /// #2612/#2564: the **fully-failed** resolve of the transient agent-transport-break
 /// lifecycle — the agent's in-task reconnect loop exhausts its budget and the
 /// transport cannot be re-established (`agent → disconnected`) — folded at the backend
