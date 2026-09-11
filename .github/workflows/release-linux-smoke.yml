@@ -110,7 +110,7 @@ jobs:
 
       - name: Checkout code
         # smoke-test.sh cd's to the git top-level, so a checkout must be present.
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install headless runtime dependencies
         # Runtime WebKitGTK/GTK libs the app links against plus Xvfb for a virtual
@@ -259,7 +259,7 @@ jobs:
 
       - name: Upload smoke logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: linux-x64-install-smoke-logs
           path: |
