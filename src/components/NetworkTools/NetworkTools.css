@@ -101,7 +101,8 @@
 /* Status / info / error messages */
 .network-panel__info {
   padding: var(--spacing-xs) var(--spacing-sm);
-  background-color: rgba(0, 122, 204, 0.15);
+  /* Accent-tinted fill that tracks the active theme (UI-003). */
+  background-color: var(--bg-selected);
   border-left: 3px solid var(--accent-color);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
@@ -110,7 +111,8 @@
 
 .network-panel__error {
   padding: var(--spacing-xs) var(--spacing-sm);
-  background-color: rgba(244, 135, 113, 0.12);
+  /* Error tint from the theme-tracked status token (UI-003). */
+  background-color: var(--color-error-bg);
   border-left: 3px solid var(--color-error);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
@@ -125,7 +127,7 @@
 
 /* Section title */
 .network-panel__section-title {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -312,7 +314,7 @@
 .network-sidebar__section-title {
   display: flex;
   align-items: center;
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -398,7 +400,8 @@
 /* Port scan warning */
 .network-panel__warning {
   padding: var(--spacing-xs) var(--spacing-sm);
-  background-color: rgba(204, 167, 0, 0.12);
+  /* Warning tint from the theme-tracked status token (UI-003). */
+  background-color: var(--bg-warning);
   border-left: 3px solid var(--color-warning);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
