@@ -8,10 +8,13 @@ import { FileEditor, REMOTE_POLL_INTERVAL_MS } from "./FileEditor";
 import type { EditorTabMeta } from "@/types/terminal";
 
 // Remote tabs don't OS-watch, but FileEditor still imports onLocalFileChanged;
-// stub it so the module resolves (it is never invoked for remote tabs).
-vi.mock("@/services/events", () => ({
-  onLocalFileChanged: vi.fn(() => Promise.resolve(() => {})),
-}));
+// stub it so the module resolves (it is never invoked for remote tabs). Keep the
+// real base64 helpers — api.ts's session_read_file decode depends on them
+// (PERF-002).
+vi.mock("@/services/events", async () => {
+  const actual = await vi.importActual<typeof import("@/services/events")>("@/services/events");
+  return { ...actual, onLocalFileChanged: vi.fn(() => Promise.resolve(() => {})) };
+});
 
 // Functional Monaco mock: renders a textarea, calls onMount with a small fake
 // editor backed by a mutable model string, and reflects model.setValue back
@@ -130,7 +133,8 @@ function installInvoke() {
   mockedInvoke.mockImplementation((cmd) => {
     switch (cmd) {
       case "session_read_file":
-        return Promise.resolve(Array.from(new TextEncoder().encode(diskContent)));
+        // File bytes cross IPC as base64, not a JSON number-array (PERF-002).
+        return Promise.resolve(btoa(String.fromCharCode(...new TextEncoder().encode(diskContent))));
       case "session_stat":
         return Promise.resolve(statEntry());
       case "session_check_writable":

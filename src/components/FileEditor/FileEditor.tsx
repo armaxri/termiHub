@@ -103,7 +103,7 @@ loader.config({ monaco });
  */
 async function sessionReadFileContent(sessionId: string, path: string): Promise<string> {
   const bytes = await sessionReadFile(sessionId, path);
-  return new TextDecoder().decode(new Uint8Array(bytes));
+  return new TextDecoder().decode(bytes);
 }
 
 /** Write a file's text through the session layer, mirroring {@link sessionReadFileContent}. */
@@ -112,7 +112,7 @@ async function sessionWriteFileContent(
   path: string,
   content: string
 ): Promise<void> {
-  await sessionWriteFile(sessionId, path, Array.from(new TextEncoder().encode(content)));
+  await sessionWriteFile(sessionId, path, new TextEncoder().encode(content));
 }
 
 /**

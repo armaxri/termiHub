@@ -16,6 +16,7 @@ import type { RemoteClipboardFile, RemoteDesktopInput } from "@/types/remoteDesk
 import type { RunLocation } from "@/types/tunnel";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
+import { base64ToBytes, bytesToBase64 } from "@/services/events";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import type {
   TabHandoffRecord,
@@ -1482,9 +1483,16 @@ export async function sessionListFiles(sessionId: string, path: string): Promise
   return await invoke<FileEntry[]>("session_list_files", { sessionId, path });
 }
 
-/** Read a file via a session's file browser capability. Returns raw bytes. */
-export async function sessionReadFile(sessionId: string, path: string): Promise<number[]> {
-  return await invoke<number[]>("session_read_file", { sessionId, path });
+/**
+ * Read a file via a session's file browser capability. Returns raw bytes.
+ *
+ * The backend ships the bytes as a compact base64 string over IPC (instead of a
+ * JSON number-array — ~4x wire bloat plus a per-byte array allocation) and this
+ * wrapper decodes them, so callers still get raw bytes (PERF-002).
+ */
+export async function sessionReadFile(sessionId: string, path: string): Promise<Uint8Array> {
+  const b64 = await invoke<string>("session_read_file", { sessionId, path });
+  return base64ToBytes(b64);
 }
 
 /**
@@ -1497,13 +1505,19 @@ export async function sessionStat(sessionId: string, path: string): Promise<File
   return await invoke<FileEntry>("session_stat", { sessionId, path });
 }
 
-/** Write raw bytes to a file via a session's file browser capability. */
+/**
+ * Write raw bytes to a file via a session's file browser capability.
+ *
+ * The bytes are base64-encoded before crossing IPC (instead of a JSON
+ * number-array — ~4x wire bloat plus a per-byte array allocation); the backend
+ * decodes them back to raw bytes before the write (PERF-002).
+ */
 export async function sessionWriteFile(
   sessionId: string,
   path: string,
-  data: number[]
+  data: Uint8Array | number[]
 ): Promise<void> {
-  await invoke("session_write_file", { sessionId, path, data });
+  await invoke("session_write_file", { sessionId, path, data: bytesToBase64(data) });
 }
 
 /** Delete a file or directory via a session's file browser capability. */
@@ -2478,6 +2492,6 @@ export async function updatePluginSettings(
  * traversal. Returns the raw bytes; text consumers decode as UTF-8.
  */
 export async function readPluginFile(pluginId: string, path: string): Promise<Uint8Array> {
-  const bytes = await invoke<number[]>("read_plugin_file", { id: pluginId, path });
-  return new Uint8Array(bytes);
+  const b64 = await invoke<string>("read_plugin_file", { id: pluginId, path });
+  return base64ToBytes(b64);
 }

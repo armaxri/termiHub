@@ -28,7 +28,7 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
-  sessionReadFile: vi.fn(() => Promise.resolve([])),
+  sessionReadFile: vi.fn(() => Promise.resolve(new Uint8Array())),
   sessionWriteFile: vi.fn(() => Promise.resolve()),
   sessionDeleteFile: vi.fn(() => Promise.resolve()),
   sessionRenameFile: vi.fn(() => Promise.resolve()),
@@ -192,7 +192,7 @@ describe("useSessionFileSystem — uploadFileFromPath API call", () => {
     expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
       "sess-1",
       "/remote/dir/data.csv",
-      expect.any(Array)
+      expect.any(Uint8Array)
     );
   });
 
@@ -218,7 +218,7 @@ describe("useSessionFileSystem — uploadFileFromPath API call", () => {
     expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
       "sess-1",
       "/config.json",
-      expect.any(Array)
+      expect.any(Uint8Array)
     );
   });
 
@@ -534,7 +534,7 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
     expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
       "docker-1",
       "/remote/dir/file.bin",
-      expect.any(Array)
+      expect.any(Uint8Array)
     );
     expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
     expect(vi.mocked(sessionUpload)).not.toHaveBeenCalled();
