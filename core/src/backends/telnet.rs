@@ -283,15 +283,15 @@ impl ConnectionType for Telnet {
             ));
         }
 
-        let addr = format!("{}:{}", config.host, config.port);
         info!(host = %config.host, port = config.port, "Connecting telnet session");
 
-        let socket_addr = addr.parse().map_err(|e: std::net::AddrParseError| {
-            SessionError::InvalidConfig(format!("Invalid address: {e}"))
-        })?;
-
-        let stream = TcpStream::connect_timeout(&socket_addr, CONNECT_TIMEOUT)
-            .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))?;
+        // Resolve the host via DNS before connecting. `connect_timeout` requires
+        // an already-resolved `SocketAddr`, so a hostname (`router.local`,
+        // `bbs.example.com`) must be resolved first — a bare IP-literal parse
+        // would reject every hostname (CORE-015).
+        let stream =
+            crate::net::connect_timeout_resolved(&config.host, config.port, CONNECT_TIMEOUT)
+                .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))?;
 
         // Enable TCP keepalive so a half-open connection (peer vanishes with no
         // FIN/RST — cable pull, NAT timeout, crashed host) is eventually torn
@@ -758,6 +758,33 @@ mod tests {
             keepalive,
             "telnet socket must have TCP keepalive enabled to detect half-open connections (#1123)"
         );
+    }
+
+    /// Regression test for CORE-015: connecting by **hostname** (not a bare IP
+    /// literal) must succeed. The old path parsed `host:port` straight into a
+    /// `SocketAddr`, which only accepts numeric IPs, so any hostname failed with
+    /// "Invalid address". The connect path now resolves via DNS first.
+    #[tokio::test]
+    async fn connect_by_hostname_resolves_and_succeeds() {
+        // Local listener stands in for a telnet server; accept and hold the peer
+        // so the connection stays established for the assertion.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+        let accept = std::thread::spawn(move || listener.accept());
+
+        let mut telnet = Telnet::new();
+        let settings = serde_json::json!({
+            // A hostname, not an IP literal — this is what the old code rejected.
+            "host": "localhost",
+            "port": port,
+        });
+        telnet
+            .connect(settings)
+            .await
+            .expect("connecting to a hostname should resolve and succeed");
+        let _peer = accept.join().expect("accept thread").expect("accept");
+
+        assert!(telnet.is_connected());
     }
 
     /// Create a dummy TCP stream for testing `filter_telnet_commands`.
