@@ -638,7 +638,9 @@ mod tests {
         use crate::daemon::client::{DaemonClient, OwnedByLivePeer};
         use crate::daemon::transport::{self, DaemonListener};
         use crate::io::transport::NotificationSender;
-        use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
+        use termihub_core::connection::{
+            Capabilities, ConnectionType, OutputReceiver, SettingsSchema,
+        };
         use termihub_core::errors::SessionError;
 
         /// Minimal in-process connection type: the daemon loop only needs it to
