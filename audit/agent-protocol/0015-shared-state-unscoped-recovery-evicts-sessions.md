@@ -10,7 +10,8 @@ evidence:
   - agent/src/session/manager.rs:856
   - agent/src/state/persistence.rs:134
   - agent/src/daemon/process.rs:194
-status: open
+status: fixed
+resolution: "#2791 — approach B: daemon refuses recovery connect while live writer attached (MSG_ATTACH_INTENT); recover skips OwnedByLivePeer. no schema change"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/layout
 evidence:
   - core/src/layout/panel_tree.rs
-status: open
+status: fixed
+resolution: "#2795 — panel_tree guard-and-collapse + sanitize_tree on restore paths + proptests"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/lib.rs:488
   - src-tauri/src/lib.rs:505
   - src-tauri/src/lib.rs:506
-status: open
+status: fixed
+resolution: "#2794 — same as ERR-004: config-dir setup degrades via RecoveryWarning not silent warn!"
 ---
 
 ## What

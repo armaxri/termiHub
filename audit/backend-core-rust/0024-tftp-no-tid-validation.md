@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/embedded_servers/tftp
 evidence:
   - core/src/embedded_servers/tftp_server.rs
-status: open
+status: fixed
+resolution: "#2792 — tftp validates peer TID; stray src gets ERROR code 5, legit transfer untouched"
 ---
 
 ## What

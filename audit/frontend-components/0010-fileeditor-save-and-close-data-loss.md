@@ -11,7 +11,8 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:1017
   - src/components/FileEditor/FileEditor.tsx:864
   - src/components/FileEditor/FileEditor.tsx:998
-status: open
+status: fixed
+resolution: "#2790 — SaveOutcome gates close; sudo close deferred until elevated write succeeds; all 3 data-loss paths gated"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/embedded_servers/tftp
 evidence:
   - core/src/embedded_servers/tftp_server.rs
-status: open
+status: fixed
+resolution: "#2786 — block wrapping_add >32MiB + explicit empty terminating DATA already landed in #2786; regression-tested in #2792"
 ---
 
 ## What

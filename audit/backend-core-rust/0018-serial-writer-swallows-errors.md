@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/serial
 evidence:
   - core/src/backends/serial.rs
-status: open
+status: fixed
+resolution: "#2795 — serial write err → mark dead + drop output sender (mirrors CORE-007)"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/ssh
 evidence:
   - core/src/backends/ssh/mod.rs:147
-status: open
+status: fixed
+resolution: "#2793 — parse_port_setting u16::try_from; >65535 → default 22 (matches string branch)"
 ---
 
 ## What

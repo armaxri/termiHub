@@ -12,7 +12,7 @@ evidence:
   - src-tauri/src/lib.rs:506
   - src-tauri/src/lib.rs:1646
 status: fixed
-resolution: "#2734"
+resolution: "#2794 — startup config/data dir degrade → RecoveryWarning (crash already gone; this surfaces it to user)"
 ---
 
 ## What

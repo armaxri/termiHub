@@ -9,7 +9,8 @@ subsystem: core/backends/ssh
 evidence:
   - core/src/backends/ssh/connector.rs:312
   - core/src/backends/ssh/connector.rs:315
-status: open
+status: fixed
+resolution: "#2793 — ssh shell-channel write/resize err → break + alive=false teardown + warn"
 ---
 
 ## What
