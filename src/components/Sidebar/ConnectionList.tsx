@@ -46,6 +46,7 @@ import { toast } from "@/components/ui";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Button, Tooltip, Input, ConfirmDialog, EmptyState } from "@/components/ui";
+import { ConnectionsEmptyState } from "./ConnectionsEmptyState";
 import { shouldShowInsecureFtpWarning } from "@/utils/ftpSecurity";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useSectionResize } from "@/hooks/useSectionResize";
@@ -1678,6 +1679,9 @@ function RootDropZone({
           )}
           {filter && !hasVisibleResults && (
             <EmptyState title={`No connections match “${filter.query}”.`} />
+          )}
+          {!filter && !isCreatingFolder && !hasVisibleResults && (
+            <ConnectionsEmptyState onNewConnection={onNewConnection} />
           )}
           {visibleRootFolders.map((folder) => (
             <TreeNode
