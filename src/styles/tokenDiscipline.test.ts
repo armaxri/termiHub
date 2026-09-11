@@ -15,6 +15,7 @@ import { fileURLToPath } from "url";
 const SRC_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const COMPONENTS_DIR = join(SRC_DIR, "components");
 const THEMES_DIR = join(SRC_DIR, "themes");
+const STYLES_DIR = join(SRC_DIR, "styles");
 
 /** Absolute path of the shared primitive layer, excluded from most guards. */
 const UI_DIR = join(COMPONENTS_DIR, "ui");
@@ -354,6 +355,100 @@ describe("undefined design-token guard (#2052)", () => {
         "token — the fallback must not mask a dangling token name. Define the token in " +
         "src/styles/variables.css (or the theme engine) or repoint to the current token whose " +
         `value matches the fallback. Dangling in:\n  ${offenders.join("\n  ")}`
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Z-index scale guard (UI-002).
+ *
+ * Before this, only two z-index tokens existed (`--z-dropdown`, `--z-toast`) and
+ * ~20 raw literals were scattered across components with no coherent ordering:
+ * the update banner (9000) and the decorative noise overlay (9999) both rendered
+ * ABOVE modals/toasts (1000), so a banner or overlay could cover an open dialog.
+ *
+ * These guards pin the layering contract so it cannot silently drift again:
+ *  - the scale is defined once in variables.css and is strictly monotonic, and
+ *  - component CSS references `--z-*` tokens rather than raw numeric z-index.
+ */
+describe("z-index scale (UI-002)", () => {
+  /** Parse the numeric `--z-*` tokens declared in variables.css. */
+  function zTokens(): Map<string, number> {
+    const css = stripCssComments(readFileSync(join(STYLES_DIR, "variables.css"), "utf8"));
+    const out = new Map<string, number>();
+    for (const m of css.matchAll(/(--z-[a-z0-9-]+)\s*:\s*(\d+)\s*;/gi)) {
+      out.set(m[1], Number(m[2]));
+    }
+    return out;
+  }
+
+  const tokens = zTokens();
+  const z = (name: string): number => {
+    const v = tokens.get(name);
+    expect(v, `variables.css must define ${name}`).toBeTypeOf("number");
+    return v as number;
+  };
+
+  it("defines the full ordered scale as strictly increasing values", () => {
+    // Low → high. Component-local in-view layers, then the app-level surfaces.
+    const order = [
+      "--z-base",
+      "--z-raised",
+      "--z-elevated",
+      "--z-layer",
+      "--z-float",
+      "--z-float-top",
+      "--z-dropdown",
+      "--z-sticky",
+      "--z-overlay",
+      "--z-banner",
+      "--z-scrim",
+      "--z-modal",
+      "--z-popover",
+      "--z-toast",
+      "--z-tooltip",
+      "--z-max",
+    ];
+    const values = order.map(z);
+    for (let i = 1; i < values.length; i++) {
+      expect(
+        values[i],
+        `${order[i]} (${values[i]}) must sit above ${order[i - 1]} (${values[i - 1]})`
+      ).toBeGreaterThan(values[i - 1]);
+    }
+  });
+
+  it("keeps modals above page banners and the noise/scrim overlay (the UI-002 bug)", () => {
+    // The concrete bug: a banner/overlay must never cover an open modal dialog.
+    expect(z("--z-modal")).toBeGreaterThan(z("--z-banner"));
+    expect(z("--z-modal")).toBeGreaterThan(z("--z-overlay"));
+    // The modal's own scrim sits just below the modal surface.
+    expect(z("--z-scrim")).toBeLessThan(z("--z-modal"));
+  });
+
+  it("keeps popovers, toasts and tooltips at or above the modal layer", () => {
+    // Radix Select/menu content opened inside a modal form, plus toasts and
+    // tooltips, must render above the modal — never behind it.
+    expect(z("--z-popover")).toBeGreaterThanOrEqual(z("--z-modal"));
+    expect(z("--z-toast")).toBeGreaterThan(z("--z-modal"));
+    expect(z("--z-tooltip")).toBeGreaterThan(z("--z-modal"));
+  });
+
+  it("uses --z-* tokens for every z-index in component CSS (no raw literals)", () => {
+    // A raw numeric z-index bypasses the scale and reintroduces the drift this
+    // finding fixed. Every component z-index must reference a token.
+    const rawZIndexRe = /z-index\s*:\s*-?\d/i;
+    const offenders: string[] = [];
+    for (const file of cssFiles) {
+      const css = stripCssComments(readFileSync(file, "utf8"));
+      if (css.split("\n").some((line) => rawZIndexRe.test(line))) {
+        offenders.push(toPosix(file));
+      }
+    }
+    expect(
+      offenders,
+      "Reference a --z-* token from src/styles/variables.css instead of a raw z-index in: " +
+        `${offenders.join(", ")}`
     ).toEqual([]);
   });
 });
