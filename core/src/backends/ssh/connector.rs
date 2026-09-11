@@ -447,3 +447,50 @@ impl SshConnector for RusshSshConnector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A successful `channel.data` / `window_change` result keeps the channel
+    /// task looping.
+    #[test]
+    fn should_continue_after_send_ok_keeps_looping() {
+        assert!(should_continue_after_send::<(), &str>(Ok(()), "write"));
+        assert!(should_continue_after_send::<(), &str>(Ok(()), "resize"));
+    }
+
+    /// Regression for CORE-007: a failing send must NOT be silently discarded.
+    /// The helper returns `false`, telling the task loop to break — which clears
+    /// the shared `alive` flag and tears the session down, so a failed write no
+    /// longer leaves the terminal looking live while swallowing input.
+    #[test]
+    fn should_continue_after_send_err_breaks_task() {
+        assert!(!should_continue_after_send::<(), &str>(
+            Err("transport error"),
+            "write"
+        ));
+        assert!(!should_continue_after_send::<(), &str>(
+            Err("transport error"),
+            "resize"
+        ));
+    }
+
+    /// The break-on-error contract clears `alive`, exactly as the task loop does
+    /// after it breaks: model the loop's teardown and assert the flag flips.
+    #[test]
+    fn break_on_send_error_clears_alive() {
+        let alive = Arc::new(AtomicBool::new(true));
+        // Simulate the task: a send fails, the helper says stop, we break, and
+        // the post-loop teardown clears `alive`.
+        let keep_going = should_continue_after_send::<(), &str>(Err("boom"), "write");
+        assert!(!keep_going, "a failed send must stop the task");
+        if !keep_going {
+            alive.store(false, Ordering::SeqCst);
+        }
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "the session must be torn down (alive cleared) after a failed send"
+        );
+    }
+}

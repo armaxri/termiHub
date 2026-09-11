@@ -1432,6 +1432,63 @@ mod tests {
         assert_eq!(config.port, 2222);
     }
 
+    // --- Port parsing (CORE-006): checked conversion, no wrapping ---
+
+    #[test]
+    fn parse_port_setting_valid_numeric() {
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(2222))), 2222);
+    }
+
+    #[test]
+    fn parse_port_setting_valid_string() {
+        assert_eq!(parse_port_setting(Some(&serde_json::json!("2222"))), 2222);
+    }
+
+    #[test]
+    fn parse_port_setting_missing_defaults_to_22() {
+        assert_eq!(parse_port_setting(None), 22);
+    }
+
+    /// Regression for CORE-006: a numeric port above `u16::MAX` must NOT wrap
+    /// (`65536` → `0`, `70000` → `4464`). It is rejected and falls back to the
+    /// default 22, exactly as the string branch already handled `"70000"`.
+    #[test]
+    fn parse_port_setting_out_of_range_numeric_does_not_wrap() {
+        // 65536 previously wrapped to 0.
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(65536))), 22);
+        // 70000 previously wrapped to 4464.
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(70000))), 22);
+    }
+
+    /// The numeric and string branches must agree: both an out-of-range numeric
+    /// port and its string form fall back to 22 (CORE-006 consistency).
+    #[test]
+    fn parse_port_setting_out_of_range_numeric_and_string_agree() {
+        assert_eq!(
+            parse_port_setting(Some(&serde_json::json!(70000))),
+            parse_port_setting(Some(&serde_json::json!("70000"))),
+        );
+    }
+
+    #[test]
+    fn parse_port_setting_max_valid_port() {
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(65535))), 65535);
+    }
+
+    /// End-to-end through `parse_ssh_settings`: an out-of-range numeric port in
+    /// the settings JSON no longer silently targets a truncated port.
+    #[test]
+    fn parse_ssh_settings_out_of_range_port_falls_back_to_default() {
+        let settings = serde_json::json!({
+            "host": "example.com",
+            "port": 70000,
+            "username": "admin",
+            "authMethod": "agent",
+        });
+        let config = parse_ssh_settings(&settings);
+        assert_eq!(config.port, 22);
+    }
+
     // --- Async tests (validation only — no real connection) ---
 
     #[tokio::test]
