@@ -252,7 +252,7 @@ Notifications have **no `id` field** and do not expect a response.
 
 ### Version Negotiation
 
-The desktop sends its supported protocol version in the `initialize` request. The agent responds with the version it will use.
+The desktop sends a protocol version in the `initialize` request. The agent responds with the version it will use.
 
 **Rules:**
 
@@ -261,6 +261,26 @@ The desktop sends its supported protocol version in the `initialize` request. Th
 - **Minor** version changes add new methods or optional fields — backwards compatible
 - **Patch** version changes are bug fixes — no protocol impact
 - The agent selects the highest compatible version it supports (matching major, up to its minor)
+
+> **Enforcement is agent-side only (current implementation).** The rules above describe what the
+> **agent** enforces: it compares the desktop's advertised major against its own
+> `AGENT_PROTOCOL_VERSION` and returns [`-32002` Version not supported](#application-errors) on a
+> major mismatch (`agent/src/handler/dispatch.rs`). The **desktop** does not participate in this
+> negotiation the way the matrix implies:
+>
+> - It sends a **fixed, hardcoded** `protocolVersion` in `initialize` (currently `"0.3.0"`, which
+>   lags the real protocol) rather than its actual supported version, so it always advertises
+>   major `0` and can never itself trigger the `-32002` reject path.
+> - It **does not validate** the version the agent returns — it stores that value for display only
+>   and proceeds regardless.
+>
+> In practice, therefore, forward/backward compatibility on the desktop side is **not** driven by
+> the version handshake but by **method-not-found fallback**: when the desktop calls a method a
+> connected agent does not implement, the agent returns
+> [`-32601` Method not found](#standard-json-rpc-errors) and the desktop falls back to the
+> pre-feature behaviour (see the per-version notes below, which describe exactly these `-32601`
+> fallbacks). Anyone implementing a third-party client should not rely on the desktop rejecting an
+> incompatible agent by version.
 
 ### Compatibility Matrix
 
