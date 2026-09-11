@@ -10,4 +10,4 @@
 - Extended the typography token scale with caption (10px) and display
   (16/20/22px) tiers and migrated component font sizes onto the tokens, giving
   small labels and headings a consistent rhythm across the app (UI-005).
-</content>
+  </content>
