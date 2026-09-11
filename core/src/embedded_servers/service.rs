@@ -17,7 +17,6 @@
 //! run on the desktop **or** a remote agent; #2192 relocated the implementations
 //! here so the agent crate can compile and host them.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -39,6 +38,7 @@ use super::config::{
 };
 use super::ftp_server::start_ftp_server;
 use super::http_server::start_http_server;
+use super::shutdown::ShutdownSignal;
 use super::tftp_server::start_tftp_server;
 
 /// Error from an embedded-server lifecycle operation.
@@ -117,6 +117,14 @@ impl BindSignal {
     pub fn fail(&self, reason: &str) {
         let _ = self.tx.send(Err(reason.to_string()));
     }
+
+    /// Build a `BindSignal` and its receiving end for tests that drive a real
+    /// server thread directly, without going through [`EmbeddedServerService`].
+    #[cfg(test)]
+    pub(crate) fn for_test() -> (Self, std::sync::mpsc::Receiver<Result<(), String>>) {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        (Self { tx }, rx)
+    }
 }
 
 /// Decision the service makes from a server thread's bind signal.
@@ -149,7 +157,7 @@ fn decide_bind_outcome(signal: Result<Result<(), String>, RecvTimeoutError>) -> 
 
 /// A running server instance.
 struct ActiveServer {
-    shutdown: Arc<AtomicBool>,
+    shutdown: ShutdownSignal,
     #[allow(dead_code)]
     thread_handle: thread::JoinHandle<()>,
     stats: Arc<AtomicServerStats>,
@@ -251,7 +259,7 @@ impl EmbeddedServerService {
             None,
         ));
 
-        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown = ShutdownSignal::new();
         let stats = AtomicServerStats::new();
         let error_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
@@ -261,7 +269,7 @@ impl EmbeddedServerService {
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
         let cfg = config.clone();
-        let shutdown_clone = Arc::clone(&shutdown);
+        let shutdown_clone = shutdown.clone();
         let stats_clone = Arc::clone(&stats);
         let error_clone = Arc::clone(&error_slot);
         let events = self.events.clone();
@@ -270,9 +278,15 @@ impl EmbeddedServerService {
         let thread_handle = thread::spawn(move || {
             let ready = BindSignal { tx: ready_tx };
             let result = match cfg.server_type {
+                // HTTP awaits the event-driven signal directly; FTP/TFTP still
+                // poll the raw flag, so they take the bridged `Arc<AtomicBool>`.
                 ServerType::Http => start_http_server(&cfg, shutdown_clone, stats_clone, ready),
-                ServerType::Ftp => start_ftp_server(&cfg, shutdown_clone, stats_clone, ready),
-                ServerType::Tftp => start_tftp_server(&cfg, shutdown_clone, stats_clone, ready),
+                ServerType::Ftp => {
+                    start_ftp_server(&cfg, shutdown_clone.flag(), stats_clone, ready)
+                }
+                ServerType::Tftp => {
+                    start_tftp_server(&cfg, shutdown_clone.flag(), stats_clone, ready)
+                }
             };
 
             if let Err(e) = result {
@@ -321,7 +335,7 @@ impl EmbeddedServerService {
                 // Bind never confirmed. Signal the thread to unwind (in case it
                 // did bind but timed out) and leave nothing active, so the server
                 // is reported as Error rather than a stuck Running.
-                shutdown.store(true, Ordering::Relaxed);
+                shutdown.trigger();
                 self.status = ServiceStatus::Failed(reason.clone());
                 tracing::warn!(server_id = %config.id, "Embedded server failed to start: {reason}");
                 self.emit_state(build_status_state(
@@ -338,12 +352,13 @@ impl EmbeddedServerService {
 
     /// Stop the running server, emitting a `Stopped` transition.
     ///
-    /// The server thread exits on its own after its next poll cycle (we do not
-    /// join, to avoid blocking the caller). Synchronous counterpart of the
-    /// trait's async [`stop`](Service::stop).
+    /// Triggering the [`ShutdownSignal`] wakes the HTTP listener immediately (and
+    /// stops the FTP/TFTP poll loops on their next check); the server thread then
+    /// exits on its own (we do not join, to avoid blocking the caller).
+    /// Synchronous counterpart of the trait's async [`stop`](Service::stop).
     pub fn shutdown(&mut self) {
         if let Some(active) = self.active.take() {
-            active.shutdown.store(true, Ordering::Relaxed);
+            active.shutdown.trigger();
             if let Some(config) = &self.config {
                 self.status = ServiceStatus::Stopped;
                 self.events.emit(ServiceEvent::new(
@@ -472,7 +487,7 @@ impl EmbeddedServerService {
     pub(crate) fn test_running(config: EmbeddedServerConfig) -> Self {
         let mut svc = Self::new(config.server_type.clone());
         svc.active = Some(ActiveServer {
-            shutdown: Arc::new(AtomicBool::new(false)),
+            shutdown: ShutdownSignal::new(),
             thread_handle: thread::spawn(|| {}),
             stats: AtomicServerStats::new(),
             started_at: chrono::Utc::now().to_rfc3339(),

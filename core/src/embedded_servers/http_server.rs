@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -15,6 +15,7 @@ use tower_http::services::ServeDir;
 
 use super::config::{AtomicServerStats, EmbeddedServerConfig};
 use super::service::BindSignal;
+use super::shutdown::ShutdownSignal;
 
 /// State shared with middleware for connection tracking.
 #[derive(Clone)]
@@ -205,7 +206,7 @@ fn build_router(root: PathBuf, directory_listing: bool, tracking_state: Tracking
     ))
 }
 
-/// Start and run the HTTP server, blocking until the shutdown flag is set.
+/// Start and run the HTTP server, blocking until the shutdown signal fires.
 ///
 /// The function must be called from within a dedicated std thread that builds
 /// its own tokio runtime. `ready` is signalled exactly once as soon as the
@@ -213,7 +214,7 @@ fn build_router(root: PathBuf, directory_listing: bool, tracking_state: Tracking
 /// `Running` after the bind is confirmed (GAP G3, #1145).
 pub fn start_http_server(
     config: &EmbeddedServerConfig,
-    shutdown: Arc<AtomicBool>,
+    shutdown: ShutdownSignal,
     stats: Arc<AtomicServerStats>,
     ready: BindSignal,
 ) -> Result<()> {
@@ -267,13 +268,10 @@ pub fn start_http_server(
         tracing::info!(addr = %addr, "HTTP server listening");
 
         axum::serve(listener, router)
+            // Event-driven shutdown: park until the signal fires, then stop
+            // immediately — no busy-poll and no fixed latency (WA-RS-001).
             .with_graceful_shutdown(async move {
-                loop {
-                    if shutdown.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                }
+                shutdown.wait().await;
             })
             .await
             .context("HTTP server error")?;
@@ -398,6 +396,60 @@ mod tests {
         assert!(
             hostile_dir.contains("&quot;&gt;&lt;script&gt;/"),
             "escaped dir name should keep its trailing slash: {hostile_dir}"
+        );
+    }
+
+    /// WA-RS-001 / CORE-001 regression: triggering the shutdown signal must stop
+    /// the running server promptly via the event-driven path, not after the old
+    /// fixed 100 ms poll interval.
+    ///
+    /// Binds a real HTTP server on an ephemeral loopback port, waits for the bind
+    /// to confirm, then fires the signal and asserts the server thread returns
+    /// cleanly and quickly.
+    #[test]
+    fn shutdown_signal_stops_server_promptly() {
+        use crate::embedded_servers::config::ServerType;
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        let config = EmbeddedServerConfig {
+            id: "test-http-shutdown".to_string(),
+            name: "test".to_string(),
+            server_type: ServerType::Http,
+            root_directory: dir.path().to_string_lossy().into_owned(),
+            bind_host: "127.0.0.1".to_string(),
+            port: 0, // ephemeral — the test only needs a confirmed bind
+            auto_start: false,
+            read_only: false,
+            directory_listing: Some(false),
+            ftp_auth: None,
+        };
+
+        let shutdown = ShutdownSignal::new();
+        let stats = AtomicServerStats::new();
+        let (ready, ready_rx) = BindSignal::for_test();
+
+        let server_shutdown = shutdown.clone();
+        let handle =
+            std::thread::spawn(move || start_http_server(&config, server_shutdown, stats, ready));
+
+        // The server must confirm its bind before we signal shutdown.
+        let bind = ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("server should confirm its bind");
+        assert!(bind.is_ok(), "bind should succeed, got {bind:?}");
+
+        // Fire the signal and confirm the server unwinds cleanly. The generous
+        // bound only guards against a hang/regression; the event-driven wake
+        // itself (sub-millisecond, no poll) is asserted in `shutdown` unit tests.
+        let start = Instant::now();
+        shutdown.trigger();
+        let result = handle.join().expect("server thread should not panic");
+        assert!(result.is_ok(), "server exited with error: {result:?}");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "server did not stop promptly after the shutdown signal ({:?})",
+            start.elapsed()
         );
     }
 
