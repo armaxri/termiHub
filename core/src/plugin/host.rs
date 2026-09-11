@@ -68,9 +68,7 @@ pub enum HostError {
     /// dynamic-library extension, so which one to load is ambiguous. A directory
     /// scan has no defined order, so silently picking one is nondeterministic and
     /// a swap vector; the package must ship exactly one library per platform.
-    #[error(
-        "ambiguous backend library in `{dir}`: {names} both match `.{ext}`; ship exactly one"
-    )]
+    #[error("ambiguous backend library in `{dir}`: {names} both match `.{ext}`; ship exactly one")]
     AmbiguousLibrary {
         /// The `backend/` directory scanned.
         dir: PathBuf,
@@ -503,8 +501,8 @@ fn signed_backend_digest(plugin_dir: &Path, lib_path: &Path) -> Result<Option<St
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(HostError::SignatureReverifyFailed(e.to_string())),
     };
-    let sig: super::signature::PackageSignature =
-        serde_json::from_slice(&raw).map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
+    let sig: super::signature::PackageSignature = serde_json::from_slice(&raw)
+        .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
 
     let actual = digest_extracted_dir(plugin_dir)?;
     super::signature::verify(&sig, &actual)
@@ -514,15 +512,11 @@ fn signed_backend_digest(plugin_dir: &Path, lib_path: &Path) -> Result<Option<St
         .strip_prefix(plugin_dir)
         .map_err(|e| HostError::SignatureReverifyFailed(e.to_string()))?;
     let key = rel_to_slash(rel);
-    sig.files
-        .get(&key)
-        .cloned()
-        .map(Some)
-        .ok_or_else(|| {
-            HostError::SignatureReverifyFailed(format!(
-                "backend library `{key}` is not covered by the signature"
-            ))
-        })
+    sig.files.get(&key).cloned().map(Some).ok_or_else(|| {
+        HostError::SignatureReverifyFailed(format!(
+            "backend library `{key}` is not covered by the signature"
+        ))
+    })
 }
 
 /// Recursively digest every file under `plugin_dir` except the signature entry,
@@ -1180,7 +1174,10 @@ mod tests {
         std::fs::write(backend.join("notes.txt"), b"").unwrap();
 
         let found = find_backend_library(tmp.path()).unwrap();
-        assert_eq!(found.file_name().unwrap(), format!("libonly.{ext}").as_str());
+        assert_eq!(
+            found.file_name().unwrap(),
+            format!("libonly.{ext}").as_str()
+        );
     }
 
     #[test]

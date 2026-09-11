@@ -251,7 +251,10 @@ pub fn sha256_file(path: &Path) -> std::io::Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(format!("{DIGEST_ALGORITHM}:{}", hex::encode(hasher.finalize())))
+    Ok(format!(
+        "{DIGEST_ALGORITHM}:{}",
+        hex::encode(hasher.finalize())
+    ))
 }
 
 /// Build the canonical, deterministic signing payload from the key id and the
