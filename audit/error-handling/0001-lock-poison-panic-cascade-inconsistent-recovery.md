@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/agents_projection/store.rs:737
   - src-tauri/src/layout/store.rs:821
   - core/src/backends/vnc/mod.rs
-status: open
+status: fixed
+resolution: "#2772+#2773 — poison-tolerant locks: session/credential/connection managers"
 ---
 
 ## What

@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/session/manager.rs
   - src-tauri/src/connection/manager.rs
   - src-tauri/src/projection/mod.rs:315
-status: open
+status: fixed
+resolution: "#2772+#2773 — poison-tolerant locks across the 3 old managers"
 ---
 
 ## What

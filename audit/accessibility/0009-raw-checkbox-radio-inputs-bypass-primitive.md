@@ -11,7 +11,8 @@ evidence:
   - src/components/Sidebar/AgentSetupDialog.tsx:424
   - src/components/Settings/CustomizeLayoutDialog.tsx:174
   - src/components/ConnectionEditor/JumpHostSection.tsx:109
-status: open
+status: fixed
+resolution: "#2769 — raw radio/checkbox inputs migrated to primitives"
 ---
 
 ## What
