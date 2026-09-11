@@ -45,6 +45,12 @@ export type { TooltipProps, TooltipProviderProps } from "./Tooltip";
 export { Progress } from "./Progress";
 export type { ProgressProps } from "./Progress";
 
+export { Spinner } from "./Spinner";
+export type { SpinnerProps, SpinnerSize } from "./Spinner";
+
+export { EmptyState } from "./EmptyState";
+export type { EmptyStateProps, EmptyStateVariant } from "./EmptyState";
+
 export { ToastProvider, toast } from "./Toast";
 export type { ToastApi, ToastOptions, ToastPromiseMessages } from "./Toast";
 

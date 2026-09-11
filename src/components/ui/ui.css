@@ -748,3 +748,103 @@
 .ui-confirm__title-icon--warn {
   color: var(--color-warning);
 }
+
+/* === Spinner (UISF-001) ===
+   The single inline loading-spinner primitive (src/components/ui/Spinner.tsx),
+   consolidating ~two dozen per-component `.*__spinner` / `.*__spin` classes that
+   each re-declared the same rotation. Owns the shared `th-spin` rotation and
+   carries `.motion-essential-spinner` at the call site, so under reduced motion
+   it degrades to an opacity pulse instead of freezing (see animations.css). */
+.ui-spinner {
+  animation: th-spin 1s linear infinite;
+  flex-shrink: 0;
+}
+
+/* === EmptyState (UISF-002) ===
+   The single empty-/loading-state primitive (src/components/ui/EmptyState.tsx),
+   consolidating the per-component `.*__empty` blocks across lists, panels, and
+   dialogs. Three density variants share the same slots; only alignment/padding
+   differ so migrated sites stay visually close. */
+.ui-empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.ui-empty__title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.ui-empty__description {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.ui-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-secondary);
+}
+
+.ui-empty__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+/* Inline: compact, left-aligned muted line — the common list/sidebar/dialog case. */
+.ui-empty--inline {
+  padding: var(--spacing-sm);
+}
+
+.ui-empty--inline .ui-empty__icon {
+  align-self: flex-start;
+}
+
+/* Panel: centred dashed box — the "nothing configured yet" settings look. */
+.ui-empty--panel {
+  align-items: center;
+  text-align: center;
+  padding: var(--spacing-md);
+  border: 1px dashed var(--border-primary);
+  border-radius: var(--radius-md);
+}
+
+.ui-empty--panel .ui-empty__title {
+  color: var(--text-disabled);
+}
+
+/* Card: large centred call-to-action (icon badge + title + description + actions). */
+.ui-empty--card {
+  align-items: center;
+  text-align: center;
+  max-width: 380px;
+  margin: 0 auto;
+  padding: var(--spacing-xl);
+  gap: 0;
+}
+
+.ui-empty--card .ui-empty__icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto var(--spacing-md);
+  border-radius: var(--radius-lg);
+  display: grid;
+  place-items: center;
+  background: var(--bg-tertiary);
+}
+
+.ui-empty--card .ui-empty__title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.ui-empty--card .ui-empty__description {
+  margin-bottom: var(--spacing-lg);
+}
