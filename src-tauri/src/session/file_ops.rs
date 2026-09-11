@@ -144,6 +144,22 @@ impl<'a> FileOps<'a> {
             .map_err(|e| TerminalError::RemoteError(e.to_string()))
     }
 
+    /// Change the permission bits (chmod) of a file via the session's file
+    /// browser. `mode` is the low 12 bits of a Unix mode (e.g. `0o755`).
+    pub(super) async fn set_permissions(
+        &self,
+        session_id: &str,
+        path: &str,
+        mode: u32,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let browser = Self::browser(&sessions, session_id)?;
+        browser
+            .set_permissions(path, mode)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
     /// Resolve an **owned** [`Arc<SftpFileBrowser>`] for a session, so a caller
     /// can drop the sessions lock before driving a (potentially slow) SFTP
     /// operation or move the handle into a background transfer task.

@@ -481,6 +481,23 @@ pub async fn session_mkdir(
     manager.mkdir_file(&session_id, &path).await
 }
 
+/// Change the permission bits (chmod) of a file via a session's file browser
+/// capability.
+///
+/// `mode` is the low 12 bits of a Unix mode (e.g. `0o755`). Only SFTP-backed
+/// (SSH) and local sessions support this; byte-based backends (FTP, Docker)
+/// return a "not supported" error rather than crashing.
+#[tauri::command]
+pub async fn session_set_permissions(
+    session_id: String,
+    path: String,
+    mode: u32,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(session_id, path, mode, "Session set permissions");
+    manager.set_file_permissions(&session_id, &path, mode).await
+}
+
 // --- Session-scoped SFTP advanced operations & transfers (#2312) ---
 //
 // Session-path mirrors of the standalone `sftp_*` commands, routed through the
