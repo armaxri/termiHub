@@ -4,7 +4,7 @@
 
 .ssh-config-import__status {
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--font-size-md);
   margin: 0;
   padding: 8px 0;
 }
@@ -21,7 +21,7 @@
 
 .ssh-config-import__empty p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .ssh-config-import__list {
@@ -44,11 +44,11 @@
 
 .ssh-config-import__row-name {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--font-size-md);
 }
 
 .ssh-config-import__row-chain {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   font-family: var(--font-mono, monospace);
   overflow: hidden;
@@ -69,7 +69,7 @@
 }
 
 .bulk-ssh-import__folder-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
@@ -82,7 +82,7 @@
 }
 
 .bulk-ssh-import__selectall-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 

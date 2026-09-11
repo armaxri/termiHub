@@ -454,6 +454,58 @@ describe("z-index scale (UI-002)", () => {
 });
 
 /**
+ * Type-scale guard (UI-005).
+ *
+ * Before this, the font-size scale was only four steps (xs 11 / sm 12 / md 13 /
+ * lg 14) and ~150 raw `font-size: Npx` declarations sprawled across components —
+ * caption/badge text at 8–10px and headings at 15–22px had no token at all, so
+ * those tiers drifted per component. The scale was extended with a caption tier
+ * (2xs 10px) and display tiers (xl 16 / 2xl 20 / 3xl 22), and every raw px
+ * font-size migrated onto a token.
+ *
+ * These guards pin the scale so it cannot drift again:
+ *  - the full tier scale is defined in variables.css, and
+ *  - component CSS references `--font-size-*` tokens rather than raw px.
+ */
+describe("type scale (UI-005)", () => {
+  it("defines the full font-size tier scale in variables.css", () => {
+    const css = stripCssComments(readFileSync(join(STYLES_DIR, "variables.css"), "utf8"));
+    for (const tok of [
+      "--font-size-2xs",
+      "--font-size-xs",
+      "--font-size-sm",
+      "--font-size-md",
+      "--font-size-lg",
+      "--font-size-xl",
+      "--font-size-2xl",
+      "--font-size-3xl",
+    ]) {
+      expect(css.includes(`${tok}:`), `variables.css must define ${tok}`).toBe(true);
+    }
+  });
+
+  it("uses --font-size-* tokens for every font-size in component CSS (no raw px)", () => {
+    // A raw px value bypasses the scale and reintroduces the drift this finding
+    // fixed. A px inside a var() fallback — `var(--font-size-xs, 11px)` — is an
+    // acceptable defensive default and is exempt, mirroring the raw-hex guard.
+    const rawFontPxRe = /font-size:\s*\d/i;
+    const varFallbackRe = /var\([^)]*\d+px/i;
+    const offenders: string[] = [];
+    for (const file of cssFiles) {
+      const css = stripCssComments(readFileSync(file, "utf8"));
+      if (css.split("\n").some((line) => rawFontPxRe.test(line) && !varFallbackRe.test(line))) {
+        offenders.push(toPosix(file));
+      }
+    }
+    expect(
+      offenders,
+      "Reference a --font-size-* token from src/styles/variables.css instead of a raw px " +
+        `font-size in: ${offenders.join(", ")}`
+    ).toEqual([]);
+  });
+});
+
+/**
  * The raw-hex guard must read CSS, not prose. A hash-prefixed issue reference in
  * a comment (`#1366`) is indistinguishable from a hex literal to a bare regex,
  * so the guard used to flag comments containing no colour at all (#1563).

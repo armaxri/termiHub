@@ -120,14 +120,14 @@
   gap: var(--spacing-sm);
   padding: var(--spacing-xs) var(--spacing-md);
   border-top: 1px solid var(--border-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-disabled);
   text-align: center;
 }
 
 .settings-panel__footer-hash {
   font-family: var(--font-mono, monospace);
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   opacity: 0.6;
 }
 
@@ -272,7 +272,7 @@
 
 .settings-panel__badge {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
   background-color: var(--color-warning, #d4a843);
@@ -346,7 +346,7 @@
 }
 
 .settings-panel__radio-option-badge {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--accent-color);
   padding: 1px 6px;

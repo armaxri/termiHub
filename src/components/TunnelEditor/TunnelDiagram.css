@@ -26,7 +26,7 @@
 }
 
 .tunnel-diagram__box-title {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
   color: var(--text-primary);
   text-transform: uppercase;
@@ -34,7 +34,7 @@
 }
 
 .tunnel-diagram__box-detail {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   text-align: center;
 }
@@ -49,13 +49,13 @@
 }
 
 .tunnel-diagram__arrow-line {
-  font-size: 16px;
+  font-size: var(--font-size-xl);
   line-height: 1;
   color: var(--accent-color);
 }
 
 .tunnel-diagram__arrow-label {
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   color: var(--text-secondary);
   white-space: nowrap;
 }

@@ -96,7 +96,7 @@
 }
 
 .oc-row__badge {
-  font-size: 10px;
+  font-size: var(--font-size-2xs);
   padding: 1px 6px;
   border-radius: var(--radius-full);
   font-weight: 500;

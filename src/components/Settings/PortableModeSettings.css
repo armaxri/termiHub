@@ -99,7 +99,7 @@
 }
 
 .portable-mode__file-status {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-disabled);
 }
 
@@ -161,7 +161,7 @@
 }
 
 .portable-mode__migration-absent {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-disabled);
   font-style: italic;
 }

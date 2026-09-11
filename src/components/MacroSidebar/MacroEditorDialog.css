@@ -8,7 +8,7 @@
 
 .macro-editor__steps-title {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -39,7 +39,7 @@
   flex-shrink: 0;
   width: 20px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   text-align: right;
 }
 
@@ -47,7 +47,7 @@
   flex: 1;
   min-width: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -67,7 +67,7 @@
 
 .macro-editor__step-unit {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-xs);
 }
 
 .macro-editor__step-actions {
@@ -78,7 +78,7 @@
 
 .macro-editor__empty {
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   padding: 12px;
   text-align: center;
 }

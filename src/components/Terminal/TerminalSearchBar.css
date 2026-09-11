@@ -20,7 +20,7 @@
   border-radius: 3px;
   background: var(--bg-input);
   color: var(--text-primary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   outline: none;
 }
 
