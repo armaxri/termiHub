@@ -828,6 +828,17 @@ async fn run_monitor(
     .await;
 }
 
+/// Whether the poll loop should perform an HTTP check this tick.
+///
+/// Skips when paused (Pause keeps the loop alive but idle) or when nothing is
+/// subscribed to the monitor's events (PERF-008): with no listener the check is
+/// pure waste — no result would reach anyone — so an unobserved monitor does no
+/// network work until something subscribes. The loop still wakes each interval to
+/// re-evaluate, so a monitor resumes checking as soon as a subscriber appears.
+fn should_check(paused: bool, subscriber_count: usize) -> bool {
+    !paused && subscriber_count > 0
+}
+
 /// The background poll loop, generic over the [`MonitorCheck`] seam so it is
 /// testable with a fake checker under deterministic virtual time.
 ///
@@ -861,10 +872,17 @@ async fn poll_loop<C: MonitorCheck>(
             break;
         }
 
-        let delay = if paused.load(Ordering::SeqCst) {
-            // Pause suspends the poll body but keeps the loop alive so Resume is
-            // instant. Idle at the base interval without disturbing the backoff.
-            debug!(monitor_id = %monitor_id, "HTTP monitor paused — skipping check");
+        let is_paused = paused.load(Ordering::SeqCst);
+        let delay = if !should_check(is_paused, events.subscriber_count()) {
+            // Idle tick: paused, or nobody is subscribed to the results (PERF-008).
+            // Either way the check would be pure waste — a result would reach no
+            // one — so do no network work and re-check one base interval later,
+            // without disturbing the failure backoff.
+            debug!(
+                monitor_id = %monitor_id,
+                paused = is_paused,
+                "HTTP monitor idle — skipping check (paused or no subscribers)"
+            );
             schedule.base_delay()
         } else {
             let result = checker.check().await;
@@ -1297,6 +1315,104 @@ mod tests {
                 Duration::from_secs(4),
                 Duration::from_secs(1),
             ]
+        );
+    }
+
+    // ── Subscriber gating: no work without a listener (PERF-008) ──────────────
+
+    #[test]
+    fn should_check_requires_running_and_a_subscriber() {
+        // A check runs only while not paused AND at least one subscriber listens.
+        assert!(should_check(false, 1), "running + subscriber → check");
+        assert!(should_check(false, 3), "multiple subscribers still checks");
+        assert!(!should_check(false, 0), "no subscriber → skip (PERF-008)");
+        assert!(
+            !should_check(true, 1),
+            "paused → skip even with a subscriber"
+        );
+        assert!(!should_check(true, 0), "paused and unsubscribed → skip");
+    }
+
+    /// Build a `RecordingChecker` that never self-cancels, so the loop's own
+    /// idle/gating behavior (not the checker) decides when checks happen. The
+    /// caller drives cancellation externally.
+    fn non_stopping_checker(
+        cancel: CancellationToken,
+        calls: Arc<Mutex<Vec<tokio::time::Instant>>>,
+    ) -> RecordingChecker {
+        RecordingChecker {
+            outcomes: vec![true; 64],
+            latency: Duration::ZERO,
+            stop_after: usize::MAX,
+            cancel,
+            calls,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn poll_loop_does_no_checks_without_a_subscriber() {
+        // A launched-but-unobserved monitor must fire zero HTTP checks (PERF-008):
+        // with no subscriber the loop only idles.
+        let interval = Duration::from_secs(1);
+        let cancel = CancellationToken::new();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let events = EventChannel::new(); // no subscriber
+        let handle = tokio::spawn(poll_loop(
+            "m".into(),
+            interval,
+            non_stopping_checker(cancel.clone(), Arc::clone(&calls)),
+            events,
+            cancel.clone(),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Mutex::new(None)),
+        ));
+
+        // Let several intervals elapse in virtual time, then stop the loop.
+        tokio::time::sleep(interval * 5).await;
+        cancel.cancel();
+        handle.await.unwrap();
+
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "no HTTP check may fire while nothing is subscribed"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn poll_loop_resumes_checks_once_a_subscriber_appears() {
+        // While unsubscribed the loop idles; the moment a subscriber appears it
+        // resumes checking (PERF-008).
+        let interval = Duration::from_secs(1);
+        let cancel = CancellationToken::new();
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let events = EventChannel::new();
+        let subscribe_handle = events.clone();
+        let handle = tokio::spawn(poll_loop(
+            "m".into(),
+            interval,
+            non_stopping_checker(cancel.clone(), Arc::clone(&calls)),
+            events,
+            cancel.clone(),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(Mutex::new(None)),
+        ));
+
+        // No subscriber for a few intervals → still zero checks.
+        tokio::time::sleep(interval * 3).await;
+        assert!(
+            calls.lock().unwrap().is_empty(),
+            "must stay idle until subscribed"
+        );
+
+        // A subscriber appears; checks resume on the next tick(s).
+        let _rx = subscribe_handle.subscribe();
+        tokio::time::sleep(interval * 3).await;
+        cancel.cancel();
+        handle.await.unwrap();
+
+        assert!(
+            !calls.lock().unwrap().is_empty(),
+            "checks must resume once a subscriber is present"
         );
     }
 
