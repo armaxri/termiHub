@@ -1230,6 +1230,86 @@ mod tests {
         assert!(conns.is_empty());
     }
 
+    // ── Concurrency (AB-BA deadlock regression, CONC-001 / TBE-008) ──
+
+    /// Regression test for CONC-001: the store used to hold two independent
+    /// mutexes locked in opposite orders across methods
+    /// (`create`: connections→folders; `create_folder`: folders→connections),
+    /// each holding the first guard across the second `.lock().await`. Two
+    /// concurrent client RPCs — one of each group — could park forever in a
+    /// classic AB-BA deadlock. This is invisible to single-client tests
+    /// (TBE-008); it needs ≥2 tasks contending on one shared store on a
+    /// multi-thread runtime.
+    ///
+    /// The test drives the previously-opposite-order operations concurrently
+    /// many times under a watchdog timeout: against the OLD two-mutex code it
+    /// hangs (→ timeout failure); with the single-lock fix all operations
+    /// complete. `flavor = "multi_thread"` ensures the tasks run in parallel so
+    /// the lock interleaving can actually occur.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_mixed_ops_do_not_deadlock() {
+        use std::sync::Arc;
+        use tokio::time::{timeout, Duration};
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = Arc::new(ConnectionStore::new_temp(path));
+
+        // Number of concurrent contenders per operation group. A handful of
+        // interleaved connections→folders vs folders→connections acquisitions
+        // is enough to hit the AB-BA window with high probability.
+        const N: usize = 64;
+
+        let run = async {
+            let mut handles = Vec::new();
+
+            for i in 0..N {
+                // Group A: create (locks connections, then folders).
+                let store_a = Arc::clone(&store);
+                handles.push(tokio::spawn(async move {
+                    store_a
+                        .create(make_connection(&format!("conn-{i}"), "Shell", false))
+                        .await;
+                }));
+
+                // Group B: create_folder (locked folders, then connections).
+                let store_b = Arc::clone(&store);
+                handles.push(tokio::spawn(async move {
+                    store_b
+                        .create_folder(make_folder(&format!("folder-{i}"), "Folder", None))
+                        .await;
+                }));
+
+                // Group B: delete_folder (also folders→connections, and mutates
+                // both maps) contending against the group-A creates.
+                let store_c = Arc::clone(&store);
+                handles.push(tokio::spawn(async move {
+                    store_c.delete_folder(&format!("folder-{i}")).await;
+                }));
+
+                // Group A: list (locks connections then folders) — read side.
+                let store_d = Arc::clone(&store);
+                handles.push(tokio::spawn(async move {
+                    let _ = store_d.list().await;
+                }));
+            }
+
+            for h in handles {
+                h.await.expect("task panicked");
+            }
+        };
+
+        // If the store deadlocks, these tasks never finish and the timeout
+        // fires — turning a hang into a deterministic test failure.
+        timeout(Duration::from_secs(30), run)
+            .await
+            .expect("connection-store operations deadlocked (AB-BA lock-order inversion)");
+
+        // Sanity: all connections were created and no lock was left poisoned.
+        let (conns, _) = store.list().await;
+        assert_eq!(conns.len(), N);
+    }
+
     #[tokio::test]
     async fn primary_connections_have_no_source_file() {
         let tmp = TempDir::new().unwrap();
