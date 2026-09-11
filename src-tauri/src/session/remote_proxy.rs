@@ -7,11 +7,28 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
+use std::time::Duration;
 
 /// Default monitoring collection interval in milliseconds (#1233).
 ///
 /// Matches the agent's own default; `set_interval` overrides it per subscription.
 const DEFAULT_MONITORING_INTERVAL_MS: u64 = 2000;
+
+/// Channel capacity for the status-derivation driver's stats/status streams.
+///
+/// Matches the SSH provider's sizing: stats are frequent (small buffer),
+/// status transitions are rare.
+const MONITORING_CHANNEL_CAPACITY: usize = 16;
+const MONITORING_STATUS_CHANNEL_CAPACITY: usize = 8;
+
+/// Grace added on top of the collection interval before a *missing* agent
+/// sample counts as one failed collect (SM-012).
+///
+/// A sample can arrive slightly late under agent-runner load without meaning the
+/// stream has dropped; the grace absorbs that jitter. `DEFAULT_STALE_THRESHOLD`
+/// consecutive missed windows are still required before the monitor reports
+/// `Stale`, so a single late sample never flaps the indicator.
+const MONITORING_FRESHNESS_GRACE_MS: u64 = 1000;
 
 // Note: `Mutex` is used only for fields that need interior mutability
 // through `&self` (remote_session_id, remote_type_id, etc.).
@@ -25,7 +42,10 @@ use tracing::{debug, warn};
 use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, SettingsSchema};
 use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::{FileBrowser, FileEntry};
-use termihub_core::monitoring::{MonitorStatus, MonitoringProvider, MonitoringSubscription};
+use termihub_core::monitoring::{
+    CollectLoopState, MonitorStatusSender, MonitoringProvider, MonitoringReceiver,
+    MonitoringSender, MonitoringSubscription, DEFAULT_STALE_THRESHOLD,
+};
 
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::terminal::backend::OUTPUT_CHANNEL_CAPACITY;
@@ -489,7 +509,9 @@ impl RemoteProxy {
                                         agent_id: self.agent_id.clone(),
                                         monitoring_host,
                                         agent_manager: self.agent_manager.clone(),
-                                        interval_ms: AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS),
+                                        interval_ms: Arc::new(AtomicU64::new(
+                                            DEFAULT_MONITORING_INTERVAL_MS,
+                                        )),
                                     });
                                 }
                             }
@@ -677,7 +699,10 @@ pub struct RemoteMonitoringProxy {
     agent_manager: Arc<dyn AgentRpcClient>,
     /// Current collection interval in ms (#1233). `set_interval` re-subscribes
     /// the agent with the new cadence; `subscribe` reads it for the initial ask.
-    interval_ms: AtomicU64,
+    ///
+    /// Shared (`Arc`) so the spawned status-derivation driver can read the live
+    /// cadence when computing its sample-freshness window (SM-012).
+    interval_ms: Arc<AtomicU64>,
 }
 
 impl RemoteMonitoringProxy {
@@ -694,7 +719,7 @@ impl RemoteMonitoringProxy {
             agent_id,
             monitoring_host: "self".to_string(),
             agent_manager,
-            interval_ms: AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS),
+            interval_ms: Arc::new(AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS)),
         }
     }
 
@@ -710,14 +735,82 @@ impl RemoteMonitoringProxy {
     }
 }
 
+/// Derive the observable [`MonitorStatus`] for an agent-mediated monitor from
+/// the *actual* sample flow, and forward samples to the consumer (SM-012).
+///
+/// The agent runs the real collect loop and streams samples over JSON-RPC; the
+/// desktop only receives them. Unlike the direct-SSH provider, this side cannot
+/// observe a collect success/failure directly, so it infers them:
+///
+/// - a sample arriving within the freshness window is a successful collect
+///   (`CollectLoopState::on_success` → `Live`);
+/// - no sample within `interval + grace` is a missed collect
+///   (`on_failure`); `DEFAULT_STALE_THRESHOLD` consecutive misses → `Stale`;
+/// - once `Stale`, if the agent transport is down (`transport_alive` is
+///   `false`, i.e. the agent-connection layer is reconnecting) the monitor
+///   reports `Reconnecting`. A later sample recovers it to `Live`.
+///
+/// The loop ends when the consumer drops `stats_tx` (tab closed) or the agent
+/// registration is torn down on `unsubscribe`/`disconnect` (closing `raw_rx`).
+async fn drive_monitor_status<F>(
+    mut raw_rx: MonitoringReceiver,
+    stats_tx: MonitoringSender,
+    status_tx: MonitorStatusSender,
+    interval_ms: Arc<AtomicU64>,
+    grace: Duration,
+    transport_alive: F,
+) where
+    F: Fn() -> bool + Send,
+{
+    let mut loop_state = CollectLoopState::with_threshold(DEFAULT_STALE_THRESHOLD);
+
+    loop {
+        let interval = Duration::from_millis(interval_ms.load(Ordering::SeqCst).max(1));
+        let freshness = interval.saturating_add(grace);
+
+        match tokio::time::timeout(freshness, raw_rx.recv()).await {
+            Ok(Some(stats)) => {
+                // Fresh sample: forward it, then mark the loop Live.
+                if stats_tx.send(stats).await.is_err() {
+                    break; // consumer gone
+                }
+                if let Some(status) = loop_state.on_success() {
+                    let _ = status_tx.send(status).await;
+                }
+            }
+            // Raw channel closed: the subscription was torn down. Stop cleanly
+            // (no status emit — the session is going away).
+            Ok(None) => break,
+            Err(_elapsed) => {
+                // No fresh sample within the window: count a missed collect.
+                if let Some(status) = loop_state.on_failure() {
+                    let _ = status_tx.send(status).await;
+                }
+                // Sustained drop: if the agent transport itself is down, the
+                // agent-connection layer is re-establishing it, so surface
+                // Reconnecting rather than leaving the numbers merely dimmed.
+                if loop_state.should_begin_reconnect() && !transport_alive() {
+                    if let Some(status) = loop_state.begin_reconnect() {
+                        let _ = status_tx.send(status).await;
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl MonitoringProvider for RemoteMonitoringProxy {
     async fn subscribe(&self) -> Result<MonitoringSubscription, CoreError> {
-        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        // Raw channel fed directly by the agent's monitoring notifications. A
+        // status-derivation driver (below) is interposed between this and the
+        // consumer so the reported `MonitorStatus` follows the *actual* sample
+        // flow instead of a hardcoded `Live` (SM-012).
+        let (raw_tx, raw_rx) = tokio::sync::mpsc::channel(MONITORING_CHANNEL_CAPACITY);
 
         // Register monitoring channel so agent_manager routes notifications to it.
         self.agent_manager
-            .register_monitoring_output(&self.agent_id, &self.monitoring_host, tx)
+            .register_monitoring_output(&self.agent_id, &self.monitoring_host, raw_tx)
             .map_err(|e| CoreError::Other(e.to_string()))?;
 
         // Send subscribe request to agent at the currently-configured cadence
@@ -731,17 +824,30 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         )
         .await?;
 
-        // The agent-mediated path does not yet forward a status stream (that
-        // arrives in a later stage of the lifecycle redesign). Report an
-        // initial `Live` so the frontend renders live agent stats rather than
-        // staying stuck at `Connecting`. Agent-side Stale/Reconnecting will be
-        // wired through this same channel in a follow-up (#1229 is S2, desktop
-        // SSH only).
-        let (status_tx, status_rx) = tokio::sync::mpsc::channel(1);
-        let _ = status_tx.send(MonitorStatus::Live).await;
+        // Consumer-facing channels. The driver forwards each fresh agent sample
+        // onto `stats_tx` and drives `status_tx` from a `CollectLoopState`: a
+        // sample arriving marks the loop `Live`; missing samples past the
+        // freshness window mark it `Stale`; and once stale with the agent
+        // transport down (reconnect underway) it reports `Reconnecting`. This
+        // mirrors the direct-SSH provider's status machine (#1229/#1230) so a
+        // mid-stream drop dims the numbers instead of freezing them as live.
+        let (stats_tx, stats_rx) = tokio::sync::mpsc::channel(MONITORING_CHANNEL_CAPACITY);
+        let (status_tx, status_rx) = tokio::sync::mpsc::channel(MONITORING_STATUS_CHANNEL_CAPACITY);
+
+        let agent_manager = self.agent_manager.clone();
+        let agent_id = self.agent_id.clone();
+        let interval_ms = self.interval_ms.clone();
+        tokio::spawn(drive_monitor_status(
+            raw_rx,
+            stats_tx,
+            status_tx,
+            interval_ms,
+            Duration::from_millis(MONITORING_FRESHNESS_GRACE_MS),
+            move || agent_manager.is_connected(&agent_id),
+        ));
 
         Ok(MonitoringSubscription {
-            stats: rx,
+            stats: stats_rx,
             status: status_rx,
         })
     }
@@ -2003,6 +2109,127 @@ mod tests {
                 .expect("stat params must match agent FilesStatParams");
             serde_json::from_value::<agent::FilesMkdirParams>(files_params::mkdir(CONN, PATH))
                 .expect("mkdir params must match agent FilesMkdirParams");
+        }
+    }
+
+    // ── Agent-mediated monitor status derivation (SM-012) ──────────────
+
+    mod status_driver {
+        use std::sync::atomic::AtomicU64;
+        use std::sync::Arc;
+        use std::time::Duration;
+
+        use tokio::sync::mpsc;
+
+        use super::super::drive_monitor_status;
+        use termihub_core::monitoring::{MonitorStatus, MonitorStatusReceiver, SystemStats};
+
+        /// A syntactically valid stats sample (values are irrelevant to the
+        /// status logic — only that a sample *arrived*).
+        fn sample() -> SystemStats {
+            SystemStats {
+                hostname: "agent-host".to_string(),
+                uptime_seconds: 1.0,
+                load_average: [0.1, 0.1, 0.1],
+                cpu_usage_percent: 5.0,
+                memory_total_kb: 16_000_000,
+                memory_available_kb: 12_000_000,
+                memory_used_percent: 25.0,
+                disk_total_kb: 50_000_000,
+                disk_used_kb: 20_000_000,
+                disk_used_percent: 40.0,
+                os_info: "Linux".to_string(),
+            }
+        }
+
+        /// Await the next status transition, failing if none arrives in time.
+        async fn next_status(rx: &mut MonitorStatusReceiver) -> MonitorStatus {
+            tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("a status transition should arrive before timeout")
+                .expect("status channel should stay open")
+        }
+
+        /// SM-012: while samples flow the monitor is `Live`; when the agent
+        /// samples stop (a mid-stream drop) the derived status flips to `Stale`
+        /// — it does NOT stay frozen at `Live`. The old code hardcoded `Live`
+        /// and emitted it exactly once, so the `Stale` assertion below is the
+        /// one it could never satisfy.
+        #[tokio::test]
+        async fn samples_flowing_is_live_then_drop_is_stale_not_frozen_live() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, mut stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            // Tight interval + grace so the freshness window is short in tests.
+            let interval = Arc::new(AtomicU64::new(20));
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                Duration::from_millis(30),
+                || true, // transport stays up: a merely-slow agent, not a drop
+            ));
+
+            // A fresh sample: the monitor reports Live and forwards the sample.
+            raw_tx.send(sample()).await.expect("send sample");
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Live,
+                "a fresh agent sample must report Live"
+            );
+            assert!(
+                stats_rx.recv().await.is_some(),
+                "the sample must be forwarded to the consumer"
+            );
+
+            // Stop sending samples: the freshness timeout must surface Stale
+            // (DEFAULT_STALE_THRESHOLD = 2 missed windows), not frozen Live.
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Stale,
+                "a stalled agent sample stream must report Stale, not frozen Live"
+            );
+
+            drop(raw_tx);
+            handle
+                .await
+                .expect("driver task should end when raw channel closes");
+        }
+
+        /// SM-012: when the agent *transport* is down (reconnect underway), a
+        /// sustained sample drop escalates past `Stale` to `Reconnecting`.
+        #[tokio::test]
+        async fn transport_down_escalates_stale_to_reconnecting() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, _stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let interval = Arc::new(AtomicU64::new(20));
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                Duration::from_millis(30),
+                || false, // transport is down → reconnect underway
+            ));
+
+            // First sample establishes Live, then the stream stops.
+            raw_tx.send(sample()).await.expect("send sample");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Stale);
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Reconnecting,
+                "a drop with a dead agent transport must escalate to Reconnecting"
+            );
+
+            drop(raw_tx);
+            handle
+                .await
+                .expect("driver task should end when raw channel closes");
         }
     }
 }
