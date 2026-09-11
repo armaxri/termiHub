@@ -184,15 +184,6 @@
   line-height: 1.4;
 }
 
-.settings-panel__empty {
-  font-size: var(--font-size-sm);
-  color: var(--text-disabled);
-  padding: var(--spacing-md);
-  text-align: center;
-  border: 1px dashed var(--border-primary);
-  border-radius: var(--radius-md);
-}
-
 /* === Create file prompt === */
 .settings-panel__create-prompt {
   display: flex;

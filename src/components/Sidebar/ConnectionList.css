@@ -413,12 +413,6 @@
   background-color: var(--bg-hover);
 }
 
-.connection-list__empty {
-  padding: var(--spacing-sm);
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-}
-
 /* Keyboard-focus ring for roving-tabindex tree rows */
 .connection-tree__folder:focus-visible,
 .connection-tree__item:focus-visible {

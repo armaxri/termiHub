@@ -20,7 +20,7 @@ import {
 } from "@/services/api";
 import { onAgentSetupProgress } from "@/services/events";
 import { useAppStore } from "@/store/appStore";
-import { Modal, Button, Input, toast } from "@/components/ui";
+import { Modal, Button, Input, Spinner, toast } from "@/components/ui";
 import "./AgentSetupDialog.css";
 
 interface AgentSetupDialogProps {
@@ -357,7 +357,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
         {phase.kind === "detecting" && (
           <div className="agent-setup-dialog__detecting">
-            <div className="agent-setup-dialog__spinner motion-essential-spinner" />
+            <Spinner size={24} label={null} />
             <span className="agent-setup-dialog__detecting-label">
               Connecting and detecting architecture…
             </span>
@@ -366,7 +366,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
         {phase.kind === "running" && (
           <div className="agent-setup-dialog__running" data-testid="agent-setup-progress">
-            <div className="agent-setup-dialog__spinner motion-essential-spinner" />
+            <Spinner size={24} label={null} />
             <div className="agent-setup-dialog__running-text">
               <span className="agent-setup-dialog__running-step">{phase.step}</span>
               <span className="agent-setup-dialog__running-message">{phase.message}</span>

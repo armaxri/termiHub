@@ -22,7 +22,7 @@ import {
 import type { NetworkTool } from "@/types/terminal";
 import type { HttpMonitorState } from "@/types/network";
 import { frontendLog } from "@/utils/frontendLog";
-import { Button, Tooltip, toast } from "@/components/ui";
+import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { isMonitorStale, formatCheckedAgo } from "./monitorStaleness";
 
 /**
@@ -333,9 +333,7 @@ export function NetworkToolsSidebar() {
             />
           </Tooltip>
         </div>
-        {httpMonitors.length === 0 && (
-          <span className="network-sidebar__empty">No monitors running</span>
-        )}
+        {httpMonitors.length === 0 && <EmptyState title="No monitors running" />}
         {httpMonitors.map((m) => (
           <MonitorRow
             key={m.config.id}

@@ -1,6 +1,6 @@
 import { AppWindow, Plus, Network } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button } from "@/components/ui";
+import { Button, EmptyState } from "@/components/ui";
 import "./EmptyWindowState.css";
 
 /**
@@ -39,36 +39,40 @@ export function EmptyWindowState() {
 
   return (
     <div className="empty-window" data-testid="empty-window-state">
-      <div className="empty-window__card">
-        <div className="empty-window__icon">
-          <AppWindow size={28} strokeWidth={1.5} />
-        </div>
-        <p className="empty-window__title">This window is empty</p>
-        <p className="empty-window__sub">
-          Start a session here, or move a tab in from another window with{" "}
-          <strong>Tab ▸ Move to Window</strong>.
-        </p>
-        <div className="empty-window__actions">
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<Plus size={14} />}
-            onClick={handleNewTerminal}
-            data-testid="empty-window-new-terminal"
-          >
-            New Terminal
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<Network size={14} />}
-            onClick={handleOpenConnection}
-            data-testid="empty-window-open-connection"
-          >
-            Open Connection…
-          </Button>
-        </div>
-      </div>
+      <EmptyState
+        variant="card"
+        role={undefined}
+        icon={<AppWindow size={28} strokeWidth={1.5} />}
+        title="This window is empty"
+        description={
+          <>
+            Start a session here, or move a tab in from another window with{" "}
+            <strong>Tab ▸ Move to Window</strong>.
+          </>
+        }
+        action={
+          <>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<Plus size={14} />}
+              onClick={handleNewTerminal}
+              data-testid="empty-window-new-terminal"
+            >
+              New Terminal
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<Network size={14} />}
+              onClick={handleOpenConnection}
+              data-testid="empty-window-open-connection"
+            >
+              Open Connection…
+            </Button>
+          </>
+        }
+      />
     </div>
   );
 }

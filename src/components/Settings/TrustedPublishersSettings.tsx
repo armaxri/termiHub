@@ -3,7 +3,7 @@ import { Trash2 } from "lucide-react";
 import { listen } from "@tauri-apps/api/event";
 import { listTrustedPublishers, revokeTrustedPublisher } from "@/services/api";
 import type { TrustedPublisher } from "@/types/plugin";
-import { Button, Tooltip, toast } from "@/components/ui";
+import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { fingerprintShort } from "@/components/Plugins/pluginPresentation";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -64,11 +64,13 @@ export function TrustedPublishersSettings() {
         </p>
 
         {loading ? (
-          <p className="settings-panel__empty">Loading…</p>
+          <EmptyState variant="panel" loading />
         ) : publishers.length === 0 ? (
-          <p className="settings-panel__empty" data-testid="trusted-publishers-empty">
-            No trusted publishers yet. Trust a publisher when installing a signed plugin.
-          </p>
+          <EmptyState
+            variant="panel"
+            title="No trusted publishers yet. Trust a publisher when installing a signed plugin."
+            data-testid="trusted-publishers-empty"
+          />
         ) : (
           <ul className="settings-panel__file-list">
             {publishers.map((p) => (

@@ -10,40 +10,6 @@
   overflow: auto;
 }
 
-.empty-window__card {
-  max-width: 380px;
-  padding: var(--spacing-xl);
-  text-align: center;
-}
-
-.empty-window__icon {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto var(--spacing-md);
-  border-radius: var(--radius-lg);
-  display: grid;
-  place-items: center;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
-
-.empty-window__title {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-  margin: 0 0 var(--spacing-xs);
-}
-
-.empty-window__sub {
-  color: var(--text-secondary);
-  margin: 0 0 var(--spacing-lg);
-  font-size: var(--font-size-sm);
-  line-height: 1.5;
-}
-
-.empty-window__actions {
-  display: flex;
-  gap: var(--spacing-sm);
-  justify-content: center;
-  flex-wrap: wrap;
-}
+/* The card itself (icon badge, title, description, actions) is the shared
+   EmptyState `card` variant (src/components/ui/EmptyState.tsx); this wrapper
+   only centres it in the SplitView content area. */
