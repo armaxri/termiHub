@@ -30,12 +30,44 @@ impl DockerFileBrowser {
     }
 }
 
+/// Environment prefix that pins a stable machine locale for every command run
+/// inside the container.
+///
+/// bollard runs `cmd` as a bare argv (no shell is involved), so the locale is
+/// forced by exec'ing through `env`. Pinning `LC_ALL=C LANG=C` keeps every
+/// parsed command locale-invariant regardless of the container's `$LANG`:
+///
+/// * `stat`'s `%F` file-type text stays English (`directory` / `symbolic link`)
+///   instead of a localized `Verzeichnis` / `répertoire` / `目录`, so the
+///   directory/symlink detection in [`parse_stat_output`] keeps working
+///   (I18N-003);
+/// * `find`'s `%T@` epoch uses a `.` decimal separator instead of a locale
+///   comma (`1700000000,5`) that would fail the `f64` parse and reset every
+///   mtime to 1970 (I18N-004);
+/// * command error text (`No such file`, `Permission denied`) stays English so
+///   [`map_docker_error`] classifies it into the right [`FileError`] variant.
+///
+/// Every command this browser runs is a machine-parsed helper (`find`, `stat`,
+/// `base64`, `rm`, `mv`, `mkdir`) — none is an interactive shell shown verbatim
+/// to the user — so forcing the locale here is always safe.
+const C_LOCALE_PREFIX: [&str; 3] = ["env", "LC_ALL=C", "LANG=C"];
+
+/// Prepend the [`C_LOCALE_PREFIX`] to a command's argv so it runs under a
+/// stable machine locale (see the constant's docs for why).
+fn with_c_locale(cmd: Vec<&str>) -> Vec<&str> {
+    let mut prefixed = Vec::with_capacity(cmd.len() + C_LOCALE_PREFIX.len());
+    prefixed.extend_from_slice(&C_LOCALE_PREFIX);
+    prefixed.extend(cmd);
+    prefixed
+}
+
 /// Run a command inside the container and return stdout as a string.
 async fn exec_command(
     client: &bollard::Docker,
     container_id: &str,
     cmd: Vec<&str>,
 ) -> Result<String, FileError> {
+    let cmd = with_c_locale(cmd);
     let exec_config = CreateExecOptions {
         attach_stdout: Some(true),
         attach_stderr: Some(true),
@@ -103,6 +135,7 @@ async fn exec_command_stdin(
     cmd: Vec<&str>,
     stdin_data: &[u8],
 ) -> Result<(), FileError> {
+    let cmd = with_c_locale(cmd);
     let exec_config = CreateExecOptions {
         attach_stdin: Some(true),
         attach_stdout: Some(true),
@@ -261,6 +294,17 @@ impl FileBrowser for DockerFileBrowser {
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---
 
+/// Parse a `find -printf '%T@'` epoch-seconds value into whole seconds.
+///
+/// The command runs under a forced C locale (see [`C_LOCALE_PREFIX`]) so `%T@`
+/// emits a `.` decimal, but this stays defensive against a locale comma (e.g.
+/// `1700000000,5`) so a stray localized value can never silently reset the
+/// mtime to 1970 the way a bare `f64::from_str` would (I18N-004). The fractional
+/// part is discarded — the browser reports whole-second mtimes.
+fn parse_epoch_seconds(field: &str) -> u64 {
+    field.replace(',', ".").parse::<f64>().unwrap_or(0.0) as u64
+}
+
 /// Parse the output of `find -printf '%f\t%y\t%s\t%T@\t%m\t%Y\t%l\n'`.
 ///
 /// The trailing `%Y` (type after following links) and `%l` (link target) fields
@@ -288,7 +332,7 @@ fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, 
         let name = fields[0].to_string();
         let own_type = fields[1];
         let size: u64 = fields[2].parse().unwrap_or(0);
-        let mtime_float: f64 = fields[3].parse().unwrap_or(0.0);
+        let mtime_secs = parse_epoch_seconds(fields[3]);
         let mode: u32 = u32::from_str_radix(fields[4].trim(), 8).unwrap_or(0);
         // `%Y` follows the link, so a symlink-to-dir still lists as a directory
         // (matching the local browser); it falls back to the own type otherwise.
@@ -305,7 +349,7 @@ fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, 
         };
 
         let path = format!("{parent}{name}");
-        let modified = chrono_from_epoch(mtime_float as u64);
+        let modified = chrono_from_epoch(mtime_secs);
         let permissions = Some(format_permissions(mode));
 
         entries.push(FileEntry {
@@ -521,6 +565,52 @@ mod tests {
     fn parse_find_output_empty() {
         let entries = parse_find_output("", "/empty").unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_find_output_survives_comma_decimal_mtime() {
+        // Regression for I18N-004: under a comma-decimal container locale
+        // `find`'s `%T@` is emitted as e.g. `1700000000,5`. A bare `f64` parse
+        // rejects the comma and resets the mtime to the 1970 epoch. The robust
+        // parse recovers the real timestamp (defence-in-depth on top of the
+        // forced C locale that keeps the separator a `.`).
+        let output = "file.txt\tf\t100\t1700000000,5\t644\tf\t\n";
+        let entries = parse_find_output(output, "/dir").unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].modified, "2023-11-14T22:13:20Z",
+            "a comma-decimal mtime must not collapse to 1970"
+        );
+    }
+
+    #[test]
+    fn parse_epoch_seconds_accepts_dot_and_comma_decimals() {
+        // The C-locale form (`.`) and a stray localized comma both resolve to
+        // the same whole-second epoch; only genuine garbage falls back to 0.
+        assert_eq!(parse_epoch_seconds("1700000000.5"), 1_700_000_000);
+        assert_eq!(parse_epoch_seconds("1700000000,5"), 1_700_000_000);
+        assert_eq!(parse_epoch_seconds("1700000000"), 1_700_000_000);
+        assert_eq!(parse_epoch_seconds("not-a-number"), 0);
+    }
+
+    // --- C-locale forcing (I18N-003/004/005) ---
+
+    #[test]
+    fn with_c_locale_prepends_env_prefix() {
+        // Every parsed docker command must run under a forced C locale so its
+        // output (stat's `%F` text, find's `%T@` decimal) and its error text
+        // stay locale-invariant regardless of the container's `$LANG`.
+        let cmd = with_c_locale(vec!["stat", "-c", "%n\t%F\t%s\t%Y\t%a", "/etc"]);
+        assert_eq!(
+            &cmd[..3],
+            &["env", "LC_ALL=C", "LANG=C"],
+            "command must be exec'd through `env LC_ALL=C LANG=C`"
+        );
+        assert_eq!(
+            &cmd[3..],
+            &["stat", "-c", "%n\t%F\t%s\t%Y\t%a", "/etc"],
+            "the original command must follow the locale prefix unchanged"
+        );
     }
 
     #[test]

@@ -10,8 +10,17 @@ use super::types::{CpuCounters, SystemStats};
 
 /// The compound command executed on Linux hosts to gather all metrics
 /// in a single round-trip.
+///
+/// The leading `export LC_ALL=C LANG=C;` pins a stable machine locale for the
+/// whole compound command (I18N-005). A bare `LC_ALL=C cmd` prefix would only
+/// affect the first `hostname`, so the locale is `export`ed once for the exec'd
+/// shell instead — keeping `df`'s numbers ungrouped and dot-decimal and
+/// `uname`'s text stable even on a remote whose `$LANG` localizes numeric
+/// output. `/proc` is already locale-invariant, so this is defence-in-depth for
+/// the `df`/`uname` legs and guards against any future parsed command being
+/// appended here.
 pub const MONITORING_COMMAND: &str =
-    "hostname && cat /proc/loadavg && head -1 /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr";
+    "export LC_ALL=C LANG=C; hostname && cat /proc/loadavg && head -1 /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr";
 
 /// Compute CPU usage percentage from the delta between two counter snapshots.
 /// Returns a value between 0.0 and 100.0.
@@ -241,6 +250,18 @@ pub fn parse_df_output(output: &str) -> (u64, u64, f64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// I18N-005: the monitoring command must pin a stable machine locale for the
+    /// whole compound command so `df`/`uname` (and any future parsed leg) are not
+    /// at the mercy of the remote's `$LANG`. An `export` (not a bare `LC_ALL=C`
+    /// prefix) is required so the locale applies past the first `&&`.
+    #[test]
+    fn monitoring_command_forces_c_locale_for_the_whole_command() {
+        assert!(
+            MONITORING_COMMAND.starts_with("export LC_ALL=C LANG=C;"),
+            "monitoring command must export a C locale before the first `&&`, got: {MONITORING_COMMAND}"
+        );
+    }
 
     /// Helper: build sample output with the given cpu line.
     fn sample_output(cpu_line: &str) -> String {

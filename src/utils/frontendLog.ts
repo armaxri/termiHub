@@ -1,6 +1,51 @@
+import { invoke } from "@tauri-apps/api/core";
+
 import { LogEntry } from "@/types/terminal";
 
 type LogCallback = (entry: LogEntry) => void;
+
+/**
+ * Whether we are running inside the Tauri webview (as opposed to a browser test
+ * environment). Guards the durable-log forward so `invoke` is never called where
+ * the Tauri IPC does not exist.
+ */
+function isTauriRuntime(): boolean {
+  return (
+    typeof window !== "undefined" && ("__TAURI_INTERNALS__" in window || "__TAURI__" in window)
+  );
+}
+
+/**
+ * Reentrancy guard: a failure while forwarding a log line must never itself emit
+ * a frontend log that forwards again. The forward is best-effort and swallows all
+ * errors, but this makes the no-loop guarantee explicit.
+ */
+let isForwarding = false;
+
+/**
+ * Forward an ERROR/WARN entry to the backend so it lands in the durable
+ * `termihub.log` (OBS-001). Fire-and-forget and fully guarded: DEBUG/INFO stay
+ * client-only, non-Tauri environments are skipped, and any failure is swallowed
+ * so logging can never disrupt the UI or loop.
+ */
+function forwardToDurableLog(entry: LogEntry): void {
+  if (entry.level !== "ERROR" && entry.level !== "WARN") return;
+  if (isForwarding || !isTauriRuntime()) return;
+  isForwarding = true;
+  try {
+    void invoke("record_frontend_log", {
+      level: entry.level,
+      target: entry.target.replace(/^frontend::/, ""),
+      message: entry.message,
+    }).catch(() => {
+      /* best-effort durability: a backend logging failure must not surface */
+    });
+  } catch {
+    /* invoke unavailable or threw synchronously — swallow */
+  } finally {
+    isForwarding = false;
+  }
+}
 
 /**
  * Levels the frontend log channel can emit. These mirror the backend tracing
@@ -57,6 +102,9 @@ export function emitFrontendLog(level: FrontendLogLevel, target: string, message
       cb(entry);
     }
   }
+  // Durability path (OBS-001): mirror ERROR/WARN to the backend so they reach
+  // `termihub.log`. Independent of the LogViewer listeners above.
+  forwardToDurableLog(entry);
 }
 
 /** Emit a DEBUG log entry visible in the LogViewer. */
