@@ -228,12 +228,6 @@ struct AgentConnection {
     command_tx: UnboundedSender<AgentIoCommand>,
     alive: Arc<AtomicBool>,
     capabilities: AgentCapabilities,
-    /// Stored for future version-gated feature checks.
-    #[allow(dead_code)]
-    agent_version: String,
-    /// Stored for future protocol negotiation.
-    #[allow(dead_code)]
-    protocol_version: String,
     /// Agent-assigned id for this desktop's own client connection (from the
     /// `initialize` result). Lets [`list_connections`](AgentConnectionManager::list_connections)
     /// exclude this desktop from the connected-host update guard (#1349). Empty
@@ -248,8 +242,10 @@ struct AgentConnection {
 /// so they can be tested without real SSH connections.
 ///
 /// [`RemoteProxy`]: crate::session::remote_proxy::RemoteProxy
-// Methods called through Arc<AgentConnectionManager> in commands; will be
-// routed through the trait once Tauri commands use Arc<dyn AgentRpcClient>.
+// The trait is live (consumed as `Arc<dyn AgentRpcClient>` across commands, session,
+// network, tunnel and embedded-servers), but `retain_agent_config` belongs to the
+// default-off backend-reconnect reattach feature (#2472) and has no caller yet, so the
+// blanket allow stays until that path is wired up.
 #[allow(dead_code)]
 pub trait AgentRpcClient: Send + Sync + 'static {
     /// Connect to a remote agent via SSH.
@@ -927,8 +923,6 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 command_tx,
                 alive,
                 capabilities,
-                agent_version,
-                protocol_version,
                 client_id,
             },
         );
@@ -3544,8 +3538,6 @@ mod tests {
                 monitoring_supported: false,
                 agent_version: String::new(),
             },
-            agent_version: String::new(),
-            protocol_version: String::new(),
             client_id: String::new(),
         }
     }
