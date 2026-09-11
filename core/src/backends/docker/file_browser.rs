@@ -3,6 +3,7 @@
 //! Uses bollard's exec API to run commands inside a running container
 //! for file listing, reading, writing, deleting, renaming, and stat.
 
+use base64::Engine as _;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
@@ -59,6 +60,71 @@ fn with_c_locale(cmd: Vec<&str>) -> Vec<&str> {
     prefixed.extend_from_slice(&C_LOCALE_PREFIX);
     prefixed.extend(cmd);
     prefixed
+}
+
+/// Portable directory-listing shell script run once per `list_dir`, replacing
+/// the GNU-only `find -printf` (CORE-012).
+///
+/// `find -printf` is a GNU findutils extension that BusyBox `find` — the `find`
+/// in Alpine and most minimal container images — does not implement, so the old
+/// command failed on exactly the most common base images. This script instead
+/// derives every field with tools BusyBox and GNU coreutils both provide:
+///
+/// * `find` only *enumerates* the entries (both `find`s support `-maxdepth`,
+///   `!`, and `-exec … +`); the script computes the metadata.
+/// * `stat -c '%s %Y %a'` yields size / mtime-epoch / octal-mode — the same
+///   specifiers the single-file [`FileBrowser::stat`] command already relies on
+///   BusyBox supporting.
+/// * `[ -L ]` / `readlink` detect a symlink and read its target; `[ -d ]`
+///   (which follows symlinks) decides the *followed* type, so a symlink-to-dir
+///   still lists as a directory.
+///
+/// It emits the **same tab-separated 7-field record** the previous `-printf`
+/// format did — `name\town-type\tsize\tmtime\tmode\tfollowed-type\ttarget` —
+/// so [`parse_find_output`] is unchanged. `name` is first (so a leading tab in
+/// a name would split it, matching the old behavior) and `target` is the
+/// rest-of-line final field (so a target may itself contain tabs). Records are
+/// newline-separated, the same delimiter the old format used — a filename
+/// containing a literal newline was, and remains, out of scope.
+///
+/// The per-entry `stat` is guarded: an entry that vanishes between the `find`
+/// enumeration and the `stat` (a TOCTOU race) is skipped rather than emitted
+/// with zeroed fields.
+const LIST_DIR_SCRIPT: &str = r#"for f in "$@"; do
+  name=${f##*/}
+  meta=$(stat -c '%s %Y %a' "$f" 2>/dev/null) || continue
+  [ -n "$meta" ] || continue
+  if [ -L "$f" ]; then y=l; t=$(readlink "$f" 2>/dev/null); else y=f; t=; fi
+  if [ -d "$f" ]; then yy=d; else yy=f; fi
+  set -- $meta
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$y" "$1" "$2" "$3" "$yy" "$t"
+done"#;
+
+/// Build the portable `list_dir` command argv (CORE-012).
+///
+/// `find` enumerates the direct children of `path` (excluding the directory
+/// itself) and hands them to the portable [`LIST_DIR_SCRIPT`] via
+/// `-exec sh -c '…' sh {} +`. `!` (POSIX) is used instead of GNU `-not`.
+fn list_dir_argv(path: &str) -> Vec<&str> {
+    vec![
+        "find",
+        path,
+        "-maxdepth",
+        "1",
+        "!",
+        "-name",
+        ".",
+        "!",
+        "-path",
+        path,
+        "-exec",
+        "sh",
+        "-c",
+        LIST_DIR_SCRIPT,
+        "sh",
+        "{}",
+        "+",
+    ]
 }
 
 /// Run a command inside the container and return stdout as a string.
@@ -210,28 +276,7 @@ async fn exec_command_stdin(
 #[async_trait::async_trait]
 impl FileBrowser for DockerFileBrowser {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
-        let output = exec_command(
-            &self.client,
-            &self.container_id,
-            vec![
-                "find",
-                path,
-                "-maxdepth",
-                "1",
-                "-not",
-                "-name",
-                ".",
-                "-not",
-                "-path",
-                path,
-                "-printf",
-                // `%y` is the entry's own type (`l` for a symlink); `%Y` is the
-                // type after following the link (so a symlink-to-dir still lists
-                // as a directory); `%l` is the link target (empty for non-links).
-                "%f\t%y\t%s\t%T@\t%m\t%Y\t%l\n",
-            ],
-        )
-        .await?;
+        let output = exec_command(&self.client, &self.container_id, list_dir_argv(path)).await?;
         parse_find_output(&output, path)
     }
 
@@ -245,19 +290,19 @@ impl FileBrowser for DockerFileBrowser {
 
         let output = exec_command(&self.client, &self.container_id, vec!["base64", path]).await?;
 
-        // base64 decode
-        use std::io::Read;
+        // `base64` wraps its output at 76 columns, so strip whitespace before
+        // decoding with the strict STANDARD engine (which, unlike the old
+        // hand-rolled reader, surfaces a decode error on a non-alphabet byte
+        // instead of silently dropping it — LIBBE-001).
         let cleaned: String = output.chars().filter(|c| !c.is_whitespace()).collect();
-        let mut decoder = base64_decode_reader(cleaned.as_bytes());
-        let mut data = Vec::new();
-        decoder
-            .read_to_end(&mut data)
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(cleaned.as_bytes())
             .map_err(|e| FileError::OperationFailed(format!("base64 decode failed: {e}")))?;
         Ok(data)
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
-        let encoded = base64_encode(data);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(data);
         let script = format!("base64 -d > '{}'", shell_escape(path));
         exec_command_stdin(
             &self.client,
@@ -308,22 +353,29 @@ impl FileBrowser for DockerFileBrowser {
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---
 
-/// Parse a `find -printf '%T@'` epoch-seconds value into whole seconds.
+/// Parse a listing record's mtime epoch-seconds value into whole seconds.
 ///
-/// The command runs under a forced C locale (see [`C_LOCALE_PREFIX`]) so `%T@`
-/// emits a `.` decimal, but this stays defensive against a locale comma (e.g.
-/// `1700000000,5`) so a stray localized value can never silently reset the
-/// mtime to 1970 the way a bare `f64::from_str` would (I18N-004). The fractional
-/// part is discarded — the browser reports whole-second mtimes.
+/// [`LIST_DIR_SCRIPT`] sources the mtime from `stat -c '%Y'` (already whole
+/// integer seconds), but this stays defensive against a fractional value with a
+/// locale comma (e.g. `1700000000,5` — as the retired `find -printf '%T@'` could
+/// emit under a comma-decimal locale) so a stray localized value can never
+/// silently reset the mtime to 1970 the way a bare `f64::from_str` would
+/// (I18N-004). The fractional part is discarded — the browser reports
+/// whole-second mtimes.
 fn parse_epoch_seconds(field: &str) -> u64 {
     field.replace(',', ".").parse::<f64>().unwrap_or(0.0) as u64
 }
 
-/// Parse the output of `find -printf '%f\t%y\t%s\t%T@\t%m\t%Y\t%l\n'`.
+/// Parse the tab-separated listing records emitted by [`LIST_DIR_SCRIPT`]:
+/// `name\town-type\tsize\tmtime-epoch\tmode\tfollowed-type\ttarget` (CORE-012).
 ///
-/// The trailing `%Y` (type after following links) and `%l` (link target) fields
-/// let the browser distinguish symlinks from the `%y` own-type field and report
-/// the link target, matching the FTP/local behavior (#1513, #1523).
+/// This is the same 7-field layout the retired GNU `find -printf
+/// '%f\t%y\t%s\t%T@\t%m\t%Y\t%l\n'` produced, so the parser is shared. The
+/// followed-type field (type after following links) and the target field let
+/// the browser distinguish symlinks from the own-type field and report the link
+/// target, matching the FTP/local behavior (#1513, #1523). The portable script
+/// emits whole-second mtimes (no fractional part), but the parse stays robust to
+/// a fractional/comma-decimal value for defence-in-depth (I18N-004).
 fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, FileError> {
     let mut entries = Vec::new();
     let parent = if parent_path.ends_with('/') {
@@ -462,114 +514,6 @@ fn shell_escape(s: &str) -> String {
     s.replace('\'', "'\\''")
 }
 
-/// Base64 encode bytes to a string (no-dependency implementation).
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
-
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-
-        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-
-        if chunk.len() > 1 {
-            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-
-        if chunk.len() > 2 {
-            result.push(CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-
-    result
-}
-
-/// Create a base64 decoding reader (no-dependency implementation).
-fn base64_decode_reader(input: &[u8]) -> Base64Decoder<'_> {
-    Base64Decoder {
-        input,
-        pos: 0,
-        buf: [0; 3],
-        buf_len: 0,
-        buf_pos: 0,
-    }
-}
-
-struct Base64Decoder<'a> {
-    input: &'a [u8],
-    pos: usize,
-    buf: [u8; 3],
-    buf_len: usize,
-    buf_pos: usize,
-}
-
-impl<'a> std::io::Read for Base64Decoder<'a> {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        let mut written = 0;
-        while written < out.len() {
-            if self.buf_pos < self.buf_len {
-                out[written] = self.buf[self.buf_pos];
-                self.buf_pos += 1;
-                written += 1;
-                continue;
-            }
-            // Decode next 4 chars.
-            if self.pos >= self.input.len() {
-                break;
-            }
-            let mut quad = [0u8; 4];
-            let mut count = 0;
-            let mut padding = 0;
-            while count < 4 && self.pos < self.input.len() {
-                let b = self.input[self.pos];
-                self.pos += 1;
-                if let Some(val) = decode_b64_char(b) {
-                    quad[count] = val;
-                    count += 1;
-                } else if b == b'=' {
-                    quad[count] = 0;
-                    count += 1;
-                    padding += 1;
-                }
-            }
-            if count < 4 {
-                break;
-            }
-            let triple = ((quad[0] as u32) << 18)
-                | ((quad[1] as u32) << 12)
-                | ((quad[2] as u32) << 6)
-                | (quad[3] as u32);
-
-            self.buf[0] = (triple >> 16) as u8;
-            self.buf[1] = (triple >> 8) as u8;
-            self.buf[2] = triple as u8;
-            self.buf_len = 3 - padding;
-            self.buf_pos = 0;
-        }
-        Ok(written)
-    }
-}
-
-fn decode_b64_char(b: u8) -> Option<u8> {
-    match b {
-        b'A'..=b'Z' => Some(b - b'A'),
-        b'a'..=b'z' => Some(b - b'a' + 26),
-        b'0'..=b'9' => Some(b - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -702,6 +646,91 @@ mod tests {
         assert_eq!(link.symlink_target, None);
     }
 
+    // --- list_dir portability (CORE-012) ---
+
+    #[test]
+    fn list_dir_argv_is_busybox_portable() {
+        // The command must not use the GNU-only `find -printf` (unsupported by
+        // BusyBox `find`, which is what Alpine and most minimal images ship), and
+        // must use the POSIX `!` negation rather than GNU `-not`.
+        let argv = list_dir_argv("/project");
+        assert!(
+            !argv.contains(&"-printf"),
+            "must not use the GNU-only -printf: {argv:?}"
+        );
+        assert!(
+            !argv.contains(&"-not"),
+            "must use POSIX `!`, not GNU `-not`: {argv:?}"
+        );
+        assert!(argv.contains(&"!"), "expected POSIX negation operator");
+        assert!(
+            argv.contains(&"-maxdepth"),
+            "expected -maxdepth enumeration"
+        );
+        // Metadata is derived with tools BusyBox and coreutils both provide.
+        assert!(argv.contains(&LIST_DIR_SCRIPT));
+        assert!(LIST_DIR_SCRIPT.contains("stat -c"));
+        assert!(LIST_DIR_SCRIPT.contains("readlink"));
+        // `-exec … +` batches the entries into the portable helper.
+        assert_eq!(argv.last(), Some(&"+"));
+    }
+
+    #[test]
+    fn parse_find_output_portable_script_sample() {
+        // Representative output of LIST_DIR_SCRIPT. Because the script derives
+        // every field with portable tools (`stat -c '%s %Y %a'`, `readlink`,
+        // `[ -L ]`, `[ -d ]`), its output is byte-identical whether the container
+        // ships GNU coreutils or BusyBox — there is a single portable form, not a
+        // GNU form and a BusyBox form. Fields:
+        //   name  own-type  size  mtime  mode  followed-type  target
+        // Note a non-symlink (including a directory) has own-type `f`; a
+        // directory is identified by the followed-type `d`.
+        let output = "my file.txt\tf\t1024\t1705321845\t644\tf\t\n\
+                       src\tf\t4096\t1705321845\t755\td\t\n\
+                       link\tl\t7\t1705321845\t777\tf\t/etc/target\n\
+                       linkdir\tl\t7\t1705321845\t777\td\t/var/data\n\
+                       broken\tl\t7\t1705321845\t777\tf\t/missing\n";
+        let entries = parse_find_output(output, "/project").unwrap();
+        assert_eq!(entries.len(), 5);
+
+        // Regular file with a space in the name.
+        let file = &entries[0];
+        assert_eq!(file.name, "my file.txt");
+        assert_eq!(file.path, "/project/my file.txt");
+        assert!(!file.is_directory);
+        assert!(!file.is_symlink);
+        assert_eq!(file.size, 1024);
+        assert_eq!(file.modified, "2024-01-15T12:30:45Z");
+        assert_eq!(file.permissions.as_deref(), Some("rw-r--r--"));
+
+        // Plain directory: own-type `f`, followed-type `d`.
+        let dir = &entries[1];
+        assert_eq!(dir.name, "src");
+        assert!(dir.is_directory);
+        assert!(!dir.is_symlink);
+        assert_eq!(dir.permissions.as_deref(), Some("rwxr-xr-x"));
+
+        // Symlink to a file.
+        let link = &entries[2];
+        assert_eq!(link.name, "link");
+        assert!(link.is_symlink);
+        assert!(!link.is_directory);
+        assert_eq!(link.symlink_target.as_deref(), Some("/etc/target"));
+
+        // Symlink to a directory still lists as a navigable directory.
+        let linkdir = &entries[3];
+        assert!(linkdir.is_symlink);
+        assert!(linkdir.is_directory);
+        assert_eq!(linkdir.symlink_target.as_deref(), Some("/var/data"));
+
+        // Broken symlink: readlink still reports the (dangling) target; the
+        // followed-type falls back to `f`, so it does not list as a directory.
+        let broken = &entries[4];
+        assert!(broken.is_symlink);
+        assert!(!broken.is_directory);
+        assert_eq!(broken.symlink_target.as_deref(), Some("/missing"));
+    }
+
     // --- parse_stat_output tests ---
 
     #[test]
@@ -806,35 +835,85 @@ mod tests {
         assert!(matches!(err, Err(FileError::NotFound(_))));
     }
 
-    // --- base64 tests ---
+    // --- base64 tests (LIBBE-001: now over the `base64` crate) ---
 
-    #[test]
-    fn base64_encode_empty() {
-        assert_eq!(base64_encode(b""), "");
+    /// Encode via the same STANDARD engine the browser now uses on the write
+    /// path, mirroring `write_file`.
+    fn b64_encode(data: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(data)
+    }
+
+    /// Decode the way `read_file` does: strip the whitespace `base64` inserts to
+    /// wrap its output, then decode strictly.
+    fn b64_decode(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
+        let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+        base64::engine::general_purpose::STANDARD.decode(cleaned.as_bytes())
     }
 
     #[test]
-    fn base64_encode_hello() {
-        assert_eq!(base64_encode(b"Hello, World!"), "SGVsbG8sIFdvcmxkIQ==");
+    fn base64_encode_empty() {
+        assert_eq!(b64_encode(b""), "");
+    }
+
+    #[test]
+    fn base64_encode_hello_matches_known_vector() {
+        // RFC 4648 / canonical vector — the crate must produce standard base64.
+        assert_eq!(b64_encode(b"Hello, World!"), "SGVsbG8sIFdvcmxkIQ==");
+    }
+
+    #[test]
+    fn base64_decode_known_vector() {
+        assert_eq!(
+            b64_decode("SGVsbG8sIFdvcmxkIQ==").unwrap(),
+            b"Hello, World!"
+        );
     }
 
     #[test]
     fn base64_roundtrip() {
         let data = b"The quick brown fox jumps over the lazy dog";
-        let encoded = base64_encode(data);
-        let mut decoder = base64_decode_reader(encoded.as_bytes());
-        let mut decoded = Vec::new();
-        std::io::Read::read_to_end(&mut decoder, &mut decoded).unwrap();
-        assert_eq!(decoded, data);
+        let encoded = b64_encode(data);
+        assert_eq!(b64_decode(&encoded).unwrap(), data);
     }
 
     #[test]
     fn base64_roundtrip_binary() {
+        // All 256 byte values, exercising the padding edge cases at every input
+        // length modulo 3 (256 % 3 == 1, so this ends in a two-`=` group).
         let data: Vec<u8> = (0..=255).collect();
-        let encoded = base64_encode(&data);
-        let mut decoder = base64_decode_reader(encoded.as_bytes());
-        let mut decoded = Vec::new();
-        std::io::Read::read_to_end(&mut decoder, &mut decoded).unwrap();
-        assert_eq!(decoded, data);
+        let encoded = b64_encode(&data);
+        assert_eq!(b64_decode(&encoded).unwrap(), data);
+    }
+
+    #[test]
+    fn base64_roundtrip_padding_lengths() {
+        // 1/2/3-byte inputs cover the `==`, `=`, and no-padding tail cases.
+        for data in [b"f".as_slice(), b"fo", b"foo", b"foob", b"fooba", b"foobar"] {
+            let encoded = b64_encode(data);
+            assert_eq!(
+                b64_decode(&encoded).unwrap(),
+                data,
+                "roundtrip for {data:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn base64_decode_tolerates_wrapped_whitespace() {
+        // `base64` wraps output at 76 columns; the read path strips whitespace
+        // (spaces and newlines) before decoding.
+        let wrapped = "SGVsbG8s\nIFdvcmxk\nIQ==\n";
+        assert_eq!(b64_decode(wrapped).unwrap(), b"Hello, World!");
+    }
+
+    #[test]
+    fn base64_decode_rejects_non_alphabet_byte() {
+        // Regression for LIBBE-001: the old hand-rolled reader silently dropped
+        // any byte outside the alphabet, so corruption in the exec output passed
+        // through as "successfully decoded". The strict crate surfaces an error.
+        //
+        // `*` is not whitespace (so it survives the strip) and is not a base64
+        // alphabet character, so it must produce a decode error.
+        assert!(b64_decode("SGVs*bG8=").is_err());
     }
 }
