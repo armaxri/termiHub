@@ -6,8 +6,10 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--terminal-bg, #1e1e1e) 88%, transparent);
-  backdrop-filter: blur(2px);
+  /* Unified content-overlay backdrop (UI-008): shared token instead of an
+     off-token blur(2px) and a one-off color-mix. */
+  background: var(--overlay-content-bg);
+  backdrop-filter: var(--overlay-blur-sm);
   color: var(--text-primary);
   font-family: var(--font-mono, monospace);
   font-size: var(--font-size-sm);

@@ -62,7 +62,7 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-overlay);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   z-index: var(--z-raised);
   opacity: 0;
   pointer-events: none;
@@ -111,7 +111,10 @@
   align-items: center;
   justify-content: center;
   gap: 10px;
-  background: var(--overlay-bg);
+  /* Unified content-overlay backdrop (UI-008): same treatment as the terminal
+     connecting/disconnected overlays, so the desktop stays faintly visible. */
+  background: var(--overlay-content-bg);
+  backdrop-filter: var(--overlay-blur-sm);
   color: var(--text-primary);
   z-index: var(--z-elevated);
   text-align: center;
@@ -127,12 +130,12 @@
 }
 
 .rd-overlay__title {
-  font-size: 14px;
+  font-size: var(--font-size-lg);
   font-weight: 600;
 }
 
 .rd-overlay__sub {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
   max-width: 420px;
 }
@@ -179,7 +182,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -189,7 +192,7 @@
   resize: none;
   padding: 6px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-primary);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-primary);
@@ -205,7 +208,7 @@
 }
 
 .rd-clipboard__files-label {
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -216,7 +219,7 @@
   gap: 2px;
   max-height: 96px;
   overflow-y: auto;
-  font-size: 12px;
+  font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
 
