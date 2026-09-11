@@ -277,9 +277,11 @@ export interface ExternalAgentFile {
 /**
  * How a shared remote agent binary is updated when a newer desktop deploys.
  *
- * Only `"immediate"` (hard shutdown + redeploy) is honored today; `"coordinated"`
- * (SI-5) and `"deferred"` (SI-6) persist the preference until those subsystems
- * land. See #1354.
+ * `"immediate"` (hard shutdown + redeploy) and `"coordinated"` (SI-5, notify
+ * connected hosts) are honored today. `"deferred"` (SI-6) is not implemented, so
+ * its control is hidden from the connection editor (WA-FE-002); the variant is
+ * retained here so existing configs that already persisted it still load. See
+ * #1354.
  */
 export type UpdateStrategy = "immediate" | "coordinated" | "deferred";
 
@@ -299,7 +301,9 @@ export interface RemoteAgentConfig {
   /**
    * Whether the agent may check GitHub and update itself in the background.
    * Opt-in; defaults to `false`. The self-update mechanism (SI-8) is not yet
-   * implemented — this persists the preference until it lands.
+   * implemented, so the toggle is hidden from the connection editor
+   * (WA-FE-002). This field is retained for forward-compat and tolerant loading
+   * of existing configs that already persisted the preference.
    */
   allowSelfUpdate?: boolean;
   /** Update strategy for this agent's binary. Defaults to `"immediate"`. */
