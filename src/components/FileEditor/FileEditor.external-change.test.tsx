@@ -225,6 +225,48 @@ describe("FileEditor — external on-disk change reload (#1620)", () => {
     expect(unwatchCall).toBeDefined();
   });
 
+  it("unwatches a watch that registers only after a fast unmount, so it never leaks (FEC-013)", async () => {
+    // Make watch_local_file hang so the editor can unmount while the watch-start
+    // is still in flight — the exact race that previously leaked the OS watch.
+    let resolveWatch: (() => void) | null = null;
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "watch_local_file")
+        return new Promise<void>((res) => {
+          resolveWatch = () => res();
+        });
+      if (cmd === "local_read_file") return Promise.resolve(INITIAL);
+      return Promise.resolve(undefined);
+    });
+
+    render();
+    await flush();
+
+    const watchCall = mockedInvoke.mock.calls.find((c) => c[0] === "watch_local_file");
+    expect(watchCall, "watch_local_file should have been invoked").toBeDefined();
+    const orphanId = (watchCall![1] as { watchId: string }).watchId;
+    // Registration is still pending, so nothing has been unwatched.
+    expect(mockedInvoke.mock.calls.find((c) => c[0] === "unwatch_local_file")).toBeUndefined();
+
+    // Unmount before the watch finishes registering.
+    act(() => root.unmount());
+    root = createRoot(container);
+    // Cleanup ran, but the watch had not registered yet, so it could not (and
+    // must not) unwatch a watch that does not exist.
+    expect(mockedInvoke.mock.calls.find((c) => c[0] === "unwatch_local_file")).toBeUndefined();
+
+    // The watch now finishes registering — because the effect is already
+    // disposed, it must immediately unwatch its own handle (no leak).
+    await act(async () => {
+      resolveWatch?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const unwatchCall = mockedInvoke.mock.calls.find(
+      (c) => c[0] === "unwatch_local_file" && (c[1] as { watchId: string }).watchId === orphanId
+    );
+    expect(unwatchCall, "the orphaned watch must be unwatched").toBeDefined();
+  });
+
   it("does not watch a remote file", async () => {
     render(REMOTE_META);
     await flush();

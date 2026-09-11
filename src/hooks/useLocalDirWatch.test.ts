@@ -141,4 +141,53 @@ describe("useLocalDirWatch", () => {
     expect(watchLocalDir).toHaveBeenCalledTimes(2);
     expect(watchLocalDir.mock.calls[1][1]).toBe("/home/u/sub");
   });
+
+  it("unwatches the previous watch by its own id when the path changes (FEC-005)", async () => {
+    const onChange = vi.fn();
+    await renderHarness({ enabled: true, path: "/home/u", onChange });
+    const firstId = watchLocalDir.mock.calls[0][0];
+
+    await renderHarness({ enabled: true, path: "/home/u/sub", onChange });
+    const secondId = watchLocalDir.mock.calls[1][0];
+
+    // Each run gets a distinct id, and the superseded watch is torn down by its
+    // own id — so a late-resolving start can never unwatch the current watch.
+    expect(secondId).not.toBe(firstId);
+    expect(unwatchLocalDir).toHaveBeenCalledWith(firstId);
+  });
+
+  it("unwatches a watch that registers only after a fast unmount, so it never leaks (FEC-005)", async () => {
+    // Defer watchLocalDir so the effect can be torn down while the watch-start
+    // is still in flight — the exact race that previously leaked the OS watch.
+    let resolveWatch: (() => void) | null = null;
+    watchLocalDir.mockImplementationOnce(
+      () =>
+        new Promise<void>((res) => {
+          resolveWatch = () => res();
+        })
+    );
+
+    await renderHarness({ enabled: true, path: "/home/u", onChange: vi.fn() });
+    const watchId = watchLocalDir.mock.calls[0][0];
+    // Registration is still pending, so nothing has been unwatched.
+    expect(unwatchLocalDir).not.toHaveBeenCalled();
+
+    // Unmount before the watch finishes registering.
+    await act(async () => {
+      root.render(createElement("div"));
+    });
+    // Cleanup ran, but the watch had not registered yet, so it could not (and
+    // must not) unwatch a watch that does not exist.
+    expect(unwatchLocalDir).not.toHaveBeenCalled();
+
+    // The watch now finishes registering — because the effect is already
+    // disposed, it must immediately unwatch its own handle (no leak).
+    await act(async () => {
+      resolveWatch?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(unwatchLocalDir).toHaveBeenCalledWith(watchId);
+    expect(unwatchLocalDir).toHaveBeenCalledTimes(1);
+  });
 });

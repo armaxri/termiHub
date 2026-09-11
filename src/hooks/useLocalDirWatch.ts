@@ -35,6 +35,12 @@ export function useLocalDirWatch(
 ): void {
   const watchId = useId();
 
+  // A monotonic per-effect-run counter. Combined with the stable `watchId` it
+  // gives every watch registration a unique id, so a slow-to-register watch
+  // from a superseded run only ever unwatches *its own* registration and can
+  // never tear down the current run's watch that reuses the base id (FEC-005).
+  const watchRunRef = useRef(0);
+
   // Keep a stable ref so the (path-scoped) watch effect always calls the latest
   // refresh logic without re-subscribing when the callback identity changes.
   const onChangeRef = useRef(onExternalChange);
@@ -42,13 +48,30 @@ export function useLocalDirWatch(
 
   useEffect(() => {
     if (!enabled || !path) return;
+    const runWatchId = `${watchId}:${watchRunRef.current++}`;
     let unlisten: (() => void) | undefined;
     let disposed = false;
+    let registered = false;
+    let watchClosed = false;
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // Idempotently tear down the OS watch — but only once it has actually
+    // registered. Calling `unwatchLocalDir` before the matching
+    // `watchLocalDir` resolves would race ahead of it and leak the OS watcher
+    // (FEC-005). `closeWatch` is a no-op until registration completes; the
+    // start path calls it once registration lands if teardown got there first.
+    const closeWatch = () => {
+      if (watchClosed || !registered) return;
+      watchClosed = true;
+      void unwatchLocalDir(runWatchId).catch(() => {
+        // best-effort teardown
+      });
+    };
 
     const start = async () => {
       try {
-        await watchLocalDir(watchId, path);
+        await watchLocalDir(runWatchId, path);
+        registered = true;
       } catch (err) {
         frontendLog(
           "file_browser",
@@ -56,17 +79,26 @@ export function useLocalDirWatch(
             err instanceof Error ? err.message : String(err)
           }`
         );
+        return;
+      }
+      // Torn down while the watch was registering: cleanup could not unwatch a
+      // watch that did not exist yet, so unwatch it now that it does.
+      if (disposed) {
+        closeWatch();
+        return;
       }
       const off = await onLocalDirChanged((changedWatchId) => {
-        if (changedWatchId !== watchId) return;
+        if (changedWatchId !== runWatchId) return;
         if (debounceTimer) clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => {
           onChangeRef.current();
         }, REFRESH_DEBOUNCE_MS);
       });
-      // The effect may have been torn down while awaiting; drop the listener.
+      // The effect may have been torn down while awaiting the listener; drop it
+      // and tear the (now-registered) watch down.
       if (disposed) {
         off();
+        closeWatch();
       } else {
         unlisten = off;
       }
@@ -77,9 +109,7 @@ export function useLocalDirWatch(
       disposed = true;
       if (debounceTimer) clearTimeout(debounceTimer);
       unlisten?.();
-      void unwatchLocalDir(watchId).catch(() => {
-        // best-effort teardown
-      });
+      closeWatch();
     };
   }, [enabled, path, watchId]);
 }
