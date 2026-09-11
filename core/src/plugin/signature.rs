@@ -35,6 +35,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{Read, Seek};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -231,6 +232,26 @@ pub fn sha256_digest(bytes: &[u8]) -> String {
 #[must_use]
 pub fn key_id_from_public_key(public_key_bytes: &[u8]) -> String {
     sha256_digest(public_key_bytes)
+}
+
+/// Compute the `sha256:`-prefixed digest of a file's contents by streaming it in
+/// chunks, so a large library is never fully buffered in memory.
+///
+/// Produces exactly the same value as [`sha256_digest`] over the file's bytes.
+/// Used by the host loader to re-check a backend library against its signed
+/// digest immediately before `dlopen` (the verify-then-load TOCTOU guard).
+pub fn sha256_file(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{DIGEST_ALGORITHM}:{}", hex::encode(hasher.finalize())))
 }
 
 /// Build the canonical, deterministic signing payload from the key id and the
