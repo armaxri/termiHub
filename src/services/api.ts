@@ -1411,6 +1411,17 @@ export async function localReadFile(path: string): Promise<string> {
   return await invoke<string>("local_read_file", { path });
 }
 
+/**
+ * Get metadata (including size) for a single local file.
+ *
+ * Backs the editor's large-file guard (#PROD-014 / #PERF-002): the frontend
+ * stats before reading so it can warn instead of freezing on a huge file.
+ * Mirrors {@link sessionStat} so local and remote share one guard path.
+ */
+export async function localStat(path: string): Promise<FileEntry> {
+  return await invoke<FileEntry>("local_stat", { path });
+}
+
 /** Write a string to a local file. */
 export async function localWriteFile(path: string, content: string): Promise<void> {
   await invoke("local_write_file", { path, content });

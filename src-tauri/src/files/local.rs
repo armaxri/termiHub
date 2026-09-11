@@ -119,6 +119,20 @@ pub fn read_file_content(path: &str) -> Result<String, TerminalError> {
     std::fs::read_to_string(path).map_err(TerminalError::Io)
 }
 
+/// Get metadata (including size) for a single local file or directory.
+///
+/// Cheap metadata-only lookup used by the editor's large-file guard (#PROD-014,
+/// #PERF-002): the frontend stats before reading so it can warn instead of
+/// blindly loading a huge file into Monaco. Mirrors the remote `session_stat`
+/// path so both transports share one guard.
+pub fn stat(path: &str) -> Result<FileEntry, TerminalError> {
+    use termihub_core::errors::FileError;
+    termihub_core::files::local::stat_sync(path).map_err(|e| match e {
+        FileError::NotFound(p) => TerminalError::NotFound(p),
+        other => TerminalError::EditorError(other.to_string()),
+    })
+}
+
 /// Write a string to a file, creating or overwriting it.
 pub fn write_file_content(path: &str, content: &str) -> Result<(), TerminalError> {
     std::fs::write(path, content).map_err(TerminalError::Io)
@@ -150,6 +164,28 @@ mod tests {
 
         let dir_entry = entries.iter().find(|e| e.name == "subdir").unwrap();
         assert!(dir_entry.is_directory);
+    }
+
+    #[test]
+    fn stat_returns_file_size() {
+        // Backs the editor's large-file guard (#PROD-014 / #PERF-002): the
+        // frontend stats before reading so it can warn on an oversized file.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("hello.txt");
+        std::fs::write(&file, "world!").unwrap();
+
+        let e = stat(file.to_str().unwrap()).unwrap();
+        assert_eq!(e.name, "hello.txt");
+        assert!(!e.is_directory);
+        assert_eq!(e.size, 6);
+    }
+
+    #[test]
+    fn stat_missing_path_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope.txt");
+        let err = stat(missing.to_str().unwrap()).unwrap_err();
+        assert!(matches!(err, TerminalError::NotFound(_)));
     }
 
     #[test]
