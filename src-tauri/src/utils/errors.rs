@@ -26,27 +26,14 @@ pub enum TerminalError {
     #[error("Failed to resize terminal: {0}")]
     ResizeFailed(String),
 
-    #[allow(dead_code)]
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
-
-    #[allow(dead_code)]
-    #[error("Serial port error: {0}")]
-    SerialError(String),
 
     #[error("SSH error: {0}")]
     SshError(String),
 
     #[error("SFTP error: {0}")]
     SftpError(String),
-
-    #[allow(dead_code)]
-    #[error("Telnet error: {0}")]
-    TelnetError(String),
-
-    #[allow(dead_code)]
-    #[error("Docker error: {0}")]
-    DockerError(String),
 
     #[error("Editor error: {0}")]
     EditorError(String),

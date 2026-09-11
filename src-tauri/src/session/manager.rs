@@ -1885,7 +1885,7 @@ impl SessionManager {
         }
 
         // Phase 2: normal streaming with coalescing.
-        let mut coalescer = OutputCoalescer::new(MAX_COALESCE_BYTES);
+        let mut coalescer = OutputCoalescer::new();
         while let Some(first_chunk) = output_rx.recv().await {
             coalescer.push(&first_chunk);
 
