@@ -33,7 +33,10 @@ pub async fn handle_port_scan(params: NetworkPortScanParams) -> Result<NetworkPo
     let results_clone = results.clone();
 
     let on_result = move |r: PortScanResult| {
-        results_clone.lock().unwrap().push(r);
+        results_clone
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(r);
     };
 
     let summary = port_scan::scan_ports(
@@ -47,7 +50,10 @@ pub async fn handle_port_scan(params: NetworkPortScanParams) -> Result<NetworkPo
     .await
     .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let results = Arc::try_unwrap(results).unwrap().into_inner().unwrap();
+    // Drain the shared accumulator instead of reclaiming sole ownership: a
+    // straggler scan task holding an `Arc` clone must never panic the agent
+    // (WA-RS-002 / ERR-005). A poisoned lock degrades to its inner Vec.
+    let results = std::mem::take(&mut *results.lock().unwrap_or_else(|e| e.into_inner()));
     Ok(NetworkPortScanResponse { results, summary })
 }
 
@@ -61,14 +67,19 @@ pub async fn handle_ping(params: NetworkPingParams) -> Result<NetworkPingRespons
     let results_clone = results.clone();
 
     let on_result = move |r: PingResult| {
-        results_clone.lock().unwrap().push(r);
+        results_clone
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(r);
     };
 
     let stats: PingStats = ping::ping_stream(&params.host, interval_ms, count, on_result, cancel)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let results = Arc::try_unwrap(results).unwrap().into_inner().unwrap();
+    // Drain the shared accumulator; never reclaim sole `Arc` ownership on a
+    // path where a spawned task may still hold a clone (WA-RS-002 / ERR-005).
+    let results = std::mem::take(&mut *results.lock().unwrap_or_else(|e| e.into_inner()));
     Ok(NetworkPingResponse { results, stats })
 }
 
@@ -97,14 +108,16 @@ pub async fn handle_traceroute(
     let hops_clone = hops.clone();
 
     let on_hop = move |h: TracerouteHop| {
-        hops_clone.lock().unwrap().push(h);
+        hops_clone.lock().unwrap_or_else(|e| e.into_inner()).push(h);
     };
 
     traceroute::traceroute(&params.host, max_hops, on_hop, cancel)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    let hops = Arc::try_unwrap(hops).unwrap().into_inner().unwrap();
+    // Drain the shared accumulator; never reclaim sole `Arc` ownership on a
+    // path where a spawned task may still hold a clone (WA-RS-002 / ERR-005).
+    let hops = std::mem::take(&mut *hops.lock().unwrap_or_else(|e| e.into_inner()));
     Ok(NetworkTracerouteResponse { hops })
 }
 
@@ -127,5 +140,68 @@ fn parse_record_type(s: &str) -> Result<DnsRecordType> {
         "PTR" => Ok(DnsRecordType::Ptr),
         "ANY" => Ok(DnsRecordType::Any),
         _ => anyhow::bail!("Unknown DNS record type: {s}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drain the shared accumulator exactly the way the handlers do, then
+    /// return it. This is the collection path under test — no `Arc::try_unwrap`.
+    fn drain<T>(acc: &Arc<Mutex<Vec<T>>>) -> Vec<T> {
+        std::mem::take(&mut *acc.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// The regression: even if a spawned task still holds a clone of the `Arc`
+    /// when the results are collected, draining must return the accumulated
+    /// values without panicking. The old
+    /// `Arc::try_unwrap(...).unwrap().into_inner().unwrap()` would panic here
+    /// because the strong count is > 1 (WA-RS-002 / ERR-005).
+    #[test]
+    fn drain_does_not_panic_with_residual_arc_clone() {
+        let acc: Arc<Mutex<Vec<u16>>> = Arc::new(Mutex::new(Vec::new()));
+        let straggler = acc.clone(); // a task that has not dropped its clone yet
+        acc.lock().unwrap().extend([22u16, 80, 443]);
+
+        assert_eq!(Arc::strong_count(&acc), 2, "a clone is still alive");
+        let collected = drain(&acc);
+
+        assert_eq!(collected, vec![22, 80, 443]);
+        // The surviving clone is now an empty shared buffer, not a panic.
+        assert!(straggler.lock().unwrap().is_empty());
+    }
+
+    /// A poisoned lock must degrade to its inner value, never crash the agent.
+    #[test]
+    fn drain_tolerates_poisoned_lock() {
+        let acc: Arc<Mutex<Vec<u16>>> = Arc::new(Mutex::new(vec![1, 2, 3]));
+        let poison = acc.clone();
+        let _ = std::thread::spawn(move || {
+            let _guard = poison.lock().unwrap();
+            panic!("poison the mutex");
+        })
+        .join();
+
+        assert!(acc.is_poisoned());
+        assert_eq!(drain(&acc), vec![1, 2, 3]);
+    }
+
+    /// Exercise the real port-scan handler end to end: every requested port
+    /// yields exactly one result (open or closed), and collection returns them
+    /// all without panicking.
+    #[tokio::test]
+    async fn handle_port_scan_collects_all_results() {
+        let params = NetworkPortScanParams {
+            host: "127.0.0.1".to_string(),
+            ports: "9,13".to_string(),
+            timeout_ms: Some(200),
+            concurrency: Some(4),
+        };
+
+        let resp = handle_port_scan(params).await.expect("scan should succeed");
+
+        assert_eq!(resp.results.len(), 2, "one result per requested port");
+        assert_eq!(resp.summary.total, 2);
     }
 }
