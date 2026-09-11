@@ -13,7 +13,8 @@ evidence:
   - agent/src/session/manager.rs:660
   - agent/src/session/manager.rs:671
   - agent/src/daemon/client.rs:97
-status: open
+status: fixed
+resolution: "#2788 — three-phase create: reserve id in pending_creates → connect w/o sessions lock → re-acquire to insert"
 ---
 
 ## What

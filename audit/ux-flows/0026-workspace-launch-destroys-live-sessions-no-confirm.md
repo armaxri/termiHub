@@ -10,7 +10,8 @@ evidence:
   - src/store/appStore.ts:7641
   - src/components/WorkspaceSidebar/WorkspaceSidebar.tsx:36
   - src/components/WorkspaceSidebar/WorkspaceSidebar.tsx:147
-status: open
+status: fixed
+resolution: "#2775"
 ---
 
 ## What

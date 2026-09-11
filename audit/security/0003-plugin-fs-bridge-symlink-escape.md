@@ -11,7 +11,8 @@ evidence:
   - core/src/plugin/security.rs:242
   - core/src/plugin/capabilities.rs:344
   - core/src/plugin/capabilities.rs:384
-status: open
+status: fixed
+resolution: "#2783 — plugin soundness"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: core/backends
 evidence:
   - core/src/backends/ssh/file_browser.rs:250
   - core/src/backends/docker/file_browser.rs:204
-status: open
+status: fixed
+resolution: "#2780 — remote read cap"
 ---
 
 ## What

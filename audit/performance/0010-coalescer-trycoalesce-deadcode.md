@@ -10,7 +10,8 @@ evidence:
   - core/src/output/coalescer.rs:37
   - core/src/output/coalescer.rs:41
   - src-tauri/src/session/manager.rs:1870
-status: open
+status: fixed
+resolution: "#2785 — try_coalesce + max_batch_bytes removed"
 ---
 
 ## What

@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:220
   - src-tauri/src/layout/store.rs:213
   - src-tauri/src/terminal/xserver/manager.rs:18
-status: open
+status: in-progress
+resolution: "#2785 — removable rust subset done; DEAD-012 + layout snapshot + retain_agent_config(#2472) remain; ConnectionFailed/AgentRpcClient kept (audit stale)"
 ---
 
 ## What

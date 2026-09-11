@@ -10,7 +10,8 @@ evidence:
   - src/components/Sidebar/FileBrowser.tsx:516
   - core/src/files/browser.rs:27
   - core/src/files/mod.rs:22
-status: open
+status: fixed
+resolution: "#2774"
 ---
 
 ## What

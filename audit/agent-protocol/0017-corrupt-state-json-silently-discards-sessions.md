@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: agent/src/state/persistence.rs
 evidence:
   - agent/src/state/persistence.rs:80
-status: open
+status: fixed
+resolution: "#2778"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/hooks/useTauriEvents.ts
 evidence:
   - src/hooks/useTauriEvents.ts:5
-status: open
+status: fixed
+resolution: "#2730 — useTauriEvents removed as FEC-015 in #2730"
 ---
 
 ## What

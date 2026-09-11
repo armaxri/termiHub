@@ -9,7 +9,8 @@ subsystem: src/components/FileEditor
 evidence:
   - src/components/FileEditor/FileEditor.tsx:640
   - src/hooks/useLocalDirWatch.ts:49
-status: open
+status: fixed
+resolution: "#2777"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/embedded_servers/tftp
 evidence:
   - core/src/embedded_servers/tftp_server.rs
-status: open
+status: fixed
+resolution: "#2786 — tftp streams upload/download + 100MiB max_transfer_bytes cap"
 ---
 
 ## What

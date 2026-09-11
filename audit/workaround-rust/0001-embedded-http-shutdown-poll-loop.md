@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: core/embedded_servers
 evidence:
   - core/src/embedded_servers/http_server.rs:236
-status: open
+status: fixed
+resolution: "#2781 — http-event shutdown"
 ---
 
 ## What

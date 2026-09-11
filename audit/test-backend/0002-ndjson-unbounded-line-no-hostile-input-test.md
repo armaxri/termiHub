@@ -10,7 +10,8 @@ evidence:
   - core/src/ipc/ndjson.rs:35
   - core/src/ipc/ndjson.rs:40
   - core/src/ipc/ndjson.rs:48
-status: open
+status: fixed
+resolution: "#2725 — MAX_LINE_LEN 16MiB cap + read_line_capped + over-cap/boundary/EOF/non-utf8 tests all landed with CORE-002"
 ---
 
 ## What

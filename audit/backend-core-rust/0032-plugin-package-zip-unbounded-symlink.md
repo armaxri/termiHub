@@ -9,7 +9,8 @@ subsystem: core/plugin
 evidence:
   - core/src/plugin/pack.rs
   - core/src/plugin/package.rs
-status: open
+status: fixed
+resolution: "#2787 — entry-count cap 8192 + symlink-entry rejection (size caps + traversal guard already present)"
 ---
 
 ## What

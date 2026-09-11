@@ -9,7 +9,8 @@ subsystem: core/plugin
 evidence:
   - core/src/plugin/connection.rs:57
   - core/src/plugin/connection.rs:74
-status: open
+status: fixed
+resolution: "#2783 — plugin path-containment soundness"
 ---
 
 ## What

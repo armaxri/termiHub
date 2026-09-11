@@ -10,7 +10,8 @@ evidence:
   - src/components/TunnelSidebar/TunnelListItem.tsx:199
   - src/components/TunnelSidebar/TunnelListItem.tsx:182
   - src/components/TunnelSidebar/TunnelSidebar.tsx:96
-status: open
+status: fixed
+resolution: "#2775"
 ---
 
 ## What

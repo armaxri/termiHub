@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/session_projection/projection.rs:160
   - src-tauri/src/session_projection/redrive.rs:181
   - src/store/appStore.ts:6021
-status: open
+status: fixed
+resolution: "#2789 — agent recover fold guarded on status==Reconnecting; tears down recovered session if user cancelled"
 ---
 
 ## What

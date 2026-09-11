@@ -11,7 +11,8 @@ evidence:
   - src/components/DynamicForm/agentSchema.ts:116
   - src/types/terminal.ts:301
   - src/components/DynamicForm/agentSchema.ts:104
-status: open
+status: fixed
+resolution: "#2779"
 ---
 
 ## What

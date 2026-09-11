@@ -9,7 +9,8 @@ subsystem: core/plugin
 evidence:
   - core/src/plugin/security.rs:219
   - core/src/plugin/security.rs:235
-status: open
+status: fixed
+resolution: "#2783"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: src/components/FileEditor
 evidence:
   - src/components/FileEditor/FileEditor.tsx:324
   - src/components/FileEditor/FileEditor.tsx:366
-status: open
+status: fixed
+resolution: "#2784 — file-editor dirty guard"
 ---
 
 ## What

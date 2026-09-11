@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/session/remote_proxy.rs:682
   - src-tauri/src/session/remote_proxy.rs:707
   - core/src/monitoring/status.rs:23
-status: open
+status: fixed
+resolution: "#2776"
 ---
 
 ## What

@@ -11,7 +11,8 @@ evidence:
   - agent/src/state/persistence.rs:93
   - agent/src/state/persistence.rs:13
   - agent/src/state/persistence.rs:104
-status: open
+status: fixed
+resolution: "#2778"
 ---
 
 ## What

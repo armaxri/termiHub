@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/output/session_log
 evidence:
   - core/src/output/session_log.rs:254
-status: open
+status: fixed
+resolution: "#2781"
 ---
 
 ## What

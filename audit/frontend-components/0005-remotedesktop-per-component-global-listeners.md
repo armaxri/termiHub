@@ -10,7 +10,8 @@ evidence:
   - src/components/RemoteDesktop/RemoteDesktopCanvas.tsx:172
   - src/components/RemoteDesktop/RemoteDesktopCanvas.tsx:203
   - src/hooks/useRemoteDesktopSession.ts:214
-status: open
+status: fixed
+resolution: "#2777"
 ---
 
 ## What
