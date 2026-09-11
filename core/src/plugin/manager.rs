@@ -45,8 +45,9 @@ use thiserror::Error;
 
 use super::manifest::{is_valid_plugin_id, parse_manifest, ApiCompatibility, PluginManifest};
 use super::package::{
-    check_package_size, read_entry_bounded, validate_package, PluginPackageError,
+    check_entry_count, check_package_size, read_entry_bounded, validate_package, PluginPackageError,
     MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES, MAX_DECOMPRESSED_TOTAL_BYTES,
+    MAX_PACKAGE_ENTRIES,
 };
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
 use super::signature::{self, VerifiedArchive};
@@ -169,6 +170,13 @@ pub enum PluginManagerError {
     /// zip-slip attempt. The install is refused.
     #[error("plugin package contains an unsafe entry path: `{0}`")]
     UnsafePath(String),
+
+    /// A package entry is a symbolic link. Even when its own path is contained,
+    /// an extracted symlink can point outside the plugin directory and be
+    /// followed by a later step (or the plugin at runtime), escaping the sandbox.
+    /// Such an entry is refused rather than created.
+    #[error("plugin package contains a symbolic-link entry: `{0}`")]
+    SymlinkEntry(String),
 
     /// A requested plugin file path escapes the plugin directory.
     #[error("path `{0}` escapes the plugin directory")]
@@ -875,6 +883,11 @@ fn extract_package_with_limits(
     let mut archive =
         zip::ZipArchive::new(file).map_err(|e| PluginManagerError::Extract(e.to_string()))?;
 
+    // Reject an absurd entry count before extracting anything — a many-entry
+    // archive is a resource-exhaustion vector (one create per entry) independent
+    // of each entry's decompressed size, which is bounded separately below.
+    check_entry_count(archive.len(), MAX_PACKAGE_ENTRIES)?;
+
     // Re-verify against this open archive and resolve the digest map the written
     // bytes must match. `Some(map)` means "bind every entry to this"; `None` means
     // an unsigned, accepted-risk package with nothing to bind.
@@ -918,6 +931,15 @@ fn extract_package_with_limits(
             .by_index(i)
             .map_err(|e| PluginManagerError::Extract(e.to_string()))?;
         let raw_name = entry.name().to_string();
+
+        // Reject symlink entries outright: a symlink extracted to disk can point
+        // outside the plugin dir and be followed later, escaping the sandbox even
+        // when its own archive path is contained. Checked before `enclosed_name`
+        // so a symlink is refused regardless of where it claims to live.
+        if entry.is_symlink() {
+            return Err(PluginManagerError::SymlinkEntry(raw_name));
+        }
+
         let safe = entry
             .enclosed_name()
             .ok_or_else(|| PluginManagerError::UnsafePath(raw_name.clone()))?;

@@ -269,7 +269,12 @@ fn write_archive(
 /// Recursively add a directory's files to the archive under `zip_prefix`.
 ///
 /// Entries are added in sorted order for a deterministic archive, and dotfiles
-/// (e.g. `.DS_Store`) are skipped.
+/// (e.g. `.DS_Store`) are skipped. Symlinks are skipped rather than followed: the
+/// file type is read via [`std::fs::DirEntry::file_type`] (which does *not* follow
+/// symlinks), so a symlinked file or directory in the source tree is never
+/// packaged — the archive never carries a symlink entry, and packing never
+/// recurses through a link out of the source tree (which could otherwise embed
+/// external content or loop). This mirrors the extractor's symlink rejection.
 fn add_dir(
     zip: &mut ZipWriter<File>,
     abs_dir: &Path,
@@ -285,9 +290,14 @@ fn add_dir(
         if name.starts_with('.') {
             continue;
         }
+        // Read the type without following symlinks; skip any symlink entry.
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
         let abs = entry.path();
         let zip_path = format!("{zip_prefix}/{name}");
-        if abs.is_dir() {
+        if file_type.is_dir() {
             add_dir(zip, &abs, &zip_path, opts)?;
         } else {
             add_file(zip, &abs, &zip_path, opts)?;
