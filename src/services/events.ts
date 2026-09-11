@@ -52,6 +52,29 @@ export function base64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
+/**
+ * Encode bytes as a base64 (standard alphabet, padded) string.
+ *
+ * Exact inverse of {@link base64ToBytes} and of the Rust `encode_file_bytes` /
+ * `serialize_bytes_base64` encoders. Byte-for-byte faithful for all values
+ * 0x00–0xFF (high bytes and non-UTF8 sequences survive intact); an empty array
+ * encodes to the empty string. Used to ship file bytes over IPC as a compact
+ * base64 string instead of serde's JSON number-array (~4x bloat), on the
+ * `session_write_file` write path (PERF-002).
+ *
+ * Chunks the `String.fromCharCode` calls to avoid the argument-count limit that
+ * a single spread over a multi-megabyte buffer would hit.
+ */
+export function bytesToBase64(bytes: Uint8Array | number[]): string {
+  const arr = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes);
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < arr.length; i += chunkSize) {
+    binary += String.fromCharCode(...arr.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 interface TerminalExitPayload {
   session_id: string;
   exit_code: number | null;

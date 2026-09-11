@@ -150,7 +150,7 @@ export function useSessionFileSystem() {
       // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip.
       const data = await sessionReadFile(sessionFileBrowserId, remotePath);
       const { writeFile } = await import("@tauri-apps/plugin-fs");
-      await writeFile(localPath, new Uint8Array(data));
+      await writeFile(localPath, data);
     },
     [sessionFileBrowserId, sftpCapable, startDownload]
   );
@@ -177,7 +177,7 @@ export function useSessionFileSystem() {
     // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip.
     const { readFile } = await import("@tauri-apps/plugin-fs");
     const data = await readFile(localPath as string);
-    await sessionWriteFile(sessionFileBrowserId, remotePath, Array.from(data));
+    await sessionWriteFile(sessionFileBrowserId, remotePath, data);
     refreshSession();
   }, [sessionFileBrowserId, sessionCurrentPath, refreshSession, sftpCapable, startUpload]);
 
@@ -201,7 +201,7 @@ export function useSessionFileSystem() {
       // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip.
       const { readFile } = await import("@tauri-apps/plugin-fs");
       const data = await readFile(localPath);
-      await sessionWriteFile(sessionFileBrowserId, remotePath, Array.from(data));
+      await sessionWriteFile(sessionFileBrowserId, remotePath, data);
       refreshSession();
     },
     [sessionFileBrowserId, sessionCurrentPath, refreshSession, sftpCapable, startUpload]
@@ -349,7 +349,7 @@ export function useSessionFileSystem() {
           // Byte-based fallback (Docker / FTP / remote-agent).
           const { readFile } = await import("@tauri-apps/plugin-fs");
           const data = await readFile(clipEntry.path);
-          await sessionWriteFile(sessionFileBrowserId, destPath, Array.from(data));
+          await sessionWriteFile(sessionFileBrowserId, destPath, data);
         }
       }
       // sftp→session: not supported (no legacy SFTP source pane remains post-#2421)
