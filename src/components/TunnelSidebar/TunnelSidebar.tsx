@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
-import { Button, toast } from "@/components/ui";
+import { Button, toast, ConfirmDialog } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
@@ -35,6 +35,23 @@ export function TunnelSidebar() {
   // Tunnel pending delete confirmation (active teardown, chained-pair cascade, or
   // a direct companion delete that breaks localhost), or null when idle.
   const [pendingDelete, setPendingDelete] = useState<{ id: string; message: string } | null>(null);
+  // A live tunnel pending a Stop / force-Reconnect confirmation (UX-021): both
+  // drop every connection currently forwarded through it, so they are guarded
+  // like Delete. Null when idle.
+  const [pendingLifecycle, setPendingLifecycle] = useState<{
+    id: string;
+    name: string;
+    kind: "stop" | "reconnect";
+  } | null>(null);
+
+  // Only a "connected" tunnel actually carries established, in-use forwards.
+  // A "connecting"/"reconnecting" tunnel has none yet (they were already torn
+  // down), so stopping it there is a cheap cancel — gate the confirm on the
+  // connected state so the prompt is accurate and idle actions are not nagged.
+  const carriesLiveForwards = useCallback(
+    (tunnelId: string) => tunnelStates[tunnelId]?.status === "connected",
+    [tunnelStates]
+  );
 
   const handleNew = useCallback(() => {
     openTunnelEditorTab(null);
@@ -115,6 +132,40 @@ export function TunnelSidebar() {
 
   const cancelDelete = useCallback(() => setPendingDelete(null), []);
 
+  // Stopping a live tunnel drops every connection flowing through it — confirm
+  // first (UX-021). A tunnel with no live forwards has nothing to lose, so stop
+  // directly (e.g. cancelling a hung connect).
+  const handleStop = useCallback(
+    (tunnelId: string) => {
+      if (!carriesLiveForwards(tunnelId)) return stopTunnel(tunnelId);
+      const target = tunnels.find((t) => t.id === tunnelId);
+      setPendingLifecycle({ id: tunnelId, name: target?.name ?? "this tunnel", kind: "stop" });
+    },
+    [carriesLiveForwards, stopTunnel, tunnels]
+  );
+
+  // Force-Reconnect tears a live tunnel down and re-establishes it, dropping its
+  // active forwards (tunnelSlice.ts). Confirm when it carries live forwards;
+  // otherwise reconnect directly.
+  const handleReconnect = useCallback(
+    (tunnelId: string) => {
+      if (!carriesLiveForwards(tunnelId)) return reconnectTunnel(tunnelId);
+      const target = tunnels.find((t) => t.id === tunnelId);
+      setPendingLifecycle({ id: tunnelId, name: target?.name ?? "this tunnel", kind: "reconnect" });
+    },
+    [carriesLiveForwards, reconnectTunnel, tunnels]
+  );
+
+  const confirmLifecycle = useCallback(() => {
+    if (!pendingLifecycle) return;
+    const { id, kind } = pendingLifecycle;
+    setPendingLifecycle(null);
+    if (kind === "stop") void stopTunnel(id);
+    else void reconnectTunnel(id);
+  }, [pendingLifecycle, stopTunnel, reconnectTunnel]);
+
+  const cancelLifecycle = useCallback(() => setPendingLifecycle(null), []);
+
   // Order rows so each chained companion (#2597) renders directly beneath its
   // parent, then flatten to the nav order. Keyboard nav walks the same visible
   // order, including nested companion rows.
@@ -183,8 +234,8 @@ export function TunnelSidebar() {
                 state={tunnelStates[tunnel.id]}
                 connections={connections}
                 onStart={startTunnel}
-                onStop={stopTunnel}
-                onReconnect={reconnectTunnel}
+                onStop={handleStop}
+                onReconnect={handleReconnect}
                 onEdit={handleEdit}
                 onDuplicate={handleDuplicate}
                 onDelete={handleDelete}
@@ -204,6 +255,30 @@ export function TunnelSidebar() {
         message={pendingDelete?.message ?? ""}
         onConfirm={confirmDelete}
         onCancel={cancelDelete}
+      />
+      <ConfirmDialog
+        open={pendingLifecycle !== null}
+        variant="danger"
+        title={
+          pendingLifecycle?.kind === "reconnect"
+            ? "Reconnect active tunnel?"
+            : "Stop active tunnel?"
+        }
+        message={
+          pendingLifecycle
+            ? pendingLifecycle.kind === "reconnect"
+              ? `Reconnecting "${pendingLifecycle.name}" tears it down and re-establishes it, ` +
+                `dropping every connection currently forwarded through it. Continue?`
+              : `Stopping "${pendingLifecycle.name}" drops every connection currently forwarded ` +
+                `through it. Continue?`
+            : ""
+        }
+        confirmLabel={pendingLifecycle?.kind === "reconnect" ? "Reconnect" : "Stop"}
+        confirmVariant="danger"
+        testIdBase="confirm-tunnel-lifecycle"
+        data-testid="confirm-tunnel-lifecycle-dialog"
+        onConfirm={confirmLifecycle}
+        onCancel={cancelLifecycle}
       />
     </div>
   );
