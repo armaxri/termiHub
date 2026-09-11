@@ -11,6 +11,7 @@
 
 import { ConnectionFolder, JumpHostConfig, SavedConnection } from "@/types/connection";
 import { ConnectionConfig } from "@/types/terminal";
+import type { SettingsField, SettingsSchema } from "@/types/schema";
 
 /**
  * Extract the jump-host chain from a connection config.
@@ -157,4 +158,56 @@ export function sshJumpHostOptions(
     .filter((c) => c.config.type === "ssh" && c.id !== excludeId)
     .map((c) => ({ id: c.id, label: connectionPathLabel(c, folders) }))
     .sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/**
+ * The SSH-schema field keys that make up an inline jump-host hop, in display
+ * order. An inline hop *is* an SSH-style host, so it reuses the very fields the
+ * SSH connection schema already declares — including the `authMethod` options
+ * and the `keyPath`/`password` conditional visibility — rather than a bespoke,
+ * drift-prone copy (UISF-014).
+ */
+const INLINE_HOP_FIELD_KEYS = [
+  "host",
+  "port",
+  "username",
+  "authMethod",
+  "keyPath",
+  "password",
+] as const;
+
+/**
+ * Per-hop connect/handshake timeout (#951). This is jump-host-specific — the SSH
+ * schema's own `connectTimeoutSecs` governs the *target*, not a hop — so it is
+ * declared here as a schema field and rendered through the same schema-driven
+ * `DynamicField` as every other hop field. Its `key` matches `JumpHostConfig`.
+ */
+export const JUMP_HOST_CONNECT_TIMEOUT_FIELD: SettingsField = {
+  key: "connectTimeoutSecs",
+  label: "Connect Timeout (s)",
+  fieldType: { type: "number", min: 1, max: 300 },
+  required: false,
+  placeholder: "Default (45 s)",
+};
+
+/**
+ * Build the ordered field list for an inline jump-host hop from the SSH
+ * connection schema, so the hop editor renders the exact same host / port /
+ * username / auth-method / key / password fields (labels, options, and
+ * conditional visibility) as the primary SSH connection form — driven from one
+ * schema, never hand-rolled. The per-hop connect-timeout field is appended.
+ *
+ * When no SSH schema is available yet (the connection-type registry is still
+ * loading) only the connect-timeout field is returned; the schema-sourced
+ * fields appear as soon as the registry resolves.
+ */
+export function jumpHostInlineFields(sshSchema: SettingsSchema | undefined): SettingsField[] {
+  const byKey = new Map<string, SettingsField>();
+  for (const group of sshSchema?.groups ?? []) {
+    for (const field of group.fields) byKey.set(field.key, field);
+  }
+  const sourced = INLINE_HOP_FIELD_KEYS.map((key) => byKey.get(key)).filter(
+    (field): field is SettingsField => field !== undefined
+  );
+  return [...sourced, JUMP_HOST_CONNECT_TIMEOUT_FIELD];
 }
