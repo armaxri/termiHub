@@ -144,7 +144,12 @@
   --shadow-overlay:
     0 24px 64px rgba(0, 0, 0, 0.75), 0 8px 24px rgba(0, 0, 0, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.055);
-  --shadow-focus: 0 0 0 3px rgba(61, 125, 232, 0.22);
+  /* Focus ring for primitives: a strong double ring (2px backing + 2px solid
+     accent) mirroring the global :focus-visible indicator, so a focused control
+     is clearly visible on every surface. A11Y-007 (WCAG 2.4.7 / 1.4.11): the
+     former 22%-alpha single ring was too faint and failed 3:1 non-text
+     contrast. */
+  --shadow-focus: 0 0 0 2px var(--bg-primary), 0 0 0 4px var(--focus-border);
 
   /* Border radius */
   --radius-xs: 2px;
