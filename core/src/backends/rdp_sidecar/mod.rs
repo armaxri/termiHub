@@ -128,6 +128,77 @@ fn io_error(message: impl Into<String>) -> SessionError {
     SessionError::Io(std::io::Error::other(message.into()))
 }
 
+/// Hard ceiling on the number of chunks a single clipboard fetch may consume
+/// before it is treated as an abusive stream (CORE-014). Bounds the loop even
+/// when the remote advertised no size; with 8 MiB chunks this still allows an
+/// enormous legitimate transfer while stopping an endless stream dead.
+const MAX_CLIPBOARD_FETCH_CHUNKS: u64 = 1_000_000;
+
+/// What to do with a clipboard-fetch chunk once it has passed the progress,
+/// ordering and size guards computed by [`plan_clipboard_chunk`].
+#[derive(Debug, PartialEq, Eq)]
+enum ChunkPlan {
+    /// Write the chunk's bytes, then keep reading more chunks.
+    Continue,
+    /// Write the chunk's bytes, flush, and finish the fetch.
+    Finish,
+}
+
+/// Validate an incoming clipboard-fetch chunk before any bytes touch disk and
+/// decide whether it completes the transfer.
+///
+/// This is the guard that keeps the fetch loop from hanging (CORE-014). Every
+/// non-final chunk must make forward progress — a zero-length non-final chunk
+/// is rejected outright, so a buggy or hostile sidecar cannot stream endless
+/// empty chunks that never trip the size cap and never set `last`. As a further
+/// backstop the total chunk count is bounded, guaranteeing termination even
+/// when the remote advertised no size. Kept pure so the guard is unit-testable
+/// without a live sidecar or real sockets.
+///
+/// * `position` – the chunk's declared byte offset (must equal `written`).
+/// * `data_len` – the chunk's payload length in bytes.
+/// * `last` – whether the remote marked this the final chunk.
+/// * `written` – bytes already staged for this fetch.
+/// * `chunk_index` – count of chunks already accepted for this fetch.
+/// * `cap` – the advertised total size, if any; extra bytes beyond it are refused.
+fn plan_clipboard_chunk(
+    position: u64,
+    data_len: u64,
+    last: bool,
+    written: u64,
+    chunk_index: u64,
+    cap: Option<u64>,
+) -> Result<ChunkPlan, String> {
+    if chunk_index >= MAX_CLIPBOARD_FETCH_CHUNKS {
+        return Err(format!(
+            "clipboard file fetch exceeded {MAX_CLIPBOARD_FETCH_CHUNKS} chunks without completing"
+        ));
+    }
+    // Chunks must arrive in order and stay contiguous.
+    if position != written {
+        return Err(format!(
+            "clipboard file chunk out of order (expected {written}, got {position})"
+        ));
+    }
+    // A zero-length non-final chunk makes no progress: it leaves `written`
+    // unchanged so the size cap is never tripped and `last` may never arrive.
+    // Reject it rather than looping forever.
+    if data_len == 0 && !last {
+        return Err("clipboard file sent an empty non-final chunk".to_string());
+    }
+    // A lying remote cannot make us write past the advertised size.
+    if let Some(max) = cap {
+        if written.saturating_add(data_len) > max {
+            return Err("clipboard file exceeded its advertised size".to_string());
+        }
+    }
+    Ok(if last {
+        ChunkPlan::Finish
+    } else {
+        ChunkPlan::Continue
+    })
+}
+
 /// Validate a remote-supplied basename before it becomes a host temp-file name
 /// (#1793) — defence in depth over the sidecar's own sanitisation. Rejects an
 /// empty name, `.`/`..`, and anything carrying a path separator, drive-letter
@@ -750,6 +821,7 @@ impl GraphicalBackend for SidecarRdp {
             .map_err(|e| io_error(format!("failed to stage clipboard file: {e}")))?;
         let cap = meta.size; // advertised size; extra bytes beyond it are refused
         let mut written: u64 = 0;
+        let mut chunk_index: u64 = 0;
         loop {
             match rx.recv().await {
                 Some(FetchEvent::Chunk {
@@ -757,24 +829,23 @@ impl GraphicalBackend for SidecarRdp {
                     data,
                     last,
                 }) => {
-                    // Chunks must arrive in order and stay within the advertised
-                    // size (a lying remote cannot make us write unboundedly).
-                    if position != written {
-                        return Err(io_error(format!(
-                            "clipboard file chunk out of order (expected {written}, got {position})"
-                        )));
-                    }
-                    if let Some(max) = cap {
-                        if written.saturating_add(data.len() as u64) > max {
-                            return Err(io_error(
-                                "clipboard file exceeded its advertised size".to_string(),
-                            ));
-                        }
-                    }
+                    // Validate ordering, forward progress and the size cap before
+                    // writing anything (CORE-014): an empty non-final chunk or an
+                    // unbounded chunk stream is refused instead of hanging.
+                    let plan = plan_clipboard_chunk(
+                        position,
+                        data.len() as u64,
+                        last,
+                        written,
+                        chunk_index,
+                        cap,
+                    )
+                    .map_err(io_error)?;
+                    chunk_index += 1;
                     file.write_all(&data)
                         .map_err(|e| io_error(format!("failed to stage chunk: {e}")))?;
                     written += data.len() as u64;
-                    if last {
+                    if plan == ChunkPlan::Finish {
                         file.flush()
                             .map_err(|e| io_error(format!("failed to flush stage: {e}")))?;
                         return Ok(staged);
@@ -832,6 +903,77 @@ mod tests {
     #[test]
     fn graphical_none_until_connected() {
         assert!(SidecarRdp::new().graphical().is_none());
+    }
+
+    // ── clipboard-fetch progress guard (CORE-014) ─────────────────────────────
+
+    /// Replays a chunk stream through `plan_clipboard_chunk` exactly as the fetch
+    /// loop does (advancing `written`/`chunk_index`, stopping on `Finish`), so
+    /// the guard can be exercised deterministically without a live sidecar. A
+    /// stream that never yields `Finish` and never errors would hang the real
+    /// loop; here that shows up as running off the end of `chunks`.
+    fn drive_fetch(chunks: &[(u64, u64, bool)], cap: Option<u64>) -> Result<u64, String> {
+        let mut written: u64 = 0;
+        for (chunk_index, &(position, data_len, last)) in (0_u64..).zip(chunks.iter()) {
+            let plan = plan_clipboard_chunk(position, data_len, last, written, chunk_index, cap)?;
+            written += data_len;
+            if plan == ChunkPlan::Finish {
+                return Ok(written);
+            }
+        }
+        // The stream ended without a final chunk — the real loop would keep
+        // awaiting more (or see the channel close); surface it distinctly.
+        Err("stream ended without a final chunk".to_string())
+    }
+
+    #[test]
+    fn empty_non_final_chunk_is_rejected_not_looped() {
+        // A single empty non-final chunk must error immediately rather than
+        // leaving the loop waiting forever.
+        let err = drive_fetch(&[(0, 0, false)], Some(100)).unwrap_err();
+        assert!(err.contains("empty non-final chunk"), "got: {err}");
+    }
+
+    #[test]
+    fn endless_empty_non_final_stream_terminates_with_error() {
+        // A peer streaming nothing but empty non-final chunks must be stopped;
+        // the guard fails on the first one so this can never spin.
+        let stream = vec![(0u64, 0u64, false); 10_000];
+        let err = drive_fetch(&stream, None).unwrap_err();
+        assert!(err.contains("empty non-final chunk"), "got: {err}");
+    }
+
+    #[test]
+    fn normal_multi_chunk_transfer_succeeds() {
+        // Three ordered non-empty chunks, the last flagged final, complete fine.
+        let stream = vec![(0, 4, false), (4, 4, false), (8, 2, true)];
+        assert_eq!(drive_fetch(&stream, Some(10)).unwrap(), 10);
+    }
+
+    #[test]
+    fn empty_final_chunk_is_allowed() {
+        // A zero-byte file (empty but final chunk) is legitimate and must end.
+        assert_eq!(drive_fetch(&[(0, 0, true)], Some(0)).unwrap(), 0);
+    }
+
+    #[test]
+    fn out_of_order_chunk_is_rejected() {
+        let err = drive_fetch(&[(0, 4, false), (99, 4, true)], None).unwrap_err();
+        assert!(err.contains("out of order"), "got: {err}");
+    }
+
+    #[test]
+    fn exceeding_advertised_size_is_rejected() {
+        let err = drive_fetch(&[(0, 4, false), (4, 8, true)], Some(10)).unwrap_err();
+        assert!(err.contains("exceeded its advertised size"), "got: {err}");
+    }
+
+    #[test]
+    fn chunk_count_ceiling_is_enforced() {
+        // At the ceiling the next chunk is rejected regardless of its contents,
+        // bounding the loop even when no size was advertised.
+        let plan = plan_clipboard_chunk(0, 4, false, 0, MAX_CLIPBOARD_FETCH_CHUNKS, None);
+        assert!(plan.unwrap_err().contains("without completing"));
     }
 
     #[test]
