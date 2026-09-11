@@ -114,6 +114,24 @@ impl Default for Ssh {
     }
 }
 
+/// Parse the `port` setting into a `u16`, defaulting to `22`.
+///
+/// Accepts either a JSON number or a numeric string. An out-of-range value is
+/// **rejected** rather than silently rewritten: the numeric branch uses a
+/// checked [`u16::try_from`] instead of a wrapping `as` cast, so a numeric
+/// `70000` falls back to the default `22` exactly as the string `"70000"`
+/// already did — the two branches now agree (CORE-006). Previously `n as u16`
+/// truncated (`65536` → `0`, `70000` → `4464`), silently targeting the wrong
+/// port.
+fn parse_port_setting(port: Option<&serde_json::Value>) -> u16 {
+    port.and_then(|v| {
+        v.as_u64()
+            .and_then(|n| u16::try_from(n).ok())
+            .or_else(|| v.as_str().and_then(|s| s.parse::<u16>().ok()))
+    })
+    .unwrap_or(22)
+}
+
 /// Parse settings JSON into an `SshConfig`.
 pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
     let str_field = |key: &str| -> String {
@@ -144,14 +162,7 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         })
     };
 
-    let port: u16 = settings
-        .get("port")
-        .and_then(|v| {
-            v.as_u64()
-                .map(|n| n as u16)
-                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-        })
-        .unwrap_or(22);
+    let port: u16 = parse_port_setting(settings.get("port"));
 
     let env = settings
         .get("env")
@@ -1419,6 +1430,63 @@ mod tests {
         });
         let config = parse_ssh_settings(&settings);
         assert_eq!(config.port, 2222);
+    }
+
+    // --- Port parsing (CORE-006): checked conversion, no wrapping ---
+
+    #[test]
+    fn parse_port_setting_valid_numeric() {
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(2222))), 2222);
+    }
+
+    #[test]
+    fn parse_port_setting_valid_string() {
+        assert_eq!(parse_port_setting(Some(&serde_json::json!("2222"))), 2222);
+    }
+
+    #[test]
+    fn parse_port_setting_missing_defaults_to_22() {
+        assert_eq!(parse_port_setting(None), 22);
+    }
+
+    /// Regression for CORE-006: a numeric port above `u16::MAX` must NOT wrap
+    /// (`65536` → `0`, `70000` → `4464`). It is rejected and falls back to the
+    /// default 22, exactly as the string branch already handled `"70000"`.
+    #[test]
+    fn parse_port_setting_out_of_range_numeric_does_not_wrap() {
+        // 65536 previously wrapped to 0.
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(65536))), 22);
+        // 70000 previously wrapped to 4464.
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(70000))), 22);
+    }
+
+    /// The numeric and string branches must agree: both an out-of-range numeric
+    /// port and its string form fall back to 22 (CORE-006 consistency).
+    #[test]
+    fn parse_port_setting_out_of_range_numeric_and_string_agree() {
+        assert_eq!(
+            parse_port_setting(Some(&serde_json::json!(70000))),
+            parse_port_setting(Some(&serde_json::json!("70000"))),
+        );
+    }
+
+    #[test]
+    fn parse_port_setting_max_valid_port() {
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(65535))), 65535);
+    }
+
+    /// End-to-end through `parse_ssh_settings`: an out-of-range numeric port in
+    /// the settings JSON no longer silently targets a truncated port.
+    #[test]
+    fn parse_ssh_settings_out_of_range_port_falls_back_to_default() {
+        let settings = serde_json::json!({
+            "host": "example.com",
+            "port": 70000,
+            "username": "admin",
+            "authMethod": "agent",
+        });
+        let config = parse_ssh_settings(&settings);
+        assert_eq!(config.port, 22);
     }
 
     // --- Async tests (validation only — no real connection) ---

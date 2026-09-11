@@ -81,6 +81,32 @@ enum ChannelCmd {
     Eof,
 }
 
+/// Decide whether the channel task should keep running after an outgoing
+/// `channel.data` / `window_change` result.
+///
+/// On error the interactive session must be **torn down** rather than silently
+/// swallowing the user's input (CORE-007): the caller breaks the task loop,
+/// which clears the shared `alive` flag after the loop, so the failure surfaces
+/// (the terminal stops looking live and input is no longer accepted) instead of
+/// keystrokes vanishing into a dead channel. Returns `true` to keep looping,
+/// `false` to break and tear down.
+fn should_continue_after_send<T, E: std::fmt::Display>(
+    result: Result<T, E>,
+    operation: &str,
+) -> bool {
+    match result {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                operation,
+                "SSH shell channel send failed; tearing down session"
+            );
+            false
+        }
+    }
+}
+
 // ── RusshShellReader ───────────────────────────────────────────────
 
 /// Bridges async russh channel output to a synchronous `Read` impl.
@@ -342,10 +368,20 @@ impl SshConnector for RusshSshConnector {
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(ChannelCmd::Write(data)) => {
-                                let _ = channel.data(&data[..]).await;
+                                if !should_continue_after_send(
+                                    channel.data(&data[..]).await,
+                                    "write",
+                                ) {
+                                    break;
+                                }
                             }
                             Some(ChannelCmd::Resize(cols, rows)) => {
-                                let _ = channel.window_change(cols, rows, 0, 0).await;
+                                if !should_continue_after_send(
+                                    channel.window_change(cols, rows, 0, 0).await,
+                                    "resize",
+                                ) {
+                                    break;
+                                }
                             }
                             Some(ChannelCmd::Eof) | None => {
                                 let _ = channel.eof().await;
@@ -409,5 +445,52 @@ impl SshConnector for RusshSshConnector {
             }),
             extensions,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A successful `channel.data` / `window_change` result keeps the channel
+    /// task looping.
+    #[test]
+    fn should_continue_after_send_ok_keeps_looping() {
+        assert!(should_continue_after_send::<(), &str>(Ok(()), "write"));
+        assert!(should_continue_after_send::<(), &str>(Ok(()), "resize"));
+    }
+
+    /// Regression for CORE-007: a failing send must NOT be silently discarded.
+    /// The helper returns `false`, telling the task loop to break — which clears
+    /// the shared `alive` flag and tears the session down, so a failed write no
+    /// longer leaves the terminal looking live while swallowing input.
+    #[test]
+    fn should_continue_after_send_err_breaks_task() {
+        assert!(!should_continue_after_send::<(), &str>(
+            Err("transport error"),
+            "write"
+        ));
+        assert!(!should_continue_after_send::<(), &str>(
+            Err("transport error"),
+            "resize"
+        ));
+    }
+
+    /// The break-on-error contract clears `alive`, exactly as the task loop does
+    /// after it breaks: model the loop's teardown and assert the flag flips.
+    #[test]
+    fn break_on_send_error_clears_alive() {
+        let alive = Arc::new(AtomicBool::new(true));
+        // Simulate the task: a send fails, the helper says stop, we break, and
+        // the post-loop teardown clears `alive`.
+        let keep_going = should_continue_after_send::<(), &str>(Err("boom"), "write");
+        assert!(!keep_going, "a failed send must stop the task");
+        if !keep_going {
+            alive.store(false, Ordering::SeqCst);
+        }
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "the session must be torn down (alive cleared) after a failed send"
+        );
     }
 }
