@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:2285
   - src/store/sessionBridge.ts:815
   - src/components/Terminal/TerminalDisconnectOverlay.tsx:267
-status: open
+status: fixed
+resolution: "#2739 — bounded-retry-then-settle to SessionLost; live-grade still owed"
 ---
 
 ## What

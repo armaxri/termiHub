@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/session_history/storage.rs:90
   - src-tauri/src/session_history/storage.rs:49
   - src-tauri/src/utils/fs.rs:23
-status: open
+status: in-progress
+resolution: "#2737"
 ---
 
 ## What

@@ -12,7 +12,8 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:97
   - src/services/api.ts:1475
   - src/services/api.ts:1490
-status: open
+status: in-progress
+resolution: "#2740 — size-guard done; number[] IPC re-encode deferred"
 ---
 
 ## What

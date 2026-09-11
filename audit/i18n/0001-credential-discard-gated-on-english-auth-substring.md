@@ -10,7 +10,8 @@ evidence:
   - src/hooks/useConnectSavedConnection.ts:166
   - src/hooks/useConnectSavedConnection.ts:168
   - src/utils/classifyAgentError.ts:35
-status: open
+status: in-progress
+resolution: "#2742"
 ---
 
 ## What

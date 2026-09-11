@@ -10,7 +10,8 @@ evidence:
   - src/components/Terminal/Tab.tsx:171
   - src/components/Sidebar/PersistentStateDot.tsx:54
   - src/components/Sidebar/AgentNode.tsx:1216
-status: open
+status: fixed
+resolution: "#2736"
 ---
 
 ## What

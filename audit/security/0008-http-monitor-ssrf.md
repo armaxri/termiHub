@@ -9,8 +9,8 @@ subsystem: core/src/monitoring
 evidence:
   - core/src/monitoring/http_monitor.rs:585
   - core/src/monitoring/http_monitor.rs:521
-status: in-progress
-resolution: "#2728 — CI failed; fixer pending"
+status: fixed
+resolution: "#2728 — SSRF default-deny + allowPrivateNetwork opt-in"
 ---
 
 ## What

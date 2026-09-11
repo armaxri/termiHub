@@ -12,7 +12,8 @@ evidence:
   - src/utils/classifyAgentError.ts:46
   - src/utils/classifyAgentError.ts:59
   - src/utils/classifyAgentError.ts:69
-status: open
+status: in-progress
+resolution: "#2742 — auth branch typed; non-auth categories deferred"
 ---
 
 ## What

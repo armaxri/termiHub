@@ -11,7 +11,8 @@ evidence:
   - src/hooks/useConnectSavedConnection.ts:168
   - core/src/errors.rs:34
   - src-tauri/src/commands
-status: open
+status: in-progress
+resolution: "#2742 — auth-failure typed; broader stringly-IPC-error rewrite separate"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/SidebarListItem
 evidence:
   - src/components/SidebarListItem/SidebarListItem.tsx:19
-status: open
+status: fixed
+resolution: "#2736"
 ---
 
 ## What
