@@ -681,7 +681,13 @@ mod tests {
         );
     }
 
+    // Uses POSIX-absolute path literals and asserts exact canonical-path
+    // equality. On Windows `std::fs::canonicalize` resolves a leading `/` against
+    // the current drive and returns a `\\?\D:\…` verbatim path, so the literal
+    // comparison only holds on Unix. Cross-platform containment/canonicalize
+    // coverage lives in `filesystem_scope_contains_and_rejects_with_real_paths`.
     #[test]
+    #[cfg(unix)]
     fn filesystem_scope_allows_declared_paths_only() {
         let m = manifest_with(
             r#"["terminal", "filesystem"]"#,
@@ -714,7 +720,10 @@ mod tests {
         ));
     }
 
+    // POSIX-absolute path literals with exact canonical-path equality — Unix-only
+    // for the same reason as `filesystem_scope_allows_declared_paths_only`.
     #[test]
+    #[cfg(unix)]
     fn filesystem_scope_rejects_traversal_escape() {
         let m = manifest_with(r#"["terminal", "filesystem"]"#, r#"["/data/plugin"]"#);
         let perms = PermissionSet::from_manifest(&m);
@@ -741,6 +750,59 @@ mod tests {
                 .unwrap(),
             PathBuf::from("/data/plugin/file.txt")
         );
+    }
+
+    // Cross-platform coverage of containment, `..` handling, and the canonical
+    // return path, using a real on-disk root so it runs on Windows too (where
+    // POSIX-literal path assertions cannot). Complements the Unix-only tests
+    // above and the symlink test below.
+    #[test]
+    fn filesystem_scope_contains_and_rejects_with_real_paths() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("sub").join("file.txt"), b"hello").unwrap();
+        // A sibling directory that merely shares a path prefix string.
+        let sibling = tmp.path().join("root-evil");
+        std::fs::create_dir_all(&sibling).unwrap();
+        std::fs::write(sibling.join("secret"), b"private").unwrap();
+
+        let canonical_root = std::fs::canonicalize(&root).unwrap();
+        let perms = PermissionSet::from_parts(
+            [PluginPermission::Filesystem, PluginPermission::Terminal],
+            &[root.to_string_lossy().into_owned()],
+        );
+
+        // The root itself and a descendant are authorized; the returned path is
+        // canonical and stays under the canonical root.
+        let inside = perms
+            .check_path(&root.join("sub").join("file.txt"))
+            .unwrap();
+        assert!(inside.starts_with(&canonical_root));
+        assert!(perms.check_path(&root).is_ok());
+
+        // A not-yet-existing in-root write target is accepted (parent canonicalized).
+        let new_target = perms.check_path(&root.join("new-file.txt")).unwrap();
+        assert!(new_target.starts_with(&canonical_root));
+
+        // `..` that stays inside the root is normalized and remains contained.
+        let normalized = perms
+            .check_path(&root.join("sub").join("..").join("file2.txt"))
+            .unwrap();
+        assert!(normalized.starts_with(&canonical_root));
+        assert!(!normalized.to_string_lossy().contains(".."));
+
+        // A sibling sharing a prefix string is not contained.
+        assert!(matches!(
+            perms.check_path(&sibling.join("secret")),
+            Err(PermissionError::PathOutsideScope { .. })
+        ));
+
+        // `..` that climbs out of the declared root is rejected.
+        assert!(matches!(
+            perms.check_path(&root.join("..").join("root-evil").join("secret")),
+            Err(PermissionError::PathOutsideScope { .. })
+        ));
     }
 
     #[test]
