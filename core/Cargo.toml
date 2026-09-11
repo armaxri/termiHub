@@ -136,8 +136,9 @@ chrono = { version = "0.4", features = ["serde"], optional = true }
 # `rand_core` feature enables `SigningKey::generate` for the keygen tool; the
 # CSPRNG itself is `rand`'s `OsRng` (already a core dependency). Behind `plugin`.
 ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
-# Base64 codec for the 32-byte public key and 64-byte signature carried in
-# `signature.json` (#2036). Behind `plugin`.
+# Base64 codec used by the `plugin` feature for the 32-byte public key and
+# 64-byte signature in `signature.json` (#2036), and by the `docker` feature to
+# move file content across the `docker exec` boundary (LIBBE-001).
 base64 = { version = "0.22", optional = true }
 # HTTP client for the periodic HTTP monitor service (#2592), hostable on the
 # desktop or a remote agent. `rustls-tls` avoids an OpenSSL dependency for the
@@ -270,6 +271,11 @@ docker = [
     "dep:tracing",
     "dep:sha2",
     "dep:hex",
+    # base64 codec for moving file content across the `docker exec` boundary
+    # (LIBBE-001) — replaces a hand-rolled encoder/decoder with the battle-tested
+    # crate. Already compiled into every shipping build (src-tauri + agent both
+    # depend on it non-optionally), so this adds no new supply-chain surface.
+    "dep:base64",
 ]
 wsl = ["dep:portable-pty", "dep:tracing"]
 ftp = [

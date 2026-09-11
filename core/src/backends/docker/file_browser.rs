@@ -3,6 +3,7 @@
 //! Uses bollard's exec API to run commands inside a running container
 //! for file listing, reading, writing, deleting, renaming, and stat.
 
+use base64::Engine as _;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
@@ -245,19 +246,19 @@ impl FileBrowser for DockerFileBrowser {
 
         let output = exec_command(&self.client, &self.container_id, vec!["base64", path]).await?;
 
-        // base64 decode
-        use std::io::Read;
+        // `base64` wraps its output at 76 columns, so strip whitespace before
+        // decoding with the strict STANDARD engine (which, unlike the old
+        // hand-rolled reader, surfaces a decode error on a non-alphabet byte
+        // instead of silently dropping it — LIBBE-001).
         let cleaned: String = output.chars().filter(|c| !c.is_whitespace()).collect();
-        let mut decoder = base64_decode_reader(cleaned.as_bytes());
-        let mut data = Vec::new();
-        decoder
-            .read_to_end(&mut data)
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(cleaned.as_bytes())
             .map_err(|e| FileError::OperationFailed(format!("base64 decode failed: {e}")))?;
         Ok(data)
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
-        let encoded = base64_encode(data);
+        let encoded = base64::engine::general_purpose::STANDARD.encode(data);
         let script = format!("base64 -d > '{}'", shell_escape(path));
         exec_command_stdin(
             &self.client,
@@ -460,114 +461,6 @@ fn map_docker_error(stderr: &str) -> FileError {
 /// Simple shell escaping for single-quoted strings.
 fn shell_escape(s: &str) -> String {
     s.replace('\'', "'\\''")
-}
-
-/// Base64 encode bytes to a string (no-dependency implementation).
-fn base64_encode(data: &[u8]) -> String {
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
-
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
-        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
-
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-
-        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
-
-        if chunk.len() > 1 {
-            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-
-        if chunk.len() > 2 {
-            result.push(CHARS[(triple & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-
-    result
-}
-
-/// Create a base64 decoding reader (no-dependency implementation).
-fn base64_decode_reader(input: &[u8]) -> Base64Decoder<'_> {
-    Base64Decoder {
-        input,
-        pos: 0,
-        buf: [0; 3],
-        buf_len: 0,
-        buf_pos: 0,
-    }
-}
-
-struct Base64Decoder<'a> {
-    input: &'a [u8],
-    pos: usize,
-    buf: [u8; 3],
-    buf_len: usize,
-    buf_pos: usize,
-}
-
-impl<'a> std::io::Read for Base64Decoder<'a> {
-    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
-        let mut written = 0;
-        while written < out.len() {
-            if self.buf_pos < self.buf_len {
-                out[written] = self.buf[self.buf_pos];
-                self.buf_pos += 1;
-                written += 1;
-                continue;
-            }
-            // Decode next 4 chars.
-            if self.pos >= self.input.len() {
-                break;
-            }
-            let mut quad = [0u8; 4];
-            let mut count = 0;
-            let mut padding = 0;
-            while count < 4 && self.pos < self.input.len() {
-                let b = self.input[self.pos];
-                self.pos += 1;
-                if let Some(val) = decode_b64_char(b) {
-                    quad[count] = val;
-                    count += 1;
-                } else if b == b'=' {
-                    quad[count] = 0;
-                    count += 1;
-                    padding += 1;
-                }
-            }
-            if count < 4 {
-                break;
-            }
-            let triple = ((quad[0] as u32) << 18)
-                | ((quad[1] as u32) << 12)
-                | ((quad[2] as u32) << 6)
-                | (quad[3] as u32);
-
-            self.buf[0] = (triple >> 16) as u8;
-            self.buf[1] = (triple >> 8) as u8;
-            self.buf[2] = triple as u8;
-            self.buf_len = 3 - padding;
-            self.buf_pos = 0;
-        }
-        Ok(written)
-    }
-}
-
-fn decode_b64_char(b: u8) -> Option<u8> {
-    match b {
-        b'A'..=b'Z' => Some(b - b'A'),
-        b'a'..=b'z' => Some(b - b'a' + 26),
-        b'0'..=b'9' => Some(b - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -806,35 +699,78 @@ mod tests {
         assert!(matches!(err, Err(FileError::NotFound(_))));
     }
 
-    // --- base64 tests ---
+    // --- base64 tests (LIBBE-001: now over the `base64` crate) ---
 
-    #[test]
-    fn base64_encode_empty() {
-        assert_eq!(base64_encode(b""), "");
+    /// Encode via the same STANDARD engine the browser now uses on the write
+    /// path, mirroring `write_file`.
+    fn b64_encode(data: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(data)
+    }
+
+    /// Decode the way `read_file` does: strip the whitespace `base64` inserts to
+    /// wrap its output, then decode strictly.
+    fn b64_decode(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
+        let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+        base64::engine::general_purpose::STANDARD.decode(cleaned.as_bytes())
     }
 
     #[test]
-    fn base64_encode_hello() {
-        assert_eq!(base64_encode(b"Hello, World!"), "SGVsbG8sIFdvcmxkIQ==");
+    fn base64_encode_empty() {
+        assert_eq!(b64_encode(b""), "");
+    }
+
+    #[test]
+    fn base64_encode_hello_matches_known_vector() {
+        // RFC 4648 / canonical vector — the crate must produce standard base64.
+        assert_eq!(b64_encode(b"Hello, World!"), "SGVsbG8sIFdvcmxkIQ==");
+    }
+
+    #[test]
+    fn base64_decode_known_vector() {
+        assert_eq!(b64_decode("SGVsbG8sIFdvcmxkIQ==").unwrap(), b"Hello, World!");
     }
 
     #[test]
     fn base64_roundtrip() {
         let data = b"The quick brown fox jumps over the lazy dog";
-        let encoded = base64_encode(data);
-        let mut decoder = base64_decode_reader(encoded.as_bytes());
-        let mut decoded = Vec::new();
-        std::io::Read::read_to_end(&mut decoder, &mut decoded).unwrap();
-        assert_eq!(decoded, data);
+        let encoded = b64_encode(data);
+        assert_eq!(b64_decode(&encoded).unwrap(), data);
     }
 
     #[test]
     fn base64_roundtrip_binary() {
+        // All 256 byte values, exercising the padding edge cases at every input
+        // length modulo 3 (256 % 3 == 1, so this ends in a two-`=` group).
         let data: Vec<u8> = (0..=255).collect();
-        let encoded = base64_encode(&data);
-        let mut decoder = base64_decode_reader(encoded.as_bytes());
-        let mut decoded = Vec::new();
-        std::io::Read::read_to_end(&mut decoder, &mut decoded).unwrap();
-        assert_eq!(decoded, data);
+        let encoded = b64_encode(&data);
+        assert_eq!(b64_decode(&encoded).unwrap(), data);
+    }
+
+    #[test]
+    fn base64_roundtrip_padding_lengths() {
+        // 1/2/3-byte inputs cover the `==`, `=`, and no-padding tail cases.
+        for data in [b"f".as_slice(), b"fo", b"foo", b"foob", b"fooba", b"foobar"] {
+            let encoded = b64_encode(data);
+            assert_eq!(b64_decode(&encoded).unwrap(), data, "roundtrip for {data:?}");
+        }
+    }
+
+    #[test]
+    fn base64_decode_tolerates_wrapped_whitespace() {
+        // `base64` wraps output at 76 columns; the read path strips whitespace
+        // (spaces and newlines) before decoding.
+        let wrapped = "SGVsbG8s\nIFdvcmxk\nIQ==\n";
+        assert_eq!(b64_decode(wrapped).unwrap(), b"Hello, World!");
+    }
+
+    #[test]
+    fn base64_decode_rejects_non_alphabet_byte() {
+        // Regression for LIBBE-001: the old hand-rolled reader silently dropped
+        // any byte outside the alphabet, so corruption in the exec output passed
+        // through as "successfully decoded". The strict crate surfaces an error.
+        //
+        // `*` is not whitespace (so it survives the strip) and is not a base64
+        // alphabet character, so it must produce a decode error.
+        assert!(b64_decode("SGVs*bG8=").is_err());
     }
 }
