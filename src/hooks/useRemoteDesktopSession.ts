@@ -24,7 +24,7 @@ import type {
   RemoteDesktopCertPromptPayload,
   ScaleMode,
 } from "@/types/remoteDesktop";
-import { frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 
 /** Everything a RemoteDesktopTab needs to drive one graphical session. */
 export interface RemoteDesktopSession {
@@ -150,7 +150,10 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
           tab.config.config as Record<string, unknown>
         );
         if (canceled) {
-          void remoteDesktopDisconnect(id).catch(() => {});
+          fireAndForget(
+            remoteDesktopDisconnect(id),
+            `disconnect orphaned remote-desktop session ${id}`
+          );
           return;
         }
         sessionIdRef.current = id;
@@ -203,7 +206,10 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         sessionIdRef.current = null;
         pendingCloseRef.current = window.setTimeout(() => {
           pendingCloseRef.current = null;
-          void remoteDesktopDisconnect(id).catch(() => {});
+          fireAndForget(
+            remoteDesktopDisconnect(id),
+            `disconnect remote-desktop session ${id} on tab close`
+          );
           setTabSessionId(tabId, null);
         }, 50);
       }
@@ -300,7 +306,10 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     const id = sessionIdRef.current;
     if (id) {
       sessionIdRef.current = null;
-      void remoteDesktopDisconnect(id).catch(() => {});
+      fireAndForget(
+        remoteDesktopDisconnect(id),
+        `disconnect remote-desktop session ${id} before reconnect`
+      );
     }
     setSessionId(null);
     setAwaitingFirstFrame(false);

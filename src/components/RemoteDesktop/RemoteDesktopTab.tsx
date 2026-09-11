@@ -6,6 +6,7 @@ import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import { remoteDesktopGetClipboard } from "@/services/api";
+import { fireAndForget } from "@/utils/frontendLog";
 import type { RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
 import { SCALE_MODE_LABELS } from "@/types/remoteDesktop";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
@@ -84,9 +85,9 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
     const el = surfaceRef.current;
     if (!el) return;
     if (document.fullscreenElement) {
-      void document.exitFullscreen().catch(() => {});
+      fireAndForget(document.exitFullscreen(), "exit remote-desktop fullscreen");
     } else {
-      void el.requestFullscreen().catch(() => {});
+      fireAndForget(el.requestFullscreen(), "enter remote-desktop fullscreen");
     }
   }, []);
 
