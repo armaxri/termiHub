@@ -283,10 +283,19 @@ impl DaemonLauncher for SystemDaemonLauncher {
         })
         .await
         {
-            Ok(client) => client,
+            Ok(client) => {
+                // The daemon is detached (setsid) but not reparented to init, so
+                // the worker stays its parent. Hand the child to a reaper so it
+                // is `wait()`ed when it eventually exits and never lingers as a
+                // zombie in a long-lived worker (AGT-018 / #2580).
+                let _ = crate::daemon::spawn::reap_detached_child(child);
+                client
+            }
             Err(e) => {
-                // Don't leave a half-started daemon orphaned when connect fails.
+                // Don't leave a half-started daemon orphaned when connect fails:
+                // kill it AND reap it so the killed process is not left a zombie.
                 let _ = child.kill();
+                let _ = crate::daemon::spawn::reap_detached_child(child);
                 return Err(e);
             }
         };
@@ -452,7 +461,12 @@ impl SessionManager {
             current_exe.as_deref(),
         ) {
             info!("Cleared an already-applied pending agent update from persisted state");
-            state.save_to(&state_path);
+            // Persist the prune under the cross-process lock, re-pruning the
+            // freshly read on-disk copy so a peer worker's concurrent write is
+            // merged rather than clobbered (AGT-016).
+            state = AgentState::mutate_locked(&state_path, |s| {
+                prune_applied_pending_update(s, env!("CARGO_PKG_VERSION"), current_exe.as_deref());
+            });
         }
         let agent_forward = AgentForwardRelay::new(notification_tx.clone());
         Self {
@@ -563,19 +577,22 @@ impl SessionManager {
 
             if capabilities.persistent {
                 if let SessionBackend::Daemon(ref client) = info.backend {
-                    let mut state = self.state.lock().await;
-                    state.sessions.insert(
-                        id.clone(),
-                        PersistedSession {
-                            type_id: type_id.to_string(),
-                            title,
-                            created_at: now.to_rfc3339(),
-                            daemon_socket: Some(client.endpoint().to_string()),
-                            settings,
-                            definition_id,
-                        },
-                    );
-                    state.save_to(&self.state_path);
+                    let persisted = PersistedSession {
+                        type_id: type_id.to_string(),
+                        title,
+                        created_at: now.to_rfc3339(),
+                        daemon_socket: Some(client.endpoint().to_string()),
+                        settings,
+                        definition_id,
+                    };
+                    let id_for_state = id.clone();
+                    // Persist the insert under the cross-process lock so a peer
+                    // worker's concurrent state write is merged, not clobbered
+                    // (AGT-016).
+                    self.persist_state_delta(move |s| {
+                        s.sessions.insert(id_for_state, persisted);
+                    })
+                    .await;
                 }
             }
 
@@ -768,11 +785,10 @@ impl SessionManager {
         // Tear down any ssh-agent relay this session held (#1727).
         self.agent_forward.stop_listener(session_id).await;
 
-        {
-            let mut state = self.state.lock().await;
-            state.sessions.remove(session_id);
-            state.save_to(&self.state_path);
-        }
+        self.persist_state_delta(|s| {
+            s.sessions.remove(session_id);
+        })
+        .await;
 
         // Deferred-update hook: when the last session disconnects and an update
         // is pending, apply it now. Shared with the natural-exit path (#2378)
@@ -909,18 +925,20 @@ impl SessionManager {
                 Some(p) => p.clone(),
                 None => {
                     warn!("Session {id} has no daemon endpoint, removing");
-                    let mut state = self.state.lock().await;
-                    state.sessions.remove(id);
-                    state.save_to(&self.state_path);
+                    self.persist_state_delta(|s| {
+                        s.sessions.remove(id);
+                    })
+                    .await;
                     continue;
                 }
             };
 
             if !endpoint_alive(&endpoint) {
                 info!("Daemon endpoint gone for session {id}, removing from state");
-                let mut state = self.state.lock().await;
-                state.sessions.remove(id);
-                state.save_to(&self.state_path);
+                self.persist_state_delta(|s| {
+                    s.sessions.remove(id);
+                })
+                .await;
                 continue;
             }
 
@@ -980,9 +998,10 @@ impl SessionManager {
                 }
                 Err(e) => {
                     warn!("Failed to recover session {id}: {e}");
-                    let mut state = self.state.lock().await;
-                    state.sessions.remove(id);
-                    state.save_to(&self.state_path);
+                    self.persist_state_delta(|s| {
+                        s.sessions.remove(id);
+                    })
+                    .await;
                 }
             }
         }
@@ -1031,13 +1050,15 @@ impl SessionManager {
             if !Path::new(&path).is_file() {
                 return Err(DeferredUpdateError::BinaryNotFound(path));
             }
-            let mut state = self.state.lock().await;
-            state.update.pending_update = Some(PendingUpdate {
+            let pending = PendingUpdate {
                 version: version.unwrap_or_default(),
                 binary_path: path,
                 staged_at: Utc::now().to_rfc3339(),
-            });
-            state.save_to(&self.state_path);
+            };
+            self.persist_state_delta(move |s| {
+                s.update.pending_update = Some(pending);
+            })
+            .await;
         }
 
         let has_pending = self.state.lock().await.update.pending_update.is_some();
@@ -1068,9 +1089,10 @@ impl SessionManager {
     /// single in-memory + persisted `update` state; a direct write from the
     /// timer would be clobbered by the next session-close persist.
     pub async fn record_update_check_time(&self, timestamp: String) {
-        let mut state = self.state.lock().await;
-        state.update.last_check_time = Some(timestamp);
-        state.save_to(&self.state_path);
+        self.persist_state_delta(move |s| {
+            s.update.last_check_time = Some(timestamp);
+        })
+        .await;
     }
 
     /// Record a staged pending update in the shared agent state **without**
@@ -1080,13 +1102,31 @@ impl SessionManager {
     /// not auto-apply on idle (coordinated), so a later coordinated apply — or
     /// an explicit `agent.request_deferred_update` — can consume it.
     pub async fn stage_pending_update(&self, binary_path: String, version: String) {
-        let mut state = self.state.lock().await;
-        state.update.pending_update = Some(PendingUpdate {
+        let pending = PendingUpdate {
             version,
             binary_path,
             staged_at: Utc::now().to_rfc3339(),
-        });
-        state.save_to(&self.state_path);
+        };
+        self.persist_state_delta(move |s| {
+            s.update.pending_update = Some(pending);
+        })
+        .await;
+    }
+
+    /// Persist a mutation to the shared `state.json` under the cross-process
+    /// advisory lock, then refresh the in-memory copy to the merged on-disk
+    /// truth (AGT-016).
+    ///
+    /// The lock + re-read + atomic write closes the multi-worker lost-update
+    /// window: a peer worker's concurrent insert/remove is merged in rather than
+    /// clobbered by this worker's stale whole-struct save. The in-memory `state`
+    /// mutex is held only for the (fast, blocking) file operation, and no file
+    /// lock is ever nested within another, so no cross-worker deadlock is
+    /// possible — the file lock is the only cross-process resource and a peer
+    /// waiting on it never also needs this worker's in-memory mutex.
+    async fn persist_state_delta(&self, delta: impl FnOnce(&mut AgentState)) {
+        let mut state = self.state.lock().await;
+        *state = AgentState::mutate_locked(&self.state_path, delta);
     }
 
     /// Apply the pending update, clearing it from persisted state **only on
@@ -1112,9 +1152,10 @@ impl SessionManager {
         );
         self.update_applier.apply(&pending)?;
         // Success (test / non-unix path): consume the pending update.
-        let mut state = self.state.lock().await;
-        state.update.pending_update = None;
-        state.save_to(&self.state_path);
+        self.persist_state_delta(|s| {
+            s.update.pending_update = None;
+        })
+        .await;
         Ok(())
     }
 }

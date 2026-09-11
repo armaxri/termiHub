@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
+use tracing::info;
 
 /// A single client currently connected to this agent process.
 ///
@@ -79,6 +80,23 @@ impl ConnectionRegistry {
             connected_since: Utc::now(),
         };
         let mut guard = self.clients.lock().unwrap_or_else(|e| e.into_inner());
+        // OBS-012: log ownership transitions so a "who is connected" change is
+        // never invisible. A re-register on the same id replaces the previous
+        // entry (a client taking the connection over).
+        if let Some(prev) = guard.get(&entry.client_id) {
+            info!(
+                client_id = %entry.client_id,
+                previous_client = %prev.client,
+                new_client = %entry.client,
+                "re-registering client: replacing the previous initialize on this connection"
+            );
+        } else {
+            info!(
+                client_id = %entry.client_id,
+                client = %entry.client,
+                "client connected and registered with the agent"
+            );
+        }
         guard.insert(entry.client_id.clone(), entry.clone());
         entry
     }
@@ -87,7 +105,16 @@ impl ConnectionRegistry {
     /// returning the removed entry if it was present.
     pub fn remove(&self, client_id: &str) -> Option<ConnectedClient> {
         let mut guard = self.clients.lock().unwrap_or_else(|e| e.into_inner());
-        guard.remove(client_id)
+        let removed = guard.remove(client_id);
+        // OBS-012: a client leaving the registry is an ownership transition too.
+        if let Some(ref client) = removed {
+            info!(
+                client_id = %client_id,
+                client = %client.client,
+                "client disconnected and was removed from the agent registry"
+            );
+        }
+        removed
     }
 
     /// Look up a single connected client by id.
@@ -194,4 +221,13 @@ mod tests {
             "1.1.0"
         );
     }
+
+    // OBS-012: `register` (fresh connect and re-register/takeover) and `remove`
+    // (disconnect) each emit an `info!` ownership-transition log. Asserting on
+    // captured tracing output here proved order-dependent (tracing caches
+    // callsite interest process-wide, so another test in this binary poisons the
+    // capture), which would make the suite flaky. The transition *behaviour* the
+    // logs annotate is covered by `re_register_same_id_replaces_entry` and
+    // `add_then_remove_leaves_registry_empty`; the daemon-side eviction decision
+    // that OBS-012 logs is unit-tested via `decide_attach` in `daemon::process`.
 }

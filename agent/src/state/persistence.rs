@@ -108,7 +108,7 @@ impl AgentState {
     /// the backup path, before continuing with empty state. This upholds the
     /// "persistent sessions survive an agent restart" guarantee — a single bad
     /// byte must not vaporize the whole recovery map (AGT-017, PER-006).
-    pub fn load_from(path: &PathBuf) -> Self {
+    pub fn load_from(path: &Path) -> Self {
         match std::fs::read_to_string(path) {
             Ok(contents) => match serde_json::from_str::<AgentState>(&contents) {
                 Ok(state) => {
@@ -188,6 +188,40 @@ impl AgentState {
                 warn!("Failed to serialize agent state: {}", e);
             }
         }
+    }
+
+    /// Cross-process-safe read-modify-write of the shared on-disk state.
+    ///
+    /// Acquires an exclusive advisory lock on `path`'s sidecar lock-file, then
+    /// **re-reads the current on-disk state**, applies `delta`, and writes the
+    /// result atomically before releasing the lock. Re-reading under the lock is
+    /// what closes the multi-worker lost-update window (AGT-016): a peer worker's
+    /// concurrent insert/remove is merged in rather than clobbered by a stale
+    /// whole-struct save. Callers should pass a *delta* (insert one session,
+    /// remove one session, set one update field) rather than a whole snapshot.
+    ///
+    /// Returns the merged state so the caller can refresh its in-memory copy to
+    /// match the on-disk truth. If the lock cannot be acquired (e.g. the lock
+    /// file is unwritable) it degrades to an unlocked read-modify-write and logs
+    /// a warning — the same behaviour as before this guard existed, never a lost
+    /// save.
+    pub fn mutate_locked(path: &Path, delta: impl FnOnce(&mut AgentState)) -> AgentState {
+        let _lock = match crate::fs::FileLock::acquire(path) {
+            Ok(lock) => Some(lock),
+            Err(e) => {
+                warn!(
+                    "Could not acquire cross-process lock for {}: {:#}; \
+                     proceeding without it (a concurrent worker could lose an update)",
+                    path.display(),
+                    e
+                );
+                None
+            }
+        };
+        let mut state = AgentState::load_from(path);
+        delta(&mut state);
+        state.save_to(path);
+        state
     }
 
     /// The default `state.json` path under the platform config dir.
@@ -671,6 +705,85 @@ mod tests {
         );
         assert!(recovered.sessions.contains_key("keep"));
         assert!(!recovered.sessions.contains_key("gone"));
+    }
+
+    /// Two simulated workers concurrently inserting *different* sessions into
+    /// the same shared `state.json` must both survive — the classic lost-update
+    /// that `mutate_locked`'s locked read-modify-write exists to prevent
+    /// (AGT-016). Without the lock + re-read, one worker's blind whole-struct
+    /// save would clobber the other's session.
+    #[test]
+    fn concurrent_mutate_locked_never_loses_an_insert() {
+        use std::sync::Arc;
+
+        let tmp = TempDir::new().unwrap();
+        let path = Arc::new(tmp.path().join("state.json"));
+        AgentState::default().save_to(path.as_path());
+
+        let iters = 40;
+        let workers = 3;
+        let handles: Vec<_> = (0..workers)
+            .map(|w| {
+                let path = Arc::clone(&path);
+                std::thread::spawn(move || {
+                    for i in 0..iters {
+                        let key = format!("w{w}-{i}");
+                        AgentState::mutate_locked(&path, |s| {
+                            s.sessions
+                                .insert(key.clone(), make_session("local", Some("/tmp/s.sock")));
+                        });
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let loaded = AgentState::load_from(path.as_path());
+        assert_eq!(
+            loaded.sessions.len(),
+            workers * iters,
+            "every worker's inserts must survive — a shortfall means a lost update"
+        );
+        for w in 0..workers {
+            for i in 0..iters {
+                assert!(
+                    loaded.sessions.contains_key(&format!("w{w}-{i}")),
+                    "missing session w{w}-{i} — lost update"
+                );
+            }
+        }
+    }
+
+    /// A `mutate_locked` remove must delete only the targeted session and
+    /// preserve the rest of the on-disk map (a peer worker's sessions), because
+    /// it re-reads the current file rather than overwriting with a stale
+    /// snapshot.
+    #[test]
+    fn mutate_locked_remove_preserves_other_sessions() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        let mut seeded = AgentState::default();
+        seeded.sessions.insert(
+            "keep".to_string(),
+            make_session("local", Some("/tmp/k.sock")),
+        );
+        seeded
+            .sessions
+            .insert("drop".to_string(), make_session("serial", None));
+        seeded.save_to(&path);
+
+        let merged = AgentState::mutate_locked(&path, |s| {
+            s.sessions.remove("drop");
+        });
+
+        assert!(merged.sessions.contains_key("keep"));
+        assert!(!merged.sessions.contains_key("drop"));
+        let loaded = AgentState::load_from(&path);
+        assert_eq!(loaded.sessions.len(), 1);
+        assert!(loaded.sessions.contains_key("keep"));
     }
 
     #[test]

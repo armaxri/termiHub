@@ -78,6 +78,10 @@ windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Pipes",
     "Win32_System_Threading",
+    # Cross-process advisory file locking for the shared state.json
+    # read-modify-write (LockFileEx / UnlockFileEx, AGT-016).
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
 ] }
 
 
