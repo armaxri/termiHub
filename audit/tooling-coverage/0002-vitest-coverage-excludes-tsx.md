@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: frontend / coverage
 evidence:
   - vitest.config.ts:24
-status: open
+status: fixed
+resolution: "#2759 — .tsx glob fixed"
 ---
 
 ## What

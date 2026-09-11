@@ -13,7 +13,8 @@ evidence:
   - src-tauri/src/utils/ssh_auth.rs:26
   - src-tauri/src/utils/ssh_auth.rs:62
   - src-tauri/src/terminal/agent_manager.rs:944
-status: open
+status: fixed
+resolution: "#2758 — cancellable reconnect"
 ---
 
 ## What

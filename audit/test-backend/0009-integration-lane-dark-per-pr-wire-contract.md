@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/code-quality.yml:88
   - core/tests/common/mod.rs:49
   - src-tauri/tests/sftp_transfer.rs:1
-status: open
+status: fixed
+resolution: "#2752 — per-PR wire contract test"
 ---
 
 ## What

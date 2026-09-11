@@ -11,7 +11,8 @@ evidence:
   - docs/contributing.md:932
   - docs/contributing.md:919
   - docs/contributing.md:974
-status: open
+status: fixed
+resolution: "#2755 — version-bump half; changelog half deferred"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/commands/credential.rs:253
   - src-tauri/src/commands/credential.rs:256
   - src-tauri/src/commands/credential.rs:267
-status: open
+status: fixed
+resolution: "#2760 — abort switch when source unreadable"
 ---
 
 ## What

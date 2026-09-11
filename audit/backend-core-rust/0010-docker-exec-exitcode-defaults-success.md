@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/docker
 evidence:
   - core/src/backends/docker/file_browser.rs:83
-status: open
+status: fixed
+resolution: "#2756 — exec exit code honored"
 ---
 
 ## What

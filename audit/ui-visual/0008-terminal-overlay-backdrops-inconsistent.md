@@ -11,7 +11,8 @@ evidence:
   - src/components/Terminal/TerminalDisconnectOverlay.css:9
   - src/components/Terminal/AgentErrorTab.css:5
   - src/components/RemoteDesktop/RemoteDesktopTab.css:114
-status: open
+status: fixed
+resolution: "#2757"
 ---
 
 ## What

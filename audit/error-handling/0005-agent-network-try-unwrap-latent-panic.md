@@ -10,7 +10,8 @@ evidence:
   - agent/src/network/mod.rs:50
   - agent/src/network/mod.rs:71
   - agent/src/network/mod.rs:107
-status: open
+status: fixed
+resolution: "#2750"
 ---
 
 ## What

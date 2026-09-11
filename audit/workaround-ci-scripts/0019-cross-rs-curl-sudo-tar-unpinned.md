@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: .github/workflows
 evidence:
   - .github/workflows/agent.yml:57
-status: open
+status: fixed
+resolution: "#2753"
 ---
 
 ## What

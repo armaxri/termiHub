@@ -10,7 +10,8 @@ evidence:
   - agent/src/protocol/methods.rs:401
   - agent/src/handler/dispatch.rs:1239
   - src-tauri/src/session/remote_proxy.rs:598
-status: open
+status: fixed
+resolution: "#2752 — rename params aligned"
 ---
 
 ## What

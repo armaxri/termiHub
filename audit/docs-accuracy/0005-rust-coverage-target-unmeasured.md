@@ -9,7 +9,8 @@ subsystem: docs/testing
 evidence:
   - docs/testing.md:393
   - docs/testing.md:397
-status: open
+status: fixed
+resolution: "#2755 — coverage claim softened"
 ---
 
 ## What

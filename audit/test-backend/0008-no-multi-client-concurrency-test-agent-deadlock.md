@@ -10,7 +10,8 @@ evidence:
   - agent/src/session/manager.rs:1377
   - agent/src/session/manager.rs:2043
   - agent/tests/local_agent_integration.rs:98
-status: open
+status: fixed
+resolution: "#2754 — multi-client concurrency test added"
 ---
 
 ## What

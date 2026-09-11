@@ -9,7 +9,8 @@ subsystem: core/backends/docker
 evidence:
   - core/src/backends/docker/mod.rs:705
   - core/src/backends/docker/mod.rs:726
-status: open
+status: fixed
+resolution: "#2756 — container cleanup on failed connect"
 ---
 
 ## What

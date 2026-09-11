@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:1752
   - src-tauri/src/terminal/agent_manager.rs:783
   - agent/src/handler/dispatch.rs:487
-status: open
+status: fixed
+resolution: "#2755 — protocol version doc corrected"
 ---
 
 ## What

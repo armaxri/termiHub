@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:2305
   - src-tauri/src/terminal/agent_manager.rs:2044
   - src-tauri/src/commands/agent.rs:283
-status: open
+status: fixed
+resolution: "#2758 — bounded send_request + drain-on-drop"
 ---
 
 ## What

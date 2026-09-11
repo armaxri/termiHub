@@ -12,7 +12,8 @@ evidence:
   - src/components/NetworkTools/NetworkTools.css:104
   - src/components/NetworkTools/NetworkTools.css:113
   - src/components/NetworkTools/NetworkTools.css:407
-status: open
+status: fixed
+resolution: "#2757"
 ---
 
 ## What

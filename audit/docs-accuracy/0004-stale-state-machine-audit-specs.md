@@ -11,7 +11,8 @@ evidence:
   - docs/audits/remote-agent-lifecycle-state-machine.md:1
   - docs/audits/embedded-servers-state-machine.md:1
   - docs/audits/remote-system-monitoring-state-machine.md:1
-status: open
+status: fixed
+resolution: "#2755 — state-machine specs marked historical"
 ---
 
 ## What

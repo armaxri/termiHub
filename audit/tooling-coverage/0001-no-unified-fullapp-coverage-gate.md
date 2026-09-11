@@ -10,7 +10,8 @@ evidence:
   - vitest.config.ts:26
   - .github/workflows/code-quality.yml:218
   - docs/testing.md:393
-status: open
+status: fixed
+resolution: "#2759 — unified coverage script+job (advisory; ratchet documented)"
 ---
 
 ## What

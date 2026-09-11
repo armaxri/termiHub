@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/release.yml:346
   - .github/workflows/dev-build.yml:298
   - .github/workflows/agent.yml:51
-status: open
+status: fixed
+resolution: "#2753 — cross-rs pinned+checksummed"
 ---
 
 ## What

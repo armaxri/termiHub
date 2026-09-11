@@ -10,7 +10,8 @@ evidence:
   - docs/testing.md:393
   - .github/workflows/code-quality.yml:210
   - Cargo.toml:1
-status: open
+status: fixed
+resolution: "#2759 — cargo-llvm-cov added"
 ---
 
 ## What

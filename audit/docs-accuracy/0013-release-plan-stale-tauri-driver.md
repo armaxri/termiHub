@@ -9,7 +9,8 @@ subsystem: docs/release-plan
 evidence:
   - docs/release-plan-0.1.0.md:29
   - docs/testing.md:1011
-status: open
+status: fixed
+resolution: "#2755"
 ---
 
 ## What

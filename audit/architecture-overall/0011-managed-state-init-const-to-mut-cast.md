@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src-tauri/src/lib.rs, src-tauri/src/network
 evidence:
   - src-tauri/src/lib.rs:576
-status: open
+status: in-progress
+resolution: "#2761"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - agent/src/protocol/methods.rs:392
   - agent/src/handler/dispatch.rs:1231
   - src-tauri/src/session/remote_proxy.rs:586
-status: open
+status: fixed
+resolution: "#2752 — delete params aligned"
 ---
 
 ## What

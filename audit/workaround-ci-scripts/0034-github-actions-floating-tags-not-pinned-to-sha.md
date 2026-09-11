@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/build.yml:194
   - .github/workflows/auto-close-issues.yml:25
   - .github/workflows/release.yml
-status: open
+status: fixed
+resolution: "#2753"
 ---
 
 ## What

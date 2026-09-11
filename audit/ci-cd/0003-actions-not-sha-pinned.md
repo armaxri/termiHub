@@ -11,7 +11,8 @@ evidence:
   - .github/workflows/code-quality.yml:52
   - .github/workflows/build.yml:53
   - .github/actions/setup-pnpm/action.yml:12
-status: open
+status: fixed
+resolution: "#2753 — actions SHA-pinned"
 ---
 
 ## What

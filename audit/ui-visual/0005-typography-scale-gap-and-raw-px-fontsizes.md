@@ -12,7 +12,8 @@ evidence:
   - src/components/Sidebar/ConnectionList.css:577
   - src/components/Settings/AboutSettings.css:6
   - src/components/Settings/LayoutPreview.css:76
-status: open
+status: fixed
+resolution: "#2757 — type-scale tokens; all raw font-px migrated + guard"
 ---
 
 ## What

@@ -14,7 +14,8 @@ evidence:
   - agent/src/session/definitions.rs:324
   - agent/src/session/definitions.rs:256
   - agent/src/session/definitions.rs:352
-status: open
+status: fixed
+resolution: "#2754 — single-lock; red-verified"
 ---
 
 ## What
