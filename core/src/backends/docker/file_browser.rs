@@ -111,14 +111,15 @@ async fn exec_command(
                 }
             }
 
-            // Check exec exit code to detect errors.
-            let inspect = client.inspect_exec(&exec.id).await.ok();
-            let exit_code = inspect.and_then(|i| i.exit_code).unwrap_or(0);
-
-            if exit_code != 0 {
-                let stderr_str = String::from_utf8_lossy(&stderr);
-                return Err(map_docker_error(&stderr_str));
-            }
+            // Check exec exit code to detect errors. A failed inspect is
+            // propagated rather than swallowed (CORE-010): treating an unknown
+            // result as success would report a failed command with empty/partial
+            // stdout as OK — silent data corruption for file operations.
+            let inspect = client
+                .inspect_exec(&exec.id)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("Failed to inspect exec: {e}")))?;
+            check_exec_exit_code(inspect.exit_code, &stderr)?;
 
             Ok(String::from_utf8_lossy(&stdout).to_string())
         }
@@ -190,13 +191,13 @@ async fn exec_command_stdin(
                 }
             }
 
-            let inspect = client.inspect_exec(&exec.id).await.ok();
-            let exit_code = inspect.and_then(|i| i.exit_code).unwrap_or(0);
-
-            if exit_code != 0 {
-                let stderr_str = String::from_utf8_lossy(&stderr);
-                return Err(map_docker_error(&stderr_str));
-            }
+            // Propagate a failed inspect and treat an unknown exit code as a
+            // failure (CORE-010) — a silently-dropped write must never look done.
+            let inspect = client
+                .inspect_exec(&exec.id)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("Failed to inspect exec: {e}")))?;
+            check_exec_exit_code(inspect.exit_code, &stderr)?;
 
             Ok(())
         }
@@ -403,6 +404,32 @@ fn parse_stat_output(output: &str, path: &str) -> Result<FileEntry, FileError> {
         is_symlink: file_type.contains("symbolic link"),
         symlink_target: None,
     })
+}
+
+/// Map a finished `docker exec`'s inspected exit code to a result (CORE-010).
+///
+/// bollard reports the exit code as `Option<i64>`: `Some(code)` once the exec
+/// has finished, `None` if it could not be determined (e.g. still running or an
+/// incomplete inspect response). Only an explicit `Some(0)` is success — a
+/// non-zero code **and** an absent code both map to a `FileError`, so a command
+/// that actually failed can never be reported as OK with empty/partial output.
+///
+/// When `stderr` carries a message it is classified via [`map_docker_error`]
+/// (preserving NotFound / PermissionDenied); otherwise a concrete
+/// [`FileError::OperationFailed`] is synthesized from the exit code.
+fn check_exec_exit_code(exit_code: Option<i64>, stderr: &[u8]) -> Result<(), FileError> {
+    if exit_code == Some(0) {
+        return Ok(());
+    }
+    let stderr_str = String::from_utf8_lossy(stderr);
+    if stderr_str.trim().is_empty() {
+        Err(FileError::OperationFailed(match exit_code {
+            Some(code) => format!("container command exited with status {code}"),
+            None => "container command exit code unavailable".to_string(),
+        }))
+    } else {
+        Err(map_docker_error(&stderr_str))
+    }
 }
 
 /// Map docker exec stderr to appropriate `FileError`.
@@ -726,6 +753,44 @@ mod tests {
     fn map_docker_error_generic() {
         let err = map_docker_error("something went wrong");
         assert!(matches!(err, FileError::OperationFailed(_)));
+    }
+
+    // --- check_exec_exit_code tests (CORE-010) ---
+
+    #[test]
+    fn check_exec_exit_code_zero_is_success() {
+        assert!(check_exec_exit_code(Some(0), b"").is_ok());
+        // A zero exit is success even if the command wrote to stderr (warnings).
+        assert!(check_exec_exit_code(Some(0), b"some warning").is_ok());
+    }
+
+    #[test]
+    fn check_exec_exit_code_nonzero_maps_stderr() {
+        let err = check_exec_exit_code(Some(1), b"rm: cannot remove: No such file or directory");
+        assert!(matches!(err, Err(FileError::NotFound(_))));
+
+        let err = check_exec_exit_code(Some(1), b"cat: /etc/shadow: Permission denied");
+        assert!(matches!(err, Err(FileError::PermissionDenied(_))));
+    }
+
+    #[test]
+    fn check_exec_exit_code_nonzero_without_stderr_reports_status() {
+        // A non-zero exit with no stderr must still be an error carrying the code.
+        match check_exec_exit_code(Some(2), b"") {
+            Err(FileError::OperationFailed(msg)) => assert!(msg.contains('2'), "msg: {msg}"),
+            other => panic!("expected OperationFailed with status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_exec_exit_code_none_is_failure_not_success() {
+        // Regression for CORE-010: an unknown exit code (failed/absent inspect)
+        // was previously `unwrap_or(0)`-ed into success, silently reporting a
+        // failed command as OK. It must now be treated as a failure.
+        assert!(check_exec_exit_code(None, b"").is_err());
+        // With stderr present, the message is still classified.
+        let err = check_exec_exit_code(None, b"stat: No such file");
+        assert!(matches!(err, Err(FileError::NotFound(_))));
     }
 
     // --- base64 tests ---
