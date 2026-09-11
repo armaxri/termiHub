@@ -18,6 +18,14 @@
 pub mod local_socket;
 pub mod ndjson;
 
+/// Current-user SID string (windows) — scopes a machine-global pipe name by the
+/// real user identity rather than a spoofable env var (AGT-020).
+#[cfg(windows)]
+pub use local_socket::current_user_sid_string;
+/// Fail-closed private-directory helper (unix) — creates and verifies a
+/// user-owned `0o700` IPC directory, refusing a squatted/symlinked one (AGT-020).
+#[cfg(unix)]
+pub use local_socket::ensure_private_dir;
 pub use local_socket::{
     connect, connect_with_retry, BoxedReader, BoxedWriter, ListenerOptions, ListenerSecurity,
     LocalSocketListener, StaleReclaim,
