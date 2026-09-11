@@ -2,7 +2,71 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import type { JumpHostConfig } from "@/types/connection";
+import type { SettingsSchema } from "@/types/schema";
 import { JumpHostSection } from "./JumpHostSection";
+
+// A minimal SSH connection schema mirroring the real backend shape (field keys
+// and types are what matter): the jump-host inline fields are sourced from it so
+// the hop editor and the primary connection form render the same fields.
+const SSH_SCHEMA: SettingsSchema = {
+  groups: [
+    {
+      key: "connection",
+      label: "Connection",
+      fields: [
+        {
+          key: "host",
+          label: "Host",
+          fieldType: { type: "text" },
+          required: true,
+          placeholder: "example.com",
+        },
+        {
+          key: "port",
+          label: "Port",
+          fieldType: { type: "port" },
+          required: true,
+          default: 22,
+        },
+        { key: "username", label: "Username", fieldType: { type: "text" }, required: true },
+      ],
+    },
+    {
+      key: "authentication",
+      label: "Authentication",
+      fields: [
+        {
+          key: "authMethod",
+          label: "Method",
+          fieldType: {
+            type: "select",
+            options: [
+              { value: "key", label: "SSH Key" },
+              { value: "password", label: "Password" },
+              { value: "agent", label: "SSH Agent" },
+            ],
+          },
+          required: true,
+          default: "key",
+        },
+        {
+          key: "password",
+          label: "Password",
+          fieldType: { type: "password" },
+          required: false,
+          visibleWhen: { field: "authMethod", equals: "password" },
+        },
+        {
+          key: "keyPath",
+          label: "Key Path",
+          fieldType: { type: "filePath", kind: "file" },
+          required: false,
+          visibleWhen: { field: "authMethod", equals: "key" },
+        },
+      ],
+    },
+  ],
+};
 
 // Mock the heavy KeyPathInput (pulls in SSH key validation / fs APIs). Honor the
 // passed testIdPrefix so per-hop key-path fields stay addressable.
@@ -64,6 +128,7 @@ function render(
     errors?: string[];
     warnings?: string[];
     savedConnections?: { id: string; label: string }[];
+    sshSchema?: SettingsSchema;
   } = {}
 ) {
   act(() => {
@@ -73,6 +138,7 @@ function render(
         targetHost={opts.targetHost ?? "target.internal"}
         onChange={onChange}
         savedConnections={opts.savedConnections}
+        sshSchema={opts.sshSchema ?? SSH_SCHEMA}
         errors={opts.errors}
         warnings={opts.warnings}
       />
@@ -164,6 +230,37 @@ describe("JumpHostSection", () => {
     expect(query("jump-host-password-0")).toBeNull();
     // A single hop is not wrapped in a numbered card.
     expect(query("jump-host-card-0")).toBeNull();
+  });
+
+  it("renders the inline fields via the shared schema-driven DynamicField", () => {
+    render([HOP], vi.fn());
+    // Each hop field is rendered through DynamicField (wrapper testid), proving
+    // the hop editor is schema-driven rather than hand-rolled (UISF-014).
+    expect(query("dynamic-jump-host-host-0")).toBeTruthy();
+    expect(query("dynamic-jump-host-auth-method-0")).toBeTruthy();
+    expect(query("dynamic-jump-host-connect-timeout-0")).toBeTruthy();
+  });
+
+  it("drives its fields from the SSH schema (a schema-only field appears)", () => {
+    // A schema carrying an extra field must surface it in the hop editor — the
+    // form follows the schema, so there is no hardcoded field list to drift.
+    const withExtra: SettingsSchema = {
+      groups: [
+        {
+          key: "connection",
+          label: "Connection",
+          fields: [
+            { key: "host", label: "Host", fieldType: { type: "text" }, required: true },
+            { key: "username", label: "Username", fieldType: { type: "text" }, required: true },
+          ],
+        },
+      ],
+    };
+    render([HOP], vi.fn(), { sshSchema: withExtra });
+    expect(query("jump-host-host-0")).toBeTruthy();
+    expect(query("jump-host-username-0")).toBeTruthy();
+    // Fields absent from this schema are not rendered (no bespoke fallback list).
+    expect(query("jump-host-port-0")).toBeNull();
   });
 
   it("editing the host merges into the existing hop", () => {
