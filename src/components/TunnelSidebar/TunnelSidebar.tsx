@@ -13,6 +13,7 @@ import {
   orderTunnelRows,
 } from "@/utils/tunnelChain";
 import { TunnelListItem } from "./TunnelListItem";
+import { newId } from "@/services/transport/ids";
 import "./TunnelSidebar.css";
 
 const DISCONNECTED: TunnelStatus = "disconnected";
@@ -52,7 +53,7 @@ export function TunnelSidebar() {
       if (!original) return;
       const duplicate = {
         ...original,
-        id: `tun-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: newId("tun"),
         name: `Copy of ${original.name}`,
         autoStart: false,
       };

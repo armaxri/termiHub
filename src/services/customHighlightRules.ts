@@ -9,6 +9,7 @@
  */
 
 import type { HighlightRule, HighlightStyle } from "../types/syntaxHighlighting";
+import { newId } from "@/services/transport/ids";
 
 /**
  * Default evaluation priority for a new custom rule. Built-ins span P0–P3; a
@@ -24,11 +25,7 @@ export function defaultCustomRuleStyle(): HighlightStyle {
 
 /** Generates a stable, collision-resistant id for a new custom rule. */
 export function generateRuleId(): string {
-  const cryptoObj = globalThis.crypto;
-  if (cryptoObj && typeof cryptoObj.randomUUID === "function") {
-    return `custom-${cryptoObj.randomUUID()}`;
-  }
-  return `custom-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("custom");
 }
 
 /**

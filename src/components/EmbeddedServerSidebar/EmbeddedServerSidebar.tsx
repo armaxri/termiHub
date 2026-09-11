@@ -9,6 +9,7 @@ import { setEmbeddedServerRunLocation } from "@/services/embeddedServerApi";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
+import { newId } from "@/services/transport/ids";
 import "./EmbeddedServerSidebar.css";
 
 /**
@@ -73,7 +74,7 @@ export function EmbeddedServerSidebar() {
       const cfg = isNew
         ? {
             ...config,
-            id: `srv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            id: newId("srv"),
           }
         : config;
       try {
@@ -96,7 +97,7 @@ export function EmbeddedServerSidebar() {
       if (!original) return;
       const dupe: EmbeddedServerConfig = {
         ...original,
-        id: `srv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: newId("srv"),
         name: `Copy of ${original.name}`,
         autoStart: false,
       };

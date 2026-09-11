@@ -164,6 +164,22 @@ describe("AgentNode — header presentation (#2524)", () => {
       expect(cls).toContain("agent-node__state-dot--connecting");
       expect(cls).not.toContain("agent-node__state-dot--connected");
     });
+
+    it.each([
+      ["connected", "Connected"],
+      ["connecting", "Connecting"],
+      ["reconnecting", "Reconnecting"],
+      ["disconnected", "Disconnected"],
+    ] as const)(
+      "exposes a non-colour accessible name (%s → %s) for the state dot",
+      (connectionState, label) => {
+        renderAgent(makeAgent({ connectionState }));
+        const dot = stateDot();
+        // role=img + aria-label surface the state to AT without hover/colour (A11Y-004).
+        expect(dot?.getAttribute("role")).toBe("img");
+        expect(dot?.getAttribute("aria-label")).toBe(label);
+      }
+    );
   });
 
   describe("two-row layout keeps the agent name visible", () => {

@@ -4,6 +4,7 @@ import { lightTheme } from "./light";
 import { solarizedDarkTheme } from "./solarized-dark";
 import { solarizedLightTheme } from "./solarized-light";
 import { COLOR_TOKEN_KEYS } from "./colorTokens";
+import { newId } from "@/services/transport/ids";
 
 /** Prefix used in `AppSettings.theme` to reference a custom theme by id. */
 export const CUSTOM_THEME_PREFIX = "custom:";
@@ -47,15 +48,11 @@ export function resolveBaseTheme(baseId: string | undefined): ThemeDefinition {
 }
 
 /**
- * Generate a collision-resistant id for a new custom theme. Uses
- * `crypto.randomUUID` when available (browser + jsdom), falling back to a
- * timestamp+random string in environments without it.
+ * Generate a collision-resistant id for a new custom theme. The bare id is
+ * encoded into the `custom:<id>` theme setting, so no prefix is added here.
  */
 export function generateThemeId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId();
 }
 
 /**

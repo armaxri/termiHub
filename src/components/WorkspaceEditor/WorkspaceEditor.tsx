@@ -9,6 +9,7 @@ import { getWorkspaceLeaves, countWorkspaceTabs } from "@/utils/workspaceLayout"
 import { Button, Input, Field, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { LayoutDesigner } from "./LayoutDesigner";
+import { newId } from "@/services/transport/ids";
 import "./WorkspaceEditor.css";
 
 interface WorkspaceEditorProps {
@@ -111,7 +112,7 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
 
   const handleSave = useCallback(async () => {
     const definition: WorkspaceDefinition = {
-      id: meta.workspaceId ?? `ws-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: meta.workspaceId ?? newId("ws"),
       name: name || "Untitled Workspace",
       description: description || undefined,
       tabGroups: tabGroupDefs,

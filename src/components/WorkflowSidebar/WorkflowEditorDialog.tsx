@@ -15,6 +15,7 @@ import {
   stepKindIcon,
   newWorkflowStep,
 } from "./workflowStepMeta";
+import { newId } from "@/services/transport/ids";
 import "./WorkflowEditorDialog.css";
 
 /** The editable fields the dialog collects before saving a workflow. */
@@ -63,9 +64,7 @@ function parseTags(raw: string): string[] {
 
 /** Generate a transient uid for a working step entry (React key + dnd id). */
 function stepUid(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  return `step-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("step");
 }
 
 /**

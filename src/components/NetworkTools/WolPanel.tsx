@@ -12,6 +12,7 @@ import type { WolDevice } from "@/types/network";
 import { validatePort, validateHost, validateMac } from "@/utils/fieldValidation";
 import { resolveUiLocale } from "@/utils/locale";
 import { frontendLog } from "@/utils/frontendLog";
+import { newId } from "@/services/transport/ids";
 
 interface WolHistoryEntry {
   mac: string;
@@ -96,7 +97,7 @@ export function WolPanel() {
     if (!name || macError) return;
     try {
       await networkWolDeviceSave({
-        id: crypto.randomUUID(),
+        id: newId("wol"),
         name,
         mac,
         broadcast,

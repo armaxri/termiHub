@@ -16,6 +16,7 @@ import {
 } from "@/services/macroPlayback";
 import { Macro, MacroStep } from "@/types/macro";
 import { frontendLog } from "@/utils/frontendLog";
+import { newId } from "@/services/transport/ids";
 
 import { currentSessionView, regionExited } from "../sessionBridge";
 
@@ -54,13 +55,9 @@ export interface PlayMacroOptions {
  */
 let activeMacroPlayback: MacroPlaybackHandle | null = null;
 
-/** Generate a unique macro id, falling back when `crypto.randomUUID` is absent. */
+/** Generate a unique macro id. */
 function generateMacroId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") {
-    return `macro-${c.randomUUID()}`;
-  }
-  return `macro-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("macro");
 }
 
 /**
