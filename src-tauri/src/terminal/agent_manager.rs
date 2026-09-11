@@ -28,7 +28,7 @@ use crate::connection::config::AgentSettings;
 use crate::session::manager::{AgentHostedSession, SessionManager};
 use crate::session_projection::projection::{
     fold_agent_reconnect_failed, fold_agent_session_lost, fold_agent_session_recovered,
-    fold_agent_transport_reconnecting,
+    fold_agent_session_unconfirmed, fold_agent_transport_reconnecting,
 };
 use crate::terminal::agent_config_store::{decide_reattach, AgentConfigStore, ReattachDecision};
 use crate::terminal::agent_deploy::ConnectedHost;
@@ -2287,16 +2287,37 @@ async fn agent_io_task<R: Runtime>(
                     || !monitoring_outputs.is_empty()
                     || !hosted.is_empty()
                 {
-                    if let Some(live_ids) =
-                        list_recovered_session_ids(&mut channel, &agent_id, &mut request_id).await
-                    {
+                    // SM-001: the transport is back, but the hosted tabs are still
+                    // folded to `Reconnecting(Idle)` (no timer armed — the in-task
+                    // loop owns the break). They are resolved off `Reconnecting`
+                    // ONLY from the `connection.list` result here, so this call must
+                    // ALWAYS settle them to a terminal outcome. `list_recovered_
+                    // session_ids` has no timeout of its own, so a bounded, per-
+                    // attempt-timed retry both recovers a transient first failure and
+                    // guarantees this returns (a hung agent can no longer strand the
+                    // task — and every hosted tab — in a no-exit reconnecting state).
+                    let live_ids = list_recovered_session_ids_bounded(
+                        &mut channel,
+                        &agent_id,
+                        &mut request_id,
+                    )
+                    .await;
+                    if let Some(ref live_ids) = live_ids {
                         reconcile_output_senders(
                             &mut session_outputs,
                             &mut monitoring_outputs,
-                            &live_ids,
+                            live_ids,
                         );
-                        resolve_agent_hosted_sessions(&app_handle, &hosted, &live_ids);
                     }
+                    // Always resolve: `Some` → recovered/lost per the listed ids;
+                    // `None` (list unavailable after the bounded budget) → settle every
+                    // hosted tab to the terminal `SessionLost` state rather than leaving
+                    // it stuck `Reconnecting` forever (SM-001).
+                    resolve_hosted_sessions_after_reconnect(
+                        &app_handle,
+                        &hosted,
+                        live_ids.as_ref(),
+                    );
                 }
 
                 emit_agent_state(&app_handle, &agent_id, "connected");
@@ -2425,6 +2446,36 @@ pub(crate) fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
     }
 }
 
+/// Resolve every hosted session's region entry after the agent's in-task transport
+/// reconnect, given the post-reconnect `connection.list` result — the single point
+/// that lifts a hosted tab out of `Reconnecting` (SM-001).
+///
+///  - `Some(live_ids)`: delegate to [`resolve_agent_hosted_sessions`] — a session the
+///    agent recovered in place folds back to `Connected`, one it did not folds the
+///    terminal `SessionLost` state (#2564).
+///  - `None`: the transport came back but `connection.list` never answered within the
+///    bounded retry budget, so which sessions survived cannot be confirmed. Settle
+///    **every** hosted tab to the terminal `SessionLost` state via
+///    [`fold_agent_session_unconfirmed`]. Leaving them `Reconnecting` here is the
+///    SM-001 no-exit state: the fold keeps the reconnect loop `Idle`, the backend
+///    timer arms only on `Waiting`, and no other task drives the machine — so nothing
+///    would ever move the tab again except a manual Stop. Settling instead surfaces an
+///    honest, actionable failure (the "session lost" overlay with a manual restart).
+pub(crate) fn resolve_hosted_sessions_after_reconnect<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    hosted: &[AgentHostedSession],
+    live_ids: Option<&std::collections::HashSet<String>>,
+) {
+    match live_ids {
+        Some(live_ids) => resolve_agent_hosted_sessions(app_handle, hosted, live_ids),
+        None => {
+            for h in hosted {
+                fold_agent_session_unconfirmed(app_handle, &h.tab_id);
+            }
+        }
+    }
+}
+
 /// Drop output/monitoring senders whose session id is not in `live_ids`.
 ///
 /// Used after a successful reconnect to reconcile the I/O task's per-session
@@ -2446,6 +2497,62 @@ fn reconcile_output_senders(
 /// skipping any interleaved notifications. Returns `None` on any I/O or parse
 /// failure so the caller leaves the sender maps untouched rather than dropping
 /// senders it could not confirm as dead.
+/// Number of `connection.list` attempts after an in-task transport reconnect before
+/// giving up and settling the hosted tabs (SM-001). The transport is already back, so a
+/// first failure is usually transient; a small bounded retry recovers it while still
+/// guaranteeing the loop always terminates.
+const RECOVERY_LIST_ATTEMPTS: u32 = 3;
+
+/// Wall-clock cap per post-reconnect `connection.list` attempt (SM-001).
+/// [`list_recovered_session_ids`] reads via [`read_handshake_line`], which has **no
+/// timeout of its own** — so without this a reconnected-but-unresponsive agent that never
+/// answers `connection.list` would block `agent_io_task`, and every hosted tab, forever.
+/// Bounding each attempt guarantees the resolve path is always reached.
+const RECOVERY_LIST_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Delay between bounded `connection.list` retry attempts (SM-001).
+const RECOVERY_LIST_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Bounded, per-attempt-timed wrapper over [`list_recovered_session_ids`] (SM-001).
+///
+/// Retries the list up to [`RECOVERY_LIST_ATTEMPTS`] times, each attempt capped at
+/// [`RECOVERY_LIST_ATTEMPT_TIMEOUT`], so a transient failure right after reconnect
+/// recovers while a hung agent can never strand the task. Returns the first successful
+/// list, or `None` once the budget is exhausted — the caller then settles the hosted tabs
+/// to a terminal state rather than leaving them stuck `Reconnecting`.
+async fn list_recovered_session_ids_bounded(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    agent_id: &str,
+    request_id: &mut u64,
+) -> Option<std::collections::HashSet<String>> {
+    for attempt in 1..=RECOVERY_LIST_ATTEMPTS {
+        match tokio::time::timeout(
+            RECOVERY_LIST_ATTEMPT_TIMEOUT,
+            list_recovered_session_ids(channel, agent_id, request_id),
+        )
+        .await
+        {
+            Ok(Some(ids)) => return Some(ids),
+            Ok(None) => warn!(
+                "Agent {}: connection.list after reconnect failed (attempt {}/{})",
+                agent_id, attempt, RECOVERY_LIST_ATTEMPTS
+            ),
+            Err(_) => warn!(
+                "Agent {}: connection.list after reconnect timed out (attempt {}/{})",
+                agent_id, attempt, RECOVERY_LIST_ATTEMPTS
+            ),
+        }
+        if attempt < RECOVERY_LIST_ATTEMPTS {
+            tokio::time::sleep(RECOVERY_LIST_RETRY_DELAY).await;
+        }
+    }
+    warn!(
+        "Agent {}: connection.list unavailable after {} attempts; settling hosted sessions",
+        agent_id, RECOVERY_LIST_ATTEMPTS
+    );
+    None
+}
+
 async fn list_recovered_session_ids(
     channel: &mut russh::Channel<russh::client::Msg>,
     agent_id: &str,

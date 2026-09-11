@@ -886,6 +886,147 @@ fn fully_failed_agent_break_folds_region_failed_at_the_source() {
     }
 }
 
+/// SM-001 (state-machine-ux/0001): the **unconfirmed-session** resolve of the transient
+/// agent-transport-break lifecycle — the agent re-established its transport, but the
+/// post-reconnect `connection.list` never answered within the bounded retry budget, so
+/// which hosted sessions survived cannot be confirmed.
+///
+/// This is the exact no-exit case the audit flagged: before the fix, the
+/// `connection.list == None` branch did nothing, so every hosted tab stayed folded to
+/// `Reconnecting` with the reconnect loop `Idle` — no timer armed (the backend timer arms
+/// only on `Waiting`), no task driving it — a "Reconnecting… forever" state escapable only
+/// by a manual Stop.
+///
+/// Drives the production `SessionManager` identity accessor + the enter fold +
+/// [`resolve_hosted_sessions_after_reconnect`] with `live_ids == None` (the settle path
+/// the `agent_io_task` reconnect loop now always takes when the list is unavailable),
+/// against the real `ReconnectTimerDriver`, to prove every hosted session **leaves**
+/// `Reconnecting` for the terminal `SessionLost` state, clears its re-attach id, resets the
+/// reconnect loop to idle, and arms **no** timer — i.e. the machine can never sit stuck.
+#[test]
+fn unconfirmed_agent_break_settles_region_off_reconnecting_at_the_source() {
+    use crate::terminal::agent_manager::{
+        fold_agent_hosted_reconnecting, resolve_hosted_sessions_after_reconnect,
+    };
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let agent = Arc::new(FakeAgent::new());
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        agent.clone() as Arc<dyn AgentRpcClient>,
+    );
+    handle.manage(manager);
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    handle.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector = projection.projector.clone();
+    let projector_seed = projection.projector.clone();
+    let store_for_publish = store.clone();
+    handle.manage(projection);
+
+    let scheduler = Arc::new(ManualScheduler::default());
+    let driver = Arc::new(ReconnectTimerDriver::new(
+        store.clone(),
+        scheduler.clone(),
+        Arc::new(move || {
+            publish_sessions(&projector, &store_for_publish);
+        }),
+    ));
+    handle.manage(driver);
+
+    // Two live agent-hosted sessions on `agent-1`, each Connected after initial connect.
+    let manager_ref = handle.state::<SessionManager>();
+    let settings = serde_json::json!({ "config": {} });
+    for (tab, connect) in [("tab-1", "tab-1:0"), ("tab-2", "tab-2:0")] {
+        tauri::async_runtime::block_on(manager_ref.create_connection(
+            "shell",
+            settings.clone(),
+            Some("agent-1"),
+            Some(connect),
+            false,
+            true, // resilient
+            handle.clone(),
+        ))
+        .expect("initial connect succeeds");
+        store.connect(tab);
+        store.connected(tab);
+        store.set_backend_session_id(tab, Some(format!("backend-{tab}")));
+    }
+    publish_sessions(&projector_seed, &store);
+
+    // Enter: fold every hosted session Reconnecting at the source (the transient break) —
+    // loop Idle, so nothing is armed. This is the state the tab is stuck in on `develop`.
+    tauri::async_runtime::block_on(fold_agent_hosted_reconnecting(
+        &handle,
+        "agent-1",
+        Some("connection reset"),
+    ));
+    let hosted = tauri::async_runtime::block_on(manager_ref.agent_hosted_sessions("agent-1"));
+    for tab in ["tab-1", "tab-2"] {
+        let life = store.get(tab).unwrap();
+        assert_eq!(
+            life.status,
+            SessionStatus::Reconnecting,
+            "{tab} folds Reconnecting on the transient break"
+        );
+        assert_eq!(
+            life.reconnect.phase,
+            ReconnectPhase::Idle,
+            "{tab} keeps the reconnect loop Idle — the in-task loop owns the break"
+        );
+        assert!(
+            !scheduler.armed(tab),
+            "{tab} arms no timer while Reconnecting(Idle) — the no-exit precondition"
+        );
+    }
+
+    // Resolve with `live_ids == None`: the transport is back but `connection.list` never
+    // answered after the bounded budget. Every hosted tab MUST leave `Reconnecting` for the
+    // terminal `SessionLost` state (SM-001). Without the fix this call is a no-op and the
+    // tabs below would still read `Reconnecting` — the stuck state.
+    resolve_hosted_sessions_after_reconnect(&handle, &hosted, None);
+
+    for tab in ["tab-1", "tab-2"] {
+        let settled = store.get(tab).unwrap();
+        assert_ne!(
+            settled.status,
+            SessionStatus::Reconnecting,
+            "{tab} must not stay stuck Reconnecting when the session cannot be confirmed (SM-001)"
+        );
+        assert_eq!(
+            settled.status,
+            SessionStatus::SessionLost,
+            "{tab} settles the terminal SessionLost state at the backend source (SM-001)"
+        );
+        assert_eq!(
+            settled.error.as_deref(),
+            Some("the agent session could not be confirmed after reconnect"),
+            "{tab} carries the unconfirmed-session cause the overlay surfaces"
+        );
+        assert_eq!(
+            settled.reconnect.phase,
+            ReconnectPhase::Idle,
+            "{tab} resets the reconnect loop to idle — a settled state, not a live loop"
+        );
+        assert!(
+            settled.backend_session_id.is_none(),
+            "{tab} clears its re-attach id — there is no confirmed live backend session"
+        );
+        assert!(
+            !scheduler.armed(tab),
+            "{tab} arms no timer after settling — the machine has reached a terminal state"
+        );
+    }
+}
+
 /// #2637: a **clean** process exit folds the coarse status to terminal
 /// `Disconnected` (reason `Normal`) server-side, reconciling the real
 /// `ReconnectTimerDriver`.
