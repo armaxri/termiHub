@@ -392,11 +392,16 @@ The deterministic-by-isolation fix runs them in a **dedicated serial, isolated g
 
 ## Coverage Goals
 
-Target coverage levels:
+These are **aspirational guidelines**, not enforced gates. There is currently **no Rust coverage
+tooling** in the repo (no tarpaulin/llvm-cov/grcov/codecov), so the Rust figure below is a target
+we aim for by hand, not a measured or CI-gated number. Frontend coverage can be measured locally
+with `pnpm test:coverage` (Vitest), but it is likewise not gated in CI.
 
-- **Rust Backend**: >80% line coverage
-- **React Components**: >70% coverage
-- **E2E Critical Paths**: 100% (all main user flows)
+Guideline coverage levels:
+
+- **Rust Backend**: aim for high line coverage (guideline ~80%) — **not currently measured**
+- **React Components**: aim for ~70% coverage — measurable via `pnpm test:coverage`, not gated
+- **E2E Critical Paths**: cover all main user flows
 
 ## Testing Best Practices
 
