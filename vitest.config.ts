@@ -20,14 +20,25 @@ export default defineConfig({
     testTimeout: 15000,
     coverage: {
       provider: "v8",
-      include: ["src/**/*.ts"],
+      // Include BOTH .ts and .tsx: the old `src/**/*.ts` glob silently excluded
+      // every React component (.tsx) from the denominator, so untested components
+      // could not lower the percentage and the gate under-counted the whole UI
+      // (TOOL-002). `src/main.tsx` stays excluded as the entry point — that
+      // exclude was previously inert because .tsx was never included at all.
+      include: ["src/**/*.{ts,tsx}"],
       exclude: ["src/test/**", "src/**/*.d.ts", "src/main.tsx"],
+      // Emit lcov (for the unified whole-app merge in scripts/coverage.sh,
+      // TOOL-001) alongside the human-readable text + html reports.
+      reporter: ["text", "html", "lcov"],
       // Modest coverage floors so a real regression fails CI without blocking
-      // the current tree (#2066, follow-up to the #2050 audit). Measured on the
-      // develop tree: statements 78.5%, branches 71.5%, functions 74.6%,
-      // lines 79.7%. Each floor sits a few points below its measured value so
-      // normal fluctuation passes but a genuine drop trips the gate. Raise these
-      // (never lower) as coverage improves — they are a ratchet, not a target.
+      // the current tree (#2066, follow-up to the #2050 audit). RE-MEASURED
+      // after the .tsx glob fix (TOOL-002): folding every React component into
+      // the denominator moved the honest numbers to statements 77.5%, branches
+      // 69.4%, functions 73.9%, lines 78.8% — the components turned out to be
+      // well-covered, so the numbers barely moved and STILL clear these floors.
+      // The thresholds are therefore left unchanged (each still sits a few
+      // points below its measured value). Raise these (never lower) as coverage
+      // improves — they are a ratchet, not a target.
       thresholds: {
         lines: 75,
         statements: 74,
