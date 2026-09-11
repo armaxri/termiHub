@@ -8,6 +8,8 @@
 //! eventually fail the socket, which surfaces to the reader as an error and
 //! drives the normal disconnect path (`terminal-exit` -> disconnect overlay).
 
+use std::io;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 use socket2::TcpKeepalive;
@@ -56,10 +58,55 @@ where
     }
 }
 
+/// Resolve `host:port` via DNS and open a blocking TCP connection, applying
+/// `timeout` to each resolved address in turn.
+///
+/// [`TcpStream::connect_timeout`] requires an already-resolved
+/// [`SocketAddr`](std::net::SocketAddr) and `str::parse::<SocketAddr>` only
+/// accepts numeric IP literals — so connecting to a hostname (`router.local`,
+/// `bbs.example.com`) needs an explicit DNS step first. `(host, port)`
+/// implements [`ToSocketAddrs`], which performs that resolution (handling both
+/// hostnames and bare IPs), yielding one or more candidate addresses (e.g. IPv4
+/// and IPv6). Each is tried in order with the given `timeout`; the first
+/// successful connection wins. Resolution failure and exhausted-candidate
+/// failure both surface as a clean [`io::Error`] rather than a panic.
+pub fn connect_timeout_resolved(host: &str, port: u16, timeout: Duration) -> io::Result<TcpStream> {
+    let addrs: Vec<_> = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("Failed to resolve host '{host}': {e}"),
+            )
+        })?
+        .collect();
+
+    if addrs.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Host '{host}' resolved to no addresses"),
+        ));
+    }
+
+    let mut last_err: Option<io::Error> = None;
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(e) => last_err = Some(e),
+        }
+    }
+
+    Err(last_err.unwrap_or_else(|| {
+        io::Error::other(format!(
+            "Could not connect to any address for host '{host}'"
+        ))
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{TcpListener, TcpStream};
+    use std::net::TcpListener;
 
     /// A connected socket has keepalive enabled after calling the helper.
     #[test]
@@ -81,5 +128,45 @@ mod tests {
             .keepalive()
             .expect("read keepalive");
         assert!(after, "expected keepalive on after enabling");
+    }
+
+    /// Connecting by **hostname** succeeds — the helper resolves `localhost`
+    /// via DNS before connecting, which the old `str::parse::<SocketAddr>`
+    /// shortcut could not do (it only accepted numeric IP literals).
+    #[test]
+    fn connect_timeout_resolved_connects_by_hostname() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+
+        let stream = connect_timeout_resolved("localhost", port, Duration::from_secs(5))
+            .expect("hostname connect should resolve and succeed");
+        let _peer = listener.accept().expect("accept");
+
+        // The connection landed on the loopback address the listener is bound to.
+        assert!(stream.peer_addr().expect("peer_addr").ip().is_loopback());
+    }
+
+    /// A bare IP literal still works (resolution is a no-op passthrough).
+    #[test]
+    fn connect_timeout_resolved_connects_by_ip() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("local_addr").port();
+
+        let stream = connect_timeout_resolved("127.0.0.1", port, Duration::from_secs(5))
+            .expect("ip connect should succeed");
+        let _peer = listener.accept().expect("accept");
+        assert_eq!(stream.peer_addr().expect("peer_addr").port(), port);
+    }
+
+    /// An unresolvable hostname returns a clean `NotFound` error, never a panic.
+    #[test]
+    fn connect_timeout_resolved_reports_unresolvable_host() {
+        let err = connect_timeout_resolved(
+            "nonexistent.host.invalid.termihub.test",
+            23,
+            Duration::from_secs(2),
+        )
+        .expect_err("an unresolvable host must error, not connect");
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 }
