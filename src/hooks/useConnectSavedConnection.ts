@@ -11,6 +11,7 @@ import {
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
+import { isAuthFailure } from "@/utils/backendErrorCode";
 
 /** Return value of {@link useConnectSavedConnection}. */
 export interface UseConnectSavedConnection {
@@ -163,12 +164,13 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
             });
             return;
           } catch (err) {
-            const errStr = String(err);
-            if (
-              errStr.toLowerCase().includes("auth failed") ||
-              errStr.includes("Authentication failed")
-            ) {
-              // Stale credential — remove it and fall through to prompt
+            if (isAuthFailure(err)) {
+              // Genuine auth rejection (typed, locale-independent signal —
+              // I18N-001): the stored credential is stale. Remove it and fall
+              // through to prompt. Gating on the typed code, never on English
+              // message text, means a localized/reworded backend or remote
+              // message can neither destroy a valid credential nor trap the user
+              // by failing to clear a genuinely stale one.
               await removeCredential(connection.id, resolution.credentialType).catch(() => {});
             } else {
               // Non-auth failure — let the Terminal component handle the error

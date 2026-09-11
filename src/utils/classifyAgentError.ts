@@ -2,6 +2,8 @@
  * Classifies a remote agent connection error into a user-friendly category.
  */
 
+import { AUTH_FAILED_CODE, parseBackendError } from "@/utils/backendErrorCode";
+
 /** The three specific error categories plus a generic fallback. */
 export type AgentErrorCategory =
   | "unreachable"
@@ -20,7 +22,25 @@ export interface ClassifiedAgentError {
 
 /** Classify a backend error string into a user-facing error. */
 export function classifyAgentError(error: unknown): ClassifiedAgentError {
-  const raw = error instanceof Error ? error.message : String(error);
+  const parsed = parseBackendError(error);
+  // Display the human message with any machine code marker stripped so a token
+  // never leaks into the error dialog.
+  const raw = parsed.message;
+
+  // Prefer the typed, locale-independent auth signal (I18N-001): a genuine
+  // credential rejection is identified by the backend code, not by matching
+  // English text — so it stays correct under any locale or rewording. The
+  // English substring below remains only as a fallback for legacy/uncoded
+  // errors (the remaining non-auth categories are still text-matched — I18N-002).
+  if (parsed.code === AUTH_FAILED_CODE) {
+    return {
+      category: "auth-failure",
+      title: "Authentication Failed",
+      message:
+        "SSH authentication was rejected. Check your username, password, or SSH key configuration.",
+      rawError: raw,
+    };
+  }
 
   if (raw.includes("Connection failed")) {
     return {

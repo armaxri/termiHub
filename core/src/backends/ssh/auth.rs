@@ -228,9 +228,13 @@ async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<()
     };
 
     if !success {
-        return Err(SessionError::SpawnFailed(
-            "Authentication failed".to_string(),
-        ));
+        // Genuine credential rejection (wrong password/passphrase or refused
+        // key). Surface the typed, locale-independent discriminant so the
+        // frontend can gate the destructive stored-credential discard on the
+        // machine-stable signal rather than on English message text (I18N-001).
+        // A transport/protocol error *during* the auth exchange is a different
+        // failure and keeps its `SpawnFailed` mapping above.
+        return Err(SessionError::AuthFailed);
     }
 
     Ok(())

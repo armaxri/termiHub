@@ -51,6 +51,7 @@ import {
   cancelConnectAgent,
 } from "@/services/api";
 import { classifyAgentError, ClassifiedAgentError } from "@/utils/classifyAgentError";
+import { isAuthFailure } from "@/utils/backendErrorCode";
 import { connectionStateLabel } from "@/utils/statusLabel";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
@@ -869,8 +870,12 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
           });
         }
       } catch (err) {
-        const classified = classifyAgentError(err);
-        if (resolution.usedStoredCredential && classified.category === "auth-failure") {
+        // Gate the DESTRUCTIVE stored-credential discard on the typed,
+        // locale-independent auth signal (I18N-001) — never on the classifier's
+        // category, which can still be derived from English substrings for the
+        // non-auth branches. A transport error that merely mentions "auth
+        // failed" must not delete a valid credential.
+        if (resolution.usedStoredCredential && isAuthFailure(err)) {
           // A failed removal leaves a known-bad stored credential in place — log
           // it to the LogViewer instead of swallowing it (WA-FE-005). The flow
           // still re-prompts for a password below.

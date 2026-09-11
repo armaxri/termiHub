@@ -85,4 +85,13 @@ describe("classifyAgentError", () => {
     const result = classifyAgentError(raw);
     expect(result.rawError).toBe(raw);
   });
+
+  it("classifies a typed auth-failure code regardless of message language (I18N-001)", () => {
+    const result = classifyAgentError("[thub-code:auth_failed] Authentifizierung fehlgeschlagen");
+    expect(result.category).toBe("auth-failure");
+    expect(result.title).toBe("Authentication Failed");
+    // The machine marker is stripped from the raw error shown in the dialog.
+    expect(result.rawError).toBe("Authentifizierung fehlgeschlagen");
+    expect(result.rawError).not.toContain("thub-code");
+  });
 });
