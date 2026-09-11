@@ -96,27 +96,23 @@ export const AGENT_SCHEMA: SettingsSchema = {
             options: [
               { value: "immediate", label: "Immediate (shut down & redeploy)" },
               { value: "coordinated", label: "Coordinated (notify connected hosts)" },
-              { value: "deferred", label: "Deferred (apply on last disconnect)" },
             ],
           },
           required: false,
           default: "immediate",
           description:
             "How this agent's binary is updated when a newer desktop version deploys. " +
-            "Immediate and Coordinated are active; Coordinated notifies other connected " +
-            "hosts and lets them reconnect cleanly before applying (Unix agents — Windows " +
-            "falls back to Immediate). Deferred is saved and takes effect once it lands.",
+            "Coordinated notifies other connected hosts and lets them reconnect cleanly " +
+            "before applying (Unix agents — Windows falls back to Immediate).",
         },
-        {
-          key: "allowSelfUpdate",
-          label: "Allow agent self-update",
-          fieldType: { type: "boolean" },
-          required: false,
-          default: false,
-          description:
-            "Let the agent check GitHub and update itself in the background. Opt-in; the " +
-            "self-update mechanism is not yet implemented, so this only persists the preference.",
-        },
+        // NOTE: The "Allow agent self-update" toggle and the "Deferred" update
+        // strategy are intentionally NOT rendered here. Their underlying
+        // mechanisms (SI-8 self-update; deferred apply-on-last-disconnect) are
+        // not implemented yet, so exposing them as controls only persisted an
+        // inert preference that silently did nothing (WA-FE-002). The type
+        // fields (`allowSelfUpdate`, `updateStrategy: "deferred"`) are kept in
+        // RemoteAgentConfig for forward-compat and tolerant loading of existing
+        // configs — re-add the controls here once the backend mechanisms land.
       ],
     },
   ],
