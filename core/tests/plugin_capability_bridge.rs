@@ -101,7 +101,7 @@ async fn probe_outcome_with_policy(
 #[tokio::test]
 async fn network_capability_is_enforced_through_the_bridge() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")))
+    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
         .expect("fixture should load");
 
     // A real listener so the *granted* probe can genuinely connect.
@@ -149,7 +149,7 @@ async fn connection_limit_is_enforced_through_the_bridge() {
     // mediated connections at 2 can open only 2 of 3 attempted at once; the third
     // is refused by the host (#2028).
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")))
+    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
         .expect("fixture should load");
 
     // Accept (and hold) every connection the host actually opens, so the ceiling —
@@ -200,7 +200,7 @@ async fn connection_limit_is_enforced_through_the_bridge() {
 #[tokio::test]
 async fn filesystem_capability_is_enforced_through_the_bridge() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")))
+    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
         .expect("fixture should load");
 
     // A scoped root with an in-scope file, and a sibling secret outside it.
@@ -249,7 +249,7 @@ async fn filesystem_capability_is_enforced_through_the_bridge() {
 #[tokio::test]
 async fn filesystem_write_is_enforced_through_the_bridge() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")))
+    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
         .expect("fixture should load");
 
     let root = tmp.path().join("scoped");
@@ -326,7 +326,7 @@ async fn filesystem_write_is_enforced_through_the_bridge() {
 #[tokio::test]
 async fn filesystem_stat_and_list_are_enforced_through_the_bridge() {
     let tmp = tempfile::TempDir::new().unwrap();
-    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")))
+    let lib = load_backend_library(&build_fixture(&tmp.path().join("target")), None)
         .expect("fixture should load");
 
     let root = tmp.path().join("scoped");

@@ -269,8 +269,8 @@ fn scope_error_status(err: &PermissionError) -> PluginStatus {
 /// Borrow the boxed [`BridgeContext`] behind a bridge `ctx`, for the duration of
 /// the current call only.
 ///
-/// The borrow argument is a reference to the caller's `ctx` **pointer binding**,
-/// which ties the returned reference's lifetime `'a` to that binding's scope
+/// The borrow argument is a reference to the caller's `ctx` **pointer binding**;
+/// by lifetime elision the returned reference is tied to that binding's scope
 /// (CORE-036). The previous signature returned `&'a BridgeContext` with a
 /// caller-chosen, effectively unbounded `'a`, so the borrow checker could not
 /// stop a returned reference from being stored past the FFI call and outliving a
@@ -289,7 +289,7 @@ fn scope_error_status(err: &PermissionError) -> PluginStatus {
 /// (non-null, non-ours) pointer is still undefined behaviour to read — the magic
 /// tag only catches the readable-but-wrong-type case; the ABI contract requires
 /// the plugin to pass back exactly the `ctx` the host gave it.
-unsafe fn context<'a>(ctx: &'a *mut core::ffi::c_void) -> Option<&'a BridgeContext> {
+unsafe fn context(ctx: &*mut core::ffi::c_void) -> Option<&BridgeContext> {
     if ctx.is_null() {
         return None;
     }
@@ -539,7 +539,13 @@ unsafe extern "C" fn bridge_list_dir(
         };
         let mut names: Vec<Vec<u8>> = Vec::new();
         for entry in read_dir.flatten() {
-            names.push(entry.file_name().to_string_lossy().into_owned().into_bytes());
+            names.push(
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+                    .into_bytes(),
+            );
         }
         let encoded = encode_dir_entries(&names);
         // SAFETY: `out_entries` is a valid, writable out-parameter.
