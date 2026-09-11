@@ -62,6 +62,71 @@ fn with_c_locale(cmd: Vec<&str>) -> Vec<&str> {
     prefixed
 }
 
+/// Portable directory-listing shell script run once per `list_dir`, replacing
+/// the GNU-only `find -printf` (CORE-012).
+///
+/// `find -printf` is a GNU findutils extension that BusyBox `find` — the `find`
+/// in Alpine and most minimal container images — does not implement, so the old
+/// command failed on exactly the most common base images. This script instead
+/// derives every field with tools BusyBox and GNU coreutils both provide:
+///
+/// * `find` only *enumerates* the entries (both `find`s support `-maxdepth`,
+///   `!`, and `-exec … +`); the script computes the metadata.
+/// * `stat -c '%s %Y %a'` yields size / mtime-epoch / octal-mode — the same
+///   specifiers the single-file [`FileBrowser::stat`] command already relies on
+///   BusyBox supporting.
+/// * `[ -L ]` / `readlink` detect a symlink and read its target; `[ -d ]`
+///   (which follows symlinks) decides the *followed* type, so a symlink-to-dir
+///   still lists as a directory.
+///
+/// It emits the **same tab-separated 7-field record** the previous `-printf`
+/// format did — `name\town-type\tsize\tmtime\tmode\tfollowed-type\ttarget` —
+/// so [`parse_find_output`] is unchanged. `name` is first (so a leading tab in
+/// a name would split it, matching the old behavior) and `target` is the
+/// rest-of-line final field (so a target may itself contain tabs). Records are
+/// newline-separated, the same delimiter the old format used — a filename
+/// containing a literal newline was, and remains, out of scope.
+///
+/// The per-entry `stat` is guarded: an entry that vanishes between the `find`
+/// enumeration and the `stat` (a TOCTOU race) is skipped rather than emitted
+/// with zeroed fields.
+const LIST_DIR_SCRIPT: &str = r#"for f in "$@"; do
+  name=${f##*/}
+  meta=$(stat -c '%s %Y %a' "$f" 2>/dev/null) || continue
+  [ -n "$meta" ] || continue
+  if [ -L "$f" ]; then y=l; t=$(readlink "$f" 2>/dev/null); else y=f; t=; fi
+  if [ -d "$f" ]; then yy=d; else yy=f; fi
+  set -- $meta
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$y" "$1" "$2" "$3" "$yy" "$t"
+done"#;
+
+/// Build the portable `list_dir` command argv (CORE-012).
+///
+/// `find` enumerates the direct children of `path` (excluding the directory
+/// itself) and hands them to the portable [`LIST_DIR_SCRIPT`] via
+/// `-exec sh -c '…' sh {} +`. `!` (POSIX) is used instead of GNU `-not`.
+fn list_dir_argv(path: &str) -> Vec<&str> {
+    vec![
+        "find",
+        path,
+        "-maxdepth",
+        "1",
+        "!",
+        "-name",
+        ".",
+        "!",
+        "-path",
+        path,
+        "-exec",
+        "sh",
+        "-c",
+        LIST_DIR_SCRIPT,
+        "sh",
+        "{}",
+        "+",
+    ]
+}
+
 /// Run a command inside the container and return stdout as a string.
 async fn exec_command(
     client: &bollard::Docker,
@@ -211,28 +276,7 @@ async fn exec_command_stdin(
 #[async_trait::async_trait]
 impl FileBrowser for DockerFileBrowser {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
-        let output = exec_command(
-            &self.client,
-            &self.container_id,
-            vec![
-                "find",
-                path,
-                "-maxdepth",
-                "1",
-                "-not",
-                "-name",
-                ".",
-                "-not",
-                "-path",
-                path,
-                "-printf",
-                // `%y` is the entry's own type (`l` for a symlink); `%Y` is the
-                // type after following the link (so a symlink-to-dir still lists
-                // as a directory); `%l` is the link target (empty for non-links).
-                "%f\t%y\t%s\t%T@\t%m\t%Y\t%l\n",
-            ],
-        )
-        .await?;
+        let output = exec_command(&self.client, &self.container_id, list_dir_argv(path)).await?;
         parse_find_output(&output, path)
     }
 
@@ -320,11 +364,16 @@ fn parse_epoch_seconds(field: &str) -> u64 {
     field.replace(',', ".").parse::<f64>().unwrap_or(0.0) as u64
 }
 
-/// Parse the output of `find -printf '%f\t%y\t%s\t%T@\t%m\t%Y\t%l\n'`.
+/// Parse the tab-separated listing records emitted by [`LIST_DIR_SCRIPT`]:
+/// `name\town-type\tsize\tmtime-epoch\tmode\tfollowed-type\ttarget` (CORE-012).
 ///
-/// The trailing `%Y` (type after following links) and `%l` (link target) fields
-/// let the browser distinguish symlinks from the `%y` own-type field and report
-/// the link target, matching the FTP/local behavior (#1513, #1523).
+/// This is the same 7-field layout the retired GNU `find -printf
+/// '%f\t%y\t%s\t%T@\t%m\t%Y\t%l\n'` produced, so the parser is shared. The
+/// followed-type field (type after following links) and the target field let
+/// the browser distinguish symlinks from the own-type field and report the link
+/// target, matching the FTP/local behavior (#1513, #1523). The portable script
+/// emits whole-second mtimes (no fractional part), but the parse stays robust to
+/// a fractional/comma-decimal value for defence-in-depth (I18N-004).
 fn parse_find_output(output: &str, parent_path: &str) -> Result<Vec<FileEntry>, FileError> {
     let mut entries = Vec::new();
     let parent = if parent_path.ends_with('/') {
@@ -593,6 +642,88 @@ mod tests {
         let link = &entries[0];
         assert!(link.is_symlink);
         assert_eq!(link.symlink_target, None);
+    }
+
+    // --- list_dir portability (CORE-012) ---
+
+    #[test]
+    fn list_dir_argv_is_busybox_portable() {
+        // The command must not use the GNU-only `find -printf` (unsupported by
+        // BusyBox `find`, which is what Alpine and most minimal images ship), and
+        // must use the POSIX `!` negation rather than GNU `-not`.
+        let argv = list_dir_argv("/project");
+        assert!(
+            !argv.iter().any(|a| *a == "-printf"),
+            "must not use the GNU-only -printf: {argv:?}"
+        );
+        assert!(
+            !argv.iter().any(|a| *a == "-not"),
+            "must use POSIX `!`, not GNU `-not`: {argv:?}"
+        );
+        assert!(argv.contains(&"!"), "expected POSIX negation operator");
+        assert!(argv.contains(&"-maxdepth"), "expected -maxdepth enumeration");
+        // Metadata is derived with tools BusyBox and coreutils both provide.
+        assert!(argv.contains(&LIST_DIR_SCRIPT));
+        assert!(LIST_DIR_SCRIPT.contains("stat -c"));
+        assert!(LIST_DIR_SCRIPT.contains("readlink"));
+        // `-exec … +` batches the entries into the portable helper.
+        assert_eq!(argv.last(), Some(&"+"));
+    }
+
+    #[test]
+    fn parse_find_output_portable_script_sample() {
+        // Representative output of LIST_DIR_SCRIPT. Because the script derives
+        // every field with portable tools (`stat -c '%s %Y %a'`, `readlink`,
+        // `[ -L ]`, `[ -d ]`), its output is byte-identical whether the container
+        // ships GNU coreutils or BusyBox — there is a single portable form, not a
+        // GNU form and a BusyBox form. Fields:
+        //   name  own-type  size  mtime  mode  followed-type  target
+        // Note a non-symlink (including a directory) has own-type `f`; a
+        // directory is identified by the followed-type `d`.
+        let output = "my file.txt\tf\t1024\t1705321845\t644\tf\t\n\
+                       src\tf\t4096\t1705321845\t755\td\t\n\
+                       link\tl\t7\t1705321845\t777\tf\t/etc/target\n\
+                       linkdir\tl\t7\t1705321845\t777\td\t/var/data\n\
+                       broken\tl\t7\t1705321845\t777\tf\t/missing\n";
+        let entries = parse_find_output(output, "/project").unwrap();
+        assert_eq!(entries.len(), 5);
+
+        // Regular file with a space in the name.
+        let file = &entries[0];
+        assert_eq!(file.name, "my file.txt");
+        assert_eq!(file.path, "/project/my file.txt");
+        assert!(!file.is_directory);
+        assert!(!file.is_symlink);
+        assert_eq!(file.size, 1024);
+        assert_eq!(file.modified, "2024-01-15T12:30:45Z");
+        assert_eq!(file.permissions.as_deref(), Some("rw-r--r--"));
+
+        // Plain directory: own-type `f`, followed-type `d`.
+        let dir = &entries[1];
+        assert_eq!(dir.name, "src");
+        assert!(dir.is_directory);
+        assert!(!dir.is_symlink);
+        assert_eq!(dir.permissions.as_deref(), Some("rwxr-xr-x"));
+
+        // Symlink to a file.
+        let link = &entries[2];
+        assert_eq!(link.name, "link");
+        assert!(link.is_symlink);
+        assert!(!link.is_directory);
+        assert_eq!(link.symlink_target.as_deref(), Some("/etc/target"));
+
+        // Symlink to a directory still lists as a navigable directory.
+        let linkdir = &entries[3];
+        assert!(linkdir.is_symlink);
+        assert!(linkdir.is_directory);
+        assert_eq!(linkdir.symlink_target.as_deref(), Some("/var/data"));
+
+        // Broken symlink: readlink still reports the (dangling) target; the
+        // followed-type falls back to `f`, so it does not list as a directory.
+        let broken = &entries[4];
+        assert!(broken.is_symlink);
+        assert!(!broken.is_directory);
+        assert_eq!(broken.symlink_target.as_deref(), Some("/missing"));
     }
 
     // --- parse_stat_output tests ---
