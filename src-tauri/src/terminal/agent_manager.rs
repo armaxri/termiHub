@@ -1231,9 +1231,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 "Agent request timed out after {:?}",
                 timeout
             ))),
-            Ok(Err(_recv)) => {
-                Err(TerminalError::RemoteError("Agent connection lost".to_string()))
-            }
+            Ok(Err(_recv)) => Err(TerminalError::RemoteError(
+                "Agent connection lost".to_string(),
+            )),
             Ok(Ok(inner)) => inner.map_err(TerminalError::RemoteError),
         }
     }
@@ -3528,7 +3528,9 @@ mod tests {
     ///
     /// Used by tests that need to keep the command *receiver* alive (e.g. the
     /// CONC-003 timeout test, which sends a request the receiver never answers).
-    fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) -> AgentConnection {
+    fn make_agent_connection_with_tx(
+        command_tx: UnboundedSender<AgentIoCommand>,
+    ) -> AgentConnection {
         AgentConnection {
             command_tx,
             alive: Arc::new(AtomicBool::new(true)),
@@ -3675,8 +3677,10 @@ mod tests {
     async fn cancel_connect_watcher_fires_token_when_alive_flips() {
         let alive = Arc::new(AtomicBool::new(true));
         let token = CancellationToken::new();
-        let watcher =
-            tokio::spawn(cancel_connect_when_disconnected(alive.clone(), token.clone()));
+        let watcher = tokio::spawn(cancel_connect_when_disconnected(
+            alive.clone(),
+            token.clone(),
+        ));
 
         // While alive, the token stays live well past one poll interval.
         tokio::time::sleep(RECONNECT_CANCEL_POLL_INTERVAL * 3).await;
