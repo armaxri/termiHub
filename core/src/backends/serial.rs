@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::config::SerialConfig;
 use crate::connection::{
@@ -213,6 +213,65 @@ async fn run_serial_reader<R: SerialByteReader>(
     }
 }
 
+/// Minimal async byte-sink abstraction for the serial writer loop.
+///
+/// Extracted alongside [`SerialByteReader`] so [`run_serial_writer`] can be
+/// unit-tested with an injected mock instead of a real serial port, which would
+/// require hardware.
+#[async_trait::async_trait]
+trait SerialByteWriter: Send + Sync {
+    /// Write all of `buf` to the serial port.
+    async fn write_all_bytes(&self, buf: &[u8]) -> std::io::Result<()>;
+}
+
+#[async_trait::async_trait]
+impl SerialByteWriter for serial2_tokio::SerialPort {
+    async fn write_all_bytes(&self, buf: &[u8]) -> std::io::Result<()> {
+        self.write_all(buf).await
+    }
+}
+
+/// Drain the write channel and forward each chunk to the serial port until the
+/// channel closes or a write fails.
+///
+/// A write failure means the port is gone or errored (device removed, adapter
+/// faulted, cable pulled). The writer task previously *swallowed* that error
+/// (`if port_writer.write_all(&data).await.is_err() { break; }`) and exited
+/// silently, leaving `alive` set and the stored output sender in place — so
+/// [`is_connected`](ConnectionType::is_connected) kept reporting the session live
+/// while every byte written vanished into a dead port ([CORE-018], the same
+/// silent-input-loss mode as the SSH shell-write finding).
+///
+/// Now a failed write tears the session down the same way a lost read does: mark
+/// the port dead and drop the stored output sender so the session manager
+/// observes the output channel close and surfaces the disconnect (tab dot leaves
+/// green + disconnect overlay). This mirrors [`run_serial_reader`] and the SSH
+/// backend's `alive`-flag convention. The same teardown runs when the write
+/// channel closes (the session is being dropped), which is harmless.
+///
+/// [CORE-018]: silent serial write-error swallowing.
+async fn run_serial_writer<W: SerialByteWriter>(
+    port_writer: Arc<W>,
+    mut write_rx: mpsc::Receiver<Vec<u8>>,
+    output_tx: Arc<Mutex<Option<OutputSender>>>,
+    alive: Arc<AtomicBool>,
+) {
+    while let Some(data) = write_rx.recv().await {
+        if let Err(e) = port_writer.write_all_bytes(&data).await {
+            warn!(error = %e, "serial write failed; marking session disconnected");
+            break;
+        }
+    }
+
+    // Either a write failed (port lost) or the write channel closed (session
+    // teardown): mark the port dead and drop the stored output sender so the
+    // disconnect is surfaced. See the doc comment above.
+    alive.store(false, Ordering::SeqCst);
+    if let Ok(mut guard) = output_tx.lock() {
+        *guard = None;
+    }
+}
+
 #[async_trait::async_trait]
 impl ConnectionType for Serial {
     fn type_id(&self) -> &str {
@@ -387,16 +446,18 @@ impl ConnectionType for Serial {
             alive.clone(),
         ));
 
-        // Writer task: drains the write channel and sends to the serial port.
+        // Writer task: drains the write channel and sends to the serial port. On
+        // a write failure it marks the session dead and drops the output sender
+        // so a lost/errored port surfaces as a disconnect instead of silently
+        // swallowing input (see `run_serial_writer`, CORE-018).
         let port_writer = port.clone();
-        let (write_tx, mut write_rx) = mpsc::channel::<Vec<u8>>(WRITE_CHANNEL_CAPACITY);
-        let writer_task = tokio::spawn(async move {
-            while let Some(data) = write_rx.recv().await {
-                if port_writer.write_all(&data).await.is_err() {
-                    break;
-                }
-            }
-        });
+        let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(WRITE_CHANNEL_CAPACITY);
+        let writer_task = tokio::spawn(run_serial_writer(
+            port_writer,
+            write_rx,
+            self.output_tx.clone(),
+            alive.clone(),
+        ));
 
         self.state = Some(ConnectedState {
             write_tx,
@@ -823,6 +884,100 @@ mod tests {
         assert_eq!(rx.recv().await, Some(b"data".to_vec()));
         let closed = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
         assert_eq!(closed, Ok(None), "channel must close on EOF");
+        assert!(!alive.load(Ordering::SeqCst));
+        assert!(output_tx.lock().expect("lock").is_none());
+    }
+
+    // --- run_serial_writer / swallowed-write-error disconnect (CORE-018) ----
+
+    /// Scripted async writer: records each successful write and, once `fail_at`
+    /// successful writes have happened, fails every subsequent write.
+    struct MockSerialWriter {
+        writes: Mutex<Vec<Vec<u8>>>,
+        fail_at: Option<usize>,
+    }
+
+    impl MockSerialWriter {
+        /// A writer that always succeeds.
+        fn ok() -> Self {
+            Self {
+                writes: Mutex::new(Vec::new()),
+                fail_at: None,
+            }
+        }
+
+        /// A writer that succeeds `n` times then fails on every write after.
+        fn failing_after(n: usize) -> Self {
+            Self {
+                writes: Mutex::new(Vec::new()),
+                fail_at: Some(n),
+            }
+        }
+
+        fn recorded(&self) -> Vec<Vec<u8>> {
+            self.writes.lock().expect("mock lock").clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SerialByteWriter for MockSerialWriter {
+        async fn write_all_bytes(&self, buf: &[u8]) -> io::Result<()> {
+            let mut writes = self.writes.lock().expect("mock lock");
+            if let Some(fail_at) = self.fail_at {
+                if writes.len() >= fail_at {
+                    return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+                }
+            }
+            writes.push(buf.to_vec());
+            Ok(())
+        }
+    }
+
+    /// Regression test for CORE-018: when a write to the port fails (device
+    /// removed / cable unplugged), the writer must mark the session dead and drop
+    /// the stored output sender — that is what makes the desktop surface the
+    /// disconnect instead of silently swallowing input while the tab stays green.
+    #[tokio::test]
+    async fn writer_marks_dead_and_drops_sender_on_write_error() {
+        let (output_tx, _rx) = make_output_channel();
+        let alive = Arc::new(AtomicBool::new(true));
+        let writer = Arc::new(MockSerialWriter::failing_after(1));
+        let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(8);
+
+        write_tx.send(b"ok".to_vec()).await.expect("send first");
+        write_tx.send(b"boom".to_vec()).await.expect("send second");
+        drop(write_tx);
+
+        run_serial_writer(writer.clone(), write_rx, output_tx.clone(), alive.clone()).await;
+
+        // The first chunk wrote through; the second failed and stopped the loop.
+        assert_eq!(writer.recorded(), vec![b"ok".to_vec()]);
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "a failed write must mark the port dead (CORE-018)"
+        );
+        assert!(
+            output_tx.lock().expect("lock").is_none(),
+            "a failed write must drop the output sender so the disconnect surfaces"
+        );
+    }
+
+    /// The happy path: every chunk is written in order, and when the write
+    /// channel closes (session teardown) the writer still cleans up.
+    #[tokio::test]
+    async fn writer_forwards_writes_then_ends_on_channel_close() {
+        let (output_tx, _rx) = make_output_channel();
+        let alive = Arc::new(AtomicBool::new(true));
+        let writer = Arc::new(MockSerialWriter::ok());
+        let (write_tx, write_rx) = mpsc::channel::<Vec<u8>>(8);
+
+        write_tx.send(b"a".to_vec()).await.expect("send a");
+        write_tx.send(b"b".to_vec()).await.expect("send b");
+        drop(write_tx); // channel closes → writer loop ends normally
+
+        run_serial_writer(writer.clone(), write_rx, output_tx.clone(), alive.clone()).await;
+
+        assert_eq!(writer.recorded(), vec![b"a".to_vec(), b"b".to_vec()]);
         assert!(!alive.load(Ordering::SeqCst));
         assert!(output_tx.lock().expect("lock").is_none());
     }

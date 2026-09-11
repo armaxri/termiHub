@@ -531,6 +531,57 @@ pub fn simplify_tree(root: &PanelNode) -> PanelNode {
     })
 }
 
+/// Collapse degenerate `Split` nodes so the tree upholds the invariant every
+/// operation here assumes: a `Split` has **at least two children**.
+///
+/// The pure operations in this module always maintain that invariant, but a tree
+/// can still *arrive* violating it. Layout state is persisted and restored
+/// (workspace save/restore), and a file that was hand-edited, truncated, or
+/// written by an older/buggy build can carry an empty `Split` (`children: []`)
+/// or a single-child `Split`. Directional navigation then walks into the empty
+/// child vector and panics the layout thread — a crash-on-open on restored state
+/// (CORE-038). Run this on any externally-sourced tree before storing it:
+///
+/// - an empty `Split` collapses to a fresh empty leaf,
+/// - a single-child `Split` collapses to that child,
+/// - otherwise its children are sanitized recursively, and a `sizes` array whose
+///   length no longer matches the child count is dropped (it would desync).
+///
+/// Unlike [`simplify_tree`] this does **not** flatten same-direction nesting; it
+/// only removes the degenerate shapes that can panic, so a well-formed tree round
+/// trips through it unchanged.
+pub fn sanitize_tree(root: &PanelNode) -> PanelNode {
+    let split = match root {
+        PanelNode::Leaf(leaf) => return PanelNode::Leaf(leaf.clone()),
+        PanelNode::Split(split) => split,
+    };
+
+    let mut children: Vec<PanelNode> = split.children.iter().map(sanitize_tree).collect();
+
+    if children.is_empty() {
+        return single_empty_leaf();
+    }
+    if children.len() == 1 {
+        return children.remove(0);
+    }
+
+    // Drop a `sizes` array that no longer matches the child count — a hand-edited
+    // file can carry a stale one, and a mismatched array desyncs from children.
+    let sizes = split
+        .sizes
+        .as_ref()
+        .filter(|s| s.len() == children.len())
+        .cloned();
+
+    PanelNode::Split(SplitContainer {
+        id: split.id.clone(),
+        direction: split.direction,
+        children,
+        sizes,
+        last_active_leaf_id: split.last_active_leaf_id.clone(),
+    })
+}
+
 /// Convert a `DropEdge` to split direction and position, or `None` for center.
 pub fn edge_to_split(edge: DropEdge) -> Option<SplitSpec> {
     match edge {
@@ -764,29 +815,35 @@ pub fn mark_active_leaf(root: &PanelNode, leaf_id: &str) -> PanelNode {
 }
 
 /// Get the first/last leaf by walking into the first/last child recursively.
-fn edge_leaf(node: &PanelNode, side: EdgeSide) -> &LeafPanel {
+///
+/// Returns `None` for a degenerate empty `Split` (no children). The algebra
+/// never produces such a node, but a restored or hand-edited workspace file can
+/// carry one (CORE-038); returning `None` here — rather than indexing an empty
+/// child vector — keeps directional navigation panic-free.
+fn edge_leaf(node: &PanelNode, side: EdgeSide) -> Option<&LeafPanel> {
     match node {
-        PanelNode::Leaf(leaf) => leaf,
+        PanelNode::Leaf(leaf) => Some(leaf),
         PanelNode::Split(split) => {
             let idx = match side {
                 EdgeSide::First => 0,
-                EdgeSide::Last => split.children.len().saturating_sub(1),
+                EdgeSide::Last => split.children.len().checked_sub(1)?,
             };
-            edge_leaf(&split.children[idx], side)
+            edge_leaf(split.children.get(idx)?, side)
         }
     }
 }
 
 /// Return the preferred leaf when entering a subtree: if the node remembers a
 /// `last_active_leaf_id` that still exists, return that leaf; otherwise fall
-/// back to the edge leaf (first or last).
-fn preferred_leaf(node: &PanelNode, fallback_side: EdgeSide) -> &LeafPanel {
+/// back to the edge leaf (first or last). `None` when the subtree holds no leaf
+/// (a degenerate empty `Split`, CORE-038).
+fn preferred_leaf(node: &PanelNode, fallback_side: EdgeSide) -> Option<&LeafPanel> {
     match node {
-        PanelNode::Leaf(leaf) => leaf,
+        PanelNode::Leaf(leaf) => Some(leaf),
         PanelNode::Split(split) => {
             if let Some(remembered_id) = &split.last_active_leaf_id {
                 if let Some(remembered) = find_leaf(node, remembered_id) {
-                    return remembered;
+                    return Some(remembered);
                 }
             }
             edge_leaf(node, fallback_side)
@@ -830,10 +887,14 @@ pub fn find_adjacent_leaf<'a>(
         } else {
             EdgeSide::Last
         };
-        return Some(preferred_leaf(
-            &entry.node.children[sibling_index as usize],
-            fallback_side,
-        ));
+        if let Some(leaf) =
+            preferred_leaf(&entry.node.children[sibling_index as usize], fallback_side)
+        {
+            return Some(leaf);
+        }
+        // A degenerate (empty) sibling subtree yields no leaf; keep walking up
+        // the ancestors rather than aborting, so navigation can still find a
+        // reachable pane beyond it (CORE-038).
     }
 
     None
