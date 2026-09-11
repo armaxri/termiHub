@@ -479,7 +479,7 @@ pub struct AgentRequestUpdateParams {
     pub version: Option<String>,
     /// How long other hosts get to disconnect before the update proceeds
     /// anyway. Omit for the default 10 s
-    /// ([`ACK_TIMEOUT`](crate::update::ACK_TIMEOUT)); tests use a short window
+    /// (`ACK_TIMEOUT` in the agent's `update` module); tests use a short window
     /// so they need not sit through it.
     #[serde(default)]
     pub ack_timeout_secs: Option<u64>,
