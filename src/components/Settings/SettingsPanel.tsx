@@ -4,6 +4,7 @@ import {
   Settings2,
   Palette,
   TerminalSquare,
+  Accessibility,
   SquareMenu,
   Keyboard,
   Shield,
@@ -26,6 +27,7 @@ import { SettingsSearch } from "./SettingsSearch";
 import { GeneralSettings, type SettingsUpdate } from "./GeneralSettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { TerminalSettings } from "./TerminalSettings";
+import { AccessibilitySettings } from "./AccessibilitySettings";
 import { ExternalFilesSettings } from "./ExternalFilesSettings";
 import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
@@ -47,6 +49,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   general: Settings2,
   appearance: Palette,
   terminal: TerminalSquare,
+  accessibility: Accessibility,
   "shell-integration": SquareMenu,
   keyboard: Keyboard,
   security: Shield,
@@ -313,6 +316,16 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
           />
         );
       }
+      if (highlightedCategories?.has("accessibility")) {
+        sections.push(
+          <AccessibilitySettings
+            key="accessibility"
+            settings={settings}
+            onChange={handleSettingsChange}
+            visibleFields={visibleFields}
+          />
+        );
+      }
       if (highlightedCategories?.has("shell-integration")) {
         sections.push(<ShellIntegrationSettings key="shell-integration" />);
       }
@@ -359,6 +372,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         return <AppearanceSettings settings={settings} onChange={handleSettingsChange} />;
       case "terminal":
         return <TerminalSettings settings={settings} onChange={handleSettingsChange} />;
+      case "accessibility":
+        return <AccessibilitySettings settings={settings} onChange={handleSettingsChange} />;
       case "shell-integration":
         return <ShellIntegrationSettings />;
       case "keyboard":

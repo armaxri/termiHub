@@ -2,6 +2,7 @@ export type SettingsCategory =
   | "general"
   | "appearance"
   | "terminal"
+  | "accessibility"
   | "shell-integration"
   | "keyboard"
   | "security"
@@ -27,6 +28,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "general", label: "General" },
   { id: "appearance", label: "Appearance" },
   { id: "terminal", label: "Terminal" },
+  { id: "accessibility", label: "Accessibility" },
   { id: "shell-integration", label: "Shell Integration" },
   { id: "keyboard", label: "Keyboard" },
   { id: "security", label: "Security" },
@@ -144,7 +146,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "screenReaderMode",
     label: "Screen Reader Mode",
     description: "Expose terminal output to assistive technology (screen readers)",
-    category: "terminal",
+    category: "accessibility",
     keywords: [
       "screen reader",
       "accessibility",

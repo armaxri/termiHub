@@ -4,6 +4,7 @@ export { SettingsSearch } from "./SettingsSearch";
 export { GeneralSettings } from "./GeneralSettings";
 export { AppearanceSettings } from "./AppearanceSettings";
 export { TerminalSettings } from "./TerminalSettings";
+export { AccessibilitySettings } from "./AccessibilitySettings";
 export { ExternalFilesSettings } from "./ExternalFilesSettings";
 export { SecuritySettings } from "./SecuritySettings";
 export { FileTypeSettings } from "./FileTypeSettings";
