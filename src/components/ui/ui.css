@@ -339,7 +339,7 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-dropdown);
   padding: var(--spacing-xs);
-  z-index: var(--z-toast);
+  z-index: var(--z-popover);
   overflow: hidden;
 }
 
@@ -524,7 +524,7 @@
   font-size: var(--font-size-sm);
   line-height: 1.4;
   letter-spacing: var(--letter-spacing-ui);
-  z-index: var(--z-toast);
+  z-index: var(--z-tooltip);
   user-select: none;
 }
 
@@ -549,7 +549,7 @@
   inset: 0;
   background: var(--overlay-bg);
   backdrop-filter: var(--overlay-blur);
-  z-index: var(--z-toast);
+  z-index: var(--z-scrim);
 }
 
 .ui-modal {
@@ -566,7 +566,7 @@
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-overlay);
-  z-index: var(--z-toast);
+  z-index: var(--z-modal);
   overflow: hidden;
 }
 
