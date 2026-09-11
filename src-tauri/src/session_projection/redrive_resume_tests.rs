@@ -732,7 +732,7 @@ fn transient_agent_break_folds_region_server_side_without_arming_the_timer() {
     // session's loop is idle, so the timer reconcile is a cancel.
     let live_ids: std::collections::HashSet<String> =
         ["remote-0".to_string()].into_iter().collect();
-    resolve_agent_hosted_sessions(&handle, &hosted, &live_ids);
+    tauri::async_runtime::block_on(resolve_agent_hosted_sessions(&handle, &hosted, &live_ids));
 
     let recovered = store.get("tab-1").unwrap();
     assert_eq!(
@@ -992,7 +992,9 @@ fn unconfirmed_agent_break_settles_region_off_reconnecting_at_the_source() {
     // answered after the bounded budget. Every hosted tab MUST leave `Reconnecting` for the
     // terminal `SessionLost` state (SM-001). Without the fix this call is a no-op and the
     // tabs below would still read `Reconnecting` — the stuck state.
-    resolve_hosted_sessions_after_reconnect(&handle, &hosted, None);
+    tauri::async_runtime::block_on(resolve_hosted_sessions_after_reconnect(
+        &handle, &hosted, None,
+    ));
 
     for tab in ["tab-1", "tab-2"] {
         let settled = store.get(tab).unwrap();

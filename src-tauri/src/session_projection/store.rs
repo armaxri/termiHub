@@ -627,6 +627,19 @@ impl SessionLifecycleStore {
         self.lock().sessions.get(session_id).map(|s| s.reconnect)
     }
 
+    /// The tab's current lifecycle status, or `None` if the session is unknown
+    /// (never registered or already removed). Read by the agent-task recover
+    /// resolve to guard the user-cancel race (SM-002): the agent transport
+    /// reconnect leaves the reconnect engine `Idle` with the status `Reconnecting`
+    /// (unlike the redrive's `Connecting` sub-phase), so the guard keys on the
+    /// status rather than the engine phase. A tab the user Stopped mid-reconnect
+    /// has already folded to `Disconnected` (`end_reason: User`) via
+    /// [`cancel_reconnect`](Self::cancel_reconnect), so the recovered session must
+    /// not silently flip it back to `Connected`.
+    pub fn status(&self, session_id: &str) -> Option<SessionStatus> {
+        self.lock().sessions.get(session_id).map(|s| s.status)
+    }
+
     /// Replace the jitter source — test-only, for a deterministic backoff
     /// schedule.
     #[cfg(test)]
