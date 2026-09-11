@@ -13,6 +13,7 @@ import {
   Download,
   RotateCcw,
   X,
+  FileWarning,
 } from "lucide-react";
 import { Button, toast } from "@/components/ui";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -20,13 +21,14 @@ import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { resolveLanguage } from "@/utils/languageMapping";
-import { getBasename } from "@/utils/formatters";
+import { getBasename, formatBytes } from "@/utils/formatters";
 import { suggestedSaveCopyPath } from "@/utils/saveCopyPath";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import { getMonacoTheme } from "@/utils/monacoCustomLanguages";
 import { getCurrentTheme, onThemeChange } from "@/themes";
 import {
   localReadFile,
+  localStat,
   localWriteFile,
   watchLocalFile,
   unwatchLocalFile,
@@ -72,6 +74,22 @@ const MAX_SUDO_ATTEMPTS = 3;
  * (the owner reserves whether remote polling should be opt-in — see #1627).
  */
 export const REMOTE_POLL_INTERVAL_MS = 4000;
+
+/**
+ * Large-file guard threshold (#PROD-014 / #PERF-002).
+ *
+ * Opening a file loads its entire contents into a single JS string and hands it
+ * to Monaco (which builds its own model/tokenizer state on top); for a remote
+ * file the bytes additionally cross the Tauri IPC boundary as a JSON `number[]`,
+ * inflating peak memory to several × the file size. Accidentally opening a big
+ * log or data file (a double-click away) can therefore freeze or OOM the app.
+ *
+ * Above this size the editor refuses to load blindly: it `stat`s first and warns
+ * the user, who stays in control and may open it anyway. 10 MiB comfortably
+ * clears ordinary source / config / log files (no new friction for those) while
+ * catching the multi-hundred-MB accidents the guard exists for.
+ */
+export const LARGE_FILE_THRESHOLD_BYTES = 10 * 1024 * 1024;
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
@@ -194,6 +212,21 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const [savedContent, setSavedContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Large-file guard (#PROD-014 / #PERF-002). When the file exceeds
+  // LARGE_FILE_THRESHOLD_BYTES its contents are NOT loaded automatically; this
+  // holds the stat'd size so the guard screen can warn the user, who may open it
+  // anyway. Null for under-threshold files or once the user has confirmed
+  // (confirmation itself is tracked in a ref so the load effect can read it
+  // without re-arming the guard).
+  const [pendingLargeFile, setPendingLargeFile] = useState<{ size: number } | null>(null);
+  // Set when an external on-disk change grew the open file past the threshold:
+  // the automatic reload is skipped (re-reading it would re-freeze the app) and
+  // a banner offers a manual reload instead. Holds the new on-disk size.
+  const [largeReloadSize, setLargeReloadSize] = useState<number | null>(null);
+  // Bumped to re-run the file-load effect after the user chooses "Open anyway",
+  // without changing the file identity that gates the guard.
+  const [loadNonce, setLoadNonce] = useState(0);
   const [saving, setSaving] = useState(false);
   // Surfaced when a save fails (e.g. permission denied on a remote file). Unlike
   // `error` — which replaces the whole editor for a load failure — this is a
@@ -264,6 +297,12 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
 
   const saveRef = useRef<() => void>(() => {});
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  // Once the user chooses "Open anyway" for an over-threshold file, the guard is
+  // bypassed for that file identity (re-armed when the tab points at a different
+  // file). A ref, not state, so the load effect can consult it without depending
+  // on it — the confirm handler bumps `loadNonce` to re-run the load.
+  const largeFileConfirmedRef = useRef(false);
+  const loadIdentityRef = useRef("");
   // In-memory session password cache ("Remember for this session"). Held in a
   // ref — never React/store state and never {@link EditorTabMeta} — so it is
   // impossible for it to be serialized into persisted tab/workspace state.
@@ -320,11 +359,36 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     });
   }, []);
 
+  // Metadata-only size probe for the tab's transport (#PROD-014 / #PERF-002),
+  // shared by the initial-load and external-change large-file guards. A `stat`
+  // is a single cheap round-trip. Returns null on any failure so a probe we
+  // couldn't complete never blocks opening or reloading the file — the read then
+  // proceeds exactly as before the guard existed.
+  const probeEffectiveSize = useCallback(async (): Promise<number | null> => {
+    try {
+      const entry =
+        meta.isRemote && meta.sessionBrowser
+          ? await sessionStat(meta.sessionBrowser.sessionId, effectivePath)
+          : await localStat(effectivePath);
+      return typeof entry?.size === "number" ? entry.size : null;
+    } catch (err) {
+      frontendLog(
+        "file_editor",
+        `size probe failed for ${effectivePath}; large-file guard skipped: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return null;
+    }
+  }, [meta.isRemote, meta.sessionBrowser, effectivePath]);
+
   // Load file content on mount
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setPendingLargeFile(null);
+    setLargeReloadSize(null);
 
     // Scratch buffers are seeded from in-memory content and never read from
     // disk. Content equals savedContent so it is not "modified", but the buffer
@@ -338,8 +402,34 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
       return;
     }
 
+    // Re-arm the large-file guard whenever the tab points at a different file; a
+    // bare `loadNonce` bump (the user's "Open anyway") keeps the same identity so
+    // the confirmation is preserved and the load proceeds.
+    const identity = `${meta.isRemote ? 1 : 0}|${meta.filePath}|${
+      meta.sessionBrowser?.sessionId ?? ""
+    }`;
+    if (loadIdentityRef.current !== identity) {
+      loadIdentityRef.current = identity;
+      largeFileConfirmedRef.current = false;
+    }
+
     const loadContent = async () => {
       try {
+        // Large-file guard (#PROD-014 / #PERF-002): stat before reading so a huge
+        // file never silently loads. Above the threshold we warn and hand the
+        // decision to the user instead of loading a multi-hundred-MB buffer into
+        // Monaco (for remote files it also crosses IPC as a JSON number[]). A
+        // failed probe falls through to the normal read — it must not regress
+        // ordinary files.
+        if (!largeFileConfirmedRef.current) {
+          const size = await probeEffectiveSize();
+          if (cancelled) return;
+          if (size !== null && size > LARGE_FILE_THRESHOLD_BYTES) {
+            setPendingLargeFile({ size });
+            setLoading(false);
+            return;
+          }
+        }
         let text: string;
         if (meta.isRemote && meta.sessionBrowser) {
           text = await sessionReadFileContent(meta.sessionBrowser.sessionId, meta.filePath);
@@ -363,7 +453,25 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     return () => {
       cancelled = true;
     };
-  }, [meta.filePath, meta.isRemote, meta.sessionBrowser, meta.scratch, meta.scratchContent]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    meta.filePath,
+    meta.isRemote,
+    meta.sessionBrowser,
+    meta.scratch,
+    meta.scratchContent,
+    loadNonce,
+  ]);
+
+  // "Open anyway" from the large-file guard: bypass the guard for this file and
+  // re-run the load. The nonce bump keeps the file identity, so the confirmation
+  // set here survives the re-run.
+  const handleOpenLargeFile = useCallback(() => {
+    largeFileConfirmedRef.current = true;
+    setPendingLargeFile(null);
+    setLoading(true);
+    setLoadNonce((n) => n + 1);
+  }, []);
 
   // Probe whether a session-layer tab's backend is SFTP-backed and whether it can
   // run remote commands (#2420). Determines whether privilege-elevated writes will
@@ -541,6 +649,24 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
   const reloadFromDisk = useCallback(async () => {
     // A scratch buffer that was never saved has no on-disk counterpart.
     if (isUnsavedScratch) return;
+
+    // Large-file guard on the re-read path (#PROD-014 / #PERF-002): a watched
+    // file that grew past the threshold must not be re-read automatically — that
+    // would re-freeze the app on every external change. Skip the auto-reload and
+    // surface a banner offering a manual reload instead. A failed probe falls
+    // through to the normal reload.
+    if (!largeFileConfirmedRef.current) {
+      const size = await probeEffectiveSize();
+      if (size !== null && size > LARGE_FILE_THRESHOLD_BYTES) {
+        frontendLog(
+          "file_editor",
+          `external change grew tab ${tabId} to ${size} bytes; skipping auto-reload (large-file guard)`
+        );
+        setLargeReloadSize(size);
+        return;
+      }
+    }
+
     let disk: string;
     try {
       disk = await readEffectiveContent();
@@ -576,7 +702,36 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     // Happy path: the buffer is clean, so reflect the new content silently.
     applyDiskContent(disk);
     frontendLog("file_editor", `reloaded tab ${tabId} from external on-disk change`);
-  }, [isUnsavedScratch, readEffectiveContent, savedContent, content, tabId, applyDiskContent]);
+  }, [
+    isUnsavedScratch,
+    probeEffectiveSize,
+    readEffectiveContent,
+    savedContent,
+    content,
+    tabId,
+    applyDiskContent,
+  ]);
+
+  // "Reload anyway" from the grew-too-large banner: the user explicitly accepts
+  // the cost, so bypass the guard (for this file) and load the on-disk contents.
+  const handleReloadLargeFile = useCallback(async () => {
+    largeFileConfirmedRef.current = true;
+    setLargeReloadSize(null);
+    let disk: string;
+    try {
+      disk = await readEffectiveContent();
+    } catch (err) {
+      frontendLog(
+        "file_editor",
+        `large-file reload read failed for tab ${tabId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return;
+    }
+    applyDiskContent(disk);
+    frontendLog("file_editor", `reloaded oversized tab ${tabId} from disk on user request`);
+  }, [readEffectiveContent, applyDiskContent, tabId]);
 
   // Banner action "Reload from disk" (#1620, #1627): discard the unsaved buffer
   // edits and load the on-disk version (local or remote). Reuses the clean-case
@@ -1195,6 +1350,33 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
     );
   }
 
+  // Large-file guard (#PROD-014 / #PERF-002): the file exceeds the threshold, so
+  // its contents were NOT loaded. Warn the user and let them open it anyway —
+  // nothing was read, so no buffer is at risk and closing the tab costs nothing.
+  if (pendingLargeFile) {
+    return (
+      <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
+        <div className="file-editor__large-file" data-testid="file-editor-large-file-guard">
+          <FileWarning size={28} className="file-editor__large-file-icon" />
+          <div className="file-editor__large-file-title">This file is large</div>
+          <p className="file-editor__large-file-text">
+            {fileName} is {formatBytes(pendingLargeFile.size)}. Opening it in the editor loads the
+            whole file into memory and may freeze or crash the app.
+          </p>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<FileEdit size={14} />}
+            onClick={handleOpenLargeFile}
+            data-testid="file-editor-large-file-open"
+          >
+            Open anyway
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`file-editor ${!isVisible ? "file-editor--hidden" : ""}`}>
       <UnsavedChangesDialog
@@ -1369,6 +1551,39 @@ export function FileEditor({ tabId, meta, isVisible, keepModel = false }: FileEd
             title="Dismiss"
             aria-label="Dismiss on-disk change notice"
             data-testid="file-editor-disk-changed-dismiss"
+          />
+        </div>
+      )}
+      {largeReloadSize !== null && (
+        <div
+          className="file-editor__disk-changed-banner"
+          role="status"
+          data-testid="file-editor-large-reload-banner"
+        >
+          <FileWarning size={14} />
+          <span className="file-editor__disk-changed-banner-text">
+            This file grew to {formatBytes(largeReloadSize)} on disk and was not reloaded
+            automatically to avoid freezing the editor.
+          </span>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<RotateCcw size={14} />}
+            onClick={handleReloadLargeFile}
+            title="Load the current on-disk contents despite the size"
+            data-testid="file-editor-large-reload-anyway"
+          >
+            Reload anyway
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<X size={14} />}
+            onClick={() => setLargeReloadSize(null)}
+            title="Dismiss"
+            aria-label="Dismiss large-file reload notice"
+            data-testid="file-editor-large-reload-dismiss"
           />
         </div>
       )}

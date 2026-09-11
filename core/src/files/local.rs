@@ -94,7 +94,7 @@ fn map_io_error(e: std::io::Error, path: &str) -> FileError {
 }
 
 /// Synchronous stat for a single path.
-fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
+pub fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
     let normalized = normalize_platform_path(path);
     let p = Path::new(&normalized);
     let metadata = std::fs::metadata(p).map_err(|e| map_io_error(e, path))?;

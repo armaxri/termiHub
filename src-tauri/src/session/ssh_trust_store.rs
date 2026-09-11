@@ -34,6 +34,8 @@ use std::sync::Mutex;
 
 use tracing::warn;
 
+use crate::utils::fs::write_atomic;
+
 /// The trust-store file name inside the config directory.
 const FILE_NAME: &str = "ssh_known_hosts.json";
 
@@ -168,7 +170,10 @@ impl SshTrustStore {
             }
             let json = serde_json::to_string_pretty(&*entries)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-            std::fs::write(path, json)
+            // Atomic temp-file + rename: an interrupted write can never truncate
+            // the existing store and drop remembered host-key fingerprints (same
+            // data-loss class as PER-002/PER-003).
+            write_atomic(path, &json).map_err(std::io::Error::other)
         };
         if let Err(e) = write() {
             warn!(path = %path.display(), error = %e, "failed to persist SSH trust store");
@@ -243,6 +248,28 @@ mod tests {
         let reopened = SshTrustStore::open(dir);
         assert_eq!(reopened.lookup("host:22", FP_A), TrustLookup::Trusted);
         assert_eq!(reopened.lookup("host:22", FP_B), TrustLookup::Changed);
+    }
+
+    /// The atomic write must leave only the store file behind — no leftover
+    /// temporary write artifacts in the config directory.
+    #[test]
+    fn persist_leaves_no_stray_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        let store = SshTrustStore::open(dir.clone());
+        store.remember("host:22", FP_A);
+        store.remember("host:22", FP_B);
+
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            vec![FILE_NAME.to_string()],
+            "atomic persist must leave only the store file, got {names:?}"
+        );
     }
 
     #[test]

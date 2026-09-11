@@ -85,6 +85,15 @@ pub fn local_read_file(path: String) -> Result<String, TerminalError> {
     crate::files::local::read_file_content(&path)
 }
 
+/// Get metadata (including size) for a single local file.
+///
+/// Backs the editor's large-file guard (#PROD-014 / #PERF-002): the frontend
+/// stats before reading so it can warn instead of freezing on a huge file.
+#[tauri::command]
+pub fn local_stat(path: String) -> Result<FileEntry, TerminalError> {
+    crate::files::local::stat(&path)
+}
+
 /// Write a string to a local file.
 #[tauri::command]
 pub fn local_write_file(path: String, content: String) -> Result<(), TerminalError> {
