@@ -21,6 +21,12 @@ export interface EmbeddedServerConfig {
   readOnly: boolean;
   directoryListing?: boolean;
   ftpAuth?: FtpAuth;
+  /**
+   * Maximum size, in bytes, of a single file transfer. Currently enforced by
+   * the (unauthenticated) TFTP server to bound per-transfer resource use.
+   * Omitted falls back to the server's built-in default.
+   */
+  maxTransferBytes?: number;
 }
 
 /** Live traffic statistics for a running server. */
