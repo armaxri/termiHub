@@ -10,6 +10,8 @@
 //! process. When the agent disconnects and reconnects, the daemon
 //! replays the ring buffer to bring the agent up to date.
 
+use std::time::Duration;
+
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
@@ -193,8 +195,39 @@ async fn daemon_loop(
             // New agent connection
             conn = listener.accept() => {
                 match conn {
-                    Ok((read_half, mut write_half)) => {
+                    Ok((mut read_half, mut write_half)) => {
                         info!("Agent connected");
+
+                        // AGT-015: `state.json` is shared per-user across every
+                        // `--stdio` worker (one per attached desktop, ADR-11). A
+                        // worker recovering sessions on startup must never evict a
+                        // session another *live* worker is actively attached to —
+                        // otherwise opening a second desktop steals the first
+                        // desktop's live terminals. When a writer is already
+                        // attached, consult the newcomer's declared intent: a
+                        // recovery connect is refused (its live owner keeps the
+                        // session); a takeover connect evicts as before.
+                        if agent_writer.is_some() {
+                            let intent = read_attach_intent(&mut read_half).await;
+                            if intent == INTENT_RECOVERY {
+                                info!(
+                                    "Refusing recovery connect: a live writer is still \
+                                     attached (AGT-015)"
+                                );
+                                let _ = protocol::write_frame_async(
+                                    &mut write_half,
+                                    MSG_ERROR,
+                                    ERR_OWNED_BY_LIVE_PEER,
+                                )
+                                .await;
+                                // Keep the existing writer and do NOT bump the
+                                // generation; the refused connection is dropped
+                                // here at end of scope.
+                                continue;
+                            }
+                            // Takeover (or an absent/malformed intent, which
+                            // defaults to takeover) → fall through and evict.
+                        }
 
                         // Bump the generation so any in-flight Disconnected from
                         // the previous connection is treated as stale.
@@ -327,6 +360,10 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                     MSG_DETACH => AgentCommand::Detach,
                     MSG_KILL => AgentCommand::Kill,
                     MSG_QUERY_BUFFER => AgentCommand::QueryBuffer,
+                    // AGT-015: an attach-intent hint is only meaningful at accept
+                    // time. On the fast path (no writer was attached) it is read
+                    // here as the first frame instead — ignore it.
+                    MSG_ATTACH_INTENT => continue,
                     other => {
                         debug!("Unknown frame type from agent: 0x{other:02x}");
                         continue;
@@ -347,6 +384,24 @@ async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentComman
                 return;
             }
         }
+    }
+}
+
+/// Read a newly-connected worker's [`MSG_ATTACH_INTENT`] to learn whether it is
+/// a recovery connect (refuse if a live writer is attached) or a takeover.
+///
+/// The current worker always sends this frame first, so the read returns
+/// immediately. Defaults to [`INTENT_TAKEOVER`] — preserving the historical
+/// evict-on-accept behavior — if the frame is absent, malformed, or does not
+/// arrive within a short window (a pre-AGT-015 worker never sends it). The short
+/// timeout also bounds how long the daemon's event loop can stall here.
+async fn read_attach_intent(reader: &mut BoxedReader) -> u8 {
+    const INTENT_TIMEOUT: Duration = Duration::from_secs(2);
+    match tokio::time::timeout(INTENT_TIMEOUT, protocol::read_frame_async(reader)).await {
+        Ok(Ok(Some(frame))) if frame.msg_type == MSG_ATTACH_INTENT => {
+            frame.payload.first().copied().unwrap_or(INTENT_TAKEOVER)
+        }
+        _ => INTENT_TAKEOVER,
     }
 }
 
@@ -570,5 +625,183 @@ mod tests {
             !agent_writer_is_set,
             "Disconnected(gen=3) must clear agent_writer when connection_gen=3"
         );
+    }
+
+    // ── AGT-015: owner-scoped recovery guard ────────────────────────────
+    //
+    // These drive the real `daemon_loop` over a real endpoint with real
+    // `DaemonClient` connects, proving the daemon never evicts a live writer for
+    // a recovery connect (the second-desktop data-loss bug) while still allowing
+    // a fresh worker to recover a truly-orphaned session and a deliberate
+    // takeover to replace a live writer.
+    mod recovery_guard {
+        use crate::daemon::client::{DaemonClient, OwnedByLivePeer};
+        use crate::daemon::transport::{self, DaemonListener};
+        use crate::io::transport::NotificationSender;
+        use termihub_core::connection::{
+            Capabilities, ConnectionType, OutputReceiver, SettingsSchema,
+        };
+        use termihub_core::errors::SessionError;
+
+        /// Minimal in-process connection type: the daemon loop only needs it to
+        /// exist and accept writes/resizes; it produces no output.
+        struct FakeConnection;
+
+        #[async_trait::async_trait]
+        impl ConnectionType for FakeConnection {
+            fn type_id(&self) -> &str {
+                "fake"
+            }
+            fn display_name(&self) -> &str {
+                "Fake"
+            }
+            fn settings_schema(&self) -> SettingsSchema {
+                SettingsSchema { groups: vec![] }
+            }
+            fn capabilities(&self) -> Capabilities {
+                Capabilities {
+                    monitoring: false,
+                    file_browser: false,
+                    graphical: false,
+                    resize: true,
+                    persistent: true,
+                    terminal: true,
+                }
+            }
+            async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+                Ok(())
+            }
+            async fn disconnect(&mut self) -> Result<(), SessionError> {
+                Ok(())
+            }
+            fn is_connected(&self) -> bool {
+                true
+            }
+            fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+                Ok(())
+            }
+            fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+                Ok(())
+            }
+            fn subscribe_output(&self) -> OutputReceiver {
+                let (_tx, rx) = tokio::sync::mpsc::channel(1);
+                rx
+            }
+            fn monitoring(&self) -> Option<&dyn termihub_core::monitoring::MonitoringProvider> {
+                None
+            }
+            fn file_browser(&self) -> Option<&dyn termihub_core::files::FileBrowser> {
+                None
+            }
+        }
+
+        fn make_notification_tx() -> NotificationSender {
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            tx
+        }
+
+        fn unique_endpoint(tag: &str) -> String {
+            let id = format!(
+                "itest-agt015-{tag}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            transport::session_endpoint(&id)
+        }
+
+        /// Bind an endpoint and run a real `daemon_loop` against it on a
+        /// background task. Returns the endpoint and the loop's join handle.
+        async fn spawn_daemon(endpoint: &str) -> tokio::task::JoinHandle<()> {
+            let mut listener = DaemonListener::bind(endpoint)
+                .await
+                .expect("bind daemon endpoint");
+            let (out_tx, out_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
+            tokio::spawn(async move {
+                // Keep the output sender alive for the life of the loop: dropping
+                // it would close the output channel and make `daemon_loop` exit.
+                let _out_tx = out_tx;
+                let conn: Box<dyn ConnectionType> = Box::new(FakeConnection);
+                let _ = super::super::daemon_loop(conn, out_rx, &mut listener, 4096).await;
+                listener.cleanup();
+            })
+        }
+
+        /// The core AGT-015 invariant: while a live writer is attached, a recovery
+        /// connect (a second desktop's worker) is REFUSED — the daemon keeps the
+        /// live writer instead of evicting it.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn recovery_connect_refused_while_live_writer_attached() {
+            let endpoint = unique_endpoint("refuse");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            // Worker A attaches (fresh spawn / takeover) and stays live.
+            let client_a =
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx())
+                    .await
+                    .expect("worker A attaches");
+            assert!(client_a.is_alive(), "worker A must be attached and alive");
+
+            // Worker B (second desktop) tries to RECOVER the same session.
+            let err = match DaemonClient::connect_for_recovery(
+                "s".into(),
+                endpoint.clone(),
+                make_notification_tx(),
+            )
+            .await
+            {
+                Ok(_) => panic!("recovery must be refused while a live writer is attached"),
+                Err(e) => e,
+            };
+            assert!(
+                err.downcast_ref::<OwnedByLivePeer>().is_some(),
+                "refusal must surface as OwnedByLivePeer, got: {err:#}"
+            );
+
+            // A must NOT have been evicted: it can still round-trip a request.
+            client_a
+                .query_buffer()
+                .await
+                .expect("worker A must still be attached after the refused recovery");
+        }
+
+        /// A worker restarting for the *same* desktop (its predecessor is gone, so
+        /// no writer is attached) still recovers a truly-orphaned session — the
+        /// flagship persistent-session feature is preserved.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn recovery_connect_succeeds_when_no_writer_attached() {
+            let endpoint = unique_endpoint("orphan");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let client = DaemonClient::connect_for_recovery(
+                "s".into(),
+                endpoint.clone(),
+                make_notification_tx(),
+            )
+            .await
+            .expect("an orphaned session (no live writer) must be recoverable");
+            assert!(client.is_alive(), "recovered session must be alive");
+        }
+
+        /// A deliberate re-attach (takeover) still replaces a live writer — the
+        /// guard only refuses *recovery* connects, never a takeover.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn takeover_connect_still_replaces_live_writer() {
+            let endpoint = unique_endpoint("takeover");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let _client_a =
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx())
+                    .await
+                    .expect("worker A attaches");
+
+            let client_b =
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx())
+                    .await
+                    .expect("a takeover connect must succeed even while A is attached");
+            assert!(client_b.is_alive(), "the taking-over writer must be alive");
+        }
     }
 }

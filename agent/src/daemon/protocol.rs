@@ -24,6 +24,37 @@ pub const MSG_DETACH: u8 = 0x03;
 pub const MSG_KILL: u8 = 0x04;
 /// Agent → Daemon: request the current ring buffer contents without reconnecting.
 pub const MSG_QUERY_BUFFER: u8 = 0x05;
+/// Agent → Daemon: declare how a newly-connecting worker wants to attach
+/// (payload: one byte — [`INTENT_TAKEOVER`] or [`INTENT_RECOVERY`]). Sent as the
+/// first frame right after connecting.
+///
+/// `state.json` is shared per-user across every `--stdio` worker (one per
+/// attached desktop, ADR-11). Without this hint the daemon evicts its current
+/// writer on every `accept`, so a second desktop's worker recovering sessions on
+/// startup silently steals the first desktop's live terminals (AGT-015). A
+/// worker that is *recovering* declares [`INTENT_RECOVERY`] and the daemon
+/// refuses to evict a still-attached live writer; a deliberate re-attach or the
+/// fresh spawn declares [`INTENT_TAKEOVER`] and keeps the historical behavior.
+///
+/// A pre-AGT-015 daemon does not read this frame before its handshake and its
+/// command loop ignores the unknown type, so a current worker connecting to an
+/// old daemon still works (the guard simply does not apply there).
+pub const MSG_ATTACH_INTENT: u8 = 0x06;
+
+/// [`MSG_ATTACH_INTENT`] payload: evict any writer currently attached — the
+/// historical accept behavior. Used by the spawn-path connect and explicit
+/// re-attach.
+pub const INTENT_TAKEOVER: u8 = 0x01;
+/// [`MSG_ATTACH_INTENT`] payload: this is a session-recovery connect — the daemon
+/// must REFUSE it (rather than evict) if a live writer is still attached, so a
+/// second worker never steals a peer's live session (AGT-015).
+pub const INTENT_RECOVERY: u8 = 0x00;
+
+/// [`MSG_ERROR`] payload the daemon sends when it refuses an [`INTENT_RECOVERY`]
+/// connect because a live writer is already attached (AGT-015). The recovering
+/// worker matches this exact marker and leaves the session in the shared state
+/// for its live owner instead of tearing it down.
+pub const ERR_OWNED_BY_LIVE_PEER: &[u8] = b"AGT-015: session owned by a live connection";
 
 /// Daemon → Agent: output bytes from the PTY.
 pub const MSG_OUTPUT: u8 = 0x81;
