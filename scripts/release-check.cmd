@@ -129,6 +129,28 @@ if errorlevel 1 (
     echo   PASS: Rust tests passed
 )
 
+REM === Unified Coverage (advisory) ===
+echo.
+echo === Unified Coverage (advisory) ===
+
+REM Whole-app coverage — frontend + Rust merged into one number (TOOL-001).
+REM ADVISORY: a low number WARNs but never blocks (no baseline ratchet yet).
+REM Follow-up: compare the unified line %% against a stored baseline and fail on a
+REM drop. A missing cargo-llvm-cov is a WARN, never a hard fail. Mirrors release-check.sh.
+where cargo-llvm-cov >nul 2>&1
+if errorlevel 1 (
+    echo   WARN: cargo-llvm-cov not installed - skipping unified coverage ^(install: cargo install cargo-llvm-cov^)
+    set /a WARNINGS+=1
+) else (
+    call scripts\coverage.cmd
+    if errorlevel 1 (
+        echo   WARN: Unified coverage run did not complete cleanly ^(advisory^)
+        set /a WARNINGS+=1
+    ) else (
+        echo   PASS: Unified coverage report produced ^(advisory - see coverage-unified\summary.txt^)
+    )
+)
+
 REM === Quality Checks ===
 echo.
 echo === Quality Checks ===

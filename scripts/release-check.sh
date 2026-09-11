@@ -113,6 +113,24 @@ fi
 
 # ---------------------------------------------------------------------------
 echo ""
+echo "=== Unified Coverage (advisory) ==="
+
+# Whole-app coverage — frontend + Rust merged into one number (TOOL-001). ADVISORY
+# for now: a low number WARNs but does not block the release, because no baseline
+# ratchet exists yet. Follow-up: once a baseline is captured, compare the unified
+# line % here and fail() on a drop so the release gate refuses to ship on a
+# coverage regression. cargo-llvm-cov may not be installed on every machine, so a
+# missing tool is a WARN, never a hard fail.
+if ! command -v cargo-llvm-cov >/dev/null 2>&1 && ! cargo llvm-cov --version >/dev/null 2>&1; then
+    warn "cargo-llvm-cov not installed — skipping unified coverage (install: cargo install cargo-llvm-cov)"
+elif ./scripts/coverage.sh 2>&1; then
+    pass "Unified coverage report produced (advisory — see coverage-unified/summary.txt)"
+else
+    warn "Unified coverage run did not complete cleanly (advisory)"
+fi
+
+# ---------------------------------------------------------------------------
+echo ""
 echo "=== Quality Checks ==="
 
 if ./scripts/check.sh 2>&1; then

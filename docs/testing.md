@@ -403,6 +403,29 @@ Guideline coverage levels:
 - **React Components**: aim for ~70% coverage — measurable via `pnpm test:coverage`, not gated
 - **E2E Critical Paths**: cover all main user flows
 
+### Measuring coverage
+
+Run `./scripts/coverage.sh` (or `scripts\coverage.cmd`) for a **unified whole-app
+number**: it runs the frontend suite under vitest/v8, the Rust workspace under
+[`cargo-llvm-cov`](https://github.com/taiki-e/cargo-llvm-cov) (`--workspace
+--all-features`), merges both lcov tracefiles, and prints one repo-wide line/
+function/branch percentage plus a merged `coverage-unified/merged.lcov`. Install
+the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
+`llvm-tools-preview` rustup component).
+
+- The **frontend** vitest gate (`pnpm test:coverage`, thresholds in
+  `vitest.config.ts`) counts both `.ts` and `.tsx` — the include glob was
+  `src/**/*.ts`, which silently excluded every React component from the
+  percentage; it is now `src/**/*.{ts,tsx}`.
+- CI runs the unified report in the [`coverage.yml`](../.github/workflows/coverage.yml)
+  workflow and uploads the merged lcov + summary as an artifact. It is
+  **advisory** (`continue-on-error`) for now: it establishes the baseline without
+  reddening PRs. The planned follow-up is a fail-on-decrease ratchet against a
+  captured baseline (remove `continue-on-error`), plus running the nightly
+  integration lane under `cargo-llvm-cov` so that dark lane finally contributes.
+- `release-check.sh` runs the unified report too (advisory), so the release path
+  can produce the number.
+
 ## Testing Best Practices
 
 ### 1. Test Pyramid

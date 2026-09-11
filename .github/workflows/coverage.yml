@@ -1,0 +1,105 @@
+name: Coverage (unified, advisory)
+
+# Unified whole-app coverage — the frontend (vitest/v8) and the Rust
+# backend/agent/core crates merged into ONE repo-wide number (TOOL-001/002/003).
+# See scripts/coverage.sh.
+#
+# ADVISORY FOR NOW: the whole job is `continue-on-error: true`, so it CANNOT red
+# a PR. Its only purpose in this first cycle is to publish the coverage artifact
+# and print the unified number so a baseline can be captured.
+#
+# FOLLOW-UP (ratchet): once a baseline exists, remove `continue-on-error: true`
+# below and add a fail-on-decrease check against the stored baseline (compare the
+# unified line % from coverage-unified/summary.txt) so a coverage drop blocks the
+# PR — the same ratchet philosophy as the vitest thresholds (#2066) and the
+# cargo-deny/audit gates. Do NOT make it blocking before a baseline exists.
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: Unified Coverage (advisory)
+    runs-on: ubuntu-latest
+    # Advisory starter: never fail the workflow / red a PR while we establish the
+    # baseline. Remove this line in the ratchet follow-up (see header).
+    continue-on-error: true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # cargo-llvm-cov needs the llvm-tools-preview rustup component to
+      # instrument and merge coverage (TOOL-003).
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          components: llvm-tools-preview
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Match the other cargo jobs: only develop/main SAVE the cache; PRs
+          # restore the develop cache and never write their own.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      # Prebuilt binary download (~seconds) instead of `cargo install`, matching
+      # the cargo-audit/cargo-deny pattern already used in code-quality.yml.
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Run unified coverage
+        run: ./scripts/coverage.sh
+
+      - name: Publish unified number to job summary
+        if: always()
+        run: |
+          {
+            echo "## Unified whole-app coverage"
+            echo ""
+            echo '```'
+            cat coverage-unified/summary.txt 2>/dev/null || echo "(no summary produced)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-unified
+          path: |
+            coverage-unified/
+            coverage/lcov.info
+          if-no-files-found: warn
