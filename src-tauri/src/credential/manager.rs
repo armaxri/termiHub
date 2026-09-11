@@ -50,7 +50,7 @@ impl CredentialManager {
 
     /// Return the current storage mode.
     pub fn get_mode(&self) -> StorageMode {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match *inner {
             StoreBackend::Null(_) => StorageMode::None,
             StoreBackend::MasterPassword(_) => StorageMode::MasterPassword,
@@ -64,10 +64,7 @@ impl CredentialManager {
     /// Callers are responsible for migrating credentials before switching.
     pub fn switch_store(&self, new_mode: StorageMode) -> Result<()> {
         let new_backend = Self::create_backend(&new_mode, &self.config_dir);
-        let mut inner = self
-            .inner
-            .write()
-            .expect("credential manager lock poisoned");
+        let mut inner = self.inner.write().unwrap_or_else(|e| e.into_inner());
 
         // Lock the old master password store if applicable
         if let StoreBackend::MasterPassword(ref old_store) = *inner {
@@ -86,7 +83,7 @@ impl CredentialManager {
     where
         F: FnOnce(&MasterPasswordStore) -> R,
     {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match *inner {
             StoreBackend::MasterPassword(ref store) => Some(f(store)),
             _ => None,
@@ -98,7 +95,7 @@ impl CredentialManager {
         let mut guard = self
             .auto_lock_timer
             .write()
-            .expect("auto_lock_timer lock poisoned");
+            .unwrap_or_else(|e| e.into_inner());
         *guard = Some(timer);
     }
 
@@ -131,7 +128,7 @@ impl CredentialManager {
 
     /// Set the app handle used for emitting events.
     pub fn set_app_handle(&self, handle: AppHandle) {
-        let mut guard = self.app_handle.write().expect("app_handle lock poisoned");
+        let mut guard = self.app_handle.write().unwrap_or_else(|e| e.into_inner());
         *guard = Some(handle);
     }
 
@@ -170,7 +167,7 @@ impl CredentialManager {
 
 impl CredentialStore for CredentialManager {
     fn get(&self, key: &CredentialKey) -> Result<Option<String>> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let is_master_password_mode = matches!(*inner, StoreBackend::MasterPassword(_));
         let result = match *inner {
             StoreBackend::Null(ref s) => s.get(key),
@@ -189,7 +186,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn set(&self, key: &CredentialKey, value: &str) -> Result<()> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let result = match *inner {
             StoreBackend::Null(ref s) => s.set(key, value),
             StoreBackend::MasterPassword(ref s) => s.set(key, value),
@@ -201,7 +198,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn remove(&self, key: &CredentialKey) -> Result<()> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let result = match *inner {
             StoreBackend::Null(ref s) => s.remove(key),
             StoreBackend::MasterPassword(ref s) => s.remove(key),
@@ -213,7 +210,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn remove_all_for_connection(&self, connection_id: &str) -> Result<()> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let result = match *inner {
             StoreBackend::Null(ref s) => s.remove_all_for_connection(connection_id),
             StoreBackend::MasterPassword(ref s) => s.remove_all_for_connection(connection_id),
@@ -225,7 +222,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn list_keys(&self) -> Result<Vec<CredentialKey>> {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         let result = match *inner {
             StoreBackend::Null(ref s) => s.list_keys(),
             StoreBackend::MasterPassword(ref s) => s.list_keys(),
@@ -237,7 +234,7 @@ impl CredentialStore for CredentialManager {
     }
 
     fn status(&self) -> CredentialStoreStatus {
-        let inner = self.inner.read().expect("credential manager lock poisoned");
+        let inner = self.inner.read().unwrap_or_else(|e| e.into_inner());
         match *inner {
             StoreBackend::Null(ref s) => s.status(),
             StoreBackend::MasterPassword(ref s) => s.status(),
@@ -275,6 +272,34 @@ mod tests {
         assert_eq!(mgr.get_mode(), StorageMode::OsKeychain);
         // A native store has no in-app lock state — always unlocked.
         assert_eq!(mgr.status(), CredentialStoreStatus::Unlocked);
+    }
+
+    // Regression: a thread that panics while holding the backend lock must not
+    // cascade that panic to every later credential access. The lock guards use
+    // `.unwrap_or_else(|e| e.into_inner())`, so a poisoned lock degrades to its
+    // inner value instead of re-panicking (ERR-001 / TAURI-004).
+    #[test]
+    fn poisoned_lock_recovers_instead_of_cascading() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = Arc::new(CredentialManager::new(
+            StorageMode::None,
+            dir.path().to_path_buf(),
+        ));
+
+        // Poison the backend RwLock by panicking while holding a write guard.
+        let poisoner = Arc::clone(&mgr);
+        let handle = std::thread::spawn(move || {
+            let _guard = poisoner.inner.write().unwrap();
+            panic!("intentional panic to poison the credential store lock");
+        });
+        assert!(handle.join().is_err(), "poisoning thread should panic");
+        assert!(mgr.inner.is_poisoned(), "backend lock should be poisoned");
+
+        // Reads must still succeed via the recovered guard, not re-panic.
+        assert_eq!(mgr.get_mode(), StorageMode::None);
+        // Writes through the poisoned lock must also recover.
+        mgr.switch_store(StorageMode::MasterPassword).unwrap();
+        assert_eq!(mgr.get_mode(), StorageMode::MasterPassword);
     }
 
     #[test]
