@@ -353,13 +353,15 @@ impl FileBrowser for DockerFileBrowser {
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---
 
-/// Parse a `find -printf '%T@'` epoch-seconds value into whole seconds.
+/// Parse a listing record's mtime epoch-seconds value into whole seconds.
 ///
-/// The command runs under a forced C locale (see [`C_LOCALE_PREFIX`]) so `%T@`
-/// emits a `.` decimal, but this stays defensive against a locale comma (e.g.
-/// `1700000000,5`) so a stray localized value can never silently reset the
-/// mtime to 1970 the way a bare `f64::from_str` would (I18N-004). The fractional
-/// part is discarded — the browser reports whole-second mtimes.
+/// [`LIST_DIR_SCRIPT`] sources the mtime from `stat -c '%Y'` (already whole
+/// integer seconds), but this stays defensive against a fractional value with a
+/// locale comma (e.g. `1700000000,5` — as the retired `find -printf '%T@'` could
+/// emit under a comma-decimal locale) so a stray localized value can never
+/// silently reset the mtime to 1970 the way a bare `f64::from_str` would
+/// (I18N-004). The fractional part is discarded — the browser reports
+/// whole-second mtimes.
 fn parse_epoch_seconds(field: &str) -> u64 {
     field.replace(',', ".").parse::<f64>().unwrap_or(0.0) as u64
 }
