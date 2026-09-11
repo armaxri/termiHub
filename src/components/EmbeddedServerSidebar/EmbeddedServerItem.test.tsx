@@ -99,6 +99,39 @@ describe("EmbeddedServerItem", () => {
     container.remove();
   });
 
+  it("exposes a non-colour accessible name on the status dot for each state (A11Y-003)", () => {
+    // Running state.
+    render(<EmbeddedServerItem {...baseProps({ state: runningState })} />);
+    let dot = container.querySelector('[data-testid="server-status-srv-1"]');
+    expect(dot?.getAttribute("role")).toBe("img");
+    expect(dot?.getAttribute("aria-label")).toBe("Running");
+    act(() => root.unmount());
+
+    // Never-started (no state) → Stopped.
+    root = createRoot(container);
+    render(<EmbeddedServerItem {...baseProps({ state: undefined })} />);
+    dot = container.querySelector('[data-testid="server-status-srv-1"]');
+    expect(dot?.getAttribute("aria-label")).toBe("Stopped");
+    act(() => root.unmount());
+
+    // Error state.
+    root = createRoot(container);
+    render(
+      <EmbeddedServerItem
+        {...baseProps({
+          state: {
+            serverId: "srv-1",
+            status: "error",
+            error: "boom",
+            stats: { activeConnections: 0, totalConnections: 0, bytesSent: 0, bytesReceived: 0 },
+          },
+        })}
+      />
+    );
+    dot = container.querySelector('[data-testid="server-status-srv-1"]');
+    expect(dot?.getAttribute("aria-label")).toBe("Error");
+  });
+
   it("surfaces a toast.error when starting fails", async () => {
     const onStart = vi.fn(() => Promise.reject(new Error("Port 8080 already in use")));
     render(<EmbeddedServerItem {...baseProps({ onStart })} />);

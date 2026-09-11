@@ -18,6 +18,7 @@ import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes } from "@/utils/formatters";
+import { connectionStateLabel } from "@/utils/statusLabel";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import {
   resolveTunnelHost,
@@ -174,7 +175,13 @@ export function TunnelListItem({
       }
       error={isError}
       onDoubleClick={() => onEdit(tunnel.id)}
-      status={<SidebarStatusDot tone={statusTone(status)} testId={`tunnel-status-${tunnel.id}`} />}
+      status={
+        <SidebarStatusDot
+          tone={statusTone(status)}
+          label={connectionStateLabel(status)}
+          testId={`tunnel-status-${tunnel.id}`}
+        />
+      }
       badge={typeLabel}
       badgeTestId={`tunnel-type-${tunnel.id}`}
       actions={
