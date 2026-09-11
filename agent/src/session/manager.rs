@@ -6,7 +6,7 @@
 //! (Unix domain socket on unix, named pipe on windows — see
 //! [`crate::daemon::transport`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -343,6 +343,17 @@ const DEFAULT_PERSISTENT_BUFFER_SIZE: usize = 1_048_576;
 /// so it can be shared across async tasks.
 pub struct SessionManager {
     sessions: Mutex<HashMap<String, SessionInfo>>,
+    /// IDs of in-flight [`create`](SessionManager::create) calls that have
+    /// reserved a slot but not yet finished their (possibly slow) backend
+    /// bring-up.
+    ///
+    /// The expensive daemon-spawn / SSH-connect in `create` runs **without**
+    /// holding the `sessions` lock (CONC-004), so it can't freeze I/O for other
+    /// live sessions. To keep [`MAX_SESSIONS`] honest while a connect is in
+    /// flight, each create reserves its id here (checked against `sessions.len()`
+    /// under the `sessions` lock) and removes it once the session is registered
+    /// or the create fails. Lock order is always `sessions → pending_creates`.
+    pending_creates: Mutex<HashSet<String>>,
     notification_tx: NotificationSender,
     registry: Arc<ConnectionTypeRegistry>,
     launcher: Arc<dyn DaemonLauncher>,
@@ -444,6 +455,7 @@ impl SessionManager {
         let agent_forward = AgentForwardRelay::new(notification_tx.clone());
         Self {
             sessions: Mutex::new(HashMap::new()),
+            pending_creates: Mutex::new(HashSet::new()),
             notification_tx,
             registry,
             launcher,
@@ -482,16 +494,8 @@ impl SessionManager {
         settings: serde_json::Value,
         definition_id: Option<String>,
     ) -> Result<SessionSnapshot, SessionCreateError> {
-        let mut sessions = self.sessions.lock().await;
-
-        if sessions.len() >= MAX_SESSIONS as usize {
-            return Err(SessionCreateError::LimitReached);
-        }
-
-        let id = uuid::Uuid::new_v4().to_string();
-        let now = Utc::now();
-
-        // Check the type exists and get capabilities.
+        // Check the type exists and get capabilities up front — cheap, in-memory,
+        // and done before any lock so an invalid type never reserves a slot.
         let capabilities = {
             let instance = self
                 .registry
@@ -500,45 +504,83 @@ impl SessionManager {
             instance.capabilities()
         };
 
-        let backend = self
+        let id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now();
+
+        // Reserve a slot: enforce MAX_SESSIONS across live sessions *and* in-flight
+        // creates, then release the lock. The reservation counts toward the cap so
+        // concurrent creates can't overshoot it, and holding the lock only for this
+        // O(1) check means the slow backend bring-up below runs without gating I/O
+        // for every other session (CONC-004). Lock order: `sessions → pending_creates`.
+        {
+            let sessions = self.sessions.lock().await;
+            let mut pending = self.pending_creates.lock().await;
+            if sessions.len() + pending.len() >= MAX_SESSIONS as usize {
+                return Err(SessionCreateError::LimitReached);
+            }
+            pending.insert(id.clone());
+        }
+
+        // Run the (possibly multi-second) daemon spawn + connect / SSH handshake
+        // WITHOUT holding `sessions`, so one slow or hung connect can't freeze
+        // write_input/resize/list/close for every other live session (CONC-004).
+        let backend = match self
             .create_backend(&id, type_id, &settings, capabilities.persistent)
             .await
-            .map_err(|e| SessionCreateError::BackendFailed(e.to_string()))?;
-
-        // Persist daemon-backed sessions for recovery after an agent restart.
-        if capabilities.persistent {
-            if let SessionBackend::Daemon(ref client) = backend {
-                let mut state = self.state.lock().await;
-                state.sessions.insert(
-                    id.clone(),
-                    PersistedSession {
-                        type_id: type_id.to_string(),
-                        title: title.clone(),
-                        created_at: now.to_rfc3339(),
-                        daemon_socket: Some(client.endpoint().to_string()),
-                        settings: settings.clone(),
-                        definition_id: definition_id.clone(),
-                    },
-                );
-                state.save_to(&self.state_path);
+        {
+            Ok(backend) => backend,
+            Err(e) => {
+                // Release the reservation so a failed create never leaks a slot
+                // or blocks a retry.
+                self.pending_creates.lock().await.remove(&id);
+                return Err(SessionCreateError::BackendFailed(e.to_string()));
             }
-        }
+        };
 
         let info = SessionInfo {
             id: id.clone(),
-            title,
+            title: title.clone(),
             type_id: type_id.to_string(),
             status: SessionStatus::Running,
-            settings,
+            settings: settings.clone(),
             created_at: now,
             last_activity: now,
             attached: false,
             backend,
-            definition_id,
+            definition_id: definition_id.clone(),
         };
 
         let snapshot = info.snapshot();
-        sessions.insert(id, info);
+
+        // Re-acquire `sessions` briefly to register the finished session, persist
+        // daemon-backed sessions for recovery, and drop the reservation. Keeping the
+        // state-persist nested under the `sessions` lock preserves the original
+        // atomicity vs. `recover_sessions` (which inserts under the same lock).
+        {
+            let mut sessions = self.sessions.lock().await;
+
+            if capabilities.persistent {
+                if let SessionBackend::Daemon(ref client) = info.backend {
+                    let mut state = self.state.lock().await;
+                    state.sessions.insert(
+                        id.clone(),
+                        PersistedSession {
+                            type_id: type_id.to_string(),
+                            title,
+                            created_at: now.to_rfc3339(),
+                            daemon_socket: Some(client.endpoint().to_string()),
+                            settings,
+                            definition_id,
+                        },
+                    );
+                    state.save_to(&self.state_path);
+                }
+            }
+
+            self.pending_creates.lock().await.remove(&id);
+            sessions.insert(id, info);
+        }
+
         Ok(snapshot)
     }
 
